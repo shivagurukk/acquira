@@ -1,0 +1,217 @@
+package com.acquira.controller;
+
+import com.acquira.dto.MerchantSummaryDTO;
+import com.acquira.service.AnalyticsService;
+import com.acquira.config.TenantContext;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/analytics")
+@CrossOrigin(origins = "http://localhost:5173")
+public class AnalyticsController {
+
+    private final AnalyticsService analyticsService;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    public AnalyticsController(AnalyticsService analyticsService) {
+        this.analyticsService = analyticsService;
+    }
+
+    @GetMapping("/executive")
+    public ResponseEntity<Map<String, Object>> getExecutiveDashboard(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return ResponseEntity.ok(analyticsService.getExecutiveDashboard(date));
+    }
+
+    @GetMapping("/merchant-summaries")
+    public ResponseEntity<Page<MerchantSummaryDTO>> getMerchantSummaries(
+            @RequestParam(defaultValue = "0") int year,
+            @RequestParam(defaultValue = "0") int month,
+            @RequestParam(defaultValue = "0") int day,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.badRequest().build();
+
+        LocalDate targetDate;
+        if (year > 0 && month > 0 && day > 0) {
+            targetDate = LocalDate.of(year, month, day);
+        } else {
+            targetDate = LocalDate.now();
+        }
+
+        LocalDate startOfMonth = targetDate.withDayOfMonth(1);
+        LocalDate startOfYear = targetDate.withDayOfYear(1);
+
+        String sql = """
+                SELECT
+                    m.name as merchantName, m.mid,
+                    '' as storeName, '' as sid,
+                    '' as tid, '' as deviceNumber,
+                    COALESCE(daily.total_txns, 0) as dailyCount, COALESCE(daily.total_volume, 0) as dailyVolume,
+                    COALESCE(mtd.total_txns, 0) as mtdCount, COALESCE(mtd.total_volume, 0) as mtdVolume,
+                    COALESCE(ytd.total_txns, 0) as ytdCount, COALESCE(ytd.total_volume, 0) as ytdVolume,
+                    COALESCE(daily.total_credit_volume, 0) as creditVolume,
+                    COALESCE(daily.total_debit_prepaid_volume, 0) as debitPrepaidVolume,
+                    COALESCE(m.sales_user_id, '') as salesUserId
+                FROM dim_merchant m
+
+                -- Daily Join
+                LEFT JOIN sum_daily_merchant daily ON daily.merchant_id = m.merchant_id
+                    AND daily.business_date = :targetDate
+
+                -- MTD Join (Aggregation)
+                LEFT JOIN (
+                    SELECT merchant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
+                    FROM sum_daily_merchant
+                    WHERE business_date >= :startOfMonth AND business_date <= :targetDate
+                    GROUP BY merchant_id
+                ) mtd ON mtd.merchant_id = m.merchant_id
+
+                -- YTD Join (Aggregation)
+                LEFT JOIN (
+                    SELECT merchant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
+                    FROM sum_daily_merchant
+                    WHERE business_date >= :startOfYear AND business_date <= :targetDate
+                    GROUP BY merchant_id
+                ) ytd ON ytd.merchant_id = m.merchant_id
+
+                WHERE m.tenant_id = :tenantId
+                ORDER BY m.name
+                """;
+
+        // Pagination Limit/Offset
+        jakarta.persistence.Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("targetDate", targetDate);
+        query.setParameter("startOfMonth", startOfMonth);
+        query.setParameter("startOfYear", startOfYear);
+        query.setParameter("tenantId", tenantId);
+
+        query.setFirstResult(page * size);
+        query.setMaxResults(size);
+
+        List<Object[]> results = query.getResultList();
+
+        List<MerchantSummaryDTO> dtos = results.stream().map(row -> new MerchantSummaryDTO(
+                (String) row[0], (String) row[1], (String) row[2], (String) row[3], (String) row[4], (String) row[5],
+                ((Number) row[6]).longValue(), (BigDecimal) row[7],
+                ((Number) row[8]).longValue(), (BigDecimal) row[9],
+                ((Number) row[10]).longValue(), (BigDecimal) row[11],
+                (BigDecimal) row[12], (BigDecimal) row[13], (String) row[14])).collect(Collectors.toList());
+
+        // Count for Pagination
+        String countSql = "SELECT COUNT(*) FROM dim_merchant m WHERE m.tenant_id = :tenantId";
+        jakarta.persistence.Query countQuery = entityManager.createNativeQuery(countSql);
+        countQuery.setParameter("tenantId", tenantId);
+        long totalElements = ((Number) countQuery.getSingleResult()).longValue();
+
+        return ResponseEntity.ok(new PageImpl<>(dtos, PageRequest.of(page, size), totalElements));
+    }
+
+    @GetMapping("/merchant-summaries/export")
+    public void exportMerchantSummaries(
+            @RequestParam(defaultValue = "0") int year,
+            @RequestParam(defaultValue = "0") int month,
+            @RequestParam(defaultValue = "0") int day,
+            jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            response.sendError(jakarta.servlet.http.HttpServletResponse.SC_BAD_REQUEST, "Tenant Context Missing");
+            return;
+        }
+
+        LocalDate targetDate;
+        if (year > 0 && month > 0 && day > 0) {
+            targetDate = LocalDate.of(year, month, day);
+        } else {
+            targetDate = LocalDate.now();
+        }
+
+        LocalDate startOfMonth = targetDate.withDayOfMonth(1);
+        LocalDate startOfYear = targetDate.withDayOfYear(1);
+
+        String sql = """
+                 SELECT
+                    m.name as merchantName, m.mid,
+                    '' as storeName, '' as sid,
+                    '' as tid, '' as deviceNumber,
+                    COALESCE(daily.total_txns, 0) as dailyCount, COALESCE(daily.total_volume, 0) as dailyVolume,
+                    COALESCE(mtd.total_txns, 0) as mtdCount, COALESCE(mtd.total_volume, 0) as mtdVolume,
+                    COALESCE(ytd.total_txns, 0) as ytdCount, COALESCE(ytd.total_volume, 0) as ytdVolume,
+                    COALESCE(daily.total_credit_volume, 0) as creditVolume,
+                    COALESCE(daily.total_debit_prepaid_volume, 0) as debitPrepaidVolume,
+                    COALESCE(m.sales_user_id, '') as salesUserId
+                FROM dim_merchant m
+
+                -- Daily Join
+                LEFT JOIN sum_daily_merchant daily ON daily.merchant_id = m.merchant_id
+                    AND daily.business_date = :targetDate
+
+                -- MTD Join (Aggregation)
+                LEFT JOIN (
+                    SELECT merchant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
+                    FROM sum_daily_merchant
+                    WHERE business_date >= :startOfMonth AND business_date <= :targetDate
+                    GROUP BY merchant_id
+                ) mtd ON mtd.merchant_id = m.merchant_id
+
+                -- YTD Join (Aggregation)
+                LEFT JOIN (
+                    SELECT merchant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
+                    FROM sum_daily_merchant
+                    WHERE business_date >= :startOfYear AND business_date <= :targetDate
+                    GROUP BY merchant_id
+                ) ytd ON ytd.merchant_id = m.merchant_id
+
+                WHERE m.tenant_id = :tenantId
+                ORDER BY m.name
+                """;
+
+        jakarta.persistence.Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("targetDate", targetDate);
+        query.setParameter("startOfMonth", startOfMonth);
+        query.setParameter("startOfYear", startOfYear);
+        query.setParameter("tenantId", tenantId);
+
+        // Limit export for safety (or stream properly, but list is fine for MVP < 100k
+        // rows)
+        query.setMaxResults(10000);
+
+        List<Object[]> results = query.getResultList();
+
+        response.setContentType("text/csv");
+        response.setHeader("Content-Disposition", "attachment; filename=\"merchant_summary_" + targetDate + ".csv\"");
+
+        try (java.io.PrintWriter writer = response.getWriter()) {
+            writer.println(
+                    "Merchant Name,MID,Credit Volume,Debit/Prepaid Volume,Sales User,Daily Count,Daily Volume,MTD Count,MTD Volume,YTD Count,YTD Volume");
+            for (Object[] row : results) {
+                // row: 0=Name, 1=MID, 2=Store, 3=SID, 4=TID, 5=DevNum, 6=DC, 7=DV, 8=MC, 9=MV,
+                // 10=YC, 11=YV, 12=Credit, 13=Debit, 14=SalesUser
+                writer.printf("\"%s\",\"%s\",%s,%s,\"%s\",%d,%s,%d,%s,%d,%s%n",
+                        row[0], row[1], row[12], row[13], row[14],
+                        ((Number) row[6]).longValue(), row[7],
+                        ((Number) row[8]).longValue(), row[9],
+                        ((Number) row[10]).longValue(), row[11]);
+            }
+        }
+    }
+}
