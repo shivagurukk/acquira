@@ -14,6 +14,9 @@ public class Transaction {
     @Column(name = "transaction_id")
     private Long transactionId;
 
+    @Column(name = "tenant_id", nullable = false)
+    private Long tenantId;
+
     @Column(name = "merchant_id")
     private Long merchantId;
 
@@ -89,6 +92,12 @@ public class Transaction {
 
     @Column(name = "destination")
     private String destination;
+
+    @Column(name = "issuer_bank")
+    private String issuerBank;
+
+    @Column(name = "issuer_country")
+    private String issuerCountry;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();

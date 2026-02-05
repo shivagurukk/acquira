@@ -380,11 +380,11 @@ public class MerchantMasterJobConfig {
                             sid,
                             MAX(COALESCE(store_name, merchant_name)),
                             MAX(store_legal_name),
-                            MAX(address),
-                            MAX(city),
-                            MAX(state),
-                            MAX(postal_code),
-                            MAX(business_mcc),
+                            MAX(s.address),
+                            MAX(s.city),
+                            MAX(s.state),
+                            MAX(s.postal_code),
+                            MAX(s.business_mcc),
                             COALESCE(MAX(store_status), 'ACTIVE'),
                             MAX(merchant_store_created_date)
                         FROM stg_merchant_master_raw s

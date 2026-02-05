@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
 import BusinessFilters from '../../components/BusinessFilters';
-import ReportHeader from '../../components/ReportHeader';
+import StandardReportHeader from '../../components/StandardReportHeader';
 import { exportToCSV } from '../../utils/exportUtils';
+import { DataGrid } from '@mui/x-data-grid';
+import { Box, Chip, Typography } from '@mui/material';
+
+// Styled DataGrid wrappers could be added here or via sx props
 
 const AttritionReport = () => {
     const [data, setData] = useState([]);
@@ -21,7 +24,7 @@ const AttritionReport = () => {
         rmList: [], teamLeaderList: [], sectorList: [],
         destinationList: [], schemeList: [], cardTypeList: [], channelList: [],
         merchantName: '',
-        datePreset: 'Custom'
+        datePreset: 'MONTH' // Default preset match
     });
 
     useEffect(() => {
@@ -43,7 +46,9 @@ const AttritionReport = () => {
 
             if (res.ok) {
                 const result = await res.json();
-                setData(result);
+                // Ensure unique IDs for DataGrid
+                const rows = result.map((r, i) => ({ id: r.mid || i, ...r }));
+                setData(rows);
             }
         } catch (error) {
             console.error(error);
@@ -56,7 +61,6 @@ const AttritionReport = () => {
         fetchData();
     };
 
-    // Unified handler for ReportHeader (partial updates) and other filters
     const handleFilterChange = (key, val) => {
         if (typeof key === 'object') {
             setFilters(prev => ({ ...prev, ...key }));
@@ -65,101 +69,183 @@ const AttritionReport = () => {
         }
     };
 
-    // Calculate Dynamic Years for Headers
+    // Date Logic
     const selectedYear = filters.endDate ? new Date(filters.endDate).getFullYear() : new Date().getFullYear();
     const prevYear = selectedYear - 1;
 
-    const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', notation: 'compact' }).format(val || 0);
-    const formatPct = (val) => `${(val || 0).toFixed(1)}%`;
-    const getPctColor = (val) => val < 0 ? 'text-red-500' : val > 0 ? 'text-green-500' : 'text-slate-400';
+    // --- Columns Definition ---
+    const currencyFormatter = (value) => {
+        if (value == null) return '-';
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', notation: 'compact' }).format(value);
+    };
+
+    const pctFormatter = (value) => {
+        if (value == null) return '-';
+        return `${value.toFixed(1)}%`;
+    };
+
+    const columns = [
+        {
+            field: 'mid',
+            headerName: 'MID',
+            width: 140,
+            renderCell: (params) => (
+                <Box sx={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body2" sx={{ fontFamily: 'monospace', color: '#64748b' }}>
+                        {params.value}
+                    </Typography>
+                </Box>
+            )
+        },
+        {
+            field: 'merchant_info',
+            headerName: 'MERCHANT NAME',
+            width: 250,
+            renderCell: (params) => (
+                <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>{params.row.name}</Typography>
+                </Box>
+            )
+        },
+        // MTD
+        {
+            field: 'mtd_prev',
+            headerName: `${prevYear} Vol`,
+            width: 120,
+            type: 'number',
+            renderCell: (params) => <Typography variant="body2" sx={{ color: '#475569' }}>{currencyFormatter(params.value)}</Typography>
+        },
+        {
+            field: 'mtd_current',
+            headerName: `${selectedYear} Vol`,
+            width: 120,
+            type: 'number',
+            renderCell: (params) => <Typography variant="body2" fontWeight="600" sx={{ color: '#0f172a' }}>{currencyFormatter(params.value)}</Typography>
+        },
+        {
+            field: 'mtd_pct',
+            headerName: '% Change',
+            width: 120,
+            type: 'number',
+            renderCell: (params) => (
+                <Typography
+                    variant="body2"
+                    sx={{
+                        fontWeight: 'bold',
+                        color: params.value < 0 ? '#ef4444' : params.value > 0 ? '#10b981' : '#cbd5e1'
+                    }}
+                >
+                    {pctFormatter(params.value)}
+                </Typography>
+            )
+        },
+        // YTD
+        {
+            field: 'ytd_prev',
+            headerName: `${prevYear} Vol`,
+            width: 120,
+            type: 'number',
+            renderCell: (params) => <Typography variant="body2" sx={{ color: '#475569' }}>{currencyFormatter(params.value)}</Typography>
+        },
+        {
+            field: 'ytd_current',
+            headerName: `${selectedYear} Vol`,
+            width: 120,
+            type: 'number',
+            renderCell: (params) => <Typography variant="body2" fontWeight="600" sx={{ color: '#0f172a' }}>{currencyFormatter(params.value)}</Typography>
+        },
+        {
+            field: 'ytd_pct',
+            headerName: '% Change',
+            width: 120,
+            type: 'number',
+            renderCell: (params) => (
+                <Typography
+                    variant="body2"
+                    sx={{
+                        fontWeight: 'bold',
+                        color: params.value < 0 ? '#ef4444' : params.value > 0 ? '#10b981' : '#cbd5e1'
+                    }}
+                >
+                    {pctFormatter(params.value)}
+                </Typography>
+            )
+        }
+    ];
+
+    const columnGroupingModel = [
+        {
+            groupId: 'mtd_group',
+            headerName: `MTD Comparison (${prevYear} vs ${selectedYear})`,
+            headerClassName: 'mtd-header-group',
+            children: [{ field: 'mtd_prev' }, { field: 'mtd_current' }, { field: 'mtd_pct' }],
+        },
+        {
+            groupId: 'ytd_group',
+            headerName: `YTD Comparison (${prevYear} vs ${selectedYear})`,
+            headerClassName: 'ytd-header-group',
+            children: [{ field: 'ytd_prev' }, { field: 'ytd_current' }, { field: 'ytd_pct' }],
+        }
+    ];
 
     return (
-        <div className="p-6 bg-slate-50 min-h-screen flex flex-col gap-6">
+        <Box className="page-container" sx={{ height: '100vh', display: 'flex', flexDirection: 'column', p: 3, bgcolor: '#f8fafc' }}>
 
-            {/* Header */}
-            <ReportHeader
+            <StandardReportHeader
                 title="Attrition Report (YoY)"
                 subtitle="Year-over-Year Volume Comparison Performance"
                 onExport={() => exportToCSV(data, 'attrition_report')}
-                onRunReport={fetchData}
-                filters={filters}
+                onRefresh={fetchData}
                 onFilterChange={handleFilterChange}
+                loading={loading}
                 showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)}
-                loading={loading}
+                filters={filters}
             />
 
-            {showFilters && (
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <BusinessFilters
-                        filters={filters}
-                        onChange={setFilters}
-                        onApply={handleApply}
-                        variant="panel"
-                    />
-                </div>
-            )}
+            <BusinessFilters
+                filters={filters}
+                onChange={setFilters}
+                onApply={handleApply}
+                isOpen={showFilters}
+                onClose={() => setShowFilters(false)}
+            />
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1">
-                <table className="w-full text-sm text-slate-600 border-collapse">
-                    <thead className="bg-slate-50 text-slate-700">
-                        <tr>
-                            <th className="p-3 border-b border-r border-slate-200 text-left">Merchant</th>
-                            <th colSpan="3" className="p-3 border-b border-r border-slate-200 text-center bg-blue-50 text-blue-800">
-                                MTD Comparison ({prevYear} vs {selectedYear})
-                            </th>
-                            <th colSpan="3" className="p-3 border-b text-center bg-indigo-50 text-indigo-800">
-                                YTD Comparison ({prevYear} vs {selectedYear})
-                            </th>
-                        </tr>
-                        <tr className="text-xs uppercase tracking-wide bg-slate-100 text-slate-500">
-                            <th className="p-3 border-b border-r text-left">Internal ID / Name</th>
-                            {/* MTD */}
-                            <th className="p-3 border-b text-right">{prevYear} Vol</th>
-                            <th className="p-3 border-b text-right">{selectedYear} Vol</th>
-                            <th className="p-3 border-b border-r text-right">% Change</th>
-                            {/* YTD */}
-                            <th className="p-3 border-b text-right">{prevYear} Vol</th>
-                            <th className="p-3 border-b text-right">{selectedYear} Vol</th>
-                            <th className="p-3 border-b text-right">% Change</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {data.length === 0 && !loading ? (
-                            <tr>
-                                <td colSpan="7" className="px-6 py-8 text-center text-slate-400 italic">
-                                    No data found. Ensure you have data for both years to see comparisons.
-                                </td>
-                            </tr>
-                        ) : (
-                            data.map((row, idx) => (
-                                <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                                    <td className="px-4 py-3 border-r border-slate-100">
-                                        <div className="font-medium text-slate-800">{row.name}</div>
-                                        <div className="text-xs text-slate-400">{row.mid}</div>
-                                    </td>
-
-                                    {/* MTD */}
-                                    <td className="px-4 py-3 text-right">{formatCurrency(row.mtd_prev)}</td>
-                                    <td className="px-4 py-3 text-right font-medium">{formatCurrency(row.mtd_current)}</td>
-                                    <td className={`px-4 py-3 text-right border-r border-slate-100 font-bold ${getPctColor(row.mtd_pct)}`}>
-                                        {formatPct(row.mtd_pct)}
-                                    </td>
-
-                                    {/* YTD */}
-                                    <td className="px-4 py-3 text-right">{formatCurrency(row.ytd_prev)}</td>
-                                    <td className="px-4 py-3 text-right font-medium">{formatCurrency(row.ytd_current)}</td>
-                                    <td className={`px-4 py-3 text-right font-bold ${getPctColor(row.ytd_pct)}`}>
-                                        {formatPct(row.ytd_pct)}
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
-                {loading && <div className="p-10 flex justify-center text-slate-400"><Loader2 className="animate-spin" /></div>}
-            </div>
-        </div>
+            <Box sx={{
+                flex: 1,
+                bgcolor: 'white',
+                borderRadius: 2,
+                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
+                '& .time-header-group': { fontWeight: 'bold' },
+                '& .mtd-header-group': { bgcolor: '#eff6ff', color: '#1e40af', fontWeight: 'bold' },
+                '& .ytd-header-group': { bgcolor: '#f8fafc', color: '#334155', fontWeight: 'bold' }
+            }}>
+                <DataGrid
+                    rows={data}
+                    columns={columns}
+                    columnGroupingModel={columnGroupingModel}
+                    loading={loading}
+                    disableRowSelectionOnClick
+                    rowHeight={60}
+                    initialState={{
+                        pagination: { paginationModel: { pageSize: 25 } },
+                    }}
+                    pageSizeOptions={[25, 50, 100]}
+                    experimentalFeatures={{ columnGrouping: true }}
+                    sx={{
+                        border: 'none',
+                        '& .MuiDataGrid-columnHeaders': {
+                            bgcolor: '#f8fafc',
+                            fontSize: '0.75rem',
+                            textTransform: 'uppercase'
+                        },
+                        '& .MuiDataGrid-virtualScroller': {
+                            bgcolor: 'white'
+                        }
+                    }}
+                />
+            </Box>
+        </Box>
     );
 };
 

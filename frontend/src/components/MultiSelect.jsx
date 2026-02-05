@@ -38,7 +38,7 @@ const MultiSelect = ({ label, options, selectedValues, onChange, placeholder = "
     };
 
     return (
-        <div className="relative" ref={wrapperRef}>
+        <div className={`relative ${isOpen ? 'z-50' : ''}`} ref={wrapperRef}>
             {label && <label className="block text-xs font-bold text-slate-500 mb-1">{label}</label>}
             <div
                 onClick={() => setIsOpen(!isOpen)}
@@ -85,25 +85,23 @@ const MultiSelect = ({ label, options, selectedValues, onChange, placeholder = "
             </div>
 
             {isOpen && (
-                <div className="absolute top-full left-0 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-60 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100">
-                    <div className="flex-1 overflow-y-auto p-1">
-                        {options.map(opt => (
-                            <div
-                                key={opt}
-                                onClick={() => handleSelect(opt)}
-                                className={`
-                                    px-3 py-2 cursor-pointer flex items-center justify-between text-sm rounded-md transition-colors
-                                    ${selectedValues.includes(opt) ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}
-                                `}
-                            >
-                                <span>{opt}</span>
-                                {selectedValues.includes(opt) && <Check size={14} className="text-blue-600" />}
-                            </div>
-                        ))}
-                        {options.length === 0 && (
-                            <div className="px-3 py-4 text-center text-slate-400 text-sm italic">No options available</div>
-                        )}
-                    </div>
+                <div className="absolute top-full left-0 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-2xl z-[100] max-h-60 overflow-y-auto py-1">
+                    {options.map(opt => (
+                        <div
+                            key={opt}
+                            onClick={() => handleSelect(opt)}
+                            className={`
+                                px-3 py-2 cursor-pointer flex items-center justify-between text-sm transition-colors
+                                ${selectedValues.includes(opt) ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}
+                            `}
+                        >
+                            <span>{opt}</span>
+                            {selectedValues.includes(opt) && <Check size={14} className="text-blue-600" />}
+                        </div>
+                    ))}
+                    {options.length === 0 && (
+                        <div className="px-3 py-4 text-center text-slate-400 text-sm italic">No options available</div>
+                    )}
                 </div>
             )}
         </div>

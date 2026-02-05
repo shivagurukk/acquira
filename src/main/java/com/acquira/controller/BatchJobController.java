@@ -93,6 +93,23 @@ public class BatchJobController {
         response.put("writeCount", writeCount);
         response.put("skipCount", skipCount);
 
+        // Calculate Progress
+        long totalRows = 0;
+        try {
+            totalRows = jobExecution.getExecutionContext().getLong("totalReqRows", 0);
+        } catch (Exception e) {
+            // ignore
+        }
+
+        response.put("totalRows", totalRows);
+        if (totalRows > 0) {
+            // Cap at 100% just in case
+            double progress = Math.min(100.0, ((double) readCount / totalRows) * 100.0);
+            response.put("progress", Math.round(progress)); // Integer percentage
+        } else {
+            response.put("progress", 0);
+        }
+
         return ResponseEntity.ok(response);
     }
 }

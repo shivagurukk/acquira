@@ -33,4 +33,7 @@ public class VolumeRevenueFilterDTO {
     private LocalDate openDateEnd;
     private List<String> teamLeaderList;
     private List<String> sectorList;
+    private List<String> preciseDateList; // For picking specific dates
+    private List<String> terminalTypeList; // POS, ECOM, SoftPOS
+
 }

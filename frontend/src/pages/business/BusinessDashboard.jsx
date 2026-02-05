@@ -45,11 +45,16 @@ const BusinessDashboard = () => {
                 <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
                     <LayoutGrid size={24} /> Business Dashboard
                 </h2>
-                {kpis?.effectiveDate && (
-                    <div className="text-sm text-slate-500">
-                        Data as of: <strong>{kpis.effectiveDate}</strong>
-                    </div>
-                )}
+                <div className="flex items-center gap-4">
+                    <a href="/business/insights" className="flex items-center gap-2 bg-[#0B1630] text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-[#1F3B6D] transition-colors">
+                        <TrendingUp size={16} /> VIEW PREMIUM INSIGHTS
+                    </a>
+                    {kpis?.effectiveDate && (
+                        <div className="text-sm text-slate-500">
+                            Data as of: <strong>{kpis.effectiveDate}</strong>
+                        </div>
+                    )}
+                </div>
             </div>
 
             <BusinessFilters onFilterChange={handleFilterChange} />

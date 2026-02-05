@@ -4,7 +4,9 @@ import jakarta.persistence.*;
 import lombok.Data;
 
 @Entity
-@Table(name = "dim_store")
+@Table(name = "dim_store", uniqueConstraints = {
+        @UniqueConstraint(columnNames = { "tenant_id", "internal_id" })
+})
 @Data
 public class Store {
     @Id
@@ -15,7 +17,7 @@ public class Store {
     @Column(name = "tenant_id")
     private Long tenantId;
 
-    @Column(name = "internal_id", unique = true)
+    @Column(name = "internal_id")
     private String internalId;
 
     @Column(name = "merchant_id")
@@ -32,6 +34,9 @@ public class Store {
     private String state;
     private String mcc;
     private String status;
+
+    private Double latitude;
+    private Double longitude;
 
     @Column(name = "created_date")
     private java.time.LocalDateTime createdDate;

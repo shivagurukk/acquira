@@ -24,7 +24,7 @@ const UserManagement = () => {
     const fetchUsers = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/users', {
+            const res = await fetch('http://localhost:8081/api/users', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) setUsers(await res.json());
@@ -34,7 +34,7 @@ const UserManagement = () => {
     const fetchBanks = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/banks', {
+            const res = await fetch('http://localhost:8081/api/banks', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) setBanks(await res.json());
@@ -44,7 +44,7 @@ const UserManagement = () => {
     const fetchGroups = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/admin/rbac/groups', {
+            const res = await fetch('http://localhost:8081/api/admin/rbac/groups', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) setGroups(await res.json());
@@ -67,7 +67,7 @@ const UserManagement = () => {
     const handleSave = async (e) => {
         e.preventDefault();
         const method = currentUser.id ? 'PUT' : 'POST';
-        const url = currentUser.id ? `http://localhost:8080/api/users/${currentUser.id}` : 'http://localhost:8080/api/users';
+        const url = currentUser.id ? `http://localhost:8081/api/users/${currentUser.id}` : 'http://localhost:8081/api/users';
 
         // Prepare payload (User only)
         const payload = {
@@ -93,7 +93,7 @@ const UserManagement = () => {
 
                 // Assign Tenant and Group if both selected
                 if (selectedBankId && selectedGroupId) {
-                    await fetch(`http://localhost:8080/api/users/${savedUser.id}/assign`, {
+                    await fetch(`http://localhost:8081/api/users/${savedUser.id}/assign`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -118,7 +118,7 @@ const UserManagement = () => {
         const updated = { ...user, active: !user.active };
         try {
             const token = localStorage.getItem('token');
-            await fetch(`http://localhost:8080/api/users/${user.id}`, {
+            await fetch(`http://localhost:8081/api/users/${user.id}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',

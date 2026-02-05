@@ -1,72 +1,84 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+    Box,
+    Paper,
+    Typography,
+    Stack,
+    IconButton,
+    CircularProgress,
+    Chip
+} from '@mui/material';
+import { DataGrid, GridToolbar, useGridApiRef } from '@mui/x-data-grid';
+import {
+    ChevronRight,
+    ChevronDown,
+    Loader2
+} from 'lucide-react';
+import StandardReportHeader from '../../components/StandardReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
-import ReportHeader from '../../components/ReportHeader';
-import { TrendingUp, TrendingDown, ArrowRight, ArrowLeft, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { exportToCSV } from '../../utils/exportUtils';
 
+// --- HELPERS ---
+const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
+const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
+const formatMonth = (dateStr) => {
+    if (!dateStr || !dateStr.includes('-')) return dateStr;
+    if (/^\d{4}-\d{2}$/.test(dateStr)) {
+        const [year, month] = dateStr.split('-');
+        const date = new Date(parseInt(year), parseInt(month) - 1);
+        return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    }
+    return dateStr;
+};
+
 const TransactionPerformanceDashboard = () => {
-    const [data, setData] = useState([]);
+    const [rows, setRows] = useState([]); // Flat list of all visible rows
     const [loading, setLoading] = useState(false);
-    const [showFilters, setShowFilters] = useState(true);
+    const [showFilters, setShowFilters] = useState(false);
+    const [filters, setFilters] = useState({ datePreset: 'Custom' });
 
-    // Drill-down State
-    const [expandedRows, setExpandedRows] = useState({}); // Key: "MONTH-2024-01" or "DAY-2024-01-01"
+    // Tracking expansion state: key -> boolean
+    const [expanded, setExpanded] = useState({});
 
-    const [filters, setFilters] = useState({
-        startDate: '', endDate: '',
-        openDateStart: '', openDateEnd: '',
-        partnerList: [], mccList: [], industryList: [],
-        rmList: [], teamLeaderList: [], sectorList: [],
-        destinationList: [], schemeList: [], cardTypeList: [], channelList: [],
-        merchantName: '',
-        datePreset: 'Custom'
-    });
+    // --- FETCH DATA ---
+    const fetchApiData = async (groupBy, parentValue, grandParentValue) => {
+        const token = localStorage.getItem('token');
+        const queryParams = new URLSearchParams({
+            groupBy,
+            parentValue: parentValue || '',
+            grandParentValue: grandParentValue || ''
+        });
 
-    // Initial Load (Months)
+        const res = await fetch(`/api/business/performance-dashboard?${queryParams}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify(filters)
+        });
+
+        if (res.ok) return await res.json();
+        return [];
+    };
+
+    // --- INITIAL LOAD ---
     useEffect(() => {
-        fetchData('MONTH', null, null);
+        loadInitialData();
     }, []);
 
-    const fetchData = async (groupBy, parentValue, grandParentValue) => {
-        // Avoid fetching if already loaded (unless refreshing?)
-        // For simplicity, we just fetch.
-
-        let targetKey = groupBy === 'MONTH' ? 'ROOT' :
-            groupBy === 'DAY' ? `MONTH-${parentValue}` :
-                groupBy === 'MERCHANT' ? `DAY-${parentValue}` :
-                    groupBy === 'STORE' ? `MERCHANT-${parentValue}-${grandParentValue}` : 'UNKNOWN';
-
+    const loadInitialData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const queryParams = new URLSearchParams({
-                groupBy,
-                parentValue: parentValue || '',
-                grandParentValue: grandParentValue || ''
-            });
-
-            // We use POST to send the complex filter object, but query params for drill-down context
-            const res = await fetch(`/api/business/performance-dashboard?${queryParams}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(filters)
-            });
-
-            if (res.ok) {
-                const result = await res.json();
-
-                if (groupBy === 'MONTH') {
-                    setData(result);
-                } else {
-                    // Store child data in a map or state attached to parent
-                    // Implementation choice: We can store it in a nested structure or a flat map of "ParentKey" -> [Children]
-                    // Let's use a flat map for expanded data
-                    setExpandedRows(prev => ({ ...prev, [targetKey]: result }));
-                }
-            }
+            const data = await fetchApiData('MONTH', null, null);
+            // Transform to Row format
+            const formatedRows = data.map((d, i) => ({
+                id: `MONTH-${d.row_label}`, // Unique ID
+                level: 0,
+                groupKey: 'MONTH',
+                label: formatMonth(d.row_label),
+                rawValue: d.row_label,
+                ...d
+            }));
+            setRows(formatedRows);
+            setExpanded({});
         } catch (error) {
             console.error(error);
         } finally {
@@ -74,188 +86,271 @@ const TransactionPerformanceDashboard = () => {
         }
     };
 
-    const handleApply = () => {
-        setExpandedRows({}); // Reset expansion on filter change
-        fetchData('MONTH', null, null);
-    };
+    // --- EXPAND/COLLAPSE LOGIC ---
+    const handleToggle = async (row) => {
+        const isCurrentlyExpanded = expanded[row.id];
 
-    // Unified handler for ReportHeader (partial updates) and other filters
-    const handleFilterChange = (key, val) => {
-        if (typeof key === 'object') {
-            setFilters(prev => ({ ...prev, ...key }));
+        if (isCurrentlyExpanded) {
+            // COLLAPSE: Remove all descendants
+            // We need to find all rows that start with this row's ID prefix or are children
+            // A simple way since it's a flat list sorted by hierarchy implies children are immediately after parent?
+            // Yes, if we insert them there.
+
+            // Recursive function to gather all child IDs to remove
+            // Or simpler: filter out any row whose ID *contains* the parent ID as a prefix? 
+            // ID construction: MONTH-2024-01 -> DAY-2024-01-01 -> MERCHANT-MID-2024-01-01
+            // Wait, ID structure varies.
+            // Let's rely on `parentId` reference if we had it, or just index logic.
+            // Safe way: Traverse down from row index and remove until we hit a node of same or higher level (lower level number).
+
+            const rowIndex = rows.findIndex(r => r.id === row.id);
+            if (rowIndex === -1) return;
+
+            let countToRemove = 0;
+            for (let i = rowIndex + 1; i < rows.length; i++) {
+                if (rows[i].level > row.level) {
+                    countToRemove++;
+                } else {
+                    break;
+                }
+            }
+
+            const newRows = [...rows];
+            newRows.splice(rowIndex + 1, countToRemove);
+            setRows(newRows);
+
+            const newExpanded = { ...expanded };
+            delete newExpanded[row.id];
+            // Also need to delete keys of children? Not strictly necessary but clean.
+            setExpanded(newExpanded);
+
         } else {
-            setFilters(prev => ({ ...prev, [key]: val }));
+            // EXPAND: Fetch and Insert
+            let nextGroupBy = '';
+            let nextParent = '';
+            let nextGrandParent = null;
+
+            if (row.level === 0) { // MONTH -> DAY
+                nextGroupBy = 'DAY';
+                nextParent = row.rawValue; // YYYY-MM
+            } else if (row.level === 1) { // DAY -> MERCHANT
+                nextGroupBy = 'MERCHANT';
+                nextParent = row.rawValue; // YYYY-MM-DD
+            } else if (row.level === 2) { // MERCHANT -> STORE
+                nextGroupBy = 'STORE';
+                nextParent = row.mid; // MID
+                nextGrandParent = row.parentDay; // Need to store parent Day in row data
+            } else {
+                return;
+            }
+
+            // Set loading state for this specific row?
+            // We can use a visual indicator.
+            // For now, toggle expanded to show loader in cell?
+            setExpanded(prev => ({ ...prev, [row.id]: true })); // Optimistic
+
+            try {
+                const children = await fetchApiData(nextGroupBy, nextParent, nextGrandParent);
+
+                // Transform Children
+                const newChildren = children.map(c => {
+                    let id = '';
+                    let label = '';
+                    let parentRef = null;
+
+                    if (row.level === 0) {
+                        id = `DAY-${c.row_label}`;
+                        label = c.row_label;
+                        parentRef = row.rawValue;
+                    } else if (row.level === 1) {
+                        id = `MERCHANT-${c.mid}-${row.rawValue}`;
+                        // Use Merchant Name if available, otherwise just MID
+                        label = c.merchant_name ? `${c.merchant_name} (${c.mid})` : `MID: ${c.mid}`;
+                        parentRef = row.rawValue; // Day
+                    } else if (row.level === 2) {
+                        id = `STORE-${c.sid}-${row.rawValue}`;
+                        label = `SID: ${c.sid}`;
+                    }
+
+                    return {
+                        ...c,
+                        id,
+                        level: row.level + 1,
+                        label,
+                        rawValue: c.row_label || c.mid || c.sid,
+                        parentDay: row.level === 1 ? row.rawValue : row.parentDay
+                    };
+                });
+
+                // Insert
+                const rowIndex = rows.findIndex(r => r.id === row.id);
+                const newRows = [...rows];
+                newRows.splice(rowIndex + 1, 0, ...newChildren);
+                setRows(newRows);
+
+            } catch (err) {
+                console.error(err);
+                // Revert expansion on failure
+                setExpanded(prev => {
+                    const n = { ...prev };
+                    delete n[row.id];
+                    return n;
+                });
+            }
         }
     };
 
-    const toggleRow = (row, level, parentValue = null) => {
-        // level 0: Month (row.row_label = YYYY-MM)
-        // level 1: Day (row.row_label = YYYY-MM-DD)
-        // level 2: Merchant (row.row_label = MID)
-        // level 3: Store (row.row_label = SID)
 
-        let key = '';
-        let nextGroupBy = '';
-        let nextParent = '';
-        let nextGrandParent = null;
+    // --- COLUMNS ---
+    const columns = [
+        {
+            field: 'entity',
+            headerName: 'PERIOD / ENTITY',
+            width: 280,
+            sortable: false,
+            renderCell: (params) => {
+                const { row } = params;
+                const isExp = !!expanded[row.id];
+                const canExpand = row.level < 3; // Max depth
 
-        if (level === 0) {
-            key = `MONTH-${row.row_label}`;
-            nextGroupBy = 'DAY';
-            nextParent = row.row_label;
-        } else if (level === 1) {
-            key = `DAY-${row.row_label}`;
-            nextGroupBy = 'MERCHANT';
-            nextParent = row.row_label;
-        } else if (level === 2) {
-            // For Merchant, we need parent Day to filter query? 
-            // Yes, `getPerformanceDashboardData` expects parentValue as Day for Merchant filtering
-            // But wait, the repo logic says: "if MERCHANT group by, parentValue is Day"
-            // And "if STORE group by, parentValue is MID, grandParent is Day"
-            key = `MERCHANT-${row.row_label}-${parentValue}`; // MID + Day
-            nextGroupBy = 'STORE';
-            nextParent = row.row_label; // MID
-            nextGrandParent = parentValue; // Day
-        } else {
-            return; // No deeper level
-        }
+                return (
+                    <Box sx={{ pl: row.level * 3, display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {canExpand && (
+                            <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleToggle(row); }}>
+                                {isExp ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                            </IconButton>
+                        )}
+                        <Typography variant="body2" fontWeight={row.level === 0 ? 700 : 500} color="text.primary">
+                            {row.label}
+                        </Typography>
+                    </Box>
+                );
+            }
+        },
+        // Domestic Debit
+        { field: 'dom_debit_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
+        { field: 'dom_debit_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'dom_debit_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'dom_debit_pct', headerName: '%', width: 70, valueGetter: (value, row) => ((row.dom_debit_vol / row.total_vol) * 100 || 0).toFixed(1) + '%' },
+        { field: 'dom_debit_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
 
-        if (expandedRows[key]) {
-            // Already loaded, just toggle visibility? 
-            // For this simple implementation, let's just use the presence of data to indicate expanded.
-            // To collapse, we remove it? Or keep it and have a separate 'visibility' state.
-            // Let's remove to simplify.
-            const newExpanded = { ...expandedRows };
-            delete newExpanded[key];
-            setExpandedRows(newExpanded);
-        } else {
-            fetchData(nextGroupBy, nextParent, nextGrandParent);
-        }
-    };
+        // Domestic Credit
+        { field: 'dom_credit_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
+        { field: 'dom_credit_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'dom_credit_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'dom_credit_pct', headerName: '%', width: 70, valueGetter: (value, row) => ((row.dom_credit_vol / row.total_vol) * 100 || 0).toFixed(1) + '%' },
+        { field: 'dom_credit_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
 
-    // Helper to check if expanded
-    const isExpanded = (key) => !!expandedRows[key];
+        // Intl
+        { field: 'int_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
+        { field: 'int_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'int_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'int_pct', headerName: '%', width: 70, valueGetter: (value, row) => ((row.int_vol / row.total_vol) * 100 || 0).toFixed(1) + '%' },
+        { field: 'int_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
 
-    // --- Table Row Rendering ---
-    const DataRow = ({ row, level, parentDay }) => {
-        // Construct unique key for this row's children
-        let childKey = '';
-        if (level === 0) childKey = `MONTH-${row.row_label}`;
-        else if (level === 1) childKey = `DAY-${row.row_label}`;
-        else if (level === 2) childKey = `MERCHANT-${row.row_label}-${parentDay}`;
+        // Total
+        {
+            field: 'total_vol',
+            headerName: 'TOTAL VOL',
+            type: 'number',
+            width: 140,
+            renderCell: (params) => (
+                <Typography fontWeight="700" color="primary.main">{formatCurrency(params.value)}</Typography>
+            )
+        },
+    ];
 
-        const expanded = isExpanded(childKey);
-
-        const indent = level * 20 + 'px';
-        const bg = level === 0 ? 'bg-white' : level === 1 ? 'bg-slate-50' : level === 2 ? 'bg-blue-50' : 'bg-indigo-50';
-        const label = level === 2 ? `MID: ${row.mid || row.row_label}` : level === 3 ? `SID: ${row.sid || row.row_label}` : row.row_label;
-
-        return (
-            <>
-                <tr className={`${bg} hover:bg-slate-100 transition-colors border-b border-slate-100`}>
-                    <td className="sticky left-0 z-10 bg-inherit px-4 py-3 font-medium text-slate-700 border-r border-slate-200">
-                        <div style={{ paddingLeft: indent }} className="flex items-center gap-2">
-                            {level < 3 && (
-                                <button onClick={() => toggleRow(row, level, parentDay)} className="p-1 hover:bg-slate-200 rounded">
-                                    {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                </button>
-                            )}
-                            {label}
-                        </div>
-                    </td>
-
-                    {/* Domestic Debit */}
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.dom_debit_cnt)}</td>
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.dom_debit_vol)}</td>
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.dom_debit_msf)}</td>
-                    <td className="px-2 py-2 text-right text-slate-400 text-xs">{(row.dom_debit_vol / row.total_vol * 100 || 0).toFixed(1)}%</td>
-                    <td className="px-2 py-2 text-right border-r border-slate-200">{new Intl.NumberFormat().format(row.dom_debit_optin)}</td>
-
-                    {/* Domestic Credit */}
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.dom_credit_cnt)}</td>
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.dom_credit_vol)}</td>
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.dom_credit_msf)}</td>
-                    <td className="px-2 py-2 text-right text-slate-400 text-xs">{(row.dom_credit_vol / row.total_vol * 100 || 0).toFixed(1)}%</td>
-                    <td className="px-2 py-2 text-right border-r border-slate-200">{new Intl.NumberFormat().format(row.dom_credit_optin)}</td>
-
-                    {/* Intl */}
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.int_cnt)}</td>
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.int_vol)}</td>
-                    <td className="px-2 py-2 text-right">{new Intl.NumberFormat().format(row.int_msf)}</td>
-                    <td className="px-2 py-2 text-right text-slate-400 text-xs">{(row.int_vol / row.total_vol * 100 || 0).toFixed(1)}%</td>
-                    <td className="px-2 py-2 text-right border-r border-slate-200">{new Intl.NumberFormat().format(row.int_optin)}</td>
-
-                    {/* Total */}
-                    <td className="px-2 py-2 text-right font-bold">{new Intl.NumberFormat().format(row.total_vol)}</td>
-                </tr>
-
-                {expanded && expandedRows[childKey] && expandedRows[childKey].map((child, idx) => (
-                    <DataRow key={idx} row={child} level={level + 1} parentDay={level === 1 ? child.row_label : parentDay} />
-                ))}
-            </>
-        );
-    };
+    const columnGroupingModel = [
+        {
+            groupId: 'DomesticDebit',
+            headerName: 'Domestic Debit & Prepaid',
+            headerClassName: 'super-header-debit',
+            children: [{ field: 'dom_debit_cnt' }, { field: 'dom_debit_vol' }, { field: 'dom_debit_msf' }, { field: 'dom_debit_pct' }, { field: 'dom_debit_optin' }],
+        },
+        {
+            groupId: 'DomesticCredit',
+            headerName: 'Domestic Credit',
+            headerClassName: 'super-header-credit',
+            children: [{ field: 'dom_credit_cnt' }, { field: 'dom_credit_vol' }, { field: 'dom_credit_msf' }, { field: 'dom_credit_pct' }, { field: 'dom_credit_optin' }],
+        },
+        {
+            groupId: 'International',
+            headerName: 'International',
+            headerClassName: 'super-header-intl',
+            children: [{ field: 'int_cnt' }, { field: 'int_vol' }, { field: 'int_msf' }, { field: 'int_pct' }, { field: 'int_optin' }],
+        },
+    ];
 
     return (
-        <div className="p-6 bg-slate-50 min-h-screen flex flex-col gap-6">
+        <Box sx={{ p: 3, bgcolor: '#F8FAFC', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
 
-            {/* Header */}
-            <ReportHeader
-                title="Transaction Performance Dashboard"
+            <StandardReportHeader
+                title="Transaction Performance"
                 subtitle="Drill-down: Month > Day > Merchant > Store"
-                onExport={() => exportToCSV(data, 'transaction_performance_dashboard')}
-                onRunReport={() => fetchData('MONTH', null, null)}
-                filters={filters}
-                onFilterChange={handleFilterChange}
+                onExport={() => exportToCSV(rows, 'transaction_performance')}
+                onRefresh={loadInitialData}
+                onFilterChange={(k, v) => setFilters(prev => ({ ...prev, [k]: v }))}
+                loading={loading}
                 showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)}
-                loading={loading}
+                filters={filters}
             />
 
-            {showFilters && (
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <BusinessFilters
-                        filters={filters}
-                        onChange={setFilters}
-                        onApply={handleApply}
-                        variant="panel"
-                    />
-                </div>
-            )}
+            <BusinessFilters
+                filters={filters}
+                onChange={setFilters}
+                onApply={loadInitialData}
+                isOpen={showFilters}
+                onClose={() => setShowFilters(false)}
+            />
 
-            {/* Charts & Table Section */}
-
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto flex-1 h-[600px]">
-                <table className="w-full text-sm text-slate-600 border-collapse">
-                    <thead className="bg-slate-100 text-slate-500 font-bold sticky top-0 z-20">
-                        <tr>
-                            <th className="sticky left-0 z-30 bg-slate-100 border-r border-b border-slate-200 p-2 text-left min-w-[200px]">Period / Entity</th>
-                            <th colSpan="5" className="border-b border-r border-slate-200 bg-blue-50 text-blue-700 text-center py-1">Domestic Debit & Prepaid</th>
-                            <th colSpan="5" className="border-b border-r border-slate-200 bg-green-50 text-green-700 text-center py-1">Domestic Credit</th>
-                            <th colSpan="5" className="border-b border-r border-slate-200 bg-orange-50 text-orange-700 text-center py-1">International</th>
-                            <th className="border-b border-slate-200 text-center py-1">Total</th>
-                        </tr>
-                        <tr className="text-xs">
-                            <th className="sticky left-0 z-30 bg-slate-100 border-b border-r border-slate-200"></th>
-                            {/* Dom Debit */}
-                            <th className="p-2 border-b">Count</th><th className="p-2 border-b">Vol</th><th className="p-2 border-b">MSF</th><th className="p-2 border-b">%</th><th className="p-2 border-b border-r border-slate-200">Opt-In</th>
-                            {/* Dom Credit */}
-                            <th className="p-2 border-b">Count</th><th className="p-2 border-b">Vol</th><th className="p-2 border-b">MSF</th><th className="p-2 border-b">%</th><th className="p-2 border-b border-r border-slate-200">Opt-In</th>
-                            {/* Intl */}
-                            <th className="p-2 border-b">Count</th><th className="p-2 border-b">Vol</th><th className="p-2 border-b">MSF</th><th className="p-2 border-b">%</th><th className="p-2 border-b border-r border-slate-200">Opt-In</th>
-
-                            <th className="p-2 border-b">Volume</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {data.map((row, idx) => (
-                            <DataRow key={idx} row={row} level={0} />
-                        ))}
-                    </tbody>
-                </table>
-                {loading && <div className="p-10 flex justify-center text-slate-400"><Loader2 className="animate-spin" /></div>}
-            </div>
-        </div>
+            <Paper sx={{
+                flex: 1,
+                width: '100%',
+                borderRadius: '12px',
+                overflow: 'hidden',
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                border: '1px solid #E2E8F0',
+                '& .super-header-debit': { bgcolor: '#eff6ff', color: '#1e40af', fontWeight: '700' },
+                '& .super-header-credit': { bgcolor: '#f0fdf4', color: '#15803d', fontWeight: '700' },
+                '& .super-header-intl': { bgcolor: '#fff7ed', color: '#c2410c', fontWeight: '700' },
+            }}>
+                <DataGrid
+                    rows={rows}
+                    columns={columns}
+                    columnGroupingModel={columnGroupingModel}
+                    loading={loading}
+                    disableRowSelectionOnClick
+                    experimentalFeatures={{ columnGrouping: true }}
+                    rowHeight={50}
+                    slots={{ toolbar: GridToolbar }}
+                    sx={{
+                        border: 'none',
+                        '& .MuiDataGrid-columnHeaders': {
+                            bgcolor: '#f8fafc',
+                            color: '#475569',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            fontSize: '0.7rem'
+                        },
+                        // Custom styles for specific column headers can be targeted via field classes if needed
+                        '& .MuiDataGrid-row': {
+                            bgcolor: '#ffffff',
+                            borderBottom: '1px solid #f1f5f9'
+                        },
+                        '& .MuiDataGrid-row:hover': { bgcolor: '#f8fafc' },
+                        // Indent styling simulation (zebra for different levels?)
+                        // We can set dynamic row style based on level if we want
+                    }}
+                    getRowClassName={(params) => `row-level-${params.row.level}`}
+                />
+            </Paper>
+            <style jsx global>{`
+                .row-level-1 { background-color: #f8fafc !important; }
+                .row-level-2 { background-color: #f1f5f9 !important; }
+                .row-level-3 { background-color: #e2e8f0 !important; }
+            `}</style>
+        </Box>
     );
 };
 

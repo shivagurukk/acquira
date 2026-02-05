@@ -49,9 +49,35 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getExecutiveMetrics(filters);
     }
 
+    @PostMapping("/merchant-analytics")
+    public Map<String, Object> getMerchantAnalyticsReport(
+            @RequestBody VolumeRevenueFilterDTO filters,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return volumeRevenueRepository.getMerchantAnalyticsReport(filters, page, size);
+    }
+
+    @Autowired
+    private com.acquira.service.MerchantDashboardService merchantDashboardService;
+
     // Placeholder for filter options (dropdowns)
     @GetMapping("/filter-options")
     public Map<String, List<String>> getFilterOptions() {
         return volumeRevenueRepository.getFilterOptions();
     }
+
+    // @GetMapping("/daily-merchant-dashboard")
+    // public List<com.acquira.dto.DailyMerchantDashboardDTO>
+    // getDailyMerchantDashboard(
+    // @RequestParam int month,
+    // @RequestParam int year,
+    // @RequestAttribute(value = "tenantId", required = false) Integer tenantId //
+    // Assuming injected by
+    // // Aspect/Interceptor
+    // ) {
+    // // Fallback for dev if tenantId missing
+    // if (tenantId == null)
+    // tenantId = 1;
+    // return merchantDashboardService.getDailyDashboard(tenantId, month, year);
+    // }
 }

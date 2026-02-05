@@ -48,10 +48,10 @@ const MerchantInsightHub = () => {
             const headers = { 'Authorization': `Bearer ${token}` };
             try {
                 const [mccRes, rmRes, partnerRes, channelRes] = await Promise.all([
-                    fetch('http://localhost:8080/api/reports/filters/mcc', { headers }),
-                    fetch('http://localhost:8080/api/reports/filters/rm', { headers }),
-                    fetch('http://localhost:8080/api/reports/filters/partners', { headers }),
-                    fetch('http://localhost:8080/api/reports/filters/channels', { headers })
+                    fetch('http://localhost:8081/api/reports/filters/mcc', { headers }),
+                    fetch('http://localhost:8081/api/reports/filters/rm', { headers }),
+                    fetch('http://localhost:8081/api/reports/filters/partners', { headers }),
+                    fetch('http://localhost:8081/api/reports/filters/channels', { headers })
                 ]);
 
                 const mccData = mccRes.ok ? await mccRes.json() : [];
@@ -86,7 +86,7 @@ const MerchantInsightHub = () => {
 
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/reports/insight/generate', {
+            const res = await fetch('http://localhost:8081/api/reports/insight/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({

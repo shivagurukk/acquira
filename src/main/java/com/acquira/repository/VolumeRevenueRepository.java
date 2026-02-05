@@ -139,6 +139,7 @@ public class VolumeRevenueRepository {
 
         sql.append("SELECT ");
         sql.append("  m.mid as mid, ");
+        sql.append("  m.name as merchant_name, ");
         sql.append("  st.sid as sid, ");
         sql.append("  SUM(s.total_txns) as total_txns, ");
         sql.append("  SUM(s.total_volume) as total_volume, ");
@@ -173,7 +174,7 @@ public class VolumeRevenueRepository {
             sql.append("AND s.card_type IN (:cardTypes) ");
 
         // Group by MID and SID
-        sql.append("GROUP BY m.mid, st.sid ");
+        sql.append("GROUP BY m.mid, m.name, st.sid ");
         sql.append("ORDER BY m.mid, st.sid");
 
         Query query = entityManager.createNativeQuery(sql.toString());
@@ -201,11 +202,12 @@ public class VolumeRevenueRepository {
         for (Object[] row : rows) {
             Map<String, Object> map = new HashMap<>();
             map.put("mid", row[0]);
-            map.put("sid", row[1]);
-            map.put("count", row[2]);
-            map.put("volume", row[3]);
-            map.put("msf", row[4]);
-            map.put("opt_in_volume", row[5]);
+            map.put("merchantName", row[1]); // New column
+            map.put("sid", row[2]);
+            map.put("count", row[3]);
+            map.put("volume", row[4]);
+            map.put("msf", row[5]);
+            map.put("opt_in_volume", row[6]);
             result.add(map);
         }
 
@@ -260,7 +262,14 @@ public class VolumeRevenueRepository {
 
         // Total
         sql.append(" SUM(s.total_volume) as total_vol, ");
-        sql.append(" SUM(s.total_msf) as total_msf ");
+        sql.append(" SUM(s.total_msf) as total_msf, ");
+
+        // Extra Context Columns (Index 16)
+        if ("MERCHANT".equals(groupBy)) {
+            sql.append(" m.name as merchant_name ");
+        } else {
+            sql.append(" CAST(NULL as text) as merchant_name ");
+        }
 
         sql.append("FROM sum_daily_insight s ");
 
@@ -337,7 +346,7 @@ public class VolumeRevenueRepository {
             groupByClause = "GROUP BY TO_CHAR(s.business_date, 'YYYY-MM-DD') ";
             orderByClause = "ORDER BY row_label ASC";
         } else if ("MERCHANT".equals(groupBy)) {
-            groupByClause = "GROUP BY m.mid ";
+            groupByClause = "GROUP BY m.mid, m.name "; // Include m.name in group by
             orderByClause = "ORDER BY row_label ASC";
         } else if ("STORE".equals(groupBy)) {
             groupByClause = "GROUP BY st.sid ";
@@ -383,6 +392,10 @@ public class VolumeRevenueRepository {
             query.setParameter("destinations", filter.getDestinationList());
         if (filter.getMccList() != null && !filter.getMccList().isEmpty())
             query.setParameter("mccs", filter.getMccList());
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
+            query.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+            query.setParameter("channels", filter.getChannelList());
 
         if ("DAY".equals(groupBy) && parentValue != null)
             query.setParameter("parentMonth", parentValue);
@@ -423,6 +436,9 @@ public class VolumeRevenueRepository {
             map.put("total_vol", row[14]);
             map.put("total_msf", row[15]);
 
+            // Extra
+            map.put("merchant_name", row[16]);
+
             result.add(map);
         }
 
@@ -460,13 +476,16 @@ public class VolumeRevenueRepository {
 
             // Channels
             // Check sum_daily_channel for channels
-            try {
-                Query qChannel = entityManager.createNativeQuery(
-                        "SELECT DISTINCT channel FROM sum_daily_channel WHERE channel IS NOT NULL ORDER BY 1");
-                options.put("channels", qChannel.getResultList());
-            } catch (Exception e) {
-                options.put("channels", new ArrayList<>());
-            }
+            List<String> channels = entityManager.createNativeQuery(
+                    "SELECT DISTINCT channel FROM sum_daily_insight WHERE channel IS NOT NULL ORDER BY channel")
+                    .getResultList();
+            options.put("channels", channels);
+
+            // Terminal Types (New)
+            List<String> terminalTypes = entityManager.createNativeQuery(
+                    "SELECT DISTINCT type FROM dim_terminal WHERE type IS NOT NULL ORDER BY type")
+                    .getResultList();
+            options.put("terminalTypes", terminalTypes);
 
             // Schemes
             Query qScheme = entityManager.createNativeQuery(
@@ -490,6 +509,7 @@ public class VolumeRevenueRepository {
 
         sql.append("SELECT ");
         sql.append("  m.mid as mid, ");
+        sql.append("  m.name as merchant_name, ");
         sql.append("  SUM(s.total_txns) as count, ");
         sql.append("  SUM(s.total_volume) as volume ");
         sql.append("FROM sum_daily_insight s ");
@@ -528,7 +548,7 @@ public class VolumeRevenueRepository {
             sql.append("AND s.channel IN (:channels) ");
         }
 
-        sql.append("GROUP BY m.mid ");
+        sql.append("GROUP BY m.mid, m.name ");
         sql.append("ORDER BY m.mid ASC");
 
         Query query = entityManager.createNativeQuery(sql.toString());
@@ -556,8 +576,9 @@ public class VolumeRevenueRepository {
         for (Object[] row : rows) {
             Map<String, Object> map = new HashMap<>();
             map.put("mid", row[0]);
-            map.put("count", row[1]);
-            map.put("volume", row[2]);
+            map.put("merchantName", row[1]);
+            map.put("count", row[2]);
+            map.put("volume", row[3]);
             result.add(map);
         }
 
@@ -796,5 +817,142 @@ public class VolumeRevenueRepository {
         if (previous == 0)
             return current > 0 ? 100.0 : 0.0;
         return ((current - previous) / previous) * 100.0;
+    }
+
+    public Map<String, Object> getMerchantAnalyticsReport(VolumeRevenueFilterDTO filter, int page, int size) {
+        StringBuilder sql = new StringBuilder();
+
+        // Select columns matching frontend expectation:
+        // sid, mid, merchantName, volume, count, msf, interchange, mcc, industry,
+        // legalName, dccOptin
+        sql.append("SELECT ");
+        sql.append("  st.sid as sid, ");
+        sql.append("  m.mid as mid, ");
+        sql.append("  m.name as merchant_name, ");
+        sql.append("  SUM(s.total_volume) as volume, ");
+        sql.append("  SUM(s.total_txns) as count, ");
+        sql.append("  SUM(s.total_msf) as msf, ");
+        // Interchange - assuming it's part of MSF or separate? Let's assume 0 if not
+        // tracked, or calculated.
+        // For now returning 0 or derived to fix broken UI.
+        sql.append("  0 as interchange, ");
+        sql.append("  st.mcc as mcc, ");
+        // industry? typically derived from MCC or a column. Using MCC description or
+        // category if available, or 'Retail' placeholder
+        sql.append("  'Retail' as industry, ");
+        sql.append("  m.name as legal_name, "); // Fallback to name
+        sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dcc_optin, ");
+        sql.append("  count(*) OVER() as total_count, "); // Window function
+        sql.append("  t.type as terminal_type "); // New Column
+
+        sql.append("FROM sum_daily_insight s ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
+        sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
+        // Join dim_terminal to get Type
+        sql.append("LEFT JOIN dim_terminal t ON s.terminal_id = t.terminal_id "); // Use LEFT JOIN in case terminal_id
+                                                                                  // is null or missing
+
+        sql.append("WHERE 1=1 ");
+
+        if (filter.getStartDate() != null)
+            sql.append("AND s.business_date >= :startDate ");
+        if (filter.getEndDate() != null)
+            sql.append("AND s.business_date <= :endDate ");
+
+        // preciseDateList handling
+        if (filter.getPreciseDateList() != null && !filter.getPreciseDateList().isEmpty()) {
+            sql.append("AND TO_CHAR(s.business_date, 'YYYY-MM-DD') IN (:preciseDates) ");
+        }
+
+        if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
+            sql.append("AND m.referral_partner IN (:partners) ");
+        if (filter.getRmList() != null && !filter.getRmList().isEmpty())
+            sql.append("AND m.sales_email IN (:rms) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            sql.append("AND (m.name ILIKE :merchName OR m.mid ILIKE :merchName) "); // Expanded search
+        if (filter.getSchemeList() != null && !filter.getSchemeList().isEmpty())
+            sql.append("AND s.card_scheme IN (:schemes) ");
+        if (filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty())
+            sql.append("AND s.card_type IN (:cardTypes) ");
+        if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+            sql.append("AND s.destination IN (:destinations) ");
+        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
+            sql.append("AND st.mcc IN (:mccs) ");
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+            sql.append("AND s.channel IN (:channels) ");
+
+        // Terminal Type Filter
+        if (filter.getTerminalTypeList() != null && !filter.getTerminalTypeList().isEmpty()) {
+            sql.append("AND t.type IN (:terminalTypes) ");
+        }
+
+        // Grouping - now includes terminal_type
+        sql.append("GROUP BY st.sid, m.mid, m.name, st.mcc, t.type ");
+
+        // Sorting and Pagination
+        sql.append("ORDER BY m.name ASC, st.sid ASC ");
+        sql.append("OFFSET :offset LIMIT :limit");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+
+        // Params
+        if (filter.getStartDate() != null)
+            query.setParameter("startDate", filter.getStartDate());
+        if (filter.getEndDate() != null)
+            query.setParameter("endDate", filter.getEndDate());
+        if (filter.getPreciseDateList() != null && !filter.getPreciseDateList().isEmpty())
+            query.setParameter("preciseDates", filter.getPreciseDateList());
+
+        if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
+            query.setParameter("partners", filter.getPartnerList());
+        if (filter.getRmList() != null && !filter.getRmList().isEmpty())
+            query.setParameter("rms", filter.getRmList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            query.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+        if (filter.getSchemeList() != null && !filter.getSchemeList().isEmpty())
+            query.setParameter("schemes", filter.getSchemeList());
+        if (filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty())
+            query.setParameter("cardTypes", filter.getCardTypeList());
+        if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+            query.setParameter("destinations", filter.getDestinationList());
+        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
+            query.setParameter("mccs", filter.getMccList());
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+            query.setParameter("channels", filter.getChannelList());
+        if (filter.getTerminalTypeList() != null && !filter.getTerminalTypeList().isEmpty())
+            query.setParameter("terminalTypes", filter.getTerminalTypeList());
+
+        query.setParameter("offset", page * size);
+        query.setParameter("limit", size);
+
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> content = new ArrayList<>();
+        long totalElements = 0;
+
+        for (Object[] row : rows) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("sid", row[0]);
+            map.put("mid", row[1]);
+            map.put("merchantName", row[2]);
+            map.put("volume", row[3]);
+            map.put("count", row[4]);
+            map.put("msf", row[5]);
+            map.put("interchange", row[6]);
+            map.put("mcc", row[7]);
+            map.put("industry", row[8]);
+            map.put("legalName", row[9]);
+            map.put("dccOptin", row[10]);
+            map.put("terminalType", row[12]); // New Column
+
+            if (totalElements == 0 && row.length > 11) {
+                totalElements = ((Number) row[11]).longValue();
+            }
+            content.add(map);
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("content", content);
+        response.put("totalElements", totalElements);
+        return response;
     }
 }

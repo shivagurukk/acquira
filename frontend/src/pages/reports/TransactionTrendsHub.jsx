@@ -34,7 +34,7 @@ const TransactionTrendsHub = () => {
         setExpandedDate(null);
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/trends/monthly', {
+            const res = await fetch('http://localhost:8081/api/trends/monthly', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify(filters)
@@ -64,7 +64,7 @@ const TransactionTrendsHub = () => {
             setLoadingDaily(true);
             try {
                 const token = localStorage.getItem('token');
-                const res = await fetch('http://localhost:8080/api/trends/daily', {
+                const res = await fetch('http://localhost:8081/api/trends/daily', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                     body: JSON.stringify({ ...filters, month: monthNum, year: year })
@@ -90,7 +90,7 @@ const TransactionTrendsHub = () => {
             setLoadingMerchants(true);
             try {
                 const token = localStorage.getItem('token');
-                const res = await fetch(`http://localhost:8080/api/finance/profitability?groupBy=merchant&from=${dateStr}&to=${dateStr}&size=100`, {
+                const res = await fetch(`http://localhost:8081/api/finance/profitability?groupBy=merchant&from=${dateStr}&to=${dateStr}&size=100`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (res.ok) {

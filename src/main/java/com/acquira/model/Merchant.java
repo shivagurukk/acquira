@@ -5,7 +5,9 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "dim_merchant")
+@Table(name = "dim_merchant", uniqueConstraints = {
+        @UniqueConstraint(columnNames = { "tenant_id", "internal_id" })
+})
 @Data
 public class Merchant {
     @Id
@@ -13,7 +15,7 @@ public class Merchant {
     @Column(name = "merchant_id")
     private Long merchantId;
 
-    @Column(name = "internal_id", unique = true)
+    @Column(name = "internal_id")
     private String internalId;
 
     private String mid;
@@ -34,6 +36,11 @@ public class Merchant {
 
     @Column(name = "tenant_id")
     private Long tenantId;
+
+    private String industry;
+    private String mcc;
+    private String location;
+    private String city;
 
     public Long getMerchantId() {
         return merchantId;

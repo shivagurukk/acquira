@@ -67,4 +67,79 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
         Page<java.util.Map<String, Object>> findHighVolumeLowMargin(Long tenantId, LocalDate startDate,
                         LocalDate endDate,
                         java.math.BigDecimal minVolume, java.math.BigDecimal maxMarginPct, Pageable pageable);
+
+        // --- New Aggregation Methods for PDF Service Refactor ---
+
+        @Query("SELECT new map(" +
+                        "SUM(m.totalTxns) as total_txns, " +
+                        "SUM(m.totalVolume) as total_sales, " +
+                        "SUM(COALESCE(m.uniqueCustomerCount, 0)) as unique_customers " +
+                        ") " +
+                        "FROM SumDailyMerchant m " +
+                        "WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
+        java.util.Map<String, Object> getAggregates(
+                        @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
+        @Query("SELECT MAX(m.totalVolume) FROM SumDailyMerchant m WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
+        java.math.BigDecimal findMaxDailySales(
+                        @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
+        @Query("SELECT MAX(m.totalTxns) FROM SumDailyMerchant m WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
+        Long findMaxDailyTxns(@org.springframework.data.repository.query.Param("merchantId") Long merchantId,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
+        @Query("SELECT MAX(m.topSpendingAmount) FROM SumDailyMerchant m WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
+        java.math.BigDecimal findMaxTopSpendingAmount(
+                        @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
+        // Daily Listing for Charts
+        @Query("SELECT m FROM SumDailyMerchant m WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.businessDate")
+        java.util.List<SumDailyMerchant> findDailyStats(
+                        @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
+        // Monthly Aggregation for Trends
+        @Query("SELECT new map(" +
+                        "EXTRACT(YEAR FROM m.businessDate) as year, " +
+                        "EXTRACT(MONTH FROM m.businessDate) as month, " +
+                        "SUM(m.totalVolume) as totalVolume, " +
+                        "SUM(m.totalTxns) as totalTxns, " +
+                        "SUM(COALESCE(m.uniqueCustomerCount, 0)) as uniqueCustomers, " +
+                        // DCC Metrics
+                        "SUM(COALESCE(m.dccEligibleVolume, 0)) as dccEligibleVolume, " +
+                        "SUM(COALESCE(m.dccOptinVolume, 0)) as dccOptinVolume, " +
+                        "SUM(COALESCE(m.dccOptoutVolume, 0)) as dccOptoutVolume " +
+                        ") " +
+                        "FROM SumDailyMerchant m " +
+                        "WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate " +
+                        "GROUP BY EXTRACT(YEAR FROM m.businessDate), EXTRACT(MONTH FROM m.businessDate) " +
+                        "ORDER BY 1, 2")
+        java.util.List<java.util.Map<String, Object>> findMonthlyTrends(
+                        @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
+        @Query("SELECT new com.acquira.dto.MerchantHeatmapDTO(" +
+                        "m.name, m.internalId, EXTRACT(MONTH FROM s.businessDate), SUM(s.totalVolume)) " +
+                        "FROM SumDailyMerchant s " +
+                        "JOIN com.acquira.model.Merchant m ON s.merchantId = m.merchantId " +
+                        "WHERE EXTRACT(YEAR FROM s.businessDate) = :year " +
+                        "GROUP BY m.name, m.internalId, EXTRACT(MONTH FROM s.businessDate) " +
+                        "ORDER BY m.name, EXTRACT(MONTH FROM s.businessDate)")
+        java.util.List<com.acquira.dto.MerchantHeatmapDTO> findMerchantHeatmapData(
+                        @org.springframework.data.repository.query.Param("year") int year);
+
+        @Query("SELECT m FROM SumDailyMerchant m WHERE m.tenantId = :tenantId AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.businessDate")
+        java.util.List<SumDailyMerchant> findByTenantIdAndDateRange(
+                        @org.springframework.data.repository.query.Param("tenantId") Integer tenantId,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
 }

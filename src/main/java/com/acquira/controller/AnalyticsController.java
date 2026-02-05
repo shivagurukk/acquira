@@ -24,12 +24,15 @@ import java.util.stream.Collectors;
 public class AnalyticsController {
 
     private final AnalyticsService analyticsService;
+    private final com.acquira.repository.SumDailyMerchantRepository sumDailyMerchantRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
 
-    public AnalyticsController(AnalyticsService analyticsService) {
+    public AnalyticsController(AnalyticsService analyticsService,
+            com.acquira.repository.SumDailyMerchantRepository sumDailyMerchantRepository) {
         this.analyticsService = analyticsService;
+        this.sumDailyMerchantRepository = sumDailyMerchantRepository;
     }
 
     @GetMapping("/executive")
@@ -213,5 +216,28 @@ public class AnalyticsController {
                         ((Number) row[10]).longValue(), row[11]);
             }
         }
+    }
+
+    @GetMapping("/heatmap")
+    public ResponseEntity<List<com.acquira.dto.MerchantHeatmapDTO>> getMerchantHeatmap(
+            @RequestParam(defaultValue = "2025") int year) {
+        return ResponseEntity.ok(sumDailyMerchantRepository.findMerchantHeatmapData(year));
+    }
+
+    @GetMapping("/available-years")
+    public ResponseEntity<List<Integer>> getAvailableYears() {
+        Long tenantId = TenantContext.getCurrentTenant();
+        String sql = "SELECT DISTINCT EXTRACT(YEAR FROM business_date) FROM sum_daily_merchant WHERE tenant_id = :tenantId ORDER BY 1 DESC";
+        jakarta.persistence.Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("tenantId", tenantId);
+        List<Number> results = query.getResultList();
+        List<Integer> years = results.stream().map(Number::intValue).collect(Collectors.toList());
+
+        // Ensure current year is always present
+        int currentYear = LocalDate.now().getYear();
+        if (!years.contains(currentYear)) {
+            years.add(0, currentYear); // Add to top if missing
+        }
+        return ResponseEntity.ok(years);
     }
 }

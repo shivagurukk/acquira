@@ -16,7 +16,7 @@ const RbacGroups = () => {
     const fetchGroups = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/admin/rbac/groups', {
+            const res = await fetch('http://localhost:8081/api/admin/rbac/groups', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) setGroups(await res.json());
@@ -26,7 +26,7 @@ const RbacGroups = () => {
     const fetchMenus = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/admin/rbac/menus', {
+            const res = await fetch('http://localhost:8081/api/admin/rbac/menus', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) setMenus(await res.json());
@@ -58,7 +58,7 @@ const RbacGroups = () => {
                 menuIds: currentGroup.menuIds
             };
 
-            const res = await fetch('http://localhost:8080/api/admin/rbac/groups', {
+            const res = await fetch('http://localhost:8081/api/admin/rbac/groups', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

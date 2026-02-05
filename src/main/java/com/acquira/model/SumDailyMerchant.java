@@ -50,6 +50,32 @@ public class SumDailyMerchant {
     @Column(name = "sales_user_id")
     private String salesUserId;
 
+    // --- New Metrics for Scalability ---
+    @Column(name = "unique_customer_count")
+    private Long uniqueCustomerCount;
+
+    @Column(name = "top_spending_customer_id")
+    private String topSpendingCustomerId;
+
+    @Column(name = "top_spending_amount")
+    private BigDecimal topSpendingAmount;
+
+    // --- DCC Metrics ---
+    @Column(name = "dcc_eligible_volume")
+    private BigDecimal dccEligibleVolume;
+
+    @Column(name = "dcc_optin_volume")
+    private BigDecimal dccOptinVolume;
+
+    @Column(name = "dcc_optout_volume")
+    private BigDecimal dccOptoutVolume;
+
+    @Column(name = "dcc_eligible_count")
+    private Long dccEligibleCount;
+
+    @Column(name = "dcc_optin_count")
+    private Long dccOptinCount;
+
     // We might need to join with DimMerchant to get names, or just store name here?
     // Usually Summary tables use IDs. We'll join in Query or fetch separately.
     @ManyToOne

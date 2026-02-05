@@ -21,6 +21,10 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DataFormatter;
 
 @Service
@@ -34,17 +38,20 @@ public class FileUploadService {
 
     private final com.acquira.service.AuditService auditService;
     private final com.acquira.repository.TenantRepository tenantRepository;
+    private final com.acquira.service.ManualIngestionService manualIngestionService;
 
     public FileUploadService(JobLauncher jobLauncher,
             @Qualifier("merchantMasterJob") Job merchantMasterJob,
             @Qualifier("transactionLoadJob") Job transactionLoadJob,
             com.acquira.service.AuditService auditService,
-            com.acquira.repository.TenantRepository tenantRepository) {
+            com.acquira.repository.TenantRepository tenantRepository,
+            com.acquira.service.ManualIngestionService manualIngestionService) {
         this.jobLauncher = jobLauncher;
         this.merchantMasterJob = merchantMasterJob;
         this.transactionLoadJob = transactionLoadJob;
         this.auditService = auditService;
         this.tenantRepository = tenantRepository;
+        this.manualIngestionService = manualIngestionService;
 
         // Ensure upload directory exists
         try {
@@ -156,21 +163,27 @@ public class FileUploadService {
             return jobLauncher.run(merchantMasterJob, jobParameters);
 
         } else if ("TRANSACTION".equals(detectedType)) {
-            String paymentDate = extractPaymentDate(filePath);
-            if (paymentDate == null) {
-                paymentDate = java.time.LocalDate.now().toString(); // Fallback
-            }
             auditService.log("BATCH_RUN",
-                    String.format("Processing TRANSACTION file for Tenant: %s (%d) Date: %s", entityName,
-                            targetTenantId, paymentDate));
+                    String.format("Processing TRANSACTION file for Tenant: %s (%d)", entityName,
+                            targetTenantId));
 
             JobParameters jobParameters = new JobParametersBuilder()
                     .addLong("tenantId", targetTenantId)
                     .addString("fullPath", filePath)
-                    .addString("paymentDate", paymentDate)
                     .addLong("startedAt", System.currentTimeMillis())
                     .toJobParameters();
-            return jobLauncher.run(transactionLoadJob, jobParameters);
+            org.springframework.batch.core.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
+
+            // Trigger Reporting Update (Synchronous for now, or could be async)
+            // Trigger Reporting Update (Multi-Date / Data-Driven)
+            try {
+                manualIngestionService.processManualUpload(targetTenantId);
+            } catch (Exception e) {
+                System.err.println("Failed to update Reporting DB: " + e.getMessage());
+                // Don't fail the upload just because reporting failed
+            }
+
+            return execution;
 
         } else {
             throw new RuntimeException("Unknown file format.");
@@ -240,38 +253,47 @@ public class FileUploadService {
     }
 
     private String extractPaymentDate(String filePath) {
+        // User Requirement: strict reliance on file content (Payment Date column)
+        // Do NOT use filename.
+
         try (InputStream is = new FileInputStream(filePath);
                 Workbook workbook = WorkbookFactory.create(is)) {
 
             Sheet sheet = workbook.getSheetAt(0);
             int paymentDateColIdx = -1;
 
-            // 1. Header Row
+            // Header Row
             Row headerRow = sheet.getRow(0);
             if (headerRow != null) {
                 for (Cell cell : headerRow) {
                     String h = getCellValue(cell);
                     if (h != null && (h.trim().equalsIgnoreCase("Payment Date")
-                            || h.trim().equalsIgnoreCase("PaymentDate"))) {
+                            || h.trim().equalsIgnoreCase("PaymentDate")
+                            || h.trim().equalsIgnoreCase("Date"))) {
                         paymentDateColIdx = cell.getColumnIndex();
                         break;
                     }
                 }
             }
 
-            // 2. Data Row
+            // Data Row
             if (paymentDateColIdx != -1) {
                 Row dataRow = sheet.getRow(1);
                 if (dataRow != null) {
                     Cell cell = dataRow.getCell(paymentDateColIdx);
+                    // Handle Excel Numeric Date
+                    if (cell.getCellType() == CellType.NUMERIC
+                            && org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
+                        return cell.getLocalDateTimeCellValue().toLocalDate().toString();
+                    }
+
                     String val = getCellValue(cell);
                     if (val != null && !val.trim().isEmpty()) {
                         try {
-                            // Try parsing if Date string
-                            java.time.LocalDate.parse(val.trim());
-                            return val.trim();
+                            // Try parsing standard formats
+                            return java.time.LocalDate.parse(val.trim()).toString();
                         } catch (Exception e) {
-                            // Ignore
+                            // Try other formats? For now, just strict ISO or Excel numeric
                         }
                     }
                 }

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import FileDropzone from '../components/FileDropzone';
 import FinancialLoader from '../components/FinancialLoader';
 import { Upload, CheckCircle, AlertCircle, FileText, Activity, Layers, X } from 'lucide-react';
+import axios from 'axios';
 import './UploadPage.css';
 
 const UploadPage = () => {
@@ -10,6 +11,8 @@ const UploadPage = () => {
     const [msg, setMsg] = useState("");
     const [jobDetails, setJobDetails] = useState(null);
     const [showSummary, setShowSummary] = useState(false);
+
+    const [uploadProgress, setUploadProgress] = useState(0);
 
     const uploadFile = async () => {
         if (!file) return;
@@ -20,31 +23,33 @@ const UploadPage = () => {
         setStatus('uploading');
         setMsg("Uploading file...");
         setJobDetails(null);
+        setUploadProgress(0);
 
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`/api/upload`, {
-                method: 'POST',
+            const response = await axios.post('/api/upload', formData, {
                 headers: {
-                    'Authorization': `Bearer ${token}`
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'multipart/form-data'
                 },
-                body: formData,
+                onUploadProgress: (progressEvent) => {
+                    const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                    setUploadProgress(percentCompleted);
+                }
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                setJobDetails(data);
-                setStatus('processing');
-                setMsg("File uploaded. processing...");
-                pollJobStatus(data.jobId);
-            } else {
-                const text = await response.text();
-                setStatus('error');
-                setMsg(`Error: ${text}`);
-            }
+            // Axios throws on error status by default, so if we are here, it is success (2xx)
+            setUploadProgress(100);
+            const data = response.data;
+            setJobDetails(data);
+            setStatus('processing');
+            setMsg("File uploaded. Processing...");
+            pollJobStatus(data.jobId);
+
         } catch (err) {
             setStatus('error');
-            setMsg(`Network Error: ${err.message}`);
+            const errorMsg = err.response?.data || err.message;
+            setMsg(`Upload Error: ${errorMsg}`);
         }
     };
 
@@ -98,14 +103,53 @@ const UploadPage = () => {
                     )}
 
                     {(status === 'uploading' || status === 'processing') && (
-                        <div style={{ marginTop: '30px' }}>
+                        <div style={{ marginTop: '30px', width: '100%' }}>
                             <FinancialLoader />
-                            <p style={{ marginTop: '10px', color: '#64748b' }}>
+                            <p style={{ marginTop: '10px', color: '#64748b', fontWeight: '500' }}>
                                 {status === 'uploading' ? 'Uploading...' : 'Processing Records...'}
                             </p>
-                            {jobDetails && (
-                                <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '5px' }}>
-                                    Job ID: {jobDetails.jobId} | Status: {jobDetails.status}
+
+                            {/* Upload Progress Bar */}
+                            {status === 'uploading' && (
+                                <div style={{ marginTop: '20px', textAlign: 'left' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.875rem', color: '#64748b' }}>
+                                        <span>Upload Progress</span>
+                                        <span style={{ fontWeight: 'bold', color: '#0f172a' }}>{uploadProgress}%</span>
+                                    </div>
+                                    <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                                        <div style={{
+                                            width: `${uploadProgress}%`,
+                                            height: '100%',
+                                            background: '#3b82f6',
+                                            transition: 'width 0.2s ease-in-out'
+                                        }}></div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Job Processing Progress Bar */}
+                            {status === 'processing' && jobDetails && (
+                                <div style={{ marginTop: '20px', textAlign: 'left' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.875rem', color: '#64748b' }}>
+                                        <span>Processing Progress</span>
+                                        <span style={{ fontWeight: 'bold', color: '#0f172a' }}>
+                                            {jobDetails.progress || 0}%
+                                        </span>
+                                    </div>
+                                    <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                                        <div style={{
+                                            width: `${jobDetails.progress || 0}%`,
+                                            height: '100%',
+                                            background: '#2563eb',
+                                            transition: 'width 0.5s ease-in-out'
+                                        }}></div>
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px', display: 'flex', justifyContent: 'space-between' }}>
+                                        <span>Job ID: {jobDetails.jobId}</span>
+                                        <span>
+                                            {jobDetails.readCount || 0} / {jobDetails.totalRows > 0 ? jobDetails.totalRows : 'Calculating...'}
+                                        </span>
+                                    </div>
                                 </div>
                             )}
                         </div>

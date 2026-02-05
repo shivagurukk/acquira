@@ -1,11 +1,8 @@
 package com.acquira.controller;
 
-import com.acquira.model.MerchantActivitySummary;
 import com.acquira.model.MerchantOpportunityScore;
 import com.acquira.repository.MerchantActivitySummaryRepository;
 import com.acquira.repository.MerchantOpportunityScoreRepository;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -98,41 +95,6 @@ public class BusinessController {
                 return ResponseEntity.ok(response);
         }
 
-        // 2. Lifecycle Stats
-        @GetMapping("/lifecycle/summary")
-        public ResponseEntity<Map<String, Long>> getLifecycleSummary(@RequestHeader("X-Tenant-Id") Long tenantId,
-                        @RequestParam(required = false) LocalDate endDate) {
-
-                LocalDate effectiveDate = endDate;
-                if (effectiveDate == null) {
-                        effectiveDate = activityRepository.findMaxCalcDate(tenantId);
-                        if (effectiveDate == null)
-                                effectiveDate = LocalDate.now();
-                }
-
-                Map<String, Long> summary = new HashMap<>();
-                summary.put("ACTIVE",
-                                activityRepository.countByTenantIdAndStatusAndCalcDate(tenantId, "ACTIVE",
-                                                effectiveDate));
-                summary.put("DORMANT",
-                                activityRepository.countByTenantIdAndStatusAndCalcDate(tenantId, "DORMANT",
-                                                effectiveDate));
-                summary.put("ONBOARDED",
-                                activityRepository.countByTenantIdAndStatusAndCalcDate(tenantId, "ONBOARDED",
-                                                effectiveDate));
-                return ResponseEntity.ok(summary);
-        }
-
-        // 3. Zero Sales List
-        @GetMapping("/zero-sales")
-        public ResponseEntity<Page<MerchantActivitySummary>> getZeroSales(@RequestHeader("X-Tenant-Id") Long tenantId,
-                        @RequestParam(defaultValue = "30") int days, Pageable pageable) {
-                if (days == 7) {
-                        return ResponseEntity.ok(activityRepository.findZeroSales7Days(tenantId, pageable));
-                }
-                return ResponseEntity.ok(activityRepository.findZeroSales30Days(tenantId, pageable));
-        }
-
         // 4. Opportunities
         @GetMapping("/opportunity")
         public ResponseEntity<List<MerchantOpportunityScore>> getOpportunities(
@@ -140,27 +102,6 @@ public class BusinessController {
                 return ResponseEntity.ok(opportunityRepository.findByTenantIdOrderByScoreDesc(tenantId));
         }
 
-        // 5. Sales Trends (Mock for now, ideally queries sum_daily_bank)
-        @GetMapping("/dashboard/trends/{mode}")
-        public ResponseEntity<List<Map<String, Object>>> getSalesTrends(@RequestHeader("X-Tenant-Id") Long tenantId,
-                        @PathVariable String mode,
-                        @RequestParam(required = false) LocalDate startDate,
-                        @RequestParam(required = false) LocalDate endDate) {
-
-                LocalDate end = (endDate != null) ? endDate : LocalDate.now();
-                LocalDate start = (startDate != null) ? startDate : end.minusDays(30);
-
-                List<com.acquira.model.SumDailyBank> dailyStats = dailyBankRepository
-                                .findByTenantIdAndBusinessDateBetweenOrderByBusinessDateAsc(tenantId, start, end);
-
-                List<Map<String, Object>> result = dailyStats.stream().map(stats -> {
-                        Map<String, Object> map = new HashMap<>();
-                        map.put("date", stats.getBusinessDate());
-                        map.put("count", stats.getTotalTxns());
-                        map.put("value", stats.getTotalVolume());
-                        return map;
-                }).toList();
-
-                return ResponseEntity.ok(result);
-        }
+        // Methods removed: getLifecycleSummary, getZeroSales, getSalesTrends (Feature
+        // Cleanup)
 }

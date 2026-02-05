@@ -4,7 +4,9 @@ import jakarta.persistence.*;
 import lombok.Data;
 
 @Entity
-@Table(name = "dim_terminal")
+@Table(name = "dim_terminal", uniqueConstraints = {
+        @UniqueConstraint(columnNames = { "tenant_id", "internal_id" })
+})
 @Data
 public class Terminal {
     @Id
@@ -15,7 +17,7 @@ public class Terminal {
     @Column(name = "tenant_id")
     private Long tenantId;
 
-    @Column(name = "internal_id", unique = true)
+    @Column(name = "internal_id")
     private String internalId;
 
     @Column(name = "store_id")

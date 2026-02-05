@@ -18,7 +18,7 @@ const GroupReports = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:8080/api/group-analytics/${activeTab}?period=${period}`, {
+            const res = await fetch(`http://localhost:8081/api/group-analytics/${activeTab}?period=${period}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {

@@ -3,13 +3,14 @@ import {
     LayoutDashboard, Store, CreditCard,
     FileText, ShieldCheck, Settings, Users,
     MapPin, Activity, DollarSign, Search,
-    Building2, Check, Upload as UploadIcon, X, FileUp, RefreshCw
+    Building2, Check, Upload as UploadIcon, X, FileUp, RefreshCw, TrendingUp
 } from 'lucide-react';
 import Loader from '../components/Loader';
 import TenantSwitcher from '../components/TenantSwitcher';
 
 import MerchantHierarchy from '../components/MerchantHierarchy';
 import TransactionList from '../components/TransactionList';
+import MerchantHeatmap from './business/MerchantHeatmap';
 
 const MerchantUniverse = () => {
     const [loading, setLoading] = useState(true);
@@ -199,6 +200,10 @@ const MerchantUniverse = () => {
             );
         }
 
+        if (activeView === 'HEATMAP') {
+            return <MerchantHeatmap />;
+        }
+
         return <div style={{ padding: '20px', color: '#64748b' }}>Section under construction</div>;
     };
 
@@ -350,6 +355,7 @@ const MerchantUniverse = () => {
 
                 <SidebarItem id="LIST" label="Merchant List" icon={Users} />
                 <SidebarItem id="DASHBOARD" label="Overview (KPIs)" icon={LayoutDashboard} />
+                <SidebarItem id="HEATMAP" label="Growth Heatmap" icon={TrendingUp} />
 
                 <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', textTransform: 'uppercase', marginTop: '20px', marginBottom: '15px', fontWeight: 'bold' }}>Operations</h3>
                 <SidebarItem id="TRANSACTIONS" label="Transactions" icon={FileText} />

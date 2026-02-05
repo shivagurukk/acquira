@@ -29,8 +29,10 @@ yarn-error.log*
 
 # Spring Boot
 logs/
+temp/
 *.log
 *.dump
+data/uploads/
 
 # OS
 .DS_Store

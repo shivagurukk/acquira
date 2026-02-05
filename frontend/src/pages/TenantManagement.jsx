@@ -23,7 +23,7 @@ const TenantManagement = () => {
     const fetchTenants = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/banks', {
+            const res = await fetch('http://localhost:8081/api/banks', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) setTenants(await res.json());
@@ -35,7 +35,7 @@ const TenantManagement = () => {
     const fetchCountries = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8080/api/admin/countries', {
+            const res = await fetch('http://localhost:8081/api/admin/countries', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) setCountries(await res.json());
@@ -72,7 +72,7 @@ const TenantManagement = () => {
     const handleSave = async (e) => {
         e.preventDefault();
         const method = currentTenant.tenantId ? 'PUT' : 'POST';
-        const url = 'http://localhost:8080/api/banks' + (currentTenant.tenantId ? `/${currentTenant.tenantId}` : '');
+        const url = 'http://localhost:8081/api/banks' + (currentTenant.tenantId ? `/${currentTenant.tenantId}` : '');
 
         try {
             const token = localStorage.getItem('token');

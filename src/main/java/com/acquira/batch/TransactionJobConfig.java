@@ -1,6 +1,12 @@
 package com.acquira.batch;
 
 import com.acquira.model.StagingTransaction;
+import com.acquira.service.MerchantMetricCalculator;
+import com.acquira.repository.SumDailyMerchantRepository;
+import com.acquira.repository.SumMonthlyMerchantMetricsRepository;
+import com.acquira.model.SumDailyMerchant;
+import com.acquira.model.SumMonthlyMerchantMetrics;
+
 import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.Job;
@@ -24,6 +30,11 @@ import org.springframework.transaction.PlatformTransactionManager;
 import javax.sql.DataSource;
 import java.time.LocalDate;
 import java.util.List;
+import com.acquira.batch.ExcelSplitterTasklet;
+import com.acquira.batch.CsvPartitioner;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.core.task.TaskExecutor;
 
 @Configuration
 public class TransactionJobConfig {
@@ -32,29 +43,101 @@ public class TransactionJobConfig {
     private final PlatformTransactionManager transactionManager;
     private final DataSource dataSource;
     private final JdbcTemplate jdbcTemplate;
+    private final MerchantMetricCalculator merchantMetricCalculator;
+    private final SumDailyMerchantRepository dailyMerchantRepo;
+    private final SumMonthlyMerchantMetricsRepository monthlyMetricsRepo;
+    private final com.acquira.service.PartitionMaintenanceService partitionMaintenanceService;
 
     public TransactionJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
-            DataSource dataSource, JdbcTemplate jdbcTemplate) {
+            DataSource dataSource, JdbcTemplate jdbcTemplate,
+            MerchantMetricCalculator merchantMetricCalculator,
+            SumDailyMerchantRepository dailyMerchantRepo,
+            SumMonthlyMerchantMetricsRepository monthlyMetricsRepo,
+            com.acquira.service.PartitionMaintenanceService partitionMaintenanceService) {
         this.jobRepository = jobRepository;
         this.transactionManager = transactionManager;
         this.dataSource = dataSource;
         this.jdbcTemplate = jdbcTemplate;
+        this.merchantMetricCalculator = merchantMetricCalculator;
+        this.dailyMerchantRepo = dailyMerchantRepo;
+        this.monthlyMetricsRepo = monthlyMetricsRepo;
+        this.partitionMaintenanceService = partitionMaintenanceService;
     }
 
     @Bean
     public Job transactionLoadJob(
+            @org.springframework.beans.factory.annotation.Qualifier("countRowsStep") Step countRowsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("splitExcelStep") Step splitExcelStep, // New
             @org.springframework.beans.factory.annotation.Qualifier("cleanTargetDayStep") Step cleanTargetDayStep,
-            @org.springframework.beans.factory.annotation.Qualifier("ingestTransactionStep") Step ingestTransactionStep,
+            @org.springframework.beans.factory.annotation.Qualifier("masterIngestStep") Step masterIngestStep, // New
             @org.springframework.beans.factory.annotation.Qualifier("stagingToFactStep") Step stagingToFactStep,
+            @org.springframework.beans.factory.annotation.Qualifier("ensurePartitionsStep") Step ensurePartitionsStep,
             @org.springframework.beans.factory.annotation.Qualifier("populateSummaryStep") Step populateSummaryStep,
-            @org.springframework.beans.factory.annotation.Qualifier("calculateBusinessMetricsStep") Step calculateBusinessMetricsStep) {
+            @org.springframework.beans.factory.annotation.Qualifier("calculateBusinessMetricsStep") Step calculateBusinessMetricsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
+
         return new JobBuilder("transactionLoadJob", jobRepository)
-                .start(cleanTargetDayStep) // CRITICAL: Delete existing data first
-                .next(ingestTransactionStep)
+                .start(countRowsStep)
+                .next(ensurePartitionsStep) // 0.5 Ensure Partitions Exist
+                .next(splitExcelStep) // 1. Split
+                .next(cleanTargetDayStep) // 2. Clean
+                .next(masterIngestStep) // 3. Parallel Ingest
                 .next(stagingToFactStep)
                 .next(populateSummaryStep)
                 .next(calculateBusinessMetricsStep)
+                .next(calculateDailyDashboardMetricsStep)
                 .build();
+    }
+
+    // ==================================================================================
+    // Step 0: Count Rows (Fast Scan)
+    // ==================================================================================
+    @Bean
+    public Step countRowsStep(Tasklet countRowsTasklet) {
+        return new StepBuilder("countRowsStep", jobRepository)
+                .tasklet(countRowsTasklet, transactionManager)
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public Tasklet countRowsTasklet(@Value("#{jobParameters['fullPath']}") String fullPath) {
+        return (contribution, chunkContext) -> {
+            if (fullPath == null)
+                return RepeatStatus.FINISHED;
+
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(fullPath))) {
+                long lines = 0;
+                while (reader.readLine() != null) {
+                    lines++;
+                }
+                // Subtract header if exists
+                long dataRows = lines > 0 ? lines - 1 : 0;
+
+                // Store in Job Context for Controller to read
+                chunkContext.getStepContext().getStepExecution().getJobExecution().getExecutionContext()
+                        .putLong("totalReqRows", dataRows);
+            } catch (Exception e) {
+                // Log and ignore, progress bar will just be indeterminate or 0
+                System.err.println("Failed to count rows: " + e.getMessage());
+            }
+            return RepeatStatus.FINISHED;
+        };
+    }
+
+    @Bean
+    public Step ensurePartitionsStep(Tasklet ensurePartitionsTasklet) {
+        return new StepBuilder("ensurePartitionsStep", jobRepository)
+                .tasklet(ensurePartitionsTasklet, transactionManager)
+                .build();
+    }
+
+    @Bean
+    public Tasklet ensurePartitionsTasklet() {
+        return (contribution, chunkContext) -> {
+            partitionMaintenanceService.ensurePartitionsForCurrentAndNextYear();
+            return RepeatStatus.FINISHED;
+        };
     }
 
     @Bean
@@ -81,7 +164,6 @@ public class TransactionJobConfig {
             // To be safe and correct for "History", we should run for all dates.
             // But 'MerchantActivitySummary' is often a snapshot *AS OF* a date.
             // If we ingest 30 days of history, do we want 30 snapshots? Yes, ideally.
-
             // Let's iterate using a list of dates retrieved from Staging.
 
             List<LocalDate> dates = jdbcTemplate.queryForList(
@@ -93,10 +175,7 @@ public class TransactionJobConfig {
                     continue;
 
                 // 1. Cleanup Idempotency
-                jdbcTemplate.update("DELETE FROM merchant_activity_summary WHERE tenant_id = ? AND calc_date = ?",
-                        tenantId, targetDate);
-                jdbcTemplate.update("DELETE FROM merchant_opportunity_score WHERE tenant_id = ? AND calc_date = ?",
-                        tenantId, targetDate);
+                // (Redundant DELETEs removed as we use ON CONFLICT DO UPDATE below)
 
                 // 2. Insert Merchant Activity Summary
                 String sqlActivityJdbc = """
@@ -139,47 +218,6 @@ public class TransactionJobConfig {
                 LocalDate date7d = targetDate.minusDays(7);
                 LocalDate date30d = targetDate.minusDays(30);
 
-                // No change to parameters needed, just the SQL structure.
-
-                // Let's check original args:
-                // targetDate, date7d, date7d, date30d, date30d, date30d, date30d, targetDate,
-                // tenantId
-                // The original code had: targetDate (param 8) for status check?
-                // Original: WHEN MAX >= ? THEN 'ACTIVE'. Arg 8 was targetDate.
-                // That means strictly active TODAY? usually "Active" means txn in last 30d.
-                // Let's stick to original arg mapping but correct one:
-                // jdbc update args:
-                // 1: targetDate
-                // 2: date7d
-                // 3: date7d
-                // 4: date30d
-                // 5: date30d
-                // 6: date30d
-                // 7: date30d
-                // 8: date30d (ACTIVE if max >= date30d) -- FIXING THIS LOGIC FOR BETTER SENSE
-                // 9: date30d (DORMANT if max < date30d)
-                // 10: targetDate (status_change_date)
-                // 11: tenantId
-
-                // Recalling Original Params:
-                // Update(sql, targetDate, date7d, date7d, date30d, date30d, date30d, date30d,
-                // targetDate, tenantId)
-                // There were 9 args?
-                // SQL: ?, ?, ?, ?, ?, ?, ?, ?, ? (9 params?)
-                // Count in string:
-                // 1 (calc), 2 (7d), 3 (7d), 4 (30d), 5 (30d), 6 (30d), 7 (30d), 8 (Status 1), 9
-                // (Status 2), 10 (StatusChange), 11 (Tenant)
-                // Original Code had limited ?s. Let's verify original code.
-                // Original Code:
-                // WHEN MAX >= ? (Active)
-                // WHEN MAX < ? (Dormant)
-                // ELSE ...
-                // ? (StatusChange)
-                // WHERE .. ? (Tenant)
-
-                // It seems I should just stick to a reliable logic:
-                // Active = Txn in last 30 days.
-
                 jdbcTemplate.update(sqlActivityJdbc,
                         targetDate, // 1. calc_date
                         date7d, date7d, // 2. last_7d_cnt, 3. last_7d_value
@@ -198,6 +236,9 @@ public class TransactionJobConfig {
                                 calc_date
                             FROM merchant_activity_summary
                             WHERE tenant_id = ? AND calc_date = ?
+                            ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET
+                                score = EXCLUDED.score,
+                                reason_tags = EXCLUDED.reason_tags
                         """;
                 jdbcTemplate.update(sqlScore, tenantId, targetDate);
             }
@@ -212,6 +253,17 @@ public class TransactionJobConfig {
                 .build();
     }
 
+    // ... populateSummaryTasklet omitted for brevity (unchanged) ...
+    // Note: Since I am replacing the block, I need to keep populateSummaryTasklet
+    // or rely on subsequent tool calls?
+    // Wait, the "EndLine" was 623. That includes ingestTransactionStep? NO.
+    // ingestTransactionStep is AFTER populateSummaryStep defs in my previous
+    // replace plan?
+    // Let me check lines again.
+    // ingestTransactionStep starts at 613.
+    // calculateBusinessMetricsStep starts at 60.
+    // cleanTargetDayStep starts at 591.
+    //
     @Bean
     @StepScope
     public Tasklet populateSummaryTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
@@ -221,218 +273,345 @@ public class TransactionJobConfig {
             }
 
             // 1. Aggregate Daily Bank
-            String sqlBank = "INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_vat, total_net_revenue) "
-                    +
-                    "SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(txn_currency_amount), SUM(msf), SUM(interchange_fee), "
-                    +
-                    "0, SUM(vat), " // Scheme Fee = 0 for now
-                    +
-                    "SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - 0) " + // Net Revenue = MSF - Int - Scheme
-                    "FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?) "
-                    +
-                    "GROUP BY tenant_id, DATE(payment_date)";
+            String sqlBank = """
+                    INSERT INTO sum_daily_bank (
+                        tenant_id, business_date, total_txns, total_volume, total_msf,
+                        total_interchange, total_scheme_fee, total_vat, total_net_revenue
+                    )
+                    SELECT
+                        tenant_id, DATE(payment_date), COUNT(*), SUM(txn_currency_amount), SUM(msf),
+                        SUM(interchange_fee), 0, SUM(vat),
+                        SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - 0)
+                    FROM fact_transaction
+                    WHERE tenant_id = ?
+                      AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    GROUP BY tenant_id, DATE(payment_date)
+                    ON CONFLICT (tenant_id, business_date) DO UPDATE SET
+                        total_txns = EXCLUDED.total_txns,
+                        total_volume = EXCLUDED.total_volume,
+                        total_msf = EXCLUDED.total_msf,
+                        total_interchange = EXCLUDED.total_interchange,
+                        total_scheme_fee = EXCLUDED.total_scheme_fee,
+                        total_vat = EXCLUDED.total_vat,
+                        total_net_revenue = EXCLUDED.total_net_revenue
+                    """;
             jdbcTemplate.update(sqlBank, tenantId, tenantId);
 
             // 2. Aggregate Daily Merchant
-            // 2. Aggregate Daily Merchant (Updated for Debit/Credit Slit and Sales User)
             String sqlMerch = """
                     INSERT INTO sum_daily_merchant (
                         tenant_id, business_date, merchant_id,
                         total_txns, total_volume, total_msf, total_interchange,
                         total_scheme_fee, total_margin,
-                        total_debit_prepaid_volume, total_credit_volume, sales_user_id
+                        total_debit_prepaid_volume, total_credit_volume, sales_user_id,
+                        unique_customer_count,
+                        dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume,
+                        dcc_eligible_count, dcc_optin_count
                     )
                     SELECT
-                        f.tenant_id,
-                        DATE(f.payment_date),
-                        f.merchant_id,
-                        COUNT(*),
-                        SUM(f.txn_currency_amount),
-                        SUM(f.msf),
-                        SUM(f.interchange_fee),
-                        0, -- Scheme Fee
+                        f.tenant_id, DATE(f.payment_date), f.merchant_id, COUNT(*),
+                        SUM(f.txn_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
                         SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - 0),
-
-                        -- Split Logic
                         SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT', 'PREPAID') THEN f.txn_currency_amount ELSE 0 END),
                         SUM(CASE WHEN UPPER(f.card_type) = 'CREDIT' THEN f.txn_currency_amount ELSE 0 END),
-
-                        m.sales_user_id
-
+                        m.sales_user_id,
+                        COUNT(DISTINCT f.card_number),
+                        SUM(CASE WHEN UPPER(f.destination) = 'INTERNATIONAL' THEN f.txn_currency_amount ELSE 0 END),
+                        SUM(CASE WHEN UPPER(f.destination) = 'INTERNATIONAL' AND f.dcc IS TRUE THEN f.txn_currency_amount ELSE 0 END),
+                        SUM(CASE WHEN UPPER(f.destination) = 'INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.txn_currency_amount ELSE 0 END),
+                        COUNT(CASE WHEN UPPER(f.destination) = 'INTERNATIONAL' THEN 1 END),
+                        COUNT(CASE WHEN UPPER(f.destination) = 'INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END)
                     FROM fact_transaction f
                     JOIN dim_merchant m ON f.merchant_id = m.merchant_id
                     WHERE f.tenant_id = ?
                       AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
                     GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, m.sales_user_id
+                    ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET
+                        total_txns = EXCLUDED.total_txns,
+                        total_volume = EXCLUDED.total_volume,
+                        total_msf = EXCLUDED.total_msf,
+                        total_interchange = EXCLUDED.total_interchange,
+                        total_scheme_fee = EXCLUDED.total_scheme_fee,
+                        total_margin = EXCLUDED.total_margin,
+                        total_debit_prepaid_volume = EXCLUDED.total_debit_prepaid_volume,
+                        total_credit_volume = EXCLUDED.total_credit_volume,
+                        sales_user_id = EXCLUDED.sales_user_id,
+                        unique_customer_count = EXCLUDED.unique_customer_count,
+                        dcc_eligible_volume = EXCLUDED.dcc_eligible_volume,
+                        dcc_optin_volume = EXCLUDED.dcc_optin_volume,
+                        dcc_optout_volume = EXCLUDED.dcc_optout_volume,
+                        dcc_eligible_count = EXCLUDED.dcc_eligible_count,
+                        dcc_optin_count = EXCLUDED.dcc_optin_count
                     """;
             jdbcTemplate.update(sqlMerch, tenantId, tenantId);
 
+            // 2.1 Update Top Spending Customer (Complex Aggregation)
+            // We do this as a separate update for performance and clarity
+            String sqlTopCust = """
+                    WITH DailyCustSpend AS (
+                        SELECT
+                            tenant_id, merchant_id, DATE(payment_date) as b_date, card_number,
+                            SUM(txn_currency_amount) as total_spend
+                        FROM fact_transaction
+                        WHERE tenant_id = ?
+                          AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                        GROUP BY tenant_id, merchant_id, DATE(payment_date), card_number
+                    ),
+                    RankedSpend AS (
+                        SELECT
+                            tenant_id, merchant_id, b_date, card_number, total_spend,
+                            ROW_NUMBER() OVER(PARTITION BY tenant_id, merchant_id, b_date ORDER BY total_spend DESC) as rn
+                        FROM DailyCustSpend
+                    )
+                    UPDATE sum_daily_merchant s
+                    SET top_spending_customer_id = rs.card_number,
+                        top_spending_amount = rs.total_spend
+                    FROM RankedSpend rs
+                    WHERE s.tenant_id = rs.tenant_id
+                      AND s.merchant_id = rs.merchant_id
+                      AND s.business_date = rs.b_date
+                      AND rs.rn = 1
+                      AND s.tenant_id = ? -- Bind param
+                    """;
+            jdbcTemplate.update(sqlTopCust, tenantId, tenantId, tenantId);
+
             // 3. Aggregate Daily MCC
-            String sqlMcc = "INSERT INTO sum_daily_mcc (tenant_id, business_date, mcc, card_scheme, total_txns, total_volume, total_msf, total_scheme_fee, total_net_revenue) "
-                    +
-                    "SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf), "
-                    +
-                    "0, " // Scheme Fee
-                    +
-                    "SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - 0) " +
-                    "FROM fact_transaction f " +
-                    "LEFT JOIN dim_store s ON f.store_id = s.store_id " +
-                    "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?) "
-                    +
-                    "GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme";
+            String sqlMcc = """
+                    INSERT INTO sum_daily_mcc (
+                        tenant_id, business_date, mcc, card_scheme, total_txns,
+                        total_volume, total_msf, total_scheme_fee, total_net_revenue
+                    )
+                    SELECT
+                        f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*),
+                        SUM(f.txn_currency_amount), SUM(f.msf), 0,
+                        SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - 0)
+                    FROM fact_transaction f
+                    LEFT JOIN dim_store s ON f.store_id = s.store_id
+                    WHERE f.tenant_id = ? AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme
+                    ON CONFLICT (tenant_id, business_date, mcc, card_scheme) DO UPDATE SET
+                        total_txns = EXCLUDED.total_txns,
+                        total_volume = EXCLUDED.total_volume,
+                        total_msf = EXCLUDED.total_msf,
+                        total_scheme_fee = EXCLUDED.total_scheme_fee,
+                        total_net_revenue = EXCLUDED.total_net_revenue
+                    """;
             jdbcTemplate.update(sqlMcc, tenantId, tenantId);
 
             // 4. Aggregate Daily Scheme
-            String sqlScheme = "INSERT INTO sum_daily_scheme (tenant_id, business_date, card_scheme, total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue) "
-                    +
-                    "SELECT tenant_id, DATE(payment_date), card_scheme, COUNT(*), SUM(txn_currency_amount), SUM(msf), SUM(interchange_fee), "
-                    +
-                    "0, "
-                    +
-                    "SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - 0) "
-                    +
-                    "FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?) "
-                    +
-                    "GROUP BY tenant_id, DATE(payment_date), card_scheme";
+            String sqlScheme = """
+                    INSERT INTO sum_daily_scheme (
+                        tenant_id, business_date, card_scheme, total_txns,
+                        total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue
+                    )
+                    SELECT
+                        tenant_id, DATE(payment_date), card_scheme, COUNT(*),
+                        SUM(txn_currency_amount), SUM(msf), SUM(interchange_fee), 0,
+                        SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - 0)
+                    FROM fact_transaction
+                    WHERE tenant_id = ? AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    GROUP BY tenant_id, DATE(payment_date), card_scheme
+                    ON CONFLICT (tenant_id, business_date, card_scheme) DO UPDATE SET
+                        total_txns = EXCLUDED.total_txns,
+                        total_volume = EXCLUDED.total_volume,
+                        total_msf = EXCLUDED.total_msf,
+                        total_interchange = EXCLUDED.total_interchange,
+                        total_scheme_fee = EXCLUDED.total_scheme_fee,
+                        total_net_revenue = EXCLUDED.total_net_revenue
+                    """;
             jdbcTemplate.update(sqlScheme, tenantId, tenantId);
 
-            // 5. Aggregate Daily Channel (Join dim_terminal for 'type')
-            String sqlChannel = "INSERT INTO sum_daily_channel (tenant_id, business_date, channel, total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue) "
-                    +
-                    "SELECT f.tenant_id, DATE(f.payment_date), t.type, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf), SUM(f.interchange_fee), "
-                    +
-                    "0, "
-                    +
-                    "SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - 0) "
-                    +
-                    "FROM fact_transaction f "
-                    +
-                    "LEFT JOIN dim_terminal t ON f.terminal_id = t.terminal_id "
-                    +
-                    "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?) "
-                    +
-                    "GROUP BY f.tenant_id, DATE(f.payment_date), t.type";
+            // 5. Aggregate Daily Channel
+            String sqlChannel = """
+                    INSERT INTO sum_daily_channel (
+                        tenant_id, business_date, channel, total_txns,
+                        total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue
+                    )
+                    SELECT
+                        f.tenant_id, DATE(f.payment_date), t.type, COUNT(*),
+                        SUM(f.txn_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
+                        SUM(COALESCE(msf,0) - COALESCE(f.interchange_fee,0) - 0)
+                    FROM fact_transaction f
+                    LEFT JOIN dim_terminal t ON f.terminal_id = t.terminal_id
+                    WHERE f.tenant_id = ? AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    GROUP BY f.tenant_id, DATE(f.payment_date), t.type
+                    ON CONFLICT (tenant_id, business_date, channel) DO UPDATE SET
+                        total_txns = EXCLUDED.total_txns,
+                        total_volume = EXCLUDED.total_volume,
+                        total_msf = EXCLUDED.total_msf,
+                        total_interchange = EXCLUDED.total_interchange,
+                        total_scheme_fee = EXCLUDED.total_scheme_fee,
+                        total_net_revenue = EXCLUDED.total_net_revenue
+                    """;
             jdbcTemplate.update(sqlChannel, tenantId, tenantId);
 
             // 6. Aggregate Monthly Bank
-            // Delete existing month row first to allow re-run updates
-            // (Strictly we should filter months relevant to the Staging dates)
-
-            // Simplified: Re-calculate months for updated dates
-            // Query unique months from Staging
-            // We can't iterate easily in simple JDBC here without logic.
-            // Option: DELETE FROM sum_monthly... WHERE (tenant, month_key) IN (SELECT
-            // tenant, proper key from Fact where Date in Staging)
-            // Or just SKIP monthly Agg for now? No, dashboard needs it.
-            // Let's do a bulk delete/insert for touched months.
-
-            String deleteMonth = "DELETE FROM sum_monthly_bank WHERE tenant_id = ? AND month_key IN " +
-                    "(SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ?)";
-            jdbcTemplate.update(deleteMonth, tenantId, tenantId);
-
-            String sqlMonth = "INSERT INTO sum_monthly_bank (tenant_id, month_key, total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_vat, total_net_revenue) "
-                    +
-                    "SELECT tenant_id, CAST(TO_CHAR(business_date, 'YYYYMM') AS INTEGER), SUM(total_txns), SUM(total_volume), SUM(total_msf), SUM(total_interchange), "
-                    +
-                    "SUM(total_scheme_fee), SUM(total_vat), SUM(total_net_revenue) "
-                    +
-                    "FROM sum_daily_bank "
-                    +
-                    "WHERE tenant_id = ? AND CAST(TO_CHAR(business_date, 'YYYYMM') AS INTEGER) IN " +
-                    "(SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ?) "
-                    +
-                    "GROUP BY tenant_id, TO_CHAR(business_date, 'YYYYMM')";
+            String sqlMonth = """
+                    INSERT INTO sum_monthly_bank (
+                        tenant_id, month_key, total_txns, total_volume, total_msf,
+                        total_interchange, total_scheme_fee, total_vat, total_net_revenue
+                    )
+                    SELECT
+                        tenant_id, CAST(TO_CHAR(business_date, 'YYYYMM') AS INTEGER),
+                        SUM(total_txns), SUM(total_volume), SUM(total_msf), SUM(total_interchange),
+                        SUM(total_scheme_fee), SUM(total_vat), SUM(total_net_revenue)
+                    FROM sum_daily_bank
+                    WHERE tenant_id = ? AND CAST(TO_CHAR(business_date, 'YYYYMM') AS INTEGER) IN
+                      (SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    GROUP BY tenant_id, TO_CHAR(business_date, 'YYYYMM')
+                    ON CONFLICT (tenant_id, month_key) DO UPDATE SET
+                        total_txns = EXCLUDED.total_txns,
+                        total_volume = EXCLUDED.total_volume,
+                        total_msf = EXCLUDED.total_msf,
+                        total_interchange = EXCLUDED.total_interchange,
+                        total_scheme_fee = EXCLUDED.total_scheme_fee,
+                        total_vat = EXCLUDED.total_vat,
+                        total_net_revenue = EXCLUDED.total_net_revenue
+                    """;
             jdbcTemplate.update(sqlMonth, tenantId, tenantId);
 
-            // 4. Aggregate Daily Terminal (Granular for Zero Sales logic & Drill down)
-            String sqlTerminal = "INSERT INTO sum_daily_terminal (tenant_id, business_date, merchant_id, store_id, terminal_id, total_txns, total_volume, total_msf, total_revenue) "
-                    +
-                    "SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id, COUNT(*), SUM(txn_currency_amount), SUM(msf), "
-                    +
-                    "SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0)) " +
-                    "FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?) "
-                    +
-                    "GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id";
+            // 4. Aggregate Daily Terminal
+            String sqlTerminal = """
+                    INSERT INTO sum_daily_terminal (
+                        tenant_id, business_date, merchant_id, store_id, terminal_id,
+                        total_txns, total_volume, total_msf, total_revenue
+                    )
+                    SELECT
+                        tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id,
+                        COUNT(*), SUM(txn_currency_amount), SUM(msf),
+                        SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0))
+                    FROM fact_transaction
+                    WHERE tenant_id = ? AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id
+                    ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET
+                        total_txns = EXCLUDED.total_txns,
+                        total_volume = EXCLUDED.total_volume,
+                        total_msf = EXCLUDED.total_msf,
+                        total_revenue = EXCLUDED.total_revenue
+                    """;
             jdbcTemplate.update(sqlTerminal, tenantId, tenantId);
 
-            // 7. Aggregate Daily Finance (Finance Summary Report)
-            // Clean up potentially existing rows for idempotency is handled in
-            // stagingToFactStep (added sum_daily_finance to list there)
+            // 7. Aggregate Daily Finance
             String sqlFinance = """
                     INSERT INTO sum_daily_finance (
                         tenant_id, business_date,
-                        -- Dom Debit
                         dom_debit_cnt, dom_debit_vol, dom_debit_msf, dom_debit_optin,
-                        -- Dom Credit
                         dom_credit_cnt, dom_credit_vol, dom_credit_msf, dom_credit_optin,
-                        -- International
                         int_cnt, int_vol, int_msf, int_optin,
-                        -- Total
                         total_vol, total_msf
                     )
                     SELECT
-                        tenant_id,
-                        DATE(payment_date),
-
-                        -- Domestic Debit & Prepaid
+                        tenant_id, DATE(payment_date),
                         COUNT(CASE WHEN UPPER(destination) = 'DOMESTIC' AND UPPER(card_type) IN ('DEBIT', 'PREPAID') THEN 1 END),
                         SUM(CASE WHEN UPPER(destination) = 'DOMESTIC' AND UPPER(card_type) IN ('DEBIT', 'PREPAID') THEN txn_currency_amount ELSE 0 END),
                         SUM(CASE WHEN UPPER(destination) = 'DOMESTIC' AND UPPER(card_type) IN ('DEBIT', 'PREPAID') THEN msf ELSE 0 END),
                         SUM(CASE WHEN UPPER(destination) = 'DOMESTIC' AND UPPER(card_type) IN ('DEBIT', 'PREPAID') AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
-
-                        -- Domestic Credit
                         COUNT(CASE WHEN UPPER(destination) = 'DOMESTIC' AND UPPER(card_type) = 'CREDIT' THEN 1 END),
                         SUM(CASE WHEN UPPER(destination) = 'DOMESTIC' AND UPPER(card_type) = 'CREDIT' THEN txn_currency_amount ELSE 0 END),
                         SUM(CASE WHEN UPPER(destination) = 'DOMESTIC' AND UPPER(card_type) = 'CREDIT' THEN msf ELSE 0 END),
                         SUM(CASE WHEN UPPER(destination) = 'DOMESTIC' AND UPPER(card_type) = 'CREDIT' AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
-
-                        -- International (All Types)
                         COUNT(CASE WHEN UPPER(destination) = 'INTERNATIONAL' THEN 1 END),
                         SUM(CASE WHEN UPPER(destination) = 'INTERNATIONAL' THEN txn_currency_amount ELSE 0 END),
                         SUM(CASE WHEN UPPER(destination) = 'INTERNATIONAL' THEN msf ELSE 0 END),
                         SUM(CASE WHEN UPPER(destination) = 'INTERNATIONAL' AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
-
-                        -- Totals
-                        SUM(txn_currency_amount),
-                        SUM(msf)
-
+                        SUM(txn_currency_amount), SUM(msf)
                     FROM fact_transaction
-                    WHERE tenant_id = ?
-                      AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    WHERE tenant_id = ? AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
                     GROUP BY tenant_id, DATE(payment_date)
+                    ON CONFLICT (tenant_id, business_date) DO UPDATE SET
+                        dom_debit_cnt = EXCLUDED.dom_debit_cnt, dom_debit_vol = EXCLUDED.dom_debit_vol,
+                        dom_debit_msf = EXCLUDED.dom_debit_msf, dom_debit_optin = EXCLUDED.dom_debit_optin,
+                        dom_credit_cnt = EXCLUDED.dom_credit_cnt, dom_credit_vol = EXCLUDED.dom_credit_vol,
+                        dom_credit_msf = EXCLUDED.dom_credit_msf, dom_credit_optin = EXCLUDED.dom_credit_optin,
+                        int_cnt = EXCLUDED.int_cnt, int_vol = EXCLUDED.int_vol,
+                        int_msf = EXCLUDED.int_msf, int_optin = EXCLUDED.int_optin,
+                        total_vol = EXCLUDED.total_vol, total_msf = EXCLUDED.total_msf
                     """;
             jdbcTemplate.update(sqlFinance, tenantId, tenantId);
 
-            // 8. Aggregate Daily Insight (Highly Granular for Insight Hub)
+            // 8. Aggregate Daily Insight
             String sqlInsight = """
                     INSERT INTO sum_daily_insight (
-                        tenant_id, business_date,
-                        merchant_id, store_id, terminal_id,
+                        tenant_id, business_date, merchant_id, store_id, terminal_id,
                         card_scheme, card_type, destination, channel, is_opt_in,
                         total_txns, total_volume, total_msf
                     )
                     SELECT
-                        f.tenant_id,
-                        DATE(f.payment_date),
-                        f.merchant_id,
-                        f.store_id,
-                        f.terminal_id,
-                        f.card_scheme,
-                        f.card_type,
-                        f.destination,
-                        COALESCE(t.type, 'POS'), -- Default to POS if unknown
-                        f.dcc,
-                        COUNT(*),
-                        SUM(f.txn_currency_amount),
-                        SUM(f.msf)
+                        f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
+                        f.card_scheme, f.card_type, f.destination, COALESCE(t.type, 'POS'), f.dcc,
+                        COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf)
                     FROM fact_transaction f
                     LEFT JOIN dim_terminal t ON f.terminal_id = t.terminal_id
-                    WHERE f.tenant_id = ?
-                      AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    WHERE f.tenant_id = ? AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
                     GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
                              f.card_scheme, f.card_type, f.destination, COALESCE(t.type, 'POS'), f.dcc
+                    ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) DO UPDATE SET
+                        total_txns = EXCLUDED.total_txns,
+                        total_volume = EXCLUDED.total_volume,
+                        total_msf = EXCLUDED.total_msf
                     """;
             jdbcTemplate.update(sqlInsight, tenantId, tenantId);
+
+            // 9. Populate Generic Attributes (SumDailyMerchantAttribute)
+            String[] attrTypes = { "CARD_SCHEME", "CARD_TYPE", "DESTINATION", "TRANSACTION_TYPE" };
+            for (String attrType : attrTypes) {
+                String col = switch (attrType) {
+                    case "CARD_SCHEME" -> "card_scheme";
+                    case "CARD_TYPE" -> "card_type";
+                    case "DESTINATION" -> "destination";
+                    case "TRANSACTION_TYPE" -> "transaction_type";
+                    default -> "NULL";
+                };
+                String sqlAttr = String.format(
+                        """
+                                INSERT INTO sum_daily_merchant_attribute (
+                                    tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume
+                                )
+                                SELECT
+                                    tenant_id, merchant_id, DATE(payment_date), '%s', COALESCE(%s, 'UNKNOWN'), COUNT(*), SUM(txn_currency_amount)
+                                FROM fact_transaction
+                                WHERE tenant_id = ? AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                                GROUP BY tenant_id, merchant_id, DATE(payment_date), %s
+                                ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
+                                    metric_count = EXCLUDED.metric_count,
+                                    metric_volume = EXCLUDED.metric_volume
+                                """,
+                        attrType, col, col);
+                jdbcTemplate.update(sqlAttr, tenantId, tenantId);
+            }
+
+            // 9.3 Attribute: HOUR
+            String sqlHour = """
+                    INSERT INTO sum_daily_merchant_attribute (
+                        tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume
+                    )
+                    SELECT
+                        tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(txn_currency_amount)
+                    FROM fact_transaction
+                    WHERE tenant_id = ? AND DATE(payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date)
+                    ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
+                        metric_count = EXCLUDED.metric_count,
+                        metric_volume = EXCLUDED.metric_volume
+                    """;
+            jdbcTemplate.update(sqlHour, tenantId, tenantId);
+
+            // 10. Populate SumMonthlyCard
+            String sqlSumCard = """
+                    INSERT INTO sum_monthly_card (
+                        tenant_id, merchant_id, month_key, card_number, visit_count, total_spend
+                    )
+                    SELECT
+                        tenant_id, merchant_id, CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(txn_currency_amount)
+                    FROM fact_transaction
+                    WHERE tenant_id = ? AND CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) IN
+                      (SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ?)
+                    GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date, 'YYYYMM'), card_number
+                    ON CONFLICT (tenant_id, merchant_id, month_key, card_number) DO UPDATE SET
+                        visit_count = EXCLUDED.visit_count,
+                        total_spend = EXCLUDED.total_spend
+                    """;
+            jdbcTemplate.update(sqlSumCard, tenantId, tenantId);
 
             return RepeatStatus.FINISHED;
         };
@@ -463,16 +642,26 @@ public class TransactionJobConfig {
     // ==================================================================================
     // Step 2: Ingest (Excel -> DB)
     // ==================================================================================
+    // ==================================================================================
+    // Step 2: Parallel Ingestion (Split -> Parallel Load)
+    // ==================================================================================
+
+    // 2a. Splitter Step
     @Bean
-    public Step ingestTransactionStep(ItemReader<StagingTransaction> transactionExcelReader,
-            ItemProcessor<StagingTransaction, StagingTransaction> transactionTenantProcessor,
-            ItemWriter<StagingTransaction> transactionWriter) {
-        return new StepBuilder("ingestTransactionStep", jobRepository)
-                .<StagingTransaction, StagingTransaction>chunk(5000, transactionManager)
-                .reader(transactionExcelReader)
-                .processor(transactionTenantProcessor)
-                .writer(transactionWriter)
+    public Step splitExcelStep(ExcelSplitterTasklet excelSplitterTasklet) {
+        return new StepBuilder("splitExcelStep", jobRepository)
+                .tasklet(excelSplitterTasklet, transactionManager)
+                .build();
+    }
+
+    // 2b. Master Step (Partitioner)
+    @Bean
+    public Step masterIngestStep(Step csvWorkerStep, CsvPartitioner partitioner) {
+        return new StepBuilder("masterIngestStep", jobRepository)
+                .partitioner("csvWorkerStep", partitioner)
+                .step(csvWorkerStep)
                 .taskExecutor(taskExecutor())
+                .gridSize(8) // Max threads
                 .build();
     }
 
@@ -482,6 +671,136 @@ public class TransactionJobConfig {
                 "spring_batch");
         executor.setConcurrencyLimit(10);
         return executor;
+    }
+
+    @Bean
+    @StepScope
+    public CsvPartitioner csvPartitioner(@Value("#{jobExecutionContext['partitionDirectory']}") String dir) {
+        CsvPartitioner partitioner = new CsvPartitioner();
+        partitioner.setPartitionDirectory(dir);
+        return partitioner;
+    }
+
+    // 2c. Worker Step (Read CSV -> Write to DB)
+    @Bean
+    public Step csvWorkerStep(
+            org.springframework.batch.item.file.FlatFileItemReader<StagingTransaction> csvTransactionReader,
+            ItemProcessor<StagingTransaction, StagingTransaction> transactionTenantProcessor,
+            ItemWriter<StagingTransaction> transactionWriter) {
+        return new StepBuilder("csvWorkerStep", jobRepository)
+                .<StagingTransaction, StagingTransaction>chunk(5000, transactionManager)
+                .reader(csvTransactionReader)
+                .processor(transactionTenantProcessor)
+                .writer(transactionWriter)
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public org.springframework.batch.item.file.FlatFileItemReader<StagingTransaction> csvTransactionReader(
+            @Value("#{stepExecutionContext['fileName']}") String fileName) {
+
+        org.springframework.batch.item.file.FlatFileItemReader<StagingTransaction> reader = new org.springframework.batch.item.file.FlatFileItemReader<>();
+        if (fileName != null) {
+            reader.setResource(new FileSystemResource(fileName));
+        }
+
+        // Skip header as Splitter preserves it, and we want to Map by Name
+        reader.setLinesToSkip(1);
+
+        reader.setLineMapper(new org.springframework.batch.item.file.mapping.DefaultLineMapper<>() {
+            {
+                setLineTokenizer(new org.springframework.batch.item.file.transform.DelimitedLineTokenizer() {
+                    {
+                        setDelimiter(",");
+                        setQuoteCharacter('"');
+                        // We rely on strict header mapping? No, CSV tokens are positional?
+                        // Wait, DelimitedLineTokenizer handles CSV.
+                        // But we need to Map to FieldSet...
+                        // Ideally we use "Entity Name", "MID" etc.
+                        // But if we want to use Names, we need to know the names.
+                        // The Splitter writes the Header first.
+                        // So we can use the header from the file to drive the tokenizer?
+                        // Standard FlatFileItemReader doesn't look at header dynamically unless
+                        // configured.
+
+                        // For simplicity and speed in this worker, we will assume standard columns?
+                        // NO, the user Excel columns are dynamic order.
+                        // The Splitter WRITES the header.
+                        // So the CSV HAS the header.
+                        // We should use a tokenizer that looks at the header?
+                        // The easiest way is to use 'setStrict(false)' and maybe list all possible
+                        // columns?
+                        // Or better: Use name matching with assumed names.
+
+                        // Let's define the names we expect to Map.
+                        setNames("Entity Name", "Aggregator Internal Id", "Aggregator Name", "AggregatorCode",
+                                "MID", "Merchant Internal Id", "Merchant Name",
+                                "SID", "Merchant Store Internal Id", "CMM Merchant Store Internal Id",
+                                "Merchant Store Legal Name", "Store Name",
+                                "TerminalID", "ARN", "RRN Number", "CardNumber", "Auth Code",
+                                "Payment Date", "Transaction Date", "BatchNumber", "Transaction Type", "CardScheme",
+                                "Card Type", "DCC",
+                                "Txn Currency", "Txn Currency Amount", "Store Base Currency",
+                                "Store Base Currency Amount",
+                                "MSF", "VAT", "Total Amount Settled", "Interchange Fee", "Destination");
+                    }
+                });
+
+                setFieldSetMapper(fieldSet -> {
+                    StagingTransaction t = new StagingTransaction();
+                    // Safe extraction (handles missing columns gracefully if names match)
+                    t.setEntityName(fieldSet.readString("Entity Name"));
+
+                    // ... Map all fields (Similar to ExcelItemReader but using FieldSet)
+                    // Wait, this is duplication. But necessary for CSV.
+                    // Let's copy the logic.
+
+                    t.setAggregatorInternalId(fieldSet.readString("Aggregator Internal Id"));
+                    t.setAggregatorName(fieldSet.readString("Aggregator Name"));
+                    t.setAggregatorCode(fieldSet.readString("AggregatorCode"));
+                    t.setMid(fieldSet.readString("MID"));
+                    t.setMerchantInternalId(fieldSet.readString("Merchant Internal Id"));
+                    t.setMerchantName(fieldSet.readString("Merchant Name"));
+                    t.setSid(fieldSet.readString("SID"));
+                    t.setMerchantStoreInternalId(fieldSet.readString("Merchant Store Internal Id"));
+                    t.setCmmMerchantStoreInternalId(fieldSet.readString("CMM Merchant Store Internal Id"));
+                    t.setMerchantStoreLegalName(fieldSet.readString("Merchant Store Legal Name"));
+                    t.setStoreName(fieldSet.readString("Store Name"));
+                    t.setTid(fieldSet.readString("TerminalID"));
+                    t.setArn(fieldSet.readString("ARN"));
+                    t.setRrnNumber(fieldSet.readString("RRN Number"));
+                    t.setCardNumber(fieldSet.readString("CardNumber"));
+                    t.setAuthCode(fieldSet.readString("Auth Code"));
+
+                    t.setPaymentDate(parseDate(fieldSet.readString("Payment Date")));
+                    t.setTransactionDate(parseDate(fieldSet.readString("Transaction Date")));
+
+                    t.setBatchNumber(fieldSet.readString("BatchNumber"));
+                    t.setTransactionType(fieldSet.readString("Transaction Type"));
+                    t.setCardScheme(fieldSet.readString("CardScheme"));
+                    t.setCardType(fieldSet.readString("Card Type"));
+
+                    // DCC Logic
+                    String dcc = fieldSet.readString("DCC");
+                    t.setDcc(dcc != null && (dcc.equalsIgnoreCase("Y") || dcc.equalsIgnoreCase("Yes")));
+
+                    t.setTxnCurrency(fieldSet.readString("Txn Currency"));
+                    t.setTxnCurrencyAmount(parseDecimal(fieldSet.readString("Txn Currency Amount")));
+                    t.setStoreBaseCurrency(fieldSet.readString("Store Base Currency"));
+                    t.setStoreBaseCurrencyAmount(parseDecimal(fieldSet.readString("Store Base Currency Amount")));
+
+                    t.setMsf(parseDecimal(fieldSet.readString("MSF")));
+                    t.setVat(parseDecimal(fieldSet.readString("VAT")));
+                    t.setTotalAmountSettled(parseDecimal(fieldSet.readString("Total Amount Settled")));
+                    t.setInterchangeFee(parseDecimal(fieldSet.readString("Interchange Fee")));
+                    t.setDestination(fieldSet.readString("Destination"));
+
+                    return t;
+                });
+            }
+        });
+        return reader;
     }
 
     @Bean
@@ -648,8 +967,9 @@ public class TransactionJobConfig {
             jdbcTemplate.update(deleteFact, tenantId, tenantId);
 
             // Also clean summaries for these dates to avoid duplicates
-            String[] tables = { "sum_daily_merchant", "sum_daily_bank", "sum_daily_mcc", "sum_daily_scheme",
-                    "sum_daily_channel", "sum_daily_terminal", "sum_daily_finance", "sum_daily_insight" };
+            // (Note: Most summary tables now use INSERT ... ON CONFLICT DO UPDATE,
+            // but we keep the list here if any are strictly delete-append)
+            String[] tables = {}; // All moved to UPSERT logic in populateSummaryTasklet
             for (String tbl : tables) {
                 jdbcTemplate.update("DELETE FROM " + tbl
                         + " WHERE tenant_id = ? AND business_date IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)",
@@ -707,6 +1027,67 @@ public class TransactionJobConfig {
                     .replace(":tenantId", String.valueOf(tenantId));
 
             jdbcTemplate.execute(sql);
+            return RepeatStatus.FINISHED;
+        };
+    }
+
+    @Bean
+    public Step calculateDailyDashboardMetricsStep(Tasklet calculateDailyDashboardMetricsTasklet) {
+        return new StepBuilder("calculateDailyDashboardMetricsStep", jobRepository)
+                .tasklet(calculateDailyDashboardMetricsTasklet, transactionManager)
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public Tasklet calculateDailyDashboardMetricsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantIdObj) {
+        return (contribution, chunkContext) -> {
+            if (tenantIdObj == null)
+                return RepeatStatus.FINISHED;
+            Integer tenantId = tenantIdObj.intValue();
+
+            // 1. Identify distinct months in upload
+            List<String> months = jdbcTemplate.queryForList(
+                    "SELECT DISTINCT TO_CHAR(payment_date, 'YYYY-MM') FROM stg_trnx_raw WHERE tenant_id = ?",
+                    String.class, tenantId);
+
+            for (String monthYear : months) {
+                if (monthYear == null)
+                    continue;
+                String[] parts = monthYear.split("-");
+                int year = Integer.parseInt(parts[0]);
+                int month = Integer.parseInt(parts[1]);
+
+                LocalDate start = LocalDate.of(year, month, 1);
+                LocalDate end = start.withDayOfMonth(start.lengthOfMonth());
+
+                List<SumDailyMerchant> dailyRecs = dailyMerchantRepo.findByTenantIdAndDateRange(tenantId, start, end);
+                java.util.Map<Long, List<SumDailyMerchant>> grouped = dailyRecs.stream()
+                        .collect(java.util.stream.Collectors.groupingBy(SumDailyMerchant::getMerchantId));
+
+                for (java.util.Map.Entry<Long, List<SumDailyMerchant>> entry : grouped.entrySet()) {
+                    Long merchantId = entry.getKey();
+                    List<SumDailyMerchant> mRecs = entry.getValue();
+
+                    // Calculate new metrics
+                    SumMonthlyMerchantMetrics newMetrics = merchantMetricCalculator.calculateMetrics(mRecs, tenantId,
+                            merchantId, monthYear);
+
+                    // Check if exists to preserve ID (UPSERT)
+                    java.util.Optional<SumMonthlyMerchantMetrics> existing = monthlyMetricsRepo
+                            .findByMerchantAndMonth(tenantId, merchantId, monthYear);
+
+                    if (existing.isPresent()) {
+                        SumMonthlyMerchantMetrics existingEntity = existing.get();
+                        // Copy ID to ensure update
+                        newMetrics.setMetricId(existingEntity.getMetricId());
+                        // Copy Audit fields if needed, or let them update
+                        newMetrics.setCreatedAt(existingEntity.getCreatedAt());
+                    }
+
+                    monthlyMetricsRepo.save(newMetrics);
+                }
+            }
             return RepeatStatus.FINISHED;
         };
     }

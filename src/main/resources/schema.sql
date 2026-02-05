@@ -3,6 +3,7 @@
 -- ==========================================
 -- Security / Core
 DROP TABLE IF EXISTS user_tenant_access CASCADE;
+DROP TABLE IF EXISTS user_region_access CASCADE;
 DROP TABLE IF EXISTS sys_group_menu CASCADE;
 DROP TABLE IF EXISTS sys_menu CASCADE;
 DROP TABLE IF EXISTS sys_user_group CASCADE;
@@ -10,6 +11,8 @@ DROP TABLE IF EXISTS user_role CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 DROP TABLE IF EXISTS app_user CASCADE;
 DROP TABLE IF EXISTS role CASCADE;
+DROP TABLE IF EXISTS tenant_setting CASCADE;
+DROP TABLE IF EXISTS dashboard_config CASCADE;
 DROP TABLE IF EXISTS tenant CASCADE;
 DROP TABLE IF EXISTS region CASCADE;
 DROP TABLE IF EXISTS ref_country CASCADE;
@@ -23,6 +26,7 @@ DROP TABLE IF EXISTS dim_merchant CASCADE;
 DROP TABLE IF EXISTS dim_aggregator CASCADE;
 DROP TABLE IF EXISTS bank_budget_target CASCADE;
 DROP TABLE IF EXISTS merchant_lifecycle_status CASCADE;
+DROP TABLE IF EXISTS merchant_activity_summary CASCADE;
 DROP TABLE IF EXISTS merchant_opportunity_score CASCADE;
 DROP TABLE IF EXISTS revenue_leakage_flags CASCADE;
 DROP TABLE IF EXISTS merchant_contact CASCADE;
@@ -31,18 +35,31 @@ DROP TABLE IF EXISTS merchant_note CASCADE;
 DROP TABLE IF EXISTS merchant_risk_profile CASCADE;
 DROP TABLE IF EXISTS merchant_settlement_config CASCADE;
 DROP TABLE IF EXISTS merchant_contract CASCADE;
+DROP TABLE IF EXISTS merchant_activity CASCADE;
 
 -- Facts
 DROP TABLE IF EXISTS fact_transaction CASCADE;
 DROP TABLE IF EXISTS sum_daily_merchant CASCADE;
-DROP TABLE IF EXISTS sum_monthly_bank CASCADE;
+DROP TABLE IF EXISTS sum_daily_merchant_attribute CASCADE;
+DROP TABLE IF EXISTS sum_daily_terminal CASCADE;
 DROP TABLE IF EXISTS sum_daily_bank CASCADE;
+DROP TABLE IF EXISTS sum_daily_finance CASCADE;
+DROP TABLE IF EXISTS sum_daily_insight CASCADE;
+DROP TABLE IF EXISTS sum_daily_scheme CASCADE;
+DROP TABLE IF EXISTS sum_daily_channel CASCADE;
 DROP TABLE IF EXISTS sum_daily_mcc CASCADE;
-DROP TABLE IF EXISTS merchant_activity CASCADE;
+DROP TABLE IF EXISTS sum_monthly_bank CASCADE;
+DROP TABLE IF EXISTS sum_monthly_card CASCADE;
+DROP TABLE IF EXISTS sum_monthly_merchant_metrics CASCADE;
+DROP TABLE IF EXISTS merchant_daily_metrics CASCADE;
 DROP TABLE IF EXISTS kpi_snapshot_daily CASCADE;
 DROP TABLE IF EXISTS kpi_snapshot_monthly CASCADE;
 DROP TABLE IF EXISTS batch_run_log CASCADE;
-DROP TABLE IF EXISTS user_region_access CASCADE;
+
+-- Config
+DROP TABLE IF EXISTS data_source_config CASCADE;
+DROP TABLE IF EXISTS report_query_config CASCADE;
+DROP TABLE IF EXISTS report_run_log CASCADE;
 
 -- Staging
 DROP TABLE IF EXISTS stg_merchant_master_raw CASCADE;
@@ -67,6 +84,17 @@ CREATE TABLE IF NOT EXISTS ref_country (
     currency_symbol VARCHAR(5),
     phone_code VARCHAR(10)
 );
+-- ==================================================================================
+-- PHASE 1.5: MULTI-TENANCY FOUNDATION
+-- ==================================================================================
+
+-- Secure Function to get current tenant from Session Variable (Simplified for Spring Data compat)
+CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
+    SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
+'
+LANGUAGE sql SECURITY DEFINER;
+
+
 -- ==================================================================================
 -- PHASE 2.5: DYNAMIC RBAC (Groups & Menus)
 -- ==================================================================================
@@ -128,7 +156,10 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Merchant Financial', '/business/merchant-financial', 'DollarSign', 'BUSINESS', 5),
 ('Performance Trends', '/business/performance', 'TrendingUp', 'BUSINESS', 6),
 ('Debit & Prepaid Metrics', '/business/debit-prepaid', 'CreditCard', 'BUSINESS', 7),
-('Attrition Report', '/business/attrition', 'TrendingDown', 'BUSINESS', 8)
+('Attrition Report', '/business/attrition', 'TrendingDown', 'BUSINESS', 8),
+('Merchant Growth Heatmap', '/business/heatmap', 'Grid', 'BUSINESS', 9),
+('Daily Merchant Dashboard', '/business/daily-dashboard', 'Calendar', 'BUSINESS', 10),
+('Backup & Restore', '/admin/backups', 'Database', 'ADMINISTRATION', 11)
 ON CONFLICT (path) DO NOTHING;
 
 -- Map New Menu to Groups (Super Admin & Bank Admin)
@@ -376,6 +407,8 @@ CREATE TABLE IF NOT EXISTS stg_trnx_raw (
     interchange_fee DECIMAL(19, 4),
     destination VARCHAR(50)
 );
+ALTER TABLE stg_merchant_master_raw ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stg_trnx_raw ENABLE ROW LEVEL SECURITY;
 
 -- ==========================================
 -- 3. Operational Tables (RLS Protected)
@@ -394,6 +427,11 @@ CREATE TABLE IF NOT EXISTS dim_merchant (
     sales_email VARCHAR(100), -- For RM Mapping
     referral_partner VARCHAR(100),
     risk_level VARCHAR(20),
+
+    industry VARCHAR(100),
+    mcc VARCHAR(10),
+    location VARCHAR(100),
+    city VARCHAR(100),
     
     UNIQUE(tenant_id, internal_id) -- Duplicate IDs allowed across different tenants
 );
@@ -417,10 +455,10 @@ CREATE TABLE IF NOT EXISTS dim_store (
     mcc VARCHAR(10),
     status VARCHAR(50),
     created_date TIMESTAMP,
-    
+
     -- Location & Geo
-    latitude DECIMAL(9, 6),
-    longitude DECIMAL(9, 6),
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
     timezone VARCHAR(50),
     operating_hours JSONB,
     
@@ -623,8 +661,8 @@ CREATE TABLE IF NOT EXISTS dim_aggregator (
 -- ==========================================
 
 CREATE TABLE IF NOT EXISTS fact_transaction (
-    transaction_id BIGSERIAL PRIMARY KEY,
-    tenant_id INT NOT NULL REFERENCES tenant(tenant_id), -- RLS Key
+    transaction_id BIGSERIAL,
+    tenant_id INT NOT NULL, -- references tenant(tenant_id) commented out to allow partitioning without complex FK handling across partitions
     
     merchant_id BIGINT, 
     store_id BIGINT,
@@ -635,7 +673,7 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     card_number VARCHAR(50), 
     auth_code VARCHAR(50),
     
-    payment_date TIMESTAMP,
+    payment_date TIMESTAMP NOT NULL, -- Required for partitioning
     transaction_date TIMESTAMP,
     batch_number VARCHAR(50),
     transaction_type VARCHAR(50),
@@ -654,8 +692,16 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     interchange_fee DECIMAL(19, 4),
     destination VARCHAR(50),
     
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    PRIMARY KEY (transaction_id, payment_date)
+) PARTITION BY RANGE (payment_date);
+
+-- Initial Partitions
+CREATE TABLE IF NOT EXISTS fact_transaction_y2024 PARTITION OF fact_transaction FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025 PARTITION OF fact_transaction FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_default PARTITION OF fact_transaction DEFAULT;
+
 -- Enable RLS
 ALTER TABLE fact_transaction ENABLE ROW LEVEL SECURITY;
 
@@ -692,19 +738,33 @@ CREATE TABLE IF NOT EXISTS sum_daily_merchant (
     total_credit_volume DECIMAL(19, 2) DEFAULT 0,
     sales_user_id VARCHAR(50),
     
-    PRIMARY KEY (summary_id, business_date)
+    unique_customer_count BIGINT DEFAULT 0,
+    top_spending_customer_id VARCHAR(50),
+    top_spending_amount DECIMAL(19, 2),
+    
+    -- DCC Metrics
+    dcc_eligible_volume DECIMAL(19, 2) DEFAULT 0,
+    dcc_optin_volume DECIMAL(19, 2) DEFAULT 0,
+    dcc_optout_volume DECIMAL(19, 2) DEFAULT 0,
+    dcc_eligible_count BIGINT DEFAULT 0,
+    dcc_optin_count BIGINT DEFAULT 0,
+    
+    PRIMARY KEY (summary_id, business_date),
+    UNIQUE (tenant_id, business_date, merchant_id)
 ) PARTITION BY RANGE (business_date);
 
 -- Partitions
-CREATE TABLE sum_daily_merchant_y2024 PARTITION OF sum_daily_merchant
+CREATE TABLE IF NOT EXISTS sum_daily_merchant_y2024 PARTITION OF sum_daily_merchant
     FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE sum_daily_merchant_y2025 PARTITION OF sum_daily_merchant
+CREATE TABLE IF NOT EXISTS sum_daily_merchant_y2025 PARTITION OF sum_daily_merchant
     FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-CREATE TABLE sum_daily_merchant_default PARTITION OF sum_daily_merchant DEFAULT;
+CREATE TABLE IF NOT EXISTS sum_daily_merchant_y2026 PARTITION OF sum_daily_merchant
+    FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_merchant_default PARTITION OF sum_daily_merchant DEFAULT;
 
 -- Indexes
-CREATE INDEX idx_sum_merch_tenant_date ON sum_daily_merchant (tenant_id, business_date);
-CREATE INDEX idx_sum_merch_id ON sum_daily_merchant (merchant_id);
+CREATE INDEX IF NOT EXISTS idx_sum_merch_tenant_date ON sum_daily_merchant (tenant_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_sum_merch_id ON sum_daily_merchant (merchant_id);
 -- Row Level Security
 ALTER TABLE sum_daily_merchant ENABLE ROW LEVEL SECURITY;
 
@@ -722,14 +782,15 @@ CREATE TABLE IF NOT EXISTS sum_daily_scheme (
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
     
-    PRIMARY KEY (summary_id, business_date)
+    PRIMARY KEY (summary_id, business_date),
+    UNIQUE (tenant_id, business_date, card_scheme)
 ) PARTITION BY RANGE (business_date);
 
-CREATE TABLE sum_daily_scheme_y2024 PARTITION OF sum_daily_scheme FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE sum_daily_scheme_y2025 PARTITION OF sum_daily_scheme FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-CREATE TABLE sum_daily_scheme_default PARTITION OF sum_daily_scheme DEFAULT;
+CREATE TABLE IF NOT EXISTS sum_daily_scheme_y2024 PARTITION OF sum_daily_scheme FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_scheme_y2025 PARTITION OF sum_daily_scheme FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_scheme_default PARTITION OF sum_daily_scheme DEFAULT;
 
-CREATE INDEX idx_sum_scheme_tenant_date ON sum_daily_scheme (tenant_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_sum_scheme_tenant_date ON sum_daily_scheme (tenant_id, business_date);
 ALTER TABLE sum_daily_scheme ENABLE ROW LEVEL SECURITY;
 
 
@@ -746,14 +807,15 @@ CREATE TABLE IF NOT EXISTS sum_daily_channel (
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
     
-    PRIMARY KEY (summary_id, business_date)
+    PRIMARY KEY (summary_id, business_date),
+    UNIQUE (tenant_id, business_date, channel)
 ) PARTITION BY RANGE (business_date);
 
-CREATE TABLE sum_daily_channel_y2024 PARTITION OF sum_daily_channel FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE sum_daily_channel_y2025 PARTITION OF sum_daily_channel FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-CREATE TABLE sum_daily_channel_default PARTITION OF sum_daily_channel DEFAULT;
+CREATE TABLE IF NOT EXISTS sum_daily_channel_y2024 PARTITION OF sum_daily_channel FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_channel_y2025 PARTITION OF sum_daily_channel FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_channel_default PARTITION OF sum_daily_channel DEFAULT;
 
-CREATE INDEX idx_sum_channel_tenant_date ON sum_daily_channel (tenant_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_sum_channel_tenant_date ON sum_daily_channel (tenant_id, business_date);
 ALTER TABLE sum_daily_channel ENABLE ROW LEVEL SECURITY;
 
 
@@ -770,16 +832,43 @@ CREATE TABLE IF NOT EXISTS sum_daily_terminal (
     total_msf DECIMAL(19, 2) DEFAULT 0,
     total_revenue DECIMAL(19, 2) DEFAULT 0, 
     
-    PRIMARY KEY (summary_id, business_date)
+    PRIMARY KEY (summary_id, business_date),
+    UNIQUE (tenant_id, business_date, merchant_id, store_id, terminal_id)
 ) PARTITION BY RANGE (business_date);
 
-CREATE TABLE sum_daily_terminal_y2024 PARTITION OF sum_daily_terminal FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE sum_daily_terminal_y2025 PARTITION OF sum_daily_terminal FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-CREATE TABLE sum_daily_terminal_default PARTITION OF sum_daily_terminal DEFAULT;
+CREATE TABLE IF NOT EXISTS sum_daily_terminal_y2024 PARTITION OF sum_daily_terminal FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_terminal_y2025 PARTITION OF sum_daily_terminal FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_terminal_default PARTITION OF sum_daily_terminal DEFAULT;
 
-CREATE INDEX idx_sum_term_tenant_date ON sum_daily_terminal (tenant_id, business_date);
-CREATE INDEX idx_sum_term_ids ON sum_daily_terminal (merchant_id, terminal_id);
+CREATE INDEX IF NOT EXISTS idx_sum_term_tenant_date ON sum_daily_terminal (tenant_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_sum_term_ids ON sum_daily_terminal (merchant_id, terminal_id);
 ALTER TABLE sum_daily_terminal ENABLE ROW LEVEL SECURITY;
+
+
+CREATE TABLE IF NOT EXISTS sum_daily_merchant_attribute (
+    id BIGSERIAL,
+    merchant_id BIGINT NOT NULL,
+    business_date DATE NOT NULL,
+    attribute_type VARCHAR(50) NOT NULL,
+    attribute_value VARCHAR(100) NOT NULL,
+    
+    metric_count BIGINT DEFAULT 0,
+    metric_volume DECIMAL(19, 2) DEFAULT 0,
+    version BIGINT,
+    tenant_id INT NOT NULL,
+    
+    PRIMARY KEY (id, business_date),
+    UNIQUE (tenant_id, merchant_id, business_date, attribute_type, attribute_value)
+) PARTITION BY RANGE (business_date);
+
+CREATE TABLE IF NOT EXISTS sum_daily_merch_attr_y2024 PARTITION OF sum_daily_merchant_attribute FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_merch_attr_y2025 PARTITION OF sum_daily_merchant_attribute FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_merch_attr_y2026 PARTITION OF sum_daily_merchant_attribute FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_merch_attr_default PARTITION OF sum_daily_merchant_attribute DEFAULT;
+
+CREATE INDEX IF NOT EXISTS idx_sdma_merchant_date ON sum_daily_merchant_attribute (merchant_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_sdma_attr_type ON sum_daily_merchant_attribute (attribute_type);
+ALTER TABLE sum_daily_merchant_attribute ENABLE ROW LEVEL SECURITY;
 
 
 CREATE TABLE IF NOT EXISTS sum_monthly_bank (
@@ -814,14 +903,15 @@ CREATE TABLE IF NOT EXISTS sum_daily_bank (
     total_vat DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
 
-    PRIMARY KEY (summary_id, business_date)
+    PRIMARY KEY (summary_id, business_date),
+    UNIQUE (tenant_id, business_date)
 ) PARTITION BY RANGE (business_date);
 
-CREATE TABLE sum_daily_bank_y2024 PARTITION OF sum_daily_bank FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE sum_daily_bank_y2025 PARTITION OF sum_daily_bank FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-CREATE TABLE sum_daily_bank_default PARTITION OF sum_daily_bank DEFAULT;
+CREATE TABLE IF NOT EXISTS sum_daily_bank_y2024 PARTITION OF sum_daily_bank FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_bank_y2025 PARTITION OF sum_daily_bank FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_bank_default PARTITION OF sum_daily_bank DEFAULT;
 
-CREATE INDEX idx_sum_bank_tenant_date ON sum_daily_bank (tenant_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_sum_bank_tenant_date ON sum_daily_bank (tenant_id, business_date);
 ALTER TABLE sum_daily_bank ENABLE ROW LEVEL SECURITY;
 
 
@@ -852,14 +942,15 @@ CREATE TABLE IF NOT EXISTS sum_daily_finance (
     total_vol DECIMAL(19, 2) DEFAULT 0,
     total_msf DECIMAL(19, 2) DEFAULT 0,
 
-    PRIMARY KEY (summary_id, business_date)
+    PRIMARY KEY (summary_id, business_date),
+    UNIQUE (tenant_id, business_date)
 ) PARTITION BY RANGE (business_date);
 
-CREATE TABLE sum_daily_finance_y2024 PARTITION OF sum_daily_finance FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE sum_daily_finance_y2025 PARTITION OF sum_daily_finance FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-CREATE TABLE sum_daily_finance_default PARTITION OF sum_daily_finance DEFAULT;
+CREATE TABLE IF NOT EXISTS sum_daily_finance_y2024 PARTITION OF sum_daily_finance FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_finance_y2025 PARTITION OF sum_daily_finance FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_finance_default PARTITION OF sum_daily_finance DEFAULT;
 
-CREATE INDEX idx_sum_fin_tenant_date ON sum_daily_finance (tenant_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_sum_fin_tenant_date ON sum_daily_finance (tenant_id, business_date);
 ALTER TABLE sum_daily_finance ENABLE ROW LEVEL SECURITY;
 
 
@@ -882,15 +973,16 @@ CREATE TABLE IF NOT EXISTS sum_daily_insight (
     total_volume DECIMAL(19, 2) DEFAULT 0,
     total_msf DECIMAL(19, 2) DEFAULT 0,
     
-    PRIMARY KEY (summary_id, business_date)
+    PRIMARY KEY (summary_id, business_date),
+    UNIQUE (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
 ) PARTITION BY RANGE (business_date);
 
-CREATE TABLE sum_daily_insight_y2024 PARTITION OF sum_daily_insight FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE sum_daily_insight_y2025 PARTITION OF sum_daily_insight FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-CREATE TABLE sum_daily_insight_default PARTITION OF sum_daily_insight DEFAULT;
+CREATE TABLE IF NOT EXISTS sum_daily_insight_y2024 PARTITION OF sum_daily_insight FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_insight_y2025 PARTITION OF sum_daily_insight FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+CREATE TABLE IF NOT EXISTS sum_daily_insight_default PARTITION OF sum_daily_insight DEFAULT;
 
-CREATE INDEX idx_sum_insight_tenant_date ON sum_daily_insight (tenant_id, business_date);
-CREATE INDEX idx_sum_insight_merchant ON sum_daily_insight (merchant_id);
+CREATE INDEX IF NOT EXISTS idx_sum_insight_tenant_date ON sum_daily_insight (tenant_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_sum_insight_merchant ON sum_daily_insight (merchant_id);
 ALTER TABLE sum_daily_insight ENABLE ROW LEVEL SECURITY;
 
 
@@ -957,7 +1049,7 @@ CREATE TABLE IF NOT EXISTS user_region_access (
 
 CREATE TABLE IF NOT EXISTS batch_run_log (
     run_id BIGSERIAL PRIMARY KEY,
-    tenant_id INT,
+    tenant_id BIGINT,
     job_name VARCHAR(100),
     start_time TIMESTAMP,
     end_time TIMESTAMP,
@@ -967,34 +1059,249 @@ CREATE TABLE IF NOT EXISTS batch_run_log (
     error_message TEXT
 );
 
--- RLS Policies for New Tables
-ALTER TABLE sum_daily_bank ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sum_daily_mcc ENABLE ROW LEVEL SECURITY;
-ALTER TABLE merchant_activity ENABLE ROW LEVEL SECURITY;
-ALTER TABLE kpi_snapshot_daily ENABLE ROW LEVEL SECURITY;
-ALTER TABLE kpi_snapshot_monthly ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sum_daily_scheme ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sum_daily_channel ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sum_daily_terminal ENABLE ROW LEVEL SECURITY;
-ALTER TABLE batch_run_log ENABLE ROW LEVEL SECURITY;
+-- Sum Monthly Card (Optimized for Loyalty / Frequency)
+CREATE TABLE IF NOT EXISTS sum_monthly_card (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    merchant_id BIGINT,
+    month_key INT, -- YYYYMM
+    card_number VARCHAR(50),
+    
+    visit_count INT DEFAULT 0,
+    total_spend DECIMAL(19, 2) DEFAULT 0,
+    UNIQUE(tenant_id, merchant_id, month_key, card_number)
+);
+CREATE INDEX IF NOT EXISTS idx_sum_card_merch_month ON sum_monthly_card (merchant_id, month_key);
+ALTER TABLE sum_monthly_card ENABLE ROW LEVEL SECURITY;
+-- ==========================================
+-- 8. Advanced Merchant Metrics (Daily Dashboard)
+-- ==========================================
 
-DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_bank;
-CREATE POLICY tenant_isolation_policy ON sum_daily_bank USING (tenant_id = get_current_tenant());
-DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_mcc;
-CREATE POLICY tenant_isolation_policy ON sum_daily_mcc USING (tenant_id = get_current_tenant());
-DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_mcc;
-CREATE POLICY tenant_isolation_policy ON sum_daily_mcc USING (tenant_id = get_current_tenant());
+CREATE TABLE IF NOT EXISTS sum_monthly_merchant_metrics (
+    metric_id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL REFERENCES tenant(tenant_id),
+    merchant_id BIGINT REFERENCES dim_merchant(merchant_id),
+    month_year VARCHAR(7) NOT NULL, -- Format: YYYY-MM
+    
+    -- Volatility & Risk
+    volatility_index DECIMAL(10, 4),
+    stability_label VARCHAR(50), -- 'Stable', 'Fluctuating', 'Unstable'
+    behavior_tag VARCHAR(50),    -- 'Weekend Heavy', 'Payday Spikes', etc.
+    smart_comment TEXT,
+    
+    -- Weekly Health (Green/Yellow/Red)
+    week_1_health VARCHAR(20),
+    week_2_health VARCHAR(20),
+    week_3_health VARCHAR(20),
+    week_4_health VARCHAR(20),
+    week_5_health VARCHAR(20),
+    
+    -- Aggregate Stats for the Month
+    total_volume DECIMAL(19, 2),
+    avg_daily_volume DECIMAL(19, 2),
+    max_daily_volume DECIMAL(19, 2),
+    min_daily_volume DECIMAL(19, 2),
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(tenant_id, merchant_id, month_year)
+);
+ALTER TABLE sum_monthly_merchant_metrics ENABLE ROW LEVEL SECURITY;
+
+-- Migration V2: Hybrid Reporting Engine Tables
+CREATE TABLE IF NOT EXISTS merchant_daily_metrics (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL REFERENCES tenant(tenant_id),
+    report_date DATE NOT NULL,
+    merchant_id VARCHAR(255) NOT NULL,
+    merchant_name VARCHAR(255),
+    mid VARCHAR(255),
+    
+    -- Volumes
+    today_volume DOUBLE PRECISION DEFAULT 0.0,
+    yesterday_volume DOUBLE PRECISION DEFAULT 0.0,
+    avg7day DOUBLE PRECISION DEFAULT 0.0,
+    total_mtd DOUBLE PRECISION DEFAULT 0.0,
+    
+    -- BI Metrics
+    trend_pct DOUBLE PRECISION DEFAULT 0.0,
+    volatility VARCHAR(20),
+    risk_score INTEGER DEFAULT 0,
+    ui_status VARCHAR(20),
+    
+    -- JSON Data
+    daily_volumes_json TEXT,
+    sparkline_data_json TEXT,
+    
+    -- Meta
+    source_type VARCHAR(50),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE merchant_daily_metrics ENABLE ROW LEVEL SECURITY;
+
+CREATE INDEX IF NOT EXISTS idx_metrics_date ON merchant_daily_metrics(report_date);
+CREATE INDEX IF NOT EXISTS idx_metrics_mid ON merchant_daily_metrics(mid);
+CREATE INDEX IF NOT EXISTS idx_metrics_merchant_id ON merchant_daily_metrics(merchant_id);
+
+
+-- 2. Data Source Config (For External DB Connections)
+CREATE TABLE IF NOT EXISTS data_source_config (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    db_type VARCHAR(50) NOT NULL, -- ORACLE, POSTGRES, MSSQL
+    host VARCHAR(255) NOT NULL,
+    port INTEGER NOT NULL,
+    db_name VARCHAR(255) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    encrypted_password VARCHAR(255) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Report Query Config (Stored SQL Queries)
+CREATE TABLE IF NOT EXISTS report_query_config (
+    id BIGSERIAL PRIMARY KEY,
+    report_name VARCHAR(255) NOT NULL,
+    sql_text TEXT NOT NULL,
+    source_id BIGINT REFERENCES data_source_config(id),
+    description TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    approved_by VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 4. Report Run Log (Audit Trail)
+CREATE TABLE IF NOT EXISTS report_run_log (
+    id BIGSERIAL PRIMARY KEY,
+    query_id BIGINT REFERENCES report_query_config(id),
+    start_time TIMESTAMP,
+    end_time TIMESTAMP,
+    status VARCHAR(50), -- SUCCESS, FAILED, RUNNING
+    row_count INTEGER,
+    error_message TEXT
+);
+
+-- Apply Tenant Isolation Policy to all RLS-enabled tables
+-- We use a standardized policy name 'tenant_isolation_policy' across all tables.
+
+-- Core & RBAC
+DROP POLICY IF EXISTS tenant_isolation_policy ON tenant_setting;
+CREATE POLICY tenant_isolation_policy ON tenant_setting USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON audit_log;
+CREATE POLICY tenant_isolation_policy ON audit_log USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON dashboard_config;
+CREATE POLICY tenant_isolation_policy ON dashboard_config USING (tenant_id = get_current_tenant());
+
+-- Dimensions
+DROP POLICY IF EXISTS tenant_isolation_policy ON dim_merchant;
+CREATE POLICY tenant_isolation_policy ON dim_merchant USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON dim_store;
+CREATE POLICY tenant_isolation_policy ON dim_store USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON dim_terminal;
+CREATE POLICY tenant_isolation_policy ON dim_terminal USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON dim_bank_account;
+CREATE POLICY tenant_isolation_policy ON dim_bank_account USING (tenant_id = get_current_tenant());
+
+-- Business Advanced
+DROP POLICY IF EXISTS tenant_isolation_policy ON bank_budget_target;
+CREATE POLICY tenant_isolation_policy ON bank_budget_target USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_lifecycle_status;
+CREATE POLICY tenant_isolation_policy ON merchant_lifecycle_status USING (tenant_id = get_current_tenant());
+
 DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_activity_summary;
 CREATE POLICY tenant_isolation_policy ON merchant_activity_summary USING (tenant_id = get_current_tenant());
-DROP POLICY IF EXISTS tenant_isolation_policy ON kpi_snapshot_daily;
-CREATE POLICY tenant_isolation_policy ON kpi_snapshot_daily USING (tenant_id = get_current_tenant());
-DROP POLICY IF EXISTS tenant_isolation_policy ON kpi_snapshot_monthly;
-CREATE POLICY tenant_isolation_policy ON kpi_snapshot_monthly USING (tenant_id = get_current_tenant());
-DROP POLICY IF EXISTS tenant_isolation_policy ON batch_run_log;
-CREATE POLICY tenant_isolation_policy ON batch_run_log USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_opportunity_score;
+CREATE POLICY tenant_isolation_policy ON merchant_opportunity_score USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON revenue_leakage_flags;
+CREATE POLICY tenant_isolation_policy ON revenue_leakage_flags USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_contact;
+CREATE POLICY tenant_isolation_policy ON merchant_contact USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_document;
+CREATE POLICY tenant_isolation_policy ON merchant_document USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_contract;
+CREATE POLICY tenant_isolation_policy ON merchant_contract USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_risk_profile;
+CREATE POLICY tenant_isolation_policy ON merchant_risk_profile USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_settlement_config;
+CREATE POLICY tenant_isolation_policy ON merchant_settlement_config USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_note;
+CREATE POLICY tenant_isolation_policy ON merchant_note USING (tenant_id = get_current_tenant());
+
+-- Transactions & Summaries
+DROP POLICY IF EXISTS tenant_isolation_policy ON fact_transaction;
+CREATE POLICY tenant_isolation_policy ON fact_transaction USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_merchant;
+CREATE POLICY tenant_isolation_policy ON sum_daily_merchant USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_scheme;
+CREATE POLICY tenant_isolation_policy ON sum_daily_scheme USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_channel;
+CREATE POLICY tenant_isolation_policy ON sum_daily_channel USING (tenant_id = get_current_tenant());
 
 DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_terminal;
 CREATE POLICY tenant_isolation_policy ON sum_daily_terminal USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_bank;
+CREATE POLICY tenant_isolation_policy ON sum_daily_bank USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_finance;
+CREATE POLICY tenant_isolation_policy ON sum_daily_finance USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_insight;
+CREATE POLICY tenant_isolation_policy ON sum_daily_insight USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_mcc;
+CREATE POLICY tenant_isolation_policy ON sum_daily_mcc USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_monthly_bank;
+CREATE POLICY tenant_isolation_policy ON sum_monthly_bank USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_monthly_card;
+CREATE POLICY tenant_isolation_policy ON sum_monthly_card USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_monthly_merchant_metrics;
+CREATE POLICY tenant_isolation_policy ON sum_monthly_merchant_metrics USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_activity;
+CREATE POLICY tenant_isolation_policy ON merchant_activity USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON kpi_snapshot_daily;
+CREATE POLICY tenant_isolation_policy ON kpi_snapshot_daily USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON kpi_snapshot_monthly;
+CREATE POLICY tenant_isolation_policy ON kpi_snapshot_monthly USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON batch_run_log;
+CREATE POLICY tenant_isolation_policy ON batch_run_log USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_daily_merchant_attribute;
+CREATE POLICY tenant_isolation_policy ON sum_daily_merchant_attribute USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON stg_merchant_master_raw;
+CREATE POLICY tenant_isolation_policy ON stg_merchant_master_raw USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON stg_trnx_raw;
+CREATE POLICY tenant_isolation_policy ON stg_trnx_raw USING (tenant_id = get_current_tenant());
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_daily_metrics;
+CREATE POLICY tenant_isolation_policy ON merchant_daily_metrics USING (tenant_id = get_current_tenant());
 
 
 -- ==================================================================================
@@ -1020,5 +1327,6 @@ SELECT u.user_id, t.tenant_id, g.group_id
 FROM users u, tenant t, sys_user_group g
 WHERE u.username = 'admin' AND t.institution_id = 'BANK001' AND g.group_name = 'Super Admin'
 ON CONFLICT (user_id, tenant_id) DO NOTHING;
+
 
 

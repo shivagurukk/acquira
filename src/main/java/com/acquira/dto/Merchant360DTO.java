@@ -2,6 +2,7 @@ package com.acquira.dto;
 
 import com.acquira.model.*;
 import lombok.Data;
+import java.math.BigDecimal;
 import java.util.List;
 
 @Data
@@ -60,5 +61,24 @@ public class Merchant360DTO {
 
     public void setRiskProfile(MerchantRiskProfile riskProfile) {
         this.riskProfile = riskProfile;
+    }
+
+    @Data
+    public static class ValueWithGrowth {
+        private BigDecimal value;
+        private Double growth;
+
+        public ValueWithGrowth(BigDecimal value, Double growth) {
+            this.value = value;
+            this.growth = growth;
+        }
+
+        public BigDecimal getValue() {
+            return value;
+        }
+
+        public Double getGrowth() {
+            return growth;
+        }
     }
 }
