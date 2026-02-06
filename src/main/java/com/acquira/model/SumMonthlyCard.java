@@ -32,4 +32,32 @@ public class SumMonthlyCard {
 
     // Optional indices for performance:
     // (tenant_id, merchant_id, month_key)
+    // Manual Getters (Fallback if Lombok fails)
+    public Long getId() {
+        return id;
+    }
+
+    public Long getTenantId() {
+        return tenantId;
+    }
+
+    public Long getMerchantId() {
+        return merchantId;
+    }
+
+    public Integer getMonthKey() {
+        return monthKey;
+    }
+
+    public String getCardNumber() {
+        return cardNumber;
+    }
+
+    public Long getVisitCount() {
+        return visitCount;
+    }
+
+    public BigDecimal getTotalSpend() {
+        return totalSpend;
+    }
 }
