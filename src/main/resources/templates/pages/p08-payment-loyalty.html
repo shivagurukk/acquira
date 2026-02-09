@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="paymentLoyaltyContent">
+
+        <div class="section-subtitle" style="margin-bottom: 8px;">Card scheme performance, wallet usage and customer loyalty analysis</div>
+
+        <!-- ═══════════════ PAYMENT SECTION ═══════════════ -->
+
+        <!-- ROW 1: 4 KPI Cards — ALL DYNAMIC -->
+        <div class="grid-4 mb-6">
+            <div class="card" style="flex-direction: row; align-items: center; gap: 8px; padding: 10px; border-top: 3px solid #2563EB;">
+                <div class="icon-circle icon-circle-blue" style="width: 28px; height: 28px;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg>
+                </div>
+                <div>
+                    <div style="font-size: 7px; color: #4B5563; font-weight: 700;">CARD PENETRATION</div>
+                    <div style="font-size: 16px; font-weight: 900; color: #111827;" th:text="${dto.demographics.cardPenetrationPct != null ? dto.demographics.cardPenetrationPct + '%' : '-'}">-</div>
+                </div>
+            </div>
+            <div class="card" style="flex-direction: row; align-items: center; gap: 8px; padding: 10px; border-top: 3px solid #0D9488;">
+                <div class="icon-circle icon-circle-green" style="width: 28px; height: 28px;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+                </div>
+                <div>
+                    <div style="font-size: 7px; color: #4B5563; font-weight: 700;">WALLET USAGE</div>
+                    <div style="font-size: 16px; font-weight: 900; color: #111827;" th:text="${dto.demographics.walletUsagePct != null ? dto.demographics.walletUsagePct + '%' : '-'}">-</div>
+                </div>
+            </div>
+            <div class="card" style="flex-direction: row; align-items: center; gap: 8px; padding: 10px; border-top: 3px solid #B45309;">
+                <div class="icon-circle icon-circle-amber" style="width: 28px; height: 28px;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
+                </div>
+                <div>
+                    <div style="font-size: 7px; color: #4B5563; font-weight: 700;">CREDIT / DEBIT</div>
+                    <div style="font-size: 16px; font-weight: 900; color: #111827;" th:text="${dto.demographics.creditDebitRatio != null ? dto.demographics.creditDebitRatio : '-'}">-</div>
+                </div>
+            </div>
+            <div class="card" style="flex-direction: row; align-items: center; gap: 8px; padding: 10px; border-top: 3px solid #6D28D9;">
+                <div class="icon-circle icon-circle-purple" style="width: 28px; height: 28px;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+                </div>
+                <div>
+                    <div style="font-size: 7px; color: #4B5563; font-weight: 700;">UNIQUE CARDS</div>
+                    <div style="font-size: 16px; font-weight: 900; color: #111827;" th:text="${dto.loyalty.totalUniqueCards != null ? dto.loyalty.totalUniqueCards.toBigInteger() : '-'}">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 2: Card Schemes + Card Types -->
+        <div class="grid-2 mb-6">
+            <div class="card" style="padding: 10px;">
+                <div class="card-title">CARD SCHEMES (BY VALUE)</div>
+                <div id="payment-card-schemes" style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
+            </div>
+            <div class="card" style="padding: 10px;">
+                <div class="card-title">CARD TYPES (BY VALUE)</div>
+                <div id="payment-card-types" style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
+            </div>
+        </div>
+
+        <!-- ROW 3: Transaction Type Split -->
+        <div class="card mb-6" style="padding: 10px;">
+            <div class="card-title">TRANSACTION TYPE SPLIT</div>
+            <div id="payment-txn-types" style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
+        </div>
+
+        <!-- Section Divider -->
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+            <div style="font-size: 8px; font-weight: 800; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">Consumer Loyalty</div>
+            <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #DBEAFE, transparent);"></div>
+        </div>
+
+        <!-- ═══════════════ LOYALTY SECTION ═══════════════ -->
+
+        <!-- ROW 4: 3 Loyalty KPIs — ALL DYNAMIC -->
+        <div class="grid-3 mb-6">
+            <div class="card" style="padding: 10px; border-top: 3px solid #0D9488;">
+                <div style="font-size: 7px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em;">RETENTION RATE</div>
+                <div style="font-size: 22px; font-weight: 900; color: #0D9488; margin: 2px 0;" th:text="${dto.loyalty.retentionRate != null ? dto.loyalty.retentionRate + '%' : '-'}">-</div>
+                <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate >= 50}" style="display: inline-block; background: #F0FDFA; color: #0D9488; padding: 1px 6px; border-radius: 3px; font-size: 7px; font-weight: 700;">High Loyalty</span>
+                <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate < 50}" style="display: inline-block; background: #FFFBEB; color: #B45309; padding: 1px 6px; border-radius: 3px; font-size: 7px; font-weight: 700;">Needs Improvement</span>
+            </div>
+            <div class="card" style="padding: 10px; border-top: 3px solid #2563EB;">
+                <div style="font-size: 7px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em;">UNIQUE CUSTOMERS</div>
+                <div style="font-size: 22px; font-weight: 900; color: #111827; margin: 2px 0;" th:text="${dto.overview.customers.formattedValue}">0</div>
+                <span style="font-size: 7px; color: #6B7280;">This period</span>
+            </div>
+            <div class="card" style="padding: 10px; border-top: 3px solid #6D28D9;">
+                <div style="font-size: 7px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em;">AVG VISITS / MONTH</div>
+                <div style="font-size: 22px; font-weight: 900; color: #111827; margin: 2px 0;" th:text="${dto.overview.avgTxnsPerCustomer != null ? dto.overview.avgTxnsPerCustomer.formattedValue : '-'}">-</div>
+                <span style="font-size: 7px; color: #6B7280;">Frequency per customer</span>
+            </div>
+        </div>
+
+        <!-- ROW 5: Revenue Concentration Banner — DYNAMIC -->
+        <th:block th:with="repeatPct=${dto.loyalty.repeatCardPct != null ? dto.loyalty.repeatCardPct : 0}">
+        <div class="card mb-6" style="padding: 10px 16px; flex-direction: row; align-items: center; gap: 12px; background: linear-gradient(135deg, #0F2042, #1E3A8A); border: none; color: white; min-height: 0;">
+            <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+                <div style="text-align: center; min-width: 60px;">
+                    <div style="font-size: 20px; font-weight: 900; color: white; line-height: 1; white-space: nowrap;" th:text="${repeatPct + '%'}">0%</div>
+                    <div style="font-size: 6px; font-weight: 600; color: rgba(255,255,255,0.6); margin-top: 2px; text-transform: uppercase; white-space: nowrap;">Repeat Customers</div>
+                </div>
+                <div style="font-size: 12px; color: rgba(255,255,255,0.3);">&#8594;</div>
+                <div style="text-align: center; min-width: 60px;">
+                    <div style="font-size: 20px; font-weight: 900; color: #60A5FA; line-height: 1; white-space: nowrap;" th:text="${dto.loyalty.retentionRate != null ? dto.loyalty.retentionRate + '%' : '-'}">-</div>
+                    <div style="font-size: 6px; font-weight: 600; color: rgba(255,255,255,0.6); margin-top: 2px; text-transform: uppercase; white-space: nowrap;">Retention Rate</div>
+                </div>
+            </div>
+            <div style="width: 1px; height: 28px; background: rgba(255,255,255,0.15); flex-shrink: 0;"></div>
+            <div style="font-size: 8px; color: rgba(255,255,255,0.85); line-height: 1.5;">
+                <strong style="color: #93C5FD;">Insight:</strong> Repeat customers drive the majority of revenue. Protect this segment with exclusive perks and personalized offers.
+            </div>
+        </div>
+        </th:block>
+
+        <!-- ROW 6: Segment Analysis Table — DYNAMIC from loyalty data -->
+        <div class="card mb-6" style="padding: 0; overflow: hidden;">
+            <div style="padding: 7px 12px; background: linear-gradient(135deg, #F8FAFF 0%, #EFF6FF 100%); border-bottom: 1px solid #E5E7EB;">
+                <div style="font-size: 7.5px; font-weight: 800; color: #1E3A8A; text-transform: uppercase; letter-spacing: 0.06em;">VISIT FREQUENCY DISTRIBUTION</div>
+            </div>
+            <table class="data-table" style="font-size: 8.5px;">
+                <thead>
+                    <tr>
+                        <th style="width: 20%; padding: 6px 12px;">Segment</th>
+                        <th style="width: 12%;">Count</th>
+                        <th style="width: 42%;">Distribution</th>
+                        <th style="width: 26%;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding: 7px 12px;"><span style="font-weight: 800; color: #0D9488; font-size: 9px;">&#9679; Repeat (2+)</span></td>
+                        <td style="font-weight: 700;" th:text="${dto.loyalty.repeatCardPct != null ? dto.loyalty.repeatCardPct + '%' : '-'}">-</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${dto.loyalty.repeatCardPct != null ? dto.loyalty.repeatCardPct : 0} + '%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-teal">Reward &amp; Retain</span></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 7px 12px;"><span style="font-weight: 800; color: #1E3A8A; font-size: 9px;">&#9679; Single Visit</span></td>
+                        <th:block th:with="singlePct=${100 - (dto.loyalty.repeatCardPct != null ? dto.loyalty.repeatCardPct : 0)}">
+                        <td style="font-weight: 700;" th:text="${singlePct + '%'}">-</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${singlePct} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 4px;'"></div></div></td>
+                        </th:block>
+                        <td><span class="pill pill-navy">Convert to Repeat</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- AI Insight — DYNAMIC -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>AI Insight:</strong> Wallet usage at <span th:text="${dto.demographics.walletUsagePct != null ? dto.demographics.walletUsagePct + '%' : '-'}">-</span> — contactless-first terminals lift ticket value. Retention rate at <span th:text="${dto.loyalty.retentionRate != null ? dto.loyalty.retentionRate + '%' : '-'}">-</span>. Focus on converting single-visit customers to repeat through points-based rewards.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

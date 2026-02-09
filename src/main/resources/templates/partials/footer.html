@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="footer" class="report-footer">
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="width: 4px; height: 4px; background: linear-gradient(135deg, #2563EB, #60A5FA); border-radius: 50%;"></div>
+            <span style="font-size: 6.5px; color: #9CA3AF; letter-spacing: 0.05em; text-transform: uppercase;">Confidential</span>
+        </div>
+        <div style="font-size: 6.5px; color: #B0B7C3; letter-spacing: 0.03em;" th:text="${generatedDate != null ? 'Generated ' + generatedDate : reportPeriod}">DATE</div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="font-family: 'Playfair Display', Georgia, serif; font-size: 8px; font-weight: 700; color: #6B7280;">Page </span>
+            <span class="page-number" style="font-family: 'Playfair Display', Georgia, serif; font-size: 8px; font-weight: 700; color: #374151;"></span>
+            <span style="color: #D1D5DB; margin: 0 3px; font-size: 10px;">&#8226;</span>
+            <span style="font-size: 6.5px; color: #B0B7C3; font-style: italic; letter-spacing: 0.02em;">Powered by Acquira</span>
+        </div>
+    </div>
+</body>
+</html>

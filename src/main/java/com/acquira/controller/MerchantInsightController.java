@@ -14,6 +14,8 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @RestController
 @RequestMapping("/api/business/insights")
@@ -79,9 +81,9 @@ public class MerchantInsightController {
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month) {
         java.util.Map<String, Object> response = new java.util.HashMap<>();
-        int successCount = 0;
-        int failureCount = 0;
-        java.util.List<String> errors = new java.util.ArrayList<>();
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failureCount = new AtomicInteger(0);
+        java.util.List<String> errors = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
         try {
             YearMonth targetMonth = resolveTargetMonth(year, month);
@@ -90,35 +92,72 @@ public class MerchantInsightController {
 
             java.util.List<com.acquira.model.Merchant> merchants = merchantRepository.findAll();
 
+            // Capture tenant context from request thread to propagate to worker threads
+            Long currentTenant = TenantContext.getCurrentTenant();
+
+            // Phase 1: Fetch all DTO data sequentially (DB queries share connection pool)
+            long dataStart = System.currentTimeMillis();
+            java.util.List<Object[]> workItems = new java.util.ArrayList<>();
             for (com.acquira.model.Merchant m : merchants) {
                 try {
                     MerchantInsightsDTO data = insightService.getInsights(m.getMerchantId(), targetMonth.getYear(),
                             targetMonth.getMonthValue());
                     String merchantName = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
-                    // Sanitize filename
-                    String safeName = merchantName.replaceAll("[^a-zA-Z0-9.-]", "_");
-
-                    String filename = "Insight_" + safeName + "_" + targetMonth + ".pdf";
-                    java.nio.file.Path path = java.nio.file.Paths.get(folder, filename);
-
-                    String password = m.getMid() != null ? m.getMid() : String.valueOf(m.getMerchantId());
-                    byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName, targetMonth.toString());
-                    java.nio.file.Files.write(path, pdfBytes);
-                    successCount++;
+                    workItems.add(new Object[]{m, data, merchantName});
                 } catch (Exception e) {
-                    failureCount++;
-                    String errorMsg = "Merchant " + m.getMerchantId() + ": " + e.getMessage();
-                    errors.add(errorMsg);
-                    System.err.println(errorMsg);
-                    e.printStackTrace();
-                    // Continue to next
+                    failureCount.incrementAndGet();
+                    errors.add("Merchant " + m.getMerchantId() + " (data): " + e.getMessage());
                 }
             }
+            long dataTime = System.currentTimeMillis() - dataStart;
 
-            response.put("generated", successCount);
-            response.put("failed", failureCount);
+            // Phase 2: Generate PDFs in parallel (4 browsers = 4 concurrent renders)
+            long pdfStart = System.currentTimeMillis();
+            ExecutorService executor = Executors.newFixedThreadPool(4);
+            java.util.List<CompletableFuture<Void>> futures = new java.util.ArrayList<>();
+
+            for (Object[] item : workItems) {
+                com.acquira.model.Merchant m = (com.acquira.model.Merchant) item[0];
+                MerchantInsightsDTO data = (MerchantInsightsDTO) item[1];
+                String merchantName = (String) item[2];
+
+                CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                    // Propagate tenant context to worker thread
+                    if (currentTenant != null) {
+                        TenantContext.setCurrentTenant(currentTenant);
+                    }
+                    try {
+                        String safeName = merchantName.replaceAll("[^a-zA-Z0-9.-]", "_");
+                        String filename = "Insight_" + safeName + "_" + targetMonth + ".pdf";
+                        java.nio.file.Path path = java.nio.file.Paths.get(folder, filename);
+
+                        byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName, targetMonth.toString());
+                        java.nio.file.Files.write(path, pdfBytes);
+                        successCount.incrementAndGet();
+                    } catch (Exception e) {
+                        failureCount.incrementAndGet();
+                        String errorMsg = "Merchant " + m.getMerchantId() + " (pdf): " + e.getMessage();
+                        errors.add(errorMsg);
+                        System.err.println(errorMsg);
+                    } finally {
+                        TenantContext.clear();
+                    }
+                }, executor);
+                futures.add(future);
+            }
+
+            // Wait for all PDFs to complete
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            executor.shutdown();
+            long pdfTime = System.currentTimeMillis() - pdfStart;
+
+            response.put("generated", successCount.get());
+            response.put("failed", failureCount.get());
             response.put("errors", errors);
             response.put("folder", java.nio.file.Paths.get(folder).toAbsolutePath().toString());
+            response.put("dataFetchMs", dataTime);
+            response.put("pdfGenerationMs", pdfTime);
+            response.put("avgPdfMs", workItems.isEmpty() ? 0 : pdfTime / workItems.size());
 
             return ResponseEntity.ok(response);
         } catch (Exception e) {

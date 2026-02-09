@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="salesTrendsContent">
+        <div class="section-subtitle" style="margin-bottom: 10px;">Revenue movement across the month</div>
+
+        <div class="insight-box mb-8"><p>Revenue is concentrated on a limited number of peak days. Smoothing daily performance through mid-week promotions can reduce volatility.</p></div>
+
+        <!-- Row 1: Daily Trend + Day of Week -->
+        <div class="grid-2 mb-8" style="flex: 1; min-height: 0;">
+            <div class="card">
+                <div class="card-title">DAILY SALES TREND</div>
+                <div class="chart-container" style="max-height: 160px;"><canvas data-chart="area" data-field="achievements.dailySalesAndCount" data-color="#1E3A8A" data-bg="rgba(30,58,138,0.08)"></canvas></div>
+            </div>
+            <div class="card">
+                <div class="card-title">SALES BY DAY OF WEEK</div>
+                <div class="chart-container" style="max-height: 160px;"><canvas data-chart="gradient-bar" data-field="overview.salesByDayOfWeek" data-color="#1E3A8A"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Row 2: Time of Day -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title">SALE % BY TIME OF DAY</div>
+            <div class="chart-container" style="max-height: 200px;"><canvas data-chart="gradient-bar" data-field="achievements.salesTimeOfDay" data-color="#6D28D9"></canvas></div>
+        </div>
+
+        <!-- Row 3: Dual-axis -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title"><span>SALE VALUE &amp; AVG VALUE BY DAY OF WEEK</span>
+                <div style="display: flex; gap: 10px; font-size: 7.5px; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 2px;"></span> Sales</span>
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: #DC2626; border-radius: 2px;"></span> Avg Value</span>
+                </div>
+            </div>
+            <div class="chart-container" style="max-height: 200px;"><canvas data-chart="dual-axis" data-field="achievements.salesAndAtvByDayOfWeek" data-color="#1E3A8A" data-color2="#DC2626"></canvas></div>
+        </div>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>Peak hours</strong> are between 14:00–18:00. Align staffing and promotional push notifications to this window for maximum conversion.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

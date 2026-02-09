@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="scorecardContent">
+        <div class="section-subtitle" style="margin-bottom: 10px;">Composite performance rating across all business dimensions</div>
+
+        <!-- HERO: Business Health Score — massive centered gauge -->
+        <div class="card mb-8" style="padding: 20px; text-align: center; background: linear-gradient(135deg, #FAFBFC 0%, #F0F4FF 100%); border: 1px solid #D1D5DB; position: relative; overflow: hidden;">
+            <!-- Decorative rings -->
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 180px; height: 180px; border-radius: 50%; border: 1px solid rgba(37,99,235,0.06);"></div>
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 220px; height: 220px; border-radius: 50%; border: 1px solid rgba(37,99,235,0.03);"></div>
+
+            <div style="font-size: 8px; font-weight: 700; color: #6B7280; letter-spacing: 0.08em; text-transform: uppercase;">Business Health Score</div>
+            <div style="font-size: 72px; font-weight: 900; color: #1E3A8A; line-height: 1; margin: 8px 0 4px 0; letter-spacing: -0.04em; position: relative; z-index: 2;">87</div>
+            <div style="font-size: 14px; font-weight: 700; color: #6B7280; margin-bottom: 4px;">out of 100</div>
+            <div style="display: inline-block; background: #D1FAE5; color: #047857; padding: 3px 14px; border-radius: 4px; font-size: 9px; font-weight: 700;">STRONG PERFORMER</div>
+
+            <!-- Score bar -->
+            <div style="max-width: 400px; margin: 14px auto 0; position: relative;">
+                <div style="width: 100%; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden;">
+                    <div style="width: 87%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #2563EB, #3B82F6); border-radius: 4px;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 7px; color: #9CA3AF;">
+                    <span>0 — Critical</span>
+                    <span>50 — Average</span>
+                    <span>100 — Excellent</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 2: 5 Sub-Scores with visual bars -->
+        <div class="card mb-8" style="padding: 0; overflow: hidden;">
+            <div style="padding: 10px 16px; background: linear-gradient(135deg, #0F2042, #1E3A8A);">
+                <div style="font-size: 8.5px; font-weight: 800; color: white; letter-spacing: 0.04em; text-transform: uppercase;">Performance Dimensions</div>
+            </div>
+            <div style="padding: 12px 16px;">
+                <!-- Revenue Health -->
+                <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
+                    <div style="width: 110px; flex-shrink: 0;">
+                        <div style="font-size: 9px; font-weight: 700; color: #111827;">Revenue Health</div>
+                        <div style="font-size: 7.5px; color: #6B7280;">Sales volume &amp; consistency</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
+                            <div style="width: 82%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 5px;"></div>
+                        </div>
+                    </div>
+                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #1E3A8A;">82</div>
+                    <div style="width: 28px;"><span style="background: #DBEAFE; color: #1E3A8A; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">A</span></div>
+                </div>
+                <!-- Growth Momentum -->
+                <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
+                    <div style="width: 110px; flex-shrink: 0;">
+                        <div style="font-size: 9px; font-weight: 700; color: #111827;">Growth Momentum</div>
+                        <div style="font-size: 7.5px; color: #6B7280;">MoM &amp; YoY trajectory</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
+                            <div style="width: 91%; height: 100%; background: linear-gradient(90deg, #047857, #34D399); border-radius: 5px;"></div>
+                        </div>
+                    </div>
+                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #047857;">91</div>
+                    <div style="width: 28px;"><span style="background: #D1FAE5; color: #047857; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">A+</span></div>
+                </div>
+                <!-- Customer Loyalty -->
+                <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
+                    <div style="width: 110px; flex-shrink: 0;">
+                        <div style="font-size: 9px; font-weight: 700; color: #111827;">Customer Loyalty</div>
+                        <div style="font-size: 7.5px; color: #6B7280;">Retention &amp; frequency</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
+                            <div style="width: 88%; height: 100%; background: linear-gradient(90deg, #6D28D9, #A78BFA); border-radius: 5px;"></div>
+                        </div>
+                    </div>
+                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #6D28D9;">88</div>
+                    <div style="width: 28px;"><span style="background: #EDE9FE; color: #6D28D9; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">A</span></div>
+                </div>
+                <!-- Payment Efficiency -->
+                <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
+                    <div style="width: 110px; flex-shrink: 0;">
+                        <div style="font-size: 9px; font-weight: 700; color: #111827;">Payment Efficiency</div>
+                        <div style="font-size: 7.5px; color: #6B7280;">Mix, wallet &amp; card health</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
+                            <div style="width: 90%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 5px;"></div>
+                        </div>
+                    </div>
+                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #0D9488;">90</div>
+                    <div style="width: 28px;"><span style="background: #CCFBF1; color: #0D9488; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">A+</span></div>
+                </div>
+                <!-- DCC Performance -->
+                <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
+                    <div style="width: 110px; flex-shrink: 0;">
+                        <div style="font-size: 9px; font-weight: 700; color: #111827;">DCC Performance</div>
+                        <div style="font-size: 7.5px; color: #6B7280;">Conversion &amp; revenue capture</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
+                            <div style="width: 48%; height: 100%; background: linear-gradient(90deg, #D97706, #FBBF24); border-radius: 5px;"></div>
+                        </div>
+                    </div>
+                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #D97706;">48</div>
+                    <div style="width: 28px;"><span style="background: #FEF3C7; color: #D97706; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">C</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 3: Key Strengths + Improvement Areas -->
+        <div class="grid-2 mb-8" style="flex: 1; min-height: 0;">
+            <div class="card" style="padding: 14px; border-top: 4px solid #059669;">
+                <div style="font-size: 8.5px; font-weight: 800; color: #059669; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;">&#9650; KEY STRENGTHS</div>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">1</div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">Strong Growth Trajectory</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">12.5% YoY growth with consistent upward momentum across all months</div></div>
+                    </div>
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">2</div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">High Customer Retention</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">72% retention rate with VIP segment driving 45% of total revenue</div></div>
+                    </div>
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">3</div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">Excellent Payment Mix</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">98.2% card penetration, 45% wallet adoption growing 15% MoM</div></div>
+                    </div>
+                </div>
+            </div>
+            <div class="card" style="padding: 14px; border-top: 4px solid #D97706;">
+                <div style="font-size: 8.5px; font-weight: 800; color: #D97706; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;">&#9660; IMPROVEMENT AREAS</div>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">1</div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">DCC Conversion at 12%</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">AED 1,840/month missed. Staff training could recover 60% immediately</div></div>
+                    </div>
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">2</div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">Mid-Week Revenue Gap</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">Tuesday &amp; Thursday underperform by 35%. Targeted promotions needed</div></div>
+                    </div>
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">3</div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">At-Risk Customers (15%)</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">Re-engagement campaign could shift 5% to Loyal tier, adding 10% revenue</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>Overall Assessment:</strong> Business scores 87/100 with exceptional growth momentum (91) and payment efficiency (90). The primary drag is DCC conversion at 48/100 — addressing this single dimension could lift the overall score to 92+. Focus Q2 on DCC staff training and mid-week activation.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

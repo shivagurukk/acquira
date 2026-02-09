@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title th:text="|${merchantName} - Performance Report|">Report</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/report-theme.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script th:inline="javascript">
+        /*<![CDATA[*/
+        window.reportData = /*[[${jsonData}]]*/ {};
+        /*]]>*/
+    </script>
+</head>
+<body>
+
+    <!-- PAGE 1: COVER -->
+    <div class="page" id="page-cover">
+        <div th:replace="~{pages/p01-cover :: coverContent}"></div>
+    </div>
+
+    <!-- PAGE 2: TABLE OF CONTENTS -->
+    <div class="page" id="page-toc">
+        <div th:replace="~{partials/header :: header(title='TABLE OF CONTENTS', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p01b-toc :: tocContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 3: MONTH-OVER-MONTH COMPARISON -->
+    <div class="page" id="page-mom-compare">
+        <div th:replace="~{partials/header :: header(title='MONTH-OVER-MONTH COMPARISON', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p01e-mom-compare :: momCompareContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 4: EXECUTIVE SUMMARY -->
+    <div class="page" id="page-exec-summary">
+        <div th:replace="~{partials/header :: header(title='EXECUTIVE SUMMARY', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p01c-exec-summary :: execSummaryContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 5: BUSINESS OVERVIEW -->
+    <div class="page" id="page-overview">
+        <div th:replace="~{partials/header :: header(title='BUSINESS OVERVIEW', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p02-overview :: overviewContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 6: BUSINESS ACHIEVEMENTS -->
+    <div class="page" id="page-peak">
+        <div th:replace="~{partials/header :: header(title='BUSINESS ACHIEVEMENTS', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p03-peak :: peakContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 7: DAILY SALES PERFORMANCE -->
+    <div class="page" id="page-sales-trends">
+        <div th:replace="~{partials/header :: header(title='DAILY SALES PERFORMANCE', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p04-sales-trends :: salesTrendsContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 8: REVENUE & WEEKLY INTELLIGENCE -->
+    <div class="page" id="page-revenue">
+        <div th:replace="~{partials/header :: header(title='REVENUE & WEEKLY INTELLIGENCE', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p05-revenue :: revenueContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 9: REVENUE BY DAY TYPE -->
+    <div class="page" id="page-day-type">
+        <div th:replace="~{partials/header :: header(title='REVENUE BY DAY TYPE', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p06-day-type :: dayTypeContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 10: GROWTH TRAJECTORY -->
+    <div class="page" id="page-growth">
+        <div th:replace="~{partials/header :: header(title='GROWTH TRAJECTORY', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p07-growth :: growthContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 11: PAYMENT ECOSYSTEM & CONSUMER LOYALTY (MERGED) -->
+    <div class="page" id="page-payment-loyalty">
+        <div th:replace="~{partials/header :: header(title='PAYMENT &amp; LOYALTY', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p08-payment-loyalty :: paymentLoyaltyContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 12: MONTHLY TRENDS -->
+    <div class="page" id="page-monthly-trends">
+        <div th:replace="~{partials/header :: header(title='MONTHLY TRENDS', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p10-monthly-trends :: monthlyTrendsContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 13: TRANSACTION TRENDS -->
+    <div class="page" id="page-transaction">
+        <div th:replace="~{partials/header :: header(title='TRANSACTION TRENDS', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p11-transaction :: transactionContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 14: DCC REVENUE -->
+    <div class="page" id="page-dcc">
+        <div th:replace="~{partials/header :: header(title='DCC REVENUE', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p12-dcc :: dccContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 15: CLOSING — PERFORMANCE SCORECARD -->
+    <div class="page" id="page-closing">
+        <div th:replace="~{pages/p99-closing :: closingContent}"></div>
+    </div>
+
+
+    <!-- =============================================
+         PREMIUM CHART ENGINE v2.0
+         Supports: sparkline, area, bar, gradient-bar,
+         dual-axis, donut, horizontal-bar
+         ============================================= -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            try {
+                if (typeof window.reportData === 'string') {
+                    window.reportData = JSON.parse(window.reportData);
+                }
+            } catch (e) { console.error("Failed to parse reportData", e); }
+
+            renderCharts();
+            renderHorizontalBars();
+        });
+
+        function getNestedValue(obj, path) {
+            if (!path) return null;
+            return path.split('.').reduce((o, i) => (o ? o[i] : null), obj);
+        }
+
+        /* ------ Create vertical gradient for bars ------ */
+        function createGradient(ctx, color, height) {
+            const grad = ctx.createLinearGradient(0, 0, 0, height || 300);
+            grad.addColorStop(0, color);
+            // Lighten by mixing toward white — less wash-out (0.38 instead of 0.55)
+            const r = parseInt(color.slice(1,3),16), g = parseInt(color.slice(3,5),16), b = parseInt(color.slice(5,7),16);
+            const lr = Math.min(255, r + Math.round((255-r)*0.38));
+            const lg = Math.min(255, g + Math.round((255-g)*0.38));
+            const lb = Math.min(255, b + Math.round((255-b)*0.38));
+            grad.addColorStop(1, `rgb(${lr},${lg},${lb})`);
+            return grad;
+        }
+
+        /* ------ Render all canvas charts ------ */
+        function renderCharts() {
+            const charts = document.querySelectorAll('canvas[data-chart]');
+            charts.forEach(canvas => {
+                const type = canvas.getAttribute('data-chart');
+                const fieldPath = canvas.getAttribute('data-field');
+                const color = canvas.getAttribute('data-color') || '#2563EB';
+                const color2 = canvas.getAttribute('data-color2') || '#F59E0B';
+                const bg = canvas.getAttribute('data-bg') || 'rgba(37, 99, 235, 0.06)';
+
+                let rawData = getNestedValue(window.reportData, fieldPath);
+                if (!rawData || !Array.isArray(rawData)) { return; }
+
+                const labels = rawData.map(d => d && d.label ? d.label : '');
+                const values = rawData.map(d => d && d.value != null ? Number(d.value) : 0);
+                const values2 = rawData.map(d => d && d.value2 != null ? Number(d.value2) : 0);
+
+                const bf = { family: 'Inter', size: 10, weight: '600' };
+                const common = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#111827', titleColor: '#FFF', bodyColor: '#FFF',
+                            titleFont: {size:10,family:'Inter',weight:'700'}, bodyFont: {size:10,family:'Inter',weight:'500'},
+                            padding: 8, cornerRadius: 5, displayColors: true, boxWidth: 8, boxHeight: 8
+                        }
+                    }
+                };
+
+                let config = {};
+
+                /* ---- SPARKLINE ---- */
+                if (type === 'sparkline') {
+                    const ctx = canvas.getContext('2d');
+                    const sparkGrad = ctx.createLinearGradient(0, 0, 0, 50);
+                    // Parse hex to rgba
+                    const hr = parseInt(color.slice(1,3),16), hg = parseInt(color.slice(3,5),16), hb = parseInt(color.slice(5,7),16);
+                    sparkGrad.addColorStop(0, 'rgba('+hr+','+hg+','+hb+',0.28)');
+                    sparkGrad.addColorStop(1, 'rgba('+hr+','+hg+','+hb+',0.02)');
+                    config = {
+                        type: 'line',
+                        data: { labels, datasets: [{
+                            data: values, borderColor: color, borderWidth: 2.5,
+                            pointRadius: 0, fill: true, backgroundColor: sparkGrad, tension: 0.4
+                        }]},
+                        options: { ...common,
+                            plugins: { legend: {display:false}, tooltip: {enabled:false} },
+                            scales: { x: {display:false}, y: {display:false, min: Math.min(...values)*0.85} }
+                        }
+                    };
+                }
+
+                /* ---- AREA ---- */
+                else if (type === 'area') {
+                    // Highlight last point with larger radius
+                    const ptRadius = values.map((v,i) => i === values.length-1 ? 5 : 2.5);
+                    const ptBorderW = values.map((v,i) => i === values.length-1 ? 3 : 2);
+                    config = {
+                        type: 'line',
+                        data: { labels, datasets: [{
+                            data: values, borderColor: color, backgroundColor: bg,
+                            borderWidth: 2.5, fill: true, pointRadius: ptRadius, pointBackgroundColor: '#FFF',
+                            pointBorderColor: color, pointBorderWidth: ptBorderW, tension: 0.35
+                        }]},
+                        options: { ...common,
+                            scales: {
+                                x: { grid:{display:false}, ticks: {font:bf, color:'#6B7280', maxTicksLimit:8, maxRotation:45} },
+                                y: { grid:{color:'#E5E7EB',drawBorder:false}, ticks: {font:bf, color:'#6B7280', callback: v=>v>=1000?(v/1000).toFixed(0)+'k':v} }
+                            }
+                        }
+                    };
+                }
+
+                /* ---- FLAT BAR ---- */
+                else if (type === 'bar') {
+                    config = {
+                        type: 'bar',
+                        data: { labels, datasets: [{
+                            data: values, backgroundColor: color,
+                            borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8
+                        }]},
+                        options: { ...common,
+                            scales: {
+                                x: { grid:{display:false}, ticks: {font:bf, color:'#6B7280', maxRotation:45} },
+                                y: { grid:{color:'#E5E7EB',drawBorder:false}, ticks: {font:bf, color:'#6B7280', callback: v=>v>=1000?(v/1000).toFixed(0)+'k':v} }
+                            }
+                        }
+                    };
+                }
+
+                /* ---- GRADIENT BAR (with highlight + data labels) ---- */
+                else if (type === 'gradient-bar') {
+                    const ctx = canvas.getContext('2d');
+                    const grad = createGradient(ctx, color, canvas.parentElement.clientHeight || 200);
+                    // Highlight last bar + find max/min indices
+                    const maxIdx = values.indexOf(Math.max(...values.filter(v=>v>0)));
+                    const minIdx = values.indexOf(Math.min(...values.filter(v=>v>0)));
+                    const lastIdx = values.length - 1;
+                    // Per-bar colors: highlight last bar with brighter shade
+                    const r = parseInt(color.slice(1,3),16), g = parseInt(color.slice(3,5),16), b = parseInt(color.slice(5,7),16);
+                    const highlightColor = `rgba(${Math.min(255,r+40)},${Math.min(255,g+40)},${Math.min(255,b+40)},1)`;
+                    const barColors = values.map((v, i) => i === lastIdx ? highlightColor : grad);
+                    const barBorders = values.map((v, i) => i === lastIdx ? color : 'transparent');
+                    config = {
+                        type: 'bar',
+                        data: { labels, datasets: [{
+                            data: values, backgroundColor: barColors,
+                            borderColor: barBorders, borderWidth: values.map((v,i) => i === lastIdx ? 2 : 0),
+                            borderRadius: 5, barPercentage: 0.72, categoryPercentage: 0.82
+                        }]},
+                        options: { ...common,
+                            plugins: { ...common.plugins,
+                                /* Data labels on max bar */
+                                dataLabels: { maxIdx: maxIdx }
+                            },
+                            scales: {
+                                x: { grid:{display:false}, ticks: {font:bf, color:'#6B7280', maxRotation:45} },
+                                y: { grid:{color:'#E5E7EB',drawBorder:false}, ticks: {font:bf, color:'#6B7280', callback: v=>v>=1000?(v/1000).toFixed(0)+'k':v} }
+                            }
+                        }
+                    };
+                    // Register a plugin to draw value label on max bar
+                    config.plugins = [{
+                        id: 'maxLabel',
+                        afterDraw: function(chart) {
+                            const meta = chart.getDatasetMeta(0);
+                            if (!meta || !meta.data[maxIdx]) return;
+                            const bar = meta.data[maxIdx];
+                            const ctx = chart.ctx;
+                            const val = values[maxIdx];
+                            const fmt = val >= 1000 ? (val/1000).toFixed(1)+'k' : val.toLocaleString();
+                            ctx.save();
+                            ctx.font = '700 10px Inter';
+                            ctx.fillStyle = '#111827';
+                            ctx.textAlign = 'center';
+                            ctx.fillText(fmt, bar.x, bar.y - 4);
+                            ctx.restore();
+                        }
+                    }];
+                }
+
+                /* ---- DUAL-AXIS (Sales bars + Count line) ---- */
+                else if (type === 'dual-axis') {
+                    const ctx = canvas.getContext('2d');
+                    const grad = createGradient(ctx, color, canvas.parentElement.clientHeight || 200);
+                    config = {
+                        type: 'bar',
+                        data: {
+                            labels,
+                            datasets: [
+                                {
+                                    label: 'Sales (AED)',
+                                    data: values,
+                                    backgroundColor: grad,
+                                    borderRadius: 4,
+                                    barPercentage: 0.68,
+                                    categoryPercentage: 0.82,
+                                    yAxisID: 'y',
+                                    order: 2
+                                },
+                                {
+                                    label: 'Txn Count',
+                                    data: values2,
+                                    type: 'line',
+                                    borderColor: color2,
+                                    backgroundColor: 'transparent',
+                                    borderWidth: 2.5,
+                                    pointRadius: 3,
+                                    pointBackgroundColor: '#FFF',
+                                    pointBorderColor: color2,
+                                    pointBorderWidth: 2,
+                                    tension: 0.35,
+                                    yAxisID: 'y1',
+                                    order: 1
+                                }
+                            ]
+                        },
+                        options: { ...common,
+                            plugins: { ...common.plugins, legend: {
+                                display: false
+                            }},
+                            scales: {
+                                x: { grid:{display:false}, ticks: {font:bf, color:'#6B7280', maxTicksLimit:10, maxRotation:45} },
+                                y: {
+                                    position: 'left',
+                                    grid: {color:'#E5E7EB',drawBorder:false},
+                                    ticks: {font:bf, color:'#6B7280', callback: v=>v>=1000?(v/1000).toFixed(0)+'k':v},
+                                    title: {display:true, text:'Sales (AED)', font:{size:9,family:'Inter',weight:'700'}, color:'#6B7280'}
+                                },
+                                y1: {
+                                    position: 'right',
+                                    grid: {display:false},
+                                    ticks: {font:bf, color: color2},
+                                    title: {display:true, text:'Txn Count', font:{size:9,family:'Inter',weight:'700'}, color: color2}
+                                }
+                            }
+                        }
+                    };
+                }
+
+                /* ---- DONUT ---- */
+                else if (type === 'donut') {
+                    config = {
+                        type: 'doughnut',
+                        data: { labels, datasets: [{
+                            data: values,
+                            backgroundColor: ['#1E3A8A','#2563EB','#3B82F6','#60A5FA','#93C5FD','#059669','#D97706'],
+                            borderColor: '#FFFFFF', borderWidth: 3
+                        }]},
+                        options: { ...common,
+                            cutout: '62%',
+                            plugins: { ...common.plugins,
+                                legend: { display:true, position:'right', labels: {
+                                    font:{size:10,family:'Inter',weight:'600'}, color:'#374151', boxWidth:10, boxHeight:10, padding:8, usePointStyle:true, pointStyle:'circle'
+                                }},
+                                tooltip: { callbacks: { label: function(ctx) {
+                                    const total = ctx.dataset.data.reduce((a,b) => a+b, 0);
+                                    return ctx.label+': '+new Intl.NumberFormat().format(ctx.parsed)+' ('+ ((ctx.parsed/total)*100).toFixed(1)+'%)';
+                                }}}
+                            }
+                        }
+                    };
+                }
+
+                if (config.type) { new Chart(canvas, config); }
+            });
+        }
+
+        /* ------ Generic horizontal bar renderer ------ */
+        function renderHBars(containerId, dataPath, colorSet, prefix) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            let rawData = getNestedValue(window.reportData, dataPath);
+            let items = [];
+
+            // Support both Array<ChartData> and Map<String, BigDecimal>
+            if (Array.isArray(rawData)) {
+                items = rawData.slice(0, 7).map(d => ({ label: d.label || '', value: Number(d.value) || 0 }));
+            } else if (rawData && typeof rawData === 'object') {
+                items = Object.entries(rawData).slice(0, 7).map(([k, v]) => ({ label: k, value: Number(v) || 0 }));
+            }
+
+            if (items.length === 0) {
+                container.innerHTML = '<div style="color:#6B7280;font-size:9px;text-align:center;padding:20px;background:#F9FAFB;border-radius:6px;border:1px dashed #D1D5DB;"><span style="font-weight:700;">No data available</span><br/><span style="font-size:7.5px;color:#9CA3AF;margin-top:2px;display:block;">Data will appear here when transactions are recorded</span></div>';
+                return;
+            }
+
+            // Sort descending
+            items.sort((a, b) => b.value - a.value);
+            const maxVal = items[0].value || 1;
+            const colors = colorSet || ['#1E3A8A','#2563EB','#3B82F6','#60A5FA','#93C5FD','#BFDBFE','#DBEAFE'];
+            const pre = prefix || '';
+
+            let html = '';
+            items.forEach((d, i) => {
+                const pct = (d.value / maxVal * 100);
+                const fmt = d.value >= 1000000 ? (d.value/1000000).toFixed(1)+'M' : d.value >= 1000 ? (d.value/1000).toFixed(1)+'k' : d.value.toLocaleString();
+                html += `<div class="h-bar-row">
+                    <div class="h-bar-label">${d.label}</div>
+                    <div class="h-bar-track">
+                        <div class="h-bar-fill" style="width:${Math.max(pct, 8)}%; background: linear-gradient(90deg, ${colors[i%colors.length]}, ${colors[Math.min(i+1,colors.length-1)]});">
+                        </div>
+                    </div>
+                    <div class="h-bar-value">${pre}${fmt}</div>
+                </div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        /* ------ Render all horizontal bar sections ------ */
+        function renderHorizontalBars() {
+            // Payment — Card Schemes (Map)
+            renderHBars('payment-card-schemes', 'demographics.cardSchemeValueSplit',
+                ['#1E3A8A','#2563EB','#3B82F6','#60A5FA','#93C5FD'], 'AED ');
+
+            // Payment — Card Types (Map)
+            renderHBars('payment-card-types', 'demographics.cardTypeValueSplit',
+                ['#047857','#059669','#34D399','#6EE7B7','#A7F3D0'], 'AED ');
+
+            // Payment — Transaction Types (Map)
+            renderHBars('payment-txn-types', 'demographics.transactionTypeValueSplit',
+                ['#7C3AED','#8B5CF6','#A78BFA','#C4B5FD','#DDD6FE'], 'AED ');
+        }
+    </script>
+</body>
+</html>

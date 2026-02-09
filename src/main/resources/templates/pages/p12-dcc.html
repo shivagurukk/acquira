@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="dccContent">
+
+        <div class="section-subtitle" style="margin-bottom: 10px;">Dynamic Currency Conversion performance and missed revenue opportunities</div>
+
+        <!-- ROW 1: Hero Banner — ALL DYNAMIC -->
+        <div class="card mb-8" style="padding: 18px 24px; background: linear-gradient(135deg, #0F2042 0%, #1E3A8A 100%); border: none; color: white;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                    <div style="font-size: 7.5px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">DCC Eligible Volume</div>
+                    <div style="font-size: 26px; font-weight: 900; color: #FFFFFF; margin-top: 4px; letter-spacing: -0.03em;" th:text="'AED ' + ${dto.dccPerformance.dccEligibleVolume != null ? #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT') : '0'}">AED 0</div>
+                    <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">International card transactions</div>
+                </div>
+                <div style="width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
+                <div style="text-align: center;">
+                    <div style="font-size: 7.5px; font-weight: 700; color: #FBBF24; letter-spacing: 0.06em; text-transform: uppercase;">Unrealized Revenue</div>
+                    <div style="font-size: 30px; font-weight: 900; color: #FBBF24; margin-top: 4px; letter-spacing: -0.03em;" th:text="'AED ' + ${dto.dccPerformance.dccMissedRevenue != null ? #numbers.formatDecimal(dto.dccPerformance.dccMissedRevenue, 1, 'COMMA', 0, 'POINT') : '0'}">AED 0</div>
+                    <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">Recoverable with optimization</div>
+                </div>
+                <div style="width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
+                <div style="text-align: right;">
+                    <div style="font-size: 7.5px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">Conversion Rate</div>
+                    <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 6px; margin-top: 4px;">
+                        <span style="font-size: 26px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.03em;" th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '0%'}">0%</span>
+                        <span style="font-size: 10px; font-weight: 600; color: #60A5FA;">/ 25% target</span>
+                    </div>
+                    <th:block th:with="rate=${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate.doubleValue() : 0}, pctOfTarget=${rate / 25.0 * 100}">
+                    <div style="width: 140px; height: 5px; background: rgba(255,255,255,0.12); border-radius: 3px; overflow: hidden; margin-top: 6px; margin-left: auto;">
+                        <div th:style="'width:' + ${#numbers.formatDecimal(pctOfTarget, 1, 0)} + '%; height: 100%; background: linear-gradient(90deg, #3B82F6, #60A5FA); border-radius: 3px;'"></div>
+                    </div>
+                    <div style="font-size: 7px; color: #60A5FA; margin-top: 3px;" th:text="${#numbers.formatDecimal(pctOfTarget, 1, 0) + '% of target achieved'}">0% of target</div>
+                    </th:block>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 2: Charts -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title"><span>DCC MISSED OPPORTUNITY TREND</span></div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="dccPerformance.missedOpportunityTrend" data-color="#1E3A8A"></canvas></div>
+        </div>
+
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title"><span>OPT-IN vs OPT-OUT TREND</span>
+                <div style="display: flex; gap: 12px; font-size: 7.5px; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #1E3A8A; border-radius: 2px;"></span> Opt-Out</span>
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #B45309; border-radius: 2px;"></span> Opt-In</span>
+                </div>
+            </div>
+            <div class="chart-container"><canvas data-chart="dual-axis" data-field="dccPerformance.optOutOptInTrend" data-color="#1E3A8A" data-color2="#B45309"></canvas></div>
+        </div>
+
+        <!-- ROW 3: Recovery Roadmap -->
+        <div class="card mb-8" style="padding: 0; overflow: hidden;">
+            <div style="padding: 8px 14px; background: linear-gradient(135deg, #F8FAFF 0%, #EFF6FF 100%); border-bottom: 1px solid #E5E7EB;">
+                <div style="font-size: 8px; font-weight: 800; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">RECOVERY ROADMAP</div>
+            </div>
+            <table class="data-table" style="font-size: 9px;">
+                <thead>
+                    <tr>
+                        <th style="width: 5%; padding: 7px 14px;"></th>
+                        <th style="width: 34%;">Action Item</th>
+                        <th style="width: 14%;">Est. Impact</th>
+                        <th style="width: 30%;">Lift</th>
+                        <th style="width: 17%;">Priority</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="font-weight: 900; color: #1E3A8A; padding: 8px 14px; font-size: 11px;">1</td>
+                        <td style="font-weight: 700; color: #111827;">Staff Training on DCC Benefits</td>
+                        <td style="font-weight: 800; color: #047857;">+8% Conv.</td>
+                        <td><div style="width: 100%; height: 7px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div style="width: 62%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 4px;"></div></div></td>
+                        <td><span class="pill pill-navy">CRITICAL</span></td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 900; color: #1E3A8A; padding: 8px 14px; font-size: 11px;">2</td>
+                        <td style="font-weight: 700; color: #111827;">Enable Auto-Prompt on Terminal</td>
+                        <td style="font-weight: 800; color: #047857;">+5% Conv.</td>
+                        <td><div style="width: 100%; height: 7px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div style="width: 38%; height: 100%; background: linear-gradient(90deg, #2563EB, #60A5FA); border-radius: 4px;"></div></div></td>
+                        <td><span class="pill pill-amber">HIGH</span></td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 900; color: #1E3A8A; padding: 8px 14px; font-size: 11px;">3</td>
+                        <td style="font-weight: 700; color: #111827;">Signage — "Pay in Home Currency"</td>
+                        <td style="font-weight: 800; color: #047857;">+2% Conv.</td>
+                        <td><div style="width: 100%; height: 7px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div style="width: 15%; height: 100%; background: linear-gradient(90deg, #6B7280, #9CA3AF); border-radius: 4px;"></div></div></td>
+                        <td><span class="pill pill-grey">MODERATE</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- AI Insight — DYNAMIC -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>AI Insight:</strong> At <span th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '0%'}">0%</span> conversion, AED <span th:text="${dto.dccPerformance.dccMissedRevenue != null ? #numbers.formatDecimal(dto.dccPerformance.dccMissedRevenue, 1, 'COMMA', 0, 'POINT') : '0'}">0</span>/month in DCC revenue is unrealized. Staff training alone could recover the majority — the highest-ROI action available.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="loyaltyContent">
+
+        <div class="section-subtitle" style="margin-bottom: 10px;">Customer retention, visit frequency and spend analysis</div>
+
+        <!-- ROW 1: 3 Hero KPIs -->
+        <div class="grid-3 mb-8">
+            <div class="card" style="padding: 12px 14px; border-top: 3px solid #0D9488;">
+                <div class="kpi-label">RETENTION RATE</div>
+                <div style="font-size: 28px; font-weight: 900; color: #0D9488; margin: 4px 0 4px 0; letter-spacing: -0.03em;">72%</div>
+                <span style="display: inline-block; background: #F0FDFA; color: #0D9488; padding: 2px 8px; border-radius: 4px; font-size: 8px; font-weight: 700;">High Loyalty</span>
+            </div>
+            <div class="card" style="padding: 12px 14px; border-top: 3px solid #2563EB;">
+                <div class="kpi-label">REPEAT CUSTOMERS</div>
+                <div style="font-size: 28px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.03em;" th:text="${dto.overview.customers.formattedValue}">0</div>
+                <span style="font-size: 8px; color: #6B7280;">Unique individuals this period</span>
+            </div>
+            <div class="card" style="padding: 12px 14px; border-top: 3px solid #6D28D9;">
+                <div class="kpi-label">AVG VISITS / MONTH</div>
+                <div style="font-size: 28px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.03em;" th:text="${dto.overview.avgTxnsPerCustomer != null ? dto.overview.avgTxnsPerCustomer.formattedValue : '2'}">2</div>
+                <span style="font-size: 8px; color: #6B7280;">Frequency per customer</span>
+            </div>
+        </div>
+
+        <!-- ROW 2: Revenue Concentration — clean inline layout -->
+        <div class="card mb-8" style="padding: 14px 20px; flex-direction: row; align-items: center; gap: 20px; background: linear-gradient(135deg, #0F2042, #1E3A8A); border: none; color: white;">
+            <div style="display: flex; align-items: center; gap: 14px; flex-shrink: 0;">
+                <div style="text-align: center;">
+                    <div style="font-size: 30px; font-weight: 900; color: white; line-height: 1;">15%</div>
+                    <div style="font-size: 7px; font-weight: 600; color: rgba(255,255,255,0.6); margin-top: 3px; letter-spacing: 0.04em; text-transform: uppercase;">VIP Customers</div>
+                </div>
+                <div style="font-size: 16px; color: rgba(255,255,255,0.3);">&#8594;</div>
+                <div style="text-align: center;">
+                    <div style="font-size: 30px; font-weight: 900; color: #60A5FA; line-height: 1;">45%</div>
+                    <div style="font-size: 7px; font-weight: 600; color: rgba(255,255,255,0.6); margin-top: 3px; letter-spacing: 0.04em; text-transform: uppercase;">Of Total Revenue</div>
+                </div>
+            </div>
+            <div style="width: 1px; height: 40px; background: rgba(255,255,255,0.15); flex-shrink: 0;"></div>
+            <div style="font-size: 8.5px; color: rgba(255,255,255,0.85); line-height: 1.6;">
+                <strong style="color: #93C5FD;">Revenue Concentration Insight:</strong> Top 15% of customers contribute nearly half of all revenue. Protecting this segment with exclusive perks, priority service and personalized offers is critical.
+            </div>
+        </div>
+
+        <!-- ROW 3: Spend Bands chart -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title">CUSTOMER SPEND DISTRIBUTION</div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="demographics.spendBands" data-color="#1E3A8A"></canvas></div>
+        </div>
+
+        <!-- ROW 4: Segment Analysis Table — refined pills -->
+        <div class="card mb-8" style="padding: 0; overflow: hidden;">
+            <div style="padding: 9px 14px; background: linear-gradient(135deg, #F8FAFF 0%, #EFF6FF 100%); border-bottom: 1px solid #E5E7EB;">
+                <div style="font-size: 8px; font-weight: 800; color: #1E3A8A; text-transform: uppercase; letter-spacing: 0.06em;">SEGMENT ANALYSIS</div>
+            </div>
+            <table class="data-table" style="font-size: 9px;">
+                <thead>
+                    <tr>
+                        <th style="width: 16%; padding: 7px 14px;">Segment</th>
+                        <th style="width: 12%;">Share</th>
+                        <th style="width: 12%;">Revenue</th>
+                        <th style="width: 38%;">Revenue Contribution</th>
+                        <th style="width: 22%;">Recommended Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding: 9px 14px;"><span style="font-weight: 800; color: #0D9488; font-size: 9.5px;">&#9679; VIP</span></td>
+                        <td style="font-weight: 700;">15%</td>
+                        <td style="font-weight: 800; color: #0D9488;">45%</td>
+                        <td>
+                            <div style="width: 100%; height: 10px; background: #F3F4F6; border-radius: 5px; overflow: hidden;">
+                                <div style="width: 45%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 5px;"></div>
+                            </div>
+                        </td>
+                        <td><span class="pill pill-teal">Exclusive Access</span></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 9px 14px;"><span style="font-weight: 800; color: #1E3A8A; font-size: 9.5px;">&#9679; Loyal</span></td>
+                        <td style="font-weight: 700;">40%</td>
+                        <td style="font-weight: 800; color: #1E3A8A;">35%</td>
+                        <td>
+                            <div style="width: 100%; height: 10px; background: #F3F4F6; border-radius: 5px; overflow: hidden;">
+                                <div style="width: 35%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 5px;"></div>
+                            </div>
+                        </td>
+                        <td><span class="pill pill-navy">Reward Program</span></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 9px 14px;"><span style="font-weight: 800; color: #6B7280; font-size: 9.5px;">&#9679; Occasional</span></td>
+                        <td style="font-weight: 700;">30%</td>
+                        <td style="font-weight: 700;">15%</td>
+                        <td>
+                            <div style="width: 100%; height: 10px; background: #F3F4F6; border-radius: 5px; overflow: hidden;">
+                                <div style="width: 15%; height: 100%; background: linear-gradient(90deg, #6B7280, #9CA3AF); border-radius: 5px;"></div>
+                            </div>
+                        </td>
+                        <td><span class="pill pill-grey">Win-Back</span></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 9px 14px;"><span style="font-weight: 800; color: #B45309; font-size: 9.5px;">&#9679; At Risk</span></td>
+                        <td style="font-weight: 700;">15%</td>
+                        <td style="font-weight: 700;">5%</td>
+                        <td>
+                            <div style="width: 100%; height: 10px; background: #F3F4F6; border-radius: 5px; overflow: hidden;">
+                                <div style="width: 5%; height: 100%; background: linear-gradient(90deg, #B45309, #FBBF24); border-radius: 5px; min-width: 8px;"></div>
+                            </div>
+                        </td>
+                        <td><span class="pill pill-amber">Re-engage</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>Retention Strategy:</strong> Focus on converting "Occasional" shoppers into "Loyal" through targeted points-based rewards. A 5% shift from Occasional to Loyal tier would increase revenue by 10%.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

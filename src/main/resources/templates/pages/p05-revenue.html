@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="revenueContent">
+
+        <div class="section-subtitle" th:text="'Weekly performance patterns for ' + ${reportPeriod}" style="margin-bottom: 10px;">Subtitle</div>
+
+        <!-- ROW 1: 3 KPI Cards -->
+        <div class="grid-3 mb-8">
+            <div class="card card-accent-blue" style="padding: 12px 14px;">
+                <div class="kpi-label">MONTHLY SALES</div>
+                <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="'AED ' + ${dto.overview.sales.formattedValue}">AED 0</div>
+                <div>
+                    <span th:class="${dto.overview.sales.momGrowth >= 0 ? 'trend-up' : 'trend-down'}">
+                        <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</span>
+                    </span>
+                    <span style="font-size: 8px; color: #6B7280; margin-left: 4px;">vs prev period</span>
+                </div>
+            </div>
+            <div class="card card-accent-green" style="padding: 12px 14px;">
+                <div class="kpi-label">DAILY AVERAGE</div>
+                <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="'AED ' + ${dto.overview.dailyAverage != null ? dto.overview.dailyAverage.setScale(0, T(java.math.RoundingMode).HALF_UP) : '0'}">AED 0</div>
+                <span style="font-size: 8.5px; color: #0D9488; font-weight: 600;">Avg revenue per active day</span>
+            </div>
+            <div class="card card-accent-amber" style="padding: 12px 14px;">
+                <div class="kpi-label">PEAK DAY</div>
+                <div style="font-size: 24px; font-weight: 900; color: #B45309; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakDayName != null ? dto.overview.peakDayName : '-'}">-</div>
+                <span style="font-size: 8.5px; color: #6B7280;">Highest revenue day</span>
+            </div>
+        </div>
+
+        <!-- ROW 2: Revenue Concentration (visual) + Weekly Pattern -->
+        <div class="grid-2 mb-8">
+            <div class="card" style="padding: 14px;">
+                <div class="card-title">REVENUE CONCENTRATION</div>
+                <div style="display: flex; align-items: center; gap: 16px; margin-top: 8px;">
+                    <div style="text-align: center; flex: 1;">
+                        <div style="font-size: 30px; font-weight: 900; color: #1E3A8A;" th:text="${dto.overview.weekdayRevenuePct != null ? dto.overview.weekdayRevenuePct + '%' : '-'}">-</div>
+                        <div class="kpi-label" style="margin-top: 3px;">Weekdays (Mon–Fri)</div>
+                    </div>
+                    <div style="width: 1px; height: 44px; background: #D1D5DB;"></div>
+                    <div style="text-align: center; flex: 1;">
+                        <div style="font-size: 30px; font-weight: 900; color: #0D9488;" th:text="${dto.overview.weekendRevenuePct != null ? dto.overview.weekendRevenuePct + '%' : '-'}">-</div>
+                        <div class="kpi-label" style="margin-top: 3px;">Weekends (Sat–Sun)</div>
+                    </div>
+                </div>
+                <div style="margin-top: 10px; font-size: 8px; color: #6B7280; text-align: center; line-height: 1.5;">
+                    Weekends generate <strong style="color: #374151;" th:text="${dto.overview.weekendRevenuePct != null ? dto.overview.weekendRevenuePct + '%' : '-'}">-</strong> of revenue in only 2 of 7 days.
+                </div>
+            </div>
+            <div class="card" style="padding: 14px;">
+                <div class="card-title">WEEKLY PERFORMANCE PATTERN</div>
+                <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px; color: #1F2937;">
+                        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #0D9488; flex-shrink: 0;"></span>
+                        <span><strong th:text="${dto.overview.peakDayName != null ? dto.overview.peakDayName : 'Peak days'}">Peak days</strong> leads revenue generation</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px; color: #1F2937;">
+                        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2563EB; flex-shrink: 0;"></span>
+                        <span>Mid-range days show consistent activity</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px; color: #1F2937;">
+                        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #B45309; flex-shrink: 0;"></span>
+                        <span>Low-traffic days need promotional activation</span>
+                    </div>
+                </div>
+                <div style="margin-top: 10px; font-size: 8px; color: #6B7280; line-height: 1.5;" th:if="${dto.overview.weekendRevenuePct != null and dto.overview.weekendRevenuePct > 35}">Traffic pattern suggests <strong style="color: #374151;">leisure-driven customer base</strong> with weekend preference.</div>
+                <div style="margin-top: 10px; font-size: 8px; color: #6B7280; line-height: 1.5;" th:if="${dto.overview.weekendRevenuePct == null or dto.overview.weekendRevenuePct <= 35}">Traffic pattern suggests <strong style="color: #374151;">weekday-dominant customer base</strong> with business-hour preference.</div>
+            </div>
+        </div>
+
+        <!-- ROW 3: Sales by Day of Week chart -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title"><span>SALES &amp; TRANSACTIONS BY DAY OF WEEK</span>
+                <div style="display: flex; gap: 10px; font-size: 7.5px; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 2px;"></span> Sales (AED)</span>
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: #B45309; border-radius: 2px;"></span> Txn Count</span>
+                </div>
+            </div>
+            <div class="chart-container"><canvas data-chart="dual-axis" data-field="achievements.salesAndAtvByDayOfWeek" data-color="#1E3A8A" data-color2="#B45309"></canvas></div>
+        </div>
+
+        <!-- ROW 4: Action strip -->
+        <div class="action-strip mb-8">
+            <div class="action-strip-item opportunity">
+                <div class="strip-label">&#9650; WEEKEND SIGNAL</div>
+                <div class="strip-text"><span th:text="${dto.overview.peakDayName}">Peak</span> promotions have highest ROI. Extend offers to adjacent days for compounding effect.</div>
+            </div>
+            <div class="action-strip-item action">
+                <div class="strip-label">&#9654; MID-WEEK BOOST</div>
+                <div class="strip-text">Low-traffic day flash deals can redistribute traffic and smooth revenue volatility.</div>
+            </div>
+            <div class="action-strip-item risk">
+                <div class="strip-label">&#9660; VOLATILITY RISK</div>
+                <div class="strip-text">Revenue concentrated on 2–3 days. Diversifying traffic improves stability and predictability.</div>
+            </div>
+        </div>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>AI Insight:</strong> <span th:text="${dto.overview.peakDayName}">Peak</span> is the strongest revenue day. Mid-week loyalty programs could shift 10–15% of peak traffic to underperforming days.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

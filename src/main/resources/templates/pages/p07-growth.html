@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="growthContent">
+        <div class="section-subtitle" style="margin-bottom: 10px;">Performance against historical baselines and projections</div>
+
+        <!-- ROW 1: 4 KPI Cards — ALL DYNAMIC -->
+        <div class="grid-4 mb-8">
+            <div class="card card-accent-blue" style="padding: 10px 12px;">
+                <div class="kpi-label">YEAR ON YEAR</div>
+                <div style="font-size: 22px; font-weight: 900; margin: 3px 0 2px 0; letter-spacing: -0.02em;"
+                     th:style="${dto.demographics.yoyGrowthPct >= 0 ? 'color: #047857' : 'color: #B45309'}"
+                     th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">0%</div>
+                <span th:class="${dto.demographics.yoyGrowthPct >= 0 ? 'trend-up' : 'trend-down'}" th:text="${dto.demographics.yoyGrowthPct >= 0 ? 'Growth' : 'Decline'}">-</span>
+            </div>
+            <div class="card card-accent-green" style="padding: 10px 12px;">
+                <div class="kpi-label">MONTH ON MONTH</div>
+                <div style="font-size: 22px; font-weight: 900; margin: 3px 0 2px 0; letter-spacing: -0.02em;"
+                     th:style="${dto.overview.sales.momGrowth >= 0 ? 'color: #047857' : 'color: #B45309'}"
+                     th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</div>
+                <span th:class="${dto.overview.sales.momGrowth >= 0 ? 'trend-up' : 'trend-down'}" th:text="${dto.overview.sales.momGrowth >= 0 ? 'Positive' : 'Decline'}">Trend</span>
+            </div>
+            <div class="card card-accent-amber" style="padding: 10px 12px;">
+                <div class="kpi-label">AVG MONTHLY GROWTH</div>
+                <div style="font-size: 22px; font-weight: 900; margin: 3px 0 2px 0; letter-spacing: -0.02em;"
+                     th:style="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'color: #047857' : 'color: #B45309'}"
+                     th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 1) + '%'}">0%</div>
+                <span style="font-size: 8.5px; color: #6B7280; font-weight: 600;">12-month average</span>
+            </div>
+            <div class="card card-accent-purple" style="padding: 10px 12px;">
+                <div class="kpi-label">BEST MONTH</div>
+                <div style="font-size: 22px; font-weight: 900; color: #6D28D9; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.demographics.bestMonth != null ? dto.demographics.bestMonth : '-'}">-</div>
+                <span style="font-size: 8.5px; color: #6B7280;">Highest revenue</span>
+            </div>
+        </div>
+
+        <!-- ROW 2: Monthly Sales Growth -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title"><span>MONTHLY SALES GROWTH %</span>
+                <div style="display: flex; gap: 10px; font-size: 7.5px; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 2px;"></span> Sales Growth</span>
+                </div>
+            </div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="demographics.monthlySalesGrowth" data-color="#1E3A8A"></canvas></div>
+        </div>
+
+        <!-- ROW 3: Monthly Transaction Growth -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title"><span>MONTHLY TRANSACTION GROWTH %</span>
+                <div style="display: flex; gap: 10px; font-size: 7.5px; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: linear-gradient(90deg, #047857, #34D399); border-radius: 2px;"></span> Txn Growth</span>
+                </div>
+            </div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="demographics.monthlyTxnGrowth" data-color="#059669"></canvas></div>
+        </div>
+
+        <!-- ROW 4: Growth Summary -->
+        <div class="grid-2 mb-8">
+            <div class="card" style="padding: 12px; display: flex; flex-direction: row; align-items: center; gap: 16px;">
+                <div style="text-align: center; flex: 1;">
+                    <div style="font-size: 7.5px; color: #6B7280; font-weight: 700;">YOY GROWTH</div>
+                    <div style="font-size: 26px; font-weight: 900; margin-top: 2px;"
+                         th:style="${dto.demographics.yoyGrowthPct >= 0 ? 'color: #047857' : 'color: #B45309'}"
+                         th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">0%</div>
+                </div>
+                <div style="width: 1px; height: 36px; background: #D1D5DB;"></div>
+                <div style="text-align: center; flex: 1;">
+                    <div style="font-size: 7.5px; color: #6B7280; font-weight: 700;">MOM GROWTH</div>
+                    <div style="font-size: 26px; font-weight: 900; margin-top: 2px;"
+                         th:style="${dto.overview.sales.momGrowth >= 0 ? 'color: #047857' : 'color: #B45309'}"
+                         th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</div>
+                </div>
+                <div style="width: 1px; height: 36px; background: #D1D5DB;"></div>
+                <div style="text-align: center; flex: 1;">
+                    <div style="font-size: 7.5px; color: #6B7280; font-weight: 700;">AVG MONTHLY</div>
+                    <div style="font-size: 26px; font-weight: 900; margin-top: 2px;"
+                         th:style="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'color: #047857' : 'color: #B45309'}"
+                         th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 1) + '%'}">0%</div>
+                </div>
+            </div>
+            <div class="card" style="padding: 12px;">
+                <div class="card-title">GROWTH ASSESSMENT</div>
+                <div style="margin-top: 4px; display: flex; flex-direction: column; gap: 6px;">
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px; color: #1F2937;">
+                        <span th:style="${dto.overview.transactions.momGrowth >= 0 ? 'display:inline-block;width:8px;height:8px;border-radius:50%;background:#0D9488;flex-shrink:0;' : 'display:inline-block;width:8px;height:8px;border-radius:50%;background:#B45309;flex-shrink:0;'}"></span>
+                        <span><strong>Volume</strong> — transaction count <span th:text="${dto.overview.transactions.momGrowth >= 0 ? 'on upward trend' : 'needs attention'}">-</span></span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px; color: #1F2937;">
+                        <span th:style="${dto.overview.avgTxnValue.momGrowth >= 0 ? 'display:inline-block;width:8px;height:8px;border-radius:50%;background:#0D9488;flex-shrink:0;' : 'display:inline-block;width:8px;height:8px;border-radius:50%;background:#B45309;flex-shrink:0;'}"></span>
+                        <span><strong>Ticket</strong> — avg value <span th:text="${dto.overview.avgTxnValue.momGrowth >= 0 ? 'growing steadily' : 'needs stabilization'}">-</span></span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 9px; color: #1F2937;">
+                        <span th:style="${dto.overview.customers.momGrowth >= 0 ? 'display:inline-block;width:8px;height:8px;border-radius:50%;background:#0D9488;flex-shrink:0;' : 'display:inline-block;width:8px;height:8px;border-radius:50%;background:#B45309;flex-shrink:0;'}"></span>
+                        <span><strong>Acquisition</strong> — customer pace <span th:text="${dto.overview.customers.momGrowth >= 0 ? 'is steady' : 'slowing down'}">-</span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>AI Insight:</strong> YoY growth at <span th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">0%</span> with avg monthly growth of <span th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 1) + '%'}">0%</span>. Best month: <span th:text="${dto.demographics.bestMonth}">-</span>. Focus on sustaining this momentum through customer retention and upselling strategies.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>
