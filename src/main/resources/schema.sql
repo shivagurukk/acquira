@@ -1328,5 +1328,30 @@ FROM users u, tenant t, sys_user_group g
 WHERE u.username = 'admin' AND t.institution_id = 'BANK001' AND g.group_name = 'Super Admin'
 ON CONFLICT (user_id, tenant_id) DO NOTHING;
 
+-- ==========================================
+-- PERFORMANCE INDEXES — Critical for 999K+ transactions
+-- ==========================================
+
+-- fact_transaction: every summary query filters on (tenant_id, payment_date)
+CREATE INDEX IF NOT EXISTS idx_fact_txn_tenant_date ON fact_transaction (tenant_id, payment_date);
+CREATE INDEX IF NOT EXISTS idx_fact_txn_tenant_merchant_date ON fact_transaction (tenant_id, merchant_id, payment_date);
+CREATE INDEX IF NOT EXISTS idx_fact_txn_merchant ON fact_transaction (merchant_id);
+CREATE INDEX IF NOT EXISTS idx_fact_txn_card ON fact_transaction (card_number);
+
+-- stg_trnx_raw: staging lookups during ingest pipeline
+CREATE INDEX IF NOT EXISTS idx_stg_tenant ON stg_trnx_raw (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_stg_tenant_date ON stg_trnx_raw (tenant_id, payment_date);
+CREATE INDEX IF NOT EXISTS idx_stg_mid ON stg_trnx_raw (mid);
+
+-- dim_merchant: JOIN target during staging→fact
+CREATE INDEX IF NOT EXISTS idx_dim_merchant_mid ON dim_merchant (mid, tenant_id);
+
+-- dim_store: JOIN target during staging→fact
+CREATE INDEX IF NOT EXISTS idx_dim_store_merchant ON dim_store (merchant_id, tenant_id);
+CREATE INDEX IF NOT EXISTS idx_dim_store_sid ON dim_store (sid, tenant_id);
+
+-- dim_terminal: JOIN target during staging→fact
+CREATE INDEX IF NOT EXISTS idx_dim_terminal_store ON dim_terminal (store_id, tenant_id);
+CREATE INDEX IF NOT EXISTS idx_dim_terminal_tid ON dim_terminal (tid, tenant_id);
 
 

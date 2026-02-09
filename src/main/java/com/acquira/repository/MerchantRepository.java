@@ -19,4 +19,6 @@ public interface MerchantRepository extends JpaRepository<Merchant, Long>,
                         org.springframework.data.domain.Pageable pageable);
 
         long countByTenantIdAndStatus(Long tenantId, String status);
+
+        Optional<Merchant> findByName(String name);
 }

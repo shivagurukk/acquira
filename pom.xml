@@ -112,6 +112,17 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- PDF Generation Engine: HTML -> Playwright -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-thymeleaf</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.microsoft.playwright</groupId>
+			<artifactId>playwright</artifactId>
+			<version>1.40.0</version>
+		</dependency>
+
 		<!-- Hybrid Data Connectors -->
 		<dependency>
 			<groupId>com.oracle.database.jdbc</groupId>

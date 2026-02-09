@@ -13,16 +13,23 @@ import org.springframework.context.annotation.ScopedProxyMode;
 import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileWriter;
-import java.io.InputStream;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.*;
 import java.util.stream.Stream;
 
+/**
+ * HIGH-PERFORMANCE Excel Splitter — handles 999K rows
+ *
+ * OPTIMIZATIONS:
+ * 1. BufferedWriter with 256KB buffer (vs default 8KB)
+ * 2. StringBuilder reuse (single allocation per row)
+ * 3. Pre-computed header index array (no HashMap lookup per cell)
+ * 4. Larger chunk size: 50K rows/file (fewer file handles, better I/O)
+ * 5. fastexcel streaming reader (already in place — no DOM loading)
+ */
 @Component
 @Scope(value = "step", proxyMode = ScopedProxyMode.TARGET_CLASS)
 public class ExcelSplitterTasklet implements Tasklet {
@@ -30,10 +37,6 @@ public class ExcelSplitterTasklet implements Tasklet {
     @Value("#{jobParameters['fullPath']}")
     private String fullPath;
 
-    @Value("#{jobParameters['jobId']}") // We can use job execution ID ideally, but parameter logic works
-    private String distinctId;
-
-    // Define the expected order EXACTLY as per TransactionJobConfig
     private static final String[] TARGET_HEADERS = {
             "Entity Name", "Aggregator Internal Id", "Aggregator Name", "AggregatorCode",
             "MID", "Merchant Internal Id", "Merchant Name",
@@ -47,7 +50,8 @@ public class ExcelSplitterTasklet implements Tasklet {
             "MSF", "VAT", "Total Amount Settled", "Interchange Fee", "Destination"
     };
 
-    private static final int CHUNK_SIZE = 10000;
+    private static final int CHUNK_SIZE = 50_000; // 5x larger = fewer files, less overhead
+    private static final int BUFFER_SIZE = 256 * 1024; // 256KB write buffer
 
     @Override
     public RepeatStatus execute(StepContribution contribution, ChunkContext chunkContext) throws Exception {
@@ -57,7 +61,6 @@ public class ExcelSplitterTasklet implements Tasklet {
             throw new IllegalStateException("Input file does not exist: " + fullPath);
         }
 
-        // Create a temp directory for this job execution
         String jobId = chunkContext.getStepContext().getStepExecution().getJobExecution().getId().toString();
         Path outputDir = Paths.get("temp", "job_" + jobId);
         Files.createDirectories(outputDir);
@@ -65,69 +68,96 @@ public class ExcelSplitterTasklet implements Tasklet {
         chunkContext.getStepContext().getStepExecution().getJobExecution().getExecutionContext()
                 .put("partitionDirectory", outputDir.toAbsolutePath().toString());
 
-        try (InputStream is = new FileInputStream(inputFile);
+        long startTime = System.currentTimeMillis();
+        long totalRows = 0;
+
+        try (InputStream is = new BufferedInputStream(new FileInputStream(inputFile), BUFFER_SIZE);
                 ReadableWorkbook wb = new ReadableWorkbook(is)) {
 
             Sheet sheet = wb.getFirstSheet();
             try (Stream<Row> rows = sheet.openStream()) {
-                var iterator = rows.iterator();
+                Iterator<Row> iterator = rows.iterator();
 
                 if (!iterator.hasNext()) {
                     return RepeatStatus.FINISHED;
                 }
 
-                // 1. Read Header and Build Mapping
+                // 1. Read header and build INDEX ARRAY (not map lookup per cell)
                 Row headerRow = iterator.next();
-                java.util.Map<String, Integer> headerMap = new java.util.HashMap<>();
+                Map<String, Integer> headerMap = new HashMap<>();
                 int cellCount = headerRow.getCellCount();
                 for (int i = 0; i < cellCount; i++) {
                     String val = headerRow.getCell(i).getText();
-                    if (val != null) {
-                        headerMap.put(val.trim(), i);
-                    }
+                    if (val != null) headerMap.put(val.trim(), i);
                 }
 
-                // Create Standardized CSV Header String
-                String headerLine = String.join(",", java.util.Arrays.stream(TARGET_HEADERS)
-                        .map(h -> "\"" + h + "\"")
-                        .toArray(String[]::new));
+                // Pre-compute: for each target column, what source index?
+                int[] sourceIndexes = new int[TARGET_HEADERS.length];
+                for (int i = 0; i < TARGET_HEADERS.length; i++) {
+                    Integer idx = headerMap.get(TARGET_HEADERS[i]);
+                    sourceIndexes[i] = (idx != null) ? idx : -1;
+                }
 
+                // Build CSV header string once
+                StringBuilder headerSb = new StringBuilder(512);
+                for (int i = 0; i < TARGET_HEADERS.length; i++) {
+                    if (i > 0) headerSb.append(',');
+                    headerSb.append('"').append(TARGET_HEADERS[i]).append('"');
+                }
+                String headerLine = headerSb.toString();
+
+                // 2. Stream rows into chunked CSV files
                 int fileIndex = 1;
                 int rowCount = 0;
                 BufferedWriter writer = createWriter(outputDir, fileIndex, headerLine);
+                StringBuilder sb = new StringBuilder(2048); // reuse per row
 
                 while (iterator.hasNext()) {
                     Row row = iterator.next();
-                    // 2. Map Row to Target Order
-                    String line = mapRowToCsv(row, headerMap);
+                    int maxCell = row.getCellCount();
 
-                    if (writer == null) {
-                        writer = createWriter(outputDir, fileIndex, headerLine);
+                    sb.setLength(0); // reset without realloc
+                    for (int i = 0; i < TARGET_HEADERS.length; i++) {
+                        if (i > 0) sb.append(',');
+                        sb.append('"');
+
+                        int srcIdx = sourceIndexes[i];
+                        if (srcIdx >= 0 && srcIdx < maxCell) {
+                            String val = row.getCell(srcIdx).getText();
+                            if (val != null && !val.isEmpty()) {
+                                // Inline CSV escape — avoid String.replace() allocation
+                                for (int c = 0; c < val.length(); c++) {
+                                    char ch = val.charAt(c);
+                                    if (ch == '"') sb.append('"'); // escape double-quote
+                                    sb.append(ch);
+                                }
+                            }
+                        }
+                        sb.append('"');
                     }
 
-                    writer.write(line);
+                    writer.write(sb.toString());
                     writer.newLine();
                     rowCount++;
+                    totalRows++;
 
                     if (rowCount >= CHUNK_SIZE) {
-                        try {
-                            writer.close();
-                        } catch (Exception ignored) {
-                        }
-                        writer = null;
+                        writer.close();
                         fileIndex++;
                         rowCount = 0;
+                        writer = createWriter(outputDir, fileIndex, headerLine);
                     }
                 }
 
-                if (writer != null) {
-                    try {
-                        writer.close();
-                    } catch (Exception ignored) {
-                    }
-                }
+                if (writer != null) writer.close();
 
-                System.out.println("Split complete. Created " + fileIndex + " partitions in " + outputDir);
+                // Store total row count for progress tracking
+                chunkContext.getStepContext().getStepExecution().getJobExecution().getExecutionContext()
+                        .putLong("totalReqRows", totalRows);
+
+                long elapsed = System.currentTimeMillis() - startTime;
+                System.out.printf("Split complete: %,d rows → %d files in %.1fs (%,.0f rows/sec)%n",
+                        totalRows, fileIndex, elapsed / 1000.0, totalRows * 1000.0 / Math.max(elapsed, 1));
             }
         }
 
@@ -136,34 +166,9 @@ public class ExcelSplitterTasklet implements Tasklet {
 
     private BufferedWriter createWriter(Path dir, int index, String header) throws Exception {
         File f = dir.resolve("part_" + String.format("%03d", index) + ".csv").toFile();
-        BufferedWriter bw = new BufferedWriter(new FileWriter(f));
-        if (header != null) {
-            bw.write(header);
-            bw.newLine();
-        }
+        BufferedWriter bw = new BufferedWriter(new FileWriter(f), BUFFER_SIZE);
+        bw.write(header);
+        bw.newLine();
         return bw;
-    }
-
-    private String mapRowToCsv(Row row, java.util.Map<String, Integer> headerMap) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < TARGET_HEADERS.length; i++) {
-            if (i > 0)
-                sb.append(",");
-
-            String targetCol = TARGET_HEADERS[i];
-            Integer sourceIndex = headerMap.get(targetCol);
-
-            String val = "";
-            if (sourceIndex != null && sourceIndex < row.getCellCount()) {
-                val = row.getCell(sourceIndex).getText();
-            }
-
-            if (val == null)
-                val = "";
-            // CSV Escaping
-            val = val.replace("\"", "\"\"");
-            sb.append("\"").append(val).append("\"");
-        }
-        return sb.toString();
     }
 }

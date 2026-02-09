@@ -39,37 +39,40 @@ import java.util.Random;
 @Service
 public class PdfGenerationService {
 
-    // --- 1. HIGH CONTRAST EXECUTIVE COLOR PALETTE ---
+    // --- 1. NEW PRIMARY COLOR PALETTE (Page 1 Redesign) ---
+    private static final Color COL_BG_MIDNIGHT_NAVY = new Color(11, 30, 59); // #0B1E3B
+    private static final Color COL_HIGHLIGHT_ELECTRIC_BLUE = new Color(41, 121, 255); // #2979FF
+    private static final Color COL_ACCENT_CYAN_TEAL = new Color(0, 229, 255); // #00E5FF
+    private static final Color COL_BG_CRISP_WHITE = new Color(255, 255, 255); // #FFFFFF
+    private static final Color COL_TEXT_CHARCOAL_GREY = new Color(51, 51, 51); // #333333
+    private static final Color COL_DIVIDER_LIGHT_MIST = new Color(224, 230, 237); // #E0E6ED
 
-    // Primary & Secondary Text (Solid, Dark)
-    // --- 1. PREMIUM FINTECH COLOR PALETTE ---
-
+    // Keep existing constants that are still in use or mapped
     // Backgrounds & Gradients
-    private static final Color COL_BG_NAVY_START = new Color(11, 28, 45); // #0B1C2D
+    private static final Color COL_BG_NAVY_START = COL_BG_MIDNIGHT_NAVY; // Mapping for compatibility
     private static final Color COL_BG_NAVY_MID = new Color(31, 79, 216); // #1F4FD8
     private static final Color COL_BG_BLUE_END = new Color(79, 172, 254); // #4FACFE (Light Blue)
 
     // Text
-    private static final Color COL_TEXT_HERO = Color.WHITE;
-    private static final Color COL_TEXT_SUBHERO = new Color(203, 213, 225); // Slate 300
+    private static final Color COL_TEXT_HERO = COL_TEXT_CHARCOAL_GREY; // Now Dark on White BG for Cover
+    private static final Color COL_TEXT_SUBHERO = new Color(100, 116, 139); // Slate 500 equivalent for subtitle
     private static final Color COL_TEXT_PRIMARY = new Color(15, 23, 42); // Slate 900 (for light backgrounds)
     private static final Color COL_TEXT_SECONDARY = Color.WHITE; // Brightened for dark gradient
     private static final Color COL_TEXT_MUTED = new Color(203, 213, 225); // Slate 300 - Brightened for visibility
     private static final Color COL_TEXT_WHITE = Color.WHITE;
 
     // KPI Card Accents
-    private static final Color COL_ACCENT_CYAN = new Color(6, 182, 212); // Cyan 500
+    private static final Color COL_ACCENT_CYAN = COL_ACCENT_CYAN_TEAL; // Mapped
     private static final Color COL_ACCENT_EMERALD = new Color(16, 185, 129); // Emerald 500
     private static final Color COL_ACCENT_AMBER = new Color(245, 158, 11); // Amber 500
     private static final Color COL_ACCENT_VIOLET = new Color(139, 92, 246); // Violet 500
 
     // Other UI Elements
-    // Other UI Elements
     private static final Color COL_BG_PAGE = new Color(248, 250, 252); // Slate 50
     private static final Color COL_BG_PAGE_2_START = new Color(246, 248, 251); // #F6F8FB
     private static final Color COL_BG_PAGE_2_END = new Color(237, 243, 255); // #EDF3FF
     private static final Color COL_BG_CARD = Color.WHITE;
-    private static final Color COL_BORDER_LIGHT = new Color(226, 232, 240); // Slate 200
+    private static final Color COL_BORDER_LIGHT = COL_DIVIDER_LIGHT_MIST; // Mapped
 
     // Chart Colors (Bold, Distinct)
     private static final Color COL_ACCENT_SALES = new Color(29, 78, 216); // #1D4ED8 (Strong Blue)
@@ -161,8 +164,16 @@ public class PdfGenerationService {
     private static final Color COL_P2_HIGHLIGHT = new Color(47, 128, 237); // #2F80ED
     private static final Color COL_P2_BORDER = new Color(221, 232, 255); // #DDE8FF
 
-    private static final Color COL_P2_BG_START = new Color(247, 250, 255); // #F7FAFF
-    private static final Color COL_P2_BG_END = new Color(238, 244, 255); // #EEF4FF
+    // New Sparkline Colors
+    private static final Color COL_SPARK_POS_LINE = new Color(45, 164, 78); // #2DA44E
+    private static final Color COL_SPARK_POS_FILL = new Color(45, 164, 78, 51); // 20% opacity
+    private static final Color COL_SPARK_NEG_LINE = new Color(209, 36, 47); // #D1242F
+    private static final Color COL_SPARK_NEG_FILL = new Color(209, 36, 47, 51); // 20% opacity
+    private static final Color COL_AXIS_TEXT = new Color(107, 114, 128); // #6B7280
+    private static final Color COL_GRID_LINE_LIGHT = new Color(229, 231, 235); // #E5E7EB
+
+    private static final Color COL_P2_BG_START = new Color(248, 250, 252); // #F8FAFC (Clean White/Page)
+    private static final Color COL_P2_BG_END = new Color(241, 245, 249); // #F1F5F9 (Very Light Grey)
     private static final Color COL_P2_SHADOW = new Color(0, 40, 120, 20); // rgba(0, 40, 120, 0.08) approx 20/255 alpha
 
     // Revenue/Sales Gradients - Gentle Blues
@@ -230,20 +241,20 @@ public class PdfGenerationService {
                     if (writer.getPageNumber() == 1) {
                         // Cover Page Background is handled in createCoverPage
                     } else {
-                        // Page 2+: Premium Gradient matching Cover Page (Deep Navy -> Sky Blue)
+                        // Page 2+: Dark Premium Background (Consistent with Cover)
                         PdfShading shading = PdfShading.simpleAxial(writer,
                                 0, h, // x0, y0 (Top Left)
                                 w, 0, // x1, y1 (Bottom Right)
-                                COL_BG_NAVY_START, // Deep Navy #0B1C2D
-                                COL_BG_BLUE_END); // Sky Blue #4FACFE
+                                COL_BG_NAVY_START, // Dark Navy
+                                COL_BG_BLUE_END); // Light Blue End
                         PdfShadingPattern pattern = new PdfShadingPattern(shading);
                         canvas.setShadingFill(pattern);
                         canvas.rectangle(0, 0, w, h);
                         canvas.fill();
 
-                        // Pattern Overlay (Dot Grid) - 5% Opacity for premium texture
+                        // Pattern Overlay (Dot Grid) - White 5% for texture on dark bg
                         PdfPatternPainter mesh = canvas.createPattern(8, 8);
-                        mesh.setColorFill(new Color(255, 255, 255, 20)); // Low opacity white
+                        mesh.setColorFill(new Color(255, 255, 255, 12)); // 5% opacity white
                         mesh.circle(4, 4, 0.5f); // Tiny dots
                         mesh.fill();
 
@@ -986,11 +997,8 @@ public class PdfGenerationService {
             c2.setPadding(10);
             chartsGrid.addCell(c2);
 
-            PdfPCell gridWrapper = new PdfPCell(chartsGrid);
-            gridWrapper.setBorder(Rectangle.NO_BORDER);
-            gridWrapper.setPadding(15);
-
-            containerCell.addElement(gridWrapper);
+            containerCell.setPadding(15);
+            containerCell.addElement(chartsGrid);
             chartsContainer.addCell(containerCell);
 
             page8Layout.addCell(chartsContainer);
@@ -1598,52 +1606,49 @@ public class PdfGenerationService {
         }
     }
 
-    // --- 0. COVER PAGE (PREMIUM FINTECH) ---
+    // --- 0. COVER PAGE (UPDATED DESIGN) ---
     private void createCoverPage(PdfWriter writer, Document document, String merchantName, String monthYear,
             MerchantInsightsDTO data) throws DocumentException {
 
         PdfContentByte canvas = writer.getDirectContentUnder();
         Rectangle pageSize = document.getPageSize();
 
-        // 1. Background: Linear Gradient (135deg approx) + Pattern Overlay
+        // 1. Background: Light Theme (Matches Page 2)
         canvas.saveState();
+        canvas.setColorFill(COL_P2_BG_START); // Clean White/Slate 50
+        canvas.rectangle(0, 0, pageSize.getWidth(), pageSize.getHeight());
+        canvas.fill();
 
-        // We simulate diagonal gradient by using axial shading from Top-Left to
-        // Bottom-Right
-        PdfShading shading = PdfShading.simpleAxial(writer,
-                0, pageSize.getHeight(), // x0, y0 (Top Left)
-                pageSize.getWidth(), 0, // x1, y1 (Bottom Right)
-                COL_BG_NAVY_START, COL_BG_BLUE_END);
-
-        // Add a mid-point color? iText simpleAxial is 2-point.
-        // For 3-point gradient we would need axial shading with function.
-        // Simpler approach: Overlay a second gradient or just stick to 2-point Deep
-        // Navy -> Light Blue which looks great.
-        // Let's stick to the 2-point for robustness, it covers the range well.
-
+        // 1b. Background Highlights (Subtle)
+        // Soft Blue Glow (Top Right) - much lighter for white bg
+        PdfShading shading = PdfShading.simpleRadial(writer,
+                pageSize.getWidth(), pageSize.getHeight(), 0, // x, y, r1
+                pageSize.getWidth(), pageSize.getHeight(), 600, // x, y, r2
+                new Color(41, 121, 255, 15), // Very faint Blue
+                new Color(255, 255, 255, 0)); // Fade to transparent
         PdfShadingPattern pattern = new PdfShadingPattern(shading);
         canvas.setShadingFill(pattern);
         canvas.rectangle(0, 0, pageSize.getWidth(), pageSize.getHeight());
         canvas.fill();
 
-        // 1b. Pattern Overlay (Dot Grid / Mesh) - 5% Opacity
+        // 1c. Pattern Overlay (Dot Grid) - Subtle Grey
         PdfPatternPainter mesh = canvas.createPattern(8, 8);
-        mesh.setColorFill(new Color(255, 255, 255, 20)); // Low opacity white
-        mesh.circle(4, 4, 0.5f); // Tiny dots
+        mesh.setColorFill(new Color(0, 0, 0, 5)); // 2% opacity black
+        mesh.circle(4, 4, 0.5f);
         mesh.fill();
 
         canvas.setPatternFill(mesh);
         canvas.rectangle(0, 0, pageSize.getWidth(), pageSize.getHeight());
         canvas.fill();
 
-        // 1c. Visual Anchor (Abstract Geometric Lines - Right Side)
-        canvas.setColorStroke(new Color(255, 255, 255, 15)); // Very faint
+        // 1d. Visual Anchor (Blue Lines)
+        canvas.setColorStroke(new Color(11, 94, 215, 20)); // Faint Primary Blue
         canvas.setLineWidth(1f);
         float w = pageSize.getWidth();
         float h = pageSize.getHeight();
-        for (int i = 0; i < 10; i++) {
-            canvas.moveTo(w * 0.6f + (i * 20), 0);
-            canvas.lineTo(w, h * 0.4f + (i * 30));
+        for (int i = 0; i < 12; i++) {
+            canvas.moveTo(w * 0.55f + (i * 25), 0);
+            canvas.lineTo(w, h * 0.45f + (i * 35));
         }
         canvas.stroke();
 
@@ -1652,29 +1657,37 @@ public class PdfGenerationService {
         // 2. Main Container (Content Layer)
         PdfPTable coverTable = new PdfPTable(1);
         coverTable.setWidthPercentage(100);
-        coverTable.setSpacingBefore(60); // Reduced for full-screen design
+        coverTable.setSpacingBefore(60);
 
-        // 3. Header Bar (Transparent / Glassy Pill)
-        // We'll draw this manually later or use a cell, but "Header" usually fixed.
-        // The requirement says "Corporate Header" is updated too.
-        // For Cover page, the "Hero Title Block" is the main focus.
-
-        // 4. Hero Title Block (Glass Panel)
+        // 4. Hero Title Block (Crisp White Card)
         PdfPCell heroCell = new PdfPCell();
         heroCell.setBorder(Rectangle.NO_BORDER);
-        heroCell.setPadding(40); // Generous padding for premium feel
+        heroCell.setPadding(40);
         heroCell.setCellEvent(new PdfPCellEvent() {
             public void cellLayout(PdfPCell cell, Rectangle position, PdfContentByte[] canvases) {
                 PdfContentByte cb = canvases[PdfPTable.LINECANVAS];
                 cb.saveState();
-                // Glass Effect: White with 8% opacity + Blur (Blur is hard in PDF, we use pure
-                // transparency)
-                cb.setColorFill(new Color(255, 255, 255, 20));
-                // Rounded Rect
+
+                // Crisp White Background
+                cb.setColorFill(COL_BG_CRISP_WHITE);
                 cb.roundRectangle(position.getLeft(), position.getBottom(), position.getWidth(), position.getHeight(),
                         16);
                 cb.fill();
-                // Border removed - no stroke for cleaner appearance
+
+                // Subtle Border (Light Mist)
+                cb.setColorStroke(COL_DIVIDER_LIGHT_MIST);
+                cb.setLineWidth(1f);
+                cb.roundRectangle(position.getLeft(), position.getBottom(), position.getWidth(), position.getHeight(),
+                        16);
+                cb.stroke();
+
+                // Accent Line (Cyan Teal) at bottom
+                cb.setColorStroke(COL_ACCENT_CYAN_TEAL);
+                cb.setLineWidth(4f);
+                cb.moveTo(position.getLeft() + 20, position.getBottom());
+                cb.lineTo(position.getRight() - 20, position.getBottom());
+                cb.stroke();
+
                 cb.restoreState();
             }
         });
@@ -1684,7 +1697,7 @@ public class PdfGenerationService {
         heroContent.setWidthPercentage(100);
 
         // TITLE
-        Font titleFont = new Font(Font.HELVETICA, 38, Font.BOLD, COL_TEXT_HERO);
+        Font titleFont = new Font(Font.HELVETICA, 38, Font.BOLD, COL_TEXT_CHARCOAL_GREY);
         PdfPCell tCell = new PdfPCell(new Phrase("MERCHANT PERFORMANCE\nINTELLIGENCE REPORT", titleFont));
         tCell.setBorder(Rectangle.NO_BORDER);
         tCell.setHorizontalAlignment(Element.ALIGN_CENTER);
@@ -1696,32 +1709,50 @@ public class PdfGenerationService {
         PdfPCell sCell = new PdfPCell(new Phrase(merchantName + " — " + monthYear, subFont));
         sCell.setBorder(Rectangle.NO_BORDER);
         sCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-        sCell.setPaddingBottom(10);
+        sCell.setPaddingBottom(15);
         heroContent.addCell(sCell);
 
+        // DIVIDER
+        PdfPCell dCell = new PdfPCell();
+        dCell.setBorder(Rectangle.NO_BORDER);
+        dCell.setFixedHeight(1);
+        dCell.setCellEvent(new PdfPCellEvent() {
+            public void cellLayout(PdfPCell cell, Rectangle position, PdfContentByte[] canvases) {
+                PdfContentByte cb = canvases[PdfPTable.LINECANVAS];
+                cb.saveState();
+                cb.setColorStroke(COL_DIVIDER_LIGHT_MIST);
+                cb.setLineWidth(1f);
+                cb.moveTo(position.getLeft() + 100, position.getTop()); // Indented divider
+                cb.lineTo(position.getRight() - 100, position.getTop());
+                cb.stroke();
+                cb.restoreState();
+            }
+        });
+        heroContent.addCell(dCell);
+
         // AGENT TAGLINE
-        Font agentFont = new Font(Font.HELVETICA, 10, Font.ITALIC, new Color(148, 163, 184)); // Slate 400
+        Font agentFont = new Font(Font.HELVETICA, 11, Font.ITALIC, COL_HIGHLIGHT_ELECTRIC_BLUE); // Electric Blue
+                                                                                                 // Highlight
         PdfPCell agentCell = new PdfPCell(
                 new Phrase("Empowering " + merchantName + " with data-driven strategic clarity", agentFont));
         agentCell.setBorder(Rectangle.NO_BORDER);
         agentCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-        agentCell.setPaddingBottom(20);
+        agentCell.setPaddingTop(15);
+        agentCell.setPaddingBottom(10);
         heroContent.addCell(agentCell);
 
         heroCell.addElement(heroContent);
 
         // Add Hero Cell to Cover Table with margins
         PdfPTable heroWrapper = new PdfPTable(1);
-        heroWrapper.setWidthPercentage(95); // Full-screen: 95% width for maximum impact
+        heroWrapper.setWidthPercentage(90);
         heroWrapper.addCell(heroCell);
 
         PdfPCell wrapperCell = new PdfPCell(heroWrapper);
         wrapperCell.setBorder(Rectangle.NO_BORDER);
         wrapperCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-        wrapperCell.setPaddingBottom(80); // Professional spacing before KPIs (increased for clarity)
+        wrapperCell.setPaddingBottom(80);
         coverTable.addCell(wrapperCell);
-
-        // KPI cards removed - they will appear on Page 2 (Business Overview) instead
 
         document.add(coverTable);
     }
@@ -4664,36 +4695,44 @@ public class PdfGenerationService {
         return chart;
     }
 
+    // --- Page 6 Helper ---
     private JFreeChart createLightDonutChart(String title, DefaultPieDataset dataset) {
         JFreeChart chart = ChartFactory.createRingChart(title, dataset, false, true, false);
 
         // Light Theme Styling
-        chart.setBackgroundPaint(Color.WHITE);
+        chart.setBackgroundPaint(null); // Transparent wrapper
         chart.setTitle(
-                new org.jfree.chart.title.TextTitle(title, new java.awt.Font("SansSerif", java.awt.Font.BOLD, 12)));
+                new org.jfree.chart.title.TextTitle(title, new java.awt.Font("Inter", java.awt.Font.BOLD, 12)));
         chart.getTitle().setPaint(new Color(15, 23, 42)); // Slate 900
 
         org.jfree.chart.plot.RingPlot plot = (org.jfree.chart.plot.RingPlot) chart.getPlot();
-        plot.setBackgroundPaint(Color.WHITE);
+        plot.setBackgroundPaint(null); // Transparent plot
         plot.setOutlineVisible(false);
         plot.setShadowPaint(null);
         plot.setSectionDepth(0.35); // Thicker ring
         plot.setSeparatorsVisible(false);
 
-        // Specific Palette (Blue 65%, Green 25%, Purple 10%)
-        // We map based on keys.
-        plot.setSectionPaint("Weekdays (Mon-Fri)", new Color(96, 165, 250)); // Light Blue #60A5FA
-        plot.setSectionPaint("Weekends (Sat-Sun)", new Color(134, 239, 172)); // Light Green #86EFAC
-        plot.setSectionPaint("Fridays", new Color(192, 132, 252)); // Light Purple #C084FC
-        // Fallback or specific keys
-        plot.setSectionPaint("Saturday", new Color(134, 239, 172));
+        // Specific Palette (Professional Bank-Grade)
+        // Weekdays: Primary Blue (Business as usual)
+        plot.setSectionPaint("Weekdays (Mon-Fri)", CHART_PRIMARY);
+        // Weekends: Success Green (High Revenue)
+        plot.setSectionPaint("Weekends (Sat-Sun)", CHART_SUCCESS);
+        // Fridays: Distinct Purple (Transition day)
+        plot.setSectionPaint("Fridays", CHART_PURPLE);
+
+        // Fallback keys
+        plot.setSectionPaint("Saturday", CHART_SUCCESS);
+        plot.setSectionPaint("Sunday", CHART_SUCCESS);
 
         // Label Generator (Cleaner)
         plot.setLabelGenerator(new org.jfree.chart.labels.StandardPieSectionLabelGenerator(
                 "{0}: {2}", new java.text.DecimalFormat("0"), new java.text.DecimalFormat("0%")));
-        plot.setLabelFont(new java.awt.Font("SansSerif", java.awt.Font.BOLD, 10));
-        plot.setLabelBackgroundPaint(new Color(255, 255, 255, 200));
+        plot.setLabelFont(new java.awt.Font("Inter", java.awt.Font.BOLD, 10));
+        plot.setLabelPaint(new Color(51, 65, 85)); // Slate 700
+        plot.setLabelBackgroundPaint(new Color(255, 255, 255, 220)); // Subtle background for legibility
         plot.setLabelOutlinePaint(null);
+        plot.setLabelShadowPaint(null);
+        plot.setSimpleLabels(true); // Cleaner leader lines
 
         return chart;
     }
@@ -5523,47 +5562,99 @@ public class PdfGenerationService {
         PdfPCell cell = new PdfPCell();
         cell.setBorder(Rectangle.NO_BORDER);
         cell.setPadding(15);
-        cell.setMinimumHeight(80);
+        cell.setMinimumHeight(100); // Taller for cleaner look
 
-        // Glassmorphism Background
+        // White Card Background
         cell.setCellEvent(new PdfPCellEvent() {
             public void cellLayout(PdfPCell cell, Rectangle position, PdfContentByte[] canvases) {
                 PdfContentByte cb = canvases[PdfPTable.LINECANVAS];
                 cb.saveState();
 
-                // White Surface with Translucency
-                cb.setColorFill(new Color(255, 255, 255, 200)); // ~80% opacity white
+                // Clean White Surface (Solid)
+                cb.setColorFill(Color.WHITE);
                 cb.roundRectangle(position.getLeft(), position.getBottom(), position.getWidth(), position.getHeight(),
-                        16);
+                        12);
                 cb.fill();
 
-                // Soft Shadow
-                cb.setColorFill(COL_P2_SHADOW);
-                cb.roundRectangle(position.getLeft() + 2, position.getBottom() - 2, position.getWidth(),
-                        position.getHeight(), 16);
-                cb.fill();
-
-                // Thin Border
-                cb.setLineWidth(0.5f);
-                cb.setColorStroke(COL_P2_BORDER);
+                // Subtle Border (Light Grey)
+                cb.setLineWidth(1f); // Slightly thicker for definition
+                cb.setColorStroke(COL_GRID_LINE_LIGHT); // #E5E7EB
                 cb.roundRectangle(position.getLeft(), position.getBottom(), position.getWidth(), position.getHeight(),
-                        16);
+                        12);
                 cb.stroke();
+
+                // Shadow (Very subtle bottom)
+                cb.setColorFill(new Color(0, 0, 0, 10)); // 4% opacity
+                cb.roundRectangle(position.getLeft() + 2, position.getBottom() - 2, position.getWidth(),
+                        position.getHeight(), 12);
+                cb.fill();
 
                 cb.restoreState();
             }
         });
 
-        // Title
-        Font titleFont = new Font(Font.HELVETICA, 8, Font.BOLD,
-                isWin ? new Color(16, 185, 129) : new Color(245, 158, 11)); // Green for Win, Amber for Opportunity
-        Phrase titlePhrase = new Phrase(title.toUpperCase(), titleFont);
-        cell.addElement(titlePhrase);
+        // Title Row (Text + Icon)
+        PdfPTable titleRow = new PdfPTable(2);
+        titleRow.setWidthPercentage(100);
+        try {
+            titleRow.setWidths(new float[] { 4, 1 });
+        } catch (Exception e) {
+        }
+
+        // Title Text
+        Font titleFont = new Font(Font.HELVETICA, 8, Font.BOLD, COL_AXIS_TEXT); // #6B7280
+        PdfPCell titleCell = new PdfPCell(new Phrase(title.toUpperCase(), titleFont));
+        titleCell.setBorder(Rectangle.NO_BORDER);
+        titleRow.addCell(titleCell);
+
+        // Icon (Trophy or Bulb)
+        // We'll use a simple text emoji or shape for now as lightweight solution
+        // "🏆" and "💡" might not render in all PDF fonts without embedding.
+        // Using simple shapes via CellEvent or just text if font supports.
+        // Let's use simple shapes/drawing for robustness.
+        PdfPCell iconCell = new PdfPCell();
+        iconCell.setBorder(Rectangle.NO_BORDER);
+        iconCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        // Drawing a simple placeholder icon
+        iconCell.setCellEvent(new PdfPCellEvent() {
+            public void cellLayout(PdfPCell cell, Rectangle position, PdfContentByte[] canvases) {
+                PdfContentByte cb = canvases[PdfPTable.LINECANVAS];
+                cb.saveState();
+                float x = position.getRight() - 10;
+                float y = position.getTop() - 8;
+                cb.setColorStroke(COL_AXIS_TEXT);
+                cb.setLineWidth(1f);
+                if (isWin) {
+                    // Trophy Cup shape
+                    cb.moveTo(x - 5, y);
+                    cb.lineTo(x + 5, y);
+                    cb.lineTo(x, y - 8);
+                    cb.lineTo(x - 5, y);
+                    cb.stroke();
+                    cb.moveTo(x, y - 8);
+                    cb.lineTo(x, y - 10);
+                    cb.moveTo(x - 3, y - 10);
+                    cb.lineTo(x + 3, y - 10);
+                    cb.stroke();
+                } else {
+                    // Lightbulb circle
+                    cb.circle(x, y - 4, 4);
+                    cb.stroke();
+                    cb.moveTo(x - 2, y - 9);
+                    cb.lineTo(x + 2, y - 9); // base
+                    cb.stroke();
+                }
+                cb.restoreState();
+            }
+        });
+        titleRow.addCell(iconCell);
+
+        cell.addElement(titleRow);
 
         // Content
-        Font contentFont = new Font(Font.HELVETICA, 10, Font.NORMAL, COL_P2_DARK_TEXT);
+        Font contentFont = new Font(Font.HELVETICA, 10, Font.NORMAL, new Color(31, 41, 55)); // #1F2937
         Paragraph contentP = new Paragraph(content, contentFont);
-        contentP.setSpacingBefore(5);
+        contentP.setSpacingBefore(8);
         cell.addElement(contentP);
 
         card.addCell(cell);
@@ -5581,63 +5672,89 @@ public class PdfGenerationService {
         PdfPCell cell = new PdfPCell();
         cell.setBorder(Rectangle.NO_BORDER);
         cell.setPadding(15);
-        cell.setMinimumHeight(100);
+        cell.setMinimumHeight(120);
 
-        // Glassmorphism Background
+        // White Card Background
         cell.setCellEvent(new PdfPCellEvent() {
             public void cellLayout(PdfPCell cell, Rectangle position, PdfContentByte[] canvases) {
                 PdfContentByte cb = canvases[PdfPTable.LINECANVAS];
                 cb.saveState();
 
-                // White Surface
-                cb.setColorFill(new Color(255, 255, 255, 220)); // ~85% opacity
+                // Clean White Surface (Solid)
+                cb.setColorFill(Color.WHITE);
                 cb.roundRectangle(position.getLeft(), position.getBottom(), position.getWidth(), position.getHeight(),
-                        16);
+                        12);
                 cb.fill();
 
-                // Soft Shadow
-                cb.setColorFill(COL_P2_SHADOW);
-                cb.roundRectangle(position.getLeft() + 2, position.getBottom() - 2, position.getWidth(),
-                        position.getHeight(), 16);
-                cb.fill();
-
-                // Thin Border
-                cb.setLineWidth(0.5f);
-                cb.setColorStroke(COL_P2_BORDER);
+                // Subtle Border
+                cb.setLineWidth(1f);
+                cb.setColorStroke(COL_GRID_LINE_LIGHT); // #E5E7EB
                 cb.roundRectangle(position.getLeft(), position.getBottom(), position.getWidth(), position.getHeight(),
-                        16);
+                        12);
                 cb.stroke();
+
+                // Shadow (Very subtle bottom)
+                cb.setColorFill(new Color(0, 0, 0, 10));
+                cb.roundRectangle(position.getLeft() + 2, position.getBottom() - 2, position.getWidth(),
+                        position.getHeight(), 12);
+                cb.fill();
 
                 // Draw Sparkline (if data exists)
                 if (sparkData != null && !sparkData.isEmpty()) {
                     float x = position.getLeft() + 15;
                     float y = position.getBottom() + 15;
                     float w = position.getWidth() - 30;
-                    float h = 30;
+                    float h = 40;
 
                     // Find min/max
                     float min = Float.MAX_VALUE;
                     float max = Float.MIN_VALUE;
-                    for (ChartData d : sparkData) {
+                    float firstVal = 0;
+                    float lastVal = 0;
+
+                    for (int i = 0; i < sparkData.size(); i++) {
+                        ChartData d = sparkData.get(i);
                         float v = d.getValue() != null ? d.getValue().floatValue() : 0.0f;
                         if (v < min)
                             min = v;
                         if (v > max)
                             max = v;
+                        if (i == 0)
+                            firstVal = v;
+                        if (i == sparkData.size() - 1)
+                            lastVal = v;
                     }
                     if (max == min)
                         max = min + 1;
                     float range = max - min;
                     float stepX = w / (sparkData.size() - 1);
 
-                    cb.setLineWidth(1.5f);
-                    // Gradient Stroke Simulation (iText is limited, use solid color or shading)
-                    // Using primary blue for sparkline
-                    cb.setColorStroke(COL_P2_PRIMARY_BLUE);
+                    // Determine Color based on Trend
+                    boolean isPositive = (growth != null) ? (growth >= 0) : (lastVal >= firstVal);
+
+                    Color lineColor = isPositive ? COL_SPARK_POS_LINE : COL_SPARK_NEG_LINE;
+                    Color fillColor = isPositive ? COL_SPARK_POS_FILL : COL_SPARK_NEG_FILL;
+
+                    // 1. Fill Area
+                    cb.saveState();
+                    cb.moveTo(x, y);
+                    for (int i = 0; i < sparkData.size(); i++) {
+                        float v = sparkData.get(i).getValue() != null ? sparkData.get(i).getValue().floatValue() : 0.0f;
+                        float px = x + (i * stepX);
+                        float py = y + ((v - min) / range) * h;
+                        cb.lineTo(px, py);
+                    }
+                    cb.lineTo(x + w, y);
+                    cb.closePath();
+                    cb.setColorFill(fillColor);
+                    cb.fill();
+                    cb.restoreState();
+
+                    // 2. Stroke Line
+                    cb.setLineWidth(2f);
+                    cb.setColorStroke(lineColor);
 
                     boolean first = true;
-                    float lastX = 0, lastY = 0;
-
                     for (int i = 0; i < sparkData.size(); i++) {
                         float v = sparkData.get(i).getValue() != null ? sparkData.get(i).getValue().floatValue() : 0.0f;
                         float px = x + (i * stepX);
@@ -5649,59 +5766,72 @@ public class PdfGenerationService {
                         } else {
                             cb.lineTo(px, py);
                         }
-                        lastX = px;
-                        lastY = py;
                     }
                     cb.stroke();
 
-                    // Soft Glow (thick semitransparent line underneath - simulated)
-                    cb.saveState();
-                    cb.setLineWidth(4f);
-                    cb.setColorStroke(new Color(11, 94, 215, 30)); // 12% opacity
-                    first = true;
-                    for (int i = 0; i < sparkData.size(); i++) {
-                        float v = sparkData.get(i).getValue() != null ? sparkData.get(i).getValue().floatValue() : 0.0f;
-                        float px = x + (i * stepX);
-                        float py = y + ((v - min) / range) * h;
-                        if (first) {
-                            cb.moveTo(px, py);
-                            first = false;
-                        } else {
-                            cb.lineTo(px, py);
-                        }
-                    }
-                    cb.stroke();
-                    cb.restoreState();
+                    // 3. End Point Dot
+                    float lastPx = x + w;
+                    float lastPy = y + ((lastVal - min) / range) * h;
+                    cb.setColorFill(lineColor);
+                    cb.circle(lastPx, lastPy, 3f);
+                    cb.fill();
                 }
 
                 cb.restoreState();
             }
         });
 
+        // Title Row
+        PdfPTable titleRow = new PdfPTable(2);
+        titleRow.setWidthPercentage(100);
+        try {
+            titleRow.setWidths(new float[] { 4, 1 });
+        } catch (Exception e) {
+        }
+
         // Title
-        Font titleFont = new Font(Font.HELVETICA, 9, Font.BOLD, COL_P2_SEC_TEXT);
+        Font titleFont = new Font(Font.HELVETICA, 8, Font.BOLD, COL_AXIS_TEXT);
         Paragraph titleP = new Paragraph(title.toUpperCase(), titleFont);
-        cell.addElement(titleP);
+        PdfPCell titleCell = new PdfPCell(titleP);
+        titleCell.setBorder(Rectangle.NO_BORDER);
+        titleRow.addCell(titleCell);
+
+        // Icon (Generic)
+        PdfPCell iconCell = new PdfPCell();
+        iconCell.setBorder(Rectangle.NO_BORDER);
+        iconCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        iconCell.setCellEvent(new PdfPCellEvent() {
+            public void cellLayout(PdfPCell cell, Rectangle position, PdfContentByte[] canvases) {
+                PdfContentByte cb = canvases[PdfPTable.LINECANVAS];
+                cb.saveState();
+                float x = position.getRight() - 10;
+                float y = position.getTop() - 8;
+                cb.setColorStroke(COL_AXIS_TEXT);
+                cb.setLineWidth(1f);
+                // Simple Bar Chart Icon
+                cb.moveTo(x - 6, y - 6);
+                cb.lineTo(x - 6, y); // L
+                cb.moveTo(x - 3, y - 8);
+                cb.lineTo(x - 3, y); // M
+                cb.moveTo(x, y - 4);
+                cb.lineTo(x, y); // S
+                cb.stroke();
+                cb.restoreState();
+            }
+        });
+        titleRow.addCell(iconCell);
+
+        cell.addElement(titleRow);
 
         // Value
-        Font valFont = new Font(Font.HELVETICA, 24, Font.BOLD, COL_P2_DARK_TEXT);
+        Font valFont = new Font(Font.HELVETICA, 24, Font.BOLD, new Color(17, 24, 39)); // #111827
         Paragraph valP = new Paragraph(value, valFont);
         valP.setSpacingBefore(10);
         cell.addElement(valP);
 
-        // Growth
-        if (growth != null) {
-            String arrow = growth >= 0 ? "\u25B2" : "\u25BC"; // Up/Down Triangle
-            Color trendColor = growth >= 0 ? new Color(16, 185, 129) : new Color(239, 68, 68);
-            Font growthFont = new Font(Font.HELVETICA, 9, Font.BOLD, trendColor);
-            Paragraph growthP = new Paragraph(arrow + " " + String.format("%.1f%%", Math.abs(growth)), growthFont);
-            growthP.setSpacingBefore(2);
-            cell.addElement(growthP);
-        }
-
-        // Space for sparkline
+        // Spacer for sparkline
         Paragraph spacer = new Paragraph(" ");
-        spacer.setSpacingBefore(15);
+        spacer.setSpacingBefore(30);
         cell.addElement(spacer);
 
         card.addCell(cell);
@@ -7398,16 +7528,20 @@ public class PdfGenerationService {
         if (data != null) {
             data.forEach((k, v) -> {
                 Number val = 0;
+                // Normalize key to Upper Case for matching, but keep original for display?
+                // Actually dataset key determines display. Let's keep original.
                 if (v instanceof Number)
                     val = (Number) v;
                 else if (v instanceof com.acquira.dto.Merchant360DTO.ValueWithGrowth)
-                    val = ((com.acquira.dto.Merchant360DTO.ValueWithGrowth) v).getValue().doubleValue();
+                    val = ((com.acquira.dto.Merchant360DTO.ValueWithGrowth) v).getValue() != null
+                            ? ((com.acquira.dto.Merchant360DTO.ValueWithGrowth) v).getValue().doubleValue()
+                            : 0.0;
                 ds.setValue(k, val);
             });
         }
 
         JFreeChart chart = ChartFactory.createRingChart(title, ds, false, false, false); // No legend/tooltips
-        chart.setBackgroundPaint(null);
+        chart.setBackgroundPaint(null); // Transparent
         chart.setBorderVisible(false);
 
         org.jfree.chart.plot.RingPlot plot = (org.jfree.chart.plot.RingPlot) chart.getPlot();
@@ -7419,28 +7553,42 @@ public class PdfGenerationService {
                 "{0}: {2}", // Format: Label: Percentage
                 java.text.NumberFormat.getNumberInstance(),
                 java.text.NumberFormat.getPercentInstance()));
-        plot.setLabelFont(new java.awt.Font("Inter", java.awt.Font.BOLD, 11));
-        plot.setLabelPaint(Color.WHITE);
+        plot.setLabelFont(new java.awt.Font("Inter", java.awt.Font.BOLD, 10)); // Slightly smaller
+        plot.setLabelPaint(new Color(51, 65, 85)); // Slate 700 - Visible on White
         plot.setLabelBackgroundPaint(null);
         plot.setLabelOutlinePaint(null);
         plot.setLabelShadowPaint(null);
 
         plot.setSectionDepth(0.35); // Thickness
         plot.setShadowPaint(null);
+        plot.setSimpleLabels(true); // Cleaner leader lines
 
-        // PROFESSIONAL COLOR PALETTE (Bank-Grade)
-        plot.setSectionPaint("Visa", CHART_INFO); // Cyan 600 - Clean, professional
-        plot.setSectionPaint("Mastercard", CHART_PURPLE); // Purple 700 - Sophisticated
-        plot.setSectionPaint("Mada", CHART_SUCCESS); // Green 600 - Emerald
+        // PROFESSIONAL COLOR PALETTE (Bank-Grade) - Robust Mapping
+        // Schemes
+        plot.setSectionPaint("Visa", CHART_PRIMARY); // Blue
+        plot.setSectionPaint("VISA", CHART_PRIMARY);
+        plot.setSectionPaint("Mastercard", CHART_PURPLE); // Purple
+        plot.setSectionPaint("MASTERCARD", CHART_PURPLE);
+        plot.setSectionPaint("Amex", CHART_INFO); // Cyan
+        plot.setSectionPaint("AMEX", CHART_INFO);
+        plot.setSectionPaint("Mada", CHART_SUCCESS); // Green
+        plot.setSectionPaint("MADA", CHART_SUCCESS);
 
-        // Generic fallback for card types
-        plot.setSectionPaint("Credit", CHART_PRIMARY); // Blue 600 - Primary
-        plot.setSectionPaint("Debit", CHART_SUCCESS); // Green 600 - Secondary
+        // Types
+        plot.setSectionPaint("Credit", CHART_PRIMARY);
+        plot.setSectionPaint("CREDIT", CHART_PRIMARY); // Blue
+        plot.setSectionPaint("Debit", CHART_TEAL);
+        plot.setSectionPaint("DEBIT", CHART_TEAL); // Teal
+        plot.setSectionPaint("Prepaid", CHART_WARNING);
+        plot.setSectionPaint("PREPAID", CHART_WARNING); // Amber
 
-        // Entry Modes (Professional consistency)
-        plot.setSectionPaint("Chip", CHART_INFO); // Cyan 600 - Matches overall scheme
-        plot.setSectionPaint("Contactless", CHART_PURPLE); // Purple 700 - Sophisticated
-        plot.setSectionPaint("Swipe", CHART_DANGER); // Red 600 - Muted warning, not harsh
+        // Fallback / Modes
+        plot.setSectionPaint("Chip", CHART_PRIMARY);
+        plot.setSectionPaint("CHIP", CHART_PRIMARY);
+        plot.setSectionPaint("Contactless", CHART_PURPLE);
+        plot.setSectionPaint("CONTACTLESS", CHART_PURPLE);
+        plot.setSectionPaint("Swipe", CHART_DANGER);
+        plot.setSectionPaint("SWIPE", CHART_DANGER);
 
         return chart;
     }

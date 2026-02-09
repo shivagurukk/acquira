@@ -2,7 +2,7 @@ package com.acquira.controller;
 
 import com.acquira.dto.MerchantInsightsDTO;
 import com.acquira.service.MerchantInsightService;
-import com.acquira.service.PdfGenerationService;
+import com.acquira.service.PlaywrightPdfService; // Updated
 import com.acquira.config.TenantContext;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -21,13 +21,13 @@ import java.time.format.DateTimeFormatter;
 public class MerchantInsightController {
 
     private final MerchantInsightService insightService;
-    private final PdfGenerationService pdfService;
+    private final PlaywrightPdfService playwrightPdfService; // Updated
     private final com.acquira.repository.MerchantRepository merchantRepository;
 
-    public MerchantInsightController(MerchantInsightService insightService, PdfGenerationService pdfService,
+    public MerchantInsightController(MerchantInsightService insightService, PlaywrightPdfService playwrightPdfService,
             com.acquira.repository.MerchantRepository merchantRepository) {
         this.insightService = insightService;
-        this.pdfService = pdfService;
+        this.playwrightPdfService = playwrightPdfService;
         this.merchantRepository = merchantRepository;
     }
 
@@ -102,8 +102,7 @@ public class MerchantInsightController {
                     java.nio.file.Path path = java.nio.file.Paths.get(folder, filename);
 
                     String password = m.getMid() != null ? m.getMid() : String.valueOf(m.getMerchantId());
-                    byte[] pdfBytes = pdfService.generateMerchantInsightPdf(data, merchantName, targetMonth.toString(),
-                            password);
+                    byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName, targetMonth.toString());
                     java.nio.file.Files.write(path, pdfBytes);
                     successCount++;
                 } catch (Exception e) {
@@ -154,8 +153,7 @@ public class MerchantInsightController {
                 password = mOpt.get().getMid();
             }
 
-            byte[] pdfBytes = pdfService.generateMerchantInsightPdf(data, merchantName, targetMonth.toString(),
-                    password);
+            byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName, targetMonth.toString());
             java.nio.file.Files.write(path, pdfBytes);
 
             return ResponseEntity.ok(path.toAbsolutePath().toString());
@@ -194,8 +192,7 @@ public class MerchantInsightController {
             }
         }
 
-        byte[] pdfBytes = pdfService.generateMerchantInsightPdf(data, merchantName, monthStr,
-                password);
+        byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName, monthStr);
 
         response.setContentType(MediaType.APPLICATION_PDF_VALUE);
         response.setHeader("Content-Disposition", "attachment; filename=Merchant_Insight_" + monthStr + ".pdf");

@@ -59,26 +59,51 @@ const MerchantReportManager = () => {
         const token = localStorage.getItem('token');
         const tenantId = localStorage.getItem('tenantId');
 
-        for (let i = 0; i < merchants.length; i++) {
-            const merchant = merchants[i];
+        try {
+            // Use the efficient batch endpoint that generates all reports at once
+            const res = await fetch('/api/business/insights/generate-all', {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `Bearer ${token}`, 
+                    'X-Tenant-Id': tenantId 
+                }
+            });
 
-            try {
-                // Generate Report for existing merchant
-                const res = await fetch(`/api/business/insights/generate/${merchant.merchantId}`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }
+            if (res.ok) {
+                const result = await res.json();
+                
+                // Update progress with actual results
+                setProgress({
+                    current: result.generated + result.failed,
+                    total: merchants.length,
+                    success: result.generated,
+                    failed: result.failed
                 });
 
-                if (res.ok) {
-                    setProgress(prev => ({ ...prev, current: prev.current + 1, success: prev.success + 1 }));
-                } else {
-                    throw new Error("Failed");
+                // Add any errors to logs
+                if (result.errors && result.errors.length > 0) {
+                    setLogs(result.errors);
                 }
-            } catch (err) {
-                setProgress(prev => ({ ...prev, current: prev.current + 1, failed: prev.failed + 1 }));
-                setLogs(prev => [...prev, `Failed: ${merchant.name || merchant.merchantId}`]);
+
+                // Add success message to logs
+                if (result.generated > 0) {
+                    setLogs(prev => [
+                        ...prev,
+                        `✅ Successfully generated ${result.generated} reports`,
+                        `📁 Saved to: ${result.folder || 'reports folder'}`
+                    ]);
+                }
+            } else {
+                const errorData = await res.json();
+                setLogs([`❌ Batch generation failed: ${errorData.error || 'Unknown error'}`]);
+                setProgress(prev => ({ ...prev, failed: merchants.length }));
             }
+        } catch (err) {
+            console.error('Batch generation error:', err);
+            setLogs([`❌ Critical error: ${err.message}`]);
+            setProgress(prev => ({ ...prev, failed: merchants.length }));
         }
+        
         setStatus('completed');
     };
 
@@ -205,9 +230,18 @@ const MerchantReportManager = () => {
             {/* Logs Area */}
             {logs.length > 0 && (
                 <div className="mt-8 w-full max-w-2xl">
-                    <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 px-2">Error Logs</div>
-                    <div className="bg-slate-900 rounded-lg p-4 font-mono text-xs text-red-400 max-h-40 overflow-y-auto shadow-inner">
-                        {logs.map((L, i) => <div key={i}>&gt; {L}</div>)}
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 px-2">
+                        {logs.some(log => log.includes('✅')) ? 'Generation Log' : 'Error Logs'}
+                    </div>
+                    <div className="bg-slate-900 rounded-lg p-4 font-mono text-xs max-h-60 overflow-y-auto shadow-inner">
+                        {logs.map((L, i) => (
+                            <div 
+                                key={i} 
+                                className={L.includes('✅') || L.includes('📁') ? 'text-green-400' : 'text-red-400'}
+                            >
+                                &gt; {L}
+                            </div>
+                        ))}
                     </div>
                 </div>
             )}

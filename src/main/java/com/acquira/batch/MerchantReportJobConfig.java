@@ -1,10 +1,9 @@
 package com.acquira.batch;
 
 import com.acquira.dto.MerchantInsightsDTO;
-import com.acquira.model.Merchant;
 import com.acquira.repository.MerchantRepository;
 import com.acquira.service.MerchantInsightService;
-import com.acquira.service.PdfGenerationService;
+import com.acquira.service.PlaywrightPdfService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.Job;
@@ -14,7 +13,6 @@ import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
 import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.item.data.RepositoryItemReader;
 import org.springframework.batch.item.data.builder.RepositoryItemReaderBuilder;
@@ -26,12 +24,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.Collections;
-import java.util.Map;
 
 @Configuration
 @EnableBatchProcessing
@@ -43,7 +38,7 @@ public class MerchantReportJobConfig {
     private final PlatformTransactionManager transactionManager;
     private final MerchantRepository merchantRepository;
     private final MerchantInsightService insightService;
-    private final PdfGenerationService pdfService;
+    private final PlaywrightPdfService playwrightPdfService;
 
     @Bean
     public Job merchantReportJob() {
@@ -54,8 +49,8 @@ public class MerchantReportJobConfig {
 
     @Bean
     public Step reportGenerationStep() {
-        return new StepBuilder("reportGenerationStep", jobRepository)
-                .<Merchant, ReportData>chunk(10, transactionManager)
+        return new StepBuilder("reportGenerationStep", jobRepository).<com.acquira.model.Merchant, ReportData>chunk(10,
+                transactionManager)
                 .reader(merchantReader())
                 .processor(merchantProcessor())
                 .writer(reportWriter())
@@ -63,8 +58,8 @@ public class MerchantReportJobConfig {
     }
 
     @Bean
-    public RepositoryItemReader<Merchant> merchantReader() {
-        return new RepositoryItemReaderBuilder<Merchant>()
+    public RepositoryItemReader<com.acquira.model.Merchant> merchantReader() {
+        return new RepositoryItemReaderBuilder<com.acquira.model.Merchant>()
                 .name("merchantReader")
                 .repository(merchantRepository)
                 .methodName("findAll")
@@ -74,7 +69,7 @@ public class MerchantReportJobConfig {
     }
 
     @Bean
-    public ItemProcessor<Merchant, ReportData> merchantProcessor() {
+    public ItemProcessor<com.acquira.model.Merchant, ReportData> merchantProcessor() {
         return merchant -> {
             try {
                 // Target: Previous Month
@@ -84,8 +79,10 @@ public class MerchantReportJobConfig {
 
                 MerchantInsightsDTO insights = insightService.getInsights(merchant.getMerchantId(), target.getYear(),
                         target.getMonthValue());
-                byte[] pdfBytes = pdfService.generateMerchantInsightPdf(insights, merchant.getName(),
-                        target.toString(), String.valueOf(merchant.getMerchantId()));
+
+                // Use Playwright Service (HTML -> PDF)
+                byte[] pdfBytes = playwrightPdfService.generatePdf(insights, merchant.getName(),
+                        target.toString());
 
                 return new ReportData(merchant, pdfBytes, target);
             } catch (Exception e) {
@@ -116,6 +113,6 @@ public class MerchantReportJobConfig {
     }
 
     // Helper Class to pass data from Processor to Writer
-    record ReportData(Merchant merchant, byte[] pdfBytes, YearMonth target) {
+    record ReportData(com.acquira.model.Merchant merchant, byte[] pdfBytes, YearMonth target) {
     }
 }
