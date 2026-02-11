@@ -21,10 +21,10 @@
     </properties>
     <modules>
         <module>acquira-common</module>
-        <module>acquira-batch</module>
-        <module>acquira-pdf</module>
-        <module>acquira-ai</module>
         <module>acquira-core</module>
+        <module>acquira-pdf</module>
+        <module>acquira-batch</module>
+        <module>acquira-ai</module>
     </modules>
     <dependencyManagement>
         <dependencies>

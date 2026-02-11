@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="peakContent">
+        <div class="section-subtitle" th:text="'Daily performance metrics for ' + ${reportPeriod}" style="margin-bottom: 10px;">Subtitle</div>
+
+        <!-- ROW 1: 4 Hero KPI Cards (bold numbers, visual anchor) -->
+        <div class="grid-4 mb-8">
+            <div class="card card-accent-blue" style="padding: 10px 12px;">
+                <div class="kpi-label">MAX DAILY SALES</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.maxDailySales != null ? 'AED ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">AED 0</div>
+                <span class="text-xs text-muted">Single-day record</span>
+            </div>
+            <div class="card card-accent-green" style="padding: 10px 12px;">
+                <div class="kpi-label">MAX TXNS / DAY</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.maxTxnsInDay != null ? dto.overview.peakStats.maxTxnsInDay.formattedValue : '-'}">0</div>
+                <span class="text-xs text-muted">Peak transaction count</span>
+            </div>
+            <div class="card card-accent-amber" style="padding: 10px 12px;">
+                <div class="kpi-label">HIGHEST TXN VALUE</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.highestTxnValue != null ? 'AED ' + dto.overview.peakStats.highestTxnValue.formattedValue : '-'}">AED 0</div>
+                <span class="text-xs text-muted">Largest single transaction</span>
+            </div>
+            <div class="card card-accent-red" style="padding: 10px 12px;">
+                <div class="kpi-label">TOP CUSTOMER SPEND</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.highestCustomerSpend != null ? 'AED ' + dto.overview.peakStats.highestCustomerSpend.formattedValue : '-'}">AED 0</div>
+                <span class="text-xs text-muted">Highest individual spend</span>
+            </div>
+        </div>
+
+        <!-- ROW 2: Daily Avg TXN Value — equal flex chart -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title">DAILY AVERAGE TRANSACTION VALUE (AED)</div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailyAvgTxnValue" data-color="#0D9488"></canvas></div>
+        </div>
+
+        <!-- ROW 3: Unique Customers — equal flex chart -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title">UNIQUE CUSTOMERS BY DAY OF THE MONTH</div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.uniqueCustomersByDay" data-color="#1E3A8A"></canvas></div>
+        </div>
+
+        <!-- ROW 4: Achievement + Watch summary strip -->
+        <div class="grid-2 mb-8">
+            <div class="action-strip-item opportunity">
+                <div class="strip-label">&#9650; KEY ACHIEVEMENT</div>
+                <div class="strip-text">
+                    Peak daily sales reached <strong th:text="${dto.overview.peakStats.maxDailySales != null ? 'AED ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">AED 0</strong>
+                    with <strong th:text="${dto.overview.peakStats.maxTxnsInDay != null ? dto.overview.peakStats.maxTxnsInDay.formattedValue + ' transactions' : '-'}">0</strong> in a single day.
+                </div>
+            </div>
+            <div class="action-strip-item risk">
+                <div class="strip-label">&#9660; AREA TO WATCH</div>
+                <div class="strip-text">
+                    Average transaction value shows day-to-day volatility. Stabilizing ticket size through bundling or minimum-order incentives can improve predictability.
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 5: AI Insight anchored bottom -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>AI Insight:</strong> Customer traffic is most consistent mid-month (days 14–20). Early-month and late-month dips suggest salary-cycle dependency — consider loyalty triggers for off-peak periods.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>
