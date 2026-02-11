@@ -464,10 +464,10 @@ public class VolumeRevenueRepository {
                     .createNativeQuery("SELECT DISTINCT mcc FROM dim_store WHERE mcc IS NOT NULL ORDER BY 1");
             options.put("mccs", qMcc.getResultList());
 
-            // Team Leaders - Using Sales User ID as proxy if available, or empty
-            // Creating placeholders based on user request "load from summary table"
-            // If column doesn't exist, we return empty list.
-            options.put("teamLeaders", new ArrayList<>());
+            // Team Leaders
+            Query qTeamLeads = entityManager.createNativeQuery(
+                    "SELECT DISTINCT team_lead_name FROM sales_team_mapping WHERE team_lead_name IS NOT NULL ORDER BY 1");
+            options.put("teamLeaders", qTeamLeads.getResultList());
 
             // Destinations
             Query qDest = entityManager.createNativeQuery(

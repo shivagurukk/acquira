@@ -23,6 +23,7 @@ import MerchantReportManager from './pages/business/MerchantReportManager';
 import MerchantHeatmap from './pages/business/MerchantHeatmap';
 import DailyMerchantDashboard from './pages/business/DailyMerchantDashboard';
 import MerchantAnalyticsReport from './pages/business/MerchantAnalyticsReport';
+import SalesTeamManagement from './pages/sales/SalesTeamManagement';
 
 import UserManagement from './pages/UserManagement';
 import TenantManagement from './pages/TenantManagement';
@@ -33,6 +34,8 @@ import FinanceSummary from './pages/finance/FinanceSummary';
 import MerchantInsightHub from './pages/reports/MerchantInsightHub';
 import TransactionTrendsHub from './pages/reports/TransactionTrendsHub';
 import BackupRestore from './pages/BackupRestore';
+import DataExplorer from './pages/analytics/DataExplorer';
+import AiAssistant from './pages/ai/AiAssistant';
 
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -73,6 +76,9 @@ function App() {
         <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
         <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
 
+        {/* Sales Routes */}
+        <Route path="/sales/team-management" element={<SalesTeamManagement />} />
+
 
         {/* Finance Routes */}
         <Route path="/finance/dashboard" element={<FinanceDashboard />} />
@@ -85,6 +91,8 @@ function App() {
         <Route path="/admin/groups" element={<RbacGroups />} />
         <Route path="/admin/backups" element={<BackupRestore />} />
         <Route path="/ops/batch-logs" element={<BatchMonitoring />} />
+        <Route path="/explorer" element={<DataExplorer />} />
+        <Route path="/ai-assistant" element={<AiAssistant />} />
       </Route>
     </Routes>
   );

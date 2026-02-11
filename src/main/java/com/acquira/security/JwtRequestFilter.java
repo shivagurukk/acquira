@@ -1,5 +1,10 @@
 package com.acquira.security;
 
+import com.acquira.config.TenantContext;
+import com.acquira.model.User;
+import com.acquira.model.UserTenantAccess;
+import com.acquira.repository.UserRepository;
+import com.acquira.repository.UserTenantAccessRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,19 +17,20 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 
 @Component
 public class JwtRequestFilter extends OncePerRequestFilter {
 
-    private final com.acquira.security.CustomUserDetailsService userDetailsService;
-    private final com.acquira.security.JwtUtil jwtUtil;
-    private final com.acquira.repository.UserRepository userRepository;
-    private final com.acquira.repository.UserTenantAccessRepository userTenantAccessRepository;
+    private final CustomUserDetailsService userDetailsService;
+    private final JwtUtil jwtUtil;
+    private final UserRepository userRepository;
+    private final UserTenantAccessRepository userTenantAccessRepository;
 
-    public JwtRequestFilter(com.acquira.security.CustomUserDetailsService userDetailsService,
-            com.acquira.security.JwtUtil jwtUtil,
-            com.acquira.repository.UserRepository userRepository,
-            com.acquira.repository.UserTenantAccessRepository userTenantAccessRepository) {
+    public JwtRequestFilter(CustomUserDetailsService userDetailsService,
+            JwtUtil jwtUtil,
+            UserRepository userRepository,
+            UserTenantAccessRepository userTenantAccessRepository) {
         this.userDetailsService = userDetailsService;
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
@@ -43,9 +49,19 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
             jwt = authorizationHeader.substring(7);
             try {
+                // Reject refresh tokens used as access tokens
+                if (jwtUtil.isRefreshToken(jwt)) {
+                    logger.warn("Refresh token used as access token — rejected");
+                    chain.doFilter(request, response);
+                    return;
+                }
                 username = jwtUtil.extractUsername(jwt);
+            } catch (io.jsonwebtoken.ExpiredJwtException e) {
+                logger.debug("JWT token expired for request: " + request.getRequestURI());
+            } catch (io.jsonwebtoken.security.SignatureException e) {
+                logger.warn("Invalid JWT signature");
             } catch (Exception e) {
-                logger.error("Error extracting username from token", e);
+                logger.warn("Invalid JWT token: " + e.getMessage());
             }
         }
 
@@ -53,26 +69,29 @@ public class JwtRequestFilter extends OncePerRequestFilter {
             UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
 
             if (jwtUtil.validateToken(jwt, userDetails)) {
-                UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken = new UsernamePasswordAuthenticationToken(
+
+                // ===== SECURITY FIX: Check if user is still active =====
+                User dbUser = userRepository.findByUsername(username).orElse(null);
+                if (dbUser == null || !dbUser.isActive()) {
+                    logger.warn("Rejected token for inactive/deleted user: " + username);
+                    chain.doFilter(request, response);
+                    return;
+                }
+
+                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                         userDetails, null, userDetails.getAuthorities());
-                usernamePasswordAuthenticationToken
-                        .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(usernamePasswordAuthenticationToken);
+                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(authToken);
 
-                // Auto-set Tenant Context for Admin/User
+                // ===== Tenant Context Resolution (with validation) =====
                 try {
-                    final String finalUsername = username;
-                    com.acquira.model.User user = userRepository.findByUsername(username)
-                            .orElseThrow(() -> new RuntimeException("User not found: " + finalUsername));
+                    List<UserTenantAccess> accessList = userTenantAccessRepository.findByUser(dbUser);
 
-                    // Find Tenant Access
-                    java.util.List<com.acquira.model.UserTenantAccess> accessList = userTenantAccessRepository
-                            .findByUser(user);
-                    // Check for X-Tenant-Id header first
                     String tenantIdHeader = request.getHeader("X-Tenant-Id");
                     Long targetTenantId = null;
 
-                    if (tenantIdHeader != null && !tenantIdHeader.isEmpty() && !"null".equalsIgnoreCase(tenantIdHeader)
+                    if (tenantIdHeader != null && !tenantIdHeader.isEmpty()
+                            && !"null".equalsIgnoreCase(tenantIdHeader)
                             && !"undefined".equalsIgnoreCase(tenantIdHeader)) {
                         try {
                             Long reqTenantId = Long.parseLong(tenantIdHeader);
@@ -83,27 +102,68 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                             if (hasAccess) {
                                 targetTenantId = reqTenantId;
                             } else {
-                                logger.warn(
-                                        "User " + username + " attempted to access unauthorized tenant " + reqTenantId);
+                                logger.warn("User " + username + " attempted unauthorized tenant " + reqTenantId);
                             }
-                        } catch (Exception e) {
-                            logger.warn("Invalid Tenant Header", e);
+                        } catch (NumberFormatException e) {
+                            logger.warn("Invalid X-Tenant-Id header: " + tenantIdHeader);
                         }
                     }
 
-                    // Fallback to default (first one) if no header or invalid
-                    if (targetTenantId == null && !accessList.isEmpty()) {
-                        targetTenantId = accessList.get(0).getTenant().getTenantId();
+                    // Fallback to default tenant or first available
+                    UserTenantAccess activeAccess = null;
+                    if (targetTenantId == null) {
+                        // 1. Try to find default
+                        activeAccess = accessList.stream()
+                                .filter(a -> Boolean.TRUE.equals(a.getIsDefaultTenant()))
+                                .findFirst()
+                                .orElse(null);
+
+                        // 2. Fallback to first
+                        if (activeAccess == null && !accessList.isEmpty()) {
+                            activeAccess = accessList.get(0);
+                        }
+
+                        if (activeAccess != null) {
+                            targetTenantId = activeAccess.getTenant().getTenantId();
+                        }
+                    } else {
+                        // Find the access object for the requested target
+                        Long finalTarget = targetTenantId;
+                        activeAccess = accessList.stream()
+                                .filter(a -> a.getTenant().getTenantId().equals(finalTarget))
+                                .findFirst()
+                                .orElse(null);
                     }
 
                     if (targetTenantId != null) {
-                        com.acquira.config.TenantContext.setCurrentTenant(targetTenantId);
-                        if (logger.isDebugEnabled()) {
-                            logger.debug("Set Tenant Context to " + targetTenantId + " for user " + username);
+                        TenantContext.setCurrentTenant(targetTenantId);
+
+                        // NEW: Set Scope and Role
+                        if (activeAccess != null) {
+                            // 1. Set Effective Role
+                            String role = activeAccess.getRoleInTenant();
+                            // Fallback to Group Name if role is null (compatibility)
+                            if (role == null && activeAccess.getSysUserGroup() != null) {
+                                String group = activeAccess.getSysUserGroup().getGroupName();
+                                if ("Super Admin".equalsIgnoreCase(group))
+                                    role = "ROLE_SUPER_ADMIN";
+                                else if ("Bank Admin".equalsIgnoreCase(group))
+                                    role = "ROLE_ADMIN";
+                                else
+                                    role = "ROLE_USER";
+                            }
+                            if (role != null)
+                                TenantContext.setCurrentRole(role);
+
+                            // 2. Set Visible Tenants (for now, just the active one, or ALL if Super Admin)
+                            if ("ROLE_SUPER_ADMIN".equals(role)) {
+                                // Super admin sees all? For now let's keep it simple
+                                // In future fetch all tenant IDs
+                            }
                         }
                     }
                 } catch (Exception e) {
-                    logger.warn("Could not auto-set tenant context for user " + username + ": " + e.getMessage());
+                    logger.warn("Could not set tenant context for " + username + ": " + e.getMessage());
                 }
             }
         }
@@ -111,8 +171,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         try {
             chain.doFilter(request, response);
         } finally {
-            // Ensure we clear it after request processing to prevent pollution
-            com.acquira.config.TenantContext.clear();
+            TenantContext.clear();
         }
     }
 }

@@ -17,6 +17,7 @@ import {
     Toolbar
 } from '@mui/material';
 import * as LucideIcons from 'lucide-react';
+import CombinedViewSwitcher from './CombinedViewSwitcher';
 
 const DRAWER_WIDTH = 260;
 
@@ -54,11 +55,20 @@ const Layout = () => {
                 { menuId: 108, menuName: 'Merchant Analytics', path: '/business/merchant-analytics', iconKey: 'BarChart2', category: 'BUSINESS', displayOrder: 8 },
                 // Keep Executive Dashboard if needed, or remove if replaced by above
                 { menuId: 114, menuName: 'Executive Dashboard', path: '/business/executive-dashboard-v2', iconKey: 'Presentation', category: 'EXECUTIVE', displayOrder: 0 },
+                { menuId: 115, menuName: 'Data Explorer', path: '/explorer', iconKey: 'Compass', category: 'BUSINESS', displayOrder: 12 },
+                { menuId: 116, menuName: 'AI Assistant', path: '/ai-assistant', iconKey: 'BrainCircuit', category: 'BUSINESS', displayOrder: 13 },
+            ];
+
+            const salesMenus = [
+                { menuId: 201, menuName: 'Team Management', path: '/sales/team-management', iconKey: 'Users', category: 'SALES', displayOrder: 10 },
             ];
 
             // Append business menus if not existing
             const existingPaths = new Set(parsed.map(m => m.path));
             businessMenus.forEach(m => {
+                if (!existingPaths.has(m.path)) parsed.push(m);
+            });
+            salesMenus.forEach(m => {
                 if (!existingPaths.has(m.path)) parsed.push(m);
             });
 
@@ -130,27 +140,17 @@ const Layout = () => {
                     <Box sx={{ width: 32, height: 32, bgcolor: 'primary.main', borderRadius: 2 }} />
                     <Typography variant="h6" fontWeight="bold">Acquira</Typography>
                 </Box>
-                {allowedTenants.length > 1 && (
-                    <select
-                        value={currentTenantId}
-                        onChange={handleSwitchTenant}
-                        style={{
-                            width: '100%',
-                            background: '#1e293b',
-                            color: '#e2e8f0',
-                            border: '1px solid #334155',
-                            padding: '8px',
-                            borderRadius: '6px',
-                            fontSize: '13px',
-                            outline: 'none',
-                            cursor: 'pointer'
+
+                {/* Multi-Tenant Switcher */}
+                <div style={{ padding: '4px 0' }}>
+                    <CombinedViewSwitcher
+                        onContextChange={() => {
+                            // Reload handled by component or here if needed
+                            // For improved UX we could trigger menu fetch here instead of full reload
+                            // but component does reload.
                         }}
-                    >
-                        {allowedTenants.map(t => (
-                            <option key={t.tenantId} value={t.tenantId}>{t.bankName}</option>
-                        ))}
-                    </select>
-                )}
+                    />
+                </div>
             </Box>
 
             {/* Menu List */}

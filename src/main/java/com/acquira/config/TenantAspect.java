@@ -19,45 +19,49 @@ public class TenantAspect {
     @PersistenceContext
     private EntityManager entityManager;
 
-    // Intercept relevant Service or Repository methods.
-    // We target Service layer primarily as it wraps transactions.
+    /**
+     * Track whether we've already set the tenant for the current thread/request.
+     * This prevents re-executing SET LOCAL on every nested service/repository call
+     * within the same request, which avoids the "transaction aborted" cascade.
+     */
+    private static final ThreadLocal<Long> lastSetTenant = new ThreadLocal<>();
+
     @Around("execution(* com.acquira.service..*(..)) || execution(* com.acquira.repository..*(..))")
     public Object setTenantContext(ProceedingJoinPoint joinPoint) throws Throwable {
         Long tenantId = TenantContext.getCurrentTenant();
 
         if (tenantId != null) {
-            // Unwrap Hibernate Session to execute SQL directly on the connection
-            try {
-                Session session = entityManager.unwrap(Session.class);
-                session.doWork(connection -> {
-                    try (java.sql.Statement stmt = connection.createStatement()) {
-                        // SET LOCAL ensures it only lasts for the current transaction
-                        stmt.execute("SET LOCAL app.current_tenant = '" + tenantId + "'");
-                        logger.trace("Set DB Session app.current_tenant = {}", tenantId);
-                    }
-                });
-            } catch (Exception e) {
-                logger.error("Failed to set tenant context in DB session", e);
-                // We don't block execution here, but RLS might block data access, which is
-                // safe.
+            // Only execute SET LOCAL if we haven't already set it for this tenant in this request
+            Long alreadySet = lastSetTenant.get();
+            if (alreadySet == null || !alreadySet.equals(tenantId)) {
+                try {
+                    Session session = entityManager.unwrap(Session.class);
+                    session.doWork(connection -> {
+                        // tenantId is a Long — guaranteed numeric, no injection possible
+                        try (java.sql.Statement stmt = connection.createStatement()) {
+                            stmt.execute("SET LOCAL app.current_tenant = '" + tenantId.longValue() + "'");
+                            logger.trace("Set DB Session app.current_tenant = {}", tenantId);
+                        }
+                    });
+                    lastSetTenant.set(tenantId);
+                } catch (Exception e) {
+                    logger.error("Failed to set tenant context in DB session for method: {}",
+                            joinPoint.getSignature().toShortString(), e);
+                    // Don't block — RLS will restrict data access as a safety net
+                }
             }
-        } else {
-            logger.trace("No Tenant Context found for method: {}", joinPoint.getSignature().toShortString());
-            // IMPORTANT: If no tenant is set, we might want to set it to NULL explicitly
-            // to prevent leakage from connection pooling reuse, though 'SET LOCAL' handles
-            // this
-            // if transactions are committed/rolled back properly.
-            // For safety in connection pools:
-            /*
-             * Session session = entityManager.unwrap(Session.class);
-             * session.doWork(connection -> {
-             * try (Statement stmt = connection.createStatement()) {
-             * stmt.execute("SET LOCAL app.current_tenant = NULL");
-             * }
-             * });
-             */
         }
 
-        return joinPoint.proceed();
+        try {
+            return joinPoint.proceed();
+        } finally {
+            // Clean up only at the outermost call (when we're about to exit the service layer)
+            // We check if this is a top-level service call by checking the stack
+            // Simple approach: let JwtRequestFilter's finally block handle TenantContext.clear()
+            // We just clear our tracking here if tenant context is null (request ending)
+            if (TenantContext.getCurrentTenant() == null) {
+                lastSetTenant.remove();
+            }
+        }
     }
 }

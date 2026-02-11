@@ -18,6 +18,8 @@ DROP TABLE IF EXISTS region CASCADE;
 DROP TABLE IF EXISTS ref_country CASCADE;
 DROP TABLE IF EXISTS audit_log CASCADE;
 
+DROP TABLE IF EXISTS saved_filter CASCADE;
+
 -- Business Domain
 DROP TABLE IF EXISTS dim_terminal CASCADE;
 DROP TABLE IF EXISTS dim_bank_account CASCADE;
@@ -1353,5 +1355,105 @@ CREATE INDEX IF NOT EXISTS idx_dim_store_sid ON dim_store (sid, tenant_id);
 -- dim_terminal: JOIN target during staging→fact
 CREATE INDEX IF NOT EXISTS idx_dim_terminal_store ON dim_terminal (store_id, tenant_id);
 CREATE INDEX IF NOT EXISTS idx_dim_terminal_tid ON dim_terminal (tid, tenant_id);
+
+-- ==========================================
+-- SAVED FILTERS / VIEWS
+-- ==========================================
+DROP TABLE IF EXISTS saved_filter CASCADE;
+
+CREATE TABLE IF NOT EXISTS saved_filter (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       INT NOT NULL,
+    user_id         BIGINT NOT NULL,
+    name            VARCHAR(100) NOT NULL,
+    dashboard_type  VARCHAR(50) NOT NULL,
+    filter_json     TEXT NOT NULL,
+    is_default      BOOLEAN DEFAULT FALSE,
+    is_shared       BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT uq_saved_filter_name UNIQUE (tenant_id, user_id, dashboard_type, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_filter_lookup ON saved_filter(tenant_id, user_id, dashboard_type);
+
+-- ==========================================
+-- AI ASSISTANT MENU
+-- ==========================================
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('AI Assistant', '/ai-assistant', 'BrainCircuit', 'BUSINESS', 12)
+ON CONFLICT (path) DO NOTHING;
+
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
+  AND m.menu_name = 'AI Assistant'
+ON CONFLICT DO NOTHING;
+
+-- ==========================================
+-- AI CHAT HISTORY (optional - for saved conversations)
+-- ==========================================
+CREATE TABLE IF NOT EXISTS ai_chat_history (
+    chat_id     BIGSERIAL PRIMARY KEY,
+    tenant_id   BIGINT NOT NULL,
+    user_id     BIGINT NOT NULL REFERENCES users(user_id),
+    question    TEXT NOT NULL,
+    generated_sql TEXT,
+    summary     TEXT,
+    row_count   INT,
+    duration_ms BIGINT,
+    is_error    BOOLEAN DEFAULT FALSE,
+    error_msg   TEXT,
+    created_at  TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_tenant ON ai_chat_history(tenant_id, user_id);
+
+-- ==========================================
+-- DATA EXPLORER INDEXES (Merchant + Txn staging)
+-- ==========================================
+CREATE INDEX IF NOT EXISTS idx_stg_merch_tenant ON stg_merchant_master_raw (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_stg_merch_city ON stg_merchant_master_raw (tenant_id, city);
+CREATE INDEX IF NOT EXISTS idx_stg_merch_mcc ON stg_merchant_master_raw (tenant_id, business_mcc);
+CREATE INDEX IF NOT EXISTS idx_stg_merch_status ON stg_merchant_master_raw (tenant_id, merchant_status);
+CREATE INDEX IF NOT EXISTS idx_stg_merch_partner ON stg_merchant_master_raw (tenant_id, referral_partner);
+CREATE INDEX IF NOT EXISTS idx_stg_merch_industry ON stg_merchant_master_raw (tenant_id, industry_type);
+CREATE INDEX IF NOT EXISTS idx_stg_merch_mid ON stg_merchant_master_raw (tenant_id, mid);
+CREATE INDEX IF NOT EXISTS idx_stg_txn_scheme ON stg_trnx_raw (tenant_id, card_scheme);
+CREATE INDEX IF NOT EXISTS idx_stg_txn_dest ON stg_trnx_raw (tenant_id, destination);
+CREATE INDEX IF NOT EXISTS idx_stg_txn_type ON stg_trnx_raw (tenant_id, transaction_type);
+
+-- ==========================================
+-- DATA EXPLORER MENU
+-- ==========================================
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Data Explorer', '/explorer', 'Compass', 'BUSINESS', 11)
+ON CONFLICT (path) DO NOTHING;
+
+-- Map to Super Admin, Bank Admin, Business User
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
+  AND m.menu_name = 'Data Explorer'
+ON CONFLICT DO NOTHING;
+
+-- ==========================================
+-- SAVED FILTERS / VIEWS
+-- ==========================================
+CREATE TABLE IF NOT EXISTS saved_filter (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    user_id         BIGINT NOT NULL REFERENCES users(user_id),
+    name            VARCHAR(100) NOT NULL,
+    dashboard_type  VARCHAR(50) NOT NULL,
+    filter_json     TEXT NOT NULL,
+    is_default      BOOLEAN DEFAULT FALSE,
+    is_shared       BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT uq_saved_filter_name UNIQUE (tenant_id, user_id, dashboard_type, name)
+);
+CREATE INDEX IF NOT EXISTS idx_saved_filter_lookup ON saved_filter(tenant_id, user_id, dashboard_type);
 
 

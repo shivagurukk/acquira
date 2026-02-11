@@ -1,106 +1,86 @@
-import React, { useState, useEffect } from 'react';
-import {
-    Box,
-    Paper,
-    Typography,
-    Avatar,
-    Chip,
-    IconButton,
-    Stack,
-    Tooltip,
-    ThemeProvider,
-    createTheme,
-    CssBaseline,
-    InputBase
-} from '@mui/material';
-import { DataGrid } from '@mui/x-data-grid';
-import {
-    TrendingUp,
-    TrendingDown,
-    MoreHorizontal,
-    Search,
-    Calendar,
-    ChevronDown,
-    Filter
-} from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Box, Paper, Typography, Avatar, Stack, Tooltip, MenuItem, Select, FormControl, InputLabel, Chip, Card, CardContent, IconButton } from '@mui/material';
+import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, Activity, FileText, Download } from 'lucide-react';
+import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
+import { exportToCSV } from '../../utils/exportUtils';
+import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 
-// --- Dark Theme Configuration ---
-const darkTheme = createTheme({
-    palette: {
-        mode: 'dark',
-        background: {
-            default: '#0F172A', // Slate 900
-            paper: '#111827',   // Gray 900
-        },
-        text: {
-            primary: '#F8FAFC', // Slate 50
-            secondary: '#94A3B8', // Slate 400
-        },
-        primary: {
-            main: '#3B82F6', // Blue 500
-        },
-        success: {
-            main: '#22C55E', // Green 500
-        },
-        error: {
-            main: '#EF4444', // Red 500
-        },
-        warning: {
-            main: '#F59E0B', // Amber 500
-        },
-        divider: '#1F2937', // Gray 800
-    },
-    typography: {
-        fontFamily: "'Inter', sans-serif",
-    },
-    components: {
-        MuiPaper: {
-            styleOverrides: {
-                root: {
-                    backgroundImage: 'none',
-                }
-            }
-        },
-        MuiChip: {
-            styleOverrides: {
-                root: {
-                    fontWeight: 600,
-                }
-            }
-        }
-    }
-});
+// --- Utils ---
+const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', maximumFractionDigits: 0 }).format(val || 0);
+const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
-// --- Sparkline Component ---
-const Sparkline = ({ data, color }) => {
-    if (!data || data.length === 0) return null;
-    const height = 24;
-    const width = 80;
+// --- Components ---
+
+// Smooth Curved Sparkline with Gradient
+const SmoothSparkline = ({ data, color, upward }) => {
+    if (!data || data.length < 2) return null;
+    const height = 32, width = 100;
     const max = Math.max(...data, 1);
-    const min = 0;
+    const min = Math.min(...data, 0);
+    const range = max - min || 1;
 
+    // Normalize data points
     const points = data.map((val, idx) => {
         const x = (idx / (data.length - 1)) * width;
-        const y = height - ((val - min) / (max - min)) * height;
-        return `${x},${y}`;
-    }).join(' ');
+        const y = height - ((val - min) / range) * height;
+        return { x, y };
+    });
+
+    // Generate smooth bezier path
+    const pathD = points.reduce((acc, point, i, a) => {
+        if (i === 0) return `M ${point.x},${point.y}`;
+        const prev = a[i - 1];
+        const cp1x = prev.x + (point.x - prev.x) / 2;
+        const cp1y = prev.y;
+        const cp2x = prev.x + (point.x - prev.x) / 2;
+        const cp2y = point.y;
+        return `${acc} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${point.x},${point.y}`;
+    }, '');
+
+    const fillPath = `${pathD} L ${width},${height} L 0,${height} Z`;
+    const gradientId = `grad-${Math.random().toString(36).substr(2, 9)}`;
 
     return (
         <svg width={width} height={height} style={{ overflow: 'visible' }}>
-            <polyline
-                points={points}
-                fill="none"
-                stroke={color}
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-            />
+            <defs>
+                <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor={color} stopOpacity={0.3} />
+                    <stop offset="100%" stopColor={color} stopOpacity={0.0} />
+                </linearGradient>
+            </defs>
+            <path d={fillPath} fill={`url(#${gradientId})`} />
+            <path d={pathD} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" />
         </svg>
     );
 };
 
-// --- Main Component ---
+const StatCard = ({ title, value, icon: Icon, color, subtitle }) => (
+    <Card sx={{ flex: 1, minWidth: 200, borderRadius: 3, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)' }}>
+        <CardContent sx={{ p: 3, '&:last-child': { pb: 3 } }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+                <Box>
+                    <Typography variant="overline" fontWeight="700" color="text.secondary" letterSpacing={1}>
+                        {title}
+                    </Typography>
+                    <Typography variant="h4" fontWeight="800" sx={{ mt: 1, mb: 1, color: '#1e293b' }}>
+                        {value}
+                    </Typography>
+                    {subtitle && (
+                        <Typography variant="body2" fontWeight="600" color={color}>
+                            {subtitle}
+                        </Typography>
+                    )}
+                </Box>
+                <Avatar sx={{ bgcolor: `${color}15`, color: color, width: 48, height: 48, borderRadius: 2 }}>
+                    <Icon size={24} />
+                </Avatar>
+            </Stack>
+        </CardContent>
+    </Card>
+);
+
 const DailyMerchantDashboard = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -108,11 +88,10 @@ const DailyMerchantDashboard = () => {
     const [filters, setFilters] = useState({
         year: new Date().getFullYear(),
         month: new Date().getMonth() + 1,
+        datePreset: 'MONTH',
     });
 
-    useEffect(() => {
-        fetchDashboardData();
-    }, [filters.year, filters.month]);
+    useEffect(() => { fetchDashboardData(); }, [filters.year, filters.month]);
 
     const fetchDashboardData = async () => {
         setLoading(true);
@@ -123,63 +102,90 @@ const DailyMerchantDashboard = () => {
             });
             if (res.ok) {
                 const result = await res.json();
-                const rows = result.map((r, i) => ({
-                    id: r.merchantId || i,
-                    ...r,
-                    // Mock sparkline data (random visual)
-                    sparklineData: Array.from({ length: 15 }, () => Math.floor(Math.random() * 1000) + 100)
-                }));
-                setData(rows);
+                // Add dummy sparkline data for visualization if not present
+                setData(result.map((r, i) => ({
+                    id: r.merchantId || i, ...r,
+                    sparklineData: r.sparklineData || Array.from({ length: 15 }, () => Math.floor(Math.random() * 5000) + 1000)
+                })));
             }
-        } catch (error) {
-            console.error("Failed to fetch data", error);
-        } finally {
-            setLoading(false);
-        }
+        } catch (error) { console.error("Failed to fetch data", error); }
+        finally { setLoading(false); }
+    };
+
+    const handleFilterChange = (keyOrObj, val) => {
+        if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));
+        else setFilters(prev => ({ ...prev, [keyOrObj]: val }));
     };
 
     const daysInMonth = new Date(filters.year, filters.month, 0).getDate();
+    const monthName = new Date(0, filters.month - 1).toLocaleString('default', { month: 'long' });
 
-    // Helper to format currency
-    const formatCurrency = (val) => new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'AED',
-        maximumFractionDigits: 0
-    }).format(val || 0);
+    const kpis = useMemo(() => {
+        if (!data.length) return [];
+        const totalVol = data.reduce((s, d) => s + (d.totalVolume || 0), 0);
+        const totalToday = data.reduce((s, d) => s + (d.todayVol || 0), 0);
+        const growing = data.filter(d => (d.trendPct || 0) >= 0).length;
+        return [
+            { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: '#6366f1' },
+            { title: 'Month Volume', value: formatCurrency(totalVol), icon: DollarSign, color: '#3b82f6' },
+            { title: 'Today Volume', value: formatCurrency(totalToday), icon: Activity, color: '#10b981' },
+            { title: 'Performance', value: `${growing}/${data.length}`, icon: TrendingUp, color: '#f59e0b', subtitle: `${data.length > 0 ? ((growing / data.length) * 100).toFixed(0) : 0}% Growing` },
+        ];
+    }, [data]);
 
-    // Helpers
-    const compactNumber = (val) => new Intl.NumberFormat('en-US', {
-        notation: "compact",
-        maximumFractionDigits: 1
-    }).format(val);
+    // Header Controls
+    const extraControls = (
+        <Stack direction="row" spacing={2} alignItems="center">
+            <FormControl size="small" variant="outlined">
+                <Select
+                    value={filters.month}
+                    onChange={(e) => setFilters(prev => ({ ...prev, month: Number(e.target.value) }))}
+                    sx={{
+                        borderRadius: 2, height: 40, bgcolor: 'white', fontWeight: 600,
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' },
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                    }}
+                    MenuProps={{ PaperProps: { sx: { borderRadius: 2, mt: 1 } } }}
+                >
+                    {Array.from({ length: 12 }, (_, i) => <MenuItem key={i + 1} value={i + 1}>{new Date(0, i).toLocaleString('default', { month: 'long' })}</MenuItem>)}
+                </Select>
+            </FormControl>
+            <FormControl size="small" variant="outlined">
+                <Select
+                    value={filters.year}
+                    onChange={(e) => setFilters(prev => ({ ...prev, year: Number(e.target.value) }))}
+                    sx={{
+                        borderRadius: 2, height: 40, bgcolor: 'white', fontWeight: 600,
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' },
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                    }}
+                >
+                    {[2024, 2025, 2026].map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
+                </Select>
+            </FormControl>
+        </Stack>
+    );
 
-    // --- Dynamic Heatmap Columns ---
+    // Dynamic Daily Columns
     const dayColumns = Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => ({
-        field: `day_${day}`,
-        headerName: `${day}`,
-        width: 36,
-        align: 'center',
-        headerAlign: 'center',
+        field: `day_${day}`, headerName: `${day}`, width: 48, align: 'center', headerAlign: 'center',
         renderCell: (params) => {
             const val = params.row.dailyVolumes ? params.row.dailyVolumes[day] : 0;
-            // Opacity based on value intensity (mock logic: max ~10k)
+            // Opacity logic: base it on max volume of the row or global max? Let's use relative to 10k for now or row max
             const opacity = Math.min(val / 5000, 1);
-
             return (
-                <Tooltip title={val ? `AED ${val.toLocaleString()}` : 'No Volume'} arrow>
+                <Tooltip title={val ? `Day ${day}: ${formatCurrency(val)}` : 'No Volume'} arrow>
                     <Box sx={{
-                        width: '100%',
-                        height: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        bgcolor: val > 0 ? `rgba(59, 130, 246, ${Math.max(opacity, 0.1)})` : 'transparent', // Blue Heatmap
-                        borderRadius: 0.5,
-                        m: 0.5
+                        width: 36, height: 36,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        bgcolor: val > 0 ? `rgba(59, 130, 246, ${Math.max(opacity, 0.1)})` : 'transparent',
+                        borderRadius: 1.5,
+                        transition: 'all 0.2s',
+                        '&:hover': { transform: 'scale(1.1)', boxShadow: 2 }
                     }}>
                         {val > 0 && (
-                            <Typography variant="caption" sx={{ fontSize: '0.65rem', color: opacity > 0.6 ? 'white' : '#94A3B8', fontWeight: 600 }}>
-                                {compactNumber(val)}
+                            <Typography variant="caption" sx={{ fontSize: '0.6rem', color: opacity > 0.6 ? 'white' : '#1e40af', fontWeight: 800 }}>
+                                {formatCompact(val)}
                             </Typography>
                         )}
                     </Box>
@@ -190,30 +196,21 @@ const DailyMerchantDashboard = () => {
 
     const columns = [
         {
-            field: 'merchantName',
-            headerName: 'MERCHANT',
-            width: 240,
-            pinned: 'left',
+            field: 'merchantName', headerName: 'MERCHANT', width: 240,
             renderCell: (params) => (
-                <Stack direction="row" spacing={1.5} alignItems="center" height="100%">
-                    <Avatar
-                        sx={{
-                            width: 32,
-                            height: 32,
-                            bgcolor: '#374151', // Gray 700
-                            color: '#F8FAFC',
-                            fontWeight: 700,
-                            fontSize: '0.85rem',
-                            border: '1px solid #4B5563'
-                        }}
-                    >
-                        {params.value.charAt(0)}
+                <Stack direction="row" spacing={2} alignItems="center" height="100%">
+                    <Avatar sx={{
+                        width: 36, height: 36,
+                        bgcolor: 'white', color: '#6366f1',
+                        fontWeight: 800, fontSize: '0.9rem',
+                        border: '1px solid #e0e7ff',
+                        boxShadow: '0 2px 4px rgba(99, 102, 241, 0.1)'
+                    }}>
+                        {params.value?.charAt(0) || '?'}
                     </Avatar>
                     <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="body2" fontWeight="600" color="text.primary" noWrap>
-                            {params.value}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" fontFamily="monospace">
+                        <Typography variant="body2" fontWeight="700" color="#1e293b" noWrap>{params.value}</Typography>
+                        <Typography variant="caption" color="#64748b" fontFamily="monospace" sx={{ fontSize: '0.7rem', display: 'block', mt: 0.2 }}>
                             {params.row.mid}
                         </Typography>
                     </Box>
@@ -221,252 +218,120 @@ const DailyMerchantDashboard = () => {
             )
         },
         {
-            field: 'status',
-            headerName: 'STATUS',
-            width: 100,
+            field: 'status', headerName: 'STATUS', width: 100, align: 'center', headerAlign: 'center',
             renderCell: (params) => {
                 const status = params.row.stabilityLabel || 'Stable';
-                const map = {
-                    'Stable': { color: '#22C55E', bg: 'rgba(34, 197, 94, 0.1)', border: 'rgba(34, 197, 94, 0.2)' },
-                    'Risk': { color: '#EF4444', bg: 'rgba(239, 68, 68, 0.1)', border: 'rgba(239, 68, 68, 0.2)' },
-                    'Watch': { color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.2)' }
+                const colors = {
+                    'Stable': { color: 'success', label: 'Stable' },
+                    'Risk': { color: 'error', label: 'At Risk' },
+                    'Watch': { color: 'warning', label: 'Watch' }
                 };
-                const s = map[status] || map['Stable'];
-
+                const config = colors[status] || colors['Stable'];
                 return (
-                    <Box sx={{
-                        bgcolor: s.bg,
-                        color: s.color,
-                        border: `1px solid ${s.border}`,
-                        px: 1,
-                        py: 0.25,
-                        borderRadius: 10,
-                        fontSize: '0.7rem',
-                        fontWeight: 700,
-                        display: 'inline-block'
-                    }}>
-                        {status.toUpperCase()}
-                    </Box>
+                    <Chip
+                        label={config.label}
+                        size="small"
+                        color={config.color}
+                        sx={{ fontWeight: 700, fontSize: '0.7rem', height: 24 }}
+                    />
                 );
             }
         },
         {
-            field: 'todayVol',
-            headerName: 'TODAY', // Sticky header name for today
-            width: 120,
-            align: 'right', // Align right for numbers
-            headerAlign: 'right', // Align header right
+            field: 'todayVol', headerName: 'TODAY', width: 130, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
-                <Stack alignItems="flex-end">
-                    <Typography fontWeight="700" fontSize="0.9rem" color="white">
-                        {formatCurrency(params.value)}
-                    </Typography>
-                    {params.row.trendPct !== undefined && (
-                        <Stack direction="row" alignItems="center" spacing={0.5}>
-                            {params.row.trendPct >= 0 ?
-                                <TrendingUp size={12} color="#22C55E" /> :
-                                <TrendingDown size={12} color="#EF4444" />
-                            }
-                            <Typography
-                                variant="caption"
-                                fontWeight="600"
-                                color={params.row.trendPct >= 0 ? '#22C55E' : '#EF4444'}
-                            >
-                                {Math.abs(params.row.trendPct).toFixed(0)}%
-                            </Typography>
-                        </Stack>
+                <Stack alignItems="flex-end" justifyContent="center" height="100%">
+                    <Typography fontWeight="800" fontSize="0.9rem" color="#1e293b">{formatCurrency(params.value)}</Typography>
+                    {params.row.trendPct !== undefined && params.row.trendPct !== 0 && (
+                        <Chip
+                            icon={params.row.trendPct >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                            label={`${Math.abs(params.row.trendPct).toFixed(0)}%`}
+                            size="small"
+                            sx={{
+                                height: 20, fontSize: '0.65rem', fontWeight: 700,
+                                bgcolor: params.row.trendPct >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                color: params.row.trendPct >= 0 ? '#059669' : '#dc2626',
+                                '& .MuiChip-icon': { color: 'inherit' }
+                            }}
+                        />
                     )}
                 </Stack>
             )
         },
         {
-            field: 'trend',
-            headerName: 'TREND',
-            width: 100,
+            field: 'trend', headerName: 'TREND (7D)', width: 140,
             renderCell: (params) => (
-                <Sparkline
-                    data={params.row.sparklineData}
-                    color={params.row.trendPct >= 0 ? '#22C55E' : '#EF4444'}
-                />
+                <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', px: 1 }}>
+                    <SmoothSparkline
+                        data={params.row.sparklineData}
+                        color={params.row.trendPct >= 0 ? '#10b981' : '#f43f5e'}
+                        upward={params.row.trendPct >= 0}
+                    />
+                </Box>
             )
         },
         {
-            field: 'totalVolume',
-            headerName: 'TOTAL',
-            width: 120,
-            align: 'right',
-            headerAlign: 'right',
+            field: 'totalVolume', headerName: 'MONTH TOTAL', width: 130, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
-                <Typography fontWeight="700" color="white">
+                <Typography fontWeight="800" color="#3b82f6" fontSize="0.95rem">
                     {formatCurrency(params.value)}
                 </Typography>
             )
         },
         ...dayColumns,
-        {
-            field: 'actions',
-            headerName: '',
-            width: 50,
-            renderCell: () => <IconButton size="small" sx={{ color: '#64748B' }}><MoreHorizontal size={16} /></IconButton>
-        }
     ];
 
     return (
-        <ThemeProvider theme={darkTheme}>
-            <CssBaseline />
-            <Box sx={{
-                minHeight: '100vh',
-                bgcolor: 'background.default',
-                color: 'text.primary',
-                p: 3,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 3
-            }}>
-                {/* Header Section */}
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Box>
-                        <Stack direction="row" alignItems="center" spacing={2}>
-                            <Typography variant="h5" fontWeight="700" letterSpacing="-0.02em">
-                                Merchant Analytics
-                            </Typography>
-                            <Chip label="Live" size="small" color="success" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 700 }} />
-                        </Stack>
-                        <Typography variant="body2" color="text.secondary" mt={0.5}>
-                            Performance across {data.length} merchants for {new Date(0, filters.month - 1).toLocaleString('default', { month: 'long' })} {filters.year}
-                        </Typography>
-                    </Box>
-                    <Stack direction="row" spacing={2} alignItems="center">
-                        {/* Search */}
-                        <Paper sx={{
-                            p: '2px 4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            bgcolor: '#1F2937',
-                            border: '1px solid #374151',
-                            borderRadius: 2,
-                            width: 240
-                        }}>
-                            <IconButton sx={{ p: '10px', color: '#94A3B8' }} aria-label="search">
-                                <Search size={18} />
-                            </IconButton>
-                            <InputBase
-                                sx={{ ml: 1, flex: 1, color: 'white', fontSize: '0.9rem' }}
-                                placeholder="Search..."
-                            />
-                        </Paper>
+        <Box sx={pageContainer}>
+            <PremiumReportHeader
+                title="Daily Merchant Dashboard"
+                subtitle={`Tracking performance across ${data.length} merchants for ${monthName} ${filters.year}`}
+                icon={Calendar}
+                onExport={() => exportToCSV(data, 'daily_merchant_dashboard')}
+                onRunReport={fetchDashboardData}
+                loading={loading}
+                hideDatePresets
+            >
+                {extraControls}
+            </PremiumReportHeader>
 
-                        {/* Date Toggle */}
-                        <Box sx={{ bgcolor: '#1F2937', borderRadius: 2, border: '1px solid #374151', p: 0.5 }}>
-                            {['Today', '7D', '30D'].map((d) => (
-                                <Box
-                                    key={d}
-                                    component="span"
-                                    sx={{
-                                        px: 2,
-                                        py: 0.5,
-                                        borderRadius: 1.5,
-                                        cursor: 'pointer',
-                                        fontSize: '0.85rem',
-                                        fontWeight: 600,
-                                        bgcolor: d === '30D' ? '#374151' : 'transparent',
-                                        color: d === '30D' ? 'white' : '#94A3B8',
-                                        '&:hover': { color: 'white' }
-                                    }}
-                                >
-                                    {d}
-                                </Box>
-                            ))}
-                        </Box>
-                    </Stack>
-                </Stack>
+            <Stack direction="row" spacing={3} mb={4}>
+                {kpis.map((kpi, idx) => (
+                    <StatCard key={idx} {...kpi} />
+                ))}
+            </Stack>
 
-                {/* Main Table Card */}
-                <Paper sx={{
-                    bgcolor: '#111827',
-                    borderRadius: 3,
-                    border: '1px solid #374151',
-                    overflow: 'hidden',
-                    height: 'calc(100vh - 160px)'
-                }}>
-                    <DataGrid
-                        rows={data}
-                        columns={columns}
-                        loading={loading}
-                        disableRowSelectionOnClick
-                        getRowClassName={(params) => `row-status-${params.row.stabilityLabel || 'Stable'}`}
-                        // Styling
-                        sx={{
-                            border: 'none',
-                            color: '#F8FAFC', // Default text color
-
-                            // Headers
-                            '& .MuiDataGrid-columnHeaders': {
-                                bgcolor: '#111827',
-                                borderBottom: '1px solid #374151',
-                                minHeight: '50px !important',
-                            },
-                            '& .MuiDataGrid-columnHeader': {
-                                bgcolor: '#111827', // Match bg
-                                color: '#94A3B8', // Muted text for headers
-                                fontWeight: 600,
-                                textTransform: 'uppercase',
-                                fontSize: '0.75rem',
-                                letterSpacing: '0.05em',
-                            },
-                            '& .MuiDataGrid-columnHeaderTitle': {
-                                fontWeight: 700,
-                                color: '#F8FAFC'
-                            },
-
-                            // Rows & Cells
-                            '& .MuiDataGrid-row': {
-                                borderBottom: '1px solid #1F2937', // Darker divider
-                                '&:hover': {
-                                    backgroundColor: '#1F2937 !important', // Hover highlight
-                                },
-                            },
-                            '& .MuiDataGrid-cell': {
-                                borderBottom: 'none',
-                                display: 'flex',
-                                alignItems: 'center',
-                            },
-
-                            // Sticky Column Styling
-                            '& .MuiDataGrid-columnHeader--pinnedLeft': {
-                                bgcolor: '#111827', // Ensure opaque bg for sticky
-                                boxShadow: '2px 0 5px rgba(0,0,0,0.2)' // Shadow separator
-                            },
-                            '& .MuiDataGrid-cell--pinnedLeft': {
-                                bgcolor: '#111827', // Match row bg
-                                backgroundImage: 'linear-gradient(to right, #111827, #111827)', // Hack to cover transparent
-                                boxShadow: '2px 0 5px rgba(0,0,0,0.2)'
-                            },
-
-                            // Scrollbars
-                            '& ::-webkit-scrollbar': { width: 8, height: 8 },
-                            '& ::-webkit-scrollbar-track': { background: '#111827' },
-                            '& ::-webkit-scrollbar-thumb': { background: '#374151', borderRadius: 4 },
-                            '& ::-webkit-scrollbar-thumb:hover': { background: '#4B5563' },
-
-                            // Footer
-                            '& .MuiDataGrid-footerContainer': {
-                                borderTop: '1px solid #374151',
-                                bgcolor: '#111827'
-                            }
-                        }}
-                    />
-                </Paper>
-
-                <BusinessFilters
-                    filters={filters}
-                    onChange={(newFilters) => setFilters(prev => ({ ...prev, ...newFilters }))}
-                    onApply={fetchDashboardData}
-                    isOpen={showFilters}
-                    onClose={() => setShowFilters(false)}
+            <Paper sx={{ ...premiumTableWrapper, borderRadius: 3, border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05), 0 4px 6px -4px rgba(0,0,0,0.05)' }}>
+                <DataGrid
+                    rows={data}
+                    columns={columns}
+                    loading={loading}
+                    disableRowSelectionOnClick
+                    rowHeight={64}
+                    columnHeaderHeight={50}
+                    slots={{ toolbar: GridToolbar }}
+                    slotProps={{
+                        toolbar: {
+                            showQuickFilter: true,
+                            quickFilterProps: { debounceMs: 500 },
+                            printOptions: { disableToolbarButton: true }
+                        }
+                    }}
+                    sx={{
+                        ...premiumDataGridStyles,
+                        '& .MuiDataGrid-columnHeaders': {
+                            bgcolor: '#f8fafc',
+                            borderBottom: '1px solid #e2e8f0',
+                            fontSize: '0.75rem'
+                        },
+                        '& .MuiDataGrid-row': {
+                            '&:hover': { bgcolor: '#ffffff !important', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' },
+                            transition: 'box-shadow 0.2s'
+                        }
+                    }}
                 />
-            </Box>
-        </ThemeProvider>
+            </Paper>
+        </Box>
     );
 };
 

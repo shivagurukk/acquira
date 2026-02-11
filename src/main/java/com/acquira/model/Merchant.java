@@ -90,12 +90,23 @@ public class Merchant {
         this.createdDate = createdDate;
     }
 
+    @Column(name = "sales_email")
+    private String salesEmail;
+
     public String getSalesUserId() {
         return salesUserId;
     }
 
     public void setSalesUserId(String salesUserId) {
         this.salesUserId = salesUserId;
+    }
+
+    public String getSalesEmail() {
+        return salesEmail;
+    }
+
+    public void setSalesEmail(String salesEmail) {
+        this.salesEmail = salesEmail;
     }
 
     public String getRiskLevel() {

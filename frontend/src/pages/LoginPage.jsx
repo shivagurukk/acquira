@@ -34,6 +34,7 @@ const LoginPage = () => {
             if (response.ok) {
                 const data = await response.json();
                 localStorage.setItem('token', data.jwt);
+                localStorage.setItem('refreshToken', data.refreshToken);
                 localStorage.setItem('roles', JSON.stringify(data.roles));
                 // Initial storage (might be updated if multiple tenants)
                 localStorage.setItem('allowedTenants', JSON.stringify(data.allowedTenants));

@@ -37,6 +37,26 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         LocalDate endDate,
                         Pageable pageable);
 
+        // Combined View Version
+        @Query("SELECT new map(" +
+                        "m.merchantId as key, " +
+                        "m.merchant.name as name, " +
+                        "SUM(m.totalTxns) as totalTxns, " +
+                        "SUM(m.totalVolume) as totalVolume, " +
+                        "SUM(m.totalMsf) as totalMsf, " +
+                        "SUM(m.totalInterchange) as totalInterchange, " +
+                        "SUM(m.totalSchemeFee) as totalSchemeFee, " +
+                        "SUM(m.totalMargin) as totalNetRevenue " +
+                        ") " +
+                        "FROM SumDailyMerchant m " +
+                        "WHERE m.tenantId IN :tenantIds AND m.businessDate BETWEEN :startDate AND :endDate " +
+                        "GROUP BY m.merchantId, m.merchant.name")
+        Page<java.util.Map<String, Object>> findMerchantProfitabilityCombined(
+                        @org.springframework.data.repository.query.Param("tenantIds") java.util.List<Long> tenantIds,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate,
+                        Pageable pageable);
+
         // List Loss Making Merchants
         @Query("SELECT new map(" +
                         "m.merchantId as merchantId, " +
@@ -50,6 +70,23 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         "HAVING SUM(m.totalMargin) < 0")
         Page<java.util.Map<String, Object>> findLossMakingMerchants(Long tenantId, LocalDate startDate,
                         LocalDate endDate,
+                        Pageable pageable);
+
+        // Combined View Version
+        @Query("SELECT new map(" +
+                        "m.merchantId as merchantId, " +
+                        "m.merchant.name as merchantName, " +
+                        "SUM(m.totalMargin) as netRevenue, " +
+                        "SUM(m.totalVolume) as totalVolume " +
+                        ") " +
+                        "FROM SumDailyMerchant m " +
+                        "WHERE m.tenantId IN :tenantIds AND m.businessDate BETWEEN :startDate AND :endDate " +
+                        "GROUP BY m.merchantId, m.merchant.name " +
+                        "HAVING SUM(m.totalMargin) < 0")
+        Page<java.util.Map<String, Object>> findLossMakingMerchantsCombined(
+                        @org.springframework.data.repository.query.Param("tenantIds") java.util.List<Long> tenantIds,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate,
                         Pageable pageable);
 
         // High Volume Low Margin
@@ -66,6 +103,24 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         "AND (SUM(m.totalMargin) * 100.0 / NULLIF(SUM(m.totalVolume), 0)) <= :maxMarginPct")
         Page<java.util.Map<String, Object>> findHighVolumeLowMargin(Long tenantId, LocalDate startDate,
                         LocalDate endDate,
+                        java.math.BigDecimal minVolume, java.math.BigDecimal maxMarginPct, Pageable pageable);
+
+        // Combined View Version
+        @Query("SELECT new map(" +
+                        "m.merchantId as merchantId, " +
+                        "m.merchant.name as merchantName, " +
+                        "SUM(m.totalMargin) as netRevenue, " +
+                        "SUM(m.totalVolume) as totalVolume " +
+                        ") " +
+                        "FROM SumDailyMerchant m " +
+                        "WHERE m.tenantId IN :tenantIds AND m.businessDate BETWEEN :startDate AND :endDate " +
+                        "GROUP BY m.merchantId, m.merchant.name " +
+                        "HAVING SUM(m.totalVolume) >= :minVolume " +
+                        "AND (SUM(m.totalMargin) * 100.0 / NULLIF(SUM(m.totalVolume), 0)) <= :maxMarginPct")
+        Page<java.util.Map<String, Object>> findHighVolumeLowMarginCombined(
+                        @org.springframework.data.repository.query.Param("tenantIds") java.util.List<Long> tenantIds,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate,
                         java.math.BigDecimal minVolume, java.math.BigDecimal maxMarginPct, Pageable pageable);
 
         // --- New Aggregation Methods for PDF Service Refactor ---

@@ -18,11 +18,19 @@ public interface MerchantActivitySummaryRepository extends JpaRepository<Merchan
     // List by status
     Page<MerchantActivitySummary> findByTenantIdAndStatus(Long tenantId, String status, Pageable pageable);
 
+    Page<MerchantActivitySummary> findByTenantIdInAndStatus(java.util.List<Long> tenantIds, String status,
+            Pageable pageable);
+
     // Count by status
     // Count by status
     long countByTenantIdAndStatus(Long tenantId, String status);
 
+    long countByTenantIdInAndStatus(java.util.List<Long> tenantIds, String status);
+
     long countByTenantIdAndStatusAndCalcDate(Long tenantId, String status, java.time.LocalDate calcDate);
+
+    long countByTenantIdInAndStatusAndCalcDate(java.util.List<Long> tenantIds, String status,
+            java.time.LocalDate calcDate);
 
     @Query("SELECT MAX(m.calcDate) FROM MerchantActivitySummary m WHERE m.tenantId = :tenantId")
     java.time.LocalDate findMaxCalcDate(Long tenantId);
@@ -35,6 +43,16 @@ public interface MerchantActivitySummaryRepository extends JpaRepository<Merchan
     @Query("SELECT m FROM MerchantActivitySummary m WHERE m.tenantId = :tenantId AND m.last30dCount = 0")
     Page<MerchantActivitySummary> findZeroSales30Days(Long tenantId, Pageable pageable);
 
+    @Query("SELECT m FROM MerchantActivitySummary m WHERE m.tenantId IN :tenantIds AND m.last30dCount = 0")
+    Page<MerchantActivitySummary> findZeroSales30DaysCombined(
+            @org.springframework.data.repository.query.Param("tenantIds") java.util.List<Long> tenantIds,
+            Pageable pageable);
+
     @Query("SELECT m FROM MerchantActivitySummary m WHERE m.tenantId = :tenantId AND m.last7dCount = 0")
     Page<MerchantActivitySummary> findZeroSales7Days(Long tenantId, Pageable pageable);
+
+    @Query("SELECT m FROM MerchantActivitySummary m WHERE m.tenantId IN :tenantIds AND m.last7dCount = 0")
+    Page<MerchantActivitySummary> findZeroSales7DaysCombined(
+            @org.springframework.data.repository.query.Param("tenantIds") java.util.List<Long> tenantIds,
+            Pageable pageable);
 }

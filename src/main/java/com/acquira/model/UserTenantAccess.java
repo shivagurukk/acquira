@@ -24,6 +24,12 @@ public class UserTenantAccess {
     @JoinColumn(name = "group_id")
     private SysUserGroup sysUserGroup;
 
+    @Column(name = "role_in_tenant")
+    private String roleInTenant; // ROLE_ADMIN, ROLE_VIEWER, etc.
+
+    @Column(name = "is_default_tenant")
+    private Boolean isDefaultTenant = false;
+
     public Integer getAccessId() {
         return accessId;
     }
@@ -54,5 +60,21 @@ public class UserTenantAccess {
 
     public void setSysUserGroup(SysUserGroup sysUserGroup) {
         this.sysUserGroup = sysUserGroup;
+    }
+
+    public String getRoleInTenant() {
+        return roleInTenant;
+    }
+
+    public void setRoleInTenant(String roleInTenant) {
+        this.roleInTenant = roleInTenant;
+    }
+
+    public Boolean getIsDefaultTenant() {
+        return isDefaultTenant;
+    }
+
+    public void setIsDefaultTenant(Boolean isDefaultTenant) {
+        this.isDefaultTenant = isDefaultTenant;
     }
 }

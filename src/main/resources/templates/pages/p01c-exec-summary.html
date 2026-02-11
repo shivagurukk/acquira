@@ -8,7 +8,7 @@
         <!-- ROW 1: 2 Hero KPI Cards — Sales & Transactions (large, premium) -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
             <!-- Sales Hero -->
-            <div style="background: linear-gradient(135deg, #0F2042 0%, #1E3A8A 100%); border-radius: 10px; padding: 18px 20px; color: white; position: relative; overflow: hidden;">
+            <div style="background: linear-gradient(135deg, #0A1628 0%, #0F2042 40%, #1E3A8A 100%); border-radius: 10px; padding: 18px 20px; color: white; position: relative; overflow: hidden;">
                 <div style="position: absolute; top: -20px; right: -20px; width: 80px; height: 80px; background: rgba(255,255,255,0.04); border-radius: 50%;"></div>
                 <div style="position: absolute; bottom: -30px; right: 20px; width: 60px; height: 60px; background: rgba(255,255,255,0.03); border-radius: 50%;"></div>
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
@@ -29,14 +29,14 @@
             </div>
 
             <!-- Transactions Hero -->
-            <div style="background: linear-gradient(135deg, #064E3B 0%, #047857 100%); border-radius: 10px; padding: 18px 20px; color: white; position: relative; overflow: hidden;">
+            <div style="background: linear-gradient(135deg, #0A1628 0%, #0F2042 40%, #1E3A8A 100%); border-radius: 10px; padding: 18px 20px; color: white; position: relative; overflow: hidden;">
                 <div style="position: absolute; top: -20px; right: -20px; width: 80px; height: 80px; background: rgba(255,255,255,0.04); border-radius: 50%;"></div>
                 <div style="position: absolute; bottom: -30px; right: 20px; width: 60px; height: 60px; background: rgba(255,255,255,0.03); border-radius: 50%;"></div>
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                     <div style="width: 28px; height: 28px; background: rgba(255,255,255,0.1); border-radius: 7px; display: flex; align-items: center; justify-content: center;">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
                     </div>
-                    <div style="font-size: 8px; font-weight: 700; color: #A7F3D0; letter-spacing: 0.06em; text-transform: uppercase;">Transactions</div>
+                    <div style="font-size: 8px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">Transactions</div>
                 </div>
                 <div style="font-size: 32px; font-weight: 900; color: white; letter-spacing: -0.03em; line-height: 1;" th:text="${dto.overview.transactions.formattedValue}">0</div>
                 <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
@@ -45,7 +45,7 @@
                     <span style="font-size: 8px; color: rgba(255,255,255,0.4);">vs previous month</span>
                 </div>
                 <div style="height: 38px; margin-top: 8px; position: relative;">
-                    <canvas data-chart="sparkline" data-field="demographics.monthlyTxns" data-color="#5EEAD4"></canvas>
+                    <canvas data-chart="sparkline" data-field="demographics.monthlyTxns" data-color="#60A5FA"></canvas>
                 </div>
             </div>
         </div>
@@ -53,17 +53,17 @@
         <!-- ROW 2: 2 Secondary KPI Cards — Customers & Avg Txn (white cards with color accents) -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
             <!-- Customers -->
-            <div class="card" style="padding: 14px 18px; border-left: 4px solid #B45309; border-top: none;">
+            <div class="card" style="padding: 14px 18px; border-left: 4px solid #0D9488; border-top: none;">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div>
-                        <div style="font-size: 8px; font-weight: 700; color: #B45309; letter-spacing: 0.06em; text-transform: uppercase;">Unique Customers</div>
+                        <div style="font-size: 8px; font-weight: 700; color: #0D9488; letter-spacing: 0.06em; text-transform: uppercase;">Unique Customers</div>
                         <div style="font-size: 26px; font-weight: 900; color: #111827; margin: 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.customers.formattedValue}">0</div>
                         <span th:class="${dto.overview.customers.momGrowth >= 0 ? 'trend-up' : 'trend-down'}">
                             <span th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '%'}">0%</span> MoM
                         </span>
                     </div>
                     <div style="width: 100px; height: 40px; position: relative;">
-                        <canvas data-chart="sparkline" data-field="demographics.monthlyCustomers" data-color="#B45309"></canvas>
+                        <canvas data-chart="sparkline" data-field="demographics.monthlyCustomers" data-color="#0D9488"></canvas>
                     </div>
                 </div>
             </div>
@@ -103,8 +103,8 @@
             </div>
         </div>
 
-        <!-- ROW 4: 12-month sales trend -->
-        <div class="card" style="flex: 1; min-height: 170px;">
+        <!-- ROW 4: 12-month sales trend — expands to fill remaining page space -->
+        <div class="card" style="flex: 1; min-height: 0;">
             <div class="card-title">12-MONTH SALES PERFORMANCE</div>
             <div class="chart-container">
                 <canvas data-chart="gradient-bar" data-field="demographics.monthlySales" data-color="#2563EB"></canvas>

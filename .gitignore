@@ -37,3 +37,26 @@ data/uploads/
 # OS
 .DS_Store
 Thumbs.db
+
+# Large data files
+*.xlsx
+*.csv
+backups/
+reports/
+temp/
+data/
+
+# Build logs
+*.log
+compile*.log
+build.log
+temp_log.txt
+
+# PDF test files
+test_report.pdf
+
+# Environment
+.env
+
+# PowerShell scripts
+*.ps1

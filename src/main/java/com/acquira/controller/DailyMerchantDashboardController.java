@@ -13,7 +13,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/business")
-@CrossOrigin(origins = "http://localhost:5173")
 @RequiredArgsConstructor
 public class DailyMerchantDashboardController {
 

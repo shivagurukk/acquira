@@ -2,11 +2,12 @@ package com.acquira.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 import java.util.HashMap;
@@ -16,10 +17,17 @@ import java.util.function.Function;
 @Component
 public class JwtUtil {
 
-    // Use a fixed secure key for HS256 (Should ideally come from properties)
-    // 32-byte (256-bit) secret string for HS256
-    private static final String SECRET_STRING = "AcquiraSecretKeyForJwtSigning1234567890!@#$%";
-    private final Key SECRET_KEY = Keys.hmacShaKeyFor(SECRET_STRING.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    private final Key SECRET_KEY;
+
+    // Access token: 30 minutes
+    private static final long ACCESS_TOKEN_EXPIRY = 1000L * 60 * 30;
+
+    // Refresh token: 7 days
+    private static final long REFRESH_TOKEN_EXPIRY = 1000L * 60 * 60 * 24 * 7;
+
+    public JwtUtil(@Value("${jwt.secret:AcquiraDefaultDevKeyAtLeast32Chars!!}") String secret) {
+        this.SECRET_KEY = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+    }
 
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
@@ -44,8 +52,7 @@ public class JwtUtil {
 
     public String generateToken(UserDetails userDetails) {
         Map<String, Object> claims = new HashMap<>();
-        // Default behavior if no extra info provided
-        return createToken(claims, userDetails.getUsername());
+        return createToken(claims, userDetails.getUsername(), ACCESS_TOKEN_EXPIRY);
     }
 
     public String generateToken(UserDetails userDetails, java.util.List<Long> allowedTenantIds, Long defaultTenantId) {
@@ -53,15 +60,32 @@ public class JwtUtil {
         claims.put("roles", userDetails.getAuthorities());
         claims.put("allowedTenantIds", allowedTenantIds);
         claims.put("defaultTenantId", defaultTenantId);
-        return createToken(claims, userDetails.getUsername());
+        return createToken(claims, userDetails.getUsername(), ACCESS_TOKEN_EXPIRY);
     }
 
-    private String createToken(Map<String, Object> claims, String subject) {
-        return Jwts.builder().setClaims(claims).setSubject(subject).setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis() + 1000L * 60 * 60 * 24 * 365 * 3)) // 3 years
-                                                                                                      // validity for
-                                                                                                      // dev
-                .signWith(SECRET_KEY).compact();
+    public String generateRefreshToken(String username) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("type", "refresh");
+        return createToken(claims, username, REFRESH_TOKEN_EXPIRY);
+    }
+
+    public boolean isRefreshToken(String token) {
+        try {
+            Claims claims = extractAllClaims(token);
+            return "refresh".equals(claims.get("type"));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String createToken(Map<String, Object> claims, String subject, long expiryMs) {
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(subject)
+                .setIssuedAt(new Date(System.currentTimeMillis()))
+                .setExpiration(new Date(System.currentTimeMillis() + expiryMs))
+                .signWith(SECRET_KEY)
+                .compact();
     }
 
     public Boolean validateToken(String token, UserDetails userDetails) {

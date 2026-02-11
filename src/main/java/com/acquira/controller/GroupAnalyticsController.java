@@ -17,7 +17,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/group-analytics")
-@CrossOrigin(origins = "http://localhost:5173")
 public class GroupAnalyticsController {
 
     @PersistenceContext

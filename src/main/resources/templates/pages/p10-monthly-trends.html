@@ -16,7 +16,7 @@
             <div class="card card-accent-green" style="padding: 10px 12px;">
                 <div class="kpi-label">AVG MONTHLY GROWTH</div>
                 <div style="font-size: 20px; font-weight: 900; margin: 3px 0 2px 0; letter-spacing: -0.02em;"
-                     th:style="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'color: #047857' : 'color: #B45309'}"
+                     th:style="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'color: #047857' : 'color: #E87461'}"
                      th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 1) + '%'}">0%</div>
                 <span th:class="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'trend-up' : 'trend-down'}" th:text="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'Steady' : 'Declining'}">-</span>
             </div>
@@ -51,15 +51,15 @@
                 <div style="font-size: 16px; font-weight: 900; color: #0D9488; margin: 3px 0;" th:text="${dto.demographics.peakSeason != null ? dto.demographics.peakSeason : '-'}">-</div>
                 <div style="font-size: 8px; color: #6B7280;">Highest revenue months</div>
             </div>
-            <div class="card" style="padding: 10px 12px; text-align: center; border-top: 4px solid #B45309;">
+            <div class="card" style="padding: 10px 12px; text-align: center; border-top: 4px solid #64748B;">
                 <div style="font-size: 7.5px; color: #6B7280; font-weight: 700;">LOW SEASON</div>
-                <div style="font-size: 16px; font-weight: 900; color: #B45309; margin: 3px 0;" th:text="${dto.demographics.lowSeason != null ? dto.demographics.lowSeason : '-'}">-</div>
+                <div style="font-size: 16px; font-weight: 900; color: #64748B; margin: 3px 0;" th:text="${dto.demographics.lowSeason != null ? dto.demographics.lowSeason : '-'}">-</div>
                 <div style="font-size: 8px; color: #6B7280;">Slowest revenue months</div>
             </div>
             <div class="card" style="padding: 10px 12px; text-align: center; border-top: 4px solid #2563EB;">
                 <div style="font-size: 7.5px; color: #6B7280; font-weight: 700;">YOY GROWTH</div>
                 <div style="font-size: 16px; font-weight: 900; margin: 3px 0;"
-                     th:style="${dto.demographics.yoyGrowthPct >= 0 ? 'color: #047857' : 'color: #B45309'}"
+                     th:style="${dto.demographics.yoyGrowthPct >= 0 ? 'color: #047857' : 'color: #E87461'}"
                      th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">-</div>
                 <div style="font-size: 8px; color: #6B7280;">Annual performance</div>
             </div>

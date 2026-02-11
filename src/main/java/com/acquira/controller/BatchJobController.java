@@ -13,7 +13,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/batch/jobs")
-@CrossOrigin(origins = "http://localhost:5173")
 public class BatchJobController {
 
     private final JobExplorer jobExplorer;

@@ -23,7 +23,6 @@ import java.util.ArrayList;
 
 @RestController
 @RequestMapping("/api/merchants")
-@CrossOrigin(origins = "http://localhost:5173")
 public class MerchantController {
 
     private final MerchantRepository merchantRepository;

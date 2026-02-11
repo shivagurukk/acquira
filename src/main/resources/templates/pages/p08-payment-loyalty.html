@@ -27,7 +27,7 @@
                     <div style="font-size: 16px; font-weight: 900; color: #111827;" th:text="${dto.demographics.walletUsagePct != null ? dto.demographics.walletUsagePct + '%' : '-'}">-</div>
                 </div>
             </div>
-            <div class="card" style="flex-direction: row; align-items: center; gap: 8px; padding: 10px; border-top: 3px solid #B45309;">
+            <div class="card" style="flex-direction: row; align-items: center; gap: 8px; padding: 10px; border-top: 3px solid #64748B;">
                 <div class="icon-circle icon-circle-amber" style="width: 28px; height: 28px;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
                 </div>
@@ -79,7 +79,7 @@
                 <div style="font-size: 7px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em;">RETENTION RATE</div>
                 <div style="font-size: 22px; font-weight: 900; color: #0D9488; margin: 2px 0;" th:text="${dto.loyalty.retentionRate != null ? dto.loyalty.retentionRate + '%' : '-'}">-</div>
                 <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate >= 50}" style="display: inline-block; background: #F0FDFA; color: #0D9488; padding: 1px 6px; border-radius: 3px; font-size: 7px; font-weight: 700;">High Loyalty</span>
-                <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate < 50}" style="display: inline-block; background: #FFFBEB; color: #B45309; padding: 1px 6px; border-radius: 3px; font-size: 7px; font-weight: 700;">Needs Improvement</span>
+                <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate < 50}" style="display: inline-block; background: #FEF2F2; color: #E87461; padding: 1px 6px; border-radius: 3px; font-size: 7px; font-weight: 700;">Needs Improvement</span>
             </div>
             <div class="card" style="padding: 10px; border-top: 3px solid #2563EB;">
                 <div style="font-size: 7px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em;">UNIQUE CUSTOMERS</div>

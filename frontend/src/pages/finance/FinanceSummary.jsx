@@ -32,7 +32,7 @@ const FinanceSummary = () => {
             if (period === 'CUSTOM') {
                 query += `&startDate=${customRange.start}&endDate=${customRange.end}`;
             }
-            const res = await fetch(`http://localhost:8081/api/finance/summary?${query}`, {
+            const res = await fetch(`/api/finance/summary?${query}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -55,7 +55,7 @@ const FinanceSummary = () => {
             const endStr = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).toISOString().split('T')[0];
 
             const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:8081/api/finance/summary?period=CUSTOM&groupBy=DAY&startDate=${startStr}&endDate=${endStr}`, {
+            const res = await fetch(`/api/finance/summary?period=CUSTOM&groupBy=DAY&startDate=${startStr}&endDate=${endStr}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -70,7 +70,7 @@ const FinanceSummary = () => {
         setLoadingMerchants(true);
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:8081/api/finance/summary?period=CUSTOM&groupBy=MERCHANT&startDate=${dateStr}&endDate=${dateStr}`, {
+            const res = await fetch(`/api/finance/summary?period=CUSTOM&groupBy=MERCHANT&startDate=${dateStr}&endDate=${dateStr}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
