@@ -1,4 +1,4 @@
-package com.acquira.pdf.service;
+﻿package com.acquira.pdf.service;
 
 import com.acquira.common.dto.MerchantInsightsDTO;
 import com.acquira.common.dto.TestDto;
@@ -9352,6 +9352,7 @@ public class PdfGenerationService {
         if (start == 0)
             return "New customer acquisition ongoing.";
         double growth = ((end - start) / start) * 100;
+
 
         if (growth > 0)
             return String.format("Active customers grew by %.0f%% from start to end of period.", growth);
