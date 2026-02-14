@@ -1,4 +1,4 @@
-﻿package com.acquira.pdf.service;
+package com.acquira.pdf.service;
 
 import com.acquira.common.dto.MerchantInsightsDTO;
 import com.acquira.common.dto.TestDto;

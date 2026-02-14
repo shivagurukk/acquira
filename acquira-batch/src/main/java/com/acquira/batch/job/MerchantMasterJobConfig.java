@@ -551,6 +551,39 @@ public class MerchantMasterJobConfig {
             jdbcTemplate.execute(insertBankSql);
             System.out.println("Upserted Bank Accounts for tenant " + tId);
 
+            // 7. Auto-assign unmapped sales users to default team lead
+            try {
+                // Find the default team lead for this tenant
+                var defaultLeads = jdbcTemplate.queryForList(
+                    "SELECT id FROM sales_team_mapping WHERE tenant_id = " + tId + " AND is_default = true LIMIT 1");
+
+                if (!defaultLeads.isEmpty()) {
+                    Long defaultLeadId = ((Number) defaultLeads.get(0).get("id")).longValue();
+
+                    // Insert assignments for sales users that exist in dim_merchant but not in sales_user_assignment
+                    String autoAssignSql = """
+                        INSERT INTO sales_user_assignment (tenant_id, sales_user_id, team_lead_id, assigned_at)
+                        SELECT DISTINCT m.tenant_id, m.sales_user_id, %d, NOW()
+                        FROM dim_merchant m
+                        WHERE m.tenant_id = %s
+                          AND m.sales_user_id IS NOT NULL
+                          AND m.sales_user_id != ''
+                          AND NOT EXISTS (
+                              SELECT 1 FROM sales_user_assignment a
+                              WHERE a.tenant_id = m.tenant_id AND a.sales_user_id = m.sales_user_id
+                          )
+                        ON CONFLICT (tenant_id, sales_user_id) DO NOTHING
+                    """.formatted(defaultLeadId, tId);
+
+                    int assigned = jdbcTemplate.update(autoAssignSql);
+                    System.out.println("Auto-assigned " + assigned + " unmapped sales users to default team lead for tenant " + tId);
+                } else {
+                    System.out.println("No default team lead found for tenant " + tId + " — skipping auto-assign");
+                }
+            } catch (Exception e) {
+                System.err.println("Warning: Auto-assign sales users failed (non-fatal): " + e.getMessage());
+            }
+
             return RepeatStatus.FINISHED;
         };
     }

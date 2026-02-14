@@ -353,21 +353,15 @@ public class VolumeRevenueRepository {
             orderByClause = "ORDER BY st.sid ASC";
         }
 
-        // HACK: Java string manipulation to fix the SQL Select list because I can't
-        // easily replace the sort_key logic above without complex string builders
-        // Let's just use MAX(s.business_date) as sort_key for Month/Day just to make
-        // SQL valid, or remove it.
-        // I'll stick to using the label itself for sorting.
-
-        int sortKeyIndex = sql.indexOf("s.business_date as sort_key");
-        if (sortKeyIndex > -1) {
-            if ("MERCHANT".equals(groupBy) || "STORE".equals(groupBy)) {
-                // Keep it (m.mid / st.sid is in group by)
-            } else {
-                // Replace with Min
-                sql.replace(sortKeyIndex, sortKeyIndex + 27, "MIN(s.business_date) as sort_key");
-            }
+        // Fix sort_key for aggregated groupBy modes (MONTH/DAY) where
+        // s.business_date is not in GROUP BY and must be wrapped in an aggregate.
+        // For MERCHANT/STORE the sort_key is already m.mid / st.sid which IS in GROUP BY.
+        String sqlStr = sql.toString();
+        if ("MONTH".equals(groupBy) || "DAY".equals(groupBy)) {
+            sqlStr = sqlStr.replace("s.business_date as sort_key", "MIN(s.business_date) as sort_key");
         }
+        // Use sqlStr from here on
+        sql = new StringBuilder(sqlStr);
 
         sql.append(groupByClause);
         sql.append(orderByClause);
@@ -409,35 +403,42 @@ public class VolumeRevenueRepository {
         List<Object[]> rows = query.getResultList();
         List<Map<String, Object>> result = new ArrayList<>();
 
+        // Debug: log column count from first row to catch index mismatches early
+        if (!rows.isEmpty()) {
+            System.out.println("[PerformanceDashboard] groupBy=" + groupBy + ", columns=" + rows.get(0).length);
+        }
+
         for (Object[] row : rows) {
             Map<String, Object> map = new HashMap<>();
-            map.put("row_label", row[0]); // generic label name
-            map.put("sort_date", row[1] != null ? row[1].toString() : "");
+            int col = 0;
+            map.put("row_label", row[col++]);       // 0: row_label
+            map.put("sort_date", row[col] != null ? row[col].toString() : "");
+            col++;                                       // 1: sort_key
 
-            // Dom Debit
-            map.put("dom_debit_cnt", row[2]);
-            map.put("dom_debit_vol", row[3]);
-            map.put("dom_debit_msf", row[4]);
-            map.put("dom_debit_optin", row[5]);
+            // Dom Debit (indices 2-5)
+            map.put("dom_debit_cnt", row[col++]);
+            map.put("dom_debit_vol", row[col++]);
+            map.put("dom_debit_msf", row[col++]);
+            map.put("dom_debit_optin", row[col++]);
 
-            // Dom Credit
-            map.put("dom_credit_cnt", row[6]);
-            map.put("dom_credit_vol", row[7]);
-            map.put("dom_credit_msf", row[8]);
-            map.put("dom_credit_optin", row[9]);
+            // Dom Credit (indices 6-9)
+            map.put("dom_credit_cnt", row[col++]);
+            map.put("dom_credit_vol", row[col++]);
+            map.put("dom_credit_msf", row[col++]);
+            map.put("dom_credit_optin", row[col++]);
 
-            // Intl
-            map.put("int_cnt", row[10]);
-            map.put("int_vol", row[11]);
-            map.put("int_msf", row[12]);
-            map.put("int_optin", row[13]);
+            // Intl (indices 10-13)
+            map.put("int_cnt", row[col++]);
+            map.put("int_vol", row[col++]);
+            map.put("int_msf", row[col++]);
+            map.put("int_optin", row[col++]);
 
-            // Totals
-            map.put("total_vol", row[14]);
-            map.put("total_msf", row[15]);
+            // Totals (indices 14-15)
+            map.put("total_vol", row[col++]);
+            map.put("total_msf", col < row.length ? row[col++] : 0);
 
-            // Extra
-            map.put("merchant_name", row[16]);
+            // Extra context (index 16)
+            map.put("merchant_name", col < row.length ? row[col++] : null);
 
             result.add(map);
         }

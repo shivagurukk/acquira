@@ -8,6 +8,7 @@
     <dependencies>
         <dependency><groupId>com.acquira</groupId><artifactId>acquira-common</artifactId></dependency>
         <dependency><groupId>com.acquira</groupId><artifactId>acquira-batch</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>com.acquira</groupId><artifactId>acquira-pdf</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
         <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
     </dependencies>

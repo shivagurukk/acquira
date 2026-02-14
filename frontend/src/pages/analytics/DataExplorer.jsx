@@ -93,7 +93,10 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
     const s = document.createElement('style');
     s.id = STYLE_ID;
     s.textContent = `
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        @font-face { font-family: 'Plus Jakarta Sans'; font-weight: 400; src: url('/fonts/PlusJakartaSans-Regular.ttf') format('truetype'); }
+        @font-face { font-family: 'Plus Jakarta Sans'; font-weight: 500; src: url('/fonts/PlusJakartaSans-Medium.ttf') format('truetype'); }
+        @font-face { font-family: 'Plus Jakarta Sans'; font-weight: 600; src: url('/fonts/PlusJakartaSans-SemiBold.ttf') format('truetype'); }
+        @font-face { font-family: 'Plus Jakarta Sans'; font-weight: 700; src: url('/fonts/PlusJakartaSans-Bold.ttf') format('truetype'); }
         .qe3 { font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif !important; }
         .qe3 * { font-family: inherit !important; box-sizing: border-box; }
         .qe3-scroll::-webkit-scrollbar { width: 5px; height: 5px; }

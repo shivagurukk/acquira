@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Filter, Calendar, CreditCard, ChevronLeft, ChevronRight, X, Download } from 'lucide-react';
+import useExcelExport from '../hooks/useExcelExport';
 import Loader from './Loader';
 
 const TransactionList = () => {
@@ -11,6 +12,7 @@ const TransactionList = () => {
     const [size, setSize] = useState(20);
     const [totalPages, setTotalPages] = useState(0);
     const [totalElements, setTotalElements] = useState(0);
+    const { exportExcel, isExporting } = useExcelExport();
 
     // Filters
     const [filters, setFilters] = useState({
@@ -103,41 +105,9 @@ const TransactionList = () => {
     // Auto-fetch on clear?
     // Let's just create a wrapper that uses current state.
 
-    const exportData = async () => {
-        try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
-
-            const params = new URLSearchParams();
-            if (filters.mid) params.append('mid', filters.mid);
-            if (filters.sid) params.append('sid', filters.sid);
-            if (filters.tid) params.append('tid', filters.tid);
-            if (filters.paymentDateFrom) params.append('paymentDateFrom', filters.paymentDateFrom);
-            if (filters.paymentDateTo) params.append('paymentDateTo', filters.paymentDateTo);
-            if (filters.transactionDateFrom) params.append('transactionDateFrom', filters.transactionDateFrom);
-            if (filters.transactionDateTo) params.append('transactionDateTo', filters.transactionDateTo);
-
-            const response = await fetch(`/api/transactions/export/csv?${params.toString()}`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'X-Tenant-Id': tenantId
-                }
-            });
-
-            if (response.ok) {
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-            }
-        } catch (error) {
-            console.error('Export error', error);
-        }
+    const handleExport = () => {
+        // Pass current filters to export
+        exportExcel('TRANSACTIONS', filters);
     };
 
     return (
@@ -148,8 +118,8 @@ const TransactionList = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a' }}>Transaction Data</h2>
                     <div style={{ display: 'flex', gap: '10px' }}>
-                        <button onClick={exportData} style={{ fontSize: '0.9rem', color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: '600' }}>
-                            <Download size={16} /> Export CSV
+                        <button onClick={handleExport} disabled={isExporting} style={{ fontSize: '0.9rem', color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: '600', opacity: isExporting ? 0.7 : 1 }}>
+                            <Download size={16} /> {isExporting ? 'Exporting...' : 'Export Excel'}
                         </button>
                         <button onClick={() => { clearFilters(); setTimeout(fetchTransactions, 50); }} style={{ fontSize: '0.9rem', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
                             <X size={16} /> Clear

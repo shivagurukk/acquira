@@ -139,63 +139,108 @@ INSERT INTO sys_user_group (group_name, description) VALUES
 ('Ops User', 'Access to Batch Logs and Uploads')
 ON CONFLICT (group_name) DO NOTHING;
 
--- 2. Insert Menus
+-- ==========================================
+-- 2. COMPLETE MENU REGISTRY
+-- Every menu here maps 1:1 to a route in App.jsx
+-- No hardcoded menus in frontend — this is the single source of truth
+-- ==========================================
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
-('Dashboard', '/dashboard', 'LayoutDashboard', 'EXECUTIVE', 1),
-('Sales Analytics', '/sales/analytics', 'TrendingUp', 'SALES', 2),
-('Zero Sales', '/sales/zero-sales', 'AlertTriangle', 'SALES', 3),
-('Profitability', '/finance/profitability', 'PieChart', 'FINANCE', 4),
-('P&L Views', '/finance/pnl', 'DollarSign', 'FINANCE', 5),
-('Batch Logs', '/ops/batch-logs', 'Activity', 'OPERATIONS', 6),
-('Upload Files', '/upload', 'Upload', 'OPERATIONS', 7),
-('User Management', '/users', 'Users', 'ADMINISTRATION', 8),
-('Bank Setup', '/tenants', 'Building', 'ADMINISTRATION', 9),
-('Group Management', '/admin/groups', 'Shield', 'ADMINISTRATION', 10),
-('Merchant Universe', '/merchants', 'Store', 'MERCHANT MGT', 1),
-('Transactions', '/transactions', 'List', 'MERCHANT MGT', 2),
-('Merchant Summary', '/merchant-summary', 'Table', 'MERCHANT MGT', 3),
-('Volume & Revenue', '/business/volume-revenue', 'BarChart2', 'BUSINESS', 4),
-('Merchant Financial', '/business/merchant-financial', 'DollarSign', 'BUSINESS', 5),
-('Performance Trends', '/business/performance', 'TrendingUp', 'BUSINESS', 6),
-('Debit & Prepaid Metrics', '/business/debit-prepaid', 'CreditCard', 'BUSINESS', 7),
-('Attrition Report', '/business/attrition', 'TrendingDown', 'BUSINESS', 8),
-('Merchant Growth Heatmap', '/business/heatmap', 'Grid', 'BUSINESS', 9),
-('Daily Merchant Dashboard', '/business/daily-dashboard', 'Calendar', 'BUSINESS', 10),
-('Backup & Restore', '/admin/backups', 'Database', 'ADMINISTRATION', 11)
+-- EXECUTIVE
+('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
+('Executive Dashboard',      '/business/executive-dashboard-v2',  'Presentation',    'EXECUTIVE',      2),
+
+-- MERCHANT MGT
+('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
+('Transactions',             '/transactions',                     'List',            'MERCHANT MGT',   2),
+('Merchant Summary',         '/merchant-summary',                 'Table',           'MERCHANT MGT',   3),
+('Merchant Insight Hub',     '/merchant/insight-hub',             'PieChart',        'MERCHANT MGT',   4),
+('Transaction Trends',       '/trends/hub',                       'Activity',        'MERCHANT MGT',   5),
+
+-- BUSINESS
+('Business Dashboard',       '/business/dashboard',               'LayoutGrid',      'BUSINESS',       0),
+('Volume & Revenue',         '/business/volume-revenue',          'BarChart3',       'BUSINESS',       1),
+('Merchant Financial',       '/business/merchant-financial',      'DollarSign',      'BUSINESS',       2),
+('Performance Trends',       '/business/performance',             'TrendingUp',      'BUSINESS',       3),
+('Debit & Prepaid Metrics',  '/business/debit-prepaid',           'CreditCard',      'BUSINESS',       4),
+('Attrition Report',         '/business/attrition',               'TrendingDown',    'BUSINESS',       5),
+('Zero Transaction Report',  '/business/zero-transaction',        'AlertTriangle',   'BUSINESS',       6),
+('Merchant Growth Heatmap',  '/business/heatmap',                 'Grid',            'BUSINESS',       7),
+('Daily Merchant Dashboard', '/business/daily-dashboard',         'Calendar',        'BUSINESS',       8),
+('Merchant Analytics',       '/business/merchant-analytics',      'BarChart2',       'BUSINESS',       9),
+('Merchant Insights',        '/business/insights',                'Lightbulb',       'BUSINESS',      10),
+('Merchant Comparison',      '/business/comparison',              'Scale',           'BUSINESS',      11),
+('Report Manager',           '/business/report-manager',          'FileText',        'BUSINESS',      12),
+('Opportunity Intelligence', '/business/opportunity',             'Target',          'BUSINESS',      13),
+('Group Reports',            '/business/groups',                  'FolderKanban',    'BUSINESS',      14),
+('Data Explorer',            '/explorer',                         'Compass',         'BUSINESS',      15),
+('AI Assistant',             '/ai-assistant',                     'BrainCircuit',    'BUSINESS',      16),
+
+-- SALES
+('Sales Team Management',    '/sales/team-management',            'Users',           'SALES',          1),
+
+-- FINANCE
+('Finance Dashboard',        '/finance/dashboard',                'PieChart',        'FINANCE',        1),
+('Finance Summary',          '/finance/summary',                  'BookOpen',        'FINANCE',        2),
+('Finance Lists',            '/finance/lists',                    'ClipboardList',   'FINANCE',        3),
+
+-- OPERATIONS
+('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
+('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     2),
+('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     3),
+
+-- ADMINISTRATION
+('User Management',          '/users',                            'Users',           'ADMINISTRATION', 1),
+('Bank Setup',               '/tenants',                          'Building',        'ADMINISTRATION', 2),
+('Group Management',         '/admin/groups',                     'Shield',          'ADMINISTRATION', 3),
+('SMTP Settings',            '/admin/smtp-settings',              'Settings',        'ADMINISTRATION', 4),
+('Audit Logs',               '/admin/audit-logs',                 'ScrollText',      'ADMINISTRATION', 5),
+('Backup & Restore',         '/admin/backups',                    'Database',        'ADMINISTRATION', 6)
 ON CONFLICT (path) DO NOTHING;
 
--- Map New Menu to Groups (Super Admin & Bank Admin)
+-- ==========================================
+-- 3. GROUP → MENU ASSIGNMENTS (RBAC)
+-- ==========================================
+
+-- Super Admin: ALL menus
 INSERT INTO sys_group_menu (group_id, menu_id)
 SELECT g.group_id, m.menu_id
 FROM sys_user_group g, sys_menu m
-WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
-  AND (m.category = 'MERCHANT MGT' OR m.category = 'BUSINESS')
+WHERE g.group_name = 'Super Admin'
 ON CONFLICT DO NOTHING;
 
-
--- 3. Map Menus to Groups (simplified for intial setup)
--- Super Admin (Group 1) gets everything
+-- Bank Admin: Everything except sensitive admin pages
 INSERT INTO sys_group_menu (group_id, menu_id)
-SELECT 1, menu_id FROM sys_menu
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name = 'Bank Admin'
+  AND m.path NOT IN ('/admin/groups', '/admin/smtp-settings', '/admin/audit-logs', '/admin/backups')
+ON CONFLICT DO NOTHING;
+
+-- Business User: Executive + Business + Merchant Mgt + Sales
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name = 'Business User'
+  AND m.category IN ('EXECUTIVE', 'BUSINESS', 'MERCHANT MGT', 'SALES')
+ON CONFLICT DO NOTHING;
+
+-- Finance User: Dashboard + Finance + Merchant Mgt
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name = 'Finance User'
+  AND (m.category IN ('FINANCE', 'MERCHANT MGT') OR m.path = '/dashboard')
+ON CONFLICT DO NOTHING;
+
+-- Ops User: Dashboard + Operations + Backup
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name = 'Ops User'
+  AND (m.category = 'OPERATIONS' OR m.path IN ('/dashboard', '/admin/backups'))
 ON CONFLICT DO NOTHING;
 
 -- 1.2 Tenant (The Core Institution/Bank Unit)
--- Replacing dim_institution concept with a robust Tenant master
--- Insert Finance Summary Menu
-INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
-('Finance Summary', '/finance/summary', 'BookOpen', 'FINANCE', 2),
-('Merchant Insight Hub', '/merchant/insight-hub', 'PieChart', 'MERCHANT MGT', 4),
-('Transaction Trends', '/trends/hub', 'Activity', 'MERCHANT MGT', 5)
-ON CONFLICT (path) DO NOTHING;
-
--- Map to Super Admin, Bank Admin, and Finance User
-INSERT INTO sys_group_menu (group_id, menu_id)
-SELECT g.group_id, m.menu_id
-FROM sys_user_group g, sys_menu m
-WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Finance User', 'Ops User', 'Business User')
-  AND m.menu_name IN ('Finance Summary', 'Merchant Insight Hub', 'Transaction Trends')
-ON CONFLICT DO NOTHING;
-
 CREATE TABLE IF NOT EXISTS tenant (
     tenant_id SERIAL PRIMARY KEY,
     institution_id VARCHAR(50) UNIQUE NOT NULL, -- Logical ID (e.g., "BANK001")
@@ -226,7 +271,14 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(50), -- Added to support direct role mapping
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login TIMESTAMP
+    last_login TIMESTAMP,
+    -- Password Management
+    must_change_password BOOLEAN DEFAULT FALSE,
+    password_changed_at TIMESTAMP,
+    -- Account Lockout
+    failed_login_attempts INT DEFAULT 0,
+    locked_until TIMESTAMP,
+    last_failed_login TIMESTAMP
 );
 
 -- 1.5 User -> Role Mapping
@@ -251,10 +303,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
     log_id BIGSERIAL PRIMARY KEY,
     tenant_id INT REFERENCES tenant(tenant_id), -- Nullable for System-level actions
     user_id BIGINT REFERENCES users(user_id),
+    username VARCHAR(50),
     action_type VARCHAR(50), -- LOGIN, EXPORT, BATCH_RUN
     details TEXT,
     ip_address VARCHAR(45),
-    event_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    event_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    http_method VARCHAR(10),
+    endpoint VARCHAR(255),
+    status_code INT,
+    user_agent VARCHAR(500),
+    category VARCHAR(50),
+    entity_type VARCHAR(50),
+    entity_id VARCHAR(100),
+    duration_ms BIGINT
 );
 
 -- 1.8 Tenant Settings (Phase 6)
@@ -1317,10 +1378,10 @@ ON CONFLICT (institution_id) DO NOTHING;
 
 -- 4.2 Default Users
 -- Password is 'password' (BCrypt encoded: $2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi)
-INSERT INTO users (username, password_hash, email, is_active) VALUES 
-('admin', '{noop}password', 'admin@acquira.com', true)
+INSERT INTO users (username, password_hash, email, role, is_active, must_change_password) VALUES 
+('admin', '{noop}password', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, false)
 ON CONFLICT (username) DO UPDATE 
-SET password_hash = EXCLUDED.password_hash;
+SET password_hash = EXCLUDED.password_hash, must_change_password = FALSE, role = 'ROLE_SUPER_ADMIN';
 
 -- 4.3 Assign Access
 -- Admin -> Acquira Bank -> Super Admin (Group 1)
@@ -1378,18 +1439,104 @@ CREATE TABLE IF NOT EXISTS saved_filter (
 CREATE INDEX IF NOT EXISTS idx_saved_filter_lookup ON saved_filter(tenant_id, user_id, dashboard_type);
 
 -- ==========================================
--- AI ASSISTANT MENU
+-- SALES TEAM MAPPING & ASSIGNMENT
 -- ==========================================
-INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
-('AI Assistant', '/ai-assistant', 'BrainCircuit', 'BUSINESS', 12)
-ON CONFLICT (path) DO NOTHING;
+CREATE TABLE IF NOT EXISTS sales_team_mapping (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    team_lead_name  VARCHAR(100) NOT NULL,
+    team_lead_email VARCHAR(150) NOT NULL,
+    is_default      BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT uq_sales_team_tenant_email UNIQUE (tenant_id, team_lead_email)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_team_tenant ON sales_team_mapping(tenant_id);
 
-INSERT INTO sys_group_menu (group_id, menu_id)
-SELECT g.group_id, m.menu_id
-FROM sys_user_group g, sys_menu m
-WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
-  AND m.menu_name = 'AI Assistant'
+CREATE TABLE IF NOT EXISTS sales_user_assignment (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    sales_user_id   VARCHAR(100) NOT NULL,
+    team_lead_id    BIGINT NOT NULL REFERENCES sales_team_mapping(id),
+    assigned_at     TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT uq_sales_user_tenant UNIQUE (tenant_id, sales_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_assign_tenant ON sales_user_assignment(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_sales_assign_lead ON sales_user_assignment(team_lead_id);
+
+-- Default Team Lead (auto-assign unmapped sales users to this lead)
+INSERT INTO sales_team_mapping (tenant_id, team_lead_name, team_lead_email, is_default)
+VALUES (1, 'Default Team Lead', 'default-lead@acquira.com', true)
+ON CONFLICT (tenant_id, team_lead_email) DO UPDATE SET is_default = true;
+
+-- ==========================================
+-- PASSWORD HISTORY
+-- ==========================================
+CREATE TABLE IF NOT EXISTS password_history (
+    history_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_password_history_user ON password_history(user_id);
+
+-- ==========================================
+-- PASSWORD RESET TOKENS
+-- ==========================================
+CREATE TABLE IF NOT EXISTS password_reset_token (
+    token_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    token VARCHAR(255) NOT NULL UNIQUE,
+    expires_at TIMESTAMP NOT NULL,
+    used BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_reset_token ON password_reset_token(token);
+
+-- ==========================================
+-- ALTER existing users table (for upgrades)
+-- ==========================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_failed_login TIMESTAMP;
+
+-- Ensure existing users are NOT forced to change password
+UPDATE users SET must_change_password = FALSE WHERE must_change_password IS NULL;
+
+-- ==========================================
+-- PASSWORD & LOCKOUT CONFIG (per-tenant)
+-- ==========================================
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'password_history_count', '5', 'NUMBER'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'password_min_length', '8', 'NUMBER'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'max_failed_logins', '5', 'NUMBER'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'lockout_duration_minutes', '15', 'NUMBER'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'password_reset_token_expiry_hours', '1', 'NUMBER'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+-- Seed admin password into history
+INSERT INTO password_history (user_id, password_hash)
+SELECT user_id, password_hash FROM users WHERE username = 'admin'
 ON CONFLICT DO NOTHING;
+-- AI Assistant menu: managed in consolidated menu block above
 
 -- ==========================================
 -- AI CHAT HISTORY (optional - for saved conversations)
@@ -1423,37 +1570,6 @@ CREATE INDEX IF NOT EXISTS idx_stg_txn_scheme ON stg_trnx_raw (tenant_id, card_s
 CREATE INDEX IF NOT EXISTS idx_stg_txn_dest ON stg_trnx_raw (tenant_id, destination);
 CREATE INDEX IF NOT EXISTS idx_stg_txn_type ON stg_trnx_raw (tenant_id, transaction_type);
 
--- ==========================================
--- DATA EXPLORER MENU
--- ==========================================
-INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
-('Data Explorer', '/explorer', 'Compass', 'BUSINESS', 11)
-ON CONFLICT (path) DO NOTHING;
-
--- Map to Super Admin, Bank Admin, Business User
-INSERT INTO sys_group_menu (group_id, menu_id)
-SELECT g.group_id, m.menu_id
-FROM sys_user_group g, sys_menu m
-WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
-  AND m.menu_name = 'Data Explorer'
-ON CONFLICT DO NOTHING;
-
--- ==========================================
--- SAVED FILTERS / VIEWS
--- ==========================================
-CREATE TABLE IF NOT EXISTS saved_filter (
-    id              BIGSERIAL PRIMARY KEY,
-    tenant_id       BIGINT NOT NULL,
-    user_id         BIGINT NOT NULL REFERENCES users(user_id),
-    name            VARCHAR(100) NOT NULL,
-    dashboard_type  VARCHAR(50) NOT NULL,
-    filter_json     TEXT NOT NULL,
-    is_default      BOOLEAN DEFAULT FALSE,
-    is_shared       BOOLEAN DEFAULT FALSE,
-    created_at      TIMESTAMP DEFAULT NOW(),
-    updated_at      TIMESTAMP DEFAULT NOW(),
-    CONSTRAINT uq_saved_filter_name UNIQUE (tenant_id, user_id, dashboard_type, name)
-);
-CREATE INDEX IF NOT EXISTS idx_saved_filter_lookup ON saved_filter(tenant_id, user_id, dashboard_type);
-
+-- Data Explorer menu: managed in consolidated menu block above
+-- (saved_filter already created above)
 

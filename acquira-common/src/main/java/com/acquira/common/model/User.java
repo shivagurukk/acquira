@@ -32,6 +32,23 @@ public class User {
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    // ===== PASSWORD MANAGEMENT =====
+    @Column(name = "must_change_password")
+    private boolean mustChangePassword = false;
+
+    @Column(name = "password_changed_at")
+    private LocalDateTime passwordChangedAt;
+
+    // ===== ACCOUNT LOCKOUT =====
+    @Column(name = "failed_login_attempts")
+    private int failedLoginAttempts = 0;
+
+    @Column(name = "locked_until")
+    private LocalDateTime lockedUntil;
+
+    @Column(name = "last_failed_login")
+    private LocalDateTime lastFailedLogin;
+
     public Long getId() {
         return id;
     }
@@ -88,5 +105,26 @@ public class User {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    // ===== Password Management Getters/Setters =====
+    public boolean isMustChangePassword() { return mustChangePassword; }
+    public void setMustChangePassword(boolean mustChangePassword) { this.mustChangePassword = mustChangePassword; }
+
+    public LocalDateTime getPasswordChangedAt() { return passwordChangedAt; }
+    public void setPasswordChangedAt(LocalDateTime passwordChangedAt) { this.passwordChangedAt = passwordChangedAt; }
+
+    // ===== Account Lockout Getters/Setters =====
+    public int getFailedLoginAttempts() { return failedLoginAttempts; }
+    public void setFailedLoginAttempts(int failedLoginAttempts) { this.failedLoginAttempts = failedLoginAttempts; }
+
+    public LocalDateTime getLockedUntil() { return lockedUntil; }
+    public void setLockedUntil(LocalDateTime lockedUntil) { this.lockedUntil = lockedUntil; }
+
+    public LocalDateTime getLastFailedLogin() { return lastFailedLogin; }
+    public void setLastFailedLogin(LocalDateTime lastFailedLogin) { this.lastFailedLogin = lastFailedLogin; }
+
+    public boolean isAccountLocked() {
+        return lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now());
     }
 }

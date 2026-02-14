@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Download, RefreshCw, Trash2, Database, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import api from '../api/axios';
 
 const BackupRestore = () => {
     const [backups, setBackups] = useState([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
     const [msg, setMsg] = useState({ type: '', text: '' });
-    const token = localStorage.getItem('token');
 
     useEffect(() => {
         fetchBackups();
@@ -15,17 +15,10 @@ const BackupRestore = () => {
     const fetchBackups = async () => {
         try {
             setLoading(true);
-            const res = await fetch('/api/admin/backups', {
-                headers: { 'Authorization': `Bearer ${token} ` }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setBackups(data);
-            } else {
-                setMsg({ type: 'error', text: 'Failed to fetch backups' });
-            }
+            const res = await api.get('/admin/backups');
+            setBackups(res.data);
         } catch (error) {
-            setMsg({ type: 'error', text: 'Network error fetching backups' });
+            setMsg({ type: 'error', text: 'Failed to fetch backups' });
         } finally {
             setLoading(false);
         }
@@ -33,24 +26,15 @@ const BackupRestore = () => {
 
     const createBackup = async () => {
         if (!window.confirm("Are you sure you want to create a new database backup?")) return;
-
         try {
             setActionLoading(true);
             setMsg({ type: 'info', text: 'Creating backup...' });
-            const res = await fetch('/api/admin/backups/create', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token} ` }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setMsg({ type: 'success', text: `Backup created: ${data.fileName} ` });
-                fetchBackups();
-            } else {
-                const err = await res.json();
-                setMsg({ type: 'error', text: `Backup failed: ${err.error || 'Unknown error'} ` });
-            }
+            const res = await api.post('/admin/backups/create');
+            setMsg({ type: 'success', text: `Backup created: ${res.data.fileName}` });
+            fetchBackups();
         } catch (error) {
-            setMsg({ type: 'error', text: 'Network error creating backup' });
+            const errMsg = error.response?.data?.error || 'Unknown error';
+            setMsg({ type: 'error', text: `Backup failed: ${errMsg}` });
         } finally {
             setActionLoading(false);
         }
@@ -59,25 +43,17 @@ const BackupRestore = () => {
     const restoreBackup = async (fileName) => {
         const confirm1 = window.confirm("WARNING: Restore is a DESTRUCTIVE operation.\nThis will overwrite the current database with the selected backup.\nAre you absolutely sure?");
         if (!confirm1) return;
-
         const confirm2 = window.confirm(`Please confirm AGAIN.\nRestore from: ${fileName}?`);
         if (!confirm2) return;
 
         try {
             setActionLoading(true);
             setMsg({ type: 'warning', text: 'Restoring database... This may take a while.' });
-            const res = await fetch(`/ api / admin / backups / restore / ${fileName} `, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token} ` }
-            });
-            if (res.ok) {
-                setMsg({ type: 'success', text: 'Restore completed successfully!' });
-            } else {
-                const err = await res.json();
-                setMsg({ type: 'error', text: `Restore failed: ${err.error || 'Unknown error'} ` });
-            }
+            await api.post(`/admin/backups/restore/${fileName}`);
+            setMsg({ type: 'success', text: 'Restore completed successfully!' });
         } catch (error) {
-            setMsg({ type: 'error', text: 'Network error restoring backup' });
+            const errMsg = error.response?.data?.error || 'Unknown error';
+            setMsg({ type: 'error', text: `Restore failed: ${errMsg}` });
         } finally {
             setActionLoading(false);
         }
@@ -85,44 +61,29 @@ const BackupRestore = () => {
 
     const deleteBackup = async (fileName) => {
         if (!window.confirm(`Delete backup ${fileName}?`)) return;
-
         try {
-            const res = await fetch(`/ api / admin / backups / ${fileName} `, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token} ` }
-            });
-            if (res.ok) {
-                setMsg({ type: 'success', text: 'Backup deleted' });
-                fetchBackups();
-            } else {
-                setMsg({ type: 'error', text: 'Failed to delete backup' });
-            }
+            await api.delete(`/admin/backups/${fileName}`);
+            setMsg({ type: 'success', text: 'Backup deleted' });
+            fetchBackups();
         } catch (error) {
-            setMsg({ type: 'error', text: 'Network error deleting backup' });
+            setMsg({ type: 'error', text: 'Failed to delete backup' });
         }
     };
 
-    const downloadBackup = (fileName) => {
-        // Trigger download via browser
-        // Need to add auth token if API requires it, but simpler to use window.open if cookies widely used
-        // Or fetch blob. For Admin API usually secured by Bearer. 
-        // Let's use fetch blob method to attach header.
-
-        fetch(`/ api / admin / backups / download / ${fileName} `, {
-            headers: { 'Authorization': `Bearer ${token} ` }
-        })
-            .then(response => response.blob())
-            .then(blob => {
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a); // Append to body to ensure click works
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a); // Cleanup
-            })
-            .catch(err => setMsg({ type: 'error', text: 'Download failed' }));
+    const downloadBackup = async (fileName) => {
+        try {
+            const res = await api.get(`/admin/backups/download/${fileName}`, { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            setMsg({ type: 'error', text: 'Download failed' });
+        }
     };
 
     const formatSize = (bytes) => {
@@ -133,9 +94,7 @@ const BackupRestore = () => {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
-    const formatDate = (ts) => {
-        return new Date(ts).toLocaleString();
-    };
+    const formatDate = (ts) => new Date(ts).toLocaleString();
 
     return (
         <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
@@ -146,13 +105,13 @@ const BackupRestore = () => {
 
             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
 
-                {/* Status Message */}
                 {msg.text && (
-                    <div className={`mb - 4 p - 4 rounded - md flex items - center gap - 2 ${msg.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' :
-                            msg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
-                                msg.type === 'warning' ? 'bg-yellow-50 text-yellow-700 border border-yellow-200' :
-                                    'bg-blue-50 text-blue-700 border border-blue-200'
-                        } `}>
+                    <div className={`mb-4 p-4 rounded-md flex items-center gap-2 ${
+                        msg.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' :
+                        msg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
+                        msg.type === 'warning' ? 'bg-yellow-50 text-yellow-700 border border-yellow-200' :
+                        'bg-blue-50 text-blue-700 border border-blue-200'
+                    }`}>
                         {msg.type === 'error' && <XCircle size={18} />}
                         {msg.type === 'success' && <CheckCircle size={18} />}
                         {msg.type === 'warning' && <AlertTriangle size={18} />}
@@ -205,26 +164,13 @@ const BackupRestore = () => {
                                         <td className="p-4 text-sm text-slate-600">{formatDate(backup.lastModified)}</td>
                                         <td className="p-4 text-sm text-slate-600">{formatSize(backup.size)}</td>
                                         <td className="p-4 text-right flex justify-end gap-2">
-                                            <button
-                                                onClick={() => downloadBackup(backup.name)}
-                                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                                                title="Download"
-                                            >
+                                            <button onClick={() => downloadBackup(backup.name)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors" title="Download">
                                                 <Download size={18} />
                                             </button>
-                                            <button
-                                                onClick={() => restoreBackup(backup.name)}
-                                                disabled={actionLoading}
-                                                className="p-2 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
-                                                title="Restore"
-                                            >
+                                            <button onClick={() => restoreBackup(backup.name)} disabled={actionLoading} className="p-2 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors" title="Restore">
                                                 <RefreshCw size={18} />
                                             </button>
-                                            <button
-                                                onClick={() => deleteBackup(backup.name)}
-                                                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                                                title="Delete"
-                                            >
+                                            <button onClick={() => deleteBackup(backup.name)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors" title="Delete">
                                                 <Trash2 size={18} />
                                             </button>
                                         </td>

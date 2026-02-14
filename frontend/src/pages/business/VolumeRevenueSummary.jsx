@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Box, Paper, Typography, Chip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { TrendingUp, TrendingDown, BarChart3, DollarSign, Hash, Percent } from 'lucide-react';
@@ -29,32 +29,104 @@ const TrendPill = ({ val }) => {
     );
 };
 
+// Compute date range from preset
+const computeDateRange = (preset) => {
+    const now = new Date();
+    const fmt = (d) => d.toISOString().split('T')[0];
+    switch (preset) {
+        case 'TODAY': return { startDate: fmt(now), endDate: fmt(now) };
+        case 'MONTH': return { startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
+        case 'LAST_MONTH': return {
+            startDate: fmt(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+            endDate: fmt(new Date(now.getFullYear(), now.getMonth(), 0))
+        };
+        case 'YEAR': return { startDate: fmt(new Date(now.getFullYear(), 0, 1)), endDate: fmt(now) };
+        case 'PY': return {
+            startDate: fmt(new Date(now.getFullYear() - 1, 0, 1)),
+            endDate: fmt(new Date(now.getFullYear() - 1, 11, 31))
+        };
+        default: return {};
+    }
+};
+
 const VolumeRevenueSummary = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showFilters, setShowFilters] = useState(false);
-    const [filters, setFilters] = useState({ datePreset: 'YEAR' });
 
-    useEffect(() => { fetchReport(); }, []);
+    // Initialize with actual date range for "This Year"
+    const initialRange = computeDateRange('YEAR');
+    const [filters, setFilters] = useState({ datePreset: 'YEAR', ...initialRange });
 
-    const fetchReport = async () => {
+    // Track filter version to trigger re-fetch
+    const [filterVersion, setFilterVersion] = useState(0);
+    const isFirstRun = useRef(true);
+
+    const fetchReport = useCallback(async (filtersToSend) => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
+            const tenantId = localStorage.getItem('defaultTenantId');
             const res = await fetch('/api/business/volume-revenue-summary', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify(filters)
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
+                },
+                body: JSON.stringify(filtersToSend)
             });
             if (res.ok) setData(await res.json());
         } catch (error) { console.error("Failed to load report", error); }
         finally { setLoading(false); }
-    };
+    }, []);
 
-    const handleFilterChange = (keyOrObj, val) => {
-        if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));
-        else setFilters(prev => ({ ...prev, [keyOrObj]: val }));
-    };
+    // Auto-fetch on filter changes (debounced by filterVersion)
+    useEffect(() => {
+        fetchReport(filters);
+    }, [filterVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Initial load
+    useEffect(() => {
+        if (isFirstRun.current) {
+            isFirstRun.current = false;
+            fetchReport(filters);
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Called by PremiumReportHeader when a date preset or custom date is clicked
+    const handleFilterChange = useCallback((keyOrObj, val) => {
+        setFilters(prev => {
+            let next;
+            if (typeof keyOrObj === 'object') {
+                next = { ...prev, ...keyOrObj };
+            } else {
+                next = { ...prev, [keyOrObj]: val };
+            }
+
+            // If a preset was picked (not CUSTOM), compute actual dates
+            if (next.datePreset && next.datePreset !== 'CUSTOM' && keyOrObj?.datePreset) {
+                const range = computeDateRange(next.datePreset);
+                next = { ...next, ...range };
+            }
+
+            return next;
+        });
+        // Trigger re-fetch for preset changes (not for typing custom dates)
+        if (typeof keyOrObj === 'object' && keyOrObj.datePreset && keyOrObj.datePreset !== 'CUSTOM') {
+            setFilterVersion(v => v + 1);
+        }
+    }, []);
+
+    // Called by BusinessFilters panel "Apply" or by "Run Report" button
+    const handleRunReport = useCallback(() => {
+        setFilterVersion(v => v + 1);
+    }, []);
+
+    // Called by BusinessFilters onChange (advanced filters)
+    const handleAdvancedFilterChange = useCallback((newFilters) => {
+        setFilters(newFilters);
+    }, []);
 
     const rows = useMemo(() => {
         if (!data.length) return [];
@@ -69,7 +141,6 @@ const VolumeRevenueSummary = () => {
         });
     }, [data]);
 
-    // KPI calculations
     const kpis = useMemo(() => {
         if (!data.length) return [];
         const totalVol = data.reduce((s, d) => s + (d.volume || 0), 0);
@@ -127,11 +198,11 @@ const VolumeRevenueSummary = () => {
                 title="Volume & Revenue Statement" subtitle="Monthly financial performance overview"
                 icon={BarChart3}
                 onExport={() => exportToCSV(rows, 'volume_revenue_summary')}
-                onRunReport={fetchReport} onFilterChange={handleFilterChange}
+                onRunReport={handleRunReport} onFilterChange={handleFilterChange}
                 loading={loading} showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
-            <BusinessFilters filters={filters} onChange={setFilters} onApply={fetchReport} isOpen={showFilters} onClose={() => setShowFilters(false)} />
+            <BusinessFilters filters={filters} onChange={handleAdvancedFilterChange} onApply={handleRunReport} isOpen={showFilters} onClose={() => setShowFilters(false)} />
             <KpiCards cards={kpis} />
             <Paper sx={premiumTableWrapper}>
                 <DataGrid rows={rows} columns={columns} loading={loading} rowHeight={65}

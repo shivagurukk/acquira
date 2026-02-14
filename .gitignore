@@ -1,62 +1,81 @@
-# Maven
+# ════════════════════════════════════════════════════════════
+#  Acquira Platform — .gitignore
+# ════════════════════════════════════════════════════════════
+
+# ─── Maven Build Output ───
 target/
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
+!**/src/test/**/target/
 *.class
+*.jar
+!.mvn/wrapper/*.jar
 
-# IntelliJ IDEA
+# ─── IDE ───
 .idea/
 *.iws
 *.iml
 *.ipr
-
-# VS Code
 .vscode/
-
-# Eclipse
 .classpath
 .project
 .settings/
+*.swp
+*.swo
+*~
 
-# Node.js / React
-node_modules/
-dist/
-build/
+# ─── Node.js / React Frontend ───
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env.local
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.env.local
+.pnpm-debug.log*
 
-# Spring Boot
+# ─── Runtime Data (generated at runtime — never commit) ───
 logs/
-temp/
-*.log
-*.dump
-data/uploads/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Large data files
-*.xlsx
-*.csv
-backups/
 reports/
-temp/
 data/
+temp/
+backups/
 
-# Build logs
+# ─── Playwright Browser Binaries ───
+.cache/ms-playwright/
+
+# ─── Spring Boot ───
+*.dump
+hs_err_pid*
+
+# ─── Log Files ───
 *.log
 compile*.log
 build.log
 temp_log.txt
 
-# PDF test files
+# ─── OS Files ───
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─── Large Data Files (samples, uploads, test data) ───
+*.xlsx
+*.csv
+*.sql.gz
 test_report.pdf
 
-# Environment
+# ─── Environment / Secrets ───
 .env
+.env.*
+!.env.example
+application-prod.properties
 
-# PowerShell scripts
+# ─── PowerShell Utility Scripts (local dev only) ───
 *.ps1
+
+# ─── Migration Artifacts ───
+migration/
+MIGRATION_GUIDE.md
+src/

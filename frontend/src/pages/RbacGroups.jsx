@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Edit2, Shield, Check, X, Menu } from 'lucide-react';
+import api from '../api/axios';
 
 const RbacGroups = () => {
     const [groups, setGroups] = useState([]);
@@ -15,21 +16,15 @@ const RbacGroups = () => {
 
     const fetchGroups = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/admin/rbac/groups', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) setGroups(await res.json());
+            const res = await api.get('/admin/rbac/groups');
+            setGroups(res.data);
         } catch (e) { console.error(e); }
     };
 
     const fetchMenus = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/admin/rbac/menus', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) setMenus(await res.json());
+            const res = await api.get('/admin/rbac/menus');
+            setMenus(res.data);
         } catch (e) { console.error(e); }
     };
 
@@ -50,30 +45,20 @@ const RbacGroups = () => {
     const handleSave = async (e) => {
         e.preventDefault();
         try {
-            const token = localStorage.getItem('token');
             const payload = {
-                id: currentGroup.id, // For update
+                id: currentGroup.id,
                 groupName: currentGroup.groupName,
                 description: currentGroup.description,
                 menuIds: currentGroup.menuIds
             };
 
-            const res = await fetch('http://localhost:8081/api/admin/rbac/groups', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (res.ok) {
-                fetchGroups();
-                setIsModalOpen(false);
-            } else {
-                alert('Failed to save group');
-            }
-        } catch (error) { console.error(error); }
+            await api.post('/admin/rbac/groups', payload);
+            fetchGroups();
+            setIsModalOpen(false);
+        } catch (error) {
+            console.error(error);
+            alert('Failed to save group');
+        }
     };
 
     const toggleMenu = (menuId) => {

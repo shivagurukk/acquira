@@ -9,95 +9,40 @@ import {
     ListItemIcon,
     ListItemText,
     Typography,
-    IconButton,
-    Avatar,
-    Divider,
-    Collapse,
-    AppBar,
-    Toolbar
 } from '@mui/material';
 import * as LucideIcons from 'lucide-react';
-import CombinedViewSwitcher from './CombinedViewSwitcher';
+import { useAuth } from '../contexts/AuthContext';
+import TenantSwitcher from './TenantSwitcher';
 
 const DRAWER_WIDTH = 260;
 
 const Layout = () => {
     const navigate = useNavigate();
     const location = useLocation();
-
-    // For mobile responsiveness if needed later, currently permanent
-    const [mobileOpen, setMobileOpen] = useState(false);
+    const { menus, logout, username, activeTenant } = useAuth();
 
     const handleLogout = () => {
-        localStorage.clear();
-        navigate('/');
+        logout();
+        navigate('/login');
     };
-
-    const menus = useMemo(() => {
-        try {
-            const storedMenus = localStorage.getItem('menus');
-            let parsed = storedMenus ? JSON.parse(storedMenus) : [];
-
-            // Filter out unwanted menus
-            const menusToRemove = ['Sales Analytics', 'Zero Sales', 'Profitability', 'P&L Views', 'Sales Trends', 'Lifecycle'];
-            parsed = parsed.filter(m => !menusToRemove.includes(m.menuName));
-
-            // INJECT BUSINESS MENUS
-            const businessMenus = [
-                { menuId: 101, menuName: 'Volume & Revenue', path: '/business/volume-revenue', iconKey: 'BarChart3', category: 'BUSINESS', displayOrder: 1 },
-                { menuId: 102, menuName: 'Merchant Financial', path: '/business/merchant-financial', iconKey: 'DollarSign', category: 'BUSINESS', displayOrder: 2 },
-                { menuId: 109, menuName: 'Merchant Report Manager', path: '/business/report-manager', iconKey: 'FileText', category: 'BUSINESS', displayOrder: 9 },
-                { menuId: 103, menuName: 'Performance Trends', path: '/business/performance', iconKey: 'TrendingUp', category: 'BUSINESS', displayOrder: 3 },
-                { menuId: 104, menuName: 'Debit & Prepaid Metrics', path: '/business/debit-prepaid', iconKey: 'CreditCard', category: 'BUSINESS', displayOrder: 4 },
-                { menuId: 105, menuName: 'Attrition Report', path: '/business/attrition', iconKey: 'Activity', category: 'BUSINESS', displayOrder: 5 },
-                { menuId: 106, menuName: 'Merchant Growth Heatmap', path: '/business/heatmap', iconKey: 'Grid', category: 'BUSINESS', displayOrder: 6 },
-                { menuId: 107, menuName: 'Daily Merchant Dashboard', path: '/business/daily-dashboard', iconKey: 'Calendar', category: 'BUSINESS', displayOrder: 7 },
-                { menuId: 108, menuName: 'Merchant Analytics', path: '/business/merchant-analytics', iconKey: 'BarChart2', category: 'BUSINESS', displayOrder: 8 },
-                // Keep Executive Dashboard if needed, or remove if replaced by above
-                { menuId: 114, menuName: 'Executive Dashboard', path: '/business/executive-dashboard-v2', iconKey: 'Presentation', category: 'EXECUTIVE', displayOrder: 0 },
-                { menuId: 115, menuName: 'Data Explorer', path: '/explorer', iconKey: 'Compass', category: 'BUSINESS', displayOrder: 12 },
-                { menuId: 116, menuName: 'AI Assistant', path: '/ai-assistant', iconKey: 'BrainCircuit', category: 'BUSINESS', displayOrder: 13 },
-            ];
-
-            const salesMenus = [
-                { menuId: 201, menuName: 'Team Management', path: '/sales/team-management', iconKey: 'Users', category: 'SALES', displayOrder: 10 },
-            ];
-
-            // Append business menus if not existing
-            const existingPaths = new Set(parsed.map(m => m.path));
-            businessMenus.forEach(m => {
-                if (!existingPaths.has(m.path)) parsed.push(m);
-            });
-            salesMenus.forEach(m => {
-                if (!existingPaths.has(m.path)) parsed.push(m);
-            });
-
-            return parsed;
-        } catch (e) {
-            console.error("Failed to parse menus", e);
-            return [];
-        }
-    }, []);
 
     // Group menus by category
     const groupedMenus = useMemo(() => {
         const groups = {};
-        menus.forEach(menu => {
-            const category = menu.category || 'GENERAL';
-            // Normalize category name for simpler display
-            const normalizedCat = category.replace(' UNIVERSE', '');
-            if (!groups[normalizedCat]) groups[normalizedCat] = [];
-            groups[normalizedCat].push(menu);
+        (menus || []).forEach(menu => {
+            const category = (menu.category || 'GENERAL').replace(' UNIVERSE', '');
+            if (!groups[category]) groups[category] = [];
+            groups[category].push(menu);
         });
 
         Object.keys(groups).forEach(key => {
-            groups[key].sort((a, b) => a.displayOrder - b.displayOrder);
+            groups[key].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
         });
 
         return groups;
     }, [menus]);
 
-    const categoryOrder = ['EXECUTIVE', 'BUSINESS', 'SALES', 'FINANCE', 'OPERATIONS', 'ADMINISTRATION', 'GENERAL'];
+    const categoryOrder = ['EXECUTIVE', 'BUSINESS', 'SALES', 'FINANCE', 'MERCHANT MGT', 'OPERATIONS', 'ADMINISTRATION', 'GENERAL'];
     const sortedCategories = Object.keys(groupedMenus).sort((a, b) => {
         const idxA = categoryOrder.indexOf(a);
         const idxB = categoryOrder.indexOf(b);
@@ -107,83 +52,72 @@ const Layout = () => {
         return a.localeCompare(b);
     });
 
-    const allowedTenants = JSON.parse(localStorage.getItem('allowedTenants') || '[]');
-    const currentTenantId = localStorage.getItem('defaultTenantId');
-
-    const handleSwitchTenant = async (e) => {
-        // Implementation remains same
-        const newTenantId = e.target.value;
-        const tenant = allowedTenants.find(t => t.tenantId == newTenantId);
-        if (tenant) {
-            localStorage.setItem('defaultTenantId', tenant.tenantId);
-            try {
-                const token = localStorage.getItem('token');
-                const res = await fetch('/api/auth/switch-context', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ tenantId: tenant.tenantId })
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    localStorage.setItem('menus', JSON.stringify(data.menus));
-                    window.location.reload();
-                }
-            } catch (err) { console.error("Switch failed", err); }
-        }
-    };
-
     const drawerContent = (
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: '#0f172a', color: 'white' }}>
             {/* Header */}
-            <Box sx={{ p: 3, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                    <Box sx={{ width: 32, height: 32, bgcolor: 'primary.main', borderRadius: 2 }} />
-                    <Typography variant="h6" fontWeight="bold">Acquira</Typography>
+            <Box sx={{ p: 2.5, pb: 2, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
+                    <Box sx={{
+                        width: 32, height: 32, borderRadius: 2,
+                        background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontWeight: 'bold', fontSize: '14px', color: 'white'
+                    }}>
+                        A
+                    </Box>
+                    <Typography variant="h6" fontWeight="bold" sx={{ fontSize: '1.1rem' }}>Acquira</Typography>
                 </Box>
 
-                {/* Multi-Tenant Switcher */}
-                <div style={{ padding: '4px 0' }}>
-                    <CombinedViewSwitcher
-                        onContextChange={() => {
-                            // Reload handled by component or here if needed
-                            // For improved UX we could trigger menu fetch here instead of full reload
-                            // but component does reload.
-                        }}
-                    />
-                </div>
+                {/* Tenant Switcher — database-driven, replaces CombinedViewSwitcher */}
+                <TenantSwitcher />
             </Box>
 
-            {/* Menu List */}
-            <List sx={{ flex: 1, overflowY: 'auto', px: 2, pt: 2 }}>
+            {/* Menu List — driven entirely by database RBAC */}
+            <List sx={{ flex: 1, overflowY: 'auto', px: 1.5, pt: 1.5, '&::-webkit-scrollbar': { width: '4px' }, '&::-webkit-scrollbar-thumb': { background: 'rgba(255,255,255,0.1)', borderRadius: '4px' } }}>
                 {sortedCategories.map(category => (
                     <React.Fragment key={category}>
-                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)', fontWeight: 'bold', display: 'block', mt: 2, mb: 1, pl: 1 }}>
+                        <Typography variant="caption" sx={{
+                            color: 'rgba(255,255,255,0.35)',
+                            fontWeight: 700,
+                            display: 'block',
+                            mt: 2, mb: 0.5, pl: 1.5,
+                            fontSize: '0.65rem',
+                            letterSpacing: '0.08em',
+                            textTransform: 'uppercase',
+                        }}>
                             {category}
                         </Typography>
                         {groupedMenus[category].map(menu => {
-                            const IconComponent = (LucideIcons && LucideIcons[menu.iconKey]) ? LucideIcons[menu.iconKey] : LucideIcons.Circle;
+                            const IconComponent = (LucideIcons && LucideIcons[menu.iconKey])
+                                ? LucideIcons[menu.iconKey]
+                                : LucideIcons.Circle;
                             const isActive = location.pathname === menu.path;
                             return (
-                                <ListItem key={menu.menuId} disablePadding sx={{ mb: 0.5 }}>
+                                <ListItem key={menu.menuId || menu.path} disablePadding sx={{ mb: 0.25 }}>
                                     <ListItemButton
                                         onClick={() => navigate(menu.path)}
                                         selected={isActive}
                                         sx={{
                                             borderRadius: 2,
+                                            py: 0.75,
+                                            minHeight: 38,
                                             '&.Mui-selected': {
-                                                bgcolor: 'rgba(255,255,255,0.1)',
-                                                color: '#60a5fa', // Blue 400
-                                                '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' }
+                                                bgcolor: 'rgba(59,130,246,0.15)',
+                                                color: '#60a5fa',
+                                                '&:hover': { bgcolor: 'rgba(59,130,246,0.2)' }
                                             },
                                             '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
                                         }}
                                     >
-                                        <ListItemIcon sx={{ minWidth: 40, color: isActive ? '#60a5fa' : 'rgba(255,255,255,0.7)' }}>
-                                            <IconComponent size={20} />
+                                        <ListItemIcon sx={{ minWidth: 36, color: isActive ? '#60a5fa' : 'rgba(255,255,255,0.5)' }}>
+                                            <IconComponent size={18} />
                                         </ListItemIcon>
                                         <ListItemText
                                             primary={menu.menuName}
-                                            primaryTypographyProps={{ fontSize: '0.875rem', fontWeight: isActive ? 600 : 400 }}
+                                            primaryTypographyProps={{
+                                                fontSize: '0.82rem',
+                                                fontWeight: isActive ? 600 : 400,
+                                            }}
                                         />
                                     </ListItemButton>
                                 </ListItem>
@@ -193,11 +127,41 @@ const Layout = () => {
                 ))}
             </List>
 
-            {/* Footer */}
-            <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                <ListItemButton onClick={handleLogout} sx={{ borderRadius: 2, color: '#ef4444', '&:hover': { bgcolor: 'rgba(239,68,68,0.1)' } }}>
-                    <ListItemIcon sx={{ minWidth: 40, color: '#ef4444' }}><LucideIcons.LogOut size={20} /></ListItemIcon>
-                    <ListItemText primary="Sign Out" />
+            {/* Footer — User info + Logout */}
+            <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                {/* User info */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5, px: 1 }}>
+                    <Box sx={{
+                        width: 28, height: 28, borderRadius: '50%',
+                        bgcolor: 'rgba(255,255,255,0.1)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.7)',
+                    }}>
+                        {(username || 'U')[0].toUpperCase()}
+                    </Box>
+                    <Box sx={{ overflow: 'hidden' }}>
+                        <Typography sx={{ fontSize: '0.78rem', fontWeight: 500, color: 'rgba(255,255,255,0.8)', lineHeight: 1.3 }}>
+                            {username || 'User'}
+                        </Typography>
+                        <Typography sx={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', lineHeight: 1.3 }}>
+                            {activeTenant?.bankName || ''}
+                        </Typography>
+                    </Box>
+                </Box>
+
+                <ListItemButton
+                    onClick={handleLogout}
+                    sx={{
+                        borderRadius: 2,
+                        py: 0.75,
+                        color: '#ef4444',
+                        '&:hover': { bgcolor: 'rgba(239,68,68,0.1)' }
+                    }}
+                >
+                    <ListItemIcon sx={{ minWidth: 36, color: '#ef4444' }}>
+                        <LucideIcons.LogOut size={18} />
+                    </ListItemIcon>
+                    <ListItemText primary="Sign Out" primaryTypographyProps={{ fontSize: '0.82rem' }} />
                 </ListItemButton>
             </Box>
         </Box>
@@ -213,7 +177,7 @@ const Layout = () => {
                     '& .MuiDrawer-paper': {
                         width: DRAWER_WIDTH,
                         boxSizing: 'border-box',
-                        borderRight: 'none'
+                        borderRight: 'none',
                     },
                 }}
             >

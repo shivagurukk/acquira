@@ -1,5 +1,6 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
@@ -23,6 +24,7 @@ import MerchantReportManager from './pages/business/MerchantReportManager';
 import MerchantHeatmap from './pages/business/MerchantHeatmap';
 import DailyMerchantDashboard from './pages/business/DailyMerchantDashboard';
 import MerchantAnalyticsReport from './pages/business/MerchantAnalyticsReport';
+import MerchantComparison from './pages/business/MerchantComparison';
 import SalesTeamManagement from './pages/sales/SalesTeamManagement';
 
 import UserManagement from './pages/UserManagement';
@@ -36,65 +38,112 @@ import TransactionTrendsHub from './pages/reports/TransactionTrendsHub';
 import BackupRestore from './pages/BackupRestore';
 import DataExplorer from './pages/analytics/DataExplorer';
 import AiAssistant from './pages/ai/AiAssistant';
+import StatementEmails from './pages/StatementEmails';
+import SmtpSettings from './pages/SmtpSettings';
+import AuditLogViewer from './pages/admin/AuditLogViewer';
 
+import ChangePasswordPage from './pages/ChangePasswordPage';
 import ProtectedRoute from './components/ProtectedRoute';
+import { RoleGuard } from './components/ProtectedRoute';
 
 function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-      {/* Protected Routes */}
-      <Route element={
-        <ProtectedRoute>
-          <Layout />
-        </ProtectedRoute>
-      }>
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/merchants" element={<MerchantHierarchy />} />
-        <Route path="/transactions" element={<TransactionList />} />
-        <Route path="/merchant-summary" element={<MerchantSummary />} />
-        <Route path="/merchant/insight-hub" element={<MerchantInsightHub />} />
-        <Route path="/trends/hub" element={<TransactionTrendsHub />} />
-        <Route path="/upload" element={<UploadPage />} />
+        {/* Change Password — protected but NO Layout sidebar (standalone page) */}
+        <Route path="/change-password" element={
+          <ProtectedRoute>
+            <ChangePasswordPage />
+          </ProtectedRoute>
+        } />
 
-        {/* Business Universe Routes */}
-        <Route path="/business/dashboard" element={<BusinessDashboard />} />
-        <Route path="/business/insights" element={<MerchantInsights />} />
-        <Route path="/business/report-manager" element={<MerchantReportManager />} />
-        <Route path="/business/opportunity" element={<OpportunityIntelligence />} />
-        <Route path="/business/groups" element={<GroupReports />} />
-        <Route path="/business/volume-revenue" element={<VolumeRevenueSummary />} />
-        <Route path="/business/merchant-financial" element={<MerchantFinancialSummary />} />
-        <Route path="/business/performance" element={<TransactionPerformanceDashboard />} />
-        <Route path="/business/debit-prepaid" element={<DebitPrepaidMetrics />} />
-        <Route path="/business/attrition" element={<AttritionReport />} />
-        <Route path="/business/zero-transaction" element={<ZeroTransactionReport />} />
-        <Route path="/business/executive-dashboard-v2" element={<ExecutiveDashboardReport />} />
-        <Route path="/business/heatmap" element={<MerchantHeatmap />} />
-        <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
-        <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
+        {/* All protected routes — wrapped in Layout with sidebar */}
+        {/* ONE ProtectedRoute here validates session, all child routes are instant */}
+        <Route element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }>
+          {/* Executive */}
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/business/executive-dashboard-v2" element={<ExecutiveDashboardReport />} />
 
-        {/* Sales Routes */}
-        <Route path="/sales/team-management" element={<SalesTeamManagement />} />
+          {/* Merchant MGT */}
+          <Route path="/merchants" element={<MerchantHierarchy />} />
+          <Route path="/transactions" element={<TransactionList />} />
+          <Route path="/merchant-summary" element={<MerchantSummary />} />
+          <Route path="/merchant/insight-hub" element={<MerchantInsightHub />} />
+          <Route path="/trends/hub" element={<TransactionTrendsHub />} />
 
+          {/* Business */}
+          <Route path="/business/dashboard" element={<BusinessDashboard />} />
+          <Route path="/business/volume-revenue" element={<VolumeRevenueSummary />} />
+          <Route path="/business/merchant-financial" element={<MerchantFinancialSummary />} />
+          <Route path="/business/performance" element={<TransactionPerformanceDashboard />} />
+          <Route path="/business/debit-prepaid" element={<DebitPrepaidMetrics />} />
+          <Route path="/business/attrition" element={<AttritionReport />} />
+          <Route path="/business/zero-transaction" element={<ZeroTransactionReport />} />
+          <Route path="/business/heatmap" element={<MerchantHeatmap />} />
+          <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
+          <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
+          <Route path="/business/insights" element={<MerchantInsights />} />
+          <Route path="/business/comparison" element={<MerchantComparison />} />
+          <Route path="/business/report-manager" element={<MerchantReportManager />} />
+          <Route path="/business/opportunity" element={<OpportunityIntelligence />} />
+          <Route path="/business/groups" element={<GroupReports />} />
+          <Route path="/explorer" element={<DataExplorer />} />
+          <Route path="/ai-assistant" element={<AiAssistant />} />
 
-        {/* Finance Routes */}
-        <Route path="/finance/dashboard" element={<FinanceDashboard />} />
-        <Route path="/finance/lists" element={<FinanceLists />} />
-        <Route path="/finance/summary" element={<FinanceSummary />} />
+          {/* Sales */}
+          <Route path="/sales/team-management" element={<SalesTeamManagement />} />
 
-        {/* Admin & Operations Routes */}
-        <Route path="/users" element={<UserManagement />} />
-        <Route path="/tenants" element={<TenantManagement />} />
-        <Route path="/admin/groups" element={<RbacGroups />} />
-        <Route path="/admin/backups" element={<BackupRestore />} />
-        <Route path="/ops/batch-logs" element={<BatchMonitoring />} />
-        <Route path="/explorer" element={<DataExplorer />} />
-        <Route path="/ai-assistant" element={<AiAssistant />} />
-      </Route>
-    </Routes>
+          {/* Finance */}
+          <Route path="/finance/dashboard" element={<FinanceDashboard />} />
+          <Route path="/finance/summary" element={<FinanceSummary />} />
+          <Route path="/finance/lists" element={<FinanceLists />} />
+
+          {/* Operations */}
+          <Route path="/upload" element={<UploadPage />} />
+          <Route path="/ops/batch-logs" element={<BatchMonitoring />} />
+          <Route path="/business/emails" element={<StatementEmails />} />
+
+          {/* Administration — RoleGuard only checks role (no session re-validation) */}
+          <Route path="/users" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <UserManagement />
+            </RoleGuard>
+          } />
+          <Route path="/tenants" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <TenantManagement />
+            </RoleGuard>
+          } />
+          <Route path="/admin/groups" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}>
+              <RbacGroups />
+            </RoleGuard>
+          } />
+          <Route path="/admin/smtp-settings" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <SmtpSettings />
+            </RoleGuard>
+          } />
+          <Route path="/admin/audit-logs" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <AuditLogViewer />
+            </RoleGuard>
+          } />
+          <Route path="/admin/backups" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}>
+              <BackupRestore />
+            </RoleGuard>
+          } />
+        </Route>
+      </Routes>
+    </AuthProvider>
   );
 }
 

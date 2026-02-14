@@ -2,6 +2,8 @@ package com.acquira.core.controller;
 
 import com.acquira.common.dto.MerchantInsightsDTO;
 import com.acquira.common.service.MerchantInsightService;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,8 +14,15 @@ import java.time.YearMonth;
 import java.util.*;
 import java.util.stream.Stream;
 
+/**
+ * Stub controller for /api/business/insights endpoints.
+ * Only loads when acquira-pdf module is NOT on the classpath.
+ * When acquira-pdf is included as a dependency, its PdfController
+ * handles these endpoints with real PDF generation.
+ */
 @RestController
 @RequestMapping("/api/business/insights")
+@ConditionalOnMissingClass("com.acquira.pdf.controller.PdfController")
 public class MerchantInsightController {
 
     private final MerchantInsightService insightService;
@@ -62,7 +71,7 @@ public class MerchantInsightController {
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month) {
         return ResponseEntity.ok(Map.of(
-                "message", "PDF generation is available in the PDF module. Start acquira-pdf to use this feature.",
+                "message", "PDF generation is available in the PDF module. Add acquira-pdf dependency to enable.",
                 "status", "PDF_MODULE_NOT_LOADED"
         ));
     }
@@ -100,6 +109,23 @@ public class MerchantInsightController {
     @GetMapping("/engine-stats")
     public ResponseEntity<Map<String, Object>> getEngineStats() {
         return ResponseEntity.ok(Map.of("status", "PDF_MODULE_NOT_LOADED"));
+    }
+
+    @GetMapping("/list-reports")
+    public ResponseEntity<Map<String, Object>> listReports(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month) {
+        return ResponseEntity.ok(Map.of("count", 0, "reports", Collections.emptyList(), "targetMonth", resolveTargetMonth(year, month).toString()));
+    }
+
+    @GetMapping("/download-report")
+    public ResponseEntity<String> downloadReport(@RequestParam String file) {
+        return ResponseEntity.ok("PDF module not loaded");
+    }
+
+    @GetMapping("/download-all-reports")
+    public ResponseEntity<String> downloadAllReports() {
+        return ResponseEntity.ok("PDF module not loaded");
     }
 
     private YearMonth resolveTargetMonth(Integer year, Integer month) {

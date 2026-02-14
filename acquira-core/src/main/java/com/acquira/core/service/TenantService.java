@@ -62,21 +62,33 @@ public class TenantService {
     }
 
     public Long getDefaultTenantIdForUser(String username) {
-        List<Tenant> tenants = getAllowedTenants(username);
-        return tenants.isEmpty() ? null : tenants.get(0).getTenantId();
+        com.acquira.common.model.User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        List<UserTenantAccess> accessList = userTenantAccessRepository.findByUser(user);
+
+        // 1. Prefer the tenant marked as default
+        return accessList.stream()
+                .filter(a -> Boolean.TRUE.equals(a.getIsDefaultTenant()))
+                .map(a -> a.getTenant().getTenantId())
+                .findFirst()
+                // 2. Fallback to first assigned tenant
+                .orElseGet(() -> {
+                    List<Tenant> tenants = getAllowedTenants(username);
+                    return tenants.isEmpty() ? null : tenants.get(0).getTenantId();
+                });
     }
 
     public Long getCurrentTenantId() {
         org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder
                 .getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()) {
-            // Fallback or throw? For now return 1L or null
-            return 1L;
+            return null; // SECURITY FIX: No hardcoded fallback to tenant 1
         }
         String username = auth.getName();
-        // If username is "anonymousUser", handle?
-        if ("anonymousUser".equals(username))
-            return 1L;
+        if ("anonymousUser".equals(username)) {
+            return null; // SECURITY FIX: Anonymous users get no tenant
+        }
 
         return getDefaultTenantIdForUser(username);
     }

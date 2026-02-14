@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
     Box, Card, Typography, Button, LinearProgress, Chip, Stack,
-    useTheme, Paper, CircularProgress, Avatar, Container, Grid
+    useTheme, Paper, CircularProgress, Avatar, Container, Grid,
+    FormControlLabel, Switch
 } from '@mui/material';
 import {
     PlayArrow, CheckCircle, Error as ErrorIcon, Refresh,
@@ -11,6 +12,7 @@ import { FileText, Zap, Clock, FileCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
+import api from '../../api/axios';
 
 const GlassCard = ({ children, sx, ...props }) => (
     <Card sx={{
@@ -54,6 +56,8 @@ const PremiumButton = ({ children, onClick, color = 'primary', startIcon, ...pro
         }} {...props}>{children}</Button>
 );
 
+const POLL_INTERVAL = 2000;
+
 const MerchantReportManager = () => {
     const theme = useTheme();
     const [merchants, setMerchants] = useState([]);
@@ -61,109 +65,158 @@ const MerchantReportManager = () => {
     const [progress, setProgress] = useState({ current: 0, total: 0, success: 0, failed: 0 });
     const [logs, setLogs] = useState([]);
     const [existingReportCount, setExistingReportCount] = useState(0);
+    const [sendEmail, setSendEmail] = useState(false);
+    const [generatedReports, setGeneratedReports] = useState([]);
     const logsEndRef = useRef(null);
+    const pollRef = useRef(null);
+    const jobIdRef = useRef(null);
 
     useEffect(() => { if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [logs]);
-    useEffect(() => { fetchMerchants(); }, []);
+    useEffect(() => { fetchMerchants(); return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, []);
+
+    // Poll batch-status/{jobId} for real-time progress
+    const startPolling = useCallback((jobId) => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        jobIdRef.current = jobId;
+
+        const poll = async () => {
+            try {
+                const res = await api.get(`/business/insights/batch-status/${jobId}`);
+                const st = res.data;
+
+                const completed = st.completed || 0;
+                const total = st.totalMerchants || merchants.length;
+                const succeeded = st.succeeded || 0;
+                const failed = st.failed || 0;
+
+                setProgress({ current: completed, total, success: succeeded, failed });
+
+                // Build logs
+                const newLogs = [`🚀 Batch Job: ${jobId}`, `📊 Processing ${total} merchants...`];
+                if (st.avgRenderMs > 0) newLogs.push(`⚡ Avg render: ${st.avgRenderMs}ms/report`);
+                if (completed > 0) newLogs.push(`📈 Progress: ${completed}/${total} (${st.progressPercent || Math.round(completed / total * 100)}%)`);
+                if (st.estimatedRemainingMs > 0) {
+                    const remSec = (st.estimatedRemainingMs / 1000).toFixed(0);
+                    newLogs.push(`⏱️ ETA: ${remSec}s remaining`);
+                }
+                if (st.errors?.length > 0) st.errors.forEach(e => newLogs.push(`❌ ${e}`));
+
+                const phase = (st.phase || st.status || '').toUpperCase();
+                if (phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED') {
+                    if (succeeded > 0) newLogs.push(`✅ Generated ${succeeded} reports in ${(st.totalSeconds || 0).toFixed(1)}s`);
+                    if (failed > 0) newLogs.push(`⚠️ ${failed} reports failed`);
+                    setLogs(newLogs);
+                    setStatus('completed');
+                    clearInterval(pollRef.current);
+                    pollRef.current = null;
+                    // Fetch generated report list
+                    fetchGeneratedReports();
+                } else {
+                    setLogs(newLogs);
+                    setStatus('running');
+                }
+            } catch (err) {
+                console.error('Poll error:', err);
+                // Don't stop polling on transient errors
+            }
+        };
+
+        poll(); // immediate
+        pollRef.current = setInterval(poll, POLL_INTERVAL);
+    }, [merchants.length]);
 
     const fetchMerchants = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
-            const res = await fetch('/api/merchants', { headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId } });
-            if (res.ok) {
-                const data = await res.json();
-                const list = data.content || data;
-                setMerchants(list);
-                setProgress(prev => ({ ...prev, total: list.length }));
-            }
+            const res = await api.get('/merchants?page=0&size=10000');
+            const list = res.data.content || res.data;
+            setMerchants(list);
+            setProgress(prev => ({ ...prev, total: list.length }));
         } catch (error) { console.error("Failed to fetch merchants", error); }
+    };
+
+    const fetchGeneratedReports = async () => {
+        try {
+            const res = await api.get('/business/insights/list-reports');
+            setGeneratedReports(res.data?.reports || []);
+        } catch (e) {
+            console.error('Failed to fetch report list', e);
+        }
+    };
+
+    const formatFileSize = (bytes) => {
+        if (!bytes || bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    };
+
+    const handleDownloadAll = () => {
+        const link = document.createElement('a');
+        link.href = '/api/business/insights/download-all-reports';
+        link.download = '';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    const handleDownloadSingle = (url) => {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = '';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     };
 
     const handleStartClick = async () => {
         setStatus('checking');
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('/api/business/insights/check-status', { headers: { 'Authorization': `Bearer ${token}` } });
-            if (res.ok) {
-                const data = await res.json();
-                if (data.exists) { setExistingReportCount(data.count); setStatus('confirming'); return; }
+            const res = await api.get('/business/insights/check-status');
+            if (res.data?.exists) {
+                setExistingReportCount(res.data.count);
+                setStatus('confirming');
+                return;
             }
         } catch (e) { console.error("Check status failed", e); }
         startBatch();
     };
 
     const startBatch = async () => {
-        setStatus('running'); setLogs([]);
+        setStatus('running');
+        setLogs([]);
         setProgress({ current: 0, total: merchants.length, success: 0, failed: 0 });
-        const token = localStorage.getItem('token');
-        const tenantId = localStorage.getItem('tenantId');
-        const headers = { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId };
+
         try {
-            const res = await fetch('/api/business/insights/generate-all', {
-                method: 'POST', headers
-            });
-            if (res.ok) {
-                const result = await res.json();
-                const jobId = result.jobId;
-                if (!jobId) {
-                    // Fallback: old synchronous response format
-                    const generated = result.generated || 0;
-                    const failed = result.failed || 0;
-                    setProgress({ current: generated + failed, total: merchants.length, success: generated, failed });
-                    if (result.errors?.length > 0) setLogs(result.errors);
-                    if (generated > 0) setLogs(prev => [...prev, `✅ Generated ${generated} reports`, `📁 Saved to: ${result.folder || 'reports folder'}`]);
+            const res = await api.post(`/business/insights/generate-all?sendEmail=${sendEmail}`);
+            const result = res.data;
+            const jobId = result.jobId;
+
+            if (!jobId) {
+                // PDF module not loaded or engine not ready
+                if (result.status === 'PDF_MODULE_NOT_LOADED') {
+                    setLogs(['⚠️ PDF module (acquira-pdf) is not included.', '💡 Add acquira-pdf dependency to acquira-core and rebuild.']);
                     setStatus('completed');
                     return;
                 }
-
-                // Async pipeline: poll for status
-                setLogs([`🚀 Batch started — Job: ${jobId}`, `📊 Processing ${result.totalMerchants} merchants...`]);
-
-                const pollInterval = setInterval(async () => {
-                    try {
-                        const statusRes = await fetch(`/api/business/insights/batch-status/${jobId}`, { headers });
-                        if (!statusRes.ok) return;
-                        const st = await statusRes.json();
-
-                        setProgress({
-                            current: st.completed || 0,
-                            total: st.totalMerchants || merchants.length,
-                            success: st.succeeded || 0,
-                            failed: st.failed || 0
-                        });
-
-                        // Update logs with latest errors
-                        const newLogs = [`🚀 Batch started — Job: ${jobId}`, `📊 Processing ${st.totalMerchants} merchants...`];
-                        if (st.avgRenderMs > 0) newLogs.push(`⚡ Avg render: ${st.avgRenderMs}ms/report`);
-                        if (st.completed > 0) newLogs.push(`📈 Progress: ${st.completed}/${st.totalMerchants} (${st.progressPercent}%)`);
-                        if (st.estimatedRemainingSeconds && typeof st.estimatedRemainingSeconds === 'number') {
-                            newLogs.push(`⏱️ ETA: ${st.estimatedRemainingSeconds}s remaining`);
-                        }
-                        if (st.errors?.length > 0) {
-                            st.errors.forEach(e => newLogs.push(`❌ ${e}`));
-                        }
-
-                        if (st.phase === 'COMPLETED' || st.phase === 'FAILED' || st.phase === 'CANCELLED') {
-                            clearInterval(pollInterval);
-                            if (st.succeeded > 0) newLogs.push(`✅ Generated ${st.succeeded} reports in ${st.totalSeconds?.toFixed(1) || '?'}s`);
-                            if (st.failed > 0) newLogs.push(`⚠️ ${st.failed} reports failed`);
-                            setLogs(newLogs);
-                            setStatus('completed');
-                        } else {
-                            setLogs(newLogs);
-                        }
-                    } catch (pollErr) {
-                        console.error('Poll error:', pollErr);
-                    }
-                }, 2000); // Poll every 2 seconds
-
-            } else {
-                const errorData = await res.json();
-                setLogs([`❌ Batch failed: ${errorData.error || 'Unknown error'}`]);
-                setProgress(prev => ({ ...prev, failed: merchants.length }));
+                if (result.status === 'PDF_ENGINE_NOT_READY') {
+                    setLogs(['⚠️ PDF engine failed to initialize.', '💡 Playwright browsers not installed.', '🔧 Run: mvn exec:java -e -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args=install', '🔄 Then restart the application.']);
+                    setStatus('completed');
+                    return;
+                }
+                // Sync response fallback
+                const generated = result.generated || 0;
+                const failed = result.failed || 0;
+                setProgress({ current: generated + failed, total: merchants.length, success: generated, failed });
+                setLogs([`✅ Generated ${generated} reports`]);
                 setStatus('completed');
+                return;
             }
+
+            // Start polling for progress
+            setLogs([`🚀 Batch started — Job: ${jobId}`, `📊 Processing ${result.totalMerchants} merchants...`]);
+            startPolling(jobId);
+
         } catch (err) {
             setLogs([`❌ Critical error: ${err.message}`]);
             setProgress(prev => ({ ...prev, failed: merchants.length }));
@@ -217,7 +270,14 @@ const MerchantReportManager = () => {
                                             <Grid item xs={12} sm={4}><StatBadge icon={<AutoGraph />} label="Report Type" value="PDF Insight" color="info" /></Grid>
                                         </Grid>
                                         <Box textAlign="center" py={4}>
-                                            <PremiumButton onClick={handleStartClick} startIcon={<PlayArrow />} size="large">Initialize Batch Process</PremiumButton>
+                                            <FormControlLabel
+                                                control={<Switch checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} color="primary" />}
+                                                label={<Typography fontWeight="600" color="text.secondary">Send Emails to Merchants after Generation</Typography>}
+                                                sx={{ mb: 2, display: 'block', textAlign: 'center' }}
+                                            />
+                                            <PremiumButton onClick={handleStartClick} startIcon={<PlayArrow />} size="large">
+                                                {sendEmail ? 'Generate & Send Emails' : 'Initialize Batch Process'}
+                                            </PremiumButton>
                                             <Typography variant="body2" color="text.secondary" mt={2}>Generates individual reports for {merchants.length} active merchants</Typography>
                                         </Box>
                                     </motion.div>
@@ -278,7 +338,7 @@ const MerchantReportManager = () => {
                                                 <AnimatePresence>
                                                     {logs.map((log, i) => (
                                                         <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2 }}>
-                                                            <Typography component="div" sx={{ color: log.includes('❌') ? '#f87171' : '#4ade80', mb: 0.5, display: 'flex', gap: 1.5 }}>
+                                                            <Typography component="div" sx={{ color: log.includes('❌') || log.includes('⚠️') ? '#f87171' : '#4ade80', mb: 0.5, display: 'flex', gap: 1.5 }}>
                                                                 <span style={{ opacity: 0.5 }}>{new Date().toLocaleTimeString('en-US', { hour12: false })}</span>
                                                                 <span>{log}</span>
                                                             </Typography>
@@ -289,8 +349,70 @@ const MerchantReportManager = () => {
                                             </Box>
                                         </Paper>
                                         {status === 'completed' && (
-                                            <Box mt={4} textAlign="center">
-                                                <Button onClick={() => setStatus('idle')} sx={{ color: 'text.secondary', fontWeight: 'bold' }}>Start New Batch</Button>
+                                            <Box mt={4}>
+                                                {/* Download All Button */}
+                                                {generatedReports.length > 0 && (
+                                                    <Box mb={3} textAlign="center">
+                                                        <Button
+                                                            variant="contained"
+                                                            size="large"
+                                                            onClick={handleDownloadAll}
+                                                            sx={{
+                                                                borderRadius: 3, px: 5, py: 1.5, fontWeight: 'bold',
+                                                                background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+                                                                boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
+                                                                '&:hover': { boxShadow: '0 6px 20px rgba(0,0,0,0.25)' }
+                                                            }}
+                                                        >
+                                                            ⬇ Download All ({generatedReports.length} PDFs as ZIP)
+                                                        </Button>
+                                                    </Box>
+                                                )}
+
+                                                {/* Individual Report List */}
+                                                {generatedReports.length > 0 && (
+                                                    <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid #e2e8f0', overflow: 'hidden', mb: 3 }}>
+                                                        <Box sx={{ px: 2.5, py: 1.5, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                            <Typography variant="subtitle2" fontWeight="bold" color="text.secondary">
+                                                                GENERATED REPORTS ({generatedReports.length})
+                                                            </Typography>
+                                                        </Box>
+                                                        <Box sx={{ maxHeight: 320, overflowY: 'auto' }}>
+                                                            {generatedReports.map((report, i) => (
+                                                                <Box key={i} sx={{
+                                                                    px: 2.5, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                                                    borderBottom: '1px solid #f1f5f9',
+                                                                    '&:hover': { bgcolor: '#f0f9ff' },
+                                                                    transition: 'background 0.15s'
+                                                                }}>
+                                                                    <Box display="flex" alignItems="center" gap={1.5} flex={1} minWidth={0}>
+                                                                        <FileCheck size={18} style={{ color: theme.palette.success.main, flexShrink: 0 }} />
+                                                                        <Typography variant="body2" fontWeight="600" noWrap>
+                                                                            {report.filename.replace(/^Insight_/, '').replace(/_\d{4}-\d{2}\.pdf$/, '').replace(/_/g, ' ')}
+                                                                        </Typography>
+                                                                    </Box>
+                                                                    <Box display="flex" alignItems="center" gap={2}>
+                                                                        <Typography variant="caption" color="text.secondary">
+                                                                            {formatFileSize(report.size)}
+                                                                        </Typography>
+                                                                        <Button
+                                                                            size="small"
+                                                                            variant="outlined"
+                                                                            onClick={() => handleDownloadSingle(report.downloadUrl)}
+                                                                            sx={{ borderRadius: 2, minWidth: 'auto', px: 2, fontSize: '0.75rem', textTransform: 'none' }}
+                                                                        >
+                                                                            Download
+                                                                        </Button>
+                                                                    </Box>
+                                                                </Box>
+                                                            ))}
+                                                        </Box>
+                                                    </Paper>
+                                                )}
+
+                                                <Box textAlign="center">
+                                                    <Button onClick={() => { setStatus('idle'); setLogs([]); setGeneratedReports([]); setProgress({ current: 0, total: merchants.length, success: 0, failed: 0 }); }} sx={{ color: 'text.secondary', fontWeight: 'bold' }}>Start New Batch</Button>
+                                                </Box>
                                             </Box>
                                         )}
                                     </motion.div>

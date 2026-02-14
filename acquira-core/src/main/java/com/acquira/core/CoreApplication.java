@@ -8,7 +8,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-@ComponentScan(basePackages = {"com.acquira.common", "com.acquira.core", "com.acquira.batch"})
+@ComponentScan(basePackages = {"com.acquira.common", "com.acquira.core", "com.acquira.batch", "com.acquira.pdf"})
 @EntityScan(basePackages = "com.acquira.common.model")
 @EnableJpaRepositories(basePackages = "com.acquira.common.repository")
 @EnableScheduling

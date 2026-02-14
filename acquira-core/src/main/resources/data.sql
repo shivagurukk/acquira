@@ -227,36 +227,20 @@ INSERT INTO users (username, password_hash, email, role, is_active)
 VALUES ('admin', '{noop}password', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true) 
 ON CONFLICT (username) DO NOTHING;
 
--- 5. User Groups
-INSERT INTO sys_user_group (group_name, description) VALUES ('Super Admin Group', 'Full Access Group') ON CONFLICT (group_name) DO NOTHING;
+-- 5. User Groups (schema.sql creates all groups; this is a safety fallback)
+-- NOTE: Do NOT add menus here — all menus are managed in schema.sql's consolidated block
 
--- 6. Menus
--- Business Universe
-INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES 
-('Dashboard', '/business/dashboard', 'LayoutGrid', 'BUSINESS UNIVERSE', 1),
-('Sales Trends', '/business/trends', 'TrendingUp', 'BUSINESS UNIVERSE', 2),
-('Lifecycle', '/business/lifecycle', 'Users', 'BUSINESS UNIVERSE', 3),
-('Zero Sales', '/business/zero-sales', 'AlertCircle', 'BUSINESS UNIVERSE', 4),
-('Opportunities', '/business/opportunity', 'Lightbulb', 'BUSINESS UNIVERSE', 5),
-
--- Finance Module
-('Finance Dashboard', '/finance/dashboard', 'PieChart', 'FINANCE', 6),
-('Profitability', '/finance/profitability', 'BarChart', 'FINANCE', 7),
-('Action Center', '/finance/lists', 'List', 'FINANCE', 8)
-ON CONFLICT DO NOTHING;
-
--- 7. Group Menu Access
--- Link 'Super Admin Group' (assuming ID 1) to all Menus
+-- 6. Group Menu Access — Super Admin gets everything (safety net if schema.sql ran first)
 INSERT INTO sys_group_menu (group_id, menu_id)
-SELECT g.group_id, m.menu_id FROM sys_user_group g, sys_menu m 
-WHERE g.group_name = 'Super Admin Group'
+SELECT g.group_id, m.menu_id FROM sys_user_group g, sys_menu m
+WHERE g.group_name = 'Super Admin'
 ON CONFLICT DO NOTHING;
 
--- 8. User Tenant Access (Update to include Group)
+-- 7. User Tenant Access
 INSERT INTO user_tenant_access (user_id, tenant_id, group_id)
 SELECT u.user_id, t.tenant_id, g.group_id
 FROM users u, tenant t, sys_user_group g
-WHERE u.username='admin' AND t.institution_id='BANK001' AND g.group_name='Super Admin Group'
+WHERE u.username='admin' AND t.institution_id='BANK001' AND g.group_name='Super Admin'
 ON CONFLICT DO NOTHING;
 
 -- 9. User Role

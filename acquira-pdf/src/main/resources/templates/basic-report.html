@@ -4,13 +4,16 @@
 <head>
     <meta charset="UTF-8">
     <title th:text="|${merchantName} - Performance Report|">Report</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap"
-        rel="stylesheet">
+    <style>
+        @font-face { font-family: 'Inter'; font-weight: 400; src: url('/assets/fonts/Inter-Regular.ttf') format('truetype'); }
+        @font-face { font-family: 'Inter'; font-weight: 500; src: url('/assets/fonts/Inter-Medium.ttf') format('truetype'); }
+        @font-face { font-family: 'Inter'; font-weight: 600; src: url('/assets/fonts/Inter-SemiBold.ttf') format('truetype'); }
+        @font-face { font-family: 'Inter'; font-weight: 700; src: url('/assets/fonts/Inter-Bold.ttf') format('truetype'); }
+        @font-face { font-family: 'Playfair Display'; font-weight: 400; src: url('/assets/fonts/PlayfairDisplay-Regular.ttf') format('truetype'); }
+        @font-face { font-family: 'Playfair Display'; font-weight: 700; src: url('/assets/fonts/PlayfairDisplay-Bold.ttf') format('truetype'); }
+    </style>
     <link rel="stylesheet" href="/assets/report-theme.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/assets/js/chart.js"></script>
     <script th:inline="javascript">
         /*<![CDATA[*/
         window.reportData = /*[[${jsonData}]]*/ {};

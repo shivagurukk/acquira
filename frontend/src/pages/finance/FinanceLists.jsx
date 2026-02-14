@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import axios from '../../api/axios';
-import { AlertCircle, TrendingDown, ArrowRight } from 'lucide-react';
+import { AlertCircle, TrendingDown, ArrowRight, Download, Loader } from 'lucide-react';
+import useExcelExport from '../../hooks/useExcelExport';
 
 const FinanceLists = () => {
     const [activeTab, setActiveTab] = useState('loss-making');
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const tenantId = 1;
+    const { exportExcel, isExporting } = useExcelExport();
 
     useEffect(() => {
         fetchList();
@@ -32,7 +34,17 @@ const FinanceLists = () => {
 
     return (
         <div className="p-8 bg-gray-50 min-h-screen font-sans">
-            <h1 className="text-2xl font-bold text-gray-900 mb-6">Finance Actions & Alerts</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl font-bold text-gray-900">Finance Actions & Alerts</h1>
+                <button
+                    onClick={() => exportExcel(activeTab === 'loss-making' ? 'FINANCE_LOSS_MAKING' : 'FINANCE_LOW_MARGIN')}
+                    disabled={isExporting || loading}
+                    className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                    {isExporting ? <Loader size={16} className="animate-spin" /> : <Download size={16} />}
+                    {isExporting ? 'Exporting...' : 'Export List'}
+                </button>
+            </div>
 
             <div className="flex gap-4 mb-6 border-b border-gray-200">
                 <button

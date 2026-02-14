@@ -10,4 +10,5 @@ import java.util.List;
 @Repository
 public interface SysUserGroupRepository extends JpaRepository<SysUserGroup, Long> {
 
+    java.util.Optional<SysUserGroup> findByGroupName(String groupName);
 }

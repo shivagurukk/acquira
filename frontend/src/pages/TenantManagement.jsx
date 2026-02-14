@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, X, Building, Globe } from 'lucide-react';
+import api from '../api/axios';
 import './TenantManagement.css';
 
 const TenantManagement = () => {
@@ -22,11 +23,8 @@ const TenantManagement = () => {
 
     const fetchTenants = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/banks', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) setTenants(await res.json());
+            const res = await api.get('/banks');
+            setTenants(res.data);
         } catch (error) {
             console.error("Failed to fetch tenants", error);
         }
@@ -34,11 +32,8 @@ const TenantManagement = () => {
 
     const fetchCountries = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/admin/countries', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) setCountries(await res.json());
+            const res = await api.get('/admin/countries');
+            setCountries(res.data);
         } catch (error) {
             console.error("Failed to fetch countries", error);
         }
@@ -71,24 +66,17 @@ const TenantManagement = () => {
 
     const handleSave = async (e) => {
         e.preventDefault();
-        const method = currentTenant.tenantId ? 'PUT' : 'POST';
-        const url = 'http://localhost:8081/api/banks' + (currentTenant.tenantId ? `/${currentTenant.tenantId}` : '');
-
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(url, {
-                method: method,
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify(currentTenant)
-            });
-            if (res.ok) {
-                fetchTenants();
-                setIsModalOpen(false);
+            if (currentTenant.tenantId) {
+                await api.put(`/banks/${currentTenant.tenantId}`, currentTenant);
             } else {
-                alert("Failed to save.");
+                await api.post('/banks', currentTenant);
             }
+            fetchTenants();
+            setIsModalOpen(false);
         } catch (error) {
             console.error("Failed to save tenant", error);
+            alert("Failed to save.");
         }
     };
 

@@ -16,10 +16,7 @@ import org.thymeleaf.spring6.SpringTemplateEngine;
 import org.thymeleaf.context.Context;
 
 import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+// No network imports needed — all resources served from classpath
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -82,10 +79,10 @@ public class PlaywrightPdfService {
     private final ObjectMapper objectMapper;
 
     // ── Configuration ──
-    @Value("${pdf.pool.size:8}")
+    @Value("${pdf.pool.size:2}")
     private int configuredPoolSize;
 
-    @Value("${pdf.chart.wait.ms:150}")
+    @Value("${pdf.chart.wait.ms:800}")
     private int chartWaitMs;
 
     @Value("${pdf.batch.data.threads:8}")
@@ -95,14 +92,12 @@ public class PlaywrightPdfService {
     private int POOL_SIZE;
     private BlockingQueue<BrowserSlot> browserPool;
 
-    // Pre-cached resources (immutable after init — safe to share across threads)
+    // Pre-cached text resources (immutable after init — safe to share across threads)
     private String cachedCss;
     private String cachedChartJs;
     private String cachedChartJsDatalabels;
-    private String cachedFontCss;
-
-    // Pre-built HTML template shell with all resources inlined (set once at init)
-    private String preBuiltTemplateShell;
+    // Pre-cached font bytes served via page.route() — avoids classpath reads per render
+    private final Map<String, byte[]> cachedFonts = new ConcurrentHashMap<>();
 
     // PDF options (immutable — safe to share)
     private static final Page.PdfOptions PDF_OPTIONS = new Page.PdfOptions()
@@ -251,30 +246,57 @@ public class PlaywrightPdfService {
         this.objectMapper = objectMapper;
     }
 
+    private boolean engineReady = false;
+
+    public boolean isEngineReady() { return engineReady; }
+
     @PostConstruct
     public void init() {
-        // Determine optimal pool size: min(CPU cores, 12) — beyond 12 browsers, memory becomes the bottleneck
-        POOL_SIZE = Math.min(Math.max(configuredPoolSize, 2), 12);
+        // Determine pool size: default 2, max 4. Each Chromium instance uses ~150-300MB.
+        // 8 slots caused OOM on default heap. 2 slots = safe default, 4 = production max.
+        POOL_SIZE = Math.min(Math.max(configuredPoolSize, 1), 4);
         log.info("PDF Engine starting — pool size: {}, chart wait: {}ms", POOL_SIZE, chartWaitMs);
+        try {
+            initInternal();
+            engineReady = true;
+        } catch (Exception e) {
+            log.warn("⚠ PDF Engine failed to initialize (Playwright may not be installed): {}", e.getMessage());
+            log.warn("  PDF generation will be unavailable. Run 'mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args=install' to install browsers.");
+            engineReady = false;
+        }
+    }
 
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+    private void initInternal() {
 
-        // 1. Pre-cache CSS
+        // ── ZERO NETWORK ACCESS ── All resources from classpath ──
+
+        // 1. Pre-cache CSS + append PDF size optimization overrides.
+        //    Chromium rasterizes every CSS gradient/pseudo-element into a full-page bitmap.
+        //    The decorative page layers (dot texture, warm glow, header shimmer) are at
+        //    1-2% opacity and invisible in print, but cost ~1MB per page as bitmaps.
+        //    Appending these overrides to the CSS eliminates them → PDF drops from 15MB to ~2-3MB.
         cachedCss = loadClasspathResource("static/assets/report-theme.css");
+        if (cachedCss != null) {
+            cachedCss += "\n\n/* ===== PDF SIZE OPTIMIZATIONS (appended at init) ===== */\n"
+                + ".page:not(#page-cover):not(#page-toc):not(#page-closing)::after { content: none !important; }\n"
+                + ".page:not(#page-cover):not(#page-toc):not(#page-closing)::before { content: none !important; }\n"
+                + ".page:not(#page-cover):not(#page-toc):not(#page-closing) { background: #FFFFFF !important; }\n"
+                + ".report-header::before { content: none !important; }\n"
+                + ".report-header { box-shadow: none !important; }\n"
+                + ".card, .exec-kpi, .data-table-wrapper { box-shadow: none !important; }\n";
+            log.info("CSS loaded: {} bytes (with PDF overrides appended)", cachedCss.length());
+        }
 
-        // 2. Pre-cache Chart.js
-        cachedChartJs = fetchUrl(httpClient, "https://cdn.jsdelivr.net/npm/chart.js");
+        // 2. Pre-cache Chart.js (local file, NOT CDN)
+        cachedChartJs = loadClasspathResource("static/assets/js/chart.js");
 
-        // 3. Pre-cache Chart.js Datalabels plugin
-        cachedChartJsDatalabels = fetchUrl(httpClient, "https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0");
+        // 3. Pre-cache Chart.js Datalabels plugin (local file)
+        cachedChartJsDatalabels = loadClasspathResource("static/assets/js/chartjs-plugin-datalabels.min.js");
 
-        // 4. Pre-cache Google Fonts with embedded base64 woff2
-        cachedFontCss = fetchAndEmbedFonts(httpClient);
+        // 4. Pre-cache font bytes in memory. Served to Chromium via page.route() handler.
+        preloadFontCache();
 
-        // 5. Initialize browser pool
+        // Initialize browser pool
         browserPool = new ArrayBlockingQueue<>(POOL_SIZE);
         int successfulSlots = 0;
         for (int i = 0; i < POOL_SIZE; i++) {
@@ -287,6 +309,9 @@ public class PlaywrightPdfService {
             }
         }
         POOL_SIZE = successfulSlots; // Adjust to actual count
+        if (POOL_SIZE == 0) {
+            throw new RuntimeException("No browser slots could be initialized");
+        }
         log.info("✓ PDF Engine ready — {} browser slots active", POOL_SIZE);
     }
 
@@ -311,6 +336,7 @@ public class PlaywrightPdfService {
     public byte[] generatePdf(MerchantInsightsDTO data, String merchantName, String monthYear) {
         String generatedDate = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm"));
         String htmlContent = renderHtml(data, merchantName, monthYear, generatedDate);
+        htmlContent = inlineResources(htmlContent);
 
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             BrowserSlot slot = null;
@@ -435,6 +461,7 @@ public class PlaywrightPdfService {
                             if (dto == null || status.cancelled) return null;
                             try {
                                 String html = renderHtml(dto, merchantName, monthYear, generatedDate);
+                                html = inlineResources(html);
                                 return html;
                             } catch (Exception e) {
                                 status.failed.incrementAndGet();
@@ -586,7 +613,7 @@ public class PlaywrightPdfService {
         stats.put("busySlots", POOL_SIZE - browserPool.size());
         stats.put("chartWaitMs", chartWaitMs);
         stats.put("activeJobs", activeJobs.size());
-        stats.put("templateCached", preBuiltTemplateShell != null || cachedCss != null);
+        stats.put("resourcesCached", cachedCss != null && cachedChartJs != null);
         List<Map<String, Object>> slotStats = new ArrayList<>();
         // Snapshot without draining
         for (BrowserSlot s : browserPool) {
@@ -622,8 +649,9 @@ public class PlaywrightPdfService {
             context.setVariable("dto", data);
             context.setVariable("generatedDate", generatedDate);
 
-            String html = templateEngine.process("basic-report", context);
-            return inlineResources(html);
+            // Template HTML keeps original <script src>, <link>, @font-face paths
+            // Playwright route handler serves them from classpath cache
+            return templateEngine.process("basic-report", context);
         } catch (Exception e) {
             throw new RuntimeException("HTML rendering failed for " + merchantName, e);
         }
@@ -643,11 +671,42 @@ public class PlaywrightPdfService {
         try {
             ctx = slot.browser.newContext(new Browser.NewContextOptions()
                     .setViewportSize(794, 1123)
+                    .setDeviceScaleFactor(1.0)   // Force 1x DPI — prevents HiDPI rasterization that bloats PDF
                     .setJavaScriptEnabled(true));
             Page page = ctx.newPage();
 
-            // All resources are inlined — no external requests needed
+            // Route ALL requests: serve fonts from memory, block everything else.
+            // The fake navigate to https://local.report gives Chromium a base URL
+            // so /assets/fonts/X.ttf resolves properly.
+            page.route("**/*", route -> {
+                String url = route.request().url();
+                // Serve font files from memory cache
+                if (url.contains("/assets/fonts/")) {
+                    String fontFile = url.substring(url.lastIndexOf('/') + 1);
+                    byte[] fontBytes = cachedFonts.get(fontFile);
+                    if (fontBytes != null) {
+                        log.info("Font route: serving {} ({} bytes)", fontFile, fontBytes.length);
+                        route.fulfill(new Route.FulfillOptions()
+                                .setContentType("font/ttf")
+                                .setBodyBytes(fontBytes));
+                        return;
+                    }
+                }
+                // Serve the initial blank page navigation
+                if (url.contains("local.report")) {
+                    route.fulfill(new Route.FulfillOptions()
+                            .setStatus(200)
+                            .setContentType("text/html")
+                            .setBody(""));
+                    return;
+                }
+                // Block all other external requests (zero network)
+                route.abort();
+            });
 
+            // Navigate to fake URL so Chromium has a proper origin for resolving
+            // relative paths in @font-face url('/assets/fonts/X.ttf')
+            page.navigate("https://local.report/report");
             page.setContent(htmlContent, new Page.SetContentOptions()
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
@@ -669,39 +728,97 @@ public class PlaywrightPdfService {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private String inlineResources(String htmlContent) {
+        int originalLen = htmlContent.length();
+
+        // 0. Force 1x device pixel ratio for Chart.js canvases
+        htmlContent = htmlContent.replace("<head>",
+                "<head>\n<script>Object.defineProperty(window,'devicePixelRatio',{value:1});</script>");
+
+        // 0b. PDF size overrides are already appended to cachedCss (done in initInternal).
+        //     They get inlined along with the CSS in step 1 below.
+
+        // 1. Inline CSS — use regex to handle variations in whitespace/closing tag
         if (cachedCss != null) {
-            htmlContent = htmlContent.replace(
-                    "<link rel=\"stylesheet\" href=\"/assets/report-theme.css\" />",
-                    "<style>\n" + cachedCss + "\n</style>"
+            htmlContent = htmlContent.replaceAll(
+                    "<link[^>]*href=\"/assets/report-theme\\.css\"[^>]*/?>" ,
+                    "<style>\n" + java.util.regex.Matcher.quoteReplacement(cachedCss) + "\n</style>"
             );
         }
+
+        // 2. Inline Chart.js — use regex to handle any variation
         if (cachedChartJs != null) {
-            htmlContent = htmlContent.replace(
-                    "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>",
-                    "<script>\n" + cachedChartJs + "\n</script>"
+            htmlContent = htmlContent.replaceAll(
+                    "<script[^>]*src=\"/assets/js/chart\\.js\"[^>]*>\\s*</script>",
+                    "<script>\n" + java.util.regex.Matcher.quoteReplacement(cachedChartJs) + "\n</script>"
+            );
+            htmlContent = htmlContent.replaceAll(
+                    "<script[^>]*src=\"https://cdn\\.jsdelivr\\.net/npm/chart\\.js\"[^>]*>\\s*</script>",
+                    "<script>\n" + java.util.regex.Matcher.quoteReplacement(cachedChartJs) + "\n</script>"
             );
         }
+
+        // 3. Inline Chart.js Datalabels plugin
         if (cachedChartJsDatalabels != null) {
-            htmlContent = htmlContent.replace(
-                    "<script src=\"https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0\"></script>",
-                    "<script>\n" + cachedChartJsDatalabels + "\n</script>"
+            htmlContent = htmlContent.replaceAll(
+                    "<script[^>]*src=\"/assets/js/chartjs-plugin-datalabels[^\"]*\"[^>]*>\\s*</script>",
+                    "<script>\n" + java.util.regex.Matcher.quoteReplacement(cachedChartJsDatalabels) + "\n</script>"
+            );
+            htmlContent = htmlContent.replaceAll(
+                    "<script[^>]*src=\"https://cdn\\.jsdelivr\\.net/npm/chartjs-plugin-datalabels[^\"]*\"[^>]*>\\s*</script>",
+                    "<script>\n" + java.util.regex.Matcher.quoteReplacement(cachedChartJsDatalabels) + "\n</script>"
             );
         }
-        if (cachedFontCss != null) {
-            htmlContent = htmlContent.replace(
-                    "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">",
-                    "<!-- fonts inlined -->"
-            );
-            htmlContent = htmlContent.replace(
-                    "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>",
-                    ""
-            );
-            htmlContent = htmlContent.replace(
-                    "<link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap\" rel=\"stylesheet\">",
-                    "<style>\n" + cachedFontCss + "\n</style>"
-            );
-        }
+
+        // 4. Keep @font-face declarations — Chromium loads fonts via page.route() handler
+        //    which serves them from classpath. Chromium then embeds only the glyph subsets
+        //    actually used in the text → PDF stays ~1-2MB instead of 13MB.
+        //    (Removing @font-face causes Chromium to use system fallback fonts like DejaVu
+        //    which are HUGE and get fully embedded, bloating PDFs to 13MB+.)
+
+        // 5. Strip any Google Font CDN references (not needed, zero network)
+        htmlContent = htmlContent.replace(
+                "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">", ""
+        );
+        htmlContent = htmlContent.replace(
+                "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>", ""
+        );
+        htmlContent = htmlContent.replaceAll(
+                "<link[^>]*fonts\\.googleapis\\.com[^>]*>", ""
+        );
+
+        log.info("\u2713 inlineResources: {} \u2192 {} bytes (CSS:{}, ChartJS:{}, fonts kept for route)",
+                originalLen, htmlContent.length(),
+                cachedCss != null ? cachedCss.length() + "b" : "MISSING",
+                cachedChartJs != null ? cachedChartJs.length() + "b" : "MISSING");
         return htmlContent;
+    }
+
+    /**
+     * Pre-cache font files from classpath into memory.
+     * These are served to Chromium via page.route() in renderPdfInSlot().
+     * Chromium loads the actual TTF fonts and embeds only glyph subsets used → small PDFs.
+     */
+    private void preloadFontCache() {
+        String[] fontFiles = {
+            "Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Bold.ttf",
+            "PlayfairDisplay-Regular.ttf", "PlayfairDisplay-Bold.ttf"
+        };
+        int loaded = 0;
+        long totalBytes = 0;
+        for (String fontFile : fontFiles) {
+            try {
+                ClassPathResource res = new ClassPathResource("static/assets/fonts/" + fontFile);
+                if (res.exists()) {
+                    byte[] fontBytes = res.getInputStream().readAllBytes();
+                    cachedFonts.put(fontFile, fontBytes);
+                    totalBytes += fontBytes.length;
+                    loaded++;
+                }
+            } catch (Exception e) {
+                log.warn("Could not cache font {}: {}", fontFile, e.getMessage());
+            }
+        }
+        log.info("✓ Cached {} fonts ({} KB) — served via page.route() to Chromium", loaded, totalBytes / 1024);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -722,65 +839,9 @@ public class PlaywrightPdfService {
         }
     }
 
-    private String fetchUrl(HttpClient client, String url) {
-        try {
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(15))
-                    .GET().build();
-            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() == 200) {
-                log.info("✓ Cached URL: {} ({} bytes)", url, resp.body().length());
-                return resp.body();
-            }
-        } catch (Exception e) {
-            log.warn("✗ Could not fetch {}: {}", url, e.getMessage());
-        }
-        return null;
-    }
+    // fetchUrl removed — zero network access. All resources loaded from classpath.
 
-    private String fetchAndEmbedFonts(HttpClient httpClient) {
-        try {
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap"))
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .timeout(Duration.ofSeconds(15))
-                    .GET().build();
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200) return null;
-
-            String fontCss = resp.body();
-            java.util.regex.Pattern urlPattern = java.util.regex.Pattern
-                    .compile("url\\((https://fonts\\.gstatic\\.com/[^)]+\\.woff2)\\)");
-            java.util.regex.Matcher matcher = urlPattern.matcher(fontCss);
-            StringBuilder sb = new StringBuilder();
-            int fontCount = 0;
-            while (matcher.find()) {
-                String fontUrl = matcher.group(1);
-                try {
-                    HttpRequest fontReq = HttpRequest.newBuilder()
-                            .uri(URI.create(fontUrl)).timeout(Duration.ofSeconds(10)).GET().build();
-                    HttpResponse<byte[]> fontResp = httpClient.send(fontReq, HttpResponse.BodyHandlers.ofByteArray());
-                    if (fontResp.statusCode() == 200) {
-                        String base64 = Base64.getEncoder().encodeToString(fontResp.body());
-                        matcher.appendReplacement(sb, "url(data:font/woff2;base64," + base64 + ")");
-                        fontCount++;
-                    } else {
-                        matcher.appendReplacement(sb, matcher.group(0));
-                    }
-                } catch (Exception fe) {
-                    matcher.appendReplacement(sb, matcher.group(0));
-                }
-            }
-            matcher.appendTail(sb);
-            String result = sb.toString();
-            log.info("✓ Fonts embedded: {} files, {} bytes total CSS", fontCount, result.length());
-            return result;
-        } catch (Exception e) {
-            log.warn("✗ Could not embed fonts: {}", e.getMessage());
-            return null;
-        }
-    }
+    // fetchAndEmbedFonts removed — fonts installed on OS, no Google Fonts CDN needed.
 
     private static String truncate(String s, int maxLen) {
         if (s == null) return "";

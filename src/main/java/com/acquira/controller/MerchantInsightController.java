@@ -25,18 +25,21 @@ public class MerchantInsightController {
 
     private final MerchantInsightService insightService;
     private final PlaywrightPdfService playwrightPdfService;
+    private final com.acquira.service.EmailService emailService;
     private final com.acquira.repository.MerchantRepository merchantRepository;
 
     public MerchantInsightController(MerchantInsightService insightService,
-                                     PlaywrightPdfService playwrightPdfService,
-                                     com.acquira.repository.MerchantRepository merchantRepository) {
+            PlaywrightPdfService playwrightPdfService,
+            com.acquira.service.EmailService emailService,
+            com.acquira.repository.MerchantRepository merchantRepository) {
         this.insightService = insightService;
         this.playwrightPdfService = playwrightPdfService;
+        this.emailService = emailService;
         this.merchantRepository = merchantRepository;
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  SINGLE REPORT ENDPOINTS
+    // SINGLE REPORT ENDPOINTS
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     @GetMapping("/overview")
@@ -45,9 +48,11 @@ public class MerchantInsightController {
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month) {
 
-        if (merchantId == null) merchantId = 1L;
+        if (merchantId == null)
+            merchantId = 1L;
         YearMonth targetMonth = resolveTargetMonth(year, month);
-        return ResponseEntity.ok(insightService.getInsights(merchantId, targetMonth.getYear(), targetMonth.getMonthValue()));
+        return ResponseEntity
+                .ok(insightService.getInsights(merchantId, targetMonth.getYear(), targetMonth.getMonthValue()));
     }
 
     @PostMapping("/generate/{merchantId}")
@@ -56,11 +61,13 @@ public class MerchantInsightController {
             @RequestParam(required = false) Integer month) {
         try {
             YearMonth targetMonth = resolveTargetMonth(year, month);
-            MerchantInsightsDTO data = insightService.getInsights(merchantId, targetMonth.getYear(), targetMonth.getMonthValue());
+            MerchantInsightsDTO data = insightService.getInsights(merchantId, targetMonth.getYear(),
+                    targetMonth.getMonthValue());
 
             String merchantName = "Merchant " + merchantId;
             var mOpt = merchantRepository.findById(merchantId);
-            if (mOpt.isPresent()) merchantName = mOpt.get().getName();
+            if (mOpt.isPresent())
+                merchantName = mOpt.get().getName();
 
             String folder = "reports/" + targetMonth.toString();
             Files.createDirectories(Paths.get(folder));
@@ -85,10 +92,12 @@ public class MerchantInsightController {
             @RequestParam(required = false) Integer month,
             HttpServletResponse response) throws IOException {
 
-        if (merchantId == null) merchantId = 1L;
+        if (merchantId == null)
+            merchantId = 1L;
         YearMonth targetMonth = resolveTargetMonth(year, month);
 
-        MerchantInsightsDTO data = insightService.getInsights(merchantId, targetMonth.getYear(), targetMonth.getMonthValue());
+        MerchantInsightsDTO data = insightService.getInsights(merchantId, targetMonth.getYear(),
+                targetMonth.getMonthValue());
 
         String merchantName = "MERCHANT " + merchantId;
         var mOpt = merchantRepository.findById(merchantId);
@@ -105,7 +114,7 @@ public class MerchantInsightController {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  BATCH GENERATION — High-Performance Pipeline
+    // BATCH GENERATION — High-Performance Pipeline
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /**
@@ -113,16 +122,18 @@ public class MerchantInsightController {
      * Returns immediately with a jobId for progress tracking.
      *
      * Usage:
-     *   POST /api/business/insights/generate-all?year=2026&month=1
-     *   → Returns { jobId: "batch-xxxxx", ... }
+     * POST /api/business/insights/generate-all?year=2026&month=1
+     * → Returns { jobId: "batch-xxxxx", ... }
      *
-     *   GET /api/business/insights/batch-status/{jobId}
-     *   → Returns { progressPercent: 45.2, completed: 9040, ... }
+     * GET /api/business/insights/batch-status/{jobId}
+     * → Returns { progressPercent: 45.2, completed: 9040, ... }
      */
+    @PostMapping("/generate-all")
     @PostMapping("/generate-all")
     public ResponseEntity<Map<String, Object>> generateAllReports(
             @RequestParam(required = false) Integer year,
-            @RequestParam(required = false) Integer month) {
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false, defaultValue = "false") boolean sendEmail) {
 
         try {
             YearMonth targetMonth = resolveTargetMonth(year, month);
@@ -132,13 +143,18 @@ public class MerchantInsightController {
             // Capture tenant context for propagation to worker threads
             Long currentTenant = TenantContext.getCurrentTenant();
 
+            // Capture current user for SSE notifications
+            org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder
+                    .getContext().getAuthentication();
+            String username = (auth != null && auth.isAuthenticated()) ? auth.getName() : null;
+
             // Fetch merchant list (lightweight — just IDs and names)
             List<com.acquira.model.Merchant> merchants = merchantRepository.findAll();
 
             List<long[]> merchantIds = new ArrayList<>(merchants.size());
             List<String> merchantNames = new ArrayList<>(merchants.size());
             for (com.acquira.model.Merchant m : merchants) {
-                merchantIds.add(new long[]{ m.getMerchantId() });
+                merchantIds.add(new long[] { m.getMerchantId() });
                 merchantNames.add(m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId());
             }
 
@@ -148,29 +164,33 @@ public class MerchantInsightController {
                     merchantNames,
                     (merchantId, idCtx) -> {
                         // Set tenant context in worker thread
-                        if (currentTenant != null) TenantContext.setCurrentTenant(currentTenant);
+                        if (currentTenant != null)
+                            TenantContext.setCurrentTenant(currentTenant);
                         try {
-                            return insightService.getInsights(merchantId, targetMonth.getYear(), targetMonth.getMonthValue());
+                            return insightService.getInsights(merchantId, targetMonth.getYear(),
+                                    targetMonth.getMonthValue());
                         } finally {
                             TenantContext.clear();
                         }
                     },
-                    folder,
                     monthYear,
-                    targetMonth.toString()
-            );
+                    targetMonth.toString(),
+                    sendEmail ? () -> emailService.onBatchComplete(targetMonth.toString(), folder) : null,
+                    username);
 
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("jobId", status.jobId);
             response.put("totalMerchants", merchants.size());
             response.put("targetFolder", Paths.get(folder).toAbsolutePath().toString());
             response.put("targetMonth", targetMonth.toString());
-            response.put("message", "Batch generation started — use /batch-status/" + status.jobId + " to track progress");
+            response.put("message",
+                    "Batch generation started — use /batch-status/" + status.jobId + " to track progress");
 
             return ResponseEntity.ok(response);
 
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to start batch: " + e.getMessage()));
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Failed to start batch: " + e.getMessage()));
         }
     }
 
@@ -205,8 +225,7 @@ public class MerchantInsightController {
         return ResponseEntity.ok(Map.of(
                 "jobId", jobId,
                 "cancelled", cancelled,
-                "message", cancelled ? "Job cancellation requested" : "Job not found or already completed"
-        ));
+                "message", cancelled ? "Job cancellation requested" : "Job not found or already completed"));
     }
 
     /**

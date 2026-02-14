@@ -5,11 +5,13 @@ import com.acquira.common.model.*;
 import com.acquira.common.repository.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Collections;
 import java.util.Set;
 import java.time.LocalDate;
@@ -31,19 +33,22 @@ public class MerchantController {
     private final MerchantContactRepository contactRepository;
     private final MerchantDocumentRepository documentRepository;
     private final MerchantRiskProfileRepository riskRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     public MerchantController(MerchantRepository merchantRepository,
             StoreRepository storeRepository,
             TerminalRepository terminalRepository,
             MerchantContactRepository contactRepository,
             MerchantDocumentRepository documentRepository,
-            MerchantRiskProfileRepository riskRepository) {
+            MerchantRiskProfileRepository riskRepository,
+            JdbcTemplate jdbcTemplate) {
         this.merchantRepository = merchantRepository;
         this.storeRepository = storeRepository;
         this.terminalRepository = terminalRepository;
         this.contactRepository = contactRepository;
         this.documentRepository = documentRepository;
         this.riskRepository = riskRepository;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @GetMapping
@@ -112,6 +117,170 @@ public class MerchantController {
     @GetMapping("/{id}/contacts")
     public ResponseEntity<List<MerchantContact>> getMerchantContacts(@PathVariable Long id) {
         return ResponseEntity.ok(contactRepository.findByMerchantId(id));
+    }
+
+    // ── Merchant Comparison Endpoint ──────────────────────────────────────────
+    @PostMapping("/compare")
+    public ResponseEntity<Map<String, Object>> compareMerchants(@RequestBody Map<String, Object> request) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
+
+        @SuppressWarnings("unchecked")
+        List<Number> merchantIds = (List<Number>) request.get("merchantIds");
+        String startDate = (String) request.getOrDefault("startDate", LocalDate.now().minusDays(30).toString());
+        String endDate = (String) request.getOrDefault("endDate", LocalDate.now().toString());
+
+        if (merchantIds == null || merchantIds.size() < 2) {
+            return ResponseEntity.badRequest().body(Map.of("error", "At least 2 merchants required"));
+        }
+
+        List<Long> ids = merchantIds.stream().map(Number::longValue).collect(Collectors.toList());
+        String inClause = ids.stream().map(String::valueOf).collect(Collectors.joining(","));
+
+        // Aggregate KPIs per merchant
+        String kpiSql = """
+            SELECT m.merchant_id, m.name, m.mid, m.status,
+                   COALESCE(SUM(s.total_volume), 0) as total_volume,
+                   COALESCE(SUM(s.total_txns), 0) as total_txns,
+                   COALESCE(SUM(s.total_msf), 0) as total_margin,
+                   CASE WHEN SUM(s.total_txns) > 0 THEN SUM(s.total_volume) / SUM(s.total_txns) ELSE 0 END as avg_txn_value,
+                   COALESCE(SUM(CASE WHEN s.is_opt_in THEN s.total_volume ELSE 0 END), 0) as dcc_optin_vol,
+                   COALESCE(SUM(s.total_volume), 0) as total_vol_for_rate
+            FROM dim_merchant m
+            LEFT JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
+                AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
+            WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
+            GROUP BY m.merchant_id, m.name, m.mid, m.status
+            """.formatted(inClause);
+
+        // Monthly trend per merchant
+        String trendSql = """
+            SELECT m.merchant_id,
+                   TO_CHAR(s.business_date, 'YYYY-MM') as month,
+                   COALESCE(SUM(s.total_volume), 0) as volume,
+                   COALESCE(SUM(s.total_txns), 0) as txns
+            FROM dim_merchant m
+            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
+                AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
+            WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
+            GROUP BY m.merchant_id, TO_CHAR(s.business_date, 'YYYY-MM')
+            ORDER BY m.merchant_id, month
+            """.formatted(inClause);
+
+        // Scheme breakdown per merchant
+        String schemeSql = """
+            SELECT m.merchant_id, COALESCE(s.card_scheme, 'OTHER') as name,
+                   COALESCE(SUM(s.total_volume), 0) as volume
+            FROM dim_merchant m
+            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
+                AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
+            WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
+            GROUP BY m.merchant_id, s.card_scheme
+            """.formatted(inClause);
+
+        // Card type breakdown
+        String cardTypeSql = """
+            SELECT m.merchant_id, COALESCE(s.card_type, 'OTHER') as name,
+                   COALESCE(SUM(s.total_volume), 0) as volume
+            FROM dim_merchant m
+            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
+                AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
+            WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
+            GROUP BY m.merchant_id, s.card_type
+            """.formatted(inClause);
+
+        // Execute queries
+        var kpiRows = jdbcTemplate.queryForList(kpiSql, startDate, endDate, tenantId);
+        var trendRows = jdbcTemplate.queryForList(trendSql, startDate, endDate, tenantId);
+        var schemeRows = jdbcTemplate.queryForList(schemeSql, startDate, endDate, tenantId);
+        var cardTypeRows = jdbcTemplate.queryForList(cardTypeSql, startDate, endDate, tenantId);
+
+        // Build per-merchant response
+        List<Map<String, Object>> merchants = new ArrayList<>();
+        Map<String, Object> leaders = new HashMap<>();
+        Map<String, Object> deltas = new HashMap<>();
+
+        double maxVol = 0, maxTxns = 0, maxMargin = 0, maxAvg = 0;
+        Long volLeader = null, txnLeader = null, marginLeader = null, avgLeader = null;
+
+        for (var row : kpiRows) {
+            Long mid = ((Number) row.get("merchant_id")).longValue();
+            double vol = ((Number) row.get("total_volume")).doubleValue();
+            double txns = ((Number) row.get("total_txns")).doubleValue();
+            double margin = ((Number) row.get("total_margin")).doubleValue();
+            double avg = ((Number) row.get("avg_txn_value")).doubleValue();
+            double dccVol = ((Number) row.get("dcc_optin_vol")).doubleValue();
+            double totalForRate = ((Number) row.get("total_vol_for_rate")).doubleValue();
+
+            if (vol > maxVol) { maxVol = vol; volLeader = mid; }
+            if (txns > maxTxns) { maxTxns = txns; txnLeader = mid; }
+            if (margin > maxMargin) { maxMargin = margin; marginLeader = mid; }
+            if (avg > maxAvg) { maxAvg = avg; avgLeader = mid; }
+
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("merchantId", mid);
+            m.put("name", row.get("name"));
+            m.put("mid", row.get("mid"));
+            m.put("status", row.get("status"));
+            m.put("city", "");
+            m.put("totalVolume", vol);
+            m.put("totalTxns", (long) txns);
+            m.put("avgTxnValue", avg);
+            m.put("totalMargin", margin);
+            m.put("dccOptinRate", totalForRate > 0 ? (dccVol / totalForRate) * 100 : 0);
+            m.put("volatilityIndex", 0.0);
+            m.put("stabilityLabel", "Stable");
+
+            // Attach trend data
+            List<Map<String, Object>> trend = trendRows.stream()
+                .filter(t -> ((Number) t.get("merchant_id")).longValue() == mid)
+                .map(t -> { Map<String, Object> tp = new HashMap<>(); tp.put("month", t.get("month")); tp.put("volume", t.get("volume")); tp.put("txns", t.get("txns")); return tp; })
+                .collect(Collectors.toList());
+            m.put("monthlyTrend", trend);
+
+            // Scheme breakdown
+            List<Map<String, Object>> schemes = schemeRows.stream()
+                .filter(s -> ((Number) s.get("merchant_id")).longValue() == mid)
+                .map(s -> { Map<String, Object> sp = new HashMap<>(); sp.put("name", s.get("name")); sp.put("volume", s.get("volume")); return sp; })
+                .collect(Collectors.toList());
+            m.put("cardSchemeBreakdown", schemes);
+
+            // Card type breakdown
+            List<Map<String, Object>> cardTypes = cardTypeRows.stream()
+                .filter(c -> ((Number) c.get("merchant_id")).longValue() == mid)
+                .map(c -> { Map<String, Object> cp = new HashMap<>(); cp.put("name", c.get("name")); cp.put("volume", c.get("volume")); return cp; })
+                .collect(Collectors.toList());
+            m.put("cardTypeBreakdown", cardTypes);
+
+            merchants.add(m);
+        }
+
+        leaders.put("totalVolume", volLeader);
+        leaders.put("totalTxns", txnLeader);
+        leaders.put("totalMargin", marginLeader);
+        leaders.put("avgTxnValue", avgLeader);
+
+        // Compute deltas between leader and runner-up
+        if (merchants.size() >= 2) {
+            for (String kpi : List.of("totalVolume", "totalTxns", "avgTxnValue", "totalMargin")) {
+                double best = 0, second = 0;
+                for (var m : merchants) {
+                    double v = ((Number) m.get(kpi)).doubleValue();
+                    if (v > best) { second = best; best = v; }
+                    else if (v > second) { second = v; }
+                }
+                deltas.put(kpi, second > 0 ? ((best - second) / second) * 100 : 0);
+            }
+        }
+
+        Map<String, Object> comparison = new HashMap<>();
+        comparison.put("leaders", leaders);
+        comparison.put("deltas", deltas);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("merchants", merchants);
+        result.put("comparison", comparison);
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/hierarchy")

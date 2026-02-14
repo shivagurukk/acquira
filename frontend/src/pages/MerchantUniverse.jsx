@@ -11,6 +11,7 @@ import TenantSwitcher from '../components/TenantSwitcher';
 import MerchantHierarchy from '../components/MerchantHierarchy';
 import TransactionList from '../components/TransactionList';
 import MerchantHeatmap from './business/MerchantHeatmap';
+import useExcelExport from '../hooks/useExcelExport';
 
 const MerchantUniverse = () => {
     const [loading, setLoading] = useState(true);
@@ -23,6 +24,7 @@ const MerchantUniverse = () => {
     const [selectedMerchant, setSelectedMerchant] = useState(null);
     const [showTenantModal, setShowTenantModal] = useState(false);
     const [availableTenants, setAvailableTenants] = useState([]);
+    const { exportExcel, isExporting } = useExcelExport();
 
     // Upload & Batch State
     const [showUploadModal, setShowUploadModal] = useState(false);
@@ -368,6 +370,24 @@ const MerchantUniverse = () => {
                 <SidebarItem id="RISK" label="Risk Profile" icon={ShieldCheck} />
                 <SidebarItem id="SETTLEMENT" label="Settlement" icon={DollarSign} />
                 <SidebarItem id="ACTIVITY" label="Activity" icon={Activity} />
+
+                <div style={{ marginTop: 'auto', paddingTop: '20px', borderTop: '1px solid #e2e8f0' }}>
+                    <button
+                        onClick={() => exportExcel('MERCHANT_MASTER')}
+                        disabled={isExporting}
+                        style={{
+                            width: '100%', padding: '10px', borderRadius: '8px',
+                            background: isExporting ? '#cbd5e1' : 'white',
+                            color: isExporting ? '#64748b' : '#3b82f6',
+                            border: '1px solid #e2e8f0', fontWeight: '600',
+                            cursor: isExporting ? 'not-allowed' : 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                        }}
+                    >
+                        {isExporting ? <Loader size={16} /> : <FileUp size={18} />}
+                        <span>{isExporting ? 'Exporting...' : 'Export Merchants'}</span>
+                    </button>
+                </div>
             </div>
 
             {/* Main Content Area */}

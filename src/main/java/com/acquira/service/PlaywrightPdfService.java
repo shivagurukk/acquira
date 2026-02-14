@@ -33,46 +33,45 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-
 /**
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- *  ULTRA-HIGH-PERFORMANCE PDF GENERATION ENGINE v3.0
+ * ULTRA-HIGH-PERFORMANCE PDF GENERATION ENGINE v3.0
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  *
- *  TARGET: 20,000 merchants × 15-page reports in < 30 minutes
+ * TARGET: 20,000 merchants × 15-page reports in < 30 minutes
  *
- *  ARCHITECTURE:
- *  ┌─────────────────────────────────────────────────────┐
- *  │  Phase 1: DATA FETCH (Parallel DB queries)          │
- *  │  ─ 8 threads fetch DTOs concurrently                │
- *  │  ─ DB pool size 20, each query ≈ 5-15ms             │
- *  │  ─ 20K merchants @ 10ms avg = ~25s with 8 threads   │
- *  ├─────────────────────────────────────────────────────┤
- *  │  Phase 2: HTML RENDER (Thymeleaf - CPU-bound)       │
- *  │  ─ Pre-built template with inlined resources        │
- *  │  ─ Parallel Thymeleaf rendering (thread-safe)       │
- *  │  ─ 20K @ 2ms each = ~5s with 8 threads              │
- *  ├─────────────────────────────────────────────────────┤
- *  │  Phase 3: PDF RENDER (Playwright - the bottleneck)  │
- *  │  ─ N isolated Playwright instances (auto-tuned)     │
- *  │  ─ Page reuse within context (skip create/destroy)  │
- *  │  ─ Reduced wait time 150ms (charts are simple)      │
- *  │  ─ 20K @ 85ms each / 8 slots = ~3.5 min             │
- *  ├─────────────────────────────────────────────────────┤
- *  │  Phase 4: FILE WRITE (Async I/O)                    │
- *  │  ─ Separate write pool for non-blocking disk I/O    │
- *  │  ─ Fire-and-forget with error capture               │
- *  └─────────────────────────────────────────────────────┘
+ * ARCHITECTURE:
+ * ┌─────────────────────────────────────────────────────┐
+ * │ Phase 1: DATA FETCH (Parallel DB queries) │
+ * │ ─ 8 threads fetch DTOs concurrently │
+ * │ ─ DB pool size 20, each query ≈ 5-15ms │
+ * │ ─ 20K merchants @ 10ms avg = ~25s with 8 threads │
+ * ├─────────────────────────────────────────────────────┤
+ * │ Phase 2: HTML RENDER (Thymeleaf - CPU-bound) │
+ * │ ─ Pre-built template with inlined resources │
+ * │ ─ Parallel Thymeleaf rendering (thread-safe) │
+ * │ ─ 20K @ 2ms each = ~5s with 8 threads │
+ * ├─────────────────────────────────────────────────────┤
+ * │ Phase 3: PDF RENDER (Playwright - the bottleneck) │
+ * │ ─ N isolated Playwright instances (auto-tuned) │
+ * │ ─ Page reuse within context (skip create/destroy) │
+ * │ ─ Reduced wait time 150ms (charts are simple) │
+ * │ ─ 20K @ 85ms each / 8 slots = ~3.5 min │
+ * ├─────────────────────────────────────────────────────┤
+ * │ Phase 4: FILE WRITE (Async I/O) │
+ * │ ─ Separate write pool for non-blocking disk I/O │
+ * │ ─ Fire-and-forget with error capture │
+ * └─────────────────────────────────────────────────────┘
  *
- *  PIPELINE: Each merchant flows through phases independently
- *  via a producer-consumer queue, keeping all browser slots
- *  100% utilized with zero idle time between renders.
+ * PIPELINE: Each merchant flows through phases independently
+ * via a producer-consumer queue, keeping all browser slots
+ * 100% utilized with zero idle time between renders.
  *
- *  MATH:
- *  20,000 reports × 85ms/render ÷ 8 browser slots = 212s ≈ 3.5 min
- *  + Data fetch 25s + HTML render 5s + overhead 30s = ~4.5 min total
- *  Even with conservative 120ms/render = 5 min total
- *  Worst case (4 slots, 150ms): 20K × 150 / 4 = 750s = 12.5 min
+ * MATH:
+ * 20,000 reports × 85ms/render ÷ 8 browser slots = 212s ≈ 3.5 min
+ * + Data fetch 25s + HTML render 5s + overhead 30s = ~4.5 min total
+ * Even with conservative 120ms/render = 5 min total
+ * Worst case (4 slots, 150ms): 20K × 150 / 4 = 750s = 12.5 min
  */
 @Service
 @Slf4j
@@ -80,6 +79,7 @@ public class PlaywrightPdfService {
 
     private final SpringTemplateEngine templateEngine;
     private final ObjectMapper objectMapper;
+    private final NotificationService notificationService;
 
     // ── Configuration ──
     @Value("${pdf.pool.size:8}")
@@ -133,8 +133,7 @@ public class PlaywrightPdfService {
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
             "--disable-ipc-flooding-protection",
-            "--js-flags=--max-old-space-size=128"
-    );
+            "--js-flags=--max-old-space-size=128");
 
     // ── Batch Job State ──
     private final ConcurrentHashMap<String, BatchJobStatus> activeJobs = new ConcurrentHashMap<>();
@@ -156,8 +155,7 @@ public class PlaywrightPdfService {
             this.browser = this.playwright.chromium().launch(
                     new BrowserType.LaunchOptions()
                             .setHeadless(true)
-                            .setArgs(BROWSER_ARGS)
-            );
+                            .setArgs(BROWSER_ARGS));
         }
 
         boolean isHealthy() {
@@ -165,19 +163,30 @@ public class PlaywrightPdfService {
         }
 
         void reset() {
-            try { browser.close(); } catch (Exception ignored) {}
-            try { playwright.close(); } catch (Exception ignored) {}
+            try {
+                browser.close();
+            } catch (Exception ignored) {
+            }
+            try {
+                playwright.close();
+            } catch (Exception ignored) {
+            }
             this.playwright = Playwright.create();
             this.browser = this.playwright.chromium().launch(
                     new BrowserType.LaunchOptions()
                             .setHeadless(true)
-                            .setArgs(BROWSER_ARGS)
-            );
+                            .setArgs(BROWSER_ARGS));
         }
 
         void destroy() {
-            try { browser.close(); } catch (Exception ignored) {}
-            try { playwright.close(); } catch (Exception ignored) {}
+            try {
+                browser.close();
+            } catch (Exception ignored) {
+            }
+            try {
+                playwright.close();
+            } catch (Exception ignored) {
+            }
         }
 
         double avgRenderMs() {
@@ -220,7 +229,8 @@ public class PlaywrightPdfService {
 
         public double estimatedRemainingMs() {
             int done = completed.get();
-            if (done == 0) return -1;
+            if (done == 0)
+                return -1;
             double msPerReport = (double) elapsedMs() / done;
             return msPerReport * (totalMerchants - done);
         }
@@ -235,25 +245,30 @@ public class PlaywrightPdfService {
             m.put("failed", failed.get());
             m.put("progressPercent", Math.round(progressPercent() * 10.0) / 10.0);
             m.put("elapsedSeconds", elapsedMs() / 1000.0);
-            m.put("estimatedRemainingSeconds", estimatedRemainingMs() > 0 ? Math.round(estimatedRemainingMs() / 100.0) / 10.0 : "calculating...");
+            m.put("estimatedRemainingSeconds",
+                    estimatedRemainingMs() > 0 ? Math.round(estimatedRemainingMs() / 100.0) / 10.0 : "calculating...");
             m.put("avgRenderMs", completed.get() > 0 ? totalRenderMs.get() / completed.get() : 0);
             m.put("errors", errors.size() > 20 ? errors.subList(0, 20) : errors);
             m.put("errorCount", errors.size());
             m.put("cancelled", cancelled);
-            if (endTime != null) m.put("totalSeconds", elapsedMs() / 1000.0);
+            if (endTime != null)
+                m.put("totalSeconds", elapsedMs() / 1000.0);
             return m;
         }
     }
 
     public PlaywrightPdfService(@Qualifier("pdfTemplateEngine") SpringTemplateEngine templateEngine,
-                                ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            NotificationService notificationService) {
         this.templateEngine = templateEngine;
         this.objectMapper = objectMapper;
+        this.notificationService = notificationService;
     }
 
     @PostConstruct
     public void init() {
-        // Determine optimal pool size: min(CPU cores, 12) — beyond 12 browsers, memory becomes the bottleneck
+        // Determine optimal pool size: min(CPU cores, 12) — beyond 12 browsers, memory
+        // becomes the bottleneck
         POOL_SIZE = Math.min(Math.max(configuredPoolSize, 2), 12);
         log.info("PDF Engine starting — pool size: {}, chart wait: {}ms", POOL_SIZE, chartWaitMs);
 
@@ -303,7 +318,7 @@ public class PlaywrightPdfService {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  SINGLE REPORT — used for individual downloads
+    // SINGLE REPORT — used for individual downloads
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private static final int MAX_RETRIES = 3;
@@ -317,7 +332,8 @@ public class PlaywrightPdfService {
             boolean slotHealthy = true;
             try {
                 slot = browserPool.poll(30, TimeUnit.SECONDS);
-                if (slot == null) throw new RuntimeException("No browser slot available within 30s — all busy");
+                if (slot == null)
+                    throw new RuntimeException("No browser slot available within 30s — all busy");
 
                 if (!slot.isHealthy()) {
                     log.warn("Slot {} unhealthy, resetting (attempt {})", slot.id, attempt);
@@ -335,7 +351,11 @@ public class PlaywrightPdfService {
                 log.warn("Browser error for {} (attempt {}/{}): {}", merchantName, attempt, MAX_RETRIES,
                         truncate(e.getMessage(), 120));
                 if (slot != null) {
-                    try { slot.reset(); } catch (Exception re) { log.error("Slot {} reset failed", slot.id, re); }
+                    try {
+                        slot.reset();
+                    } catch (Exception re) {
+                        log.error("Slot {} reset failed", slot.id, re);
+                    }
                 }
                 if (attempt == MAX_RETRIES) {
                     throw new RuntimeException("PDF Generation Failed after " + MAX_RETRIES + " retries", e);
@@ -343,19 +363,20 @@ public class PlaywrightPdfService {
             } catch (Exception e) {
                 throw new RuntimeException("PDF Generation Failed for " + merchantName, e);
             } finally {
-                if (slot != null) browserPool.offer(slot);
+                if (slot != null)
+                    browserPool.offer(slot);
             }
         }
         throw new RuntimeException("PDF Generation Failed for " + merchantName);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  BATCH GENERATION — 20K merchants pipeline
+    // BATCH GENERATION — 20K merchants pipeline
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /**
      * High-performance batch generation using a 4-stage pipeline:
-     *   DATA_FETCH → HTML_RENDER → PDF_RENDER → FILE_WRITE
+     * DATA_FETCH → HTML_RENDER → PDF_RENDER → FILE_WRITE
      *
      * Each stage runs on its own thread pool. Work items flow through
      * bounded queues. PDF_RENDER pool = POOL_SIZE (the real bottleneck).
@@ -374,7 +395,9 @@ public class PlaywrightPdfService {
             java.util.function.BiFunction<Long, long[], MerchantInsightsDTO> dataFetcher,
             String targetFolder,
             String monthYear,
-            String targetYearMonth) {
+            String targetYearMonth,
+            Runnable onComplete,
+            String username) {
 
         String jobId = "batch-" + System.currentTimeMillis();
         int total = merchantIdList.size();
@@ -393,11 +416,23 @@ public class PlaywrightPdfService {
 
                 // Thread pools
                 ExecutorService dataPool = Executors.newFixedThreadPool(Math.min(dataFetchThreads, 12),
-                        r -> { Thread t = new Thread(r, "pdf-data"); t.setDaemon(true); return t; });
+                        r -> {
+                            Thread t = new Thread(r, "pdf-data");
+                            t.setDaemon(true);
+                            return t;
+                        });
                 ExecutorService renderPool = Executors.newFixedThreadPool(POOL_SIZE,
-                        r -> { Thread t = new Thread(r, "pdf-render"); t.setDaemon(true); return t; });
+                        r -> {
+                            Thread t = new Thread(r, "pdf-render");
+                            t.setDaemon(true);
+                            return t;
+                        });
                 ExecutorService writePool = Executors.newFixedThreadPool(4,
-                        r -> { Thread t = new Thread(r, "pdf-write"); t.setDaemon(true); return t; });
+                        r -> {
+                            Thread t = new Thread(r, "pdf-write");
+                            t.setDaemon(true);
+                            return t;
+                        });
 
                 status.phase = "GENERATING";
 
@@ -405,7 +440,8 @@ public class PlaywrightPdfService {
                 List<CompletableFuture<Void>> allFutures = new ArrayList<>(total);
 
                 for (int i = 0; i < total; i++) {
-                    if (status.cancelled) break;
+                    if (status.cancelled)
+                        break;
 
                     final int idx = i;
                     final long merchantId = merchantIdList.get(i)[0];
@@ -414,99 +450,113 @@ public class PlaywrightPdfService {
 
                     CompletableFuture<Void> future = CompletableFuture
 
-                        // Stage 1: Fetch Data (parallel, DB-bound)
-                        .supplyAsync(() -> {
-                            if (status.cancelled) return null;
-                            long t0 = System.nanoTime();
-                            try {
-                                MerchantInsightsDTO dto = dataFetcher.apply(merchantId, idContext);
-                                status.totalDataFetchMs.addAndGet((System.nanoTime() - t0) / 1_000_000);
-                                return dto;
-                            } catch (Exception e) {
-                                status.failed.incrementAndGet();
-                                status.completed.incrementAndGet();
-                                status.errors.add(merchantName + " [data]: " + truncate(e.getMessage(), 80));
-                                return null;
-                            }
-                        }, dataPool)
-
-                        // Stage 2: Render HTML (parallel, CPU-bound — Thymeleaf is thread-safe)
-                        .thenApplyAsync(dto -> {
-                            if (dto == null || status.cancelled) return null;
-                            try {
-                                String html = renderHtml(dto, merchantName, monthYear, generatedDate);
-                                return html;
-                            } catch (Exception e) {
-                                status.failed.incrementAndGet();
-                                status.completed.incrementAndGet();
-                                status.errors.add(merchantName + " [html]: " + truncate(e.getMessage(), 80));
-                                return null;
-                            }
-                        }, dataPool) // Reuse data pool for CPU-bound HTML work
-
-                        // Stage 3: Render PDF (bottleneck — limited by browser slots)
-                        .thenApplyAsync(html -> {
-                            if (html == null || status.cancelled) return null;
-                            BrowserSlot slot = null;
-                            try {
-                                // Block until a browser slot is available
-                                slot = browserPool.poll(120, TimeUnit.SECONDS);
-                                if (slot == null) {
-                                    throw new RuntimeException("No browser slot available within 120s");
-                                }
-                                if (!slot.isHealthy()) slot.reset();
-
+                            // Stage 1: Fetch Data (parallel, DB-bound)
+                            .supplyAsync(() -> {
+                                if (status.cancelled)
+                                    return null;
                                 long t0 = System.nanoTime();
-                                byte[] pdf = renderPdfInSlot(slot, html);
-                                long renderMs = (System.nanoTime() - t0) / 1_000_000;
-
-                                slot.totalRendered++;
-                                slot.totalRenderTimeMs += renderMs;
-                                status.totalRenderMs.addAndGet(renderMs);
-
-                                return pdf;
-                            } catch (Exception e) {
-                                if (slot != null) {
-                                    try { slot.reset(); } catch (Exception ignored) {}
+                                try {
+                                    MerchantInsightsDTO dto = dataFetcher.apply(merchantId, idContext);
+                                    status.totalDataFetchMs.addAndGet((System.nanoTime() - t0) / 1_000_000);
+                                    return dto;
+                                } catch (Exception e) {
+                                    status.failed.incrementAndGet();
+                                    status.completed.incrementAndGet();
+                                    status.errors.add(merchantName + " [data]: " + truncate(e.getMessage(), 80));
+                                    return null;
                                 }
-                                status.failed.incrementAndGet();
-                                status.completed.incrementAndGet();
-                                status.errors.add(merchantName + " [pdf]: " + truncate(e.getMessage(), 80));
-                                return null;
-                            } finally {
-                                if (slot != null) browserPool.offer(slot);
-                            }
-                        }, renderPool)
+                            }, dataPool)
 
-                        // Stage 4: Write File (async I/O)
-                        .thenAcceptAsync(pdfBytes -> {
-                            if (pdfBytes == null || status.cancelled) return;
-                            long t0 = System.nanoTime();
-                            try {
-                                String safeName = merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-                                String filename = "Insight_" + safeName + "_" + targetYearMonth + ".pdf";
-                                Path path = Paths.get(targetFolder, filename);
-                                Files.write(path, pdfBytes);
-
-                                status.succeeded.incrementAndGet();
-                                status.totalWriteMs.addAndGet((System.nanoTime() - t0) / 1_000_000);
-                            } catch (Exception e) {
-                                status.failed.incrementAndGet();
-                                status.errors.add(merchantName + " [write]: " + truncate(e.getMessage(), 80));
-                            } finally {
-                                int done = status.completed.incrementAndGet();
-                                // Log progress every 500 reports or at milestones
-                                if (done % 500 == 0 || done == total) {
-                                    double pct = status.progressPercent();
-                                    double elapsed = status.elapsedMs() / 1000.0;
-                                    double avgMs = status.totalRenderMs.get() / Math.max(1, status.succeeded.get());
-                                    log.info("PDF Batch: {}/{} ({}%) — {}s elapsed — avg render {}ms — {} errors",
-                                            done, total, String.format("%.1f", pct),
-                                            String.format("%.1f", elapsed),
-                                            String.format("%.0f", avgMs), status.failed.get());
+                            // Stage 2: Render HTML (parallel, CPU-bound — Thymeleaf is thread-safe)
+                            .thenApplyAsync(dto -> {
+                                if (dto == null || status.cancelled)
+                                    return null;
+                                try {
+                                    String html = renderHtml(dto, merchantName, monthYear, generatedDate);
+                                    return html;
+                                } catch (Exception e) {
+                                    status.failed.incrementAndGet();
+                                    status.completed.incrementAndGet();
+                                    status.errors.add(merchantName + " [html]: " + truncate(e.getMessage(), 80));
+                                    return null;
                                 }
-                            }
-                        }, writePool);
+                            }, dataPool) // Reuse data pool for CPU-bound HTML work
+
+                            // Stage 3: Render PDF (bottleneck — limited by browser slots)
+                            .thenApplyAsync(html -> {
+                                if (html == null || status.cancelled)
+                                    return null;
+                                BrowserSlot slot = null;
+                                try {
+                                    // Block until a browser slot is available
+                                    slot = browserPool.poll(120, TimeUnit.SECONDS);
+                                    if (slot == null) {
+                                        throw new RuntimeException("No browser slot available within 120s");
+                                    }
+                                    if (!slot.isHealthy())
+                                        slot.reset();
+
+                                    long t0 = System.nanoTime();
+                                    byte[] pdf = renderPdfInSlot(slot, html);
+                                    long renderMs = (System.nanoTime() - t0) / 1_000_000;
+
+                                    slot.totalRendered++;
+                                    slot.totalRenderTimeMs += renderMs;
+                                    status.totalRenderMs.addAndGet(renderMs);
+
+                                    return pdf;
+                                } catch (Exception e) {
+                                    if (slot != null) {
+                                        try {
+                                            slot.reset();
+                                        } catch (Exception ignored) {
+                                        }
+                                    }
+                                    status.failed.incrementAndGet();
+                                    status.completed.incrementAndGet();
+                                    status.errors.add(merchantName + " [pdf]: " + truncate(e.getMessage(), 80));
+                                    return null;
+                                } finally {
+                                    if (slot != null)
+                                        browserPool.offer(slot);
+                                }
+                            }, renderPool)
+
+                            // Stage 4: Write File (async I/O)
+                            .thenAcceptAsync(pdfBytes -> {
+                                if (pdfBytes == null || status.cancelled)
+                                    return;
+                                long t0 = System.nanoTime();
+                                try {
+                                    String safeName = merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
+                                    String filename = "Insight_" + safeName + "_" + targetYearMonth + ".pdf";
+                                    Path path = Paths.get(targetFolder, filename);
+                                    Files.write(path, pdfBytes);
+
+                                    status.succeeded.incrementAndGet();
+                                    status.totalWriteMs.addAndGet((System.nanoTime() - t0) / 1_000_000);
+                                } catch (Exception e) {
+                                    status.failed.incrementAndGet();
+                                    status.errors.add(merchantName + " [write]: " + truncate(e.getMessage(), 80));
+                                } finally {
+                                    int done = status.completed.incrementAndGet();
+                                    // Log progress every 500 reports or at milestones
+                                    if (done % 5 == 0 || done == total) { // More frequent updates for UI (every 5)
+                                        double pct = status.progressPercent();
+                                        double elapsed = status.elapsedMs() / 1000.0;
+                                        double avgMs = status.totalRenderMs.get() / Math.max(1, status.succeeded.get());
+                                        log.info("PDF Batch: {}/{} ({}%) — {}s elapsed — avg render {}ms — {} errors",
+                                                done, total, String.format("%.1f", pct),
+                                                String.format("%.1f", elapsed),
+                                                String.format("%.0f", avgMs), status.failed.get());
+
+                                        // Emit SSE Event
+                                        if (username != null) {
+                                            notificationService.send(username, "REPORT_PROGRESS", status.toMap());
+                                        }
+                                    }
+                                }
+                            }, writePool);
 
                     allFutures.add(future);
                 }
@@ -522,15 +572,33 @@ public class PlaywrightPdfService {
                 status.phase = "COMPLETED";
                 status.endTime = Instant.now();
 
+                // Trigger callback if provided
+                if (onComplete != null) {
+                    try {
+                        onComplete.run();
+                    } catch (Exception e) {
+                        log.error("Batch completion callback failed", e);
+                    }
+                }
+
+                // Emit Completion Event
+                if (username != null) {
+                    notificationService.send(username, "REPORT_COMPLETE", status.toMap());
+                }
+
                 // Log final stats
                 double totalSec = status.elapsedMs() / 1000.0;
                 log.info("━━━━━━ PDF BATCH COMPLETE ━━━━━━");
                 log.info("  Total: {} | Success: {} | Failed: {}", total, status.succeeded.get(), status.failed.get());
-                log.info("  Time: {}s ({} min)", String.format("%.1f", totalSec), String.format("%.1f", totalSec / 60.0));
-                log.info("  Avg render: {}ms/report", String.format("%.0f", status.totalRenderMs.get() / (double) Math.max(1, status.succeeded.get())));
-                log.info("  Throughput: {} reports/sec", String.format("%.0f", status.succeeded.get() / Math.max(1.0, totalSec)));
+                log.info("  Time: {}s ({} min)", String.format("%.1f", totalSec),
+                        String.format("%.1f", totalSec / 60.0));
+                log.info("  Avg render: {}ms/report", String.format("%.0f",
+                        status.totalRenderMs.get() / (double) Math.max(1, status.succeeded.get())));
+                log.info("  Throughput: {} reports/sec",
+                        String.format("%.0f", status.succeeded.get() / Math.max(1.0, totalSec)));
                 // Per-slot stats
-                browserPool.forEach(s -> log.info("  Slot {}: {} renders, avg {}ms", s.id, s.totalRendered, String.format("%.0f", s.avgRenderMs())));
+                browserPool.forEach(s -> log.info("  Slot {}: {} renders, avg {}ms", s.id, s.totalRendered,
+                        String.format("%.0f", s.avgRenderMs())));
                 log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
             } catch (Exception e) {
@@ -601,14 +669,14 @@ public class PlaywrightPdfService {
         return stats;
     }
 
-
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  INTERNAL: HTML Rendering
+    // INTERNAL: HTML Rendering
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /**
      * Render HTML from DTO using Thymeleaf.
-     * Thymeleaf's SpringTemplateEngine is thread-safe — can be called from any thread.
+     * Thymeleaf's SpringTemplateEngine is thread-safe — can be called from any
+     * thread.
      * Resources are inlined at this stage to avoid per-render string replacements.
      */
     private String renderHtml(MerchantInsightsDTO data, String merchantName, String monthYear, String generatedDate) {
@@ -630,7 +698,7 @@ public class PlaywrightPdfService {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  INTERNAL: PDF Rendering in Browser Slot
+    // INTERNAL: PDF Rendering in Browser Slot
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /**
@@ -658,54 +726,50 @@ public class PlaywrightPdfService {
             return page.pdf(PDF_OPTIONS);
         } finally {
             if (ctx != null) {
-                try { ctx.close(); } catch (Exception ignored) {}
+                try {
+                    ctx.close();
+                } catch (Exception ignored) {
+                }
             }
         }
     }
 
-
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  INTERNAL: Resource Inlining
+    // INTERNAL: Resource Inlining
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private String inlineResources(String htmlContent) {
         if (cachedCss != null) {
             htmlContent = htmlContent.replace(
                     "<link rel=\"stylesheet\" href=\"/assets/report-theme.css\" />",
-                    "<style>\n" + cachedCss + "\n</style>"
-            );
+                    "<style>\n" + cachedCss + "\n</style>");
         }
         if (cachedChartJs != null) {
             htmlContent = htmlContent.replace(
                     "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>",
-                    "<script>\n" + cachedChartJs + "\n</script>"
-            );
+                    "<script>\n" + cachedChartJs + "\n</script>");
         }
         if (cachedChartJsDatalabels != null) {
             htmlContent = htmlContent.replace(
                     "<script src=\"https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0\"></script>",
-                    "<script>\n" + cachedChartJsDatalabels + "\n</script>"
-            );
+                    "<script>\n" + cachedChartJsDatalabels + "\n</script>");
         }
         if (cachedFontCss != null) {
             htmlContent = htmlContent.replace(
                     "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">",
-                    "<!-- fonts inlined -->"
-            );
+                    "<!-- fonts inlined -->");
             htmlContent = htmlContent.replace(
                     "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>",
-                    ""
-            );
+                    "");
             htmlContent = htmlContent.replace(
                     "<link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap\" rel=\"stylesheet\">",
-                    "<style>\n" + cachedFontCss + "\n</style>"
-            );
+                    "<style>\n" + cachedFontCss + "\n</style>");
         }
         return htmlContent;
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  INTERNAL: Startup Resource Loading
+    // INTERNAL: Startup Resource Loading
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private String loadClasspathResource(String path) {
@@ -742,12 +806,14 @@ public class PlaywrightPdfService {
     private String fetchAndEmbedFonts(HttpClient httpClient) {
         try {
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap"))
+                    .uri(URI.create(
+                            "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap"))
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .timeout(Duration.ofSeconds(15))
                     .GET().build();
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200) return null;
+            if (resp.statusCode() != 200)
+                return null;
 
             String fontCss = resp.body();
             java.util.regex.Pattern urlPattern = java.util.regex.Pattern
@@ -783,7 +849,8 @@ public class PlaywrightPdfService {
     }
 
     private static String truncate(String s, int maxLen) {
-        if (s == null) return "";
+        if (s == null)
+            return "";
         return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
     }
 }

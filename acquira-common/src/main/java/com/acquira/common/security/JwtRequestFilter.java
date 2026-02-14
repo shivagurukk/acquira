@@ -87,6 +87,9 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                 try {
                     List<UserTenantAccess> accessList = userTenantAccessRepository.findByUser(dbUser);
 
+                    // Super Admin can access ANY tenant without explicit UserTenantAccess rows
+                    boolean isSuperAdmin = "ROLE_SUPER_ADMIN".equals(dbUser.getRole());
+
                     String tenantIdHeader = request.getHeader("X-Tenant-Id");
                     Long targetTenantId = null;
 
@@ -95,8 +98,8 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                             && !"undefined".equalsIgnoreCase(tenantIdHeader)) {
                         try {
                             Long reqTenantId = Long.parseLong(tenantIdHeader);
-                            // Validate user has access to this tenant
-                            boolean hasAccess = accessList.stream()
+                            // Super Admin bypasses access-list check
+                            boolean hasAccess = isSuperAdmin || accessList.stream()
                                     .anyMatch(a -> a.getTenant().getTenantId().equals(reqTenantId));
 
                             if (hasAccess) {
