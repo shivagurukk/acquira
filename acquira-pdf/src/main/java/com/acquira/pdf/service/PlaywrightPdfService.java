@@ -305,7 +305,7 @@ public class PlaywrightPdfService {
                 browserPool.offer(slot);
                 successfulSlots++;
             } catch (Exception e) {
-                log.error("Failed to initialize browser slot {}: {}", i, e.getMessage());
+                log.error("Failed to initialize browser slot {}: {}", i, e.getMessage(), e);
             }
         }
         POOL_SIZE = successfulSlots; // Adjust to actual count

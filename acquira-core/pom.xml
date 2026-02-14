@@ -19,6 +19,12 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <jvmArguments>-Xmx2048m</jvmArguments>
+                    <requiresUnpack>
+                        <dependency>
+                            <groupId>com.microsoft.playwright</groupId>
+                            <artifactId>driver-bundle</artifactId>
+                        </dependency>
+                    </requiresUnpack>
                     <excludes><exclude><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId></exclude></excludes>
                 </configuration>
             </plugin>
