@@ -63,6 +63,19 @@ DROP TABLE IF EXISTS data_source_config CASCADE;
 DROP TABLE IF EXISTS report_query_config CASCADE;
 DROP TABLE IF EXISTS report_run_log CASCADE;
 
+-- Integration Hub
+DROP TABLE IF EXISTS integration_run_log CASCADE;
+DROP TABLE IF EXISTS integration_schedule CASCADE;
+DROP TABLE IF EXISTS integration_report CASCADE;
+DROP TABLE IF EXISTS integration_connection CASCADE;
+
+-- Report Builder & Email Campaigns
+DROP TABLE IF EXISTS email_campaign_log CASCADE;
+DROP TABLE IF EXISTS email_campaign CASCADE;
+DROP TABLE IF EXISTS email_template_config CASCADE;
+DROP TABLE IF EXISTS report_schedule CASCADE;
+DROP TABLE IF EXISTS report_template CASCADE;
+
 -- Staging
 DROP TABLE IF EXISTS stg_merchant_master_raw CASCADE;
 DROP TABLE IF EXISTS stg_trnx_raw CASCADE;
@@ -185,8 +198,9 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 
 -- OPERATIONS
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
-('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     2),
-('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     3),
+('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
+('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
 ('User Management',          '/users',                            'Users',           'ADMINISTRATION', 1),
@@ -804,6 +818,9 @@ CREATE TABLE IF NOT EXISTS sum_daily_merchant (
     unique_customer_count BIGINT DEFAULT 0,
     top_spending_customer_id VARCHAR(50),
     top_spending_amount DECIMAL(19, 2),
+    
+    -- Base Currency Volume (Store Base Currency Amount for merchant-facing PDF)
+    total_base_volume DECIMAL(19, 2) DEFAULT 0,
     
     -- DCC Metrics
     dcc_eligible_volume DECIMAL(19, 2) DEFAULT 0,
@@ -1572,4 +1589,247 @@ CREATE INDEX IF NOT EXISTS idx_stg_txn_type ON stg_trnx_raw (tenant_id, transact
 
 -- Data Explorer menu: managed in consolidated menu block above
 -- (saved_filter already created above)
+
+-- ==========================================
+-- DATA INTEGRATION HUB
+-- ==========================================
+
+-- External DB connections (per tenant)
+CREATE TABLE IF NOT EXISTS integration_connection (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    db_type VARCHAR(50) NOT NULL,
+    host VARCHAR(255) NOT NULL,
+    port INTEGER NOT NULL,
+    db_name VARCHAR(255) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    encrypted_password TEXT NOT NULL,
+    timeout_seconds INTEGER DEFAULT 30,
+    max_retries INTEGER DEFAULT 3,
+    is_active BOOLEAN DEFAULT TRUE,
+    last_test_at TIMESTAMP,
+    last_test_status VARCHAR(20),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_intg_conn_tenant ON integration_connection(tenant_id);
+
+-- Report configs (per tenant, per type: MERCHANT or TRANSACTION)
+CREATE TABLE IF NOT EXISTS integration_report (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    connection_id BIGINT REFERENCES integration_connection(id),
+    name VARCHAR(255) NOT NULL,
+    report_type VARCHAR(50) NOT NULL,
+    sql_text TEXT NOT NULL,
+    column_mapping TEXT,
+    description TEXT,
+    param_schema TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    approved_by VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_intg_report_tenant ON integration_report(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_intg_report_type ON integration_report(tenant_id, report_type);
+
+-- Schedule configs (independent per report per tenant)
+CREATE TABLE IF NOT EXISTS integration_schedule (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    report_id BIGINT REFERENCES integration_report(id),
+    cron_expression VARCHAR(100) NOT NULL,
+    frequency_label VARCHAR(50),
+    timezone VARCHAR(50) DEFAULT 'UTC',
+    is_enabled BOOLEAN DEFAULT TRUE,
+    last_run_at TIMESTAMP,
+    next_run_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_intg_sched_tenant ON integration_schedule(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_intg_sched_enabled ON integration_schedule(is_enabled);
+
+-- Run history with retry tracking
+CREATE TABLE IF NOT EXISTS integration_run_log (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    report_id BIGINT REFERENCES integration_report(id),
+    schedule_id BIGINT REFERENCES integration_schedule(id),
+    trigger_type VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    attempt_number INTEGER DEFAULT 1,
+    max_retries INTEGER DEFAULT 3,
+    rows_fetched INTEGER DEFAULT 0,
+    rows_processed INTEGER DEFAULT 0,
+    rows_failed INTEGER DEFAULT 0,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    error_message TEXT,
+    date_range_from DATE,
+    date_range_to DATE,
+    duration_ms BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_intg_run_tenant ON integration_run_log(tenant_id, start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_intg_run_status ON integration_run_log(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_intg_run_report ON integration_run_log(report_id);
+
+-- Menu entries for Data Integration
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Integration Hub',       '/admin/integration',              'Cable',           'DATA INTEGRATION', 1),
+('DB Connections',        '/admin/integration/connections',   'Database',        'DATA INTEGRATION', 2),
+('Report Configs',        '/admin/integration/reports',       'FileCode',        'DATA INTEGRATION', 3),
+('Schedules',             '/admin/integration/schedules',     'Clock',           'DATA INTEGRATION', 4),
+('Run History',           '/admin/integration/runs',          'ScrollText',      'DATA INTEGRATION', 5)
+ON CONFLICT (path) DO NOTHING;
+
+-- Grant integration menus to SUPER_ADMIN and ADMIN groups
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name = 'SUPER_ADMIN' AND m.category = 'DATA INTEGRATION'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name = 'ADMIN' AND m.category = 'DATA INTEGRATION'
+ON CONFLICT DO NOTHING;
+
+-- ==========================================
+-- REPORT BUILDER & TEMPLATES
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS report_template (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    config_json TEXT NOT NULL,
+    is_shared BOOLEAN DEFAULT FALSE,
+    last_run_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_report_tpl_tenant ON report_template(tenant_id, user_id);
+
+CREATE TABLE IF NOT EXISTS report_schedule (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    template_id BIGINT REFERENCES report_template(id),
+    cron_expression VARCHAR(100) NOT NULL,
+    frequency_label VARCHAR(50),
+    timezone VARCHAR(50) DEFAULT 'UTC',
+    delivery_method VARCHAR(20) DEFAULT 'EMAIL',
+    recipient_emails TEXT,
+    export_format VARCHAR(10) DEFAULT 'EXCEL',
+    is_enabled BOOLEAN DEFAULT TRUE,
+    last_run_at TIMESTAMP,
+    next_run_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_report_sched_tenant ON report_schedule(tenant_id);
+
+-- ==========================================
+-- EMAIL CAMPAIGN SYSTEM
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS email_template_config (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    template_type VARCHAR(50) NOT NULL,
+    subject_template VARCHAR(500) NOT NULL,
+    body_html TEXT NOT NULL,
+    body_text TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    is_default_for_type BOOLEAN DEFAULT FALSE,
+    created_by VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_email_tpl_tenant ON email_template_config(tenant_id);
+
+CREATE TABLE IF NOT EXISTS email_campaign (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    template_id BIGINT REFERENCES email_template_config(id),
+    campaign_type VARCHAR(20) NOT NULL,
+    recipient_filter_json TEXT,
+    attachment_type VARCHAR(20) DEFAULT 'NONE',
+    attachment_report_template_id BIGINT,
+    statement_month VARCHAR(10),
+    schedule_cron VARCHAR(100),
+    schedule_timezone VARCHAR(50),
+    status VARCHAR(20) DEFAULT 'DRAFT',
+    total_recipients INTEGER DEFAULT 0,
+    sent_count INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+    sent_at TIMESTAMP,
+    created_by VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_email_camp_tenant ON email_campaign(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_email_camp_status ON email_campaign(tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS email_campaign_log (
+    id BIGSERIAL PRIMARY KEY,
+    campaign_id BIGINT NOT NULL REFERENCES email_campaign(id),
+    tenant_id BIGINT NOT NULL,
+    merchant_id BIGINT,
+    merchant_name VARCHAR(255),
+    recipient_email VARCHAR(255),
+    subject_rendered VARCHAR(500),
+    status VARCHAR(20) NOT NULL,
+    sent_at TIMESTAMP,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_email_clog_campaign ON email_campaign_log(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_email_clog_tenant ON email_campaign_log(tenant_id, sent_at DESC);
+
+-- Default email templates
+INSERT INTO email_template_config (tenant_id, name, template_type, subject_template, body_html, is_active, is_default_for_type) VALUES
+(1, 'Monthly Statement', 'STATEMENT',
+ 'Your {{month}} Performance Statement - {{merchant_name}}',
+ '<!DOCTYPE html><html><head><style>body{font-family:Helvetica,Arial,sans-serif;line-height:1.6;color:#333;background:#f9fafb;margin:0;padding:0}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,.05)}.header{background:#0f172a;color:#fff;padding:30px;text-align:center}.header h1{margin:0;font-size:24px}.content{padding:40px 30px}.greeting{font-size:18px;color:#1e293b;margin-bottom:20px}.card{background:#f1f5f9;border-radius:8px;padding:20px;margin-bottom:20px;border:1px solid #e2e8f0}.stats{display:flex;gap:20px;margin:20px 0}.stat{flex:1;text-align:center;padding:15px;background:#fff;border-radius:8px;border:1px solid #e2e8f0}.stat-value{font-size:22px;font-weight:700;color:#0f172a}.stat-label{font-size:12px;color:#64748b;text-transform:uppercase}.footer{background:#f8fafc;padding:20px;text-align:center;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0}</style></head><body><div class="container"><div class="header"><h1>{{tenant_name}}</h1></div><div class="content"><div class="greeting">Dear {{contact_name}},</div><p>Your performance statement for <strong>{{month}}</strong> is now available.</p><div class="card"><div style="font-size:14px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:10px">Performance Summary</div><div class="stats"><div class="stat"><div class="stat-value">{{total_count}}</div><div class="stat-label">Transactions</div></div><div class="stat"><div class="stat-value">{{total_volume}}</div><div class="stat-label">Volume</div></div><div class="stat"><div class="stat-value">{{total_msf}}</div><div class="stat-label">MSF Revenue</div></div></div></div><p style="color:#64748b">Please find the detailed PDF report attached to this email.</p></div><div class="footer">&copy; 2026 {{tenant_name}}. All rights reserved.<br>This is an automated message.</div></div></body></html>',
+ TRUE, TRUE),
+(1, 'Welcome Email', 'WELCOME',
+ 'Welcome to {{tenant_name}} - {{merchant_name}}',
+ '<!DOCTYPE html><html><head><style>body{font-family:Helvetica,Arial,sans-serif;line-height:1.6;color:#333;background:#f9fafb;margin:0;padding:0}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,.05)}.header{background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;padding:40px;text-align:center}.header h1{margin:0;font-size:28px}.content{padding:40px 30px}.footer{background:#f8fafc;padding:20px;text-align:center;font-size:12px;color:#94a3b8}</style></head><body><div class="container"><div class="header"><h1>Welcome!</h1></div><div class="content"><h2>Hello {{contact_name}},</h2><p>Welcome to <strong>{{tenant_name}}</strong>! We are excited to have <strong>{{merchant_name}}</strong> onboard.</p><p>Your Merchant ID is <strong>{{mid}}</strong>.</p><p>You can view your transaction data, performance analytics, and monthly statements through our portal.</p></div><div class="footer">&copy; 2026 {{tenant_name}}. All rights reserved.</div></div></body></html>',
+ TRUE, TRUE),
+(1, 'Dormancy Alert', 'ALERT',
+ 'Action Required: {{merchant_name}} - No recent transactions',
+ '<!DOCTYPE html><html><head><style>body{font-family:Helvetica,Arial,sans-serif;line-height:1.6;color:#333;background:#f9fafb;margin:0;padding:0}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden}.header{background:#dc2626;color:#fff;padding:30px;text-align:center}.content{padding:40px 30px}.alert-box{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:20px;margin:20px 0}.footer{background:#f8fafc;padding:20px;text-align:center;font-size:12px;color:#94a3b8}</style></head><body><div class="container"><div class="header"><h1>⚠ Activity Alert</h1></div><div class="content"><p>Dear Team,</p><div class="alert-box"><strong>{{merchant_name}}</strong> (MID: {{mid}}) has not processed transactions in <strong>{{days_since_last_txn}} days</strong>.</div><p>Location: {{city}}<br>Status: {{merchant_status}}<br>Stores: {{store_count}} | Terminals: {{terminal_count}}</p><p>Please follow up to ensure the merchant is still active.</p></div><div class="footer">&copy; 2026 {{tenant_name}}</div></div></body></html>',
+ TRUE, TRUE)
+ON CONFLICT DO NOTHING;
+
+-- Menu entries for Email Campaign Hub
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Email Campaigns',  '/admin/email-campaigns',  'MailOpen',  'OPERATIONS', 4)
+ON CONFLICT (path) DO NOTHING;
+
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('SUPER_ADMIN', 'ADMIN') AND m.path = '/admin/email-campaigns'
+ON CONFLICT DO NOTHING;
+
+-- Menu entry for Sales Leaderboard
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Sales Leaderboard',  '/sales/leaderboard',  'Trophy',  'SALES', 2)
+ON CONFLICT (path) DO NOTHING;
+
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('SUPER_ADMIN', 'ADMIN', 'BUSINESS') AND m.path = '/sales/leaderboard'
+ON CONFLICT DO NOTHING;
 

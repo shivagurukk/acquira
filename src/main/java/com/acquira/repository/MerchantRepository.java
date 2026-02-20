@@ -35,4 +35,6 @@ public interface MerchantRepository extends JpaRepository<Merchant, Long>,
         @org.springframework.data.jpa.repository.Query("SELECT DISTINCT m.salesUserId FROM Merchant m WHERE m.tenantId = :tenantId AND m.salesUserId IS NOT NULL")
         java.util.List<String> findDistinctSalesUserIdsByTenantId(
                         @org.springframework.data.repository.query.Param("tenantId") Long tenantId);
+
+        Optional<Merchant> findByMerchantIdAndTenantId(Long merchantId, Long tenantId);
 }

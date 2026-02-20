@@ -7,7 +7,6 @@ const FinanceLists = () => {
     const [activeTab, setActiveTab] = useState('loss-making');
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
-    const tenantId = 1;
     const { exportExcel, isExporting } = useExcelExport();
 
     useEffect(() => {
@@ -18,11 +17,12 @@ const FinanceLists = () => {
         setLoading(true);
         try {
             const endpoint = activeTab === 'loss-making'
-                ? '/api/finance/loss-making-merchants'
-                : '/api/finance/high-volume-low-margin?minVolume=5000&maxMarginPct=0.8'; // Defaults
+                ? '/finance/loss-making-merchants'
+                : '/finance/high-volume-low-margin?minVolume=5000&maxMarginPct=0.8';
 
-            const response = await axios.get(endpoint, { headers: { 'X-Tenant-Id': tenantId } });
-            setData(response.data.content);
+            // axios interceptor already attaches Authorization and X-Tenant-Id headers
+            const response = await axios.get(endpoint);
+            setData(response.data.content || response.data || []);
         } catch (error) {
             console.error("Error fetching list", error);
         } finally {

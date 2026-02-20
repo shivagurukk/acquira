@@ -1,239 +1,190 @@
-import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
-import { Filter, Search, Download, AlertCircle, Clock, CheckCircle, XCircle } from 'lucide-react';
-import ReportHeader from '../../components/ReportHeader';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Box, Paper, Typography, Chip, Stack, TextField, Collapse } from '@mui/material';
+import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { AlertTriangle, Clock, Users, TrendingDown, XCircle } from 'lucide-react';
+import PremiumReportHeader from '../../components/PremiumReportHeader';
+import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
+import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+
+const RANGE_TYPES = [
+    { key: 'LAST_7', label: 'Last 7 Days' },
+    { key: 'LAST_30', label: 'Last 30 Days' },
+    { key: 'NEVER', label: 'Since Onboarding' },
+];
 
 const ZeroTransactionReport = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [showFilters, setShowFilters] = useState(true);
+    const [showFilters, setShowFilters] = useState(false);
+    const [rangeType, setRangeType] = useState('LAST_30');
 
-    // Filters
-    const [rangeType, setRangeType] = useState('LAST_30'); // LAST_7, LAST_30, NEVER
-    const [filters, setFilters] = useState({
-        merchantName: '', // Maps to Entity Name or Merchant Name
-        partnerList: [], // Aggregator Name
-        midList: [],
-        sidList: [],
-        tidList: [],
-        hideDatePresets: true // Custom flag for ReportHeader
-    });
-
-    // Input states for comma-separated lists
+    // Text inputs for comma-separated filters
+    const [merchantName, setMerchantName] = useState('');
     const [aggregatorInput, setAggregatorInput] = useState('');
     const [midInput, setMidInput] = useState('');
     const [sidInput, setSidInput] = useState('');
     const [tidInput, setTidInput] = useState('');
 
+    useEffect(() => { fetchData(); }, [rangeType]);
+
     const fetchData = async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-
-            // Parse inputs to lists
+            const tenantId = localStorage.getItem('defaultTenantId');
             const payload = {
-                merchantName: filters.merchantName,
+                merchantName,
                 partnerList: aggregatorInput ? aggregatorInput.split(',').map(s => s.trim()) : [],
                 midList: midInput ? midInput.split(',').map(s => s.trim()) : [],
                 sidList: sidInput ? sidInput.split(',').map(s => s.trim()) : [],
                 tidList: tidInput ? tidInput.split(',').map(s => s.trim()) : [],
             };
-
             const res = await fetch(`/api/reports/zero-txn/list?rangeType=${rangeType}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    'Authorization': `Bearer ${token}`,
+                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
                 },
                 body: JSON.stringify(payload)
             });
-
             if (res.ok) {
                 const result = await res.json();
-                setData(result);
+                setData(result.map((r, i) => ({ id: `${r.mid}-${r.sid}-${r.terminalId}-${i}`, ...r })));
             }
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setLoading(false);
-        }
+        } catch (error) { console.error(error); }
+        finally { setLoading(false); }
     };
 
-    // Initial Load
-    useEffect(() => {
-        fetchData();
-    }, [rangeType]); // Auto-reload on Range Switch
+    const kpis = useMemo(() => {
+        if (!data.length) return [];
+        const neverTransacted = data.filter(d => d.status === 'Never Transacted').length;
+        const inactive30 = data.filter(d => d.status === 'Inactive 30+').length;
+        const inactive7 = data.filter(d => d.status !== 'Never Transacted' && d.status !== 'Inactive 30+').length;
+        return [
+            { title: 'Total Inactive', value: data.length.toLocaleString(), icon: Users, color: '#6366f1' },
+            { title: 'Never Transacted', value: neverTransacted.toLocaleString(), icon: XCircle, color: '#ef4444' },
+            { title: 'Inactive 30+ Days', value: inactive30.toLocaleString(), icon: TrendingDown, color: '#f59e0b' },
+            { title: 'Inactive 7–30 Days', value: inactive7.toLocaleString(), icon: Clock, color: '#3b82f6' },
+        ];
+    }, [data]);
 
-    const getStatusBadge = (status) => {
-        if (status === 'Never Transacted') {
-            return <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-bold border border-slate-200">Never Transacted</span>;
-        } else if (status === 'Inactive 30+') {
-            return <span className="px-2 py-1 rounded-full bg-red-50 text-red-600 text-xs font-bold border border-red-200">Inactive 30+</span>;
-        } else {
-            return <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-600 text-xs font-bold border border-amber-200">Inactive 7-30</span>;
-        }
+    const getStatusChip = (status) => {
+        if (status === 'Never Transacted') return <Chip label="Never Transacted" size="small" sx={{ fontWeight: 700, bgcolor: '#f1f5f9', color: '#475569', fontSize: '11px' }} />;
+        if (status === 'Inactive 30+') return <Chip label="Inactive 30+" size="small" sx={{ fontWeight: 700, bgcolor: '#fee2e2', color: '#991b1b', fontSize: '11px' }} />;
+        return <Chip label="Inactive 7-30" size="small" sx={{ fontWeight: 700, bgcolor: '#fef3c7', color: '#92400e', fontSize: '11px' }} />;
+    };
+
+    const columns = [
+        {
+            field: 'entityName', headerName: 'ENTITY NAME', flex: 1, minWidth: 160,
+            renderCell: (p) => <Typography variant="body2" fontWeight={700} color="#1e293b">{p.value || '—'}</Typography>
+        },
+        {
+            field: 'aggregatorName', headerName: 'AGGREGATOR', flex: 1, minWidth: 140,
+            renderCell: (p) => <Typography variant="body2" color="#475569">{p.value || '—'}</Typography>
+        },
+        {
+            field: 'aggregatorCode', headerName: 'AGG CODE', width: 100,
+            renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: '#64748b' }}>{p.value || '—'}</Typography>
+        },
+        {
+            field: 'mid', headerName: 'MID', width: 130,
+            renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: '#475569', bgcolor: '#f1f5f9', px: 1, py: 0.3, borderRadius: '4px', border: '1px solid #e2e8f0' }}>{p.value}</Typography>
+        },
+        {
+            field: 'merchantName', headerName: 'MERCHANT NAME', flex: 1.2, minWidth: 160,
+            renderCell: (p) => <Typography variant="body2" fontWeight={600} color="#334155">{p.value}</Typography>
+        },
+        {
+            field: 'sid', headerName: 'SID', width: 100,
+            renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: '#64748b' }}>{p.value}</Typography>
+        },
+        {
+            field: 'storeName', headerName: 'STORE', flex: 1, minWidth: 130,
+            renderCell: (p) => <Typography variant="body2" color="#475569">{p.value || '—'}</Typography>
+        },
+        {
+            field: 'terminalId', headerName: 'TID', width: 110,
+            renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', fontWeight: 700, color: '#334155', bgcolor: '#f1f5f9', px: 1, py: 0.3, borderRadius: '4px' }}>{p.value}</Typography>
+        },
+        { field: 'status', headerName: 'STATUS', width: 150, renderCell: (p) => getStatusChip(p.value) },
+        {
+            field: 'lastTransactionDate', headerName: 'LAST TXN', width: 120, align: 'right', headerAlign: 'right',
+            renderCell: (p) => <Typography variant="body2" color="#64748b" sx={{ fontVariantNumeric: 'tabular-nums' }}>{p.value || <em style={{ color: '#cbd5e1' }}>Never</em>}</Typography>
+        },
+        {
+            field: 'daysInactive', headerName: 'INACTIVE DAYS', type: 'number', width: 120, align: 'right', headerAlign: 'right',
+            renderCell: (p) => <Typography variant="body2" fontWeight={600} color={p.value > 30 ? '#ef4444' : '#475569'} sx={{ fontVariantNumeric: 'tabular-nums' }}>{p.value > -1 ? p.value : '—'}</Typography>
+        },
+    ];
+
+    const filterInputSx = {
+        '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '13px', bgcolor: '#f8fafc' },
+        '& .MuiInputLabel-root': { fontSize: '12px', fontWeight: 600 },
     };
 
     return (
-        <div className="flex-1 p-8 overflow-y-auto bg-slate-50/50 min-h-screen">
-
-            {/* Header */}
-            <ReportHeader
-                title="Zero Merchant Transaction Report"
-                subtitle="Identify inactive merchants and potential churn risks."
+        <Box sx={pageContainer}>
+            <PremiumReportHeader
+                title="Zero Transaction Report" subtitle="Identify inactive merchants and potential churn risks"
+                icon={AlertTriangle}
                 onExport={() => exportToCSV(data, 'zero_transaction_report')}
                 onRunReport={fetchData}
-                filters={filters}
-                onFilterChange={() => { }} // No date filters to update from header
+                loading={loading}
                 showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)}
-                loading={loading}
-            />
-
-            {/* Filter Panel */}
-            {showFilters && (
-                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-6">
-                    {/* Range Selection */}
-                    <div className="flex items-center gap-4 mb-6 border-b border-slate-100 pb-6">
-                        <span className="text-sm font-bold text-slate-700">Date Range:</span>
-                        <div className="flex bg-slate-100 p-1 rounded-lg">
-                            {['LAST_7', 'LAST_30', 'NEVER'].map((type) => (
-                                <button
-                                    key={type}
-                                    onClick={() => setRangeType(type)}
-                                    className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${rangeType === type
-                                        ? 'bg-white text-blue-600 shadow-sm'
-                                        : 'text-slate-500 hover:text-slate-700'
-                                        }`}
-                                >
-                                    {type === 'LAST_7' && 'Last 7 Days'}
-                                    {type === 'LAST_30' && 'Last 30 Days'}
-                                    {type === 'NEVER' && 'Since Onboarding'}
-                                </button>
-                            ))}
-                        </div>
-                        <div className="flex-1"></div>
-                        <button
-                            onClick={fetchData}
-                            className="px-6 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-2"
+                hideDatePresets
+            >
+                {/* Inline range type selector */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: '2px', bgcolor: '#f1f5f9', borderRadius: '10px', p: '3px' }}>
+                    {RANGE_TYPES.map(r => (
+                        <Box key={r.key} onClick={() => setRangeType(r.key)}
+                            sx={{
+                                px: 1.5, py: 0.6, borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                                cursor: 'pointer', transition: 'all 0.15s ease', userSelect: 'none', whiteSpace: 'nowrap',
+                                ...(rangeType === r.key
+                                    ? { bgcolor: 'white', color: '#0f172a', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }
+                                    : { bgcolor: 'transparent', color: '#64748b', '&:hover': { color: '#334155', bgcolor: 'rgba(255,255,255,0.5)' } }
+                                ),
+                            }}
                         >
-                            <Filter size={16} /> Apply Filters
-                        </button>
-                    </div>
+                            {r.label}
+                        </Box>
+                    ))}
+                </Box>
+            </PremiumReportHeader>
 
+            {/* Advanced Filters Panel */}
+            <Collapse in={showFilters} unmountOnExit>
+                <Paper sx={{ p: 3, mb: 3, borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                    <Typography variant="caption" fontWeight={700} color="#94a3b8" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 2, display: 'block' }}>
+                        Search Filters
+                    </Typography>
+                    <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
+                        <TextField label="Entity / Merchant" size="small" value={merchantName} onChange={e => setMerchantName(e.target.value)} sx={{ minWidth: 180, ...filterInputSx }} />
+                        <TextField label="Aggregator Name" size="small" value={aggregatorInput} onChange={e => setAggregatorInput(e.target.value)} sx={{ minWidth: 160, ...filterInputSx }} />
+                        <TextField label="MID" size="small" value={midInput} onChange={e => setMidInput(e.target.value)} placeholder="Comma-separated" sx={{ minWidth: 140, ...filterInputSx }} />
+                        <TextField label="SID" size="small" value={sidInput} onChange={e => setSidInput(e.target.value)} placeholder="Comma-separated" sx={{ minWidth: 140, ...filterInputSx }} />
+                        <TextField label="Terminal ID" size="small" value={tidInput} onChange={e => setTidInput(e.target.value)} placeholder="Comma-separated" sx={{ minWidth: 140, ...filterInputSx }} />
+                    </Stack>
+                </Paper>
+            </Collapse>
 
-                    {/* Checkbox / Field Filters */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-bold text-slate-500">Entity Name</label>
-                            <input
-                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500"
-                                placeholder="Search Entity/Merchant..."
-                                value={filters.merchantName}
-                                onChange={e => setFilters({ ...filters, merchantName: e.target.value })}
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-bold text-slate-500">Aggregator Name</label>
-                            <input
-                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500"
-                                placeholder="e.g. Partner A"
-                                value={aggregatorInput}
-                                onChange={e => setAggregatorInput(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-bold text-slate-500">Aggregator Code</label>
-                            <input
-                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500"
-                                placeholder="Code..."
-                                disabled // Mapped to name for now in logic
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-bold text-slate-500">MID</label>
-                            <input
-                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500"
-                                placeholder="IDs..."
-                                value={midInput}
-                                onChange={e => setMidInput(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-bold text-slate-500">SID</label>
-                            <input
-                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500"
-                                placeholder="IDs..."
-                                value={sidInput}
-                                onChange={e => setSidInput(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-bold text-slate-500">Terminal ID</label>
-                            <input
-                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500"
-                                placeholder="IDs..."
-                                value={tidInput}
-                                onChange={e => setTidInput(e.target.value)}
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
+            <KpiCards cards={kpis} />
 
-            {/* Table */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
-                        <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200 font-bold">
-                            <tr>
-                                <th className="px-6 py-4">Entity Name</th>
-                                <th className="px-6 py-4">Aggregator</th>
-                                <th className="px-6 py-4">Agg Code</th>
-                                <th className="px-6 py-4">MID</th>
-                                <th className="px-6 py-4">Merchant Name</th>
-                                <th className="px-6 py-4">SID</th>
-                                <th className="px-6 py-4">Store</th>
-                                <th className="px-6 py-4">TID</th>
-                                <th className="px-6 py-4">Status</th>
-                                <th className="px-6 py-4 text-right">Last Txn</th>
-                                <th className="px-6 py-4 text-right">Inactive Days</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {loading ? (
-                                <tr><td colSpan="11" className="px-6 py-10 text-center text-slate-500">Loading data...</td></tr>
-                            ) : data.length === 0 ? (
-                                <tr><td colSpan="11" className="px-6 py-10 text-center text-slate-400">No inactive merchants found in this range.</td></tr>
-                            ) : (
-                                data.map((row, i) => (
-                                    <tr key={i} className="hover:bg-slate-50 transition-colors">
-                                        <td className="px-6 py-4 font-medium text-slate-900">{row.entityName || '-'}</td>
-                                        <td className="px-6 py-4 text-slate-600">{row.aggregatorName || '-'}</td>
-                                        <td className="px-6 py-4 text-slate-500 font-mono text-xs">{row.aggregatorCode || '-'}</td>
-                                        <td className="px-6 py-4 text-slate-600 font-mono text-xs">{row.mid}</td>
-                                        <td className="px-6 py-4 text-slate-600">{row.merchantName}</td>
-                                        <td className="px-6 py-4 text-slate-500 font-mono text-xs">{row.sid}</td>
-                                        <td className="px-6 py-4 text-slate-600">{row.storeName}</td>
-                                        <td className="px-6 py-4 text-slate-600 font-mono text-xs font-bold bg-slate-100 rounded px-1 w-fit">{row.terminalId}</td>
-                                        <td className="px-6 py-4">
-                                            {getStatusBadge(row.status)}
-                                        </td>
-                                        <td className="px-6 py-4 text-right text-slate-600">
-                                            {row.lastTransactionDate ? row.lastTransactionDate : <span className="text-slate-300 italic">Never</span>}
-                                        </td>
-                                        <td className="px-6 py-4 text-right font-medium text-slate-700">
-                                            {row.daysInactive > -1 ? row.daysInactive : '-'}
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+            <Paper sx={premiumTableWrapper}>
+                <DataGrid rows={data} columns={columns} loading={loading} rowHeight={55}
+                    disableRowSelectionOnClick
+                    slots={{ toolbar: GridToolbar }}
+                    slotProps={{ toolbar: { showQuickFilter: true, quickFilterProps: { debounceMs: 500 } } }}
+                    initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
+                    pageSizeOptions={[25, 50, 100]}
+                    sx={premiumDataGridStyles}
+                />
+            </Paper>
+        </Box>
     );
 };
 

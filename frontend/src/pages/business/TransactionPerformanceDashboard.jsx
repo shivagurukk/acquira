@@ -29,10 +29,11 @@ const TransactionPerformanceDashboard = () => {
 
     const fetchApiData = async (groupBy, parentValue, grandParentValue) => {
         const token = localStorage.getItem('token');
+        const tenantId = localStorage.getItem('defaultTenantId');
         const queryParams = new URLSearchParams({ groupBy, parentValue: parentValue || '', grandParentValue: grandParentValue || '' });
         const res = await fetch(`/api/business/performance-dashboard?${queryParams}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) },
             body: JSON.stringify(filters)
         });
         if (res.ok) return await res.json();

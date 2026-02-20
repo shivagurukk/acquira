@@ -1,21 +1,63 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from '../../api/axios';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { DollarSign, TrendingUp, Percent, CreditCard, Activity } from 'lucide-react';
-import BusinessFilterBar from '../../components/BusinessFilterBar';
+import { Box, Paper, Typography, Grid, Stack } from '@mui/material';
+import PremiumReportHeader from '../../components/PremiumReportHeader';
+import BusinessFilters from '../../components/BusinessFilters';
+import KpiCards from '../../components/KpiCards';
+import { pageContainer } from '../../theme/dataGridStyles';
+
+const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val || 0);
+const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
+
+// ─── Premium Chart Card ──────────────────────────────────────────────
+const ChartCard = ({ title, children }) => (
+    <Paper sx={{
+        p: 3, height: 380, borderRadius: '14px', border: '1px solid #e2e8f0',
+        bgcolor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        transition: 'all 0.2s ease',
+        '&:hover': { boxShadow: '0 4px 16px rgba(0,0,0,0.06)', borderColor: '#cbd5e1' },
+        display: 'flex', flexDirection: 'column',
+    }}>
+        <Typography variant="subtitle2" fontWeight={800} color="#0f172a"
+            sx={{ mb: 2, pb: 1.5, borderBottom: '1px solid #f1f5f9', letterSpacing: '-0.01em' }}>
+            {title}
+        </Typography>
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+            {children}
+        </Box>
+    </Paper>
+);
+
+// ─── Custom Tooltip ──────────────────────────────────────────────────
+const CustomTooltip = ({ active, payload, label, formatter }) => {
+    if (!active || !payload || !payload.length) return null;
+    return (
+        <Box sx={{ bgcolor: '#0f172a', borderRadius: '8px', px: 2, py: 1.5, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+            <Typography variant="caption" color="#94a3b8" fontWeight={600}>{label}</Typography>
+            {payload.map((p, i) => (
+                <Stack key={i} direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: p.color }} />
+                    <Typography variant="body2" fontWeight={700} color="white">
+                        {p.name}: {formatter ? formatter(p.value) : p.value}
+                    </Typography>
+                </Stack>
+            ))}
+        </Box>
+    );
+};
 
 const FinanceDashboard = () => {
     const [kpis, setKpis] = useState(null);
     const [trends, setTrends] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [filters, setFilters] = useState({});
+    const [showFilters, setShowFilters] = useState(false);
+    const [filters, setFilters] = useState({ datePreset: 'MONTH' });
 
-    // TODO: Context for Tenant
-    const tenantId = localStorage.getItem('tenantId') || 1;
+    const tenantId = localStorage.getItem('tenantId') || localStorage.getItem('defaultTenantId') || 1;
 
-    useEffect(() => {
-        fetchData();
-    }, [filters, tenantId]);
+    useEffect(() => { fetchData(); }, []);
 
     const fetchData = async () => {
         setLoading(true);
@@ -23,173 +65,115 @@ const FinanceDashboard = () => {
             const queryParams = new URLSearchParams();
             if (filters.startDate) queryParams.append('from', filters.startDate);
             if (filters.endDate) queryParams.append('to', filters.endDate);
-            // Default to MTD if no dates provided (handled by backend or here)
 
             const [kpiRes, trendRes] = await Promise.all([
-                axios.get(`/api/finance/dashboard/kpis?${queryParams.toString()}`, { headers: { 'X-Tenant-Id': tenantId } }),
-                // Trend mode logic: if range > 32 days, maybe YTD mode? For now default MTD or let backend decide
-                axios.get(`/api/finance/dashboard/trends/MTD?${queryParams.toString()}`, { headers: { 'X-Tenant-Id': tenantId } })
+                axios.get(`/finance/dashboard/kpis?${queryParams.toString()}`, { headers: { 'X-Tenant-Id': tenantId } }),
+                axios.get(`/finance/dashboard/trends/MTD?${queryParams.toString()}`, { headers: { 'X-Tenant-Id': tenantId } })
             ]);
             setKpis(kpiRes.data);
             setTrends(trendRes.data);
-        } catch (error) {
-            console.error("Error fetching finance dashboard data", error);
-        } finally {
-            setLoading(false);
-        }
+        } catch (error) { console.error('Error fetching finance dashboard data', error); }
+        finally { setLoading(false); }
     };
 
-    const handleFilterChange = (newFilters) => {
-        setFilters(newFilters);
+    const handleFilterChange = (keyOrObj, val) => {
+        if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));
+        else setFilters(prev => ({ ...prev, [keyOrObj]: val }));
     };
 
-    if (loading && !kpis) return <div className="p-8 text-center text-gray-500">Loading Finance Data...</div>;
+    // ─── KPI Cards ───────────────────────────────────────────────────────
+    const revenueKpis = useMemo(() => [
+        { title: 'Daily Net Revenue', value: formatCurrency(kpis?.dailyNetRevenue), subtitle: 'Today', icon: TrendingUp, color: '#3b82f6' },
+        { title: 'MTD Net Revenue', value: formatCurrency(kpis?.mtdNetRevenue), subtitle: 'Month to Date', icon: TrendingUp, color: '#6366f1' },
+        { title: 'YTD Net Revenue', value: formatCurrency(kpis?.ytdNetRevenue), subtitle: 'Year to Date', icon: TrendingUp, color: '#8b5cf6' },
+    ], [kpis]);
 
-    const KPITile = ({ title, value, icon: Icon, subtext, color = "blue" }) => (
-        <div className={`bg-white p-6 rounded-xl shadow-sm border-l-4 border-${color}-500 flex items-center justify-between`}>
-            <div>
-                <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider">{title}</p>
-                <h3 className="text-2xl font-bold mt-1 text-gray-900">{value}</h3>
-                {subtext && <p className={`text-xs mt-1 ${subtext.includes('-') ? 'text-red-500' : 'text-green-500'}`}>{subtext}</p>}
-            </div>
-            <div className={`p-3 bg-${color}-50 rounded-full text-${color}-600`}>
-                <Icon size={24} />
-            </div>
-        </div>
-    );
+    const volumeKpis = useMemo(() => [
+        { title: 'Daily Volume', value: formatCurrency(kpis?.dailyVolume), subtitle: 'Today', icon: Activity, color: '#10b981' },
+        { title: 'MTD Volume', value: formatCurrency(kpis?.mtdVolume), subtitle: 'Month to Date', icon: Activity, color: '#14b8a6' },
+        { title: 'YTD Volume', value: formatCurrency(kpis?.ytdVolume), subtitle: 'Year to Date', icon: Activity, color: '#06b6d4' },
+    ], [kpis]);
 
-    const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
+    const costKpis = useMemo(() => [
+        { title: 'MSF Revenue', value: formatCurrency(kpis?.msfRevenue), subtitle: 'Gross Fees', icon: DollarSign, color: '#3b82f6' },
+        { title: 'Interchange Costs', value: formatCurrency(kpis?.interchangeFees), subtitle: 'Network Costs', icon: CreditCard, color: '#f97316' },
+        { title: 'Scheme Fees', value: formatCurrency(kpis?.schemeFees), subtitle: 'Card Scheme Fees', icon: Activity, color: '#ef4444' },
+        { title: 'Margin %', value: `${kpis?.marginPct || 0}%`, subtitle: 'Net / Volume', icon: Percent, color: '#f59e0b' },
+    ], [kpis]);
 
     return (
-        <div className="p-8 bg-gray-50 min-h-screen font-sans">
-            <div className="flex justify-between items-center mb-8">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900">Finance Dashboard</h1>
-                    <p className="text-gray-500 mt-1">Financial performance overview and profitability metrics</p>
-                </div>
-            </div>
+        <Box sx={pageContainer}>
+            <PremiumReportHeader
+                title="Finance Dashboard" subtitle="Financial performance overview and profitability metrics"
+                icon={DollarSign}
+                onRunReport={fetchData} onFilterChange={handleFilterChange}
+                loading={loading} showFilters={showFilters}
+                onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
+            />
+            <BusinessFilters filters={filters} onChange={setFilters} onApply={fetchData} isOpen={showFilters} onClose={() => setShowFilters(false)} />
 
-            <BusinessFilterBar onFilterChange={handleFilterChange} />
+            {/* Revenue KPIs */}
+            <Typography variant="caption" fontWeight={700} color="#94a3b8"
+                sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1.5, display: 'block' }}>
+                Net Revenue Performance
+            </Typography>
+            <KpiCards cards={revenueKpis} />
 
-            {/* KPI Grid */}
-            {/* KPI Grid */}
-            <div className="mb-8">
-                <h3 className="text-lg font-bold text-gray-800 mb-4">Net Revenue Performance</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <KPITile title="Daily Net Revenue" value={formatCurrency(kpis?.dailyNetRevenue)} icon={TrendingUp} color="blue" subtext="Today" />
-                    <KPITile title="MTD Net Revenue" value={formatCurrency(kpis?.mtdNetRevenue)} icon={TrendingUp} color="indigo" subtext="Month to Date" />
-                    <KPITile title="YTD Net Revenue" value={formatCurrency(kpis?.ytdNetRevenue)} icon={TrendingUp} color="purple" subtext="Year to Date" />
-                </div>
-            </div>
+            {/* Volume KPIs */}
+            <Typography variant="caption" fontWeight={700} color="#94a3b8"
+                sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1.5, display: 'block' }}>
+                Volume Performance
+            </Typography>
+            <KpiCards cards={volumeKpis} />
 
-            <div className="mb-8">
-                <h3 className="text-lg font-bold text-gray-800 mb-4">Volume Performance</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <KPITile title="Daily Volume" value={formatCurrency(kpis?.dailyVolume)} icon={Activity} color="green" subtext="Today" />
-                    <KPITile title="MTD Volume" value={formatCurrency(kpis?.mtdVolume)} icon={Activity} color="teal" subtext="Month to Date" />
-                    <KPITile title="YTD Volume" value={formatCurrency(kpis?.ytdVolume)} icon={Activity} color="emerald" subtext="Year to Date" />
-                </div>
-            </div>
+            {/* Cost KPIs */}
+            <Typography variant="caption" fontWeight={700} color="#94a3b8"
+                sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1.5, display: 'block' }}>
+                Cost Analysis (MTD)
+            </Typography>
+            <KpiCards cards={costKpis} />
 
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Cost Analysis ({dateMode})</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <KPITile
-                    title="MSF Revenue"
-                    value={formatCurrency(kpis?.msfRevenue)}
-                    icon={DollarSign}
-                    color="blue"
-                    subtext="Gross Fees"
-                />
-                <KPITile
-                    title="Interchange Costs"
-                    value={formatCurrency(kpis?.interchangeFees)}
-                    icon={CreditCard}
-                    color="orange"
-                    subtext="Network Interchange"
-                />
-                <KPITile
-                    title="Scheme Fees"
-                    value={formatCurrency(kpis?.schemeFees)}
-                    icon={Activity}
-                    color="red"
-                    subtext="Card Scheme Fees"
-                />
-                <KPITile
-                    title="Margin %"
-                    value={`${kpis?.marginPct || 0}%`}
-                    icon={Percent}
-                    color="yellow"
-                    subtext="Net / Volume"
-                />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-                {/* Revenue Trend Chart */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">Revenue Trends ({dateMode})</h3>
-                    <div className="h-80">
+            {/* Charts */}
+            <Grid container spacing={2.5} sx={{ mb: 3 }}>
+                <Grid item xs={12} lg={6}>
+                    <ChartCard title="Revenue Trends (MTD)">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={trends}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="key" stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={(val) => val.slice(-2)} /> {/* Simple tick format */}
-                                <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={(val) => `$${val / 1000}k`} />
-                                <Tooltip
-                                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                                    formatter={(val) => formatCurrency(val)}
-                                />
-                                <Legend />
-                                <Line type="monotone" dataKey="netRevenue" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} name="Net Revenue" />
+                                <XAxis dataKey="key" stroke="#94a3b8" tick={{ fontSize: 11 }} tickFormatter={(val) => val?.slice?.(-2) || val} />
+                                <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} />
+                                <Tooltip content={<CustomTooltip formatter={formatCurrency} />} />
+                                <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
+                                <Line type="monotone" dataKey="netRevenue" stroke="#10b981" strokeWidth={3} dot={{ r: 3 }} name="Net Revenue" />
                                 <Line type="monotone" dataKey="msf" stroke="#3b82f6" strokeWidth={2} dot={false} name="MSF Rev" />
                                 <Line type="monotone" dataKey="interchange" stroke="#f97316" strokeWidth={2} dot={false} name="Interchange" />
                             </LineChart>
                         </ResponsiveContainer>
-                    </div>
-                </div>
+                    </ChartCard>
+                </Grid>
 
-                {/* Margin Trend Chart */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">Margin % Trend ({dateMode})</h3>
-                    <div className="h-80">
+                <Grid item xs={12} lg={6}>
+                    <ChartCard title="Margin % Trend (MTD)">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={trends}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="key" stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={(val) => val.slice(-2)} />
-                                <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 'auto']} tickFormatter={(val) => `${val}%`} />
-                                <Tooltip
-                                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                                    formatter={(val) => `${val}%`}
-                                />
-                                <Legend />
-                                <Line type="step" dataKey="marginPct" stroke="#8b5cf6" strokeWidth={3} dot={{ r: 4 }} name="Margin %" />
+                                <XAxis dataKey="key" stroke="#94a3b8" tick={{ fontSize: 11 }} tickFormatter={(val) => val?.slice?.(-2) || val} />
+                                <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} domain={[0, 'auto']} tickFormatter={(val) => `${val}%`} />
+                                <Tooltip content={<CustomTooltip formatter={(v) => `${v}%`} />} />
+                                <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
+                                <Line type="step" dataKey="marginPct" stroke="#8b5cf6" strokeWidth={3} dot={{ r: 3 }} name="Margin %" />
                             </LineChart>
                         </ResponsiveContainer>
-                    </div>
-                </div>
-            </div>
+                    </ChartCard>
+                </Grid>
+            </Grid>
 
-            {/* Quick Stats Row (Scheme Fees & VAT) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
-                    <div>
-                        <p className="text-sm font-semibold text-gray-500">Scheme Fees (Est.)</p>
-                        <h3 className="text-xl font-bold mt-1 text-gray-800">{formatCurrency(kpis?.schemeFees)}</h3>
-                    </div>
-                    <div className="p-2 bg-gray-100 rounded-lg text-gray-500">
-                        <Activity size={20} />
-                    </div>
-                </div>
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
-                    <div>
-                        <p className="text-sm font-semibold text-gray-500">VAT Collected</p>
-                        <h3 className="text-xl font-bold mt-1 text-gray-800">{formatCurrency(kpis?.vat)}</h3>
-                    </div>
-                    <div className="p-2 bg-gray-100 rounded-lg text-gray-500">
-                        <Activity size={20} />
-                    </div>
-                </div>
-            </div>
-
-        </div>
+            {/* Bottom KPI Row */}
+            <KpiCards cards={[
+                { title: 'Scheme Fees (Est.)', value: formatCurrency(kpis?.schemeFees), icon: Activity, color: '#64748b' },
+                { title: 'VAT Collected', value: formatCurrency(kpis?.vat), icon: Activity, color: '#64748b' },
+            ]} />
+        </Box>
     );
 };
 

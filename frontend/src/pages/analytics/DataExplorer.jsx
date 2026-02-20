@@ -18,7 +18,7 @@ import {
     ResponsiveContainer, PieChart as RPieChart, Pie, Cell, Legend,
     LineChart, Line, AreaChart, Area
 } from 'recharts';
-import { explorerApi, savedViewsApi } from '../../api/explorer';
+import { explorerApi, reportApi, savedViewsApi } from '../../api/explorer';
 
 /* ═══════════════════════════════════════════════════════
    DESIGN TOKENS
@@ -448,6 +448,12 @@ export default function DataExplorer() {
     };
     const delV = async id => { try { await savedViewsApi.remove(id); setViews((await savedViewsApi.list('DATA_EXPLORER')).data); if (activeView === id) setActiveView(null); } catch (e) {} };
     const exportCSV = () => { if (!rows.length) return; const h = Object.keys(rows[0]); const csv = [h.join(','), ...rows.map(r => h.map(k => `"${r[k] ?? ''}"`).join(','))].join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = 'explorer.csv'; a.click(); };
+    const exportExcel = async () => { if (!rows.length) return; try { const res = await reportApi.exportExcel({ reportName: 'Data Explorer Report', data: rows }); const a = document.createElement('a'); a.href = URL.createObjectURL(res.data); a.download = 'explorer_report.xlsx'; a.click(); } catch (e) { console.error('Excel export failed', e); } };
+    const [tplDlg, setTplDlg] = useState(false);
+    const [tplName, setTplName] = useState('');
+    const [tplDesc, setTplDesc] = useState('');
+    const [tplShared, setTplShared] = useState(false);
+    const saveTemplate = async () => { if (!tplName.trim()) return; try { await reportApi.createTemplate({ name: tplName, description: tplDesc, isShared: tplShared, userId: 0, configJson: JSON.stringify({ dimensions: dims.map(d => d.key), measures: meas.map(m => m.key), filters, startDate: sd, endDate: ed, chartType, viewMode }) }); setTplDlg(false); setTplName(''); setTplDesc(''); } catch (e) { console.error('Save template failed', e); } };
 
     const quickStart = k => {
         const af = [...(catalog.merchantFields || []), ...(catalog.transactionFields || [])];
@@ -614,8 +620,10 @@ export default function DataExplorer() {
                         sx={{ textTransform: 'none', fontWeight: 800, fontSize: 12, height: 34, borderRadius: '8px', px: 2.5, bgcolor: T.primary, '&:hover': { bgcolor: T.primaryDark }, '&:disabled': { bgcolor: '#e2e8f0', color: '#94a3b8' } }}>
                         Run Query
                     </Button>
-                    <Tooltip title="Save" arrow><IconButton size="small" onClick={() => setSaveDlg(true)} sx={{ color: T.td3, '&:hover': { color: T.primary } }}><Save size={15} /></IconButton></Tooltip>
-                    <Tooltip title="Export" arrow><IconButton size="small" onClick={exportCSV} disabled={!rows.length} sx={{ color: T.td3, '&:hover': { color: T.green } }}><Download size={15} /></IconButton></Tooltip>
+                    <Tooltip title="Save View" arrow><IconButton size="small" onClick={() => setSaveDlg(true)} sx={{ color: T.td3, '&:hover': { color: T.primary } }}><Save size={15} /></IconButton></Tooltip>
+                    <Tooltip title="Save as Report Template" arrow><IconButton size="small" onClick={() => setTplDlg(true)} sx={{ color: T.td3, '&:hover': { color: T.purple } }}><Bookmark size={15} /></IconButton></Tooltip>
+                    <Tooltip title="Export CSV" arrow><IconButton size="small" onClick={exportCSV} disabled={!rows.length} sx={{ color: T.td3, '&:hover': { color: T.green } }}><Download size={15} /></IconButton></Tooltip>
+                    <Tooltip title="Export Excel" arrow><IconButton size="small" onClick={exportExcel} disabled={!rows.length} sx={{ color: T.td3, '&:hover': { color: T.green } }}><Table2 size={15} /></IconButton></Tooltip>
                 </Paper>
 
                 {/* DROP ZONES */}
@@ -833,6 +841,24 @@ export default function DataExplorer() {
                 <DialogActions sx={{ px: 3, pb: 2.5 }}>
                     <Button onClick={() => setSaveDlg(false)} sx={{ textTransform: 'none', color: T.td3 }}>Cancel</Button>
                     <Button onClick={saveV} disabled={!vName.trim()} variant="contained" disableElevation sx={{ textTransform: 'none', fontWeight: 800, borderRadius: '8px', px: 3, bgcolor: T.primary, '&:disabled': { bgcolor: '#e2e8f0' } }}>Save</Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Save as Report Template Dialog */}
+            <Dialog open={tplDlg} onClose={() => setTplDlg(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: '14px', overflow: 'hidden' } }}>
+                <Box sx={{ p: 0.5, background: `linear-gradient(135deg, ${T.purple}22, ${T.primary}22)` }} />
+                <DialogTitle sx={{ fontWeight: 800, fontSize: 18, pb: 0 }}>Save as Report Template</DialogTitle>
+                <DialogContent sx={{ pt: 2 }}>
+                    <Typography sx={{ fontSize: 12.5, color: T.td3, mb: 2.5 }}>Save this analysis as a reusable report template</Typography>
+                    <TextField fullWidth label="Template Name" value={tplName} onChange={e => setTplName(e.target.value)} size="small" sx={{ mb: 2 }} />
+                    <TextField fullWidth label="Description" value={tplDesc} onChange={e => setTplDesc(e.target.value)} size="small" multiline rows={2} sx={{ mb: 2 }} />
+                    <Stack direction="row" spacing={2}>
+                        <FormControlLabel control={<Checkbox checked={tplShared} onChange={e => setTplShared(e.target.checked)} size="small" sx={{ color: T.purple, '&.Mui-checked': { color: T.purple } }} />} label={<Typography sx={{ fontSize: 12.5 }}>Share with team</Typography>} />
+                    </Stack>
+                </DialogContent>
+                <DialogActions sx={{ px: 3, pb: 2.5 }}>
+                    <Button onClick={() => setTplDlg(false)} sx={{ textTransform: 'none', color: T.td3 }}>Cancel</Button>
+                    <Button onClick={saveTemplate} disabled={!tplName.trim()} variant="contained" disableElevation sx={{ textTransform: 'none', fontWeight: 800, borderRadius: '8px', px: 3, bgcolor: T.purple, '&:disabled': { bgcolor: '#e2e8f0' } }}>Save Template</Button>
                 </DialogActions>
             </Dialog>
         </Box>

@@ -53,6 +53,41 @@ public class FileUploadController {
         }
     }
 
+    /**
+     * Process file(s) from the server filesystem (skip HTTP upload).
+     * Accepts a file path OR a folder path.
+     *
+     * If path is a FOLDER:
+     *   - Scans for .xlsx, .csv, .tsv files
+     *   - Auto-detects each as MERCHANT or TRANSACTION
+     *   - Processes MERCHANT files first (so dim tables exist for transactions)
+     *   - Then processes TRANSACTION files sequentially
+     *   - Returns summary of all jobs
+     *
+     * If path is a FILE: processes that single file.
+     *
+     * Usage:
+     *   POST /api/upload/process-server-file?path=/opt/acquira/data/uploads/
+     *   POST /api/upload/process-server-file?path=/opt/acquira/data/uploads/transactions.xlsx
+     */
+    @PostMapping("/process-server-file")
+    public ResponseEntity<?> processServerFile(@RequestParam("path") String filePath) {
+        try {
+            java.io.File target = new java.io.File(filePath);
+            if (!target.exists()) {
+                return ResponseEntity.badRequest().body(
+                    java.util.Map.of("error", "Path not found: " + filePath));
+            }
+
+            java.util.Map<String, Object> result = fileUploadService.processServerPath(filePath);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.badRequest().body(
+                java.util.Map.of("error", e.getMessage()));
+        }
+    }
+
     private java.util.Map<String, Object> mapJobExecution(org.springframework.batch.core.JobExecution execution,
             String message) {
         java.util.Map<String, Object> response = new java.util.HashMap<>();

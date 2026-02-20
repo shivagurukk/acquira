@@ -253,7 +253,7 @@ public class FileUploadService {
             try {
                 manualIngestionService.processManualUpload(targetTenantId);
             } catch (Exception e) {
-                System.err.println("Failed to update Reporting DB: " + e.getMessage());
+                log.warn("Failed to update Reporting DB: {}", e.getMessage());
                 // Don't fail the upload just because reporting failed
             }
 

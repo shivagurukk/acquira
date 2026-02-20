@@ -8,6 +8,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.time.LocalDateTime;
@@ -37,6 +38,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Map<String, Object>> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
         return buildError(HttpStatus.PAYLOAD_TOO_LARGE, "File size exceeds the maximum allowed limit.");
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        logger.warn("Type mismatch on parameter '{}': value='{}' (expected {})",
+                ex.getName(), ex.getValue(), ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "unknown");
+        return buildError(HttpStatus.BAD_REQUEST,
+                "Invalid parameter '" + ex.getName() + "': expected a valid number but received '" + ex.getValue() + "'");
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

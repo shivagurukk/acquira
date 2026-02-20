@@ -4,21 +4,23 @@
     <div th:fragment="scorecardContent">
         <div class="section-subtitle" style="margin-bottom: 10px;">Composite performance rating across all business dimensions</div>
 
-        <!-- HERO: Business Health Score — massive centered gauge -->
+        <!-- HERO: Business Health Score — dynamic gauge -->
         <div class="card mb-8" style="padding: 20px; text-align: center; background: linear-gradient(135deg, #FAFBFC 0%, #F0F4FF 100%); border: 1px solid #D1D5DB; position: relative; overflow: hidden;">
             <!-- Decorative rings -->
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 180px; height: 180px; border-radius: 50%; border: 1px solid rgba(37,99,235,0.06);"></div>
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 220px; height: 220px; border-radius: 50%; border: 1px solid rgba(37,99,235,0.03);"></div>
 
             <div style="font-size: 8px; font-weight: 700; color: #6B7280; letter-spacing: 0.08em; text-transform: uppercase;">Business Health Score</div>
-            <div style="font-size: 72px; font-weight: 900; color: #1E3A8A; line-height: 1; margin: 8px 0 4px 0; letter-spacing: -0.04em; position: relative; z-index: 2;">87</div>
+            <div th:style="'font-size: 72px; font-weight: 900; line-height: 1; margin: 8px 0 4px 0; letter-spacing: -0.04em; position: relative; z-index: 2; color: ' + ${dto.healthScore.gradeColor}"
+                 th:text="${dto.healthScore.compositeScore}">87</div>
             <div style="font-size: 14px; font-weight: 700; color: #6B7280; margin-bottom: 4px;">out of 100</div>
-            <div style="display: inline-block; background: #D1FAE5; color: #047857; padding: 3px 14px; border-radius: 4px; font-size: 9px; font-weight: 700;">STRONG PERFORMER</div>
+            <div th:style="'display: inline-block; padding: 3px 14px; border-radius: 4px; font-size: 9px; font-weight: 700; background: ' + ${dto.healthScore.gradeBgColor} + '; color: ' + ${dto.healthScore.gradeColor}"
+                 th:text="${dto.healthScore.gradeLabel}">STRONG PERFORMER</div>
 
             <!-- Score bar -->
             <div style="max-width: 400px; margin: 14px auto 0; position: relative;">
                 <div style="width: 100%; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden;">
-                    <div style="width: 87%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #2563EB, #3B82F6); border-radius: 4px;"></div>
+                    <div th:style="'width: ' + ${dto.healthScore.compositeScore} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #2563EB, #3B82F6); border-radius: 4px;'"></div>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 7px; color: #9CA3AF;">
                     <span>0 — Critical</span>
@@ -28,7 +30,7 @@
             </div>
         </div>
 
-        <!-- ROW 2: 5 Sub-Scores with visual bars -->
+        <!-- ROW 2: 5 Sub-Scores with visual bars — all dynamic -->
         <div class="card mb-8" style="padding: 0; overflow: hidden;">
             <div style="padding: 10px 16px; background: linear-gradient(135deg, #0F2042, #1E3A8A);">
                 <div style="font-size: 8.5px; font-weight: 800; color: white; letter-spacing: 0.04em; text-transform: uppercase;">Performance Dimensions</div>
@@ -42,11 +44,13 @@
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
-                            <div style="width: 82%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 5px;"></div>
+                            <div th:style="'width: ' + ${dto.healthScore.revenueHealthScore} + '%; height: 100%; background: linear-gradient(90deg, ' + ${dto.healthScore.revenueColor} + ', ' + ${dto.healthScore.revenueColor} + '88); border-radius: 5px;'"></div>
                         </div>
                     </div>
-                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #1E3A8A;">82</div>
-                    <div style="width: 28px;"><span style="background: #DBEAFE; color: #1E3A8A; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">A</span></div>
+                    <div th:style="'width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: ' + ${dto.healthScore.revenueColor}"
+                         th:text="${dto.healthScore.revenueHealthScore}">82</div>
+                    <div style="width: 28px;"><span th:style="'padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800; background: #DBEAFE; color: ' + ${dto.healthScore.revenueColor}"
+                         th:text="${dto.healthScore.revenueGrade}">A</span></div>
                 </div>
                 <!-- Growth Momentum -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
@@ -56,11 +60,13 @@
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
-                            <div style="width: 91%; height: 100%; background: linear-gradient(90deg, #047857, #34D399); border-radius: 5px;"></div>
+                            <div th:style="'width: ' + ${dto.healthScore.growthMomentumScore} + '%; height: 100%; background: linear-gradient(90deg, ' + ${dto.healthScore.growthColor} + ', ' + ${dto.healthScore.growthColor} + '88); border-radius: 5px;'"></div>
                         </div>
                     </div>
-                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #047857;">91</div>
-                    <div style="width: 28px;"><span style="background: #D1FAE5; color: #047857; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">A+</span></div>
+                    <div th:style="'width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: ' + ${dto.healthScore.growthColor}"
+                         th:text="${dto.healthScore.growthMomentumScore}">91</div>
+                    <div style="width: 28px;"><span th:style="'padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800; background: #D1FAE5; color: ' + ${dto.healthScore.growthColor}"
+                         th:text="${dto.healthScore.growthGrade}">A+</span></div>
                 </div>
                 <!-- Customer Loyalty -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
@@ -70,11 +76,13 @@
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
-                            <div style="width: 88%; height: 100%; background: linear-gradient(90deg, #6D28D9, #A78BFA); border-radius: 5px;"></div>
+                            <div th:style="'width: ' + ${dto.healthScore.customerLoyaltyScore} + '%; height: 100%; background: linear-gradient(90deg, ' + ${dto.healthScore.loyaltyColor} + ', ' + ${dto.healthScore.loyaltyColor} + '88); border-radius: 5px;'"></div>
                         </div>
                     </div>
-                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #6D28D9;">88</div>
-                    <div style="width: 28px;"><span style="background: #EDE9FE; color: #6D28D9; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">A</span></div>
+                    <div th:style="'width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: ' + ${dto.healthScore.loyaltyColor}"
+                         th:text="${dto.healthScore.customerLoyaltyScore}">88</div>
+                    <div style="width: 28px;"><span th:style="'padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800; background: #EDE9FE; color: ' + ${dto.healthScore.loyaltyColor}"
+                         th:text="${dto.healthScore.loyaltyGrade}">A</span></div>
                 </div>
                 <!-- Payment Efficiency -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
@@ -84,72 +92,94 @@
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
-                            <div style="width: 90%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 5px;"></div>
+                            <div th:style="'width: ' + ${dto.healthScore.paymentEfficiencyScore} + '%; height: 100%; background: linear-gradient(90deg, ' + ${dto.healthScore.paymentColor} + ', ' + ${dto.healthScore.paymentColor} + '88); border-radius: 5px;'"></div>
                         </div>
                     </div>
-                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #0D9488;">90</div>
-                    <div style="width: 28px;"><span style="background: #CCFBF1; color: #0D9488; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">A+</span></div>
+                    <div th:style="'width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: ' + ${dto.healthScore.paymentColor}"
+                         th:text="${dto.healthScore.paymentEfficiencyScore}">90</div>
+                    <div style="width: 28px;"><span th:style="'padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800; background: #CCFBF1; color: ' + ${dto.healthScore.paymentColor}"
+                         th:text="${dto.healthScore.paymentGrade}">A+</span></div>
                 </div>
-                <!-- DCC Performance -->
-                <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
+                <!-- DCC Performance (conditionally shown) -->
+                <div th:if="${dto.healthScore.dccApplicable}" style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
                     <div style="width: 110px; flex-shrink: 0;">
                         <div style="font-size: 9px; font-weight: 700; color: #111827;">DCC Performance</div>
                         <div style="font-size: 7.5px; color: #6B7280;">Conversion &amp; revenue capture</div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
-                            <div style="width: 48%; height: 100%; background: linear-gradient(90deg, #D97706, #FBBF24); border-radius: 5px;"></div>
+                            <div th:style="'width: ' + ${dto.healthScore.dccPerformanceScore} + '%; height: 100%; background: linear-gradient(90deg, ' + ${dto.healthScore.dccColor} + ', ' + ${dto.healthScore.dccColor} + '88); border-radius: 5px;'"></div>
                         </div>
                     </div>
-                    <div style="width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: #D97706;">48</div>
-                    <div style="width: 28px;"><span style="background: #FEF3C7; color: #D97706; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800;">C</span></div>
+                    <div th:style="'width: 36px; text-align: right; font-size: 14px; font-weight: 900; color: ' + ${dto.healthScore.dccColor}"
+                         th:text="${dto.healthScore.dccPerformanceScore}">48</div>
+                    <div style="width: 28px;"><span th:style="'padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800; background: #FEF3C7; color: ' + ${dto.healthScore.dccColor}"
+                         th:text="${dto.healthScore.dccGrade}">C</span></div>
+                </div>
+                <!-- DCC N/A row when not applicable -->
+                <div th:unless="${dto.healthScore.dccApplicable}" style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
+                    <div style="width: 110px; flex-shrink: 0;">
+                        <div style="font-size: 9px; font-weight: 700; color: #9CA3AF;">DCC Performance</div>
+                        <div style="font-size: 7.5px; color: #9CA3AF;">Not applicable (domestic only)</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="width: 100%; height: 10px; background: #F3F4F6; border-radius: 5px;"></div>
+                    </div>
+                    <div style="width: 36px; text-align: right; font-size: 11px; font-weight: 700; color: #9CA3AF;">N/A</div>
+                    <div style="width: 28px;"><span style="padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 800; background: #F3F4F6; color: #9CA3AF;">—</span></div>
                 </div>
             </div>
         </div>
 
-        <!-- ROW 3: Key Strengths + Improvement Areas -->
+        <!-- ROW 3: Key Strengths + Improvement Areas — all dynamic -->
         <div class="grid-2 mb-8" style="flex: 1; min-height: 0;">
             <div class="card" style="padding: 14px; border-top: 4px solid #059669;">
                 <div style="font-size: 8.5px; font-weight: 800; color: #059669; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;">&#9650; KEY STRENGTHS</div>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
-                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <!-- Strength 1 -->
+                    <div th:if="${dto.healthScore.strength1Title != null and dto.healthScore.strength1Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">1</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">Strong Growth Trajectory</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">12.5% YoY growth with consistent upward momentum across all months</div></div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.strength1Title}">Strength</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.strength1Detail}">Detail</div></div>
                     </div>
-                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <!-- Strength 2 -->
+                    <div th:if="${dto.healthScore.strength2Title != null and dto.healthScore.strength2Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">2</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">High Customer Retention</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">72% retention rate with VIP segment driving 45% of total revenue</div></div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.strength2Title}">Strength</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.strength2Detail}">Detail</div></div>
                     </div>
-                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <!-- Strength 3 -->
+                    <div th:if="${dto.healthScore.strength3Title != null and dto.healthScore.strength3Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">3</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">Excellent Payment Mix</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">98.2% card penetration, 45% wallet adoption growing 15% MoM</div></div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.strength3Title}">Strength</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.strength3Detail}">Detail</div></div>
                     </div>
                 </div>
             </div>
             <div class="card" style="padding: 14px; border-top: 4px solid #D97706;">
                 <div style="font-size: 8.5px; font-weight: 800; color: #D97706; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;">&#9660; IMPROVEMENT AREAS</div>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
-                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <!-- Improvement 1 -->
+                    <div th:if="${dto.healthScore.improve1Title != null and dto.healthScore.improve1Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">1</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">DCC Conversion at 12%</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">AED 1,840/month missed. Staff training could recover 60% immediately</div></div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve1Title}">Improvement</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve1Detail}">Detail</div></div>
                     </div>
-                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <!-- Improvement 2 -->
+                    <div th:if="${dto.healthScore.improve2Title != null and dto.healthScore.improve2Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">2</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">Mid-Week Revenue Gap</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">Tuesday &amp; Thursday underperform by 35%. Targeted promotions needed</div></div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve2Title}">Improvement</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve2Detail}">Detail</div></div>
                     </div>
-                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <!-- Improvement 3 -->
+                    <div th:if="${dto.healthScore.improve3Title != null and dto.healthScore.improve3Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">3</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;">At-Risk Customers (15%)</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;">Re-engagement campaign could shift 5% to Loyal tier, adding 10% revenue</div></div>
+                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve3Title}">Improvement</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve3Detail}">Detail</div></div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- AI Insight -->
+        <!-- AI Insight — dynamic summary -->
         <div class="ai-insight">
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">
-                <strong>Overall Assessment:</strong> Business scores 87/100 with exceptional growth momentum (91) and payment efficiency (90). The primary drag is DCC conversion at 48/100 — addressing this single dimension could lift the overall score to 92+. Focus Q2 on DCC staff training and mid-week activation.
+                <strong>Overall Assessment:</strong> <span th:text="${dto.healthScore.aiSummary}">Business scores 87/100 with strong performance.</span>
             </div>
         </div>
 

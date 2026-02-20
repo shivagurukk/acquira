@@ -186,7 +186,7 @@ h1,h2,h3,h4,h5,h6 {
    PAGE CONTENT
    ============================================= */
 .page-content {
-    flex: 1; padding: 14px 42px 6px 42px;
+    flex: 1; padding: 34px 42px 6px 42px;
     overflow: hidden; display: flex; flex-direction: column;
     position: relative; z-index: 2; min-height: 0;
 }

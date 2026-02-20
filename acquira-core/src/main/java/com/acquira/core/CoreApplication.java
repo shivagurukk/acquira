@@ -14,6 +14,9 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 public class CoreApplication {
     public static void main(String[] args) {
+        // Raise SpEL expression length limit BEFORE Spring context initializes.
+        // Required to support base64 image data URIs injected as Thymeleaf variables.
+        System.setProperty("spring.context.expression.maxLength", "500000");
         SpringApplication.run(CoreApplication.class, args);
     }
 }

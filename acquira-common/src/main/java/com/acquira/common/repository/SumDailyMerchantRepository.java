@@ -166,6 +166,7 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         "EXTRACT(YEAR FROM m.businessDate) as year, " +
                         "EXTRACT(MONTH FROM m.businessDate) as month, " +
                         "SUM(m.totalVolume) as totalVolume, " +
+                        "SUM(COALESCE(m.totalBaseVolume, m.totalVolume)) as totalBaseVolume, " +
                         "SUM(m.totalTxns) as totalTxns, " +
                         "SUM(COALESCE(m.uniqueCustomerCount, 0)) as uniqueCustomers, " +
                         // DCC Metrics

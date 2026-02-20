@@ -1,16 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutGrid, TrendingUp, Users, UserPlus, UserMinus, AlertCircle } from 'lucide-react';
+import { LayoutGrid, TrendingUp, Users, UserPlus, UserMinus, AlertCircle, Filter } from 'lucide-react';
 import Loader from '../../components/Loader';
 import BusinessFilters from '../../components/BusinessFilters';
 
 const BusinessDashboard = () => {
     const [kpis, setKpis] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [filters, setFilters] = useState({});
+    const [filters, setFilters] = useState({
+        startDate: '', endDate: '', openDateStart: '', openDateEnd: '',
+        partnerList: [], mccList: [], industryList: [], rmList: [], teamLeaderList: [],
+        sectorList: [], destinationList: [], schemeList: [], cardTypeList: [], channelList: [],
+        merchantName: '', midList: [], sidList: [],
+    });
+    const [filterOpen, setFilterOpen] = useState(false);
 
     useEffect(() => {
         fetchKpis();
-    }, [filters]);
+    }, []);
 
     const fetchKpis = async () => {
         setLoading(true);
@@ -33,10 +39,6 @@ const BusinessDashboard = () => {
         }
     };
 
-    const handleFilterChange = (newFilters) => {
-        setFilters(newFilters);
-    };
-
     const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
 
     return (
@@ -46,6 +48,12 @@ const BusinessDashboard = () => {
                     <LayoutGrid size={24} /> Business Dashboard
                 </h2>
                 <div className="flex items-center gap-4">
+                    <button
+                        onClick={() => setFilterOpen(true)}
+                        className="flex items-center gap-2 bg-white text-slate-600 px-4 py-2 rounded-lg text-sm font-semibold border border-slate-200 hover:bg-slate-50 transition-colors"
+                    >
+                        <Filter size={16} /> Filters
+                    </button>
                     <a href="/business/insights" className="flex items-center gap-2 bg-[#0B1630] text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-[#1F3B6D] transition-colors">
                         <TrendingUp size={16} /> VIEW PREMIUM INSIGHTS
                     </a>
@@ -57,24 +65,23 @@ const BusinessDashboard = () => {
                 </div>
             </div>
 
-            <BusinessFilters onFilterChange={handleFilterChange} />
+            <BusinessFilters
+                filters={filters}
+                onChange={setFilters}
+                onApply={fetchKpis}
+                isOpen={filterOpen}
+                onClose={() => setFilterOpen(false)}
+            />
 
             {loading ? <Loader /> : (
                 <>
-                    {/* KPI Grid */}
-                    {/* KPI Grid */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
-                        {/* Transaction Counts */}
                         <KpiTile title="Daily Transactions" value={kpis?.dailyCount} icon={LayoutGrid} color="blue" />
                         <KpiTile title="MTD Transactions" value={kpis?.mtdCount} icon={LayoutGrid} color="indigo" />
                         <KpiTile title="YTD Transactions" value={kpis?.ytdCount} icon={LayoutGrid} color="violet" />
-
-                        {/* Transaction Volumes */}
                         <KpiTile title="Daily Volume" value={formatCurrency(kpis?.dailyVolume)} icon={TrendingUp} color="green" />
                         <KpiTile title="MTD Volume" value={formatCurrency(kpis?.mtdVolume)} icon={TrendingUp} color="teal" />
                         <KpiTile title="YTD Volume" value={formatCurrency(kpis?.ytdVolume)} icon={TrendingUp} color="emerald" />
-
-                        {/* Merchant Stats */}
                         <KpiTile title="Active Merchants" value={kpis?.activeMerchants} icon={Users} color="cyan" />
                         <KpiTile title="New Merchants" value={kpis?.newMerchants} icon={UserPlus} color="lime" />
                         <KpiTile title="Dormant Merchants" value={kpis?.dormantMerchants} icon={UserMinus} color="orange" />
@@ -95,30 +102,21 @@ const BusinessDashboard = () => {
 
 const KpiTile = ({ title, value, icon: Icon, color }) => {
     const colors = {
-        blue: { bg: '#eff6ff', text: '#1d4ed8' },
-        green: { bg: '#f0fdf4', text: '#15803d' },
-        indigo: { bg: '#eef2ff', text: '#4338ca' },
-        teal: { bg: '#f0fdfa', text: '#0f766e' },
-        orange: { bg: '#fff7ed', text: '#c2410c' },
-        red: { bg: '#fef2f2', text: '#b91c1c' },
-        violet: { bg: '#f5f3ff', text: '#7c3aed' },
-        emerald: { bg: '#ecfdf5', text: '#059669' },
-        cyan: { bg: '#ecfeff', text: '#0891b2' },
-        lime: { bg: '#f7fee7', text: '#65a30d' },
+        blue: { bg: '#eff6ff', text: '#1d4ed8' }, green: { bg: '#f0fdf4', text: '#15803d' },
+        indigo: { bg: '#eef2ff', text: '#4338ca' }, teal: { bg: '#f0fdfa', text: '#0f766e' },
+        orange: { bg: '#fff7ed', text: '#c2410c' }, red: { bg: '#fef2f2', text: '#b91c1c' },
+        violet: { bg: '#f5f3ff', text: '#7c3aed' }, emerald: { bg: '#ecfdf5', text: '#059669' },
+        cyan: { bg: '#ecfeff', text: '#0891b2' }, lime: { bg: '#f7fee7', text: '#65a30d' },
     };
     const c = colors[color] || colors.blue;
-
     return (
         <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                <div style={{ padding: '8px', borderRadius: '8px', background: c.bg, color: c.text }}>
-                    <Icon size={20} />
-                </div>
-                {/* Could add % change here */}
+                <div style={{ padding: '8px', borderRadius: '8px', background: c.bg, color: c.text }}><Icon size={20} /></div>
             </div>
             <div>
                 <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '500' }}>{title}</div>
-                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a', marginTop: '4px' }}>{value}</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a', marginTop: '4px' }}>{value ?? '—'}</div>
             </div>
         </div>
     );

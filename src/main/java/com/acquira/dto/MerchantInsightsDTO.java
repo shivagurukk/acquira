@@ -15,6 +15,11 @@ public class MerchantInsightsDTO {
     // NEW: Currency support
     private String currencySymbol;
     private String currencyCode;
+    // NEW: Store-level leaderboard (top stores by volume)
+    private List<ChartData> storeLeaderboard; // label=storeName, value=volume, value2=txnCount, value3=avgTicket
+
+    public List<ChartData> getStoreLeaderboard() { return storeLeaderboard; }
+    public void setStoreLeaderboard(List<ChartData> v) { this.storeLeaderboard = v; }
 
     public MerchantInsightsDTO() {
     }
@@ -716,6 +721,9 @@ public class MerchantInsightsDTO {
         private List<ChartData> salesTimeOfDay;
         private List<ChartData> salesByDayOfMonth;
         private List<ChartData> salesAndAtvByDayOfWeek;
+        // NEW: Revenue Heatmap (Day×Hour), Txn Size Distribution
+        private List<ChartData> revenueHeatmap; // label="Mon|09", value=volume
+        private List<ChartData> txnSizeDistribution; // label="0-50", value=count, value2=pct
 
         public BusinessAchievements() {
         }
@@ -778,6 +786,11 @@ public class MerchantInsightsDTO {
         public void setSalesAndAtvByDayOfWeek(List<ChartData> salesAndAtvByDayOfWeek) {
             this.salesAndAtvByDayOfWeek = salesAndAtvByDayOfWeek;
         }
+
+        public List<ChartData> getRevenueHeatmap() { return revenueHeatmap; }
+        public void setRevenueHeatmap(List<ChartData> v) { this.revenueHeatmap = v; }
+        public List<ChartData> getTxnSizeDistribution() { return txnSizeDistribution; }
+        public void setTxnSizeDistribution(List<ChartData> v) { this.txnSizeDistribution = v; }
 
         public static BusinessAchievementsBuilder builder() {
             return new BusinessAchievementsBuilder();
@@ -842,30 +855,35 @@ public class MerchantInsightsDTO {
         private BigDecimal retentionRate;
         private BigDecimal totalUniqueCards;
         private BigDecimal repeatCardPct;
+        // NEW: Customer Intelligence metrics for p09
+        private BigDecimal avgVisitsPerMonth;
+        private Long singleVisitCards;
+        private BigDecimal singleVisitPct;
+        private BigDecimal singleVisitRevenue;
+        private Long repeatVisitCards;
+        private BigDecimal repeatVisitPct;
+        private BigDecimal repeatVisitRevenue;
 
-        public BigDecimal getRetentionRate() {
-            return retentionRate;
-        }
-
-        public void setRetentionRate(BigDecimal v) {
-            this.retentionRate = v;
-        }
-
-        public BigDecimal getTotalUniqueCards() {
-            return totalUniqueCards;
-        }
-
-        public void setTotalUniqueCards(BigDecimal v) {
-            this.totalUniqueCards = v;
-        }
-
-        public BigDecimal getRepeatCardPct() {
-            return repeatCardPct;
-        }
-
-        public void setRepeatCardPct(BigDecimal v) {
-            this.repeatCardPct = v;
-        }
+        public BigDecimal getRetentionRate() { return retentionRate; }
+        public void setRetentionRate(BigDecimal v) { this.retentionRate = v; }
+        public BigDecimal getTotalUniqueCards() { return totalUniqueCards; }
+        public void setTotalUniqueCards(BigDecimal v) { this.totalUniqueCards = v; }
+        public BigDecimal getRepeatCardPct() { return repeatCardPct; }
+        public void setRepeatCardPct(BigDecimal v) { this.repeatCardPct = v; }
+        public BigDecimal getAvgVisitsPerMonth() { return avgVisitsPerMonth; }
+        public void setAvgVisitsPerMonth(BigDecimal v) { this.avgVisitsPerMonth = v; }
+        public Long getSingleVisitCards() { return singleVisitCards; }
+        public void setSingleVisitCards(Long v) { this.singleVisitCards = v; }
+        public BigDecimal getSingleVisitPct() { return singleVisitPct; }
+        public void setSingleVisitPct(BigDecimal v) { this.singleVisitPct = v; }
+        public BigDecimal getSingleVisitRevenue() { return singleVisitRevenue; }
+        public void setSingleVisitRevenue(BigDecimal v) { this.singleVisitRevenue = v; }
+        public Long getRepeatVisitCards() { return repeatVisitCards; }
+        public void setRepeatVisitCards(Long v) { this.repeatVisitCards = v; }
+        public BigDecimal getRepeatVisitPct() { return repeatVisitPct; }
+        public void setRepeatVisitPct(BigDecimal v) { this.repeatVisitPct = v; }
+        public BigDecimal getRepeatVisitRevenue() { return repeatVisitRevenue; }
+        public void setRepeatVisitRevenue(BigDecimal v) { this.repeatVisitRevenue = v; }
 
         public ConsumerLoyalty() {
         }
@@ -1084,6 +1102,58 @@ public class MerchantInsightsDTO {
         private String peakSeason;
         private String lowSeason;
         private BigDecimal yoyGrowthPct;
+        // NEW: Credit/Debit/Prepaid card type metrics
+        private BigDecimal creditPct;
+        private BigDecimal creditVolume;
+        private Long creditTxnCount;
+        private BigDecimal debitPct;
+        private BigDecimal debitVolume;
+        private Long debitTxnCount;
+        private BigDecimal prepaidPct;
+        private BigDecimal prepaidVolume;
+        private Long prepaidTxnCount;
+        // NEW: Local vs International card metrics
+        private BigDecimal localCardPct;
+        private BigDecimal localCardVolume;
+        private Long localCardCustomers;
+        private BigDecimal internationalCardPct;
+        private BigDecimal internationalCardVolume;
+        private Long internationalCardCustomers;
+        // NEW: Avg Ticket by Card Type
+        private List<ChartData> avgTicketByCardType; // label=CREDIT/DEBIT/PREPAID, value=ATV, value2=volume, value3=count
+
+        public BigDecimal getCreditPct() { return creditPct; }
+        public void setCreditPct(BigDecimal v) { this.creditPct = v; }
+        public BigDecimal getCreditVolume() { return creditVolume; }
+        public void setCreditVolume(BigDecimal v) { this.creditVolume = v; }
+        public Long getCreditTxnCount() { return creditTxnCount; }
+        public void setCreditTxnCount(Long v) { this.creditTxnCount = v; }
+        public BigDecimal getDebitPct() { return debitPct; }
+        public void setDebitPct(BigDecimal v) { this.debitPct = v; }
+        public BigDecimal getDebitVolume() { return debitVolume; }
+        public void setDebitVolume(BigDecimal v) { this.debitVolume = v; }
+        public Long getDebitTxnCount() { return debitTxnCount; }
+        public void setDebitTxnCount(Long v) { this.debitTxnCount = v; }
+        public BigDecimal getPrepaidPct() { return prepaidPct; }
+        public void setPrepaidPct(BigDecimal v) { this.prepaidPct = v; }
+        public BigDecimal getPrepaidVolume() { return prepaidVolume; }
+        public void setPrepaidVolume(BigDecimal v) { this.prepaidVolume = v; }
+        public Long getPrepaidTxnCount() { return prepaidTxnCount; }
+        public void setPrepaidTxnCount(Long v) { this.prepaidTxnCount = v; }
+        public BigDecimal getLocalCardPct() { return localCardPct; }
+        public void setLocalCardPct(BigDecimal v) { this.localCardPct = v; }
+        public BigDecimal getLocalCardVolume() { return localCardVolume; }
+        public void setLocalCardVolume(BigDecimal v) { this.localCardVolume = v; }
+        public Long getLocalCardCustomers() { return localCardCustomers; }
+        public void setLocalCardCustomers(Long v) { this.localCardCustomers = v; }
+        public BigDecimal getInternationalCardPct() { return internationalCardPct; }
+        public void setInternationalCardPct(BigDecimal v) { this.internationalCardPct = v; }
+        public BigDecimal getInternationalCardVolume() { return internationalCardVolume; }
+        public void setInternationalCardVolume(BigDecimal v) { this.internationalCardVolume = v; }
+        public Long getInternationalCardCustomers() { return internationalCardCustomers; }
+        public void setInternationalCardCustomers(Long v) { this.internationalCardCustomers = v; }
+        public List<ChartData> getAvgTicketByCardType() { return avgTicketByCardType; }
+        public void setAvgTicketByCardType(List<ChartData> v) { this.avgTicketByCardType = v; }
 
         public String getCreditDebitRatio() {
             return creditDebitRatio;
@@ -1452,6 +1522,39 @@ public class MerchantInsightsDTO {
         private BigDecimal dccOptoutVolume;
         private BigDecimal dccConversionRate;
         private BigDecimal dccMissedRevenue;
+        // NEW: Opt-in/Opt-out counts and revenue for p09-customer-intel
+        private Long optInCount;
+        private BigDecimal optInRevenue;
+        private Long optOutCount;
+        private BigDecimal optOutRevenue;
+        private BigDecimal optOutDeclineRate;
+        private Long dccEligibleCount;
+        private Long dccOptinCountLong;
+
+        public Long getOptInCount() { return optInCount; }
+        public void setOptInCount(Long v) { this.optInCount = v; }
+        public BigDecimal getOptInRevenue() { return optInRevenue; }
+        public void setOptInRevenue(BigDecimal v) { this.optInRevenue = v; }
+        public Long getOptOutCount() { return optOutCount; }
+        public void setOptOutCount(Long v) { this.optOutCount = v; }
+        public BigDecimal getOptOutRevenue() { return optOutRevenue; }
+        public void setOptOutRevenue(BigDecimal v) { this.optOutRevenue = v; }
+        public BigDecimal getOptOutDeclineRate() { return optOutDeclineRate; }
+        public void setOptOutDeclineRate(BigDecimal v) { this.optOutDeclineRate = v; }
+        public Long getDccEligibleCount() { return dccEligibleCount; }
+        public void setDccEligibleCount(Long v) { this.dccEligibleCount = v; }
+        public Long getDccOptinCountLong() { return dccOptinCountLong; }
+        public void setDccOptinCountLong(Long v) { this.dccOptinCountLong = v; }
+        // NEW: DCC Funnel — total international txn volume for the funnel top
+        private Long totalIntlTxnCount;
+        private BigDecimal totalIntlVolume;
+        private BigDecimal dccRevenueGenerated; // actual margin earned from DCC opt-ins
+        public Long getTotalIntlTxnCount() { return totalIntlTxnCount; }
+        public void setTotalIntlTxnCount(Long v) { this.totalIntlTxnCount = v; }
+        public BigDecimal getTotalIntlVolume() { return totalIntlVolume; }
+        public void setTotalIntlVolume(BigDecimal v) { this.totalIntlVolume = v; }
+        public BigDecimal getDccRevenueGenerated() { return dccRevenueGenerated; }
+        public void setDccRevenueGenerated(BigDecimal v) { this.dccRevenueGenerated = v; }
 
         public BigDecimal getDccEligibleVolume() {
             return dccEligibleVolume;

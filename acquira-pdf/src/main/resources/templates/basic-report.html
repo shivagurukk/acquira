@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title th:text="|${merchantName} - Performance Report|">Report</title>
+    <title th:text="|${merchantName} - AFS Pulse Report|">AFS Pulse Report</title>
     <style>
         @font-face { font-family: 'Inter'; font-weight: 400; src: url('/assets/fonts/Inter-Regular.ttf') format('truetype'); }
         @font-face { font-family: 'Inter'; font-weight: 500; src: url('/assets/fonts/Inter-Medium.ttf') format('truetype'); }
@@ -37,17 +37,7 @@
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 3: MONTH-OVER-MONTH COMPARISON -->
-    <div class="page" id="page-mom-compare">
-        <div th:replace="~{partials/header :: header(title='MONTH-OVER-MONTH COMPARISON', subtitle=${reportPeriod})}">
-        </div>
-        <div class="page-content">
-            <div th:replace="~{pages/p01e-mom-compare :: momCompareContent}"></div>
-        </div>
-        <div th:replace="~{partials/footer :: footer}"></div>
-    </div>
-
-    <!-- PAGE 4: EXECUTIVE SUMMARY -->
+    <!-- PAGE 3: EXECUTIVE SUMMARY (MoM + KPIs + Actions) -->
     <div class="page" id="page-exec-summary">
         <div th:replace="~{partials/header :: header(title='EXECUTIVE SUMMARY', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
@@ -56,16 +46,7 @@
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 5: BUSINESS OVERVIEW -->
-    <div class="page" id="page-overview">
-        <div th:replace="~{partials/header :: header(title='BUSINESS OVERVIEW', subtitle=${reportPeriod})}"></div>
-        <div class="page-content">
-            <div th:replace="~{pages/p02-overview :: overviewContent}"></div>
-        </div>
-        <div th:replace="~{partials/footer :: footer}"></div>
-    </div>
-
-    <!-- PAGE 6: BUSINESS ACHIEVEMENTS -->
+    <!-- PAGE 4: BUSINESS ACHIEVEMENTS -->
     <div class="page" id="page-peak">
         <div th:replace="~{partials/header :: header(title='BUSINESS ACHIEVEMENTS', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
@@ -74,80 +55,79 @@
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 7: DAILY SALES PERFORMANCE -->
+    <!-- PAGE 5: SALES & HOURLY INTELLIGENCE -->
     <div class="page" id="page-sales-trends">
-        <div th:replace="~{partials/header :: header(title='DAILY SALES PERFORMANCE', subtitle=${reportPeriod})}"></div>
+        <div th:replace="~{partials/header :: header(title='SALES &amp; HOURLY INTELLIGENCE', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
             <div th:replace="~{pages/p04-sales-trends :: salesTrendsContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 8: REVENUE & WEEKLY INTELLIGENCE -->
-    <div class="page" id="page-revenue">
-        <div th:replace="~{partials/header :: header(title='REVENUE & WEEKLY INTELLIGENCE', subtitle=${reportPeriod})}">
-        </div>
+    <!-- PAGE 5b: REVENUE HEATMAP & TXN SIZE DISTRIBUTION -->
+    <div class="page" id="page-heatmap">
+        <div th:replace="~{partials/header :: header(title='OPERATIONAL INTELLIGENCE', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
-            <div th:replace="~{pages/p05-revenue :: revenueContent}"></div>
+            <div th:replace="~{pages/p04b-heatmap :: heatmapContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 9: REVENUE BY DAY TYPE -->
-    <div class="page" id="page-day-type">
-        <div th:replace="~{partials/header :: header(title='REVENUE BY DAY TYPE', subtitle=${reportPeriod})}"></div>
-        <div class="page-content">
-            <div th:replace="~{pages/p06-day-type :: dayTypeContent}"></div>
-        </div>
-        <div th:replace="~{partials/footer :: footer}"></div>
-    </div>
-
-    <!-- PAGE 10: GROWTH TRAJECTORY -->
+    <!-- PAGE 6: GROWTH & SEASONALITY -->
     <div class="page" id="page-growth">
-        <div th:replace="~{partials/header :: header(title='GROWTH TRAJECTORY', subtitle=${reportPeriod})}"></div>
+        <div th:replace="~{partials/header :: header(title='GROWTH &amp; SEASONALITY', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
             <div th:replace="~{pages/p07-growth :: growthContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 11: PAYMENT ECOSYSTEM & CONSUMER LOYALTY (MERGED) -->
-    <div class="page" id="page-payment-loyalty">
-        <div th:replace="~{partials/header :: header(title='PAYMENT &amp; LOYALTY', subtitle=${reportPeriod})}"></div>
+    <!-- PAGE 7: CARD & PAYMENT ANALYTICS -->
+    <div class="page" id="page-card-analytics">
+        <div th:replace="~{partials/header :: header(title='CARD &amp; PAYMENT ANALYTICS', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
-            <div th:replace="~{pages/p08-payment-loyalty :: paymentLoyaltyContent}"></div>
+            <div th:replace="~{pages/p08-card-analytics :: cardAnalyticsContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 12: MONTHLY TRENDS -->
-    <div class="page" id="page-monthly-trends">
-        <div th:replace="~{partials/header :: header(title='MONTHLY TRENDS', subtitle=${reportPeriod})}"></div>
+    <!-- PAGE 8: CUSTOMER INTELLIGENCE -->
+    <div class="page" id="page-customer-intel">
+        <div th:replace="~{partials/header :: header(title='CUSTOMER INTELLIGENCE', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
-            <div th:replace="~{pages/p10-monthly-trends :: monthlyTrendsContent}"></div>
+            <div th:replace="~{pages/p09-customer-intel :: customerIntelContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 13: TRANSACTION TRENDS -->
-    <div class="page" id="page-transaction">
-        <div th:replace="~{partials/header :: header(title='TRANSACTION TRENDS', subtitle=${reportPeriod})}"></div>
-        <div class="page-content">
-            <div th:replace="~{pages/p11-transaction :: transactionContent}"></div>
-        </div>
-        <div th:replace="~{partials/footer :: footer}"></div>
-    </div>
-
-    <!-- PAGE 14: DCC REVENUE -->
+    <!-- PAGE 9: DCC REVENUE -->
     <div class="page" id="page-dcc">
-        <div th:replace="~{partials/header :: header(title='DCC REVENUE', subtitle=${reportPeriod})}"></div>
+        <div th:replace="~{partials/header :: header(title='DCC REVENUE OPTIMIZATION', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
             <div th:replace="~{pages/p12-dcc :: dccContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 15: CLOSING — PERFORMANCE SCORECARD -->
+    <!-- PAGE 9b: STORE LEADERBOARD (only if multi-store) -->
+    <div class="page" id="page-store-leaderboard" th:if="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1}">
+        <div th:replace="~{partials/header :: header(title='STORE PERFORMANCE', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p05b-store-leaderboard :: storeLeaderboardContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 10: GLOSSARY & DEFINITIONS -->
+    <div class="page" id="page-glossary">
+        <div th:replace="~{partials/header :: header(title='GLOSSARY &amp; DEFINITIONS', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p13-glossary :: glossaryContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 11: CLOSING — PERFORMANCE SCORECARD -->
     <div class="page" id="page-closing">
         <div th:replace="~{pages/p99-closing :: closingContent}"></div>
     </div>
@@ -168,6 +148,8 @@
 
             renderCharts();
             renderHorizontalBars();
+            renderRevenueHeatmap();
+            renderTxnSizeDistribution();
         });
 
         function getNestedValue(obj, path) {
@@ -179,7 +161,6 @@
         function createGradient(ctx, color, height) {
             const grad = ctx.createLinearGradient(0, 0, 0, height || 300);
             grad.addColorStop(0, color);
-            // Lighten by mixing toward white — less wash-out (0.38 instead of 0.55)
             const r = parseInt(color.slice(1, 3), 16), g = parseInt(color.slice(3, 5), 16), b = parseInt(color.slice(5, 7), 16);
             const lr = Math.min(255, r + Math.round((255 - r) * 0.38));
             const lg = Math.min(255, g + Math.round((255 - g) * 0.38));
@@ -201,9 +182,29 @@
                 let rawData = getNestedValue(window.reportData, fieldPath);
                 if (!rawData || !Array.isArray(rawData)) { return; }
 
-                const labels = rawData.map(d => d && d.label ? d.label : '');
+                let labels = rawData.map(d => d && d.label ? d.label : '');
                 const values = rawData.map(d => d && d.value != null ? Number(d.value) : 0);
                 const values2 = rawData.map(d => d && d.value2 != null ? Number(d.value2) : 0);
+
+                // For daily charts, convert date labels (e.g. '2026-01-15') to day numbers (e.g. '15')
+                var isDailyChart = fieldPath && (fieldPath.indexOf('daily') >= 0 || fieldPath.indexOf('Daily') >= 0 || fieldPath.indexOf('uniqueCustomersByDay') >= 0);
+                // Exclude day-of-week charts (Mon/Tue/Wed etc.) from date conversion
+                var isDayOfWeekChart = fieldPath && (fieldPath.indexOf('DayOfWeek') >= 0 || fieldPath.indexOf('dayOfWeek') >= 0);
+                if (isDailyChart && !isDayOfWeekChart) {
+                    labels = labels.map(function(lbl) {
+                        if (!lbl) return '';
+                        var s = String(lbl).trim();
+                        // Handle 'YYYY-MM-DD' or 'YYYY-MM-DDThh:mm:ss' format
+                        var parts = s.split('T')[0].split('-');
+                        if (parts.length === 3 && parts[0].length === 4) return String(parseInt(parts[2], 10));
+                        // Handle 'DD/MM/YYYY' format
+                        var slashParts = s.split('/');
+                        if (slashParts.length === 3) return String(parseInt(slashParts[0], 10));
+                        // Handle 'DD-Mon-YYYY' format (e.g. '15-Jan-2026')
+                        if (parts.length === 3 && parts[0].length <= 2) return String(parseInt(parts[0], 10));
+                        return s;
+                    });
+                }
 
                 const bf = { family: 'Inter', size: 10, weight: '700' };
                 const common = {
@@ -226,7 +227,6 @@
                 if (type === 'sparkline') {
                     const ctx = canvas.getContext('2d');
                     const sparkGrad = ctx.createLinearGradient(0, 0, 0, 50);
-                    // Parse hex to rgba
                     const hr = parseInt(color.slice(1, 3), 16), hg = parseInt(color.slice(3, 5), 16), hb = parseInt(color.slice(5, 7), 16);
                     sparkGrad.addColorStop(0, 'rgba(' + hr + ',' + hg + ',' + hb + ',0.28)');
                     sparkGrad.addColorStop(1, 'rgba(' + hr + ',' + hg + ',' + hb + ',0.02)');
@@ -248,7 +248,6 @@
 
                 /* ---- AREA ---- */
                 else if (type === 'area') {
-                    // Highlight last point with larger radius
                     const ptRadius = values.map((v, i) => i === values.length - 1 ? 5 : 2.5);
                     const ptBorderW = values.map((v, i) => i === values.length - 1 ? 3 : 2);
                     config = {
@@ -290,19 +289,27 @@
                     };
                 }
 
-                /* ---- GRADIENT BAR (with highlight + data labels) ---- */
+                /* ---- GRADIENT BAR (with highlight + data labels + P5C peak day gold) ---- */
                 else if (type === 'gradient-bar') {
                     const ctx = canvas.getContext('2d');
                     const grad = createGradient(ctx, color, canvas.parentElement.clientHeight || 200);
-                    // Highlight last bar + find max/min indices
                     const maxIdx = values.indexOf(Math.max(...values.filter(v => v > 0)));
-                    const minIdx = values.indexOf(Math.min(...values.filter(v => v > 0)));
                     const lastIdx = values.length - 1;
-                    // Per-bar colors: highlight last bar with brighter shade
                     const r = parseInt(color.slice(1, 3), 16), g = parseInt(color.slice(3, 5), 16), b = parseInt(color.slice(5, 7), 16);
                     const highlightColor = `rgba(${Math.min(255, r + 40)},${Math.min(255, g + 40)},${Math.min(255, b + 40)},1)`;
-                    const barColors = values.map((v, i) => i === lastIdx ? highlightColor : grad);
-                    const barBorders = values.map((v, i) => i === lastIdx ? color : 'transparent');
+                    // P5C: Peak day highlight — use gold for peak day bar on daily sales charts
+                    const peakDayIdx = (window.reportData && window.reportData.insights) ? window.reportData.insights.peakDayIndex : -1;
+                    const goldGrad = ctx.createLinearGradient(0, 0, 0, canvas.parentElement.clientHeight || 200);
+                    goldGrad.addColorStop(0, '#F59E0B'); goldGrad.addColorStop(1, '#FDE68A');
+                    const barColors = values.map((v, i) => {
+                        if (isDailyChart && !isDayOfWeekChart && i === peakDayIdx) return goldGrad;
+                        if (i === lastIdx) return highlightColor;
+                        return grad;
+                    });
+                    const barBorders = values.map((v, i) => {
+                        if (isDailyChart && !isDayOfWeekChart && i === peakDayIdx) return '#D97706';
+                        return i === lastIdx ? color : 'transparent';
+                    });
                     config = {
                         type: 'bar',
                         data: {
@@ -325,7 +332,6 @@
                             }
                         }
                     };
-                    // Register a plugin to draw value labels on ALL bars
                     config.plugins = [{
                         id: 'allLabels',
                         afterDraw: function (chart) {
@@ -337,16 +343,23 @@
                                 if (!bar || values[i] === 0) return;
                                 const val = values[i];
                                 const fmt = val >= 1000000 ? (val / 1000000).toFixed(1) + 'M' : val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val.toLocaleString();
-                                /* Bold dark labels for all bars, extra bold for max */
-                                if (i === maxIdx) {
+                                // P5C: Gold star + bold label on peak day
+                                if (isDailyChart && !isDayOfWeekChart && i === peakDayIdx) {
+                                    ctx.font = '900 10px Inter';
+                                    ctx.fillStyle = '#92400E';
+                                    ctx.textAlign = 'center';
+                                    ctx.fillText('★ ' + fmt, bar.x, bar.y - 6);
+                                } else if (i === maxIdx) {
                                     ctx.font = '900 10px Inter';
                                     ctx.fillStyle = '#0F172A';
+                                    ctx.textAlign = 'center';
+                                    ctx.fillText(fmt, bar.x, bar.y - 6);
                                 } else {
                                     ctx.font = '700 9px Inter';
                                     ctx.fillStyle = '#334155';
+                                    ctx.textAlign = 'center';
+                                    ctx.fillText(fmt, bar.x, bar.y - 6);
                                 }
-                                ctx.textAlign = 'center';
-                                ctx.fillText(fmt, bar.x, bar.y - 6);
                             });
                             ctx.restore();
                         }
@@ -393,9 +406,7 @@
                         options: {
                             ...common,
                             plugins: {
-                                ...common.plugins, legend: {
-                                    display: false
-                                }
+                                ...common.plugins, legend: { display: false }
                             },
                             scales: {
                                 x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: '#1E293B', maxTicksLimit: 10, maxRotation: 45 } },
@@ -462,7 +473,6 @@
             let rawData = getNestedValue(window.reportData, dataPath);
             let items = [];
 
-            // Support both Array<ChartData> and Map<String, BigDecimal>
             if (Array.isArray(rawData)) {
                 items = rawData.slice(0, 7).map(d => ({ label: d.label || '', value: Number(d.value) || 0 }));
             } else if (rawData && typeof rawData === 'object') {
@@ -474,7 +484,6 @@
                 return;
             }
 
-            // Sort descending
             items.sort((a, b) => b.value - a.value);
             const maxVal = items[0].value || 1;
             const colors = colorSet || ['#1E3A8A', '#2563EB', '#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE', '#DBEAFE'];
@@ -496,19 +505,123 @@
             container.innerHTML = html;
         }
 
+        /* ------ Revenue Heatmap renderer ------ */
+        function renderRevenueHeatmap() {
+            const container = document.getElementById('revenue-heatmap-grid');
+            if (!container) return;
+            const heatmapData = getNestedValue(window.reportData, 'achievements.revenueHeatmap');
+            if (!Array.isArray(heatmapData) || heatmapData.length === 0) {
+                container.innerHTML = '<div style="color:#6B7280;font-size:9px;text-align:center;padding:20px;">No heatmap data available</div>';
+                return;
+            }
+            const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+            const hours = Array.from({length:24}, (_,i) => String(i).padStart(2,'0'));
+            // Build lookup
+            const grid = {};
+            let maxVal = 0;
+            heatmapData.forEach(d => {
+                const v = Number(d.value) || 0;
+                grid[d.label] = v;
+                if (v > maxVal) maxVal = v;
+            });
+            // Find peak hour, peak day, dead zone
+            const hourTotals = {}; const dayTotals = {};
+            days.forEach(day => { dayTotals[day] = 0; hours.forEach(h => { const k = day+'|'+h; const v = grid[k]||0; dayTotals[day]+=v; hourTotals[h]=(hourTotals[h]||0)+v; }); });
+            const peakHour = Object.entries(hourTotals).sort((a,b)=>b[1]-a[1])[0];
+            const peakDay = Object.entries(dayTotals).sort((a,b)=>b[1]-a[1])[0];
+            const deadHour = Object.entries(hourTotals).filter(e=>e[1]>0).sort((a,b)=>a[1]-b[1])[0] || Object.entries(hourTotals).sort((a,b)=>a[1]-b[1])[0];
+            const currency = window.reportData.currencySymbol || 'AED';
+            const fmt = v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(1)+'k' : Math.round(v).toLocaleString();
+            // Set summary cards
+            const phEl = document.getElementById('heatmap-peak-hour');
+            if (phEl && peakHour) { phEl.textContent = peakHour[0]+':00'; document.getElementById('heatmap-peak-hour-rev').textContent = currency+' '+fmt(peakHour[1])+' total'; }
+            const pdEl = document.getElementById('heatmap-peak-day');
+            if (pdEl && peakDay) { pdEl.textContent = peakDay[0]; document.getElementById('heatmap-peak-day-rev').textContent = currency+' '+fmt(peakDay[1])+' total'; }
+            const dzEl = document.getElementById('heatmap-dead-zone');
+            if (dzEl && deadHour) { dzEl.textContent = deadHour[0]+':00'; }
+            // Color function
+            function getColor(val) {
+                if (maxVal === 0) return '#F9FAFB';
+                const pct = val / maxVal;
+                if (pct === 0) return '#F9FAFB';
+                if (pct < 0.15) return '#EFF6FF';
+                if (pct < 0.3) return '#DBEAFE';
+                if (pct < 0.5) return '#93C5FD';
+                if (pct < 0.7) return '#3B82F6';
+                if (pct < 0.85) return '#1E3A8A';
+                return '#DC2626';
+            }
+            function getTextColor(val) {
+                if (maxVal === 0) return '#CBD5E1';
+                const pct = val / maxVal;
+                return pct > 0.45 ? '#FFFFFF' : '#374151';
+            }
+            // Build HTML grid
+            let html = '<div style="display:grid;grid-template-columns:32px repeat(24,1fr);gap:1px;font-size:6.5px;">';
+            // Header row
+            html += '<div style="font-weight:700;color:#6B7280;display:flex;align-items:center;justify-content:center;"></div>';
+            hours.forEach(h => { html += '<div style="font-weight:700;color:#6B7280;text-align:center;padding:2px 0;">'+h+'</div>'; });
+            // Data rows
+            days.forEach(day => {
+                html += '<div style="font-weight:800;color:#1E293B;display:flex;align-items:center;padding-right:4px;">'+day+'</div>';
+                hours.forEach(h => {
+                    const k = day+'|'+h;
+                    const v = grid[k] || 0;
+                    const bg = getColor(v);
+                    const tc = getTextColor(v);
+                    const label = v > 0 ? fmt(v) : '';
+                    html += '<div style="background:'+bg+';color:'+tc+';text-align:center;padding:5px 1px;border-radius:2px;font-size:5.5px;font-weight:600;line-height:1;">'+label+'</div>';
+                });
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        /* ------ Txn Size Distribution renderer ------ */
+        function renderTxnSizeDistribution() {
+            const container = document.getElementById('txn-size-dist-chart');
+            if (!container) return;
+            const distData = getNestedValue(window.reportData, 'achievements.txnSizeDistribution');
+            if (!Array.isArray(distData) || distData.length === 0) {
+                container.innerHTML = '<div style="color:#6B7280;font-size:9px;text-align:center;padding:20px;">No transaction size data available</div>';
+                return;
+            }
+            const maxPct = Math.max(...distData.map(d => Number(d.value2) || 0), 1);
+            const currency = window.reportData.currencySymbol || 'AED';
+            const fmt = v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(1)+'k' : Number(v).toLocaleString();
+            const colors = ['#DBEAFE','#93C5FD','#3B82F6','#2563EB','#1E3A8A','#1E40AF','#0F2042'];
+            let html = '';
+            distData.forEach((d, i) => {
+                const pct = Number(d.value2) || 0;
+                const cnt = Number(d.value) || 0;
+                const vol = Number(d.value3) || 0;
+                const barW = Math.max(pct / maxPct * 100, 8);
+                html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">';
+                html += '<div style="width:45px;font-size:8px;font-weight:700;color:#374151;text-align:right;">'+d.label+'</div>';
+                html += '<div style="flex:1;height:16px;background:#F3F4F6;border-radius:3px;overflow:hidden;position:relative;">';
+                html += '<div style="width:'+barW+'%;height:100%;background:'+colors[i%colors.length]+';border-radius:3px;display:flex;align-items:center;padding-left:6px;">';
+                html += '<span style="font-size:6.5px;font-weight:700;color:'+(barW > 30 ? 'white' : '#374151')+';">'+ pct+'%</span>';
+                html += '</div></div>';
+                html += '<div style="width:70px;font-size:7px;color:#6B7280;text-align:right;">'+fmt(cnt)+' txns</div>';
+                html += '<div style="width:70px;font-size:7px;color:#1E3A8A;font-weight:700;text-align:right;">'+currency+' '+fmt(vol)+'</div>';
+                html += '</div>';
+            });
+            container.innerHTML = html;
+        }
+
         /* ------ Render all horizontal bar sections ------ */
         function renderHorizontalBars() {
-            const currency = window.reportData.currencySymbol || 'AED'; // Default fallback
+            const currency = window.reportData.currencySymbol || 'AED';
 
-            // Payment — Card Schemes (Map)
+            // Card Schemes
             renderHBars('payment-card-schemes', 'demographics.cardSchemeValueSplit',
                 ['#1E3A8A', '#2563EB', '#3B82F6', '#60A5FA', '#93C5FD'], currency + ' ');
 
-            // Payment — Card Types (Map)
+            // Card Types
             renderHBars('payment-card-types', 'demographics.cardTypeValueSplit',
                 ['#047857', '#059669', '#34D399', '#6EE7B7', '#A7F3D0'], currency + ' ');
 
-            // Payment — Transaction Types (Map)
+            // Transaction Types
             renderHBars('payment-txn-types', 'demographics.transactionTypeValueSplit',
                 ['#7C3AED', '#8B5CF6', '#A78BFA', '#C4B5FD', '#DDD6FE'], currency + ' ');
         }

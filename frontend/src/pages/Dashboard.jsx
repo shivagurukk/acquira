@@ -49,7 +49,7 @@ const Dashboard = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
+            const tenantId = localStorage.getItem('defaultTenantId');
             const headers = {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`,

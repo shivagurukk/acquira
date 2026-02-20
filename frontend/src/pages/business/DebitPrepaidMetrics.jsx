@@ -24,9 +24,10 @@ const DebitPrepaidMetrics = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
+            const tenantId = localStorage.getItem('defaultTenantId');
             const res = await fetch('/api/business/debit-prepaid-metrics', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) },
                 body: JSON.stringify(filters)
             });
             if (res.ok) {

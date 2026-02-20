@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
@@ -16,8 +17,10 @@ public class PartitionMaintenanceService {
 
     private final JdbcTemplate jdbcTemplate;
 
-    private static final List<String> PARTITIONED_TABLES = List.of(
-            "fact_transaction",
+    private static final List<String> MONTHLY_PARTITIONED_TABLES = List.of(
+            "fact_transaction");
+
+    private static final List<String> YEARLY_PARTITIONED_TABLES = List.of(
             "sum_daily_merchant",
             "sum_daily_merchant_attribute",
             "sum_daily_terminal",
@@ -25,14 +28,20 @@ public class PartitionMaintenanceService {
             "sum_daily_channel",
             "sum_daily_bank",
             "sum_daily_finance",
-            "sum_daily_insight",
-            "sum_daily_mcc",
-            "kpi_snapshot_daily");
+            "sum_daily_insight");
+    // NOTE: merchant_daily_metrics was REMOVED — it is NOT a partitioned table.
+    // Attempting CREATE TABLE ... PARTITION OF on a non-partitioned table causes
+    // PostgreSQL error: "merchant_daily_metrics" is not partitioned
+    // which poisons the entire transaction (PostgreSQL aborts all subsequent commands).
 
     private static final java.util.Map<String, String> PARTITION_PREFIX_OVERRIDES = java.util.Map.of(
             "sum_daily_merchant_attribute", "sum_daily_merch_attr");
 
-    @Transactional
+    /**
+     * Ensure partitions exist for current year and next year.
+     * NOT @Transactional — each partition is created in its own transaction
+     * so that a failure in one doesn't poison the rest (PostgreSQL behavior).
+     */
     public void ensurePartitionsForCurrentAndNextYear() {
         int currentYear = LocalDate.now().getYear();
         ensurePartitionsForYear(currentYear);
@@ -40,63 +49,62 @@ public class PartitionMaintenanceService {
     }
 
     public void ensurePartitionsForYear(int year) {
-        log.info("Checking and creating partitions for year: {}", year);
-        String startDate = year + "-01-01";
-        String endDate = (year + 1) + "-01-01";
+        log.info("Checking partitions for year: {}", year);
+        ensureMonthlyPartitions(year);
+        ensureYearlyPartitions(year);
+    }
 
-        for (String table : PARTITIONED_TABLES) {
-            // Check if table is actually partitioned
-            try {
-                String relKind = jdbcTemplate.queryForObject(
-                        "SELECT relkind FROM pg_class WHERE relname = ?",
-                        String.class,
-                        table);
+    private void ensureMonthlyPartitions(int year) {
+        for (int month = 1; month <= 12; month++) {
+            LocalDate start = LocalDate.of(year, month, 1);
+            LocalDate end = start.plusMonths(1);
+            String partitionSuffix = String.format("_y%dm%02d", year, month); // _y2025m01
 
-                if (!"p".equals(relKind)) {
-                    log.warn(
-                            "Table {} exists but is not a partitioned table (relkind={}). Skipping partition creation.",
-                            table, relKind);
-                    continue;
-                }
-            } catch (Exception e) {
-                log.warn("Could not determine if table {} is partitioned (maybe it doesn't exist). Skipping.", table);
-                continue;
+            for (String table : MONTHLY_PARTITIONED_TABLES) {
+                createPartitionIfNotExists(table, partitionSuffix, start, end);
             }
+        }
+    }
 
-            String prefix = PARTITION_PREFIX_OVERRIDES.getOrDefault(table, table);
-            String partitionName = prefix + "_y" + year;
+    private void ensureYearlyPartitions(int year) {
+        LocalDate start = LocalDate.of(year, 1, 1);
+        LocalDate end = LocalDate.of(year + 1, 1, 1);
+        String partitionSuffix = String.format("_y%d", year); // _y2025
 
-            // Check if partition exists
+        for (String table : YEARLY_PARTITIONED_TABLES) {
+            createPartitionIfNotExists(table, partitionSuffix, start, end);
+        }
+    }
+
+    /**
+     * Each partition creation runs in its own NEW transaction.
+     * This prevents PostgreSQL's "current transaction is aborted" cascade —
+     * if one CREATE PARTITION fails, it only rolls back that single attempt
+     * and other partitions can still be created successfully.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void createPartitionIfNotExists(String table, String suffix, LocalDate start, LocalDate end) {
+        String prefix = PARTITION_PREFIX_OVERRIDES.getOrDefault(table, table);
+        String partitionName = prefix + suffix;
+
+        try {
+            // Check existence
             Boolean exists = jdbcTemplate.queryForObject(
                     "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE tablename = ?)",
-                    Boolean.class,
-                    partitionName.toLowerCase());
+                    Boolean.class, partitionName.toLowerCase());
 
             if (Boolean.FALSE.equals(exists)) {
                 log.info("Creating partition {} for table {}", partitionName, table);
                 String sql = String.format(
                         "CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM ('%s') TO ('%s')",
-                        partitionName, table, startDate, endDate);
-                try {
-                    jdbcTemplate.execute(sql);
-                } catch (Exception e) {
-                    if (e.getMessage() != null && e.getMessage().contains("would overlap partition")) {
-                        log.warn(
-                                "Partition creation failed for {} due to overlap (likely existing partition with different name). Ignoring.",
-                                partitionName);
-                    } else {
-                        log.error("Failed to create partition {} for table {}: {}", partitionName, table,
-                                e.getMessage());
-                        // In Postgres, a failed statement aborts the transaction.
-                        // Since we checked relkind above, this shouldn't happen for "not partitioned"
-                        // error.
-                        // But if it does happen, we must propagate or handle knowing the tx is dead.
-                        throw e;
-                    }
-                }
-            } else {
-                log.debug("Partition {} already exists", partitionName);
+                        partitionName, table, start.toString(), end.toString());
+                jdbcTemplate.execute(sql);
             }
+        } catch (Exception e) {
+            log.warn("Partition {} skipped (table '{}' may not be partitioned): {}",
+                    partitionName, table, e.getMessage());
+            // Exception propagates to roll back THIS transaction only (REQUIRES_NEW)
+            // Other partition creations continue in their own transactions
         }
     }
 }

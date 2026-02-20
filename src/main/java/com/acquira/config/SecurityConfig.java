@@ -24,7 +24,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity  // Enables @PreAuthorize, @Secured, etc.
+@EnableMethodSecurity // Enables @PreAuthorize, @Secured, etc.
 public class SecurityConfig {
 
     private final CustomUserDetailsService userDetailsService;
@@ -47,16 +47,20 @@ public class SecurityConfig {
                 // ===== Security Headers =====
                 .headers(headers -> headers
                         .frameOptions(frame -> frame.deny())
-                        .contentTypeOptions(contentType -> {}) // X-Content-Type-Options: nosniff
+                        .contentTypeOptions(contentType -> {
+                        }) // X-Content-Type-Options: nosniff
                         .httpStrictTransportSecurity(hsts -> hsts
                                 .maxAgeInSeconds(31536000)
                                 .includeSubDomains(true))
-                        .cacheControl(cache -> {}) // Cache-Control: no-cache, no-store
+                        .cacheControl(cache -> {
+                        }) // Cache-Control: no-cache, no-store
                 )
 
                 // ===== URL-Level Authorization =====
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
+                        // Swagger UI / OpenAPI
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
 
                         // Admin endpoints — require ADMIN or SUPER_ADMIN
                         .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
@@ -65,8 +69,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/batch/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
 
                         // Everything else — must be authenticated
-                        .anyRequest().authenticated()
-                )
+                        .anyRequest().authenticated())
 
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class);

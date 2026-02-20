@@ -265,3 +265,19 @@ SELECT u.user_id, r.role_id
 FROM users u, role r
 WHERE u.username='admin' AND r.role_name='ROLE_SUPER_ADMIN'
 ON CONFLICT DO NOTHING;
+
+-- =============================================================================
+-- 10. DATA FIX: Auto-populate dim_merchant.name from stg_trnx_raw where NULL
+-- Safe to re-run: only updates rows where name IS NULL or empty
+-- =============================================================================
+UPDATE dim_merchant m
+SET name = sub.merchant_name
+FROM (
+    SELECT DISTINCT ON (s.mid, s.tenant_id) s.mid, s.tenant_id, s.merchant_name
+    FROM stg_trnx_raw s
+    WHERE s.merchant_name IS NOT NULL AND s.merchant_name != ''
+    ORDER BY s.mid, s.tenant_id, s.load_time DESC
+) sub
+WHERE m.mid = sub.mid
+  AND m.tenant_id = sub.tenant_id
+  AND (m.name IS NULL OR m.name = '');

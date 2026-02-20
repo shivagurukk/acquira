@@ -699,10 +699,35 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     PRIMARY KEY (transaction_id, payment_date)
 ) PARTITION BY RANGE (payment_date);
 
--- Initial Partitions
-CREATE TABLE IF NOT EXISTS fact_transaction_y2024 PARTITION OF fact_transaction FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE IF NOT EXISTS fact_transaction_y2025 PARTITION OF fact_transaction FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+-- Monthly Partitions (Optimized for 150M rows/month)
+-- 2025
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m01 PARTITION OF fact_transaction FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m02 PARTITION OF fact_transaction FOR VALUES FROM ('2025-02-01') TO ('2025-03-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m03 PARTITION OF fact_transaction FOR VALUES FROM ('2025-03-01') TO ('2025-04-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m04 PARTITION OF fact_transaction FOR VALUES FROM ('2025-04-01') TO ('2025-05-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m05 PARTITION OF fact_transaction FOR VALUES FROM ('2025-05-01') TO ('2025-06-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m06 PARTITION OF fact_transaction FOR VALUES FROM ('2025-06-01') TO ('2025-07-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m07 PARTITION OF fact_transaction FOR VALUES FROM ('2025-07-01') TO ('2025-08-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m08 PARTITION OF fact_transaction FOR VALUES FROM ('2025-08-01') TO ('2025-09-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m09 PARTITION OF fact_transaction FOR VALUES FROM ('2025-09-01') TO ('2025-10-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m10 PARTITION OF fact_transaction FOR VALUES FROM ('2025-10-01') TO ('2025-11-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m11 PARTITION OF fact_transaction FOR VALUES FROM ('2025-11-01') TO ('2025-12-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2025m12 PARTITION OF fact_transaction FOR VALUES FROM ('2025-12-01') TO ('2026-01-01');
+
+-- 2026 (Forward looking)
+CREATE TABLE IF NOT EXISTS fact_transaction_y2026m01 PARTITION OF fact_transaction FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
+CREATE TABLE IF NOT EXISTS fact_transaction_y2026m02 PARTITION OF fact_transaction FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');
 CREATE TABLE IF NOT EXISTS fact_transaction_default PARTITION OF fact_transaction DEFAULT;
+
+-- Performance Indexes (CRITICAL for Dashboard Load Speed)
+-- 1. Merchant Dashboard Filter: WHERE tenant_id=? AND merchant_id=? AND payment_date BETWEEN ? AND ?
+CREATE INDEX IF NOT EXISTS idx_fact_trnx_merchant ON fact_transaction (tenant_id, merchant_id, payment_date);
+
+-- 2. Terminal Filter: WHERE tenant_id=? AND terminal_id=? AND payment_date BETWEEN ? AND ?
+CREATE INDEX IF NOT EXISTS idx_fact_trnx_terminal ON fact_transaction (tenant_id, terminal_id, payment_date);
+
+-- 3. Recon/Settlement: WHERE tenant_id=? AND payment_date=?
+CREATE INDEX IF NOT EXISTS idx_fact_trnx_daily_recon ON fact_transaction (tenant_id, payment_date) INCLUDE (total_amount_settled);
 
 -- Enable RLS
 ALTER TABLE fact_transaction ENABLE ROW LEVEL SECURITY;

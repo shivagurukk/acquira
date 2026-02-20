@@ -15,6 +15,18 @@ public class MerchantInsightsDTO {
     // NEW: Currency support
     private String currencySymbol;
     private String currencyCode;
+    private List<ChartData> storeLeaderboard;
+    // Dynamic AI-generated insights for each PDF section
+    private InsightNarrative insights;
+    // Business Health Score — composite performance rating
+    private HealthScore healthScore;
+
+    public List<ChartData> getStoreLeaderboard() { return storeLeaderboard; }
+    public void setStoreLeaderboard(List<ChartData> v) { this.storeLeaderboard = v; }
+    public InsightNarrative getInsights() { return insights; }
+    public void setInsights(InsightNarrative v) { this.insights = v; }
+    public HealthScore getHealthScore() { return healthScore; }
+    public void setHealthScore(HealthScore v) { this.healthScore = v; }
 
     public MerchantInsightsDTO() {
     }
@@ -716,6 +728,13 @@ public class MerchantInsightsDTO {
         private List<ChartData> salesTimeOfDay;
         private List<ChartData> salesByDayOfMonth;
         private List<ChartData> salesAndAtvByDayOfWeek;
+        private List<ChartData> revenueHeatmap;
+        private List<ChartData> txnSizeDistribution;
+
+        public List<ChartData> getRevenueHeatmap() { return revenueHeatmap; }
+        public void setRevenueHeatmap(List<ChartData> v) { this.revenueHeatmap = v; }
+        public List<ChartData> getTxnSizeDistribution() { return txnSizeDistribution; }
+        public void setTxnSizeDistribution(List<ChartData> v) { this.txnSizeDistribution = v; }
 
         public BusinessAchievements() {
         }
@@ -790,6 +809,8 @@ public class MerchantInsightsDTO {
             private List<ChartData> salesTimeOfDay;
             private List<ChartData> salesByDayOfMonth;
             private List<ChartData> salesAndAtvByDayOfWeek;
+            private List<ChartData> revenueHeatmap;
+            private List<ChartData> txnSizeDistribution;
 
             public BusinessAchievementsBuilder dailySalesAndCount(List<ChartData> dailySalesAndCount) {
                 this.dailySalesAndCount = dailySalesAndCount;
@@ -821,9 +842,22 @@ public class MerchantInsightsDTO {
                 return this;
             }
 
+            public BusinessAchievementsBuilder revenueHeatmap(List<ChartData> revenueHeatmap) {
+                this.revenueHeatmap = revenueHeatmap;
+                return this;
+            }
+
+            public BusinessAchievementsBuilder txnSizeDistribution(List<ChartData> txnSizeDistribution) {
+                this.txnSizeDistribution = txnSizeDistribution;
+                return this;
+            }
+
             public BusinessAchievements build() {
-                return new BusinessAchievements(dailySalesAndCount, dailyAvgTxnValue, uniqueCustomersByDay,
+                BusinessAchievements ba = new BusinessAchievements(dailySalesAndCount, dailyAvgTxnValue, uniqueCustomersByDay,
                         salesTimeOfDay, salesByDayOfMonth, salesAndAtvByDayOfWeek);
+                ba.setRevenueHeatmap(revenueHeatmap);
+                ba.setTxnSizeDistribution(txnSizeDistribution);
+                return ba;
             }
         }
     }
@@ -1084,6 +1118,59 @@ public class MerchantInsightsDTO {
         private String peakSeason;
         private String lowSeason;
         private BigDecimal yoyGrowthPct;
+
+        // Card type breakdown
+        private BigDecimal creditPct;
+        private BigDecimal creditVolume;
+        private Long creditTxnCount;
+        private BigDecimal debitPct;
+        private BigDecimal debitVolume;
+        private Long debitTxnCount;
+        private BigDecimal prepaidPct;
+        private BigDecimal prepaidVolume;
+        private Long prepaidTxnCount;
+        // Local vs International
+        private BigDecimal localCardPct;
+        private BigDecimal localCardVolume;
+        private Long localCardCustomers;
+        private BigDecimal internationalCardPct;
+        private BigDecimal internationalCardVolume;
+        private Long internationalCardCustomers;
+        // Avg ticket by card type
+        private List<ChartData> avgTicketByCardType;
+
+        public BigDecimal getCreditPct() { return creditPct; }
+        public void setCreditPct(BigDecimal v) { this.creditPct = v; }
+        public BigDecimal getCreditVolume() { return creditVolume; }
+        public void setCreditVolume(BigDecimal v) { this.creditVolume = v; }
+        public Long getCreditTxnCount() { return creditTxnCount; }
+        public void setCreditTxnCount(Long v) { this.creditTxnCount = v; }
+        public BigDecimal getDebitPct() { return debitPct; }
+        public void setDebitPct(BigDecimal v) { this.debitPct = v; }
+        public BigDecimal getDebitVolume() { return debitVolume; }
+        public void setDebitVolume(BigDecimal v) { this.debitVolume = v; }
+        public Long getDebitTxnCount() { return debitTxnCount; }
+        public void setDebitTxnCount(Long v) { this.debitTxnCount = v; }
+        public BigDecimal getPrepaidPct() { return prepaidPct; }
+        public void setPrepaidPct(BigDecimal v) { this.prepaidPct = v; }
+        public BigDecimal getPrepaidVolume() { return prepaidVolume; }
+        public void setPrepaidVolume(BigDecimal v) { this.prepaidVolume = v; }
+        public Long getPrepaidTxnCount() { return prepaidTxnCount; }
+        public void setPrepaidTxnCount(Long v) { this.prepaidTxnCount = v; }
+        public BigDecimal getLocalCardPct() { return localCardPct; }
+        public void setLocalCardPct(BigDecimal v) { this.localCardPct = v; }
+        public BigDecimal getLocalCardVolume() { return localCardVolume; }
+        public void setLocalCardVolume(BigDecimal v) { this.localCardVolume = v; }
+        public Long getLocalCardCustomers() { return localCardCustomers; }
+        public void setLocalCardCustomers(Long v) { this.localCardCustomers = v; }
+        public BigDecimal getInternationalCardPct() { return internationalCardPct; }
+        public void setInternationalCardPct(BigDecimal v) { this.internationalCardPct = v; }
+        public BigDecimal getInternationalCardVolume() { return internationalCardVolume; }
+        public void setInternationalCardVolume(BigDecimal v) { this.internationalCardVolume = v; }
+        public Long getInternationalCardCustomers() { return internationalCardCustomers; }
+        public void setInternationalCardCustomers(Long v) { this.internationalCardCustomers = v; }
+        public List<ChartData> getAvgTicketByCardType() { return avgTicketByCardType; }
+        public void setAvgTicketByCardType(List<ChartData> v) { this.avgTicketByCardType = v; }
 
         public String getCreditDebitRatio() {
             return creditDebitRatio;
@@ -1493,6 +1580,40 @@ public class MerchantInsightsDTO {
             this.dccMissedRevenue = v;
         }
 
+        // Opt-in/out counts and revenue
+        private long optInCount;
+        private BigDecimal optInRevenue;
+        private long optOutCount;
+        private BigDecimal optOutRevenue;
+        private BigDecimal optOutDeclineRate;
+        private Long dccEligibleCount;
+        private Long dccOptinCountLong;
+        // DCC Funnel fields
+        private Long totalIntlTxnCount;
+        private BigDecimal totalIntlVolume;
+        private BigDecimal dccRevenueGenerated;
+
+        public long getOptInCount() { return optInCount; }
+        public void setOptInCount(long v) { this.optInCount = v; }
+        public BigDecimal getOptInRevenue() { return optInRevenue; }
+        public void setOptInRevenue(BigDecimal v) { this.optInRevenue = v; }
+        public long getOptOutCount() { return optOutCount; }
+        public void setOptOutCount(long v) { this.optOutCount = v; }
+        public BigDecimal getOptOutRevenue() { return optOutRevenue; }
+        public void setOptOutRevenue(BigDecimal v) { this.optOutRevenue = v; }
+        public BigDecimal getOptOutDeclineRate() { return optOutDeclineRate; }
+        public void setOptOutDeclineRate(BigDecimal v) { this.optOutDeclineRate = v; }
+        public Long getDccEligibleCount() { return dccEligibleCount; }
+        public void setDccEligibleCount(Long v) { this.dccEligibleCount = v; }
+        public Long getDccOptinCountLong() { return dccOptinCountLong; }
+        public void setDccOptinCountLong(Long v) { this.dccOptinCountLong = v; }
+        public Long getTotalIntlTxnCount() { return totalIntlTxnCount; }
+        public void setTotalIntlTxnCount(Long v) { this.totalIntlTxnCount = v; }
+        public BigDecimal getTotalIntlVolume() { return totalIntlVolume; }
+        public void setTotalIntlVolume(BigDecimal v) { this.totalIntlVolume = v; }
+        public BigDecimal getDccRevenueGenerated() { return dccRevenueGenerated; }
+        public void setDccRevenueGenerated(BigDecimal v) { this.dccRevenueGenerated = v; }
+
         public DccPerformance() {
         }
 
@@ -1672,5 +1793,219 @@ public class MerchantInsightsDTO {
                 return new ChartData(label, value, value2, value3);
             }
         }
+    }
+
+    /**
+     * Business Health Score — composite performance rating across 5 dimensions.
+     * Fully computed from real transaction data, zero hardcoded values.
+     */
+    public static class HealthScore {
+        private int compositeScore;       // 0-100
+        private String grade;             // A+, A, B+, B, C, D, F
+        private String gradeLabel;        // "Exceptional", "Strong Performer", etc.
+        private String gradeColor;        // hex color for the grade badge
+        private String gradeBgColor;      // hex background color for the grade badge
+
+        // 5 dimensions, each 0-100
+        private int revenueHealthScore;
+        private int growthMomentumScore;
+        private int customerLoyaltyScore;
+        private int paymentEfficiencyScore;
+        private int dccPerformanceScore;
+        private boolean dccApplicable;    // false if 100% domestic merchant
+
+        // Dimension grades
+        private String revenueGrade;
+        private String growthGrade;
+        private String loyaltyGrade;
+        private String paymentGrade;
+        private String dccGrade;
+
+        // Dimension colors (for progress bars)
+        private String revenueColor;
+        private String growthColor;
+        private String loyaltyColor;
+        private String paymentColor;
+        private String dccColor;
+
+        // Dynamic strengths (top 3 scoring dimensions)
+        private String strength1Title;
+        private String strength1Detail;
+        private String strength2Title;
+        private String strength2Detail;
+        private String strength3Title;
+        private String strength3Detail;
+
+        // Dynamic improvement areas (bottom 2 scoring dimensions or <70)
+        private String improve1Title;
+        private String improve1Detail;
+        private String improve2Title;
+        private String improve2Detail;
+        private String improve3Title;
+        private String improve3Detail;
+
+        // AI summary for the scorecard
+        private String aiSummary;
+
+        public HealthScore() {}
+
+        // --- Getters and Setters ---
+        public int getCompositeScore() { return compositeScore; }
+        public void setCompositeScore(int v) { this.compositeScore = v; }
+        public String getGrade() { return grade; }
+        public void setGrade(String v) { this.grade = v; }
+        public String getGradeLabel() { return gradeLabel; }
+        public void setGradeLabel(String v) { this.gradeLabel = v; }
+        public String getGradeColor() { return gradeColor; }
+        public void setGradeColor(String v) { this.gradeColor = v; }
+        public String getGradeBgColor() { return gradeBgColor; }
+        public void setGradeBgColor(String v) { this.gradeBgColor = v; }
+
+        public int getRevenueHealthScore() { return revenueHealthScore; }
+        public void setRevenueHealthScore(int v) { this.revenueHealthScore = v; }
+        public int getGrowthMomentumScore() { return growthMomentumScore; }
+        public void setGrowthMomentumScore(int v) { this.growthMomentumScore = v; }
+        public int getCustomerLoyaltyScore() { return customerLoyaltyScore; }
+        public void setCustomerLoyaltyScore(int v) { this.customerLoyaltyScore = v; }
+        public int getPaymentEfficiencyScore() { return paymentEfficiencyScore; }
+        public void setPaymentEfficiencyScore(int v) { this.paymentEfficiencyScore = v; }
+        public int getDccPerformanceScore() { return dccPerformanceScore; }
+        public void setDccPerformanceScore(int v) { this.dccPerformanceScore = v; }
+        public boolean isDccApplicable() { return dccApplicable; }
+        public void setDccApplicable(boolean v) { this.dccApplicable = v; }
+
+        public String getRevenueGrade() { return revenueGrade; }
+        public void setRevenueGrade(String v) { this.revenueGrade = v; }
+        public String getGrowthGrade() { return growthGrade; }
+        public void setGrowthGrade(String v) { this.growthGrade = v; }
+        public String getLoyaltyGrade() { return loyaltyGrade; }
+        public void setLoyaltyGrade(String v) { this.loyaltyGrade = v; }
+        public String getPaymentGrade() { return paymentGrade; }
+        public void setPaymentGrade(String v) { this.paymentGrade = v; }
+        public String getDccGrade() { return dccGrade; }
+        public void setDccGrade(String v) { this.dccGrade = v; }
+
+        public String getRevenueColor() { return revenueColor; }
+        public void setRevenueColor(String v) { this.revenueColor = v; }
+        public String getGrowthColor() { return growthColor; }
+        public void setGrowthColor(String v) { this.growthColor = v; }
+        public String getLoyaltyColor() { return loyaltyColor; }
+        public void setLoyaltyColor(String v) { this.loyaltyColor = v; }
+        public String getPaymentColor() { return paymentColor; }
+        public void setPaymentColor(String v) { this.paymentColor = v; }
+        public String getDccColor() { return dccColor; }
+        public void setDccColor(String v) { this.dccColor = v; }
+
+        public String getStrength1Title() { return strength1Title; }
+        public void setStrength1Title(String v) { this.strength1Title = v; }
+        public String getStrength1Detail() { return strength1Detail; }
+        public void setStrength1Detail(String v) { this.strength1Detail = v; }
+        public String getStrength2Title() { return strength2Title; }
+        public void setStrength2Title(String v) { this.strength2Title = v; }
+        public String getStrength2Detail() { return strength2Detail; }
+        public void setStrength2Detail(String v) { this.strength2Detail = v; }
+        public String getStrength3Title() { return strength3Title; }
+        public void setStrength3Title(String v) { this.strength3Title = v; }
+        public String getStrength3Detail() { return strength3Detail; }
+        public void setStrength3Detail(String v) { this.strength3Detail = v; }
+
+        public String getImprove1Title() { return improve1Title; }
+        public void setImprove1Title(String v) { this.improve1Title = v; }
+        public String getImprove1Detail() { return improve1Detail; }
+        public void setImprove1Detail(String v) { this.improve1Detail = v; }
+        public String getImprove2Title() { return improve2Title; }
+        public void setImprove2Title(String v) { this.improve2Title = v; }
+        public String getImprove2Detail() { return improve2Detail; }
+        public void setImprove2Detail(String v) { this.improve2Detail = v; }
+        public String getImprove3Title() { return improve3Title; }
+        public void setImprove3Title(String v) { this.improve3Title = v; }
+        public String getImprove3Detail() { return improve3Detail; }
+        public void setImprove3Detail(String v) { this.improve3Detail = v; }
+
+        public String getAiSummary() { return aiSummary; }
+        public void setAiSummary(String v) { this.aiSummary = v; }
+    }
+
+    /**
+     * Dynamic AI-generated narrative insights for each PDF section.
+     * All text is computed from actual data in MerchantInsightService — zero hardcoded sentences.
+     */
+    public static class InsightNarrative {
+        // Executive Summary — 2-3 sentence overview
+        private String execSummary;
+        // Page-level insights (achievement, watch, tip)
+        private String peakAchievement;
+        private String peakWatch;
+        private String salesInsight;
+        private String salesWatch;
+        private String heatmapInsight;
+        private String heatmapTip;
+        private String growthInsight;
+        private String growthWatch;
+        private String cardInsight;
+        private String cardTip;
+        private String customerInsight;
+        private String customerTip;
+        private String dccInsight;
+        private String dccTip;
+        // Closing page action items (data-driven)
+        private String actionItem1;
+        private String actionItem2;
+        private String actionItem3;
+        // Peak day index for chart highlighting (0-based day-of-month index)
+        private int peakDayIndex = -1;
+        private String peakDayLabel;
+        private String slowestDayLabel;
+        private String peakHourLabel;
+        private String slowestHourLabel;
+
+        public InsightNarrative() {}
+
+        public String getExecSummary() { return execSummary; }
+        public void setExecSummary(String v) { this.execSummary = v; }
+        public String getPeakAchievement() { return peakAchievement; }
+        public void setPeakAchievement(String v) { this.peakAchievement = v; }
+        public String getPeakWatch() { return peakWatch; }
+        public void setPeakWatch(String v) { this.peakWatch = v; }
+        public String getSalesInsight() { return salesInsight; }
+        public void setSalesInsight(String v) { this.salesInsight = v; }
+        public String getSalesWatch() { return salesWatch; }
+        public void setSalesWatch(String v) { this.salesWatch = v; }
+        public String getHeatmapInsight() { return heatmapInsight; }
+        public void setHeatmapInsight(String v) { this.heatmapInsight = v; }
+        public String getHeatmapTip() { return heatmapTip; }
+        public void setHeatmapTip(String v) { this.heatmapTip = v; }
+        public String getGrowthInsight() { return growthInsight; }
+        public void setGrowthInsight(String v) { this.growthInsight = v; }
+        public String getGrowthWatch() { return growthWatch; }
+        public void setGrowthWatch(String v) { this.growthWatch = v; }
+        public String getCardInsight() { return cardInsight; }
+        public void setCardInsight(String v) { this.cardInsight = v; }
+        public String getCardTip() { return cardTip; }
+        public void setCardTip(String v) { this.cardTip = v; }
+        public String getCustomerInsight() { return customerInsight; }
+        public void setCustomerInsight(String v) { this.customerInsight = v; }
+        public String getCustomerTip() { return customerTip; }
+        public void setCustomerTip(String v) { this.customerTip = v; }
+        public String getDccInsight() { return dccInsight; }
+        public void setDccInsight(String v) { this.dccInsight = v; }
+        public String getDccTip() { return dccTip; }
+        public void setDccTip(String v) { this.dccTip = v; }
+        public String getActionItem1() { return actionItem1; }
+        public void setActionItem1(String v) { this.actionItem1 = v; }
+        public String getActionItem2() { return actionItem2; }
+        public void setActionItem2(String v) { this.actionItem2 = v; }
+        public String getActionItem3() { return actionItem3; }
+        public void setActionItem3(String v) { this.actionItem3 = v; }
+        public int getPeakDayIndex() { return peakDayIndex; }
+        public void setPeakDayIndex(int v) { this.peakDayIndex = v; }
+        public String getPeakDayLabel() { return peakDayLabel; }
+        public void setPeakDayLabel(String v) { this.peakDayLabel = v; }
+        public String getSlowestDayLabel() { return slowestDayLabel; }
+        public void setSlowestDayLabel(String v) { this.slowestDayLabel = v; }
+        public String getPeakHourLabel() { return peakHourLabel; }
+        public void setPeakHourLabel(String v) { this.peakHourLabel = v; }
+        public String getSlowestHourLabel() { return slowestHourLabel; }
+        public void setSlowestHourLabel(String v) { this.slowestHourLabel = v; }
     }
 }

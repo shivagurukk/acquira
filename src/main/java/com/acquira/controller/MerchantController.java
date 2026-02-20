@@ -65,14 +65,21 @@ public class MerchantController {
 
     @GetMapping("/{id}")
     public ResponseEntity<Merchant> getMerchant(@PathVariable Long id) {
-        return merchantRepository.findById(id)
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.status(403).build();
+        return merchantRepository.findByMerchantIdAndTenantId(id, tenantId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/{id}/360")
     public ResponseEntity<com.acquira.dto.Merchant360DTO> getMerchant360(@PathVariable Long id) {
-        return merchantRepository.findById(id).map(merchant -> {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.status(403).build();
+
+        return merchantRepository.findByMerchantIdAndTenantId(id, tenantId).map(merchant -> {
             com.acquira.dto.Merchant360DTO dto = new com.acquira.dto.Merchant360DTO();
             dto.setMerchant(merchant);
 
@@ -96,11 +103,25 @@ public class MerchantController {
 
     @GetMapping("/{id}/stores")
     public ResponseEntity<List<Store>> getMerchantStores(@PathVariable Long id) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.status(403).build();
+        // verify ownership first
+        if (merchantRepository.findByMerchantIdAndTenantId(id, tenantId).isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(storeRepository.findByMerchantId(id));
     }
 
     @GetMapping("/{id}/terminals")
     public ResponseEntity<List<Terminal>> getMerchantTerminals(@PathVariable Long id) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.status(403).build();
+        if (merchantRepository.findByMerchantIdAndTenantId(id, tenantId).isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
         List<Store> stores = storeRepository.findByMerchantId(id);
         if (stores.isEmpty()) {
             return ResponseEntity.ok(java.util.Collections.emptyList());
@@ -111,6 +132,12 @@ public class MerchantController {
 
     @GetMapping("/{id}/contacts")
     public ResponseEntity<List<MerchantContact>> getMerchantContacts(@PathVariable Long id) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.status(403).build();
+        if (merchantRepository.findByMerchantIdAndTenantId(id, tenantId).isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(contactRepository.findByMerchantId(id));
     }
 

@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,13 +38,16 @@ public class ManualIngestionService {
         log.info("Starting Manual Ingestion Processing for Tenant: {}", tenantId);
 
         // 1. Identify distinct dates from Staging (Data-Driven)
-        List<LocalDate> reportDates = jdbcTemplate.queryForList(
-                "SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?",
+        List<LocalDate> reportDates = new ArrayList<>(jdbcTemplate.queryForList(
+                "SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL",
                 LocalDate.class,
-                tenantId);
+                tenantId));
+
+        // Filter out any null entries that may slip through
+        reportDates.removeIf(d -> d == null);
 
         if (reportDates.isEmpty()) {
-            log.warn("No dates found in staging for tenant {}", tenantId);
+            log.warn("No valid dates found in staging for tenant {}", tenantId);
             return;
         }
 

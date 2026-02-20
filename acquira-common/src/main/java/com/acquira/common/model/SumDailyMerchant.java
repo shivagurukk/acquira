@@ -60,6 +60,10 @@ public class SumDailyMerchant {
     @Column(name = "top_spending_amount")
     private BigDecimal topSpendingAmount;
 
+    // --- Base Currency Volume (for merchant-facing PDF: Store Base Currency Amount) ---
+    @Column(name = "total_base_volume")
+    private BigDecimal totalBaseVolume;
+
     // --- DCC Metrics ---
     @Column(name = "dcc_eligible_volume")
     private BigDecimal dccEligibleVolume;

@@ -97,8 +97,9 @@ const DailyMerchantDashboard = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
+            const tenantId = localStorage.getItem('defaultTenantId');
             const res = await fetch(`/api/business/daily-merchant-dashboard?month=${filters.month}&year=${filters.year}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
             });
             if (res.ok) {
                 const result = await res.json();

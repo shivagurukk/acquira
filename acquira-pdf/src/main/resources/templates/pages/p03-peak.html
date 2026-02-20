@@ -2,12 +2,22 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <body>
     <div th:fragment="peakContent">
-        <div class="section-subtitle" th:text="'Daily performance metrics for ' + ${reportPeriod}" style="margin-bottom: 10px;">Subtitle</div>
+        <div class="section-title" style="margin-bottom: 2px;">Business Achievements</div>
+        <div class="section-subtitle" th:text="'Daily performance metrics for ' + ${reportPeriod}" style="margin-bottom: 6px;">Subtitle</div>
+
+        <!-- Dynamic Insight -->
+        <div th:if="${dto.insights != null and dto.insights.peakAchievement != null}" style="background: linear-gradient(135deg, #FFFBEB, #FEF3C7); border: 1px solid #FDE68A; border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; display: flex; gap: 8px;">
+            <div style="font-size: 12px; margin-top: 1px;">⭐</div>
+            <div>
+                <p style="font-size: 8px; color: #92400E; line-height: 1.5; margin: 0; font-weight: 600;" th:text="${dto.insights.peakAchievement}">Peak insight</p>
+                <p th:if="${dto.insights.peakWatch != null}" style="font-size: 7.5px; color: #A16207; line-height: 1.4; margin: 3px 0 0 0;" th:text="${dto.insights.peakWatch}">Watch text</p>
+            </div>
+        </div>
 
         <!-- ROW 1: 4 Hero KPI Cards (bold numbers, visual anchor) -->
         <div class="grid-4 mb-8">
             <div class="card card-accent-blue" style="padding: 10px 12px;">
-                <div class="kpi-label">MAX DAILY SALES</div>
+                <div class="kpi-label">MAX DAILY SALES (AED)</div>
                 <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.maxDailySales != null ? 'AED ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">AED 0</div>
                 <span class="text-xs text-muted">Single-day record</span>
             </div>
@@ -17,12 +27,12 @@
                 <span class="text-xs text-muted">Peak transaction count</span>
             </div>
             <div class="card card-accent-amber" style="padding: 10px 12px;">
-                <div class="kpi-label">HIGHEST TXN VALUE</div>
-                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.highestTxnValue != null ? 'AED ' + dto.overview.peakStats.highestTxnValue.formattedValue : '-'}">AED 0</div>
-                <span class="text-xs text-muted">Largest single transaction</span>
+                <div class="kpi-label">AVG DAILY SALES (AED)</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.dailyAverage != null ? 'AED ' + #numbers.formatDecimal(dto.overview.dailyAverage, 1, 'COMMA', 0, 'POINT') : '-'}">AED 0</div>
+                <span class="text-xs text-muted">Daily average revenue</span>
             </div>
             <div class="card card-accent-red" style="padding: 10px 12px;">
-                <div class="kpi-label">TOP CUSTOMER SPEND</div>
+                <div class="kpi-label">TOP CUSTOMER SPEND (AED)</div>
                 <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.highestCustomerSpend != null ? 'AED ' + dto.overview.peakStats.highestCustomerSpend.formattedValue : '-'}">AED 0</div>
                 <span class="text-xs text-muted">Highest individual spend</span>
             </div>
@@ -30,13 +40,13 @@
 
         <!-- ROW 2: Daily Avg TXN Value — equal flex chart -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title">DAILY AVERAGE TRANSACTION VALUE (AED)</div>
+            <div class="card-title">DAILY AVERAGE TRANSACTION VALUE (AED) — Day of Month</div>
             <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailyAvgTxnValue" data-color="#0D9488"></canvas></div>
         </div>
 
         <!-- ROW 3: Unique Customers — equal flex chart -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title">UNIQUE CUSTOMERS BY DAY OF THE MONTH</div>
+            <div class="card-title">UNIQUE CUSTOMERS — Day of Month</div>
             <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.uniqueCustomersByDay" data-color="#1E3A8A"></canvas></div>
         </div>
 
@@ -44,15 +54,14 @@
         <div class="grid-2 mb-8">
             <div class="action-strip-item opportunity">
                 <div class="strip-label">&#9650; KEY ACHIEVEMENT</div>
-                <div class="strip-text">
-                    Peak daily sales reached <strong th:text="${dto.overview.peakStats.maxDailySales != null ? 'AED ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">AED 0</strong>
-                    with <strong th:text="${dto.overview.peakStats.maxTxnsInDay != null ? dto.overview.peakStats.maxTxnsInDay.formattedValue + ' transactions' : '-'}">0</strong> in a single day.
+                <div class="strip-text" th:text="${dto.insights != null and dto.insights.peakAchievement != null ? dto.insights.peakAchievement : 'Peak daily sales hit a record high.'}">
+                    Peak daily sales hit a record high.
                 </div>
             </div>
             <div class="action-strip-item risk">
                 <div class="strip-label">&#9660; AREA TO WATCH</div>
-                <div class="strip-text">
-                    Average transaction value shows day-to-day volatility. Stabilizing ticket size through bundling or minimum-order incentives can improve predictability.
+                <div class="strip-text" th:text="${dto.insights != null and dto.insights.peakWatch != null ? dto.insights.peakWatch : 'Average transaction value shows day-to-day volatility.'}">
+                    Average transaction value shows day-to-day volatility.
                 </div>
             </div>
         </div>

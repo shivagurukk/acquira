@@ -10,8 +10,9 @@ const ExecutiveDashboard = () => {
         const fetchData = async () => {
             try {
                 const token = localStorage.getItem('token');
+                const tenantId = localStorage.getItem('defaultTenantId');
                 const response = await fetch('/api/analytics/executive', {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
                 });
                 if (response.ok) {
                     const result = await response.json();

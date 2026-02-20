@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Lock, User, ArrowRight, Building2, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ParticlesBackground from '../components/ParticlesBackground';
 import './Login.css';
 
 const LoginPage = () => {
@@ -33,11 +34,8 @@ const LoginPage = () => {
 
             if (response.ok) {
                 const data = await response.json();
-
-                // Login to AuthContext first
                 const authState = login(data);
 
-                // If must change password, redirect there
                 if (data.mustChangePassword) {
                     navigate('/change-password');
                     return;
@@ -68,7 +66,6 @@ const LoginPage = () => {
             navigate('/dashboard');
         } catch (e) {
             console.error(e);
-            // Fallback — navigate anyway
             navigate('/dashboard');
         } finally {
             setSwitchingTenant(null);
@@ -76,17 +73,36 @@ const LoginPage = () => {
     };
 
     return (
-        <div style={styles.container}>
-            {/* Background gradient */}
-            <div style={styles.bgGradient} />
+        <div className="login-page">
+            {/* Layer 1: Animated Gradient Mesh */}
+            <div className="gradient-mesh">
+                <div className="blob blob-1" />
+                <div className="blob blob-2" />
+                <div className="blob blob-3" />
+                <div className="blob blob-4" />
+            </div>
 
-            <div style={styles.content}>
-                <div style={styles.card}>
+            {/* Layer 2: Floating Geometric Shapes */}
+            <div className="floating-shapes">
+                <div className="shape shape-1" />
+                <div className="shape shape-2" />
+                <div className="shape shape-3" />
+                <div className="shape shape-4" />
+                <div className="shape shape-5" />
+                <div className="shape shape-6" />
+            </div>
+
+            {/* Layer 3: Particle Network */}
+            <ParticlesBackground />
+
+            {/* Layer 4: Login Content */}
+            <div className="login-content">
+                <div className="login-glass-card">
                     {/* Logo */}
-                    <div style={styles.logoSection}>
-                        <div style={styles.logoIcon}>A</div>
-                        <h1 style={styles.logoText}>Acquira</h1>
-                        <p style={styles.logoSubtext}>Enterprise Payment Intelligence</p>
+                    <div className="login-logo-section">
+                        <div className="login-logo-icon">A</div>
+                        <h1 className="login-logo-text">Acquira</h1>
+                        <p className="login-logo-subtext">Enterprise Payment Intelligence</p>
                     </div>
 
                     <AnimatePresence mode="wait">
@@ -97,49 +113,49 @@ const LoginPage = () => {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
                                 onSubmit={handleLogin}
-                                style={styles.form}
+                                className="login-form"
                             >
                                 {error && (
-                                    <div style={styles.errorBanner}>{error}</div>
+                                    <div className="login-error-banner">{error}</div>
                                 )}
 
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.inputLabel}>Username</label>
-                                    <div style={styles.inputWrapper}>
-                                        <User size={18} style={styles.inputIcon} />
+                                <div className="login-input-group">
+                                    <label className="login-input-label">Username</label>
+                                    <div className="login-input-wrapper">
                                         <input
                                             name="username"
                                             type="text"
                                             placeholder="Enter your username"
                                             value={credentials.username}
                                             onChange={handleChange}
-                                            style={styles.input}
                                             autoFocus
                                         />
+                                        <User size={18} className="input-icon" />
                                     </div>
                                 </div>
 
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.inputLabel}>Password</label>
-                                    <div style={styles.inputWrapper}>
-                                        <Lock size={18} style={styles.inputIcon} />
+                                <div className="login-input-group">
+                                    <label className="login-input-label">Password</label>
+                                    <div className="login-input-wrapper">
                                         <input
                                             name="password"
                                             type="password"
                                             placeholder="Enter your password"
                                             value={credentials.password}
                                             onChange={handleChange}
-                                            style={styles.input}
                                         />
+                                        <Lock size={18} className="input-icon" />
                                     </div>
                                 </div>
 
-                                <button type="submit" disabled={loading} style={styles.loginBtn}>
-                                    {loading ? (
-                                        <><Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Authenticating...</>
-                                    ) : (
-                                        <>Sign In <ArrowRight size={18} /></>
-                                    )}
+                                <button type="submit" disabled={loading} className="login-submit-btn">
+                                    <span>
+                                        {loading ? (
+                                            <><Loader2 size={18} className="spin-icon" /> Authenticating...</>
+                                        ) : (
+                                            <>Sign In <ArrowRight size={18} /></>
+                                        )}
+                                    </span>
                                 </button>
                             </motion.form>
                         ) : (
@@ -148,19 +164,21 @@ const LoginPage = () => {
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
-                                style={styles.tenantSection}
+                                className="tenant-section"
                             >
-                                <div style={styles.tenantHeader}>
-                                    <Building2 size={20} color="#3b82f6" />
+                                <div className="tenant-header">
+                                    <div className="tenant-header-icon">
+                                        <Building2 size={20} color="#3b82f6" />
+                                    </div>
                                     <div>
-                                        <h3 style={styles.tenantTitle}>Select Organization</h3>
-                                        <p style={styles.tenantSubtitle}>
+                                        <h3 className="tenant-title">Select Organization</h3>
+                                        <p className="tenant-subtitle">
                                             You have access to {allowedTenants.length} organizations
                                         </p>
                                     </div>
                                 </div>
 
-                                <div style={styles.tenantList}>
+                                <div className="tenant-list">
                                     {allowedTenants.map(tenant => {
                                         const isSwitching = switchingTenant === tenant.tenantId;
                                         return (
@@ -168,38 +186,26 @@ const LoginPage = () => {
                                                 key={tenant.tenantId}
                                                 onClick={() => handleSelectTenant(tenant)}
                                                 disabled={!!switchingTenant}
-                                                style={{
-                                                    ...styles.tenantCard,
-                                                    ...(isSwitching ? styles.tenantCardActive : {}),
-                                                }}
-                                                onMouseEnter={e => {
-                                                    if (!switchingTenant) e.currentTarget.style.borderColor = '#3b82f6';
-                                                }}
-                                                onMouseLeave={e => {
-                                                    if (!switchingTenant) e.currentTarget.style.borderColor = '#e2e8f0';
-                                                }}
+                                                className={`tenant-card ${isSwitching ? 'active' : ''}`}
                                             >
-                                                <div style={styles.tenantCardLeft}>
-                                                    <div style={{
-                                                        ...styles.tenantCardIcon,
-                                                        background: isSwitching ? '#3b82f6' : '#f1f5f9',
-                                                    }}>
+                                                <div className="tenant-card-left">
+                                                    <div className="tenant-card-icon">
                                                         {isSwitching ? (
-                                                            <Loader2 size={18} color="white" style={{ animation: 'spin 1s linear infinite' }} />
+                                                            <Loader2 size={18} color="#3b82f6" className="spin-icon" />
                                                         ) : (
-                                                            <Building2 size={18} color="#64748b" />
+                                                            <Building2 size={18} color="#94a3b8" />
                                                         )}
                                                     </div>
-                                                    <div style={styles.tenantCardInfo}>
-                                                        <span style={styles.tenantCardName}>{tenant.bankName}</span>
-                                                        <span style={styles.tenantCardMeta}>
+                                                    <div>
+                                                        <span className="tenant-card-name">{tenant.bankName}</span>
+                                                        <span className="tenant-card-meta">
                                                             {tenant.bankShortCode}
                                                             {tenant.country ? ` · ${tenant.country}` : ''}
                                                             {tenant.baseCurrency ? ` · ${tenant.baseCurrency}` : ''}
                                                         </span>
                                                     </div>
                                                 </div>
-                                                <ArrowRight size={16} color="#94a3b8" />
+                                                <ArrowRight size={16} color="#64748b" />
                                             </button>
                                         );
                                     })}
@@ -207,7 +213,7 @@ const LoginPage = () => {
 
                                 <button
                                     onClick={() => { setShowTenantModal(false); setError(null); }}
-                                    style={styles.backBtn}
+                                    className="login-back-btn"
                                 >
                                     ← Back to login
                                 </button>
@@ -215,217 +221,13 @@ const LoginPage = () => {
                         )}
                     </AnimatePresence>
                 </div>
-            </div>
 
-            <style>{`
-                @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-            `}</style>
+                <div className="login-footer">
+                    Powered by Acquira · Secure Enterprise Platform
+                </div>
+            </div>
         </div>
     );
-};
-
-// ==========================================
-// Styles
-// ==========================================
-const styles = {
-    container: {
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#0f172a',
-        position: 'relative',
-        overflow: 'hidden',
-    },
-    bgGradient: {
-        position: 'absolute',
-        top: '-50%',
-        left: '-50%',
-        width: '200%',
-        height: '200%',
-        background: 'radial-gradient(circle at 30% 40%, rgba(59,130,246,0.08) 0%, transparent 50%), radial-gradient(circle at 70% 60%, rgba(99,102,241,0.06) 0%, transparent 50%)',
-    },
-    content: {
-        position: 'relative',
-        zIndex: 1,
-        width: '100%',
-        maxWidth: '420px',
-        padding: '20px',
-    },
-    card: {
-        background: 'white',
-        borderRadius: '20px',
-        padding: '40px 36px',
-        boxShadow: '0 25px 60px rgba(0,0,0,0.3)',
-    },
-    logoSection: {
-        textAlign: 'center',
-        marginBottom: '32px',
-    },
-    logoIcon: {
-        width: '48px',
-        height: '48px',
-        borderRadius: '14px',
-        background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: 'white',
-        fontWeight: 'bold',
-        fontSize: '20px',
-        marginBottom: '12px',
-    },
-    logoText: {
-        fontSize: '1.5rem',
-        fontWeight: 700,
-        color: '#0f172a',
-        margin: '0 0 4px',
-    },
-    logoSubtext: {
-        fontSize: '0.85rem',
-        color: '#94a3b8',
-        margin: 0,
-    },
-    form: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '20px',
-    },
-    errorBanner: {
-        background: '#fef2f2',
-        color: '#dc2626',
-        padding: '12px 16px',
-        borderRadius: '10px',
-        fontSize: '0.85rem',
-        border: '1px solid #fecaca',
-    },
-    inputGroup: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-    },
-    inputLabel: {
-        fontSize: '0.82rem',
-        fontWeight: 500,
-        color: '#334155',
-    },
-    inputWrapper: {
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'center',
-    },
-    inputIcon: {
-        position: 'absolute',
-        left: '14px',
-        color: '#94a3b8',
-        pointerEvents: 'none',
-    },
-    input: {
-        width: '100%',
-        padding: '12px 14px 12px 44px',
-        borderRadius: '10px',
-        border: '1px solid #e2e8f0',
-        fontSize: '0.9rem',
-        outline: 'none',
-        transition: 'border-color 0.2s',
-        boxSizing: 'border-box',
-    },
-    loginBtn: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px',
-        padding: '13px',
-        borderRadius: '10px',
-        background: '#0f172a',
-        color: 'white',
-        fontSize: '0.9rem',
-        fontWeight: 600,
-        border: 'none',
-        cursor: 'pointer',
-        transition: 'background 0.2s',
-        marginTop: '4px',
-    },
-    tenantSection: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '20px',
-    },
-    tenantHeader: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-    },
-    tenantTitle: {
-        fontSize: '1.05rem',
-        fontWeight: 600,
-        color: '#0f172a',
-        margin: 0,
-    },
-    tenantSubtitle: {
-        fontSize: '0.8rem',
-        color: '#94a3b8',
-        margin: 0,
-    },
-    tenantList: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-        maxHeight: '320px',
-        overflowY: 'auto',
-    },
-    tenantCard: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '14px',
-        borderRadius: '12px',
-        border: '1px solid #e2e8f0',
-        background: 'white',
-        cursor: 'pointer',
-        transition: 'all 0.2s',
-        width: '100%',
-        textAlign: 'left',
-    },
-    tenantCardActive: {
-        borderColor: '#3b82f6',
-        background: '#f0f7ff',
-    },
-    tenantCardLeft: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-    },
-    tenantCardIcon: {
-        width: '40px',
-        height: '40px',
-        borderRadius: '10px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    tenantCardInfo: {
-        display: 'flex',
-        flexDirection: 'column',
-    },
-    tenantCardName: {
-        fontWeight: 600,
-        fontSize: '0.9rem',
-        color: '#0f172a',
-    },
-    tenantCardMeta: {
-        fontSize: '0.75rem',
-        color: '#94a3b8',
-    },
-    backBtn: {
-        background: 'transparent',
-        border: 'none',
-        color: '#64748b',
-        cursor: 'pointer',
-        fontSize: '0.85rem',
-        textAlign: 'center',
-        padding: '8px',
-    },
 };
 
 export default LoginPage;

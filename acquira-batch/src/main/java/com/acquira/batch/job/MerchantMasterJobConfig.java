@@ -141,12 +141,9 @@ public class MerchantMasterJobConfig {
         reader.setResource(new FileSystemResource(fullPath));
         reader.setLinesToSkip(1);
 
-        // We capture the reader itself to use its new getCellValue method which uses
-        // the internal headerMap
+        // Excel row mapper (for .xlsx files)
         reader.setRowMapper((row, rowNum) -> {
             StagingMerchant m = new StagingMerchant();
-
-            // Core Identity
             m.setInstitutionCode(reader.getCellValue(row, "Institution Code"));
             m.setInstitutionName(reader.getCellValue(row, "Institution Name"));
             m.setEntityInternalId(reader.getCellValue(row, "EntityInternalId"));
@@ -155,50 +152,37 @@ public class MerchantMasterJobConfig {
             m.setAggregatorInternalId(reader.getCellValue(row, "AggregatorInternalId"));
             m.setAggregatorName(reader.getCellValue(row, "Aggregator Name"));
             m.setAggregatorCode(reader.getCellValue(row, "Aggregator Code"));
-
-            // Merchant
             m.setMerchantInternalId(reader.getCellValue(row, "MerchantInternalId"));
             m.setMid(reader.getCellValue(row, "MID"));
             m.setMerchantName(reader.getCellValue(row, "MerchantName"));
             m.setMerchantStatus(reader.getCellValue(row, "MerchantStatus"));
             m.setRiskLevel(reader.getCellValue(row, "RiskLevel"));
             m.setProduct(reader.getCellValue(row, "Product"));
-
-            // Store
             m.setMerchantStoreInternalId(reader.getCellValue(row, "MerchantStoreInternalId"));
             m.setSid(reader.getCellValue(row, "SID"));
             m.setStoreLegalName(reader.getCellValue(row, "StoreLegalName"));
             m.setStoreName(reader.getCellValue(row, "StoreName"));
-            m.setStoreStatus(reader.getCellValue(row, "Store Status")); // Note space in header
+            m.setStoreStatus(reader.getCellValue(row, "Store Status"));
             m.setStoreDesc(reader.getCellValue(row, "Store Desc"));
-
-            // Address
             m.setAddress(reader.getCellValue(row, "Address"));
             m.setCity(reader.getCellValue(row, "City"));
             m.setState(reader.getCellValue(row, "State"));
             m.setPostalCode(reader.getCellValue(row, "PostalCode"));
-
-            // Business Details
             m.setBusinessType(reader.getCellValue(row, "Business Type"));
             m.setBusinessMcc(reader.getCellValue(row, "Business MCC"));
             m.setVatNumber(reader.getCellValue(row, "VATNumber"));
             m.setIndustryType(reader.getCellValue(row, "Industry Type"));
             m.setCustomerType(reader.getCellValue(row, "Customer Type"));
-            m.setSourceOfFund(reader.getCellValue(row, "SourceOffund")); // Note type
+            m.setSourceOfFund(reader.getCellValue(row, "SourceOffund"));
             m.setExpectedVolume(parseDecimal(reader.getCellValue(row, "Expected Volume")));
-
-            // Contacts
             m.setPrimaryContactPerson(reader.getCellValue(row, "PrimaryContactPerson"));
             m.setPrimaryContactNumber(reader.getCellValue(row, "PrimaryContactNumber"));
             m.setPrimaryContactEmail(reader.getCellValue(row, "PrimaryContactEmail"));
             m.setPrimaryContactDesignation(reader.getCellValue(row, "PrimaryContactDesignation"));
-
             m.setSecondaryContactPerson(reader.getCellValue(row, "SecondaryContactPerson"));
             m.setSecondaryContactEmail(reader.getCellValue(row, "SecondaryContactEmail"));
             m.setSecondaryContactNumber(reader.getCellValue(row, "SecondaryContactNumber"));
             m.setSecondaryContactDesignation(reader.getCellValue(row, "SecondaryContactDesignation"));
-
-            // Compliance / Risk
             m.setRegulatedActivity(parseBoolean(reader.getCellValue(row, "regulatedActivity")));
             m.setRegulatedActivityDesc(reader.getCellValue(row, "regulatedActivityDescription"));
             m.setAuditorName(reader.getCellValue(row, "auditorName"));
@@ -209,8 +193,6 @@ public class MerchantMasterJobConfig {
             m.setRiskLevelHigh(parseBoolean(reader.getCellValue(row, "Risk Level High")));
             m.setRiskLevelProhibited(parseBoolean(reader.getCellValue(row, "Risk Level Prohibited")));
             m.setRiskLevelRestricted(parseBoolean(reader.getCellValue(row, "Risk Level Restricted")));
-
-            // Terminal
             m.setTerminalInternalId(reader.getCellValue(row, "TerminalInternalId"));
             m.setTid(reader.getCellValue(row, "TID"));
             m.setTerminalName(reader.getCellValue(row, "Terminal Name"));
@@ -218,31 +200,103 @@ public class MerchantMasterJobConfig {
             m.setTerminalDeviceNumber(reader.getCellValue(row, "Terminal Device Number"));
             m.setTerminalType(reader.getCellValue(row, "Terminal Type"));
             m.setTerminalDescription(reader.getCellValue(row, "Terminal Description"));
-
-            // Bank Info
             m.setBankName(reader.getCellValue(row, "BankName"));
             m.setBankAccountName(reader.getCellValue(row, "BankAccountName"));
             m.setBankAccountNumber(reader.getCellValue(row, "BankAccountNumber"));
             m.setSwiftCode(reader.getCellValue(row, "SwiftCode"));
             m.setIbanNumber(reader.getCellValue(row, "IBANNumber"));
-
-            // Sales User
             m.setSalesUserEmail(reader.getCellValue(row, "Sales User Email"));
             m.setSalesUserId(reader.getCellValue(row, "Sales User Id"));
             m.setReferralPartner(reader.getCellValue(row, "Referral Partner"));
-
-            // Dates
             m.setDateOfOnboarding(parseDate(reader.getCellValue(row, "Date of Onboarding")));
             m.setReviewedDate(parseDate(reader.getCellValue(row, "Reviewed Date")));
             m.setNextReviewedDate(parseDate(reader.getCellValue(row, "Next Reviewed Date")));
-
             m.setCreatedDate(parseDate(reader.getCellValue(row, "CreatedDate")));
             m.setMerchantCreatedDate(parseDate(reader.getCellValue(row, "Merchant CreatedDate")));
             m.setMerchantStoreCreatedDate(parseDate(reader.getCellValue(row, "MerchantStore CreatedDate")));
             m.setTerminalCreatedDate(parseDate(reader.getCellValue(row, "Terminal CreatedDate")));
-
             return m;
         });
+
+        // CSV row mapper (for .csv/.tsv files) — same field mapping, uses getCsvCellValue()
+        reader.setCsvRowMapper((r, rowNum) -> {
+            @SuppressWarnings("unchecked")
+            ExcelItemReader<StagingMerchant> rr = (ExcelItemReader<StagingMerchant>) r;
+            StagingMerchant m = new StagingMerchant();
+            m.setInstitutionCode(rr.getCsvCellValue("Institution Code"));
+            m.setInstitutionName(rr.getCsvCellValue("Institution Name"));
+            m.setEntityInternalId(rr.getCsvCellValue("EntityInternalId"));
+            m.setEntityName(rr.getCsvCellValue("Entity Name"));
+            m.setEntityCode(rr.getCsvCellValue("Entity Code"));
+            m.setAggregatorInternalId(rr.getCsvCellValue("AggregatorInternalId"));
+            m.setAggregatorName(rr.getCsvCellValue("Aggregator Name"));
+            m.setAggregatorCode(rr.getCsvCellValue("Aggregator Code"));
+            m.setMerchantInternalId(rr.getCsvCellValue("MerchantInternalId"));
+            m.setMid(rr.getCsvCellValue("MID"));
+            m.setMerchantName(rr.getCsvCellValue("MerchantName"));
+            m.setMerchantStatus(rr.getCsvCellValue("MerchantStatus"));
+            m.setRiskLevel(rr.getCsvCellValue("RiskLevel"));
+            m.setProduct(rr.getCsvCellValue("Product"));
+            m.setMerchantStoreInternalId(rr.getCsvCellValue("MerchantStoreInternalId"));
+            m.setSid(rr.getCsvCellValue("SID"));
+            m.setStoreLegalName(rr.getCsvCellValue("StoreLegalName"));
+            m.setStoreName(rr.getCsvCellValue("StoreName"));
+            m.setStoreStatus(rr.getCsvCellValue("Store Status"));
+            m.setStoreDesc(rr.getCsvCellValue("Store Desc"));
+            m.setAddress(rr.getCsvCellValue("Address"));
+            m.setCity(rr.getCsvCellValue("City"));
+            m.setState(rr.getCsvCellValue("State"));
+            m.setPostalCode(rr.getCsvCellValue("PostalCode"));
+            m.setBusinessType(rr.getCsvCellValue("Business Type"));
+            m.setBusinessMcc(rr.getCsvCellValue("Business MCC"));
+            m.setVatNumber(rr.getCsvCellValue("VATNumber"));
+            m.setIndustryType(rr.getCsvCellValue("Industry Type"));
+            m.setCustomerType(rr.getCsvCellValue("Customer Type"));
+            m.setSourceOfFund(rr.getCsvCellValue("SourceOffund"));
+            m.setExpectedVolume(parseDecimal(rr.getCsvCellValue("Expected Volume")));
+            m.setPrimaryContactPerson(rr.getCsvCellValue("PrimaryContactPerson"));
+            m.setPrimaryContactNumber(rr.getCsvCellValue("PrimaryContactNumber"));
+            m.setPrimaryContactEmail(rr.getCsvCellValue("PrimaryContactEmail"));
+            m.setPrimaryContactDesignation(rr.getCsvCellValue("PrimaryContactDesignation"));
+            m.setSecondaryContactPerson(rr.getCsvCellValue("SecondaryContactPerson"));
+            m.setSecondaryContactEmail(rr.getCsvCellValue("SecondaryContactEmail"));
+            m.setSecondaryContactNumber(rr.getCsvCellValue("SecondaryContactNumber"));
+            m.setSecondaryContactDesignation(rr.getCsvCellValue("SecondaryContactDesignation"));
+            m.setRegulatedActivity(parseBoolean(rr.getCsvCellValue("regulatedActivity")));
+            m.setRegulatedActivityDesc(rr.getCsvCellValue("regulatedActivityDescription"));
+            m.setAuditorName(rr.getCsvCellValue("auditorName"));
+            m.setIsPep(parseBoolean(rr.getCsvCellValue("isPEP")));
+            m.setPepReason(rr.getCsvCellValue("PEPReason"));
+            m.setHighRiskAdverseMedia(parseBoolean(rr.getCsvCellValue("highRiskAdverseMedia")));
+            m.setHighRiskSourceOfWealth(parseBoolean(rr.getCsvCellValue("highRiskSourceOfWealth")));
+            m.setRiskLevelHigh(parseBoolean(rr.getCsvCellValue("Risk Level High")));
+            m.setRiskLevelProhibited(parseBoolean(rr.getCsvCellValue("Risk Level Prohibited")));
+            m.setRiskLevelRestricted(parseBoolean(rr.getCsvCellValue("Risk Level Restricted")));
+            m.setTerminalInternalId(rr.getCsvCellValue("TerminalInternalId"));
+            m.setTid(rr.getCsvCellValue("TID"));
+            m.setTerminalName(rr.getCsvCellValue("Terminal Name"));
+            m.setTerminalStatus(rr.getCsvCellValue("Terminal Status"));
+            m.setTerminalDeviceNumber(rr.getCsvCellValue("Terminal Device Number"));
+            m.setTerminalType(rr.getCsvCellValue("Terminal Type"));
+            m.setTerminalDescription(rr.getCsvCellValue("Terminal Description"));
+            m.setBankName(rr.getCsvCellValue("BankName"));
+            m.setBankAccountName(rr.getCsvCellValue("BankAccountName"));
+            m.setBankAccountNumber(rr.getCsvCellValue("BankAccountNumber"));
+            m.setSwiftCode(rr.getCsvCellValue("SwiftCode"));
+            m.setIbanNumber(rr.getCsvCellValue("IBANNumber"));
+            m.setSalesUserEmail(rr.getCsvCellValue("Sales User Email"));
+            m.setSalesUserId(rr.getCsvCellValue("Sales User Id"));
+            m.setReferralPartner(rr.getCsvCellValue("Referral Partner"));
+            m.setDateOfOnboarding(parseDate(rr.getCsvCellValue("Date of Onboarding")));
+            m.setReviewedDate(parseDate(rr.getCsvCellValue("Reviewed Date")));
+            m.setNextReviewedDate(parseDate(rr.getCsvCellValue("Next Reviewed Date")));
+            m.setCreatedDate(parseDate(rr.getCsvCellValue("CreatedDate")));
+            m.setMerchantCreatedDate(parseDate(rr.getCsvCellValue("Merchant CreatedDate")));
+            m.setMerchantStoreCreatedDate(parseDate(rr.getCsvCellValue("MerchantStore CreatedDate")));
+            m.setTerminalCreatedDate(parseDate(rr.getCsvCellValue("Terminal CreatedDate")));
+            return m;
+        });
+
         return reader;
     }
 

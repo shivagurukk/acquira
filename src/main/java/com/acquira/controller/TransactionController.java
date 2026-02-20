@@ -52,7 +52,12 @@ public class TransactionController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate transactionDateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate transactionDateTo) {
 
-        Specification<Transaction> spec = createSpecification(mid, sid, tid, paymentDateFrom, paymentDateTo,
+        Long tenantId = com.acquira.config.TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            return ResponseEntity.status(403).build();
+        }
+
+        Specification<Transaction> spec = createSpecification(tenantId, mid, sid, tid, paymentDateFrom, paymentDateTo,
                 transactionDateFrom, transactionDateTo);
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "paymentDate"));
@@ -71,7 +76,13 @@ public class TransactionController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate transactionDateTo,
             jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
 
-        Specification<Transaction> spec = createSpecification(mid, sid, tid, paymentDateFrom, paymentDateTo,
+        Long tenantId = com.acquira.config.TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            response.sendError(403, "Tenant Context Missing");
+            return;
+        }
+
+        Specification<Transaction> spec = createSpecification(tenantId, mid, sid, tid, paymentDateFrom, paymentDateTo,
                 transactionDateFrom, transactionDateTo);
         List<Transaction> transactions = transactionRepository.findAll(spec,
                 Sort.by(Sort.Direction.DESC, "paymentDate"));
@@ -101,10 +112,13 @@ public class TransactionController {
         }
     }
 
-    private Specification<Transaction> createSpecification(String mid, String sid, String tid,
+    private Specification<Transaction> createSpecification(Long tenantId, String mid, String sid, String tid,
             LocalDate paymentDateFrom, LocalDate paymentDateTo,
             LocalDate transactionDateFrom, LocalDate transactionDateTo) {
         Specification<Transaction> spec = Specification.where(null);
+
+        // Tenant Filter (CRITICAL)
+        spec = spec.and((root, query, cb) -> cb.equal(root.get("tenantId"), tenantId));
 
         // Date Filters
         if (paymentDateFrom != null) {

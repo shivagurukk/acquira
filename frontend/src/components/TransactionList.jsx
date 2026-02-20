@@ -1,7 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Filter, Calendar, CreditCard, ChevronLeft, ChevronRight, X, Download } from 'lucide-react';
 import useExcelExport from '../hooks/useExcelExport';
 import Loader from './Loader';
+
+const EMPTY_FILTERS = {
+    mid: '', sid: '', tid: '',
+    paymentDateFrom: '', paymentDateTo: '',
+    transactionDateFrom: '', transactionDateTo: ''
+};
 
 const TransactionList = () => {
     const [transactions, setTransactions] = useState([]);
@@ -15,98 +21,74 @@ const TransactionList = () => {
     const { exportExcel, isExporting } = useExcelExport();
 
     // Filters
-    const [filters, setFilters] = useState({
-        mid: '',
-        sid: '',
-        tid: '',
-        paymentDateFrom: '',
-        paymentDateTo: '',
-        transactionDateFrom: '',
-        transactionDateTo: ''
-    });
+    const [filters, setFilters] = useState({ ...EMPTY_FILTERS });
 
-    useEffect(() => {
-        fetchTransactions();
-    }, [page, size]);
+    // Use a ref to always have current filters available in fetchTransactions
+    const filtersRef = useRef(filters);
+    filtersRef.current = filters;
 
-    const fetchTransactions = async () => {
+    const fetchTransactions = useCallback(async (overrideFilters) => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
+            const tenantId = localStorage.getItem('defaultTenantId');
+            const activeFilters = overrideFilters || filtersRef.current;
 
             const params = new URLSearchParams();
             params.append('page', page);
             params.append('size', size);
 
-            if (filters.mid) params.append('mid', filters.mid);
-            if (filters.sid) params.append('sid', filters.sid);
-            if (filters.tid) params.append('tid', filters.tid);
+            if (activeFilters.mid) params.append('mid', activeFilters.mid);
+            if (activeFilters.sid) params.append('sid', activeFilters.sid);
+            if (activeFilters.tid) params.append('tid', activeFilters.tid);
 
-            if (filters.paymentDateFrom) params.append('paymentDateFrom', filters.paymentDateFrom);
-            if (filters.paymentDateTo) params.append('paymentDateTo', filters.paymentDateTo);
-            if (filters.transactionDateFrom) params.append('transactionDateFrom', filters.transactionDateFrom);
-            if (filters.transactionDateTo) params.append('transactionDateTo', filters.transactionDateTo);
+            if (activeFilters.paymentDateFrom) params.append('paymentDateFrom', activeFilters.paymentDateFrom);
+            if (activeFilters.paymentDateTo) params.append('paymentDateTo', activeFilters.paymentDateTo);
+            if (activeFilters.transactionDateFrom) params.append('transactionDateFrom', activeFilters.transactionDateFrom);
+            if (activeFilters.transactionDateTo) params.append('transactionDateTo', activeFilters.transactionDateTo);
 
             const res = await fetch(`/api/transactions?${params.toString()}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
-                    'X-Tenant-Id': tenantId
+                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
                 }
             });
 
             if (res.ok) {
                 const data = await res.json();
-                setTransactions(data.content);
-                setTotalPages(data.totalPages);
-                setTotalElements(data.totalElements);
+                setTransactions(data.content || []);
+                setTotalPages(data.totalPages || 0);
+                setTotalElements(data.totalElements || 0);
             }
         } catch (error) {
             console.error("Failed to fetch transactions", error);
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, size]);
+
+    useEffect(() => {
+        fetchTransactions();
+    }, [page, size]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleFilterChange = (key, value) => {
         setFilters(prev => ({ ...prev, [key]: value }));
     };
 
     const applyFilters = () => {
-        setPage(0); // Reset to first page
+        setPage(0);
         fetchTransactions();
     };
 
     const clearFilters = () => {
-        setFilters({
-            mid: '', sid: '', tid: '',
-            paymentDateFrom: '', paymentDateTo: '',
-            transactionDateFrom: '', transactionDateTo: ''
-        });
+        const cleared = { ...EMPTY_FILTERS };
+        setFilters(cleared);
         setPage(0);
-        setTimeout(() => {
-            // We need to trigger fetch, but state update is async. 
-            // A better way is dependency on a 'trigger' or just rely on manual 'Apply' but user expects clear to fetch.
-            // For now, simple timeout or just let user click apply after clear? 
-            // Let's force fetch by calling with empty filters directly or just triggering.
-            // Actually, best to just reset state and let user click apply, OR call fetch with cleared params.
-            // Let's call fetch manually with defaults.
-            // But fetchTransactions uses state. 
-            // Standard pattern: setFilters then useEffect or explicit call.
-            // We'll leave it to user to click apply or auto-apply? 
-            // Auto-apply on clear is better UX.
-        }, 0);
-        // Hack: Direct fetch not clean due to closure. 
-        // We will just reload page 0 with empty params by setting state and ensuring useEffect doesn't fire double?
-        // Actually, just set Filters and trigger a reload flag?
-        // Let's just use a ref or simple "Appy" button is required.
+        // Pass cleared filters directly to avoid stale closure
+        fetchTransactions(cleared);
     };
 
-    // Auto-fetch on clear?
-    // Let's just create a wrapper that uses current state.
-
     const handleExport = () => {
-        // Pass current filters to export
         exportExcel('TRANSACTIONS', filters);
     };
 
@@ -121,7 +103,7 @@ const TransactionList = () => {
                         <button onClick={handleExport} disabled={isExporting} style={{ fontSize: '0.9rem', color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: '600', opacity: isExporting ? 0.7 : 1 }}>
                             <Download size={16} /> {isExporting ? 'Exporting...' : 'Export Excel'}
                         </button>
-                        <button onClick={() => { clearFilters(); setTimeout(fetchTransactions, 50); }} style={{ fontSize: '0.9rem', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <button onClick={clearFilters} style={{ fontSize: '0.9rem', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
                             <X size={16} /> Clear
                         </button>
                     </div>

@@ -26,6 +26,7 @@ import DailyMerchantDashboard from './pages/business/DailyMerchantDashboard';
 import MerchantAnalyticsReport from './pages/business/MerchantAnalyticsReport';
 import MerchantComparison from './pages/business/MerchantComparison';
 import SalesTeamManagement from './pages/sales/SalesTeamManagement';
+import SalesLeaderboard from './pages/sales/SalesLeaderboard';
 
 import UserManagement from './pages/UserManagement';
 import TenantManagement from './pages/TenantManagement';
@@ -39,8 +40,11 @@ import BackupRestore from './pages/BackupRestore';
 import DataExplorer from './pages/analytics/DataExplorer';
 import AiAssistant from './pages/ai/AiAssistant';
 import StatementEmails from './pages/StatementEmails';
+import ServerFileProcessor from './pages/ServerFileProcessor';
 import SmtpSettings from './pages/SmtpSettings';
 import AuditLogViewer from './pages/admin/AuditLogViewer';
+import IntegrationHub from './pages/admin/IntegrationHub';
+import EmailCampaignHub from './pages/admin/EmailCampaignHub';
 
 import ChangePasswordPage from './pages/ChangePasswordPage';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -99,6 +103,7 @@ function App() {
 
           {/* Sales */}
           <Route path="/sales/team-management" element={<SalesTeamManagement />} />
+          <Route path="/sales/leaderboard" element={<SalesLeaderboard />} />
 
           {/* Finance */}
           <Route path="/finance/dashboard" element={<FinanceDashboard />} />
@@ -107,6 +112,11 @@ function App() {
 
           {/* Operations */}
           <Route path="/upload" element={<UploadPage />} />
+          <Route path="/ops/server-file" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <ServerFileProcessor />
+            </RoleGuard>
+          } />
           <Route path="/ops/batch-logs" element={<BatchMonitoring />} />
           <Route path="/business/emails" element={<StatementEmails />} />
 
@@ -139,6 +149,40 @@ function App() {
           <Route path="/admin/backups" element={
             <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}>
               <BackupRestore />
+            </RoleGuard>
+          } />
+
+          {/* Data Integration — single page with tabs */}
+          <Route path="/admin/integration" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <IntegrationHub />
+            </RoleGuard>
+          } />
+          <Route path="/admin/integration/connections" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <IntegrationHub defaultTab="connections" />
+            </RoleGuard>
+          } />
+          <Route path="/admin/integration/reports" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <IntegrationHub defaultTab="reports" />
+            </RoleGuard>
+          } />
+          <Route path="/admin/integration/schedules" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <IntegrationHub defaultTab="schedules" />
+            </RoleGuard>
+          } />
+          <Route path="/admin/integration/runs" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <IntegrationHub defaultTab="runs" />
+            </RoleGuard>
+          } />
+
+          {/* Email Campaign Hub */}
+          <Route path="/admin/email-campaigns" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
+              <EmailCampaignHub />
             </RoleGuard>
           } />
         </Route>

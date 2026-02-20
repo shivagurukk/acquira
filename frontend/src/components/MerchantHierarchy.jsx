@@ -30,7 +30,7 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
+            const tenantId = localStorage.getItem('defaultTenantId');
 
             const currentFilters = clear ? {} : filters;
             const queryParams = new URLSearchParams();
@@ -58,12 +58,10 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
 
             if (res.ok) {
                 const data = await res.json();
-                if (reset) {
-                    setMerchants(data.content);
-                } else {
-                    setMerchants(prev => [...prev, ...data.content]);
-                }
+                setMerchants(data.content || []);
                 setHasMore(!data.last);
+                setTotalPages(data.totalPages || 0);
+                setTotalElements(data.totalElements || 0);
 
                 if (data.content.length > 0 && (data.content[0].stores && data.content[0].stores.length > 0)) {
                     autoExpand(data.content);
@@ -112,7 +110,7 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
     const fetchStoresForMerchant = async (merchantId) => {
         try {
             const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
+            const tenantId = localStorage.getItem('defaultTenantId');
             const res = await fetch(`/api/merchants/${merchantId}/stores`, {
                 headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }
             });
@@ -141,7 +139,7 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
     const fetchTerminalsForStore = async (storeId, merchantId) => {
         try {
             const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
+            const tenantId = localStorage.getItem('defaultTenantId');
             const res = await fetch(`/api/stores/${storeId}/terminals`, {
                 headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }
             });
@@ -174,6 +172,8 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
 
     const [page, setPage] = useState(0);
     const [hasMore, setHasMore] = useState(false);
+    const [totalPages, setTotalPages] = useState(0);
+    const [totalElements, setTotalElements] = useState(0);
 
     const applyFilters = () => {
         setPage(0);
@@ -193,12 +193,6 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
         setFetchedMerchants(new Set());
         setFetchedStores(new Set());
         setTimeout(() => fetchHierarchy(0, true, true), 50);
-    };
-
-    const loadMore = () => {
-        const nextPage = page + 1;
-        setPage(nextPage);
-        fetchHierarchy(nextPage, false);
     };
 
     if (loading && page === 0 && merchants.length === 0) return <Loader />;
@@ -359,18 +353,61 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
                         ))}
                     </>
                 )}
-                {hasMore && (
-                    <div style={{ padding: '20px', textAlign: 'center', borderTop: '1px solid #e2e8f0' }}>
-                        <button
-                            onClick={loadMore}
-                            disabled={loading}
-                            style={{
-                                padding: '10px 20px', background: 'white', border: '1px solid #e2e8f0',
-                                borderRadius: '8px', cursor: 'pointer', color: '#64748b', fontWeight: 'bold'
-                            }}
-                        >
-                            {loading ? 'Loading...' : 'Load More Results'}
-                        </button>
+                {/* Pagination */}
+                {totalPages > 1 && (
+                    <div style={{ padding: '16px 20px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
+                        <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                            Page {page + 1} of {totalPages} • {totalElements} total merchants
+                        </span>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                                onClick={() => { const p = Math.max(0, page - 1); setPage(p); fetchHierarchy(p, true); }}
+                                disabled={page === 0 || loading}
+                                style={{
+                                    padding: '8px 16px', background: page === 0 ? '#f1f5f9' : '#fff', border: '1px solid #e2e8f0',
+                                    borderRadius: '8px', cursor: page === 0 ? 'default' : 'pointer', color: page === 0 ? '#cbd5e1' : '#3b82f6',
+                                    fontWeight: '600', fontSize: '0.85rem'
+                                }}
+                            >← Previous</button>
+                            {totalPages <= 7 ? (
+                                Array.from({ length: totalPages }, (_, i) => (
+                                    <button key={i} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
+                                        style={{
+                                            padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer',
+                                            fontWeight: '600', fontSize: '0.85rem', minWidth: '38px',
+                                            background: page === i ? '#3b82f6' : '#fff', color: page === i ? '#fff' : '#64748b',
+                                        }}
+                                    >{i + 1}</button>
+                                ))
+                            ) : (
+                                <>
+                                    {[0, 1, 2].filter(i => i < totalPages).map(i => (
+                                        <button key={i} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
+                                            style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.85rem', minWidth: '38px', background: page === i ? '#3b82f6' : '#fff', color: page === i ? '#fff' : '#64748b' }}
+                                        >{i + 1}</button>
+                                    ))}
+                                    {page > 3 && <span style={{ padding: '8px 4px', color: '#94a3b8' }}>…</span>}
+                                    {page > 2 && page < totalPages - 3 && (
+                                        <button style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '8px', fontWeight: '600', fontSize: '0.85rem', minWidth: '38px', background: '#3b82f6', color: '#fff' }}>{page + 1}</button>
+                                    )}
+                                    {page < totalPages - 4 && <span style={{ padding: '8px 4px', color: '#94a3b8' }}>…</span>}
+                                    {[totalPages - 3, totalPages - 2, totalPages - 1].filter(i => i >= 3 && i < totalPages).map(i => (
+                                        <button key={i} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
+                                            style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.85rem', minWidth: '38px', background: page === i ? '#3b82f6' : '#fff', color: page === i ? '#fff' : '#64748b' }}
+                                        >{i + 1}</button>
+                                    ))}
+                                </>
+                            )}
+                            <button
+                                onClick={() => { const p = Math.min(totalPages - 1, page + 1); setPage(p); fetchHierarchy(p, true); }}
+                                disabled={page >= totalPages - 1 || loading}
+                                style={{
+                                    padding: '8px 16px', background: page >= totalPages - 1 ? '#f1f5f9' : '#fff', border: '1px solid #e2e8f0',
+                                    borderRadius: '8px', cursor: page >= totalPages - 1 ? 'default' : 'pointer', color: page >= totalPages - 1 ? '#cbd5e1' : '#3b82f6',
+                                    fontWeight: '600', fontSize: '0.85rem'
+                                }}
+                            >Next →</button>
+                        </div>
                     </div>
                 )}
             </div>

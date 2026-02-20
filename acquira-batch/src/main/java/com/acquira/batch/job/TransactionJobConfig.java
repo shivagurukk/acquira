@@ -216,7 +216,7 @@ public class TransactionJobConfig {
                         "SID", "Merchant Store Internal Id", "CMM Merchant Store Internal Id",
                         "Merchant Store Legal Name", "Store Name",
                         "TerminalID", "ARN", "RRN Number", "CardNumber", "Auth Code",
-                        "Payment Date", "Transaction Date", "BatchNumber", "Transaction Type", "CardScheme",
+                        "Payment Date", "Transaction Date", "Transaction Time", "BatchNumber", "Transaction Type", "CardScheme",
                         "Card Type", "DCC",
                         "Txn Currency", "Txn Currency Amount", "Store Base Currency",
                         "Store Base Currency Amount",
@@ -242,7 +242,10 @@ public class TransactionJobConfig {
                 t.setCardNumber(fieldSet.readString("CardNumber"));
                 t.setAuthCode(fieldSet.readString("Auth Code"));
                 t.setPaymentDate(parseDate(fieldSet.readString("Payment Date")));
-                t.setTransactionDate(parseDate(fieldSet.readString("Transaction Date")));
+                // Combine Transaction Date + Transaction Time for proper TIMESTAMP
+                String txnDateStr = fieldSet.readString("Transaction Date");
+                String txnTimeStr = fieldSet.readString("Transaction Time");
+                t.setTransactionDate(parseDateWithTime(txnDateStr, txnTimeStr));
                 t.setBatchNumber(fieldSet.readString("BatchNumber"));
                 t.setTransactionType(fieldSet.readString("Transaction Type"));
                 t.setCardScheme(fieldSet.readString("CardScheme"));
@@ -356,13 +359,21 @@ public class TransactionJobConfig {
         return (contribution, chunkContext) -> {
             long start = System.currentTimeMillis();
 
+            // 0. Log rows with null payment_date (data quality warning)
+            Integer nullDateCount = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NULL",
+                    Integer.class, tenantId);
+            if (nullDateCount != null && nullDateCount > 0) {
+                System.out.printf("WARNING: %d staging rows have NULL payment_date and will be skipped%n", nullDateCount);
+            }
+
             // 1. Delete existing fact rows for dates being uploaded (idempotent)
             jdbcTemplate.update(
                 "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " +
-                "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)",
+                "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)",
                 tenantId, tenantId);
 
-            // 2. Bulk INSERT from staging → fact
+            // 2. Bulk INSERT from staging → fact (only rows with valid payment_date)
             String sql = """
                 INSERT INTO fact_transaction (
                     tenant_id, merchant_id, store_id, terminal_id,
@@ -387,7 +398,7 @@ public class TransactionJobConfig {
                 LEFT JOIN dim_terminal t ON t.store_id = s.store_id
                     AND (t.tid = stg.tid OR t.internal_id = stg.tid OR t.internal_id = CONCAT('TERM_', stg.mid))
                     AND t.tenant_id = ?
-                WHERE stg.tenant_id = ?
+                WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL
                 """;
             jdbcTemplate.update(sql, tenantId, tenantId, tenantId, tenantId);
 
@@ -414,8 +425,9 @@ public class TransactionJobConfig {
             long start = System.currentTimeMillis();
 
             // Date scope subquery (used everywhere — Postgres will cache the plan)
-            String dateScope = "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)";
-            String monthScope = "(SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ?)";
+            // IMPORTANT: filter out NULL payment_date rows (e.g. interchange-only files)
+            String dateScope = "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
+            String monthScope = "(SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
 
             // 1. sum_daily_bank
             jdbcTemplate.update("""
@@ -431,14 +443,26 @@ public class TransactionJobConfig {
                     total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue
                 """, tenantId, tenantId);
 
-            // 2. sum_daily_merchant (the big one)
+            // 1.5 Auto-populate dim_merchant.name from stg_trnx_raw when NULL
+            //     (covers the case where transaction file is uploaded without a separate Merchant Master file)
+            jdbcTemplate.update("""
+                UPDATE dim_merchant m SET name = sub.merchant_name
+                FROM (
+                    SELECT DISTINCT s.mid, s.merchant_name
+                    FROM stg_trnx_raw s
+                    WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND s.merchant_name != ''
+                ) sub
+                WHERE m.mid = sub.mid AND m.tenant_id = ? AND (m.name IS NULL OR m.name = '')
+                """, tenantId, tenantId);
+
+            // 2. sum_daily_merchant (the big one — now includes total_base_volume for PDF)
             jdbcTemplate.update("""
                 INSERT INTO sum_daily_merchant (tenant_id, business_date, merchant_id,
-                    total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_margin,
+                    total_txns, total_volume, total_base_volume, total_msf, total_interchange, total_scheme_fee, total_margin,
                     total_debit_prepaid_volume, total_credit_volume, sales_user_id, unique_customer_count,
                     dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume, dcc_eligible_count, dcc_optin_count)
                 SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, COUNT(*),
-                    SUM(f.txn_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
+                    SUM(f.txn_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
                     SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0)),
                     SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT','PREPAID') THEN f.txn_currency_amount ELSE 0 END),
                     SUM(CASE WHEN UPPER(f.card_type) = 'CREDIT' THEN f.txn_currency_amount ELSE 0 END),
@@ -452,7 +476,7 @@ public class TransactionJobConfig {
                 WHERE f.tenant_id = ? AND DATE(f.payment_date) IN """ + dateScope + """
                 GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, m.sales_user_id
                 ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET
-                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf,
+                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf,
                     total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee,
                     total_margin=EXCLUDED.total_margin, total_debit_prepaid_volume=EXCLUDED.total_debit_prepaid_volume,
                     total_credit_volume=EXCLUDED.total_credit_volume, sales_user_id=EXCLUDED.sales_user_id,
@@ -603,9 +627,9 @@ public class TransactionJobConfig {
                 String[] parts = ac.split(":");
                 jdbcTemplate.update(String.format("""
                     INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
-                    SELECT tenant_id, merchant_id, DATE(payment_date), '%s', COALESCE(%s,'UNKNOWN'), COUNT(*), SUM(txn_currency_amount)
+                    SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(txn_currency_amount)
                     FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN %s
-                    GROUP BY tenant_id, merchant_id, DATE(payment_date), %s
+                    GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(%s,'UNKNOWN'))
                     ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
                         metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
                     """, parts[0], parts[1], dateScope, parts[1]), tenantId, tenantId);
@@ -617,6 +641,29 @@ public class TransactionJobConfig {
                 SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(txn_currency_amount)
                 FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date)
+                ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
+                    metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
+                """, tenantId, tenantId);
+
+            // TXN_SIZE_BUCKET attribute (for transaction size distribution chart)
+            jdbcTemplate.update("""
+                INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
+                SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_SIZE_BUCKET',
+                    CASE WHEN txn_currency_amount < 50 THEN '< 50'
+                         WHEN txn_currency_amount < 100 THEN '50-100'
+                         WHEN txn_currency_amount < 250 THEN '100-250'
+                         WHEN txn_currency_amount < 500 THEN '250-500'
+                         WHEN txn_currency_amount < 1000 THEN '500-1K'
+                         ELSE '1K+' END,
+                    COUNT(*), SUM(txn_currency_amount)
+                FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
+                GROUP BY tenant_id, merchant_id, DATE(payment_date),
+                    CASE WHEN txn_currency_amount < 50 THEN '< 50'
+                         WHEN txn_currency_amount < 100 THEN '50-100'
+                         WHEN txn_currency_amount < 250 THEN '100-250'
+                         WHEN txn_currency_amount < 500 THEN '250-500'
+                         WHEN txn_currency_amount < 1000 THEN '500-1K'
+                         ELSE '1K+' END
                 ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
                     metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
                 """, tenantId, tenantId);
@@ -673,7 +720,7 @@ public class TransactionJobConfig {
                          ELSE 'ONBOARDED' END,
                     d.target_date
                 FROM dim_merchant m
-                CROSS JOIN (SELECT DISTINCT DATE(payment_date) as target_date FROM stg_trnx_raw WHERE tenant_id = ?) d
+                CROSS JOIN (SELECT DISTINCT DATE(payment_date) as target_date FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL) d
                 LEFT JOIN fact_transaction f ON m.merchant_id = f.merchant_id AND f.tenant_id = m.tenant_id
                 WHERE m.tenant_id = ?
                 GROUP BY m.tenant_id, m.merchant_id, d.target_date
@@ -691,7 +738,7 @@ public class TransactionJobConfig {
                     CASE WHEN last_30d_value > 1000 THEN 80 ELSE 40 END,
                     'Automated Score', calc_date
                 FROM merchant_activity_summary
-                WHERE tenant_id = ? AND calc_date IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ?)
+                WHERE tenant_id = ? AND calc_date IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)
                 ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET
                     score=EXCLUDED.score, reason_tags=EXCLUDED.reason_tags
                 """, tenantId, tenantId);
@@ -720,7 +767,7 @@ public class TransactionJobConfig {
             long start = System.currentTimeMillis();
 
             List<String> months = jdbcTemplate.queryForList(
-                "SELECT DISTINCT TO_CHAR(payment_date, 'YYYY-MM') FROM stg_trnx_raw WHERE tenant_id = ?",
+                "SELECT DISTINCT TO_CHAR(payment_date, 'YYYY-MM') FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL",
                 String.class, tenantId);
 
             for (String monthYear : months) {
@@ -800,5 +847,40 @@ public class TransactionJobConfig {
             if (v.contains(" ")) return java.time.LocalDateTime.parse(v, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
             return java.time.LocalDate.parse(v).atStartOfDay();
         } catch (Exception e) { return null; }
+    }
+
+    /**
+     * Combine separate date + time strings into a single LocalDateTime.
+     * Handles: formatted dates (yyyy-MM-dd), Excel serial dates (e.g. 46068),
+     *          formatted times (HH:mm:ss), Excel serial times (e.g. 0.762326)
+     */
+    private java.time.LocalDateTime parseDateWithTime(String dateStr, String timeStr) {
+        if (dateStr == null || dateStr.trim().isEmpty()) return null;
+        java.time.LocalDateTime datePart = parseDate(dateStr);
+        if (datePart == null) return null;
+
+        if (timeStr == null || timeStr.trim().isEmpty()) return datePart;
+
+        try {
+            String tv = timeStr.trim();
+            int hh, mm, ss;
+            if (tv.matches("\\d+\\.\\d+")) {
+                // Excel time serial: 0.762326 = fraction of 24 hours
+                double frac = Double.parseDouble(tv);
+                int totalSecs = (int) Math.round(frac * 86400);
+                hh = totalSecs / 3600; mm = (totalSecs % 3600) / 60; ss = totalSecs % 60;
+            } else if (tv.contains(":")) {
+                // Formatted time: HH:mm:ss or HH:mm
+                String[] parts = tv.split(":");
+                hh = Integer.parseInt(parts[0]);
+                mm = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+                ss = parts.length > 2 ? Integer.parseInt(parts[2]) : 0;
+            } else {
+                return datePart; // unrecognized time format, keep date only
+            }
+            return datePart.toLocalDate().atTime(hh, mm, ss);
+        } catch (Exception e) {
+            return datePart; // on any error, keep date without time
+        }
     }
 }

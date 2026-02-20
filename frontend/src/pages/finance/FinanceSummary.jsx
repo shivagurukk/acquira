@@ -32,9 +32,9 @@ const FinanceSummary = () => {
             if (period === 'CUSTOM') {
                 query += `&startDate=${customRange.start}&endDate=${customRange.end}`;
             }
-            const res = await fetch(`/api/finance/summary?${query}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const tenantId = localStorage.getItem('defaultTenantId');
+            const hdrs = { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) };
+            const res = await fetch(`/api/finance/summary?${query}`, { headers: hdrs });
             if (res.ok) {
                 setData(await res.json());
             }
@@ -45,19 +45,14 @@ const FinanceSummary = () => {
     const fetchDailyData = async (monthLabel, avgDate) => {
         setLoadingDaily(true);
         try {
-            // Calculate start/end of month from the row data or label? 
-            // The API supports passing a specific date range or just relying on "period". 
-            // But we need data for *that specific month*.
-            // We can strictly pass startDate/endDate corresponding to that month.
-            // Or simpler: pass 'period=CUSTOM' and range based on 'avgDate' (sort_date).
             const dateObj = new Date(avgDate);
             const startStr = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1).toISOString().split('T')[0];
             const endStr = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).toISOString().split('T')[0];
 
             const token = localStorage.getItem('token');
-            const res = await fetch(`/api/finance/summary?period=CUSTOM&groupBy=DAY&startDate=${startStr}&endDate=${endStr}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const tenantId = localStorage.getItem('defaultTenantId');
+            const hdrs = { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) };
+            const res = await fetch(`/api/finance/summary?period=CUSTOM&groupBy=DAY&startDate=${startStr}&endDate=${endStr}`, { headers: hdrs });
             if (res.ok) {
                 const list = await res.json();
                 setDailyData(prev => ({ ...prev, [monthLabel]: list }));
@@ -70,9 +65,9 @@ const FinanceSummary = () => {
         setLoadingMerchants(true);
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`/api/finance/summary?period=CUSTOM&groupBy=MERCHANT&startDate=${dateStr}&endDate=${dateStr}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const tenantId = localStorage.getItem('defaultTenantId');
+            const hdrs = { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) };
+            const res = await fetch(`/api/finance/summary?period=CUSTOM&groupBy=MERCHANT&startDate=${dateStr}&endDate=${dateStr}`, { headers: hdrs });
             if (res.ok) {
                 const list = await res.json();
                 setMerchantData(prev => ({ ...prev, [dateStr]: list }));

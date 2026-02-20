@@ -17,101 +17,96 @@
             <rect width="100%" height="100%" fill="url(#coverDots)"/>
         </svg>
 
-        <!-- Primary radial glow — top right -->
+        <!-- Glows -->
         <div style="position: absolute; top: -180px; right: -100px; width: 550px; height: 550px; background: radial-gradient(circle, rgba(37,99,235,0.14) 0%, rgba(37,99,235,0.04) 40%, transparent 70%); pointer-events: none;"></div>
-        <!-- Secondary glow — bottom left -->
         <div style="position: absolute; bottom: -120px; left: -100px; width: 400px; height: 400px; background: radial-gradient(circle, rgba(96,165,250,0.08) 0%, transparent 65%); pointer-events: none;"></div>
-        <!-- Gold centre glow — luxe touch -->
         <div style="position: absolute; top: 42%; left: 50%; transform: translate(-50%, -50%); width: 700px; height: 250px; background: radial-gradient(ellipse, rgba(201,169,98,0.04) 0%, transparent 55%); pointer-events: none;"></div>
-        <!-- Ambient light from top center -->
-        <div style="position: absolute; top: -50px; left: 50%; transform: translateX(-50%); width: 400px; height: 200px; background: radial-gradient(ellipse, rgba(255,255,255,0.02) 0%, transparent 70%); pointer-events: none;"></div>
 
-        <!-- Decorative corner lines — geometric premium feel -->
-        <svg style="position: absolute; top: 60px; left: 32px; opacity: 0.06; pointer-events: none;" width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- Decorative corner lines -->
+        <svg style="position: absolute; top: 60px; left: 32px; opacity: 0.06; pointer-events: none;" width="80" height="80" viewBox="0 0 80 80" fill="none">
             <path d="M0 0 L0 80" stroke="white" stroke-width="0.5"/>
             <path d="M0 0 L80 0" stroke="white" stroke-width="0.5"/>
         </svg>
-        <svg style="position: absolute; bottom: 60px; right: 32px; opacity: 0.06; pointer-events: none;" width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <svg style="position: absolute; bottom: 60px; right: 32px; opacity: 0.06; pointer-events: none;" width="80" height="80" viewBox="0 0 80 80" fill="none">
             <path d="M80 80 L80 0" stroke="white" stroke-width="0.5"/>
             <path d="M80 80 L0 80" stroke="white" stroke-width="0.5"/>
         </svg>
 
-        <!-- Top bar: Period badge + Confidential + Bank Logo -->
+        <!-- Top bar -->
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 28px 46px; position: relative; z-index: 2;">
             <div style="display: flex; align-items: center; gap: 14px;">
-                <div style="background: linear-gradient(135deg, #2563EB, #3B82F6); color: white; padding: 6px 20px; border-radius: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; box-shadow: 0 3px 12px rgba(37,99,235,0.35), 0 1px 3px rgba(37,99,235,0.2);" th:text="${reportPeriod}">January 2026</div>
+                <div style="background: linear-gradient(135deg, #2563EB, #3B82F6); color: white; padding: 6px 20px; border-radius: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em;" th:text="${reportPeriod}">January 2026</div>
                 <div style="font-size: 8px; color: rgba(255,255,255,0.25); letter-spacing: 0.1em; font-weight: 500;">CONFIDENTIAL</div>
             </div>
-            <div style="background: rgba(255,255,255,0.06); width: 100px; height: 32px; border-radius: 7px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.3); font-weight: 700; font-size: 8px; letter-spacing: 0.07em; border: 1px solid rgba(255,255,255,0.06); backdrop-filter: blur(4px);">BANK LOGO</div>
+            <img src="__AFS_LOGO_WHITE__" alt="AFS" style="height: 44px; width: auto; opacity: 0.92;" />
         </div>
 
-        <!-- Main content — centered with dramatic typography -->
+        <!-- Main content -->
         <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 0 60px; position: relative; z-index: 2;">
 
-            <!-- Acquira icon — gold ring with layered depth -->
-            <div style="width: 64px; height: 64px; border: 1.5px solid rgba(201,169,98,0.28); border-radius: 18px; display: flex; align-items: center; justify-content: center; margin-bottom: 36px; background: rgba(255,255,255,0.03); box-shadow: 0 4px 24px rgba(201,169,98,0.08), 0 8px 32px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.06);">
-                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="rgba(201,169,98,0.9)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M2 17L12 22L22 17" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/>
-                    <path d="M2 12L12 17L22 12" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
-                </svg>
+            <!-- AFS Logo glass container -->
+            <div style="width: 210px; height: 136px; border: 1.5px solid rgba(201,169,98,0.35); border-radius: 22px; display: flex; align-items: center; justify-content: center; margin-bottom: 36px; background: rgba(255,255,255,0.05); position: relative; overflow: hidden;">
+                <div style="position: absolute; top: 0; left: 0; right: 0; height: 1.5px; background: linear-gradient(90deg, transparent, rgba(201,169,98,0.6), transparent);"></div>
+                <img src="__AFS_LOGO_WHITE__" alt="AFS" style="height: 68px; width: auto;" />
             </div>
 
-            <!-- Subtitle — editorial tracking -->
+            <!-- Subtitle -->
             <div style="font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600; color: rgba(201,169,98,0.85); letter-spacing: 0.35em; text-transform: uppercase; margin-bottom: 18px;">Monthly Merchant Report</div>
 
-            <!-- Title — dramatic display type -->
-            <h1 style="font-family: 'Playfair Display', 'Georgia', serif; font-size: 52px; font-weight: 900; margin-bottom: 4px; color: white; letter-spacing: 0.02em; line-height: 1; text-shadow: 0 2px 30px rgba(96,165,250,0.15), 0 4px 60px rgba(37,99,235,0.08);">PERFORMANCE</h1>
-            <h1 style="font-family: 'Playfair Display', 'Georgia', serif; font-size: 52px; font-weight: 900; margin-bottom: 0; color: white; letter-spacing: 0.02em; line-height: 1; text-shadow: 0 2px 30px rgba(96,165,250,0.15), 0 4px 60px rgba(37,99,235,0.08);">INSIGHTS</h1>
+            <!-- Title -->
+            <h1 style="font-family: 'Playfair Display', 'Georgia', serif; font-size: 52px; font-weight: 900; margin-bottom: 4px; color: white; letter-spacing: 0.02em; line-height: 1;">AFS</h1>
+            <h1 style="font-family: 'Playfair Display', 'Georgia', serif; font-size: 52px; font-weight: 900; margin-bottom: 0; color: white; letter-spacing: 0.02em; line-height: 1;">PULSE</h1>
+            <div style="font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500; color: rgba(201,169,98,0.6); letter-spacing: 0.18em; text-transform: uppercase; margin-top: 10px;">Heartbeat of Your Business</div>
 
-            <!-- Gold gradient divider -->
-            <div style="width: 90px; height: 2.5px; background: linear-gradient(90deg, transparent, rgba(201,169,98,0.8), transparent); margin: 30px 0; border-radius: 2px; box-shadow: 0 0 12px rgba(201,169,98,0.15);"></div>
+            <!-- Gold divider -->
+            <div style="width: 90px; height: 2.5px; background: linear-gradient(90deg, transparent, rgba(201,169,98,0.8), transparent); margin: 30px 0; border-radius: 2px;"></div>
 
-            <!-- Merchant name — elegant serif -->
+            <!-- Merchant name -->
             <h2 style="font-family: 'Playfair Display', 'Georgia', serif; font-size: 25px; color: white; font-weight: 600; margin-bottom: 6px; letter-spacing: 0.04em;" th:text="${merchantName}">MERCHANT NAME</h2>
             <p style="font-family: 'Inter', sans-serif; font-size: 11px; color: rgba(255,255,255,0.35); letter-spacing: 0.1em;" th:text="${reportPeriod}">PERIOD</p>
+            <div style="font-family: 'Inter', sans-serif; font-size: 9px; color: rgba(255,255,255,0.25); letter-spacing: 0.08em; margin-top: 4px;">Monthly Volume: <span style="color: rgba(201,169,98,0.7); font-weight: 700;" th:text="'AED ' + ${dto.overview.sales.formattedValue}">AED 0</span> &nbsp;|&nbsp; Transactions: <span style="color: rgba(201,169,98,0.7); font-weight: 700;" th:text="${dto.overview.transactions.formattedValue}">0</span></div>
 
-            <!-- 3 KPI snapshot cards — glass with premium depth -->
+            <!-- 3 KPI snapshot cards -->
             <div style="display: flex; gap: 16px; margin-top: 46px;">
                 <!-- Revenue -->
-                <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 16px 26px; text-align: center; min-width: 138px; backdrop-filter: blur(8px); position: relative; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.06);">
+                <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 16px 26px; text-align: center; min-width: 138px; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2.5px; background: linear-gradient(90deg, transparent, #3B82F6, transparent); opacity: 0.7;"></div>
                     <div style="font-family: 'Inter', sans-serif; font-size: 7px; color: rgba(201,169,98,0.7); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;">Revenue</div>
                     <div style="font-family: 'Playfair Display', 'Georgia', serif; font-size: 23px; font-weight: 800; color: white; margin-top: 5px;" th:text="'AED ' + ${dto.overview.sales.formattedValue}">AED 0</div>
                     <div style="margin-top: 6px;">
-                        <span th:if="${dto.overview.sales.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399; background: rgba(52,211,153,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '% ↑'}">0%</span>
-                        <span th:if="${dto.overview.sales.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5; background: rgba(252,165,165,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '% ↓'}">0%</span>
+                        <span th:if="${dto.overview.sales.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399; background: rgba(52,211,153,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '% \u2191'}">0%</span>
+                        <span th:if="${dto.overview.sales.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5; background: rgba(252,165,165,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '% \u2193'}">0%</span>
                     </div>
                 </div>
                 <!-- Transactions -->
-                <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 16px 26px; text-align: center; min-width: 138px; backdrop-filter: blur(8px); position: relative; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.06);">
+                <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 16px 26px; text-align: center; min-width: 138px; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2.5px; background: linear-gradient(90deg, transparent, #34D399, transparent); opacity: 0.7;"></div>
                     <div style="font-family: 'Inter', sans-serif; font-size: 7px; color: rgba(201,169,98,0.7); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;">Transactions</div>
                     <div style="font-family: 'Playfair Display', 'Georgia', serif; font-size: 23px; font-weight: 800; color: white; margin-top: 5px;" th:text="${dto.overview.transactions.formattedValue}">0</div>
                     <div style="margin-top: 6px;">
-                        <span th:if="${dto.overview.transactions.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399; background: rgba(52,211,153,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '% ↑'}">0%</span>
-                        <span th:if="${dto.overview.transactions.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5; background: rgba(252,165,165,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '% ↓'}">0%</span>
+                        <span th:if="${dto.overview.transactions.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399; background: rgba(52,211,153,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '% \u2191'}">0%</span>
+                        <span th:if="${dto.overview.transactions.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5; background: rgba(252,165,165,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '% \u2193'}">0%</span>
                     </div>
                 </div>
                 <!-- Customers -->
-                <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 16px 26px; text-align: center; min-width: 138px; backdrop-filter: blur(8px); position: relative; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.06);">
+                <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 16px 26px; text-align: center; min-width: 138px; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2.5px; background: linear-gradient(90deg, transparent, #A78BFA, transparent); opacity: 0.7;"></div>
                     <div style="font-family: 'Inter', sans-serif; font-size: 7px; color: rgba(201,169,98,0.7); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;">Customers</div>
                     <div style="font-family: 'Playfair Display', 'Georgia', serif; font-size: 23px; font-weight: 800; color: white; margin-top: 5px;" th:text="${dto.overview.customers.formattedValue}">0</div>
                     <div style="margin-top: 6px;">
-                        <span th:if="${dto.overview.customers.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399; background: rgba(52,211,153,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '% ↑'}">0%</span>
-                        <span th:if="${dto.overview.customers.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5; background: rgba(252,165,165,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '% ↓'}">0%</span>
+                        <span th:if="${dto.overview.customers.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399; background: rgba(52,211,153,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '% \u2191'}">0%</span>
+                        <span th:if="${dto.overview.customers.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5; background: rgba(252,165,165,0.15); padding: 2px 10px; border-radius: 5px;" th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '% \u2193'}">0%</span>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Bottom bar — signature with gold accent line -->
+        <!-- Bottom bar -->
         <div style="padding: 22px 46px; display: flex; justify-content: space-between; align-items: center; position: relative; z-index: 2;">
             <div style="font-size: 7.5px; color: rgba(255,255,255,0.2); letter-spacing: 0.1em; font-weight: 500;">FINDING NEW WAYS TO HELP YOU SCALE YOUR BUSINESS</div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <div style="width: 50px; height: 1px; background: linear-gradient(90deg, transparent, rgba(201,169,98,0.35));"></div>
-                <div style="font-size: 7px; color: rgba(201,169,98,0.55); letter-spacing: 0.1em; font-weight: 600;">POWERED BY ACQUIRA</div>
+                <div style="font-size: 7px; color: rgba(201,169,98,0.55); letter-spacing: 0.1em; font-weight: 600;">POWERED BY AFS PULSE</div>
             </div>
         </div>
     </div>

@@ -1,274 +1,210 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
     PieChart, Pie, Cell
 } from 'recharts';
-import { Calendar, Layers } from 'lucide-react';
-import {
-    Grid,
-    Card,
-    CardContent,
-    Typography,
-    Box,
-    FormControl,
-    InputLabel,
-    Select,
-    MenuItem,
-    TextField,
-    Paper
-} from '@mui/material';
-import ReportHeader from '../../components/ReportHeader';
+import { Layers, BarChart3, Store, CreditCard, DollarSign, TrendingUp } from 'lucide-react';
+import { Grid, Box, Paper, Typography, Stack, FormControl, InputLabel, Select, MenuItem, TextField, Collapse } from '@mui/material';
+import PremiumReportHeader from '../../components/PremiumReportHeader';
+import KpiCards from '../../components/KpiCards';
+import { pageContainer } from '../../theme/dataGridStyles';
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#3b82f6', '#14b8a6', '#f97316'];
+
+const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val || 0);
+const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
+
+// ─── Premium Chart Card ──────────────────────────────────────────────
+const ChartCard = ({ title, children }) => (
+    <Paper sx={{
+        p: 3, height: 400, borderRadius: '14px', border: '1px solid #e2e8f0',
+        bgcolor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        transition: 'all 0.2s ease',
+        '&:hover': { boxShadow: '0 4px 16px rgba(0,0,0,0.06)', borderColor: '#cbd5e1' },
+        display: 'flex', flexDirection: 'column',
+    }}>
+        <Typography variant="subtitle2" fontWeight={800} color="#0f172a"
+            sx={{ mb: 2, pb: 1.5, borderBottom: '1px solid #f1f5f9', letterSpacing: '-0.01em' }}>
+            {title}
+        </Typography>
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+            {children}
+        </Box>
+    </Paper>
+);
+
+// ─── Custom Tooltip ──────────────────────────────────────────────────
+const CustomTooltip = ({ active, payload, label, isCurrency }) => {
+    if (!active || !payload || !payload.length) return null;
+    return (
+        <Box sx={{ bgcolor: '#0f172a', borderRadius: '8px', px: 2, py: 1.5, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+            <Typography variant="caption" color="#94a3b8" fontWeight={600}>{label}</Typography>
+            {payload.map((p, i) => (
+                <Typography key={i} variant="body2" fontWeight={700} sx={{ color: p.color || '#fff', mt: 0.5 }}>
+                    {isCurrency ? formatCurrency(p.value) : formatNumber(p.value)}
+                </Typography>
+            ))}
+        </Box>
+    );
+};
 
 const ExecutiveDashboardReport = () => {
     const [loading, setLoading] = useState(false);
     const [asOfDate, setAsOfDate] = useState(new Date().toISOString().split('T')[0]);
     const [dataset, setDataset] = useState('SID_Data_2026');
     const [availableDatasets, setAvailableDatasets] = useState([]);
-    const [showFilters, setShowFilters] = useState(true);
+    const [showFilters, setShowFilters] = useState(false);
 
     const [data, setData] = useState({
-        kpis: {
-            ytdSid: 0, ytdMid: 0, mtdSid: 0, wtdSid: 0, mtdMsfUsd: 0
-        },
-        charts: {
-            ytdByAgent: [],
-            ytdByProgram: [],
-            mtdVolumeSplit: [],
-            mtdSidByProgram: []
-        }
+        kpis: { ytdSid: 0, ytdMid: 0, mtdSid: 0, wtdSid: 0, mtdMsfUsd: 0 },
+        charts: { ytdByAgent: [], ytdByProgram: [], mtdVolumeSplit: [], mtdSidByProgram: [] }
     });
 
     useEffect(() => {
-        // Fetch Datasets
         fetch('/api/dashboard/v2/datasets')
             .then(res => res.json())
-            .then(sets => {
-                setAvailableDatasets(sets);
-                if (sets.length > 0 && !dataset) setDataset(sets[0]);
-            })
+            .then(sets => { setAvailableDatasets(sets); if (sets.length > 0 && !dataset) setDataset(sets[0]); })
             .catch(err => console.error(err));
     }, []);
 
-    useEffect(() => {
-        fetchDashboardData();
-    }, [asOfDate, dataset]);
+    useEffect(() => { fetchDashboardData(); }, [asOfDate, dataset]);
 
     const fetchDashboardData = async () => {
         if (!dataset) return;
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
+            const tenantId = localStorage.getItem('tenantId') || localStorage.getItem('defaultTenantId');
             const res = await fetch(`/api/dashboard/v2/data?dataset=${dataset}&asOfDate=${asOfDate}`, {
-                headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }
+                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
             });
-            if (res.ok) {
-                const result = await res.json();
-                setData(result);
-            }
-        } catch (error) {
-            console.error("Failed to fetch dashboard data", error);
-        } finally {
-            setLoading(false);
-        }
+            if (res.ok) setData(await res.json());
+        } catch (error) { console.error('Failed to fetch dashboard data', error); }
+        finally { setLoading(false); }
     };
 
-    const formatCurrency = (val) => {
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
+    const kpis = useMemo(() => [
+        { title: 'YTD SID', value: formatNumber(data.kpis.ytdSid), subtitle: 'Stores Created', icon: Store, color: '#6366f1' },
+        { title: 'YTD MID', value: formatNumber(data.kpis.ytdMid), subtitle: 'Merchants Created', icon: CreditCard, color: '#3b82f6' },
+        { title: 'MTD SID', value: formatNumber(data.kpis.mtdSid), subtitle: 'This Month', icon: TrendingUp, color: '#10b981' },
+        { title: 'WTD SID', value: formatNumber(data.kpis.wtdSid), subtitle: 'This Week', icon: BarChart3, color: '#f59e0b' },
+        { title: 'MTD MSF Revenue', value: formatCurrency(data.kpis.mtdMsfUsd), subtitle: 'USD Revenue', icon: DollarSign, color: '#8b5cf6' },
+    ], [data.kpis]);
+
+    const filterInputSx = {
+        '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '13px', bgcolor: '#f8fafc' },
+        '& .MuiInputLabel-root': { fontSize: '12px', fontWeight: 600 },
     };
 
     return (
-        <Box sx={{ p: 4, bgcolor: 'background.default', minHeight: '100vh', overflowY: 'auto' }}>
-            {/* Header */}
-            <ReportHeader
-                title="Executive Dashboard 2.0"
-                subtitle="SID Acquisition & Performance Report"
-                // No CSV export for dashboard charts currently, or could implement later
+        <Box sx={pageContainer}>
+            <PremiumReportHeader
+                title="Executive Dashboard" subtitle="SID Acquisition & Performance Report"
+                icon={BarChart3}
                 onRunReport={fetchDashboardData}
-                filters={{ hideDatePresets: true }}
-                onFilterChange={() => { }}
+                loading={loading}
                 showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)}
-                loading={loading}
+                hideDatePresets
             />
 
             {/* Filter Panel */}
-            {showFilters && (
-                <Paper sx={{ p: 3, mb: 4, borderRadius: 3 }}>
-                    <Grid container spacing={3} alignItems="center">
-                        <Grid item xs={12} md={4}>
-                            <FormControl fullWidth size="small">
-                                <InputLabel id="dataset-select-label">Data Sheet</InputLabel>
-                                <Select
-                                    labelId="dataset-select-label"
-                                    value={dataset}
-                                    label="Data Sheet"
-                                    onChange={e => setDataset(e.target.value)}
-                                    startAdornment={<Layers size={16} style={{ marginRight: 8, opacity: 0.5 }} />}
-                                >
-                                    {availableDatasets.map(ds => (
-                                        <MenuItem key={ds} value={ds}>{ds}</MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
-                        </Grid>
-                        <Grid item xs={12} md={4}>
-                            <TextField
-                                label="As of Date"
-                                type="date"
-                                fullWidth
-                                size="small"
-                                value={asOfDate}
-                                onChange={e => setAsOfDate(e.target.value)}
-                                InputLabelProps={{ shrink: true }}
-                            />
-                        </Grid>
-                    </Grid>
+            <Collapse in={showFilters} unmountOnExit>
+                <Paper sx={{ p: 3, mb: 3, borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                    <Typography variant="caption" fontWeight={700} color="#94a3b8"
+                        sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 2, display: 'block' }}>
+                        Data Source
+                    </Typography>
+                    <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
+                        <FormControl size="small" sx={{ minWidth: 220, ...filterInputSx }}>
+                            <InputLabel>Data Sheet</InputLabel>
+                            <Select value={dataset} label="Data Sheet"
+                                onChange={e => setDataset(e.target.value)}
+                                startAdornment={<Layers size={14} style={{ marginRight: 8, opacity: 0.5 }} />}
+                            >
+                                {availableDatasets.map(ds => (
+                                    <MenuItem key={ds} value={ds}>{ds}</MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                        <TextField label="As of Date" type="date" size="small" value={asOfDate}
+                            onChange={e => setAsOfDate(e.target.value)}
+                            InputLabelProps={{ shrink: true }}
+                            sx={{ minWidth: 170, ...filterInputSx }}
+                        />
+                    </Stack>
                 </Paper>
-            )}
+            </Collapse>
 
-            {/* Charts Grid (2x2) */}
-            <Grid container spacing={3} sx={{ mb: 4 }}>
+            {/* KPI Row */}
+            <KpiCards cards={kpis} />
 
-                {/* Chart 1: Number of SID YTD by Introducing Agent */}
+            {/* Charts Grid (2×2) */}
+            <Grid container spacing={2.5} sx={{ mb: 3 }}>
                 <Grid item xs={12} md={6}>
-                    <Paper sx={{ p: 3, height: 400, borderRadius: 3 }}>
-                        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2, borderBottom: 1, borderColor: 'divider', pb: 1 }}>
-                            Number of SID YTD by Introducing Agent
-                        </Typography>
+                    <ChartCard title="Number of SID YTD by Introducing Agent">
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart
-                                layout="vertical"
-                                data={data.charts.ytdByAgent}
-                                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                            >
-                                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                                <XAxis type="number" />
-                                <YAxis dataKey="agent" type="category" width={100} tick={{ fontSize: 11 }} />
-                                <Tooltip />
-                                <Bar dataKey="count" fill="#3B82F6" radius={[0, 4, 4, 0]} label={{ position: 'right', fill: '#64748b', fontSize: 11 }} />
+                            <BarChart layout="vertical" data={data.charts.ytdByAgent} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                                <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                <YAxis dataKey="agent" type="category" width={100} tick={{ fontSize: 11, fill: '#64748b' }} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="count" fill="#6366f1" radius={[0, 6, 6, 0]} />
                             </BarChart>
                         </ResponsiveContainer>
-                    </Paper>
+                    </ChartCard>
                 </Grid>
 
-                {/* Chart 2: Number of SID YTD by Merchant Referral Program */}
                 <Grid item xs={12} md={6}>
-                    <Paper sx={{ p: 3, height: 400, borderRadius: 3 }}>
-                        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2, borderBottom: 1, borderColor: 'divider', pb: 1 }}>
-                            Number of SID YTD by Program
-                        </Typography>
+                    <ChartCard title="Number of SID YTD by Program">
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart
-                                data={data.charts.ytdByProgram}
-                                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                            >
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                <XAxis dataKey="program" tick={{ fontSize: 11 }} />
-                                <YAxis />
-                                <Tooltip />
-                                <Bar dataKey="count" fill="#10B981" radius={[4, 4, 0, 0]} label={{ position: 'top', fill: '#64748b', fontSize: 11 }} />
+                            <BarChart data={data.charts.ytdByProgram} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                <XAxis dataKey="program" tick={{ fontSize: 11, fill: '#64748b' }} />
+                                <YAxis tick={{ fill: '#94a3b8' }} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="count" fill="#10b981" radius={[6, 6, 0, 0]} />
                             </BarChart>
                         </ResponsiveContainer>
-                    </Paper>
+                    </ChartCard>
                 </Grid>
 
-                {/* Chart 3: MTD Volume USD Split by Program */}
                 <Grid item xs={12} md={6}>
-                    <Paper sx={{ p: 3, height: 400, borderRadius: 3 }}>
-                        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2, borderBottom: 1, borderColor: 'divider', pb: 1 }}>
-                            MTD Volume USD Split by Program
-                        </Typography>
+                    <ChartCard title="MTD Volume USD Split by Program">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
-                                <Pie
-                                    data={data.charts.mtdVolumeSplit}
-                                    cx="50%"
-                                    cy="50%"
+                                <Pie data={data.charts.mtdVolumeSplit} cx="50%" cy="50%"
                                     labelLine={false}
                                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                                    outerRadius={120}
-                                    fill="#8884d8"
-                                    dataKey="value"
+                                    outerRadius={110} innerRadius={50} dataKey="value"
+                                    stroke="none" paddingAngle={2}
                                 >
-                                    {data.charts.mtdVolumeSplit.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    {data.charts.mtdVolumeSplit.map((_, index) => (
+                                        <Cell key={index} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
-                                <Tooltip formatter={(value) => formatCurrency(value)} />
-                                <Legend />
+                                <Tooltip content={<CustomTooltip isCurrency />} />
+                                <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
                             </PieChart>
                         </ResponsiveContainer>
-                    </Paper>
+                    </ChartCard>
                 </Grid>
 
-                {/* Chart 4: MTD SID Count by Program */}
                 <Grid item xs={12} md={6}>
-                    <Paper sx={{ p: 3, height: 400, borderRadius: 3 }}>
-                        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2, borderBottom: 1, borderColor: 'divider', pb: 1 }}>
-                            Number of SID for the Month by Program
-                        </Typography>
+                    <ChartCard title="Number of SID for the Month by Program">
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart
-                                data={data.charts.mtdSidByProgram}
-                                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                            >
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                <XAxis dataKey="program" tick={{ fontSize: 11 }} />
-                                <YAxis />
-                                <Tooltip />
-                                <Bar dataKey="count" fill="#8B5CF6" radius={[4, 4, 0, 0]} label={{ position: 'top', fill: '#64748b', fontSize: 11 }} />
+                            <BarChart data={data.charts.mtdSidByProgram} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                <XAxis dataKey="program" tick={{ fontSize: 11, fill: '#64748b' }} />
+                                <YAxis tick={{ fill: '#94a3b8' }} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="count" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
                             </BarChart>
                         </ResponsiveContainer>
-                    </Paper>
-                </Grid>
-            </Grid>
-
-            {/* KPI Tiles (Bottom Row) */}
-            <Grid container spacing={2}>
-                <Grid item xs={12} sm={6} md={4} lg={2}>
-                    <KpiTile label="As of Date" value={asOfDate} sublabel="Selection" color="info" />
-                </Grid>
-                <Grid item xs={12} sm={6} md={4} lg={2}>
-                    <KpiTile label="YTD SID" value={data.kpis.ytdSid.toLocaleString()} sublabel="Stores Created" color="primary" />
-                </Grid>
-                <Grid item xs={12} sm={6} md={4} lg={2}>
-                    <KpiTile label="YTD MID" value={data.kpis.ytdMid.toLocaleString()} sublabel="Merchants Created" color="secondary" />
-                </Grid>
-                <Grid item xs={12} sm={6} md={4} lg={2}>
-                    <KpiTile label="MTD SID Created" value={data.kpis.mtdSid.toLocaleString()} sublabel="This Month" color="success" />
-                </Grid>
-                <Grid item xs={12} sm={6} md={4} lg={2}>
-                    <KpiTile label="WTD SID Created" value={data.kpis.wtdSid.toLocaleString()} sublabel="This Week" color="warning" />
-                </Grid>
-                <Grid item xs={12} sm={6} md={4} lg={2}>
-                    <KpiTile label="Sum of MTD MSF" value={formatCurrency(data.kpis.mtdMsfUsd)} sublabel="USD Revenue" color="success" />
+                    </ChartCard>
                 </Grid>
             </Grid>
         </Box>
-    );
-};
-
-const KpiTile = ({ label, value, sublabel, color = 'primary' }) => {
-    // Mapping our custom 'color' props to MUI severity/palette colors if needed
-    // or just use 'primary', 'secondary', 'error', 'warning', 'info', 'success'
-
-    return (
-        <Card elevation={0} sx={{ height: '100%', border: '1px solid', borderColor: `${color}.light`, bgcolor: `${color}.lighter` }}>
-            <CardContent>
-                <Typography variant="overline" color="text.secondary" fontWeight="bold">
-                    {label}
-                </Typography>
-                <Typography variant="h4" fontWeight="bold" color={`${color}.main`} sx={{ my: 1 }} noWrap title={value}>
-                    {value}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                    {sublabel}
-                </Typography>
-            </CardContent>
-        </Card>
     );
 };
 

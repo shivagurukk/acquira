@@ -10,86 +10,68 @@
 
         <div class="toc-item">
             <div class="toc-num">1</div>
-            <div><div class="toc-title">Month-over-Month Comparison</div><div class="toc-desc">Side-by-side metrics with previous period analysis</div></div>
+            <div><div class="toc-title">Executive Summary</div><div class="toc-desc">Month-over-month comparison, key metrics and action signals</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">03</div>
         </div>
         <div class="toc-item">
             <div class="toc-num">2</div>
-            <div><div class="toc-title">Executive Summary</div><div class="toc-desc">Key metrics at a glance with performance highlights</div></div>
+            <div><div class="toc-title">Business Achievements</div><div class="toc-desc">Peak performance records, daily ATV and customer traffic patterns</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">04</div>
         </div>
         <div class="toc-item">
             <div class="toc-num">3</div>
-            <div><div class="toc-title">Business Overview</div><div class="toc-desc">Sales, transactions, customers and peak performance stats</div></div>
+            <div><div class="toc-title">Sales &amp; Hourly Intelligence</div><div class="toc-desc">Daily sales trend, time-of-day distribution and day-of-week analysis</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">05</div>
         </div>
         <div class="toc-item">
             <div class="toc-num">4</div>
-            <div><div class="toc-title">Business Achievements</div><div class="toc-desc">Daily sales trends, transaction values and unique customers</div></div>
+            <div><div class="toc-title">Operational Intelligence</div><div class="toc-desc">Revenue heatmap by day &amp; hour, transaction size distribution</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">06</div>
         </div>
         <div class="toc-item">
             <div class="toc-num">5</div>
-            <div><div class="toc-title">Daily Sales Performance</div><div class="toc-desc">Revenue distribution, time-of-day and day-of-week analysis</div></div>
+            <div><div class="toc-title">Growth &amp; Seasonality</div><div class="toc-desc">12-month rolling performance, YoY/MoM growth and quarterly breakdown</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">07</div>
         </div>
         <div class="toc-item">
             <div class="toc-num">6</div>
-            <div><div class="toc-title">Revenue &amp; Weekly Intelligence</div><div class="toc-desc">Weekly patterns, daily averages and peak day identification</div></div>
+            <div><div class="toc-title">Card &amp; Payment Analytics</div><div class="toc-desc">Credit, debit &amp; prepaid metrics with local vs international card analysis</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">08</div>
         </div>
         <div class="toc-item">
             <div class="toc-num">7</div>
-            <div><div class="toc-title">Revenue by Day Type</div><div class="toc-desc">Weekday vs weekend distribution with action signals</div></div>
+            <div><div class="toc-title">Customer Intelligence</div><div class="toc-desc">Retention analysis, opt-in/opt-out trends and loyalty segmentation</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">09</div>
         </div>
         <div class="toc-item">
             <div class="toc-num">8</div>
-            <div><div class="toc-title">Growth Trajectory</div><div class="toc-desc">YoY and MoM growth, momentum index and projections</div></div>
+            <div><div class="toc-title">DCC Revenue Optimization</div><div class="toc-desc">DCC conversion funnel, missed revenue and recovery roadmap</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">10</div>
         </div>
-        <div class="toc-item">
+        <div class="toc-item" th:if="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1}">
             <div class="toc-num">9</div>
-            <div><div class="toc-title">Payment &amp; Loyalty</div><div class="toc-desc">Card schemes, wallet usage, retention and customer segments</div></div>
+            <div><div class="toc-title">Store Performance</div><div class="toc-desc">Top-performing store locations ranked by sales volume and average ticket</div></div>
             <div class="toc-dots"></div>
             <div class="toc-page">11</div>
         </div>
-        <div class="toc-item">
-            <div class="toc-num">10</div>
-            <div><div class="toc-title">Monthly Trends</div><div class="toc-desc">12-month rolling performance and seasonality</div></div>
-            <div class="toc-dots"></div>
-            <div class="toc-page">12</div>
-        </div>
-        <div class="toc-item">
-            <div class="toc-num">11</div>
-            <div><div class="toc-title">Transaction Trends</div><div class="toc-desc">Volume analysis and quarterly breakdown</div></div>
-            <div class="toc-dots"></div>
-            <div class="toc-page">13</div>
-        </div>
-        <div class="toc-item">
-            <div class="toc-num">12</div>
-            <div><div class="toc-title">DCC Revenue Optimization</div><div class="toc-desc">Currency conversion opportunity and recommended actions</div></div>
-            <div class="toc-dots"></div>
-            <div class="toc-page">14</div>
-        </div>
         <div class="toc-item" style="border-bottom: none;">
-            <div class="toc-num">13</div>
+            <div class="toc-num" th:text="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1 ? '10' : '9'}">9</div>
             <div><div class="toc-title">Performance Scorecard</div><div class="toc-desc">Overall health score, metric gauges and next month priorities</div></div>
             <div class="toc-dots"></div>
-            <div class="toc-page">15</div>
+            <div class="toc-page" th:text="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1 ? '12' : '11'}">11</div>
         </div>
 
         <div style="margin-top: auto; display: flex; align-items: center; gap: 8px;">
             <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #E5E7EB, transparent);"></div>
-            <div style="font-size: 7px; color: #9CA3AF; letter-spacing: 0.06em;">15 PAGES &#8212; PREPARED WITH ACQUIRA INTELLIGENCE PLATFORM</div>
+            <div style="font-size: 7px; color: #9CA3AF; letter-spacing: 0.06em;">11+ PAGES &#8212; PREPARED WITH ACQUIRA INTELLIGENCE PLATFORM</div>
             <div style="flex: 1; height: 1px; background: linear-gradient(270deg, #E5E7EB, transparent);"></div>
         </div>
     </div>
