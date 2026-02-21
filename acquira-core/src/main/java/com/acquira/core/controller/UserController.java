@@ -109,6 +109,16 @@ public class UserController {
             user.setEmail(userDetails.getEmail().trim());
         }
 
+        // GAP-3: Update displayName
+        if (userDetails.getDisplayName() != null) {
+            user.setDisplayName(userDetails.getDisplayName());
+        }
+
+        // GAP-4: Update role (only if provided and caller is SUPER_ADMIN)
+        if (userDetails.getRole() != null && !userDetails.getRole().isBlank()) {
+            user.setRole(userDetails.getRole());
+        }
+
         user.setActive(userDetails.isActive());
 
         // If password is provided in update, use admin reset flow
@@ -234,5 +244,148 @@ public class UserController {
     @GetMapping("/{username}/banks")
     public ResponseEntity<List<com.acquira.common.model.Tenant>> getUserTenants(@PathVariable String username) {
         return ResponseEntity.ok(tenantService.getAllowedTenantsForUser(username));
+    }
+
+    // ===== GET USER TENANT ASSIGNMENTS (for edit panel) =====
+    @GetMapping("/{userId}/tenant-access")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> getUserTenantAccess(@PathVariable Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        List<com.acquira.common.model.UserTenantAccess> accesses = accessRepository.findAllByUser(user);
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        for (com.acquira.common.model.UserTenantAccess a : accesses) {
+            Map<String, Object> map = new java.util.HashMap<>();
+            map.put("accessId", a.getAccessId());
+            map.put("tenantId", a.getTenant().getTenantId());
+            map.put("tenantName", a.getTenant().getBankName());
+            map.put("groupId", a.getSysUserGroup() != null ? a.getSysUserGroup().getGroupId() : null);
+            map.put("groupName", a.getSysUserGroup() != null ? a.getSysUserGroup().getGroupName() : null);
+            map.put("roleInTenant", a.getRoleInTenant());
+            map.put("isDefault", Boolean.TRUE.equals(a.getIsDefaultTenant()));
+            result.add(map);
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    // ===== ADD TENANT ACCESS =====
+    @PostMapping("/{userId}/tenant-access")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> addTenantAccess(@PathVariable Long userId, @RequestBody Map<String, Object> payload) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        Long tenantId = Long.valueOf(payload.get("tenantId").toString());
+        Long groupId = Long.valueOf(payload.get("groupId").toString());
+        String roleInTenant = (String) payload.get("roleInTenant");
+        Boolean isDefault = Boolean.TRUE.equals(payload.get("isDefault"));
+
+        // Check for duplicate
+        if (accessRepository.findByUserAndTenant_TenantId(user, tenantId).isPresent()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "User already has access to this tenant"));
+        }
+
+        com.acquira.common.model.Tenant tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new RuntimeException("Tenant not found"));
+        com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new RuntimeException("Group not found"));
+
+        // If setting as default, unset others
+        if (isDefault) {
+            accessRepository.findAllByUser(user).forEach(a -> {
+                a.setIsDefaultTenant(false);
+                accessRepository.save(a);
+            });
+        }
+
+        com.acquira.common.model.UserTenantAccess access = new com.acquira.common.model.UserTenantAccess();
+        access.setUser(user);
+        access.setTenant(tenant);
+        access.setSysUserGroup(group);
+        access.setRoleInTenant(roleInTenant);
+        access.setIsDefaultTenant(isDefault);
+        accessRepository.save(access);
+
+        return ResponseEntity.ok(Map.of("message", "Tenant access added"));
+    }
+
+    // ===== UPDATE TENANT ACCESS =====
+    @PutMapping("/{userId}/tenant-access/{accessId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> updateTenantAccess(@PathVariable Long userId, @PathVariable Integer accessId,
+            @RequestBody Map<String, Object> payload) {
+
+        com.acquira.common.model.UserTenantAccess access = accessRepository.findById(accessId)
+                .orElseThrow(() -> new RuntimeException("Access not found"));
+
+        Long groupId = Long.valueOf(payload.get("groupId").toString());
+        String roleInTenant = (String) payload.get("roleInTenant");
+        Boolean isDefault = Boolean.TRUE.equals(payload.get("isDefault"));
+
+        com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new RuntimeException("Group not found"));
+
+        access.setSysUserGroup(group);
+        access.setRoleInTenant(roleInTenant);
+
+        if (isDefault) {
+            accessRepository.findAllByUser(access.getUser()).forEach(a -> {
+                a.setIsDefaultTenant(false);
+                accessRepository.save(a);
+            });
+        }
+        access.setIsDefaultTenant(isDefault);
+        accessRepository.save(access);
+
+        return ResponseEntity.ok(Map.of("message", "Tenant access updated"));
+    }
+
+    // ===== REMOVE TENANT ACCESS =====
+    @DeleteMapping("/{userId}/tenant-access/{accessId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> removeTenantAccess(@PathVariable Long userId, @PathVariable Integer accessId) {
+        accessRepository.deleteById(accessId);
+        return ResponseEntity.ok(Map.of("message", "Tenant access removed"));
+    }
+
+    // ===== GET ALL USERS (ENRICHED with tenant info) =====
+    @GetMapping("/enriched")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<?> getAllUsersEnriched() {
+        List<User> users = userRepository.findAll();
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+
+        for (User u : users) {
+            Map<String, Object> map = new java.util.HashMap<>();
+            map.put("id", u.getId());
+            map.put("username", u.getUsername());
+            map.put("email", u.getEmail());
+            map.put("displayName", u.getDisplayName());
+            map.put("role", u.getRole());
+            map.put("active", u.isActive());
+            map.put("ssoProvider", u.getSsoProvider());
+            map.put("approvalStatus", u.getApprovalStatus());
+            map.put("mustChangePassword", u.isMustChangePassword());
+            map.put("lockedUntil", u.getLockedUntil());
+            map.put("createdAt", u.getCreatedAt());
+
+            // Tenant assignments
+            List<com.acquira.common.model.UserTenantAccess> accesses = accessRepository.findAllByUser(u);
+            List<Map<String, Object>> tenantList = new java.util.ArrayList<>();
+            for (com.acquira.common.model.UserTenantAccess a : accesses) {
+                Map<String, Object> ta = new java.util.HashMap<>();
+                ta.put("accessId", a.getAccessId());
+                ta.put("tenantId", a.getTenant().getTenantId());
+                ta.put("tenantName", a.getTenant().getBankName());
+                ta.put("groupName", a.getSysUserGroup() != null ? a.getSysUserGroup().getGroupName() : null);
+                ta.put("isDefault", Boolean.TRUE.equals(a.getIsDefaultTenant()));
+                tenantList.add(ta);
+            }
+            map.put("tenants", tenantList);
+            result.add(map);
+        }
+
+        return ResponseEntity.ok(result);
     }
 }

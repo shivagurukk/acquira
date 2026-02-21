@@ -152,6 +152,7 @@ public class ExcelItemReader<T> extends AbstractItemCountingItemStreamItemReader
         this.rowIterator = rowStream.iterator();
 
         logger.info("ExcelItemReader opened resource: {}", resource.getDescription());
+        logger.info("Raw Excel headers (before normalization):");
 
         if (linesToSkip > 0 && rowIterator.hasNext()) {
             Row headerRow = rowIterator.next();
@@ -160,6 +161,7 @@ public class ExcelItemReader<T> extends AbstractItemCountingItemStreamItemReader
                 if (h != null) {
                     String key = h.trim().toLowerCase().replace(" ", "").replace("_", "");
                     headerMap.put(key, cell.getColumnIndex());
+                    logger.info("  Col {}: '{}' -> normalized: '{}'", cell.getColumnIndex(), h, key);
                 }
             }
             logger.info("Mapped {} headers from Excel file.", headerMap.size());

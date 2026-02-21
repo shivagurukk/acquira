@@ -152,6 +152,14 @@ public class ExcelSplitterTasklet implements Tasklet {
         }
         int[] sourceIndexes = buildSourceIndexes(headerMap);
 
+        // Debug: log header mapping
+        System.out.println("=== CSV HEADER MAPPING ===");
+        System.out.println("Source headers found: " + headerMap.keySet());
+        for (int i = 0; i < TARGET_HEADERS.length; i++) {
+            String status = sourceIndexes[i] >= 0 ? "MAPPED (col " + sourceIndexes[i] + ")" : "*** MISSING ***";
+            System.out.printf("  [%d] %-30s -> %s%n", i, TARGET_HEADERS[i], status);
+        }
+
         // Build CSV header
         StringBuilder headerSb = new StringBuilder(512);
         for (int i = 0; i < TARGET_HEADERS.length; i++) {
@@ -293,6 +301,14 @@ public class ExcelSplitterTasklet implements Tasklet {
                     if (val != null) headerMap.put(normalizeHeader(val), i);
                 }
                 int[] sourceIndexes = buildSourceIndexes(headerMap);
+
+                // Debug: log header mapping
+                System.out.println("=== EXCEL HEADER MAPPING ===");
+                System.out.println("Source headers found: " + headerMap.keySet());
+                for (int i = 0; i < TARGET_HEADERS.length; i++) {
+                    String status = sourceIndexes[i] >= 0 ? "MAPPED (col " + sourceIndexes[i] + ")" : "*** MISSING ***";
+                    System.out.printf("  [%d] %-30s -> %s%n", i, TARGET_HEADERS[i], status);
+                }
 
                 // Build CSV header string once
                 StringBuilder headerSb = new StringBuilder(512);

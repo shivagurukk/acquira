@@ -180,13 +180,12 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Merchant Growth Heatmap',  '/business/heatmap',                 'Grid',            'BUSINESS',       7),
 ('Daily Merchant Dashboard', '/business/daily-dashboard',         'Calendar',        'BUSINESS',       8),
 ('Merchant Analytics',       '/business/merchant-analytics',      'BarChart2',       'BUSINESS',       9),
-('Merchant Insights',        '/business/insights',                'Lightbulb',       'BUSINESS',      10),
-('Merchant Comparison',      '/business/comparison',              'Scale',           'BUSINESS',      11),
-('Report Manager',           '/business/report-manager',          'FileText',        'BUSINESS',      12),
-('Opportunity Intelligence', '/business/opportunity',             'Target',          'BUSINESS',      13),
-('Group Reports',            '/business/groups',                  'FolderKanban',    'BUSINESS',      14),
-('Data Explorer',            '/explorer',                         'Compass',         'BUSINESS',      15),
-('AI Assistant',             '/ai-assistant',                     'BrainCircuit',    'BUSINESS',      16),
+('Merchant Comparison',      '/business/comparison',              'Scale',           'BUSINESS',      10),
+('Report Manager',           '/business/report-manager',          'FileText',        'BUSINESS',      11),
+('Opportunity Intelligence', '/business/opportunity',             'Target',          'BUSINESS',      12),
+('Group Reports',            '/business/groups',                  'FolderKanban',    'BUSINESS',      13),
+('Data Explorer',            '/explorer',                         'Compass',         'BUSINESS',      14),
+('AI Assistant',             '/ai-assistant',                     'BrainCircuit',    'BUSINESS',      15),
 
 -- SALES
 ('Sales Team Management',    '/sales/team-management',            'Users',           'SALES',          1),
@@ -1518,6 +1517,58 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_failed_login TIMESTAMP;
 
+-- ==========================================
+-- SSO & ACCESS REQUEST SUPPORT
+-- ==========================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_provider VARCHAR(20);       -- 'MICROSOFT', NULL
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_id VARCHAR(255);            -- Azure AD Object ID
+ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) DEFAULT 'APPROVED';
+    -- APPROVED (normal users), PENDING (SSO requests), REJECTED
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(150);
+ALTER TABLE user_tenant_access ADD COLUMN IF NOT EXISTS role_in_tenant VARCHAR(50);
+ALTER TABLE user_tenant_access ADD COLUMN IF NOT EXISTS is_default_tenant BOOLEAN DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS access_request (
+    request_id BIGSERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    display_name VARCHAR(150),
+    sso_provider VARCHAR(20),
+    sso_id VARCHAR(255),
+    requested_tenant_id INT REFERENCES tenant(tenant_id),
+    message TEXT,
+    status VARCHAR(20) DEFAULT 'PENDING',  -- PENDING, APPROVED, REJECTED
+    reviewed_by BIGINT REFERENCES users(user_id),
+    reviewed_at TIMESTAMP,
+    review_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- SSO Configuration per tenant (admin toggle)
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'sso_enabled', 'false', 'BOOLEAN'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'sso_provider', 'MICROSOFT', 'STRING'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'sso_client_id', '', 'STRING'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'sso_tenant_id', '', 'STRING'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'sso_client_secret', '', 'STRING'
+FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+
 -- Ensure existing users are NOT forced to change password
 UPDATE users SET must_change_password = FALSE WHERE must_change_password IS NULL;
 
@@ -1822,6 +1873,28 @@ FROM sys_user_group g, sys_menu m
 WHERE g.group_name IN ('SUPER_ADMIN', 'ADMIN') AND m.path = '/admin/email-campaigns'
 ON CONFLICT DO NOTHING;
 
+-- Menu entry for SSO Settings
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('SSO Settings',  '/admin/sso-settings',  'Shield',  'ADMINISTRATION', 5)
+ON CONFLICT (path) DO NOTHING;
+
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('SUPER_ADMIN') AND m.path = '/admin/sso-settings'
+ON CONFLICT DO NOTHING;
+
+-- Menu entry for Data Migration
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Data Migration',  '/admin/data-migration',  'DatabaseZap',  'ADMINISTRATION', 7)
+ON CONFLICT (path) DO NOTHING;
+
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Super Admin') AND m.path = '/admin/data-migration'
+ON CONFLICT DO NOTHING;
+
 -- Menu entry for Sales Leaderboard
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Sales Leaderboard',  '/sales/leaderboard',  'Trophy',  'SALES', 2)
@@ -1832,4 +1905,35 @@ SELECT g.group_id, m.menu_id
 FROM sys_user_group g, sys_menu m
 WHERE g.group_name IN ('SUPER_ADMIN', 'ADMIN', 'BUSINESS') AND m.path = '/sales/leaderboard'
 ON CONFLICT DO NOTHING;
+
+-- ═══════════════════════════════════════════════════════════
+-- PDF Optimization — contact_email + email_queue
+-- ═══════════════════════════════════════════════════════════
+
+-- Add contact_email to dim_merchant for merchant report emailing
+DO $
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'dim_merchant' AND column_name = 'contact_email'
+    ) THEN
+        ALTER TABLE dim_merchant ADD COLUMN contact_email VARCHAR(255);
+    END IF;
+END $;
+
+-- Email queue table for async email processing
+CREATE TABLE IF NOT EXISTS email_queue (
+    id              BIGSERIAL PRIMARY KEY,
+    recipient       VARCHAR(255) NOT NULL,
+    subject         VARCHAR(500),
+    body            TEXT,
+    attachment_path VARCHAR(1000),
+    status          VARCHAR(20) DEFAULT 'PENDING',
+    error_message   TEXT,
+    retry_count     INT DEFAULT 0,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    sent_at         TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_queue_status ON email_queue(status);
 

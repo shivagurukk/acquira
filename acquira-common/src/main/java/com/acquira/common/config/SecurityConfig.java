@@ -57,6 +57,8 @@ public class SecurityConfig {
                 // ===== URL-Level Authorization =====
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/sso/**").permitAll()
+                        .requestMatchers("/api/external/**").permitAll()  // External API — uses X-API-Key auth
 
                         // Admin endpoints — require ADMIN or SUPER_ADMIN
                         .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
@@ -84,7 +86,7 @@ public class SecurityConfig {
         config.setAllowedOrigins(origins);
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-Id"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-Id", "X-API-Key"));
         config.setExposedHeaders(List.of("Content-Disposition"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);

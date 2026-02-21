@@ -15,6 +15,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.bind.annotation.*;
 
+import com.acquira.core.service.EmailService;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -33,6 +34,7 @@ public class AuthController {
     private final com.acquira.common.repository.UserTenantAccessRepository userTenantAccessRepository;
     private final PasswordService passwordService;
     private final PasswordResetTokenRepository resetTokenRepository;
+    private final EmailService emailService;
 
     // ===== IP-based rate limiter (defense-in-depth, kept alongside per-user lockout) =====
     private final ConcurrentHashMap<String, long[]> loginAttempts = new ConcurrentHashMap<>();
@@ -49,7 +51,8 @@ public class AuthController {
             UserRepository userRepository,
             com.acquira.common.repository.UserTenantAccessRepository userTenantAccessRepository,
             PasswordService passwordService,
-            PasswordResetTokenRepository resetTokenRepository) {
+            PasswordResetTokenRepository resetTokenRepository,
+            EmailService emailService) {
         this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
         this.tenantService = tenantService;
@@ -59,6 +62,7 @@ public class AuthController {
         this.userTenantAccessRepository = userTenantAccessRepository;
         this.passwordService = passwordService;
         this.resetTokenRepository = resetTokenRepository;
+        this.emailService = emailService;
     }
 
     @PostMapping("/login")
@@ -98,6 +102,12 @@ public class AuthController {
             if (!dbUser.isActive()) {
                 return ResponseEntity.status(403).body(Map.of(
                         "error", "Account is deactivated. Contact your administrator."));
+            }
+
+            // Check if account is pending approval
+            if (dbUser.isPendingApproval()) {
+                return ResponseEntity.status(403).body(Map.of(
+                        "error", "Your account is pending admin approval."));
             }
         }
 
@@ -190,6 +200,11 @@ public class AuthController {
         response.put("menus", menus);
         response.put("username", authenticationRequest.getUsername());
         response.put("userRole", user != null ? user.getRole() : "ROLE_USER");
+        // GAP-12: Include displayName and ssoProvider in login response
+        if (user != null) {
+            response.put("displayName", user.getDisplayName());
+            response.put("ssoProvider", user.getSsoProvider());
+        }
 
         // ===== Force password change flag =====
         if (user != null && user.isMustChangePassword()) {
@@ -352,10 +367,8 @@ public class AuthController {
         LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
         resetTokenRepository.save(new PasswordResetToken(user, token, expiresAt));
 
-        // TODO: Send email with link — integrate with your existing SMTP service
-        // Example link: https://yourdomain.com/reset-password?token=<token>
-        // For now, log it (remove in production):
-        System.out.println("[PASSWORD RESET] Token for " + user.getUsername() + ": " + token);
+        // GAP-18: Send email with reset link (falls back to log if SMTP not configured)
+        emailService.sendPasswordResetEmail(user.getEmail(), user.getUsername(), token);
 
         return ResponseEntity.ok(Map.of("message",
                 "If that email is registered, a password reset link has been sent."));

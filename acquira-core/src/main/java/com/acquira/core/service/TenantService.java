@@ -53,6 +53,10 @@ public class TenantService {
                 .collect(Collectors.toList());
     }
 
+    public List<Tenant> getAllTenants() {
+        return tenantRepository.findAll();
+    }
+
     public Tenant createTenant(Tenant tenant) {
         return tenantRepository.save(tenant);
     }

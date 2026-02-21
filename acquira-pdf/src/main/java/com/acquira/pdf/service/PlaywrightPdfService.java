@@ -382,6 +382,17 @@ public class PlaywrightPdfService {
                 cachedLogoColorDataUri != null ? "ok" : "missing");
     }
 
+    /**
+     * Load a classpath PNG image, auto-crop transparent padding, resize
+     * to optimal PDF size, and return as a PNG data URI.
+     *
+     * The source logos are 8000x4500 with ~67% transparent padding.
+     * At CSS height 44-80px, the actual "afs" text renders at only ~14px
+     * which looks blurry. This method:
+     * 1. Crops to the tight bounding box of visible pixels (removes padding)
+     * 2. Resizes to 400px height with BICUBIC interpolation
+     * 3. Returns as a compact PNG data URI (~5KB instead of ~280KB)
+     */
     private String loadClasspathImageAsDataUri(String path, String mimeType) {
         try {
             ClassPathResource resource = new ClassPathResource(path);
@@ -389,13 +400,91 @@ public class PlaywrightPdfService {
                 log.warn("Logo not found on classpath: {}", path);
                 return null;
             }
-            byte[] bytes = resource.getInputStream().readAllBytes();
-            String b64 = Base64.getEncoder().encodeToString(bytes);
-            return "data:" + mimeType + ";base64," + b64;
+            byte[] originalBytes = resource.getInputStream().readAllBytes();
+            java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(
+                    new java.io.ByteArrayInputStream(originalBytes));
+            if (img == null) {
+                log.warn("Could not decode image: {}", path);
+                return null;
+            }
+
+            log.info("Logo source: {} ({}x{}, {}KB)", path, img.getWidth(), img.getHeight(), originalBytes.length / 1024);
+
+            // Step 1: Auto-crop transparent padding
+            java.awt.image.BufferedImage cropped = autoCropTransparent(img);
+            log.info("  Cropped: {}x{} -> {}x{}", img.getWidth(), img.getHeight(), cropped.getWidth(), cropped.getHeight());
+
+            // Step 2: Resize to 400px height for crisp PDF rendering
+            int targetH = 400;
+            if (cropped.getHeight() > targetH) {
+                double ratio = (double) targetH / cropped.getHeight();
+                int targetW = (int) (cropped.getWidth() * ratio);
+                java.awt.image.BufferedImage resized = new java.awt.image.BufferedImage(
+                        targetW, targetH, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                java.awt.Graphics2D g2d = resized.createGraphics();
+                g2d.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+                        java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                g2d.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING,
+                        java.awt.RenderingHints.VALUE_RENDER_QUALITY);
+                g2d.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2d.drawImage(cropped, 0, 0, targetW, targetH, null);
+                g2d.dispose();
+                cropped = resized;
+                log.info("  Resized to: {}x{}", targetW, targetH);
+            }
+
+            // Step 3: Encode as PNG
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(cropped, "png", baos);
+            byte[] pngBytes = baos.toByteArray();
+
+            String b64 = Base64.getEncoder().encodeToString(pngBytes);
+            log.info("  Final: {}KB base64 (was {}KB original)", b64.length() / 1024, originalBytes.length / 1024);
+            return "data:image/png;base64," + b64;
         } catch (Exception e) {
             log.warn("Could not cache logo {}: {}", path, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Crop transparent padding from a PNG image.
+     * Finds the bounding box of all non-transparent pixels and crops to it
+     * with a small margin (8% of content size).
+     */
+    private java.awt.image.BufferedImage autoCropTransparent(java.awt.image.BufferedImage img) {
+        int w = img.getWidth();
+        int h = img.getHeight();
+
+        int minX = w, minY = h, maxX = 0, maxY = 0;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int alpha = (img.getRGB(x, y) >> 24) & 0xFF;
+                if (alpha > 0) {
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+        }
+
+        if (maxX <= minX || maxY <= minY) {
+            return img; // No visible content or already tight
+        }
+
+        // Add 8% padding around content
+        int contentW = maxX - minX;
+        int contentH = maxY - minY;
+        int pad = (int) (Math.max(contentW, contentH) * 0.08);
+
+        int cropX = Math.max(0, minX - pad);
+        int cropY = Math.max(0, minY - pad);
+        int cropW = Math.min(w - cropX, contentW + 2 * pad);
+        int cropH = Math.min(h - cropY, contentH + 2 * pad);
+
+        return img.getSubimage(cropX, cropY, cropW, cropH);
     }
 
     private void preloadFontCache() {

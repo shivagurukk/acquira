@@ -90,6 +90,56 @@ public class AdminController {
     }
 
     // ==========================================
+    // ===== Global Settings (uses current user's default tenant) =====
+
+    @GetMapping("/settings")
+    public ResponseEntity<?> getSettings(jakarta.servlet.http.HttpServletRequest request) {
+        Long tenantId = extractTenantId(request);
+        if (tenantId == null) return ResponseEntity.badRequest().body(java.util.Map.of("error", "No tenant context"));
+        return ResponseEntity.ok(tenantSettingRepository.findByTenant_TenantId(tenantId));
+    }
+
+    @PutMapping("/settings")
+    public ResponseEntity<?> updateSetting(jakarta.servlet.http.HttpServletRequest request,
+            @RequestBody java.util.Map<String, String> payload) {
+        Long tenantId = extractTenantId(request);
+        if (tenantId == null) return ResponseEntity.badRequest().body(java.util.Map.of("error", "No tenant context"));
+
+        String key = payload.get("settingKey");
+        String value = payload.get("settingValue");
+        if (key == null) return ResponseEntity.badRequest().body(java.util.Map.of("error", "settingKey is required"));
+
+        Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
+        var existing = tenantSettingRepository.findByTenant_TenantIdAndKey(tenantId, key);
+        com.acquira.common.model.TenantSetting setting;
+        if (existing.isPresent()) {
+            setting = existing.get();
+            setting.setValue(value);
+        } else {
+            setting = new com.acquira.common.model.TenantSetting();
+            setting.setTenant(tenant);
+            setting.setKey(key);
+            setting.setValue(value);
+            setting.setType("STRING");
+        }
+        return ResponseEntity.ok(tenantSettingRepository.save(setting));
+    }
+
+    private Long extractTenantId(jakarta.servlet.http.HttpServletRequest request) {
+        String header = request.getHeader("X-Tenant-Id");
+        if (header != null && !header.isBlank()) {
+            try { return Long.parseLong(header); } catch (Exception e) { /* fall through */ }
+        }
+        // Fallback: first tenant
+        String username = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication().getName();
+        var user = userRepository.findByUsername(username).orElse(null);
+        if (user != null) {
+            var accesses = userTenantAccessRepository.findByUser(user);
+            if (!accesses.isEmpty()) return accesses.get(0).getTenant().getTenantId();
+        }
+        return null;
+    }
+
     // Phase 6: Settings & Config
     // ==========================================
 

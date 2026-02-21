@@ -72,6 +72,17 @@ public class SalesTeamService {
                 .collect(Collectors.toMap(SalesUserAssignment::getSalesUserId, SalesUserAssignment::getTeamLeadId,
                         (existing, replacement) -> existing));
 
+        // Get merchant count per sales user
+        Map<String, Long> merchantCounts = new HashMap<>();
+        try {
+            List<Map<String, Object>> counts = merchantRepository.countMerchantsBySalesUser(tenantId);
+            for (Map<String, Object> row : counts) {
+                String userId = (String) row.get("sales_user_id");
+                Long count = ((Number) row.get("merchant_count")).longValue();
+                if (userId != null) merchantCounts.put(userId, count);
+            }
+        } catch (Exception ignored) {}
+
         List<Map<String, Object>> result = new ArrayList<>();
         for (com.acquira.common.repository.MerchantRepository.SalesUserProjection user : distinctUsers) {
             Map<String, Object> map = new HashMap<>();
@@ -79,6 +90,7 @@ public class SalesTeamService {
             map.put("salesUserEmail", user.getSalesEmail());
             map.put("teamLeadId", assignmentMap.get(user.getSalesUserId()));
             map.put("status", assignmentMap.containsKey(user.getSalesUserId()) ? "MAPPED" : "UNMAPPED");
+            map.put("merchantCount", merchantCounts.getOrDefault(user.getSalesUserId(), 0L));
             result.add(map);
         }
         return result;

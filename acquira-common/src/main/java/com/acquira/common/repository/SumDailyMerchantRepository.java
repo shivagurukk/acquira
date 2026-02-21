@@ -198,4 +198,33 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         @org.springframework.data.repository.query.Param("tenantId") Integer tenantId,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
+        // ── BULK QUERIES for batch PDF pre-fetch ──
+
+        @Query("SELECT m FROM SumDailyMerchant m WHERE m.merchantId IN :merchantIds AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.merchantId, m.businessDate")
+        java.util.List<SumDailyMerchant> findDailyStatsForMerchants(
+                        @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
+        @Query("SELECT new map(" +
+                        "m.merchantId as merchantId, " +
+                        "EXTRACT(YEAR FROM m.businessDate) as year, " +
+                        "EXTRACT(MONTH FROM m.businessDate) as month, " +
+                        "SUM(m.totalVolume) as totalVolume, " +
+                        "SUM(COALESCE(m.totalBaseVolume, m.totalVolume)) as totalBaseVolume, " +
+                        "SUM(m.totalTxns) as totalTxns, " +
+                        "SUM(COALESCE(m.uniqueCustomerCount, 0)) as uniqueCustomers, " +
+                        "SUM(COALESCE(m.dccEligibleVolume, 0)) as dccEligibleVolume, " +
+                        "SUM(COALESCE(m.dccOptinVolume, 0)) as dccOptinVolume, " +
+                        "SUM(COALESCE(m.dccOptoutVolume, 0)) as dccOptoutVolume " +
+                        ") " +
+                        "FROM SumDailyMerchant m " +
+                        "WHERE m.merchantId IN :merchantIds AND m.businessDate BETWEEN :startDate AND :endDate " +
+                        "GROUP BY m.merchantId, EXTRACT(YEAR FROM m.businessDate), EXTRACT(MONTH FROM m.businessDate) " +
+                        "ORDER BY m.merchantId, 2, 3")
+        java.util.List<java.util.Map<String, Object>> findMonthlyTrendsForMerchants(
+                        @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
 }

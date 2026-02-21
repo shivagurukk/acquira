@@ -19,7 +19,7 @@ import DebitPrepaidMetrics from './pages/business/DebitPrepaidMetrics';
 import AttritionReport from './pages/business/AttritionReport';
 import ZeroTransactionReport from './pages/business/ZeroTransactionReport';
 import ExecutiveDashboardReport from './pages/business/ExecutiveDashboardReport';
-import MerchantInsights from './pages/business/MerchantInsights';
+// MerchantInsights removed — consolidated into MerchantInsightHub
 import MerchantReportManager from './pages/business/MerchantReportManager';
 import MerchantHeatmap from './pages/business/MerchantHeatmap';
 import DailyMerchantDashboard from './pages/business/DailyMerchantDashboard';
@@ -45,6 +45,8 @@ import SmtpSettings from './pages/SmtpSettings';
 import AuditLogViewer from './pages/admin/AuditLogViewer';
 import IntegrationHub from './pages/admin/IntegrationHub';
 import EmailCampaignHub from './pages/admin/EmailCampaignHub';
+import SsoSettings from './pages/admin/SsoSettings';
+import DataMigration from './pages/admin/DataMigration';
 
 import ChangePasswordPage from './pages/ChangePasswordPage';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -55,6 +57,7 @@ function App() {
     <AuthProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/sso/callback" element={<LoginPage />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
         {/* Change Password — protected but NO Layout sidebar (standalone page) */}
@@ -93,7 +96,7 @@ function App() {
           <Route path="/business/heatmap" element={<MerchantHeatmap />} />
           <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
           <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
-          <Route path="/business/insights" element={<MerchantInsights />} />
+          {/* /business/insights removed — use /merchant/insight-hub instead */}
           <Route path="/business/comparison" element={<MerchantComparison />} />
           <Route path="/business/report-manager" element={<MerchantReportManager />} />
           <Route path="/business/opportunity" element={<OpportunityIntelligence />} />
@@ -179,10 +182,24 @@ function App() {
             </RoleGuard>
           } />
 
+          {/* SSO Settings */}
+          <Route path="/admin/sso-settings" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}>
+              <SsoSettings />
+            </RoleGuard>
+          } />
+
           {/* Email Campaign Hub */}
           <Route path="/admin/email-campaigns" element={
             <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}>
               <EmailCampaignHub />
+            </RoleGuard>
+          } />
+
+          {/* Data Migration */}
+          <Route path="/admin/data-migration" element={
+            <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}>
+              <DataMigration />
             </RoleGuard>
           } />
         </Route>

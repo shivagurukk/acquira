@@ -1,12 +1,14 @@
 package com.acquira.common.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "users")
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class User {
 
     @Id
@@ -48,6 +50,19 @@ public class User {
 
     @Column(name = "last_failed_login")
     private LocalDateTime lastFailedLogin;
+
+    // ===== SSO FIELDS =====
+    @Column(name = "sso_provider")
+    private String ssoProvider;  // "MICROSOFT", null
+
+    @Column(name = "sso_id")
+    private String ssoId;  // Azure AD Object ID
+
+    @Column(name = "approval_status")
+    private String approvalStatus = "APPROVED";  // APPROVED, PENDING, REJECTED
+
+    @Column(name = "display_name")
+    private String displayName;
 
     public Long getId() {
         return id;
@@ -127,4 +142,20 @@ public class User {
     public boolean isAccountLocked() {
         return lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now());
     }
+
+    // ===== SSO Getters/Setters =====
+    public String getSsoProvider() { return ssoProvider; }
+    public void setSsoProvider(String ssoProvider) { this.ssoProvider = ssoProvider; }
+
+    public String getSsoId() { return ssoId; }
+    public void setSsoId(String ssoId) { this.ssoId = ssoId; }
+
+    public String getApprovalStatus() { return approvalStatus != null ? approvalStatus : "APPROVED"; }
+    public void setApprovalStatus(String approvalStatus) { this.approvalStatus = approvalStatus; }
+
+    public String getDisplayName() { return displayName; }
+    public void setDisplayName(String displayName) { this.displayName = displayName; }
+
+    public boolean isSsoUser() { return ssoProvider != null && !ssoProvider.isEmpty(); }
+    public boolean isPendingApproval() { return "PENDING".equals(approvalStatus); }
 }

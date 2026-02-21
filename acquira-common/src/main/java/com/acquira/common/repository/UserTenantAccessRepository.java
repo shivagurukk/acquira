@@ -11,4 +11,13 @@ public interface UserTenantAccessRepository extends JpaRepository<UserTenantAcce
     List<UserTenantAccess> findByUser_Id(Long userId);
 
     java.util.Optional<UserTenantAccess> findByUserAndTenant_TenantId(User user, Long tenantId);
+
+    default List<UserTenantAccess> findAllByUser(User user) {
+        return findByUser(user);
+    }
+
+    // GAP-15: Batch fetch all access records for a list of users (eliminates N+1)
+    @org.springframework.data.jpa.repository.Query(
+        "SELECT a FROM UserTenantAccess a JOIN FETCH a.tenant LEFT JOIN FETCH a.sysUserGroup WHERE a.user IN :users")
+    List<UserTenantAccess> findAllByUserIn(@org.springframework.data.repository.query.Param("users") List<User> users);
 }

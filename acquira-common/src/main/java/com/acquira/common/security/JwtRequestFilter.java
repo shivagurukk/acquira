@@ -77,6 +77,12 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                     chain.doFilter(request, response);
                     return;
                 }
+                // GAP-13: Block PENDING approval users from making API calls
+                if (dbUser.isPendingApproval()) {
+                    logger.warn("Rejected token for pending-approval user: " + username);
+                    chain.doFilter(request, response);
+                    return;
+                }
 
                 UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                         userDetails, null, userDetails.getAuthorities());

@@ -151,22 +151,44 @@ const MerchantReportManager = () => {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
 
-    const handleDownloadAll = () => {
-        const link = document.createElement('a');
-        link.href = '/api/business/insights/download-all-reports';
-        link.download = '';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    const handleDownloadAll = async () => {
+        try {
+            const res = await api.get('/business/insights/download-all-reports', { responseType: 'blob' });
+            const blob = new Blob([res.data], { type: 'application/zip' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'Merchant_Reports.zip';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('Download all failed:', e);
+        }
     };
 
-    const handleDownloadSingle = (url) => {
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = '';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    const handleDownloadSingle = async (downloadUrl) => {
+        try {
+            // downloadUrl is like "/api/business/insights/download-report?file=...&year=...&month=..."
+            // Strip the /api prefix since axios baseURL already includes it
+            const apiPath = downloadUrl.replace(/^\/api/, '');
+            const res = await api.get(apiPath, { responseType: 'blob' });
+            const contentDisposition = res.headers['content-disposition'] || '';
+            const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+            const filename = filenameMatch ? filenameMatch[1] : 'report.pdf';
+            const blob = new Blob([res.data], { type: 'application/pdf' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('Download failed:', e);
+        }
     };
 
     const handleStartClick = async () => {

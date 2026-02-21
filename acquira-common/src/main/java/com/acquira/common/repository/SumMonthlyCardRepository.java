@@ -15,10 +15,13 @@ public interface SumMonthlyCardRepository extends JpaRepository<SumMonthlyCard, 
     @Query("SELECT s FROM SumMonthlyCard s WHERE s.merchantId = :merchantId AND s.monthKey BETWEEN :startMonth AND :endMonth")
     List<SumMonthlyCard> findByMerchantAndMonthRange(Long merchantId, Integer startMonth, Integer endMonth);
 
-    // For "Loyalty - Visit Frequency" (Total Period aggregation might be needed if
-    // PDF purely strictly asks for "Total Period" histograms from daily sum?
-    // Actually the PDF asks for "For the Month" (Page 8) and "Monthly Trends" (Page
-    // 9).
-    // So usually querying by single monthKey is enough for Page 8.
-    // querying by range is needed for Page 9.
+    // For "Loyalty - Visit Frequency"
+    // querying by range is needed for Page 9 trends.
+
+    // BULK: fetch card data for all merchants at once
+    @Query("SELECT s FROM SumMonthlyCard s WHERE s.merchantId IN :merchantIds AND s.monthKey BETWEEN :startMonth AND :endMonth")
+    List<SumMonthlyCard> findByMerchantsAndMonthRange(
+            @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
+            @org.springframework.data.repository.query.Param("startMonth") Integer startMonth,
+            @org.springframework.data.repository.query.Param("endMonth") Integer endMonth);
 }

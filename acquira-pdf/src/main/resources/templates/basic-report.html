@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title th:text="|${merchantName} - AFS Pulse Report|">AFS Pulse Report</title>
+    <title th:text="|${merchantName} - AFS Nexus Report|">AFS Nexus Report</title>
     <style>
         @font-face { font-family: 'Inter'; font-weight: 400; src: url('/assets/fonts/Inter-Regular.ttf') format('truetype'); }
         @font-face { font-family: 'Inter'; font-weight: 500; src: url('/assets/fonts/Inter-Medium.ttf') format('truetype'); }
@@ -505,7 +505,7 @@
             container.innerHTML = html;
         }
 
-        /* ------ Revenue Heatmap renderer ------ */
+        /* ------ Revenue Heatmap renderer (redesigned) ------ */
         function renderRevenueHeatmap() {
             const container = document.getElementById('revenue-heatmap-grid');
             if (!container) return;
@@ -515,64 +515,114 @@
                 return;
             }
             const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+            const fullDays = {Mon:'Monday',Tue:'Tuesday',Wed:'Wednesday',Thu:'Thursday',Fri:'Friday',Sat:'Saturday',Sun:'Sunday'};
             const hours = Array.from({length:24}, (_,i) => String(i).padStart(2,'0'));
-            // Build lookup
             const grid = {};
             let maxVal = 0;
-            heatmapData.forEach(d => {
-                const v = Number(d.value) || 0;
-                grid[d.label] = v;
-                if (v > maxVal) maxVal = v;
-            });
-            // Find peak hour, peak day, dead zone
+            heatmapData.forEach(d => { const v = Number(d.value)||0; grid[d.label]=v; if(v>maxVal) maxVal=v; });
             const hourTotals = {}; const dayTotals = {};
-            days.forEach(day => { dayTotals[day] = 0; hours.forEach(h => { const k = day+'|'+h; const v = grid[k]||0; dayTotals[day]+=v; hourTotals[h]=(hourTotals[h]||0)+v; }); });
+            days.forEach(day => { dayTotals[day]=0; hours.forEach(h => { const k=day+'|'+h; const v=grid[k]||0; dayTotals[day]+=v; hourTotals[h]=(hourTotals[h]||0)+v; }); });
             const peakHour = Object.entries(hourTotals).sort((a,b)=>b[1]-a[1])[0];
             const peakDay = Object.entries(dayTotals).sort((a,b)=>b[1]-a[1])[0];
             const deadHour = Object.entries(hourTotals).filter(e=>e[1]>0).sort((a,b)=>a[1]-b[1])[0] || Object.entries(hourTotals).sort((a,b)=>a[1]-b[1])[0];
             const currency = window.reportData.currencySymbol || 'AED';
             const fmt = v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(1)+'k' : Math.round(v).toLocaleString();
-            // Set summary cards
+            // Populate summary cards
             const phEl = document.getElementById('heatmap-peak-hour');
             if (phEl && peakHour) { phEl.textContent = peakHour[0]+':00'; document.getElementById('heatmap-peak-hour-rev').textContent = currency+' '+fmt(peakHour[1])+' total'; }
             const pdEl = document.getElementById('heatmap-peak-day');
-            if (pdEl && peakDay) { pdEl.textContent = peakDay[0]; document.getElementById('heatmap-peak-day-rev').textContent = currency+' '+fmt(peakDay[1])+' total'; }
+            if (pdEl && peakDay) { pdEl.textContent = fullDays[peakDay[0]]||peakDay[0]; document.getElementById('heatmap-peak-day-rev').textContent = currency+' '+fmt(peakDay[1])+' total'; }
             const dzEl = document.getElementById('heatmap-dead-zone');
-            if (dzEl && deadHour) { dzEl.textContent = deadHour[0]+':00'; }
-            // Color function
+            if (dzEl && deadHour) { dzEl.textContent = deadHour[0]+':00'; document.getElementById('heatmap-dead-zone-detail').textContent = currency+' '+fmt(deadHour[1])+' total'; }
+            // Smooth color ramp: cool teal → warm rose for peak
             function getColor(val) {
-                if (maxVal === 0) return '#F9FAFB';
-                const pct = val / maxVal;
-                if (pct === 0) return '#F9FAFB';
-                if (pct < 0.15) return '#EFF6FF';
-                if (pct < 0.3) return '#DBEAFE';
-                if (pct < 0.5) return '#93C5FD';
-                if (pct < 0.7) return '#3B82F6';
-                if (pct < 0.85) return '#1E3A8A';
-                return '#DC2626';
+                if (maxVal===0) return '#F8FAFC';
+                const p = val/maxVal;
+                if (p===0)  return '#F8FAFC';
+                if (p<0.08) return '#F0FDFA';
+                if (p<0.15) return '#CCFBF1';
+                if (p<0.25) return '#99F6E4';
+                if (p<0.35) return '#5EEAD4';
+                if (p<0.45) return '#2DD4BF';
+                if (p<0.55) return '#14B8A6';
+                if (p<0.65) return '#0D9488';
+                if (p<0.75) return '#0F766E';
+                if (p<0.85) return '#115E59';
+                if (p<0.93) return '#134E4A';
+                return '#E11D48';
             }
             function getTextColor(val) {
-                if (maxVal === 0) return '#CBD5E1';
-                const pct = val / maxVal;
-                return pct > 0.45 ? '#FFFFFF' : '#374151';
+                if (maxVal===0) return '#CBD5E1';
+                const p = val/maxVal;
+                if (p<0.30) return '#0F766E';
+                if (p>=0.93) return '#FFFFFF';
+                return '#FFFFFF';
             }
-            // Build HTML grid
-            let html = '<div style="display:grid;grid-template-columns:32px repeat(24,1fr);gap:1px;font-size:6.5px;">';
+            // Find active hour range (skip empty leading/trailing hours)
+            let minH=23, maxH=0;
+            days.forEach(day => hours.forEach(h => { const v=grid[day+'|'+h]||0; if(v>0){const hi=parseInt(h); if(hi<minH)minH=hi; if(hi>maxH)maxH=hi;} }));
+            if(minH>maxH){minH=0;maxH=23;}
+            // Add 1h padding
+            minH = Math.max(0, minH-1);
+            maxH = Math.min(23, maxH+1);
+            const activeHours = hours.slice(minH, maxH+1);
+            const colCount = activeHours.length;
+            // Row totals for day bar
+            const maxDayTotal = Math.max(...Object.values(dayTotals),1);
+            // Build the redesigned grid
+            let html = '';
+            // Outer wrapper with subtle shadow
+            html += '<div style="border-radius:8px;overflow:hidden;border:1px solid #E2E8F0;">';
             // Header row
-            html += '<div style="font-weight:700;color:#6B7280;display:flex;align-items:center;justify-content:center;"></div>';
-            hours.forEach(h => { html += '<div style="font-weight:700;color:#6B7280;text-align:center;padding:2px 0;">'+h+'</div>'; });
+            html += '<div style="display:grid;grid-template-columns:54px repeat('+colCount+',1fr) 60px;background:#F8FAFC;border-bottom:2px solid #E2E8F0;">';
+            html += '<div style="padding:4px 6px;font-size:6px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.08em;display:flex;align-items:center;">Day</div>';
+            activeHours.forEach(h => {
+                const isPeak = peakHour && h===peakHour[0];
+                html += '<div style="text-align:center;padding:4px 0;font-size:6.5px;font-weight:'+(isPeak?'800':'600')+';color:'+(isPeak?'#E11D48':'#64748B')+';letter-spacing:0.02em;'+(isPeak?'background:#FFF1F2;':'')+'">'+(parseInt(h)>12?(parseInt(h)-12)+'p':(parseInt(h)===0?'12a':parseInt(h)+'a'))+'</div>';
+            });
+            html += '<div style="padding:4px 4px;font-size:6px;font-weight:700;color:#94A3B8;text-align:center;text-transform:uppercase;">Total</div>';
+            html += '</div>';
             // Data rows
-            days.forEach(day => {
-                html += '<div style="font-weight:800;color:#1E293B;display:flex;align-items:center;padding-right:4px;">'+day+'</div>';
-                hours.forEach(h => {
+            days.forEach((day, di) => {
+                const isWeekend = (day==='Sat'||day==='Sun');
+                const rowBg = di%2===0 ? '#FFFFFF' : '#FAFBFC';
+                const isPeakDay = peakDay && day===peakDay[0];
+                html += '<div style="display:grid;grid-template-columns:54px repeat('+colCount+',1fr) 60px;background:'+rowBg+';'+(di<6?'border-bottom:1px solid #F1F5F9;':'')+'">';
+                // Day label
+                html += '<div style="padding:0 6px;font-size:7.5px;font-weight:800;color:'+(isWeekend?'#7C3AED':'#1E293B')+';display:flex;align-items:center;gap:2px;'+(isPeakDay?'background:#F0FDF4;':'')+'">';
+                html += (isPeakDay?'<span style="color:#059669;font-size:5px;">★</span> ':'')+day;
+                html += '</div>';
+                // Hour cells
+                activeHours.forEach(h => {
                     const k = day+'|'+h;
-                    const v = grid[k] || 0;
+                    const v = grid[k]||0;
                     const bg = getColor(v);
                     const tc = getTextColor(v);
-                    const label = v > 0 ? fmt(v) : '';
-                    html += '<div style="background:'+bg+';color:'+tc+';text-align:center;padding:5px 1px;border-radius:2px;font-size:5.5px;font-weight:600;line-height:1;">'+label+'</div>';
+                    const isPeakCell = (maxVal>0 && v===maxVal);
+                    const label = v>0 ? fmt(v) : '';
+                    html += '<div style="background:'+bg+';color:'+tc+';text-align:center;padding:6px 1px;font-size:5.5px;font-weight:'+(v/maxVal>0.7?'700':'600')+';line-height:1;position:relative;';
+                    if(isPeakCell) html += 'box-shadow:inset 0 0 0 1.5px #E11D48;border-radius:3px;';
+                    html += '">'+label+'</div>';
                 });
+                // Day total mini-bar
+                const dayPct = dayTotals[day]/maxDayTotal*100;
+                html += '<div style="padding:2px 4px;display:flex;align-items:center;gap:3px;">';
+                html += '<div style="flex:1;height:6px;background:#F1F5F9;border-radius:3px;overflow:hidden;"><div style="width:'+dayPct+'%;height:100%;background:'+(isPeakDay?'#059669':'#94A3B8')+';border-radius:3px;"></div></div>';
+                html += '<span style="font-size:5.5px;font-weight:700;color:#475569;min-width:22px;text-align:right;">'+fmt(dayTotals[day])+'</span>';
+                html += '</div>';
+                html += '</div>';
             });
+            // Bottom hour totals row
+            html += '<div style="display:grid;grid-template-columns:54px repeat('+colCount+',1fr) 60px;background:#F1F5F9;border-top:2px solid #E2E8F0;">';
+            html += '<div style="padding:4px 6px;font-size:6px;font-weight:700;color:#64748B;">Total</div>';
+            activeHours.forEach(h => {
+                const hTotal = hourTotals[h]||0;
+                const isTopHour = peakHour && h===peakHour[0];
+                html += '<div style="text-align:center;padding:3px 0;font-size:5.5px;font-weight:'+(isTopHour?'800':'600')+';color:'+(isTopHour?'#E11D48':'#64748B')+';">'+fmt(hTotal)+'</div>';
+            });
+            const grandTotal = Object.values(dayTotals).reduce((a,b)=>a+b,0);
+            html += '<div style="text-align:center;padding:3px 4px;font-size:6px;font-weight:800;color:#1E293B;">'+fmt(grandTotal)+'</div>';
+            html += '</div>';
             html += '</div>';
             container.innerHTML = html;
         }

@@ -24,4 +24,11 @@ public interface SumDailyMerchantAttributeRepository extends JpaRepository<SumDa
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
             @Param("type") String type);
+
+    // BULK: fetch attributes for all merchants in one query
+    @Query("SELECT s FROM SumDailyMerchantAttribute s WHERE s.merchantId IN :merchantIds AND s.businessDate BETWEEN :startDate AND :endDate")
+    List<SumDailyMerchantAttribute> findByMerchantsAndDateRange(
+            @Param("merchantIds") java.util.List<Long> merchantIds,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
 }

@@ -42,6 +42,9 @@ public class Merchant {
     private String location;
     private String city;
 
+    @Column(name = "contact_email")
+    private String contactEmail;
+
     public Long getMerchantId() {
         return merchantId;
     }
