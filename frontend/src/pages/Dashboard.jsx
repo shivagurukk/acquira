@@ -76,50 +76,61 @@ const Dashboard = () => {
                 setMetrics(data);
             }
 
+            // --- Daily Volume Trend Chart ---
             try {
-                const summaryRes = await fetch('/api/business/volume-revenue-summary', {
+                const dailyTrendRes = await fetch('/api/business/performance-dashboard?groupBy=DAY', {
                     method: 'POST', headers, body
                 });
-                if (summaryRes.ok) {
-                    const summaryData = await summaryRes.json();
-                    if (summaryData && summaryData.length > 0) {
-                        const daily = summaryData
-                            .filter(r => r.business_date)
-                            .sort((a, b) => new Date(a.business_date) - new Date(b.business_date))
+                if (dailyTrendRes.ok) {
+                    const trendData = await dailyTrendRes.json();
+                    if (trendData && trendData.length > 0) {
+                        const daily = trendData
+                            .filter(r => r.row_label)
+                            .sort((a, b) => a.row_label.localeCompare(b.row_label))
                             .slice(-30)
                             .map(r => ({
-                                date: fmt.date(r.business_date),
-                                volume: Number(r.total_volume || 0),
-                                txns: Number(r.total_txns || 0),
+                                date: fmt.date(r.row_label),
+                                volume: Number(r.total_vol || 0),
+                                txns: Number((r.dom_debit_cnt || 0) + (r.dom_credit_cnt || 0) + (r.int_cnt || 0)),
                                 msf: Number(r.total_msf || 0),
                             }));
                         setDailyData(daily);
+                    }
+                }
+            } catch (e) { console.warn('Daily trend fetch failed', e); }
 
-                        const merchantMap = {};
-                        summaryData.forEach(r => {
-                            const name = r.merchant_name || r.mid || 'Unknown';
-                            if (!merchantMap[name]) merchantMap[name] = { name, volume: 0, txns: 0, msf: 0 };
-                            merchantMap[name].volume += Number(r.total_volume || 0);
-                            merchantMap[name].txns += Number(r.total_txns || 0);
-                            merchantMap[name].msf += Number(r.total_msf || 0);
-                        });
-                        const sorted = Object.values(merchantMap)
+            // --- Top Merchants Chart ---
+            try {
+                const merchantRes = await fetch('/api/business/performance-dashboard?groupBy=MERCHANT', {
+                    method: 'POST', headers, body
+                });
+                if (merchantRes.ok) {
+                    const merchData = await merchantRes.json();
+                    if (merchData && merchData.length > 0) {
+                        const sorted = merchData
+                            .map(r => ({
+                                name: r.merchant_name || r.row_label || 'Unknown',
+                                volume: Number(r.total_vol || 0),
+                                txns: Number((r.dom_debit_cnt || 0) + (r.dom_credit_cnt || 0) + (r.int_cnt || 0)),
+                                msf: Number(r.total_msf || 0),
+                            }))
                             .sort((a, b) => b.volume - a.volume)
                             .slice(0, 8);
                         setTopMerchants(sorted);
                     }
                 }
-            } catch (e) { /* not critical */ }
+            } catch (e) { console.warn('Top merchants fetch failed', e); }
 
+            // --- Volume by Scheme Pie Chart ---
             try {
-                const perfRes = await fetch('/api/business/performance-dashboard?groupBy=card_scheme', {
+                const schemeRes = await fetch('/api/analytics/scheme-breakdown', {
                     method: 'POST', headers, body
                 });
-                if (perfRes.ok) {
-                    const perfData = await perfRes.json();
-                    if (perfData && perfData.length > 0) {
-                        const schemes = perfData
-                            .filter(r => r.card_scheme && r.total_volume > 0)
+                if (schemeRes.ok) {
+                    const schData = await schemeRes.json();
+                    if (schData && schData.length > 0) {
+                        const schemes = schData
+                            .filter(r => r.card_scheme && Number(r.total_volume || 0) > 0)
                             .map(r => ({
                                 name: r.card_scheme,
                                 value: Number(r.total_volume || 0),
@@ -130,7 +141,7 @@ const Dashboard = () => {
                         setSchemeData(schemes);
                     }
                 }
-            } catch (e) { /* not critical */ }
+            } catch (e) { console.warn('Scheme breakdown fetch failed', e); }
 
             setLastRefresh(new Date());
         } catch (error) {

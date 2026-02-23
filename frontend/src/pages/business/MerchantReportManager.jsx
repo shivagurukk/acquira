@@ -2,17 +2,18 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
     Box, Card, Typography, Button, LinearProgress, Chip, Stack,
     useTheme, Paper, CircularProgress, Avatar, Container, Grid,
-    FormControlLabel, Switch
+    FormControlLabel, Switch, Dialog, DialogContent
 } from '@mui/material';
 import {
     PlayArrow, CheckCircle, Error as ErrorIcon, Refresh,
     AccessTime, Assessment, Bolt, AutoGraph
 } from '@mui/icons-material';
-import { FileText, Zap, Clock, FileCheck } from 'lucide-react';
+import { FileText, Zap, Clock, FileCheck, Building2, AlertTriangle, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const GlassCard = ({ children, sx, ...props }) => (
     <Card sx={{
@@ -56,12 +57,121 @@ const PremiumButton = ({ children, onClick, color = 'primary', startIcon, ...pro
         }} {...props}>{children}</Button>
 );
 
+// ==========================================
+// Tenant Confirmation Dialog
+// Shows which tenant the reports will generate for.
+// Prevents accidental generation for wrong tenant.
+// ==========================================
+const TenantConfirmDialog = ({ open, onClose, onConfirm, activeTenant, tenants, merchantCount }) => {
+    const theme = useTheme();
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
+            PaperProps={{ sx: { borderRadius: 4, overflow: 'hidden', boxShadow: '0 25px 60px rgba(0,0,0,0.25)' } }}
+        >
+            {/* Header */}
+            <Box sx={{
+                background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #818cf8 100%)',
+                px: 3.5, py: 3, display: 'flex', alignItems: 'center', gap: 2
+            }}>
+                <Avatar sx={{ bgcolor: 'rgba(255,255,255,0.2)', width: 52, height: 52, backdropFilter: 'blur(10px)' }}>
+                    <Shield size={24} color="white" />
+                </Avatar>
+                <Box>
+                    <Typography variant="h5" fontWeight="800" color="white" lineHeight={1.2}>
+                        Confirm Report Generation
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.75)', mt: 0.5 }}>
+                        Reports are generated per tenant — please verify the active organization
+                    </Typography>
+                </Box>
+            </Box>
+
+            <DialogContent sx={{ px: 3.5, py: 3 }}>
+                {/* Active Tenant Card */}
+                <Paper elevation={0} sx={{
+                    p: 2.5, borderRadius: 3, border: '2px solid #c7d2fe', bgcolor: '#eef2ff',
+                    display: 'flex', alignItems: 'center', gap: 2
+                }}>
+                    <Avatar variant="rounded" sx={{ bgcolor: '#4f46e5', width: 56, height: 56 }}>
+                        <Building2 size={26} color="white" />
+                    </Avatar>
+                    <Box flex={1}>
+                        <Typography variant="h6" fontWeight="800" color="#312e81">
+                            {activeTenant?.bankName || 'Unknown'}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            {[activeTenant?.bankShortCode, activeTenant?.country, activeTenant?.baseCurrency].filter(Boolean).join(' · ')}
+                        </Typography>
+                    </Box>
+                    <Chip label="ACTIVE" size="small" sx={{ bgcolor: '#4f46e5', color: 'white', fontWeight: 800, fontSize: 11, letterSpacing: 0.5 }} />
+                </Paper>
+
+                {/* Multi-tenant warning */}
+                {tenants?.length > 1 && (
+                    <Box sx={{ mt: 2.5, p: 2, borderRadius: 2.5, bgcolor: '#fffbeb', border: '1px solid #fde68a', display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
+                        <AlertTriangle size={18} color="#b45309" style={{ marginTop: 1, flexShrink: 0 }} />
+                        <Box>
+                            <Typography variant="body2" fontWeight="700" color="#92400e">
+                                You have access to {tenants.length} organizations
+                            </Typography>
+                            <Typography variant="caption" color="#a16207">
+                                Reports will <strong>only</strong> include merchants belonging to "{activeTenant?.bankName}".
+                                To generate for a different tenant, cancel and switch tenants from the sidebar first.
+                            </Typography>
+                        </Box>
+                    </Box>
+                )}
+
+                {/* Summary */}
+                <Box sx={{ mt: 2.5, p: 2, borderRadius: 2.5, bgcolor: '#f0fdf4', border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#22c55e', flexShrink: 0 }} />
+                    <Typography variant="body2" fontWeight="600" color="#166534">
+                        {merchantCount} merchants found · PDF reports will be generated and saved under "{activeTenant?.bankName || 'tenant'}"
+                    </Typography>
+                </Box>
+
+                {/* How it works */}
+                <Box sx={{ mt: 2.5, p: 2, borderRadius: 2.5, bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                    <Typography variant="caption" fontWeight="700" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        How Report Generation Works
+                    </Typography>
+                    <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        {[
+                            'Only merchants belonging to the active tenant are included',
+                            'Reports are isolated per tenant — other tenants\' data is never mixed',
+                            'PDFs are stored in tenant-specific folders for organization',
+                            'Switching tenant in sidebar changes which merchants appear'
+                        ].map((text, i) => (
+                            <Typography key={i} variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Box component="span" sx={{ color: '#4f46e5', fontWeight: 800 }}>{i + 1}.</Box> {text}
+                            </Typography>
+                        ))}
+                    </Box>
+                </Box>
+            </DialogContent>
+
+            {/* Actions */}
+            <Box sx={{ px: 3.5, py: 2.5, bgcolor: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+                <Button variant="outlined" color="inherit" onClick={onClose}
+                    sx={{ borderRadius: 3, px: 4, textTransform: 'none', fontWeight: 600 }}>
+                    Cancel
+                </Button>
+                <PremiumButton onClick={onConfirm} startIcon={<PlayArrow />}>
+                    Generate for {activeTenant?.bankShortCode || 'Tenant'}
+                </PremiumButton>
+            </Box>
+        </Dialog>
+    );
+};
+
 const POLL_INTERVAL = 2000;
 
 const MerchantReportManager = () => {
     const theme = useTheme();
+    const { activeTenant, activeTenantId, tenants } = useAuth();
     const [merchants, setMerchants] = useState([]);
-    const [status, setStatus] = useState('idle');
+    const [status, setStatus] = useState('idle'); // idle | checking | confirming | running | completed
+    const [showTenantConfirm, setShowTenantConfirm] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, success: 0, failed: 0 });
     const [logs, setLogs] = useState([]);
     const [existingReportCount, setExistingReportCount] = useState(0);
@@ -73,6 +183,9 @@ const MerchantReportManager = () => {
 
     useEffect(() => { if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [logs]);
     useEffect(() => { fetchMerchants(); return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, []);
+
+    // Re-fetch merchants when tenant changes
+    useEffect(() => { fetchMerchants(); }, [activeTenantId]);
 
     // Poll batch-status/{jobId} for real-time progress
     const startPolling = useCallback((jobId) => {
@@ -109,7 +222,6 @@ const MerchantReportManager = () => {
                     setStatus('completed');
                     clearInterval(pollRef.current);
                     pollRef.current = null;
-                    // Fetch generated report list
                     fetchGeneratedReports();
                 } else {
                     setLogs(newLogs);
@@ -117,11 +229,10 @@ const MerchantReportManager = () => {
                 }
             } catch (err) {
                 console.error('Poll error:', err);
-                // Don't stop polling on transient errors
             }
         };
 
-        poll(); // immediate
+        poll();
         pollRef.current = setInterval(poll, POLL_INTERVAL);
     }, [merchants.length]);
 
@@ -158,7 +269,7 @@ const MerchantReportManager = () => {
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = 'Merchant_Reports.zip';
+            link.download = `Merchant_Reports_${activeTenant?.bankShortCode || 'ALL'}.zip`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -170,8 +281,6 @@ const MerchantReportManager = () => {
 
     const handleDownloadSingle = async (downloadUrl) => {
         try {
-            // downloadUrl is like "/api/business/insights/download-report?file=...&year=...&month=..."
-            // Strip the /api prefix since axios baseURL already includes it
             const apiPath = downloadUrl.replace(/^\/api/, '');
             const res = await api.get(apiPath, { responseType: 'blob' });
             const contentDisposition = res.headers['content-disposition'] || '';
@@ -191,7 +300,14 @@ const MerchantReportManager = () => {
         }
     };
 
-    const handleStartClick = async () => {
+    // Step 1: User clicks "Initialize" → open tenant confirmation popup
+    const handleStartClick = () => {
+        setShowTenantConfirm(true);
+    };
+
+    // Step 2: User confirms tenant → check for existing reports
+    const handleTenantConfirmed = async () => {
+        setShowTenantConfirm(false);
         setStatus('checking');
         try {
             const res = await api.get('/business/insights/check-status');
@@ -215,7 +331,6 @@ const MerchantReportManager = () => {
             const jobId = result.jobId;
 
             if (!jobId) {
-                // PDF module not loaded or engine not ready
                 if (result.status === 'PDF_MODULE_NOT_LOADED') {
                     setLogs(['⚠️ PDF module (acquira-pdf) is not included.', '💡 Add acquira-pdf dependency to acquira-core and rebuild.']);
                     setStatus('completed');
@@ -226,7 +341,6 @@ const MerchantReportManager = () => {
                     setStatus('completed');
                     return;
                 }
-                // Sync response fallback
                 const generated = result.generated || 0;
                 const failed = result.failed || 0;
                 setProgress({ current: generated + failed, total: merchants.length, success: generated, failed });
@@ -235,8 +349,11 @@ const MerchantReportManager = () => {
                 return;
             }
 
-            // Start polling for progress
-            setLogs([`🚀 Batch started — Job: ${jobId}`, `📊 Processing ${result.totalMerchants} merchants...`]);
+            setLogs([
+                `🏛️ Tenant: ${activeTenant?.bankName || 'Unknown'}`,
+                `🚀 Batch started — Job: ${jobId}`,
+                `📊 Processing ${result.totalMerchants} merchants...`
+            ]);
             startPolling(jobId);
 
         } catch (err) {
@@ -262,7 +379,30 @@ const MerchantReportManager = () => {
                 title="Merchant Report Manager" subtitle="Enterprise batch PDF generation system"
                 icon={FileText} hideDatePresets
             />
+
+            {/* Active Tenant Banner */}
+            <Box sx={{ mb: 2, px: 2, py: 1.5, borderRadius: 3, bgcolor: '#eef2ff', border: '1px solid #c7d2fe', display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Building2 size={18} color="#4f46e5" />
+                <Typography variant="body2" fontWeight="700" color="#312e81">
+                    Generating for: {activeTenant?.bankName || 'Unknown Tenant'}
+                </Typography>
+                <Chip label={activeTenant?.bankShortCode || '?'} size="small" sx={{ bgcolor: '#4f46e5', color: 'white', fontWeight: 700, fontSize: 11, ml: 'auto' }} />
+                {activeTenant?.baseCurrency && (
+                    <Chip label={activeTenant.baseCurrency} size="small" variant="outlined" sx={{ fontWeight: 600, fontSize: 11 }} />
+                )}
+            </Box>
+
             <KpiCards cards={kpis} />
+
+            {/* Tenant Confirmation Popup */}
+            <TenantConfirmDialog
+                open={showTenantConfirm}
+                onClose={() => setShowTenantConfirm(false)}
+                onConfirm={handleTenantConfirmed}
+                activeTenant={activeTenant}
+                tenants={tenants}
+                merchantCount={merchants.length}
+            />
 
             <Container maxWidth="lg" disableGutters sx={{ flex: 1 }}>
                 <GlassCard>
@@ -313,7 +453,8 @@ const MerchantReportManager = () => {
                                             <Box py={4} maxWidth={500} mx="auto">
                                                 <Avatar sx={{ width: 80, height: 80, bgcolor: 'warning.50', color: 'warning.main', mx: 'auto', mb: 3 }}><ErrorIcon sx={{ fontSize: 40 }} /></Avatar>
                                                 <Typography variant="h5" fontWeight="800" gutterBottom>Artifacts Detected</Typography>
-                                                <Typography color="text.secondary" mb={4}>Found <strong>{existingReportCount}</strong> existing reports. Running this batch will overwrite them.</Typography>
+                                                <Typography color="text.secondary" mb={1}>Found <strong>{existingReportCount}</strong> existing reports for <strong>{activeTenant?.bankName || 'this tenant'}</strong>.</Typography>
+                                                <Typography color="text.secondary" mb={4}>Running this batch will overwrite them.</Typography>
                                                 <Stack direction="row" spacing={2} justifyContent="center">
                                                     <Button variant="outlined" color="inherit" onClick={() => setStatus('idle')} sx={{ borderRadius: 3, px: 4 }}>Cancel</Button>
                                                     <PremiumButton onClick={startBatch} color="warning" startIcon={<Refresh />}>Overwrite & Proceed</PremiumButton>
@@ -372,7 +513,6 @@ const MerchantReportManager = () => {
                                         </Paper>
                                         {status === 'completed' && (
                                             <Box mt={4}>
-                                                {/* Download All Button */}
                                                 {generatedReports.length > 0 && (
                                                     <Box mb={3} textAlign="center">
                                                         <Button
@@ -391,7 +531,6 @@ const MerchantReportManager = () => {
                                                     </Box>
                                                 )}
 
-                                                {/* Individual Report List */}
                                                 {generatedReports.length > 0 && (
                                                     <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid #e2e8f0', overflow: 'hidden', mb: 3 }}>
                                                         <Box sx={{ px: 2.5, py: 1.5, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

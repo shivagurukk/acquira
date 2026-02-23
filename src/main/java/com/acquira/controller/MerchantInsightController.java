@@ -69,7 +69,9 @@ public class MerchantInsightController {
             if (mOpt.isPresent())
                 merchantName = mOpt.get().getName();
 
-            String folder = "reports/" + targetMonth.toString();
+            Long currentTenant = TenantContext.getCurrentTenant();
+            String tenantFolder = currentTenant != null ? "tenant_" + currentTenant : "default";
+            String folder = "reports/" + tenantFolder + "/" + targetMonth.toString();
             Files.createDirectories(Paths.get(folder));
             String filename = "Merchant_Insight_" + merchantId + "_" + targetMonth + ".pdf";
             Path path = Paths.get(folder, filename);
@@ -129,7 +131,6 @@ public class MerchantInsightController {
      * → Returns { progressPercent: 45.2, completed: 9040, ... }
      */
     @PostMapping("/generate-all")
-    @PostMapping("/generate-all")
     public ResponseEntity<Map<String, Object>> generateAllReports(
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month,
@@ -137,11 +138,14 @@ public class MerchantInsightController {
 
         try {
             YearMonth targetMonth = resolveTargetMonth(year, month);
-            String folder = "reports/" + targetMonth.toString();
-            String monthYear = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
 
             // Capture tenant context for propagation to worker threads
             Long currentTenant = TenantContext.getCurrentTenant();
+
+            // Tenant-scoped report folder: reports/tenant_{id}/{YYYY-MM}
+            String tenantFolder = currentTenant != null ? "tenant_" + currentTenant : "default";
+            String folder = "reports/" + tenantFolder + "/" + targetMonth.toString();
+            String monthYear = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
 
             // Capture current user for SSE notifications
             org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder
@@ -246,7 +250,9 @@ public class MerchantInsightController {
         Map<String, Object> response = new HashMap<>();
         try {
             YearMonth targetMonth = resolveTargetMonth(year, month);
-            String folder = "reports/" + targetMonth.toString();
+            Long currentTenant = TenantContext.getCurrentTenant();
+            String tenantFolder = currentTenant != null ? "tenant_" + currentTenant : "default";
+            String folder = "reports/" + tenantFolder + "/" + targetMonth.toString();
             Path folderPath = Paths.get(folder);
 
             int count = 0;
@@ -263,6 +269,107 @@ public class MerchantInsightController {
         } catch (Exception e) {
             response.put("error", e.getMessage());
             return ResponseEntity.internalServerError().body(response);
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // REPORT LIST & DOWNLOAD ENDPOINTS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /**
+     * List generated reports for the active tenant and month.
+     */
+    @GetMapping("/list-reports")
+    public ResponseEntity<Map<String, Object>> listReports(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month) {
+        try {
+            YearMonth targetMonth = resolveTargetMonth(year, month);
+            Long currentTenant = TenantContext.getCurrentTenant();
+            String tenantFolder = currentTenant != null ? "tenant_" + currentTenant : "default";
+            String folder = "reports/" + tenantFolder + "/" + targetMonth.toString();
+            Path folderPath = Paths.get(folder);
+
+            List<Map<String, Object>> reports = new ArrayList<>();
+            if (Files.exists(folderPath)) {
+                try (Stream<Path> files = Files.list(folderPath)) {
+                    files.filter(p -> p.toString().endsWith(".pdf"))
+                         .sorted()
+                         .forEach(p -> {
+                             Map<String, Object> report = new LinkedHashMap<>();
+                             report.put("filename", p.getFileName().toString());
+                             try { report.put("size", Files.size(p)); } catch (IOException e) { report.put("size", 0); }
+                             report.put("downloadUrl", "/api/business/insights/download-report?file=" + p.getFileName() + "&year=" + targetMonth.getYear() + "&month=" + targetMonth.getMonthValue());
+                             reports.add(report);
+                         });
+                }
+            }
+
+            return ResponseEntity.ok(Map.of("reports", reports, "count", reports.size(), "targetMonth", targetMonth.toString()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Download a single report PDF.
+     */
+    @GetMapping("/download-report")
+    public void downloadReport(
+            @RequestParam String file,
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month,
+            HttpServletResponse response) throws IOException {
+
+        YearMonth targetMonth = resolveTargetMonth(year, month);
+        Long currentTenant = TenantContext.getCurrentTenant();
+        String tenantFolder = currentTenant != null ? "tenant_" + currentTenant : "default";
+        Path filePath = Paths.get("reports", tenantFolder, targetMonth.toString(), file);
+
+        if (!Files.exists(filePath)) {
+            response.sendError(404, "Report not found");
+            return;
+        }
+
+        response.setContentType("application/pdf");
+        response.setHeader("Content-Disposition", "attachment; filename=\"" + file + "\"");
+        response.setContentLengthLong(Files.size(filePath));
+        Files.copy(filePath, response.getOutputStream());
+    }
+
+    /**
+     * Download ALL reports as a ZIP file.
+     */
+    @GetMapping("/download-all-reports")
+    public void downloadAllReports(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month,
+            HttpServletResponse response) throws IOException {
+
+        YearMonth targetMonth = resolveTargetMonth(year, month);
+        Long currentTenant = TenantContext.getCurrentTenant();
+        String tenantFolder = currentTenant != null ? "tenant_" + currentTenant : "default";
+        Path folderPath = Paths.get("reports", tenantFolder, targetMonth.toString());
+
+        if (!Files.exists(folderPath)) {
+            response.sendError(404, "No reports found");
+            return;
+        }
+
+        response.setContentType("application/zip");
+        response.setHeader("Content-Disposition", "attachment; filename=\"Merchant_Reports_" + tenantFolder + "_" + targetMonth + ".zip\"");
+
+        try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(response.getOutputStream());
+             Stream<Path> files = Files.list(folderPath)) {
+            files.filter(p -> p.toString().endsWith(".pdf")).forEach(p -> {
+                try {
+                    zos.putNextEntry(new java.util.zip.ZipEntry(p.getFileName().toString()));
+                    Files.copy(p, zos);
+                    zos.closeEntry();
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to zip: " + p.getFileName(), e);
+                }
+            });
         }
     }
 

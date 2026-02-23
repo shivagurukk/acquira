@@ -223,8 +223,14 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(50) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     email VARCHAR(100),
-    role VARCHAR(50), -- Added to support direct role mapping
+    role VARCHAR(50),
     is_active BOOLEAN DEFAULT TRUE,
+    display_name VARCHAR(100),
+    sso_provider VARCHAR(50),
+    must_change_password BOOLEAN DEFAULT FALSE,
+    locked_until TIMESTAMP,
+    failed_login_attempts INTEGER DEFAULT 0,
+    approval_status VARCHAR(20),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_login TIMESTAMP
 );
@@ -243,6 +249,8 @@ CREATE TABLE IF NOT EXISTS user_tenant_access (
     user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
     tenant_id INT REFERENCES tenant(tenant_id) ON DELETE CASCADE,
     group_id BIGINT REFERENCES sys_user_group(group_id),
+    role_in_tenant VARCHAR(50),
+    is_default_tenant BOOLEAN DEFAULT FALSE,
     UNIQUE(user_id, tenant_id)
 );
 
@@ -1401,6 +1409,62 @@ CREATE TABLE IF NOT EXISTS saved_filter (
 );
 
 CREATE INDEX IF NOT EXISTS idx_saved_filter_lookup ON saved_filter(tenant_id, user_id, dashboard_type);
+
+-- ═══════════════════════════════════════════════════════
+-- MIGRATION SAFETY: Ensure columns exist (safe to re-run)
+-- ═══════════════════════════════════════════════════════
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_provider VARCHAR(50);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20);
+ALTER TABLE user_tenant_access ADD COLUMN IF NOT EXISTS role_in_tenant VARCHAR(50);
+ALTER TABLE user_tenant_access ADD COLUMN IF NOT EXISTS is_default_tenant BOOLEAN DEFAULT FALSE;
+
+-- ═══════════════════════════════════════════════════════
+-- FORCE ROW LEVEL SECURITY
+-- Required when app connects as table owner (e.g. postgres user)
+-- Without this, RLS policies are BYPASSED for the owner.
+-- ═══════════════════════════════════════════════════════
+ALTER TABLE dim_merchant FORCE ROW LEVEL SECURITY;
+ALTER TABLE dim_store FORCE ROW LEVEL SECURITY;
+ALTER TABLE dim_terminal FORCE ROW LEVEL SECURITY;
+ALTER TABLE dim_bank_account FORCE ROW LEVEL SECURITY;
+ALTER TABLE fact_transaction FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_merchant FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_scheme FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_channel FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_terminal FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_bank FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_finance FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_insight FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_mcc FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_monthly_bank FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_monthly_card FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_monthly_merchant_metrics FORCE ROW LEVEL SECURITY;
+ALTER TABLE sum_daily_merchant_attribute FORCE ROW LEVEL SECURITY;
+ALTER TABLE bank_budget_target FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_lifecycle_status FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_activity_summary FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_opportunity_score FORCE ROW LEVEL SECURITY;
+ALTER TABLE revenue_leakage_flags FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_contact FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_document FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_contract FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_risk_profile FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_settlement_config FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_note FORCE ROW LEVEL SECURITY;
+ALTER TABLE tenant_setting FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
+ALTER TABLE dashboard_config FORCE ROW LEVEL SECURITY;
+ALTER TABLE stg_merchant_master_raw FORCE ROW LEVEL SECURITY;
+ALTER TABLE stg_trnx_raw FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_activity FORCE ROW LEVEL SECURITY;
+ALTER TABLE kpi_snapshot_daily FORCE ROW LEVEL SECURITY;
+ALTER TABLE kpi_snapshot_monthly FORCE ROW LEVEL SECURITY;
+ALTER TABLE batch_run_log FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_daily_metrics FORCE ROW LEVEL SECURITY;
 
 -- ==========================================
 -- AI ASSISTANT MENU

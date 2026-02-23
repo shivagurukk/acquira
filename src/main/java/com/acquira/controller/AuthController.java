@@ -205,7 +205,21 @@ public class AuthController {
             }
         }
 
-        return ResponseEntity.ok(Map.of("menus", menus));
+        Map<String, Object> response = new HashMap<>();
+        response.put("menus", menus);
+        response.put("activeTenantId", tenantId);
+
+        // Include group name for role context
+        if (tenantId != null) {
+            Optional<com.acquira.model.UserTenantAccess> accessObj = userTenantAccessRepository
+                    .findByUserAndTenant_TenantId(user, tenantId);
+            if (accessObj.isPresent() && accessObj.get().getSysUserGroup() != null) {
+                response.put("groupName", accessObj.get().getSysUserGroup().getGroupName());
+                response.put("roleInTenant", accessObj.get().getRoleInTenant());
+            }
+        }
+
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/session")

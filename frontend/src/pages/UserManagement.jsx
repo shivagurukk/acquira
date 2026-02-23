@@ -23,7 +23,7 @@ const UserManagement = () => {
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalUser, setModalUser] = useState(null);
-  const [formData, setFormData] = useState({ username: '', email: '', displayName: '', password: '', active: true, tenantId: '', groupId: '' });
+  const [formData, setFormData] = useState({ username: '', email: '', displayName: '', password: '', active: true, tenantAssignments: [{ tenantId: '', groupId: '', isDefault: true }] });
   const [formErrors, setFormErrors] = useState({});
 
   // Pagination
@@ -82,7 +82,7 @@ const UserManagement = () => {
   // ─── User CRUD ─────────────────────────────────────────
   const openCreateModal = () => {
     setModalUser(null);
-    setFormData({ username: '', email: '', displayName: '', password: '', active: true, tenantId: '', groupId: '' });
+    setFormData({ username: '', email: '', displayName: '', password: '', active: true, tenantAssignments: [{ tenantId: '', groupId: '', isDefault: true }] });
     setFormErrors({});
     setIsModalOpen(true);
   };
@@ -99,6 +99,10 @@ const UserManagement = () => {
     if (!formData.username?.trim()) errors.username = 'Required';
     if (!formData.email?.trim()) errors.email = 'Required';
     if (!modalUser && !formData.password?.trim()) errors.password = 'Required for new user';
+    if (!modalUser) {
+      const validAssignments = (formData.tenantAssignments || []).filter(a => a.tenantId && a.groupId);
+      if (validAssignments.length === 0) errors.tenants = 'At least one tenant assignment is required';
+    }
     setFormErrors(errors);
     if (Object.keys(errors).length) return;
 
@@ -107,15 +111,20 @@ const UserManagement = () => {
         await api.put(`/users/${modalUser.id}`, { ...formData, id: modalUser.id });
         notify('User updated');
       } else {
-        // GAP-6: Create user then assign tenant if selected
+        // Create user then assign all selected tenants
         const res = await api.post('/users', formData);
         const newUserId = res.data?.id;
-        if (newUserId && formData.tenantId && formData.groupId) {
-          try {
-            await api.post(`/users/${newUserId}/tenant-access`, {
-              tenantId: formData.tenantId, groupId: formData.groupId, isDefault: true
-            });
-          } catch (te) { console.warn('Tenant assignment failed:', te); }
+        if (newUserId && formData.tenantAssignments) {
+          const validAssignments = formData.tenantAssignments.filter(a => a.tenantId && a.groupId);
+          for (const assignment of validAssignments) {
+            try {
+              await api.post(`/users/${newUserId}/tenant-access`, {
+                tenantId: assignment.tenantId,
+                groupId: assignment.groupId,
+                isDefault: assignment.isDefault || false
+              });
+            } catch (te) { console.warn('Tenant assignment failed:', te); }
+          }
         }
         notify('User created');
       }
@@ -478,25 +487,55 @@ const UserManagement = () => {
                 <Field label="Display Name" icon={UserIcon} value={formData.displayName}
                   onChange={v => setFormData({ ...formData, displayName: v })} placeholder="Optional" />
 
-                {/* GAP-6: Tenant assignment for new users */}
+                {/* Multi-tenant assignment for new users */}
                 {!modalUser && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    <div>
-                      <label style={labelStyle}>Assign Tenant</label>
-                      <select value={formData.tenantId} onChange={e => setFormData({ ...formData, tenantId: e.target.value })}
-                        style={{ ...inputStyle, paddingLeft: 12 }}>
-                        <option value="">Select Tenant...</option>
-                        {banks.map(b => <option key={b.tenantId} value={b.tenantId}>{b.bankName}</option>)}
-                      </select>
+                  <div>
+                    {formErrors.tenants && <div style={{ ...errorBoxStyle, marginBottom: 8, padding: '8px 12px', fontSize: 12 }}>{formErrors.tenants}</div>}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>Tenant Assignments</label>
+                      <button type="button" onClick={() => setFormData({ ...formData, tenantAssignments: [...formData.tenantAssignments, { tenantId: '', groupId: '', isDefault: false }] })}
+                        style={{ background: 'none', border: '1px dashed #cbd5e1', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Plus size={12} /> Add Tenant
+                      </button>
                     </div>
-                    <div>
-                      <label style={labelStyle}>Assign Group</label>
-                      <select value={formData.groupId} onChange={e => setFormData({ ...formData, groupId: e.target.value })}
-                        style={{ ...inputStyle, paddingLeft: 12 }}>
-                        <option value="">Select Group...</option>
-                        {groups.map(g => <option key={g.groupId || g.id} value={g.groupId || g.id}>{g.groupName}</option>)}
-                      </select>
-                    </div>
+                    {formData.tenantAssignments.map((assignment, idx) => (
+                      <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: 8, alignItems: 'center', marginBottom: 8, padding: '8px 10px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e5e7eb' }}>
+                        <select value={assignment.tenantId} onChange={e => {
+                          const updated = [...formData.tenantAssignments];
+                          updated[idx] = { ...updated[idx], tenantId: e.target.value };
+                          setFormData({ ...formData, tenantAssignments: updated });
+                        }} style={{ ...inputStyle, paddingLeft: 12, fontSize: 12 }}>
+                          <option value="">Select Tenant...</option>
+                          {banks.filter(b => !formData.tenantAssignments.some((a, i) => i !== idx && a.tenantId === String(b.tenantId)))
+                            .map(b => <option key={b.tenantId} value={b.tenantId}>{b.bankName}</option>)}
+                        </select>
+                        <select value={assignment.groupId} onChange={e => {
+                          const updated = [...formData.tenantAssignments];
+                          updated[idx] = { ...updated[idx], groupId: e.target.value };
+                          setFormData({ ...formData, tenantAssignments: updated });
+                        }} style={{ ...inputStyle, paddingLeft: 12, fontSize: 12 }}>
+                          <option value="">Select Group...</option>
+                          {groups.map(g => <option key={g.groupId || g.id} value={g.groupId || g.id}>{g.groupName}</option>)}
+                        </select>
+                        <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                          <input type="radio" name="defaultTenant" checked={assignment.isDefault}
+                            onChange={() => {
+                              const updated = formData.tenantAssignments.map((a, i) => ({ ...a, isDefault: i === idx }));
+                              setFormData({ ...formData, tenantAssignments: updated });
+                            }} /> Default
+                        </label>
+                        {formData.tenantAssignments.length > 1 && (
+                          <button type="button" onClick={() => {
+                            const updated = formData.tenantAssignments.filter((_, i) => i !== idx);
+                            // If removed was default, make first one default
+                            if (assignment.isDefault && updated.length > 0) updated[0].isDefault = true;
+                            setFormData({ ...formData, tenantAssignments: updated });
+                          }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 2 }}>
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
 

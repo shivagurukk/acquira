@@ -62,8 +62,33 @@ public class TenantService {
     }
 
     public Long getDefaultTenantIdForUser(String username) {
-        List<Tenant> tenants = getAllowedTenants(username);
-        return tenants.isEmpty() ? null : tenants.get(0).getTenantId();
+        com.acquira.model.User user = userRepository.findByUsername(username).orElse(null);
+        if (user == null) return null;
+
+        // 1. Find the access marked as default
+        List<UserTenantAccess> accessList = userTenantAccessRepository.findByUser(user);
+        UserTenantAccess defaultAccess = accessList.stream()
+                .filter(a -> Boolean.TRUE.equals(a.getIsDefaultTenant()))
+                .findFirst()
+                .orElse(null);
+
+        if (defaultAccess != null) {
+            return defaultAccess.getTenant().getTenantId();
+        }
+
+        // 2. Fallback to first available tenant
+        if (!accessList.isEmpty()) {
+            return accessList.get(0).getTenant().getTenantId();
+        }
+
+        // 3. Super admin fallback — first tenant in system
+        String role = user.getRole();
+        if ("ROLE_SUPER_ADMIN".equals(role) || "ROLE_ADMIN".equals(role)) {
+            List<Tenant> all = tenantRepository.findAll();
+            return all.isEmpty() ? null : all.get(0).getTenantId();
+        }
+
+        return null;
     }
 
     public Long getCurrentTenantId() {

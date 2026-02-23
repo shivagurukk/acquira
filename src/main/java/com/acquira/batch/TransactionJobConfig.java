@@ -64,13 +64,15 @@ public class TransactionJobConfig {
     private final SumDailyMerchantRepository dailyMerchantRepo;
     private final SumMonthlyMerchantMetricsRepository monthlyMetricsRepo;
     private final com.acquira.service.PartitionMaintenanceService partitionMaintenanceService;
+    private final TenantBatchStepListener tenantBatchStepListener;
 
     public TransactionJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate,
             MerchantMetricCalculator merchantMetricCalculator,
             SumDailyMerchantRepository dailyMerchantRepo,
             SumMonthlyMerchantMetricsRepository monthlyMetricsRepo,
-            com.acquira.service.PartitionMaintenanceService partitionMaintenanceService) {
+            com.acquira.service.PartitionMaintenanceService partitionMaintenanceService,
+            TenantBatchStepListener tenantBatchStepListener) {
         this.jobRepository = jobRepository;
         this.transactionManager = transactionManager;
         this.dataSource = dataSource;
@@ -79,6 +81,7 @@ public class TransactionJobConfig {
         this.dailyMerchantRepo = dailyMerchantRepo;
         this.monthlyMetricsRepo = monthlyMetricsRepo;
         this.partitionMaintenanceService = partitionMaintenanceService;
+        this.tenantBatchStepListener = tenantBatchStepListener;
     }
 
     // ==================================================================================
@@ -139,7 +142,8 @@ public class TransactionJobConfig {
     @Bean
     public Step cleanTargetDayStep(Tasklet cleanTargetDayTasklet) {
         return new StepBuilder("cleanTargetDayStep", jobRepository)
-                .tasklet(cleanTargetDayTasklet, transactionManager).build();
+                .tasklet(cleanTargetDayTasklet, transactionManager)
+                .listener(tenantBatchStepListener).build();
     }
 
     @Bean
@@ -352,7 +356,8 @@ public class TransactionJobConfig {
     @Bean
     public Step stagingToFactStep(Tasklet stagingToFactTasklet) {
         return new StepBuilder("stagingToFactStep", jobRepository)
-                .tasklet(stagingToFactTasklet, transactionManager).build();
+                .tasklet(stagingToFactTasklet, transactionManager)
+                .listener(tenantBatchStepListener).build();
     }
 
     @Bean
@@ -420,7 +425,8 @@ public class TransactionJobConfig {
     @Bean
     public Step populateSummaryStep(Tasklet populateSummaryTasklet) {
         return new StepBuilder("populateSummaryStep", jobRepository)
-                .tasklet(populateSummaryTasklet, transactionManager).build();
+                .tasklet(populateSummaryTasklet, transactionManager)
+                .listener(tenantBatchStepListener).build();
     }
 
     @Bean
@@ -721,7 +727,8 @@ public class TransactionJobConfig {
     @Bean
     public Step calculateBusinessMetricsStep(Tasklet calculateBusinessMetricsTasklet) {
         return new StepBuilder("calculateBusinessMetricsStep", jobRepository)
-                .tasklet(calculateBusinessMetricsTasklet, transactionManager).build();
+                .tasklet(calculateBusinessMetricsTasklet, transactionManager)
+                .listener(tenantBatchStepListener).build();
     }
 
     @Bean
@@ -786,7 +793,8 @@ public class TransactionJobConfig {
     @Bean
     public Step calculateDailyDashboardMetricsStep(Tasklet calculateDailyDashboardMetricsTasklet) {
         return new StepBuilder("calculateDailyDashboardMetricsStep", jobRepository)
-                .tasklet(calculateDailyDashboardMetricsTasklet, transactionManager).build();
+                .tasklet(calculateDailyDashboardMetricsTasklet, transactionManager)
+                .listener(tenantBatchStepListener).build();
     }
 
     @Bean
