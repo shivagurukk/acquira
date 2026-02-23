@@ -2,6 +2,7 @@ import axios from 'axios';
 
 const api = axios.create({
     baseURL: '/api',
+    withCredentials: true, // #12: Send HttpOnly cookies with requests (for refresh token)
 });
 
 // Request interceptor — attach JWT and tenant header
@@ -65,7 +66,8 @@ api.interceptors.response.use(
             isRefreshing = true;
 
             try {
-                const res = await axios.post('/api/auth/refresh', { refreshToken });
+                // #12: Cookie is sent automatically; body is fallback for backward compat
+                const res = await axios.post('/api/auth/refresh', { refreshToken }, { withCredentials: true });
                 const { jwt, refreshToken: newRefresh } = res.data;
 
                 localStorage.setItem('token', jwt);

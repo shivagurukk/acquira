@@ -6,7 +6,10 @@ import com.acquira.common.repository.PasswordResetTokenRepository;
 import com.acquira.common.repository.UserRepository;
 import com.acquira.common.security.JwtUtil;
 import com.acquira.core.service.PasswordService;
+import com.acquira.core.service.RefreshTokenService;
 import com.acquira.core.service.TenantService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -35,6 +38,8 @@ public class AuthController {
     private final PasswordService passwordService;
     private final PasswordResetTokenRepository resetTokenRepository;
     private final EmailService emailService;
+    private final RefreshTokenService refreshTokenService;
+    private final com.acquira.common.service.AuditService auditService;
 
     // ===== IP-based rate limiter (defense-in-depth, kept alongside per-user lockout) =====
     private final ConcurrentHashMap<String, long[]> loginAttempts = new ConcurrentHashMap<>();
@@ -52,7 +57,9 @@ public class AuthController {
             com.acquira.common.repository.UserTenantAccessRepository userTenantAccessRepository,
             PasswordService passwordService,
             PasswordResetTokenRepository resetTokenRepository,
-            EmailService emailService) {
+            EmailService emailService,
+            RefreshTokenService refreshTokenService,
+            com.acquira.common.service.AuditService auditService) {
         this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
         this.tenantService = tenantService;
@@ -63,6 +70,8 @@ public class AuthController {
         this.passwordService = passwordService;
         this.resetTokenRepository = resetTokenRepository;
         this.emailService = emailService;
+        this.refreshTokenService = refreshTokenService;
+        this.auditService = auditService;
     }
 
     @PostMapping("/login")
@@ -162,6 +171,14 @@ public class AuthController {
         final String accessToken = jwtUtil.generateToken(userDetails);
         final String refreshToken = jwtUtil.generateRefreshToken(userDetails.getUsername());
 
+        // #14: Store refresh token in DB for rotation tracking
+        refreshTokenService.storeToken(userDetails.getUsername(), refreshToken,
+            java.time.LocalDateTime.now().plusDays(7),
+            httpRequest.getHeader("User-Agent"), getClientIp(httpRequest));
+
+        // #13: Audit successful login
+        auditService.log("LOGIN", "User '" + userDetails.getUsername() + "' logged in from " + getClientIp(httpRequest));
+
         // Get allowed tenants
         List<com.acquira.common.model.Tenant> allowedTenants = tenantService
                 .getAllowedTenantsForUser(userDetails.getUsername());
@@ -193,7 +210,7 @@ public class AuthController {
 
         Map<String, Object> response = new HashMap<>();
         response.put("jwt", accessToken);
-        response.put("refreshToken", refreshToken);
+        response.put("refreshToken", refreshToken); // Still in body for backward compat; frontend should migrate to cookie
         response.put("allowedTenants", allowedTenants);
         response.put("defaultTenantId", effectiveTenantId);
         response.put("roles", userDetails.getAuthorities());
@@ -211,13 +228,31 @@ public class AuthController {
             response.put("mustChangePassword", true);
         }
 
-        return ResponseEntity.ok(response);
+        // #12: Set refresh token as HttpOnly cookie (XSS-safe)
+        ResponseCookie cookie = buildRefreshCookie(refreshToken, 7 * 24 * 60 * 60);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, cookie.toString())
+                .body(response);
     }
 
     // ===== Refresh Token Endpoint =====
     @PostMapping("/refresh")
-    public ResponseEntity<?> refreshToken(@RequestBody Map<String, String> payload) {
-        String refreshToken = payload.get("refreshToken");
+    public ResponseEntity<?> refreshToken(@RequestBody(required = false) Map<String, String> payload,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+        // #12: Read refresh token from HttpOnly cookie first, fall back to body
+        String refreshToken = null;
+        if (httpRequest.getCookies() != null) {
+            for (jakarta.servlet.http.Cookie c : httpRequest.getCookies()) {
+                if ("refreshToken".equals(c.getName())) {
+                    refreshToken = c.getValue();
+                    break;
+                }
+            }
+        }
+        // Fallback: read from request body (backward compat)
+        if ((refreshToken == null || refreshToken.isBlank()) && payload != null) {
+            refreshToken = payload.get("refreshToken");
+        }
         if (refreshToken == null || refreshToken.trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Refresh token is required"));
         }
@@ -234,6 +269,12 @@ public class AuthController {
                 return ResponseEntity.status(401).body(Map.of("error", "Expired or invalid refresh token"));
             }
 
+            // #14: Check if token is valid in DB (not revoked)
+            if (!refreshTokenService.isTokenValid(refreshToken)) {
+                // Token was revoked (possibly stolen and reused)
+                return ResponseEntity.status(401).body(Map.of("error", "Refresh token has been revoked. Please log in again."));
+            }
+
             User dbUser = userRepository.findByUsername(username).orElse(null);
             if (dbUser == null || !dbUser.isActive()) {
                 return ResponseEntity.status(401).body(Map.of("error", "User account is disabled"));
@@ -242,12 +283,40 @@ public class AuthController {
             String newAccessToken = jwtUtil.generateToken(userDetails);
             String newRefreshToken = jwtUtil.generateRefreshToken(username);
 
-            return ResponseEntity.ok(Map.of(
-                    "jwt", newAccessToken,
-                    "refreshToken", newRefreshToken));
+            // #14: Rotate — revoke old, store new
+            boolean rotated = refreshTokenService.rotateToken(username, refreshToken, newRefreshToken,
+                java.time.LocalDateTime.now().plusDays(7),
+                httpRequest.getHeader("User-Agent"), getClientIp(httpRequest));
+
+            if (!rotated) {
+                // Token reuse detected — all sessions revoked
+                return ResponseEntity.status(401).body(Map.of(
+                    "error", "Security alert: refresh token reuse detected. All sessions have been revoked. Please log in again."));
+            }
+
+            // #12: Set new refresh token as HttpOnly cookie
+            ResponseCookie newCookie = buildRefreshCookie(newRefreshToken, 7 * 24 * 60 * 60);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.SET_COOKIE, newCookie.toString())
+                    .body(Map.of(
+                        "jwt", newAccessToken,
+                        "refreshToken", newRefreshToken)); // Body included for backward compat
         } catch (Exception e) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid refresh token"));
         }
+    }
+
+    // #14: Logout all devices — revokes all refresh tokens
+    @PostMapping("/logout-all")
+    public ResponseEntity<?> logoutAllDevices() {
+        String username = org.springframework.security.core.context.SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        int revoked = refreshTokenService.revokeAllForUser(username);
+        auditService.log("LOGOUT_ALL", "User '" + username + "' revoked " + revoked + " sessions");
+        // #12: Clear refresh token cookie
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString())
+                .body(Map.of("message", "All sessions revoked", "revokedCount", revoked));
     }
 
     @PostMapping("/switch-context")
@@ -434,6 +503,23 @@ public class AuthController {
             data[0]++;
             return data;
         });
+    }
+
+    // ===== HttpOnly Cookie Helper =====
+    private ResponseCookie buildRefreshCookie(String refreshToken, long maxAgeSeconds) {
+        return ResponseCookie.from("refreshToken", refreshToken)
+                .httpOnly(true)          // Not accessible via JavaScript — XSS safe
+                .secure(true)            // Only sent over HTTPS
+                .path("/api/auth")       // Scoped to auth endpoints only
+                .maxAge(maxAgeSeconds)   // 7 days
+                .sameSite("Strict")      // CSRF protection
+                .build();
+    }
+
+    private ResponseCookie clearRefreshCookie() {
+        return ResponseCookie.from("refreshToken", "")
+                .httpOnly(true).secure(true).path("/api/auth")
+                .maxAge(0).sameSite("Strict").build();
     }
 
     private String getClientIp(jakarta.servlet.http.HttpServletRequest request) {

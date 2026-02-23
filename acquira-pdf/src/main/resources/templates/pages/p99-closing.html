@@ -80,8 +80,8 @@
                 <!-- Gauge 1: Sales -->
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #3B82F6, transparent);"></div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #93C5FD; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Total Sales (AED)</div>
-                    <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="'AED ' + ${dto.overview.sales.formattedValue}">AED 0</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #93C5FD; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Total Sales (<span th:text="${dto.currencyCode}">AED</span>)</div>
+                    <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.currencyCode} + ' ' + ${dto.overview.sales.formattedValue}">AED 0</div>
                     <div style="margin-top: 5px;">
                         <span th:if="${dto.overview.sales.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2)} + '%'">0%</span>
                         <span th:if="${dto.overview.sales.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2)} + '%'">0%</span>
@@ -123,7 +123,7 @@
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #A78BFA, transparent);"></div>
                     <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #C4B5FD; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Avg Ticket</div>
-                    <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="'AED ' + ${dto.overview.avgTxnValue.formattedValue}">AED 0</div>
+                    <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.currencyCode} + ' ' + ${dto.overview.avgTxnValue.formattedValue}">AED 0</div>
                     <div style="margin-top: 5px;">
                         <span th:if="${dto.overview.avgTxnValue.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2)} + '%'">0%</span>
                         <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2)} + '%'">0%</span>
@@ -150,7 +150,7 @@
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #F472B6, transparent);"></div>
                     <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #FBCFE8; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Peak Day Sales</div>
-                    <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.overview.peakStats.maxDailySales != null ? 'AED ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">-</div>
+                    <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.overview.peakStats.maxDailySales != null ? dto.currencyCode + ' ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">-</div>
                     <div style="margin-top: 5px;">
                         <span style="font-size: 8px; font-weight: 600; color: rgba(255,255,255,0.4);" th:text="${dto.overview.peakDayName != null ? dto.overview.peakDayName + 's lead' : ''}"></span>
                     </div>

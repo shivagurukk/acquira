@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Box, Paper, Typography } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { CreditCard, Hash, DollarSign, TrendingUp } from 'lucide-react';
@@ -7,54 +7,103 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { useAuth } from '../../contexts/AuthContext';
 
-const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', minimumFractionDigits: 2 }).format(val || 0);
-const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
-const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
+/* ── Date Preset Resolver (same logic as PremiumReportHeader) ────── */
+const computeDateRange = (preset) => {
+    const now = new Date();
+    const fmt = (d) => d.toISOString().split('T')[0];
+    switch (preset) {
+        case 'TODAY':      return { startDate: fmt(now), endDate: fmt(now) };
+        case 'MONTH':      return { startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
+        case 'LAST_MONTH': return { startDate: fmt(new Date(now.getFullYear(), now.getMonth() - 1, 1)), endDate: fmt(new Date(now.getFullYear(), now.getMonth(), 0)) };
+        case 'YEAR':       return { startDate: fmt(new Date(now.getFullYear(), 0, 1)), endDate: fmt(now) };
+        case 'PY':         return { startDate: fmt(new Date(now.getFullYear() - 1, 0, 1)), endDate: fmt(new Date(now.getFullYear() - 1, 11, 31)) };
+        default:           return {};
+    }
+};
 
 const DebitPrepaidMetrics = () => {
+    const { currencyCode = 'AED', formatCurrency: fmtCurr } = useAuth() || {};
+
+    const formatCurrency = useCallback((val) => {
+        if (fmtCurr) return fmtCurr(val);
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode, minimumFractionDigits: 2 }).format(val || 0);
+    }, [fmtCurr, currencyCode]);
+
+    const formatNumber  = (val) => new Intl.NumberFormat('en-US').format(val || 0);
+    const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
+
+    // Initialize filters with resolved date range so first fetch has real dates
+    const [filters, setFilters] = useState(() => {
+        const range = computeDateRange('MONTH');
+        return { datePreset: 'MONTH', ...range };
+    });
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
-    const [filters, setFilters] = useState({ datePreset: 'MONTH' });
 
-    useEffect(() => { fetchData(); }, []);
-
-    const fetchData = async () => {
+    const fetchData = useCallback(async (overrideFilters) => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
+
+            const payload = overrideFilters || filters;
+
+            // Ensure startDate/endDate are resolved from preset
+            const body = { ...payload };
+            if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
+                const range = computeDateRange(body.datePreset);
+                body.startDate = range.startDate;
+                body.endDate = range.endDate;
+            }
+            // Remove non-DTO fields
+            delete body.datePreset;
+
             const res = await fetch('/api/business/debit-prepaid-metrics', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) },
-                body: JSON.stringify(filters)
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
+                },
+                body: JSON.stringify(body)
             });
             if (res.ok) {
                 const result = await res.json();
                 setData(result.map((r, i) => ({ id: r.mid || i, ...r })));
             }
-        } catch (error) { console.error(error); }
-        finally { setLoading(false); }
-    };
+        } catch (error) {
+            console.error('Failed to fetch debit/prepaid metrics:', error);
+        } finally {
+            setLoading(false);
+        }
+    }, [filters]);
+
+    // Initial load
+    useEffect(() => { fetchData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleFilterChange = (keyOrObj, val) => {
-        if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));
-        else setFilters(prev => ({ ...prev, [keyOrObj]: val }));
+        if (typeof keyOrObj === 'object') {
+            setFilters(prev => ({ ...prev, ...keyOrObj }));
+        } else {
+            setFilters(prev => ({ ...prev, [keyOrObj]: val }));
+        }
     };
 
     const kpis = useMemo(() => {
         if (!data.length) return [];
-        const totalVol = data.reduce((s, d) => s + (d.volume || 0), 0);
+        const totalVol   = data.reduce((s, d) => s + (d.volume || 0), 0);
         const totalCount = data.reduce((s, d) => s + (d.count || 0), 0);
-        const topVols = data.slice().sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(d => d.volume || 0);
+        const topVols    = data.slice().sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(d => d.volume || 0);
         return [
-            { title: 'Total Merchants', value: formatNumber(data.length), icon: CreditCard, color: '#6366f1' },
-            { title: 'Total Volume', value: `AED ${formatCompact(totalVol)}`, icon: DollarSign, color: '#3b82f6', sparkData: topVols },
-            { title: 'Total Transactions', value: formatCompact(totalCount), icon: Hash, color: '#10b981' },
-            { title: 'Avg per Merchant', value: `AED ${formatCompact(data.length > 0 ? totalVol / data.length : 0)}`, icon: TrendingUp, color: '#f59e0b' },
+            { title: 'Total Merchants',      value: formatNumber(data.length), icon: CreditCard, color: '#6366f1' },
+            { title: 'Total Volume',          value: `${currencyCode} ${formatCompact(totalVol)}`, icon: DollarSign, color: '#3b82f6', sparkData: topVols },
+            { title: 'Total Transactions',    value: formatCompact(totalCount), icon: Hash,        color: '#10b981' },
+            { title: 'Avg per Merchant',      value: `${currencyCode} ${formatCompact(data.length > 0 ? totalVol / data.length : 0)}`, icon: TrendingUp, color: '#f59e0b' },
         ];
-    }, [data]);
+    }, [data, currencyCode]);
 
     const columns = [
         {
@@ -74,7 +123,7 @@ const DebitPrepaidMetrics = () => {
             renderCell: (params) => <Typography variant="body2" color="#64748b" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatNumber(params.value)}</Typography>
         },
         {
-            field: 'volume', headerName: 'VOLUME (AED)', type: 'number', flex: 1, minWidth: 180, align: 'right', headerAlign: 'right',
+            field: 'volume', headerName: `VOLUME (${currencyCode})`, type: 'number', flex: 1, minWidth: 180, align: 'right', headerAlign: 'right',
             renderCell: (params) => <Typography variant="body2" fontWeight="700" color="#0f172a" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
         },
     ];
@@ -85,11 +134,11 @@ const DebitPrepaidMetrics = () => {
                 title="Debit & Prepaid Metrics" subtitle="Domestic debit and prepaid performance by merchant"
                 icon={CreditCard}
                 onExport={() => exportToCSV(data, 'debit_prepaid_metrics')}
-                onRunReport={fetchData} onFilterChange={handleFilterChange}
+                onRunReport={() => fetchData()} onFilterChange={handleFilterChange}
                 loading={loading} showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
-            <BusinessFilters filters={filters} onChange={setFilters} onApply={fetchData} isOpen={showFilters} onClose={() => setShowFilters(false)} />
+            <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchData()} isOpen={showFilters} onClose={() => setShowFilters(false)} />
             <KpiCards cards={kpis} />
             <Paper sx={premiumTableWrapper}>
                 <DataGrid rows={data} columns={columns} loading={loading} rowHeight={55}

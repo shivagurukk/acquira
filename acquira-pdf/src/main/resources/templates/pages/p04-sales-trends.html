@@ -16,7 +16,7 @@
 
         <!-- ROW 1: Daily Sales Trend (full width) -->
         <div class="card mb-6" style="padding: 10px 12px;">
-            <div class="card-title">DAILY SALES TREND (AED) — Day of Month</div>
+            <div class="card-title">DAILY SALES TREND (<span th:text="${dto.currencyCode}">AED</span>) — Day of Month</div>
             <div class="chart-container" style="max-height: 140px;"><canvas data-chart="area" data-field="achievements.dailySalesAndCount" data-color="#1E3A8A" data-bg="rgba(30,58,138,0.08)"></canvas></div>
         </div>
 
@@ -35,7 +35,7 @@
         <!-- ROW 3: Day of Week + Dual Axis side by side -->
         <div class="grid-2 mb-6" style="flex: 1; min-height: 0;">
             <div class="card" style="padding: 10px 12px;">
-                <div class="card-title">SALES BY DAY OF WEEK (AED)</div>
+                <div class="card-title">SALES BY DAY OF WEEK (<span th:text="${dto.currencyCode}">AED</span>)</div>
                 <div class="chart-container" style="max-height: 150px;"><canvas data-chart="gradient-bar" data-field="overview.salesByDayOfWeek" data-color="#1E3A8A"></canvas></div>
             </div>
             <div class="card" style="padding: 10px 12px;">

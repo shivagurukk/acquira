@@ -11,15 +11,17 @@ import {
     Pie, Cell
 } from 'recharts';
 import TenantSwitcher from '../components/TenantSwitcher';
+import { useAuth } from '../contexts/AuthContext'; // #16: Dynamic currency
 
 const CHART_COLORS = ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444'];
 
-const fmt = {
+// #16: Currency formatter factory — creates formatters using tenant currency
+const createFmt = (sym) => ({
     currency: (val) => {
-        if (val === 0 || val == null) return '$0';
-        if (val >= 1_000_000) return '$' + (val / 1_000_000).toFixed(2) + 'M';
-        if (val >= 1_000) return '$' + (val / 1_000).toFixed(1) + 'K';
-        return '$' + val.toLocaleString();
+        if (val === 0 || val == null) return sym + ' 0';
+        if (val >= 1_000_000) return sym + ' ' + (val / 1_000_000).toFixed(2) + 'M';
+        if (val >= 1_000) return sym + ' ' + (val / 1_000).toFixed(1) + 'K';
+        return sym + ' ' + val.toLocaleString();
     },
     number: (val) => {
         if (val == null) return '0';
@@ -33,10 +35,12 @@ const fmt = {
         return `${sign}${val.toFixed(1)}%`;
     },
     date: (d) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-};
+});
 
 const Dashboard = () => {
     const navigate = useNavigate();
+    const { currencySymbol } = useAuth(); // #16
+    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
     const [loading, setLoading] = useState(true);
     const [period, setPeriod] = useState('30');
     const [metrics, setMetrics] = useState(null);
@@ -144,7 +148,7 @@ const Dashboard = () => {
             { label: 'Total Volume', value: fmt.currency(metrics.totalVolume), change: fmt.growth(metrics.volumeGrowth), up: metrics.volumeGrowth >= 0, icon: DollarSign, color: '#10b981', sub: 'vs previous period' },
             { label: 'Active Merchants', value: fmt.number(metrics.activeMerchants), change: fmt.growth(metrics.merchantsGrowth), up: metrics.merchantsGrowth >= 0, icon: Store, color: '#3b82f6', sub: 'unique MIDs' },
             { label: 'Transactions', value: fmt.number(metrics.totalTxns), change: fmt.growth(metrics.txnsGrowth), up: metrics.txnsGrowth >= 0, icon: Activity, color: '#8b5cf6', sub: 'total processed' },
-            { label: 'Avg Txn Value', value: metrics.totalTxns > 0 ? fmt.currency(metrics.totalVolume / metrics.totalTxns) : '$0', change: '', up: true, icon: Target, color: '#06b6d4', sub: 'per transaction' },
+            { label: 'Avg Txn Value', value: metrics.totalTxns > 0 ? fmt.currency(metrics.totalVolume / metrics.totalTxns) : fmt.currency(0), change: '', up: true, icon: Target, color: '#06b6d4', sub: 'per transaction' },
             { label: 'Leakage Alerts', value: fmt.number(metrics.leakageCount), change: fmt.growth(metrics.leakageGrowth), up: metrics.leakageGrowth <= 0, icon: AlertTriangle, color: '#f59e0b', sub: 'flagged items' },
         ];
     }, [metrics]);

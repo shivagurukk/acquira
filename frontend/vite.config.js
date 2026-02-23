@@ -8,6 +8,13 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  // #25: Vitest configuration
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.js',
+    css: true,
+  },
   server: {
     proxy: {
       '/api': {

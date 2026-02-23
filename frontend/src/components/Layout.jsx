@@ -12,7 +12,9 @@ import {
 } from '@mui/material';
 import * as LucideIcons from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
 import TenantSwitcher from './TenantSwitcher';
+import ThemeToggle from './ThemeToggle';
 
 const DRAWER_WIDTH = 260;
 
@@ -149,6 +151,11 @@ const Layout = () => {
                     </Box>
                 </Box>
 
+                {/* #27: Dark mode toggle */}
+                <Box sx={{ px: 1, mb: 1 }}>
+                    <ThemeToggle />
+                </Box>
+
                 <ListItemButton
                     onClick={handleLogout}
                     sx={{
@@ -183,7 +190,7 @@ const Layout = () => {
             >
                 {drawerContent}
             </Drawer>
-            <Box component="main" sx={{ flexGrow: 1, bgcolor: '#f8fafc', minHeight: '100vh', width: `calc(100% - ${DRAWER_WIDTH}px)` }}>
+            <Box component="main" sx={{ flexGrow: 1, bgcolor: 'var(--bg, #f8fafc)', color: 'var(--text, #111827)', minHeight: '100vh', width: `calc(100% - ${DRAWER_WIDTH}px)`, transition: 'background-color 0.2s, color 0.2s' }}>
                 <Outlet />
             </Box>
         </Box>

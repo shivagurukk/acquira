@@ -774,8 +774,10 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
 ) PARTITION BY RANGE (payment_date);
 
 -- Initial Partitions
-CREATE TABLE IF NOT EXISTS fact_transaction_y2024 PARTITION OF fact_transaction FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-CREATE TABLE IF NOT EXISTS fact_transaction_y2025 PARTITION OF fact_transaction FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+-- #21: Use MONTHLY partitions for fact_transaction (aligned with PartitionMaintenanceService)
+-- Yearly partitions removed to avoid overlap with monthly partitions.
+-- PartitionMaintenanceService.ensurePartitionsForYear() creates monthly partitions
+-- (e.g. fact_transaction_y2025m01 ... fact_transaction_y2025m12) at application startup.
 CREATE TABLE IF NOT EXISTS fact_transaction_default PARTITION OF fact_transaction DEFAULT;
 
 -- Enable RLS
@@ -1911,15 +1913,8 @@ ON CONFLICT DO NOTHING;
 -- ═══════════════════════════════════════════════════════════
 
 -- Add contact_email to dim_merchant for merchant report emailing
-DO $
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'dim_merchant' AND column_name = 'contact_email'
-    ) THEN
-        ALTER TABLE dim_merchant ADD COLUMN contact_email VARCHAR(255);
-    END IF;
-END $;
+-- (Using ADD COLUMN IF NOT EXISTS — avoids DO $ blocks which break Spring ScriptUtils)
+ALTER TABLE dim_merchant ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255);
 
 -- Email queue table for async email processing
 CREATE TABLE IF NOT EXISTS email_queue (
@@ -1936,4 +1931,29 @@ CREATE TABLE IF NOT EXISTS email_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_queue_status ON email_queue(status);
+CREATE INDEX IF NOT EXISTS idx_email_queue_pending ON email_queue(status, created_at) WHERE status = 'PENDING';
+
+-- Refresh Token tracking (#14: rotation + revocation)
+CREATE TABLE IF NOT EXISTS refresh_token (
+    id              BIGSERIAL PRIMARY KEY,
+    username        VARCHAR(100) NOT NULL,
+    token_hash      VARCHAR(128) NOT NULL UNIQUE,
+    issued_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMP NOT NULL,
+    revoked         BOOLEAN NOT NULL DEFAULT FALSE,
+    replaced_by     VARCHAR(128),
+    user_agent      VARCHAR(500),
+    ip_address      VARCHAR(50)
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_token_username ON refresh_token(username);
+CREATE INDEX IF NOT EXISTS idx_refresh_token_hash ON refresh_token(token_hash);
+
+-- SSO State Tokens (#7: persist across restart)
+CREATE TABLE IF NOT EXISTS sso_state_token (
+    state_token     VARCHAR(100) PRIMARY KEY,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMP NOT NULL,
+    used            BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_sso_state_expires ON sso_state_token(expires_at);
 

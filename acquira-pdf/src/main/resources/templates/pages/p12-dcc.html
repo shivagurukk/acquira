@@ -19,13 +19,13 @@
             <div style="display: flex; align-items: center; justify-content: space-between;">
                 <div>
                     <div style="font-size: 7.5px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">DCC Eligible Volume</div>
-                    <div style="font-size: 26px; font-weight: 900; color: #FFFFFF; margin-top: 4px; letter-spacing: -0.03em;"><span th:if="${dto.dccPerformance.dccEligibleVolume != null}" th:text="'AED ' + ${#numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT')}">AED 0</span><span th:if="${dto.dccPerformance.dccEligibleVolume == null}">AED 0</span></div>
+                    <div style="font-size: 26px; font-weight: 900; color: #FFFFFF; margin-top: 4px; letter-spacing: -0.03em;"><span th:if="${dto.dccPerformance.dccEligibleVolume != null}" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT')}"><span th:text="${dto.currencyCode}">AED</span> 0</span><span th:if="${dto.dccPerformance.dccEligibleVolume == null}"><span th:text="${dto.currencyCode}">AED</span> 0</span></div>
                     <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">International card transactions</div>
                 </div>
                 <div style="width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
                 <div style="text-align: center;">
                     <div style="font-size: 7.5px; font-weight: 700; color: #FBBF24; letter-spacing: 0.06em; text-transform: uppercase;">Unrealized Revenue</div>
-                    <div style="font-size: 30px; font-weight: 900; color: #FBBF24; margin-top: 4px; letter-spacing: -0.03em;" th:text="'AED ' + ${dto.dccPerformance.dccMissedRevenue != null ? #numbers.formatDecimal(dto.dccPerformance.dccMissedRevenue, 1, 'COMMA', 0, 'POINT') : '0'}">AED 0</div>
+                    <div style="font-size: 30px; font-weight: 900; color: #FBBF24; margin-top: 4px; letter-spacing: -0.03em;" th:text="${dto.currencyCode} + ' ' + ${dto.dccPerformance.dccMissedRevenue != null ? #numbers.formatDecimal(dto.dccPerformance.dccMissedRevenue, 1, 'COMMA', 0, 'POINT') : '0'}"><span th:text="${dto.currencyCode}">AED</span> 0</div>
                     <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">Recoverable with optimization</div>
                 </div>
                 <div style="width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
@@ -54,7 +54,7 @@
                     <div style="background: linear-gradient(135deg, #1E3A8A, #2563EB); color: white; padding: 12px 8px; border-radius: 8px 0 0 8px; clip-path: polygon(0 0, 90% 0, 100% 50%, 90% 100%, 0 100%);">
                         <div style="font-size: 7px; font-weight: 700; color: #93C5FD; text-transform: uppercase; letter-spacing: 0.05em;">Total Intl Transaction Count</div>
                         <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.totalIntlTxnCount != null ? #numbers.formatDecimal(dto.dccPerformance.totalIntlTxnCount, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
-                        <div style="font-size: 7px; color: #93C5FD; margin-top: 1px;" th:text="${dto.dccPerformance.totalIntlVolume != null ? 'AED ' + #numbers.formatDecimal(dto.dccPerformance.totalIntlVolume, 1, 'COMMA', 0, 'POINT') : 'AED 0'}">AED 0</div>
+                        <div style="font-size: 7px; color: #93C5FD; margin-top: 1px;" th:text="${dto.dccPerformance.totalIntlVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.totalIntlVolume, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
                     </div>
                 </div>
                 <!-- Arrow -->
@@ -64,7 +64,7 @@
                     <div style="background: linear-gradient(135deg, #2563EB, #3B82F6); color: white; padding: 12px 8px; clip-path: polygon(0 10%, 10% 0, 90% 0, 100% 50%, 90% 100%, 10% 100%, 0 90%);">
                         <div style="font-size: 7px; font-weight: 700; color: #BFDBFE; text-transform: uppercase; letter-spacing: 0.05em;">DCC Eligible</div>
                         <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccEligibleCount != null ? #numbers.formatDecimal(dto.dccPerformance.dccEligibleCount, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
-                        <div style="font-size: 7px; color: #BFDBFE; margin-top: 1px;" th:text="${dto.dccPerformance.dccEligibleVolume != null ? 'AED ' + #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT') : 'AED 0'}">AED 0</div>
+                        <div style="font-size: 7px; color: #BFDBFE; margin-top: 1px;" th:text="${dto.dccPerformance.dccEligibleVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
                     </div>
                 </div>
                 <!-- Arrow -->
@@ -74,7 +74,7 @@
                     <div style="background: linear-gradient(135deg, #047857, #059669); color: white; padding: 12px 8px; clip-path: polygon(0 10%, 10% 0, 90% 0, 100% 50%, 90% 100%, 10% 100%, 0 90%);">
                         <div style="font-size: 7px; font-weight: 700; color: #6EE7B7; text-transform: uppercase; letter-spacing: 0.05em;">Opted In</div>
                         <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccOptinCountLong != null ? #numbers.formatDecimal(dto.dccPerformance.dccOptinCountLong, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
-                        <div style="font-size: 7px; color: #6EE7B7; margin-top: 1px;" th:text="${dto.dccPerformance.dccOptinVolume != null ? 'AED ' + #numbers.formatDecimal(dto.dccPerformance.dccOptinVolume, 1, 'COMMA', 0, 'POINT') : 'AED 0'}">AED 0</div>
+                        <div style="font-size: 7px; color: #6EE7B7; margin-top: 1px;" th:text="${dto.dccPerformance.dccOptinVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptinVolume, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
                     </div>
                 </div>
                 <!-- Arrow -->
@@ -83,7 +83,7 @@
                 <div style="text-align: center; flex: 1;">
                     <div style="background: linear-gradient(135deg, #C9A962, #D4B878); color: white; padding: 12px 8px; border-radius: 0 8px 8px 0; clip-path: polygon(0 10%, 10% 0, 100% 0, 100% 100%, 10% 100%, 0 90%);">
                         <div style="font-size: 7px; font-weight: 700; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.05em;">Revenue Earned</div>
-                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccRevenueGenerated != null ? 'AED ' + #numbers.formatDecimal(dto.dccPerformance.dccRevenueGenerated, 1, 'COMMA', 0, 'POINT') : 'AED 0'}">AED 0</div>
+                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccRevenueGenerated != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccRevenueGenerated, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
                         <div style="font-size: 7px; color: rgba(255,255,255,0.7); margin-top: 1px;">~3.5% DCC margin</div>
                     </div>
                 </div>
@@ -162,7 +162,7 @@
         <div class="ai-insight">
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">
-                <strong>AI Insight:</strong> At <span th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '0%'}">0%</span> conversion, AED <span th:text="${dto.dccPerformance.dccMissedRevenue != null ? #numbers.formatDecimal(dto.dccPerformance.dccMissedRevenue, 1, 'COMMA', 0, 'POINT') : '0'}">0</span>/month in DCC revenue is unrealized. Staff training alone could recover the majority — the highest-ROI action available.
+                <strong>AI Insight:</strong> At <span th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '0%'}">0%</span> conversion, <span th:text="${dto.currencyCode}">AED</span> <span th:text="${dto.dccPerformance.dccMissedRevenue != null ? #numbers.formatDecimal(dto.dccPerformance.dccMissedRevenue, 1, 'COMMA', 0, 'POINT') : '0'}">0</span>/month in DCC revenue is unrealized. Staff training alone could recover the majority — the highest-ROI action available.
             </div>
         </div>
 

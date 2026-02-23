@@ -18,18 +18,31 @@ const MerchantAnalyticsReport = () => {
     const [totalRows, setTotalRows] = useState(0);
     const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 25 });
     const [showFilters, setShowFilters] = useState(false);
-    const [filters, setFilters] = useState({ datePreset: 'MONTH' });
+    const [filters, setFilters] = useState(() => {
+        const now = new Date();
+        const fmt = (d) => d.toISOString().split('T')[0];
+        return { datePreset: 'MONTH', startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
+    });
 
-    useEffect(() => { fetchReport(); }, [paginationModel]);
+    useEffect(() => { fetchReport(); }, [paginationModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchReport = async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
+            const tenantId = localStorage.getItem('defaultTenantId');
+            const body = { ...filters };
+            if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
+                const now = new Date();
+                const fmt = (d) => d.toISOString().split('T')[0];
+                if (body.datePreset === 'MONTH') { body.startDate = fmt(new Date(now.getFullYear(), now.getMonth(), 1)); body.endDate = fmt(now); }
+                else if (body.datePreset === 'YEAR') { body.startDate = fmt(new Date(now.getFullYear(), 0, 1)); body.endDate = fmt(now); }
+            }
+            delete body.datePreset;
             const res = await fetch(`/api/business/merchant-analytics?page=${paginationModel.page}&size=${paginationModel.pageSize}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify(filters)
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) },
+                body: JSON.stringify(body)
             });
             if (res.ok) {
                 const result = await res.json();

@@ -24,17 +24,30 @@ const TransactionPerformanceDashboard = () => {
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
-    const [filters, setFilters] = useState({ datePreset: 'YEAR' });
+    const [filters, setFilters] = useState(() => {
+        const now = new Date();
+        const fmt = (d) => d.toISOString().split('T')[0];
+        return { datePreset: 'YEAR', startDate: fmt(new Date(now.getFullYear(), 0, 1)), endDate: fmt(now) };
+    });
     const [expanded, setExpanded] = useState({});
 
     const fetchApiData = async (groupBy, parentValue, grandParentValue) => {
         const token = localStorage.getItem('token');
         const tenantId = localStorage.getItem('defaultTenantId');
         const queryParams = new URLSearchParams({ groupBy, parentValue: parentValue || '', grandParentValue: grandParentValue || '' });
+        // Resolve datePreset to real dates before sending
+        const body = { ...filters };
+        if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
+            const now = new Date();
+            const fmt = (d) => d.toISOString().split('T')[0];
+            if (body.datePreset === 'YEAR') { body.startDate = fmt(new Date(now.getFullYear(), 0, 1)); body.endDate = fmt(now); }
+            else if (body.datePreset === 'MONTH') { body.startDate = fmt(new Date(now.getFullYear(), now.getMonth(), 1)); body.endDate = fmt(now); }
+        }
+        delete body.datePreset;
         const res = await fetch(`/api/business/performance-dashboard?${queryParams}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) },
-            body: JSON.stringify(filters)
+            body: JSON.stringify(body)
         });
         if (res.ok) return await res.json();
         return [];

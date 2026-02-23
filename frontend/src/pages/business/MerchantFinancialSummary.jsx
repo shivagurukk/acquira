@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Box, Paper, Typography, Stack, Chip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { DollarSign, Store, CreditCard, Hash, Users, TrendingUp } from 'lucide-react';
@@ -7,27 +7,58 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { useAuth } from '../../contexts/AuthContext';
 
-const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', minimumFractionDigits: 2 }).format(val || 0);
+/* ── Date Preset Resolver ──────────────────────────────────────── */
+const computeDateRange = (preset) => {
+    const now = new Date();
+    const fmt = (d) => d.toISOString().split('T')[0];
+    switch (preset) {
+        case 'TODAY':      return { startDate: fmt(now), endDate: fmt(now) };
+        case 'MONTH':      return { startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
+        case 'LAST_MONTH': return { startDate: fmt(new Date(now.getFullYear(), now.getMonth() - 1, 1)), endDate: fmt(new Date(now.getFullYear(), now.getMonth(), 0)) };
+        case 'YEAR':       return { startDate: fmt(new Date(now.getFullYear(), 0, 1)), endDate: fmt(now) };
+        case 'PY':         return { startDate: fmt(new Date(now.getFullYear() - 1, 0, 1)), endDate: fmt(new Date(now.getFullYear() - 1, 11, 31)) };
+        default:           return {};
+    }
+};
+
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
 const MerchantFinancialSummary = () => {
+    const { currencyCode = 'AED', formatCurrency: fmtCurr } = useAuth() || {};
+    const formatCurrency = useCallback((val) => {
+        if (fmtCurr) return fmtCurr(val);
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode, minimumFractionDigits: 2 }).format(val || 0);
+    }, [fmtCurr, currencyCode]);
+
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showFilters, setShowFilters] = useState(false);
-    const [filters, setFilters] = useState({ datePreset: 'MONTH' });
+    const [filters, setFilters] = useState(() => {
+        const range = computeDateRange('MONTH');
+        return { datePreset: 'MONTH', ...range };
+    });
 
-    useEffect(() => { fetchReport(); }, []);
+    useEffect(() => { fetchReport(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchReport = async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
+            const tenantId = localStorage.getItem('defaultTenantId');
+            const body = { ...filters };
+            if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
+                const range = computeDateRange(body.datePreset);
+                body.startDate = range.startDate;
+                body.endDate = range.endDate;
+            }
+            delete body.datePreset;
             const res = await fetch('/api/business/merchant-financial-summary', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify(filters)
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) },
+                body: JSON.stringify(body)
             });
             if (res.ok) setData(await res.json());
         } catch (error) { console.error("Failed to load report", error); }
@@ -53,8 +84,8 @@ const MerchantFinancialSummary = () => {
         const topVols = data.slice().sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(d => d.volume || 0);
         return [
             { title: 'Total Merchants', value: formatNumber(data.length), icon: Users, color: '#6366f1' },
-            { title: 'Total Volume', value: `AED ${formatCompact(totalVol)}`, icon: TrendingUp, color: '#3b82f6', sparkData: topVols },
-            { title: 'Total MSF', value: `AED ${formatCompact(totalMsf)}`, icon: DollarSign, color: '#10b981' },
+            { title: 'Total Volume', value: `${currencyCode} ${formatCompact(totalVol)}`, icon: TrendingUp, color: '#3b82f6', sparkData: topVols },
+            { title: 'Total MSF', value: `${currencyCode} ${formatCompact(totalMsf)}`, icon: DollarSign, color: '#10b981' },
             { title: 'Total Transactions', value: formatCompact(totalCount), icon: Hash, color: '#f59e0b' },
         ];
     }, [data]);
