@@ -10,7 +10,7 @@
             <div style="font-size: 12px; margin-top: 1px;">📈</div>
             <div>
                 <p style="font-size: 8px; color: #4C1D95; line-height: 1.5; margin: 0; font-weight: 600;" th:text="${dto.insights.growthInsight}">Growth insight</p>
-                <p th:if="${dto.insights.growthWatch != null}" style="font-size: 7.5px; color: #6D28D9; line-height: 1.4; margin: 3px 0 0 0;" th:text="'💡 ' + ${dto.insights.growthWatch}">Watch</p>
+                <p th:if="${dto.insights.growthWatch != null}" style="font-size: 8px; color: #6D28D9; line-height: 1.4; margin: 3px 0 0 0;" th:text="'💡 ' + ${dto.insights.growthWatch}">Watch</p>
             </div>
         </div>
 
@@ -21,51 +21,50 @@
                 <th:block th:if="${dto.demographics.yoyGrowthPct != null and dto.demographics.yoyGrowthPct.doubleValue() != 0.0}">
                     <div style="font-size: 20px; font-weight: 900; margin: 2px 0 1px 0; letter-spacing: -0.02em;"
                          th:style="${dto.demographics.yoyGrowthPct >= 0 ? 'color: #047857' : 'color: #E87461'}"
-                         th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">0%</div>
+                         th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 0) + '%'}">0%</div>
                     <span th:class="${dto.demographics.yoyGrowthPct >= 0 ? 'trend-up' : 'trend-down'}" th:text="${dto.demographics.yoyGrowthPct >= 0 ? 'Growth' : 'Decline'}">-</span>
                 </th:block>
                 <th:block th:if="${dto.demographics.yoyGrowthPct == null or dto.demographics.yoyGrowthPct.doubleValue() == 0.0}">
                     <div style="font-size: 18px; font-weight: 900; margin: 2px 0 1px 0; letter-spacing: -0.02em; color: #9CA3AF;">N/A</div>
-                    <span style="font-size: 7.5px; color: #9CA3AF; font-weight: 600;">Needs 2+ months</span>
+                    <span style="font-size: 8px; color: #9CA3AF; font-weight: 600;">Needs 2+ months</span>
                 </th:block>
             </div>
             <div class="card card-accent-green" style="padding: 8px 10px;">
                 <div class="kpi-label">MONTH ON MONTH</div>
                 <div style="font-size: 20px; font-weight: 900; margin: 2px 0 1px 0; letter-spacing: -0.02em;"
                      th:style="${dto.overview.sales.momGrowth >= 0 ? 'color: #047857' : 'color: #E87461'}"
-                     th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</div>
+                     th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</div>
                 <span th:class="${dto.overview.sales.momGrowth >= 0 ? 'trend-up' : 'trend-down'}" th:text="${dto.overview.sales.momGrowth >= 0 ? 'Positive' : 'Decline'}">-</span>
             </div>
             <div class="card card-accent-amber" style="padding: 8px 10px;">
                 <div class="kpi-label">AVG MONTHLY GROWTH</div>
                 <div style="font-size: 20px; font-weight: 900; margin: 2px 0 1px 0; letter-spacing: -0.02em;"
                      th:style="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'color: #047857' : 'color: #E87461'}"
-                     th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 1) + '%'}">0%</div>
+                     th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 0) + '%'}">0%</div>
                 <span style="font-size: 8px; color: #6B7280; font-weight: 600;">12-month avg</span>
             </div>
             <div class="card card-accent-purple" style="padding: 8px 10px;">
                 <div class="kpi-label">BEST MONTH</div>
                 <div style="font-size: 20px; font-weight: 900; color: #6D28D9; margin: 2px 0 1px 0; letter-spacing: -0.02em;" th:text="${dto.demographics.bestMonth != null ? dto.demographics.bestMonth : '-'}">-</div>
-                <span style="font-size: 8px; color: #6B7280;">Peak revenue</span>
+                <span style="font-size: 8px; color: #6B7280;">Highest sales month</span>
             </div>
         </div>
 
         <!-- ROW 2: Annual Sales Trend -->
         <div class="card mb-6" style="flex: 1; min-height: 0;">
-            <div class="card-title"><span>ANNUAL SALES TREND (AED)</span></div>
+            <div class="card-title"><span>ANNUAL SALES TREND (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
             <div class="chart-container" style="max-height: 150px;"><canvas data-chart="gradient-bar" data-field="demographics.monthlySales" data-color="#1E3A8A"></canvas></div>
         </div>
 
-        <!-- ROW 3: Transactions + Avg Txn Value side by side -->
-        <div class="grid-2 mb-6">
-            <div class="card" style="padding: 10px 12px;">
-                <div class="card-title"><span>TRANSACTION COUNT (12-MONTH)</span></div>
-                <div class="chart-container" style="max-height: 120px;"><canvas data-chart="gradient-bar" data-field="demographics.monthlyTxns" data-color="#059669"></canvas></div>
-            </div>
-            <div class="card" style="padding: 10px 12px;">
-                <div class="card-title"><span>AVG TRANSACTION VALUE (AED)</span></div>
-                <div class="chart-container" style="max-height: 120px;"><canvas data-chart="area" data-field="demographics.monthlyAtv" data-color="#6D28D9" data-bg="rgba(109,40,217,0.08)"></canvas></div>
-            </div>
+        <!-- ROW 3a: Transaction Count full width -->
+        <div class="card mb-6" style="padding: 10px 12px;">
+            <div class="card-title"><span>TRANSACTION COUNT (12-MONTH)</span></div>
+            <div class="chart-container" style="max-height: 130px;"><canvas data-chart="gradient-bar" data-field="demographics.monthlyTxns" data-color="#059669"></canvas></div>
+        </div>
+        <!-- ROW 3b: ATV full width -->
+        <div class="card mb-6" style="padding: 10px 12px;">
+            <div class="card-title"><span>AVG TRANSACTION VALUE (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
+            <div class="chart-container" style="max-height: 130px;"><canvas data-chart="area" data-field="demographics.monthlyAtv" data-color="#6D28D9" data-bg="rgba(109,40,217,0.08)"></canvas></div>
         </div>
 
         <!-- ROW 4: Seasonality + Quarterly Table -->
@@ -73,18 +72,18 @@
             <!-- Seasonality -->
             <div style="display: flex; flex-direction: column; gap: 6px;">
                 <div class="card" style="padding: 8px 10px; text-align: center; border-top: 3px solid #0D9488; flex: 1;">
-                    <div style="font-size: 7px; color: #6B7280; font-weight: 700;">PEAK SEASON</div>
+                    <div style="font-size: 8px; color: #6B7280; font-weight: 700;">PEAK SEASON</div>
                     <div style="font-size: 14px; font-weight: 900; color: #0D9488; margin: 2px 0;" th:text="${dto.demographics.peakSeason != null ? dto.demographics.peakSeason : '-'}">-</div>
                 </div>
                 <div class="card" style="padding: 8px 10px; text-align: center; border-top: 3px solid #64748B; flex: 1;">
-                    <div style="font-size: 7px; color: #6B7280; font-weight: 700;">LOW SEASON</div>
+                    <div style="font-size: 8px; color: #6B7280; font-weight: 700;">LOW SEASON</div>
                     <div style="font-size: 14px; font-weight: 900; color: #64748B; margin: 2px 0;" th:text="${dto.demographics.lowSeason != null ? dto.demographics.lowSeason : '-'}">-</div>
                 </div>
             </div>
             <!-- Quarterly Breakdown -->
             <div class="card" style="padding: 0; overflow: hidden;">
                 <div style="padding: 6px 10px; background: linear-gradient(135deg, #F8FAFF, #EFF6FF); border-bottom: 1px solid #E5E7EB;">
-                    <div style="font-size: 7px; font-weight: 800; color: #1E3A8A; text-transform: uppercase; letter-spacing: 0.05em;">QUARTERLY BREAKDOWN</div>
+                    <div style="font-size: 8px; font-weight: 800; color: #1E3A8A; text-transform: uppercase; letter-spacing: 0.05em;">QUARTERLY BREAKDOWN</div>
                 </div>
                 <table class="data-table" style="font-size: 8px;">
                     <thead>
@@ -99,7 +98,7 @@
                         <th:block th:if="${dto.demographics.quarterlyBreakdown != null and !dto.demographics.quarterlyBreakdown.isEmpty()}">
                         <tr th:each="q, iter : ${dto.demographics.quarterlyBreakdown}">
                             <td style="font-weight: 700; padding: 5px 10px;" th:text="${q.label}">Q1</td>
-                            <td style="font-weight: 700;" th:text="'AED ' + ${#numbers.formatDecimal(q.value, 1, 'COMMA', 0, 'POINT')}">0</td>
+                            <td style="font-weight: 700;" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(q.value, 1, 'COMMA', 0, 'POINT')}">0</td>
                             <td th:text="${q.value2 != null ? #numbers.formatDecimal(q.value2, 1, 'COMMA', 0, 'POINT') : '-'}">0</td>
                             <td th:if="${iter.index == 0}" style="color: #9CA3AF;">—</td>
                             <td th:if="${iter.index > 0}" th:with="prevVal=${dto.demographics.quarterlyBreakdown[iter.index - 1].value}">
@@ -114,7 +113,7 @@
                         </tr>
                     </tbody>
                 </table>
-                <div th:if="${dto.demographics.quarterlyBreakdown != null and !dto.demographics.quarterlyBreakdown.isEmpty()}" style="padding: 3px 10px 5px 10px; font-size: 6.5px; color: #9CA3AF; font-style: italic;">* Current quarter may be incomplete (partial months)</div>
+                <div th:if="${dto.demographics.quarterlyBreakdown != null and !dto.demographics.quarterlyBreakdown.isEmpty()}" style="padding: 3px 10px 5px 10px; font-size: 8px; color: #9CA3AF; font-style: italic;">Q1 = January–March, Q2 = April–June, Q3 = July–September, Q4 = October–December. Quarters marked with * are incomplete (fewer than 3 months of data).</div>
             </div>
         </div>
 
@@ -122,11 +121,13 @@
         <div class="ai-insight">
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">
-                <strong>AI Insight:</strong>
-                <th:block th:if="${dto.demographics.yoyGrowthPct != null and dto.demographics.yoyGrowthPct.doubleValue() != 0.0}">YoY growth at <span th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">0%</span>.</th:block>
-                <th:block th:if="${dto.demographics.yoyGrowthPct == null or dto.demographics.yoyGrowthPct.doubleValue() == 0.0}">YoY comparison will be available next month.</th:block>
-                MoM growth at <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</span>.
-                Revenue peaks in <span th:text="${dto.demographics.peakSeason != null ? dto.demographics.peakSeason : '-'}">-</span>. Pre-season campaigns can maximize the growth corridor.
+                <strong>Insight:</strong>
+                <span th:if="${dto.insights != null and dto.insights.growthInsight != null}" th:text="${dto.insights.growthInsight}"></span>
+                <span th:if="${dto.insights == null or dto.insights.growthInsight == null}">
+                    <th:block th:if="${dto.demographics.yoyGrowthPct != null and dto.demographics.yoyGrowthPct.doubleValue() != 0.0}">Year-on-year performance at <span th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 0) + '%'}">0%</span>.</th:block>
+                    <th:block th:if="${dto.demographics.yoyGrowthPct == null or dto.demographics.yoyGrowthPct.doubleValue() == 0.0}">Year-on-year data will be available once more history builds up.</th:block>
+                    Month-on-month: <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</span>.
+                </span>
             </div>
         </div>
 

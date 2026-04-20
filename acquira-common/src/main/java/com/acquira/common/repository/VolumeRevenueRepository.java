@@ -510,17 +510,18 @@ public class VolumeRevenueRepository {
 
         sql.append("SELECT ");
         sql.append("  m.mid as mid, ");
+        sql.append("  st2.sid as sid, ");
         sql.append("  m.name as merchant_name, ");
         sql.append("  SUM(s.total_txns) as count, ");
         sql.append("  SUM(s.total_volume) as volume ");
         sql.append("FROM sum_daily_insight s ");
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
-        // Apply store join if needed
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
-            sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
-        }
+        sql.append("LEFT JOIN dim_store st2 ON s.store_id = st2.store_id ");
 
-        sql.append("WHERE s.destination = 'DOMESTIC' AND s.card_type IN ('DEBIT', 'PREPAID') ");
+        // Match debit and prepaid card types - support both text labels and scheme codes
+        sql.append("WHERE (UPPER(s.card_type) IN ('DEBIT', 'PREPAID', 'DEBIT PREPAID', 'CREDIT PREPAID') ");
+        sql.append("   OR s.card_type IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4)) ");
+        sql.append("   OR s.card_scheme IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4))) ");
 
         if (filter.getStartDate() != null)
             sql.append("AND s.business_date >= :startDate ");
@@ -540,7 +541,7 @@ public class VolumeRevenueRepository {
         // filters".
         // Applying generic filters:
         if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
-            sql.append("AND st.mcc IN (:mccs) ");
+            sql.append("AND st2.mcc IN (:mccs) ");
         }
         if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty()) {
             sql.append("AND m.sales_user_id IN (:teamLeaders) ");
@@ -549,8 +550,8 @@ public class VolumeRevenueRepository {
             sql.append("AND s.channel IN (:channels) ");
         }
 
-        sql.append("GROUP BY m.mid, m.name ");
-        sql.append("ORDER BY m.mid ASC");
+        sql.append("GROUP BY m.mid, st2.sid, m.name ");
+        sql.append("ORDER BY m.mid ASC, st2.sid ASC");
 
         Query query = entityManager.createNativeQuery(sql.toString());
 
@@ -577,9 +578,10 @@ public class VolumeRevenueRepository {
         for (Object[] row : rows) {
             Map<String, Object> map = new HashMap<>();
             map.put("mid", row[0]);
-            map.put("merchantName", row[1]);
-            map.put("count", row[2]);
-            map.put("volume", row[3]);
+            map.put("sid", row[1]);
+            map.put("merchantName", row[2]);
+            map.put("count", row[3]);
+            map.put("volume", row[4]);
             result.add(map);
         }
 
@@ -619,7 +621,11 @@ public class VolumeRevenueRepository {
                 "  SUM(CASE WHEN s.business_date >= :ytdStartDate AND s.business_date <= :endDate THEN s.total_volume ELSE 0 END) as ytd_current, ");
         // YTD Previous (Jan 1 of PrevYear -> PrevEndDate)
         sql.append(
-                "  SUM(CASE WHEN s.business_date >= :prevYtdStartDate AND s.business_date <= :prevEndDate THEN s.total_volume ELSE 0 END) as ytd_prev ");
+                "  SUM(CASE WHEN s.business_date >= :prevYtdStartDate AND s.business_date <= :prevEndDate THEN s.total_volume ELSE 0 END) as ytd_prev, ");
+
+        // MoM: Previous Month (full month before start date)
+        sql.append(
+                "  SUM(CASE WHEN s.business_date >= :momStartDate AND s.business_date <= :momEndDate THEN s.total_volume ELSE 0 END) as mom_prev ");
 
         sql.append("FROM sum_daily_insight s ");
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
@@ -668,12 +674,21 @@ public class VolumeRevenueRepository {
         java.time.LocalDate ytdStart = end.withDayOfYear(1);
         java.time.LocalDate prevYtdStart = prevEnd.withDayOfYear(1);
 
+        // MoM: Previous full month (month before the start date's month)
+        java.time.LocalDate momEndDate = start.minusDays(1); // last day of previous month
+        java.time.LocalDate momStartDate = momEndDate.withDayOfMonth(1); // first day of previous month
+
+        // Use the earliest date across all ranges as global lower bound
+        java.time.LocalDate globalLowerBound = prevYtdStart.isBefore(momStartDate) ? prevYtdStart : momStartDate;
+
         query.setParameter("startDate", start);
         query.setParameter("endDate", end);
         query.setParameter("prevStartDate", prevStart);
         query.setParameter("prevEndDate", prevEnd);
         query.setParameter("ytdStartDate", ytdStart);
-        query.setParameter("prevYtdStartDate", prevYtdStart); // This acts as the global lower bound for WHERE
+        query.setParameter("prevYtdStartDate", globalLowerBound); // Global lower bound for WHERE
+        query.setParameter("momStartDate", momStartDate);
+        query.setParameter("momEndDate", momEndDate);
 
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
@@ -701,6 +716,7 @@ public class VolumeRevenueRepository {
             java.math.BigDecimal mtdPrev = (java.math.BigDecimal) row[3];
             java.math.BigDecimal ytdCur = (java.math.BigDecimal) row[4];
             java.math.BigDecimal ytdPrev = (java.math.BigDecimal) row[5];
+            java.math.BigDecimal momPrev = (java.math.BigDecimal) row[6];
 
             map.put("mtd_current", mtdCur);
             map.put("mtd_prev", mtdPrev);
@@ -725,6 +741,17 @@ public class VolumeRevenueRepository {
                 ytdPct = 100;
             }
             map.put("ytd_pct", ytdPct);
+
+            // MoM: Previous month volume and % change vs current MTD
+            map.put("mom_prev", momPrev);
+            double momPct = 0;
+            if (momPrev != null && momPrev.doubleValue() != 0) {
+                momPct = ((mtdCur != null ? mtdCur.doubleValue() : 0) - momPrev.doubleValue()) / momPrev.doubleValue()
+                        * 100;
+            } else if (mtdCur != null && mtdCur.doubleValue() > 0) {
+                momPct = 100;
+            }
+            map.put("mom_pct", momPct);
 
             result.add(map);
         }

@@ -62,7 +62,7 @@
                 <div style="position: absolute; top: 18px; left: 18px; width: 114px; height: 114px; border-radius: 50%; background: radial-gradient(circle, rgba(37,99,235,0.12) 0%, transparent 70%);"></div>
                 <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center;">
                     <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 44px; font-weight: 900; color: white; line-height: 1; text-shadow: 0 2px 20px rgba(96,165,250,0.3);" th:text="${#numbers.formatInteger(healthScore, 1)}">75</div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 7px; font-weight: 600; color: #60A5FA; letter-spacing: 0.12em; text-transform: uppercase; margin-top: 2px;">HEALTH SCORE</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; font-weight: 600; color: #60A5FA; letter-spacing: 0.12em; text-transform: uppercase; margin-top: 2px;">HEALTH SCORE</div>
                 </div>
             </div>
 
@@ -80,11 +80,11 @@
                 <!-- Gauge 1: Sales -->
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #3B82F6, transparent);"></div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #93C5FD; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Total Sales (<span th:text="${dto.currencyCode}">AED</span>)</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; font-weight: 600; color: #93C5FD; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Sales Volume (<span th:text="${dto.currencyCode}">AED</span>)</div>
                     <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.currencyCode} + ' ' + ${dto.overview.sales.formattedValue}">AED 0</div>
                     <div style="margin-top: 5px;">
-                        <span th:if="${dto.overview.sales.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2)} + '%'">0%</span>
-                        <span th:if="${dto.overview.sales.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2)} + '%'">0%</span>
+                        <span th:if="${dto.overview.sales.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0)} + '%'">0%</span>
+                        <span th:if="${dto.overview.sales.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0)} + '%'">0%</span>
                     </div>
                     <div style="margin-top: 6px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;">
                         <div th:style="'height:100%; border-radius:2px; background:linear-gradient(90deg,#3B82F6,#60A5FA); width:' + ${T(java.lang.Math).min(100.0, T(java.lang.Math).max(10.0, 50.0 + (dto.overview.sales.momGrowth != null ? dto.overview.sales.momGrowth * 2 : 0.0)))} + '%;'"></div>
@@ -94,11 +94,11 @@
                 <!-- Gauge 2: Transactions -->
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #34D399, transparent);"></div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #A7F3D0; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Transaction Count</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; font-weight: 600; color: #A7F3D0; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Transaction Count</div>
                     <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.overview.transactions.formattedValue}">0</div>
                     <div style="margin-top: 5px;">
-                        <span th:if="${dto.overview.transactions.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2)} + '%'">0%</span>
-                        <span th:if="${dto.overview.transactions.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2)} + '%'">0%</span>
+                        <span th:if="${dto.overview.transactions.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0)} + '%'">0%</span>
+                        <span th:if="${dto.overview.transactions.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0)} + '%'">0%</span>
                     </div>
                     <div style="margin-top: 6px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;">
                         <div th:style="'height:100%; border-radius:2px; background:linear-gradient(90deg,#059669,#34D399); width:' + ${T(java.lang.Math).min(100.0, T(java.lang.Math).max(10.0, 50.0 + (dto.overview.transactions.momGrowth != null ? dto.overview.transactions.momGrowth * 2 : 0.0)))} + '%;'"></div>
@@ -108,11 +108,11 @@
                 <!-- Gauge 3: Customers -->
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #FBBF24, transparent);"></div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #FDE68A; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Customers</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; font-weight: 600; color: #FDE68A; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Unique Customers</div>
                     <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.overview.customers.formattedValue}">0</div>
                     <div style="margin-top: 5px;">
-                        <span th:if="${dto.overview.customers.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2)} + '%'">0%</span>
-                        <span th:if="${dto.overview.customers.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2)} + '%'">0%</span>
+                        <span th:if="${dto.overview.customers.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 0)} + '%'">0%</span>
+                        <span th:if="${dto.overview.customers.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 0)} + '%'">0%</span>
                     </div>
                     <div style="margin-top: 6px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;">
                         <div th:style="'height:100%; border-radius:2px; background:linear-gradient(90deg,#F59E0B,#FBBF24); width:' + ${T(java.lang.Math).min(100.0, T(java.lang.Math).max(10.0, 50.0 + (dto.overview.customers.momGrowth != null ? dto.overview.customers.momGrowth * 2 : 0.0)))} + '%;'"></div>
@@ -122,11 +122,11 @@
                 <!-- Gauge 4: Avg Ticket -->
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #A78BFA, transparent);"></div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #C4B5FD; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Avg Ticket</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; font-weight: 600; color: #C4B5FD; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Avg Ticket</div>
                     <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.currencyCode} + ' ' + ${dto.overview.avgTxnValue.formattedValue}">AED 0</div>
                     <div style="margin-top: 5px;">
-                        <span th:if="${dto.overview.avgTxnValue.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2)} + '%'">0%</span>
-                        <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2)} + '%'">0%</span>
+                        <span th:if="${dto.overview.avgTxnValue.momGrowth >= 0}" style="font-size: 8px; font-weight: 700; color: #34D399;" th:text="'▲ ' + ${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 0)} + '%'">0%</span>
+                        <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}" style="font-size: 8px; font-weight: 700; color: #FCA5A5;" th:text="'▼ ' + ${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 0)} + '%'">0%</span>
                     </div>
                     <div style="margin-top: 6px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;">
                         <div th:style="'height:100%; border-radius:2px; background:linear-gradient(90deg,#6D28D9,#A78BFA); width:' + ${T(java.lang.Math).min(100.0, T(java.lang.Math).max(10.0, 50.0 + (dto.overview.avgTxnValue.momGrowth != null ? dto.overview.avgTxnValue.momGrowth * 2 : 0.0)))} + '%;'"></div>
@@ -136,7 +136,7 @@
                 <!-- Gauge 5: Retention -->
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #14B8A6, transparent);"></div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #99F6E4; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Retention</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; font-weight: 600; color: #99F6E4; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Retention</div>
                     <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.loyalty.retentionRate != null ? dto.loyalty.retentionRate + '%' : '-'}">-</div>
                     <div style="margin-top: 5px;">
                         <span style="font-size: 8px; font-weight: 600; color: rgba(255,255,255,0.4);">of customers return</span>
@@ -149,7 +149,7 @@
                 <!-- Gauge 6: Peak Day -->
                 <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 12px; text-align: center; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #F472B6, transparent);"></div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 6.5px; font-weight: 600; color: #FBCFE8; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Peak Day Sales</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; font-weight: 600; color: #FBCFE8; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px;">Peak Day Sales</div>
                     <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 800; color: white; line-height: 1;" th:text="${dto.overview.peakStats.maxDailySales != null ? dto.currencyCode + ' ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">-</div>
                     <div style="margin-top: 5px;">
                         <span style="font-size: 8px; font-weight: 600; color: rgba(255,255,255,0.4);" th:text="${dto.overview.peakDayName != null ? dto.overview.peakDayName + 's lead' : ''}"></span>
@@ -163,7 +163,8 @@
             <!-- Next Month Priorities — glass panel -->
             <div style="margin-top: 20px; width: 100%; max-width: 620px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 16px 22px; position: relative; overflow: hidden;">
                 <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #2563EB, #60A5FA, transparent);"></div>
-                <div style="font-family: 'Inter', sans-serif; font-size: 7px; font-weight: 700; color: #60A5FA; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 10px;">&#9670; Next Month Action Items</div>
+                <div style="font-family: 'Inter', sans-serif; font-size: 8px; font-weight: 700; color: #60A5FA; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 6px;">&#9670; Next Month Action Items</div>
+                <div style="font-family: 'Inter', sans-serif; font-size: 8px; color: rgba(255,255,255,0.25); margin-bottom: 8px;">Health score reflects sales consistency, growth momentum, customer retention, payment mix and DCC performance — scored 0–100.</div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px;">
                     <!-- Action Item 1 (data-driven) -->
                     <div style="display: flex; align-items: flex-start; gap: 8px;">
@@ -211,17 +212,17 @@
                         -->
                         <div>
                             <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 14px; font-weight: 800; color: #60A5FA; letter-spacing: 0.03em;">AFS NEXUS</div>
-                            <div style="font-family: 'Inter', sans-serif; font-size: 7px; color: rgba(255,255,255,0.35); letter-spacing: 0.06em;">CONNECTING YOUR BUSINESS INTELLIGENCE</div>
+                            <div style="font-family: 'Inter', sans-serif; font-size: 8px; color: rgba(255,255,255,0.35); letter-spacing: 0.06em;">CONNECTING YOUR BUSINESS INTELLIGENCE</div>
                         </div>
                     </div>
                 </div>
                 <div style="text-align: right;">
-                    <div style="font-family: 'Inter', sans-serif; font-size: 7px; color: rgba(255,255,255,0.3); letter-spacing: 0.04em; margin-bottom: 3px;" th:text="'Report Period: ' + ${reportPeriod}">Period</div>
-                    <div style="font-family: 'Inter', sans-serif; font-size: 7px; color: rgba(255,255,255,0.3); letter-spacing: 0.04em;" th:text="'Merchant: ' + ${merchantName}">Merchant</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; color: rgba(255,255,255,0.3); letter-spacing: 0.04em; margin-bottom: 3px;" th:text="'Report Period: ' + ${reportPeriod}">Period</div>
+                    <div style="font-family: 'Inter', sans-serif; font-size: 8px; color: rgba(255,255,255,0.3); letter-spacing: 0.04em;" th:text="'Merchant: ' + ${merchantName}">Merchant</div>
                 </div>
             </div>
             <div style="margin-top: 10px; height: 2px; background: linear-gradient(90deg, #2563EB, #60A5FA, #93C5FD, transparent); border-radius: 1px;"></div>
-            <div style="margin-top: 6px; text-align: center; font-family: 'Inter', sans-serif; font-size: 6.5px; color: rgba(255,255,255,0.2); letter-spacing: 0.08em;">
+            <div style="margin-top: 6px; text-align: center; font-family: 'Inter', sans-serif; font-size: 8px; color: rgba(255,255,255,0.2); letter-spacing: 0.08em;">
                 THIS REPORT WAS GENERATED AUTOMATICALLY BY AFS NEXUS &#8226; ALL DATA IS SOURCED FROM LIVE TRANSACTION RECORDS &#8226; CONFIDENTIAL
             </div>
         </div>

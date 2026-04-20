@@ -3,57 +3,51 @@
 <body>
     <div th:fragment="salesTrendsContent">
         <div class="section-title" style="margin-bottom: 2px;">Sales &amp; Hourly Intelligence</div>
-        <div class="section-subtitle" style="margin-bottom: 6px;">Revenue movement, hourly distribution and weekly patterns</div>
+        <div class="section-subtitle" style="margin-bottom: 6px;">Sales movement, hourly distribution and weekly patterns</div>
 
         <!-- Dynamic Insight -->
         <div th:if="${dto.insights != null and dto.insights.salesInsight != null}" style="background: linear-gradient(135deg, #EFF6FF, #DBEAFE); border: 1px solid #93C5FD; border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; display: flex; gap: 8px;">
             <div style="font-size: 12px; margin-top: 1px;">⏰</div>
             <div>
                 <p style="font-size: 8px; color: #1E3A8A; line-height: 1.5; margin: 0; font-weight: 600;" th:text="${dto.insights.salesInsight}">Sales insight</p>
-                <p th:if="${dto.insights.salesWatch != null}" style="font-size: 7.5px; color: #3B82F6; line-height: 1.4; margin: 3px 0 0 0;" th:text="'💡 ' + ${dto.insights.salesWatch}">Watch</p>
+                <p th:if="${dto.insights.salesWatch != null}" style="font-size: 8px; color: #3B82F6; line-height: 1.4; margin: 3px 0 0 0;" th:text="'💡 ' + ${dto.insights.salesWatch}">Watch</p>
             </div>
         </div>
 
-        <!-- ROW 1: Daily Sales Trend (full width) -->
+        <!-- ROW 1: Sales by Day of Week (full width) -->
         <div class="card mb-6" style="padding: 10px 12px;">
-            <div class="card-title">DAILY SALES TREND (<span th:text="${dto.currencyCode}">AED</span>) — Day of Month</div>
-            <div class="chart-container" style="max-height: 140px;"><canvas data-chart="area" data-field="achievements.dailySalesAndCount" data-color="#1E3A8A" data-bg="rgba(30,58,138,0.08)"></canvas></div>
+            <div class="card-title"><span>SALES BY DAY OF WEEK (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
+            <div class="chart-container" style="max-height: 140px;"><canvas data-chart="gradient-bar" data-field="overview.salesByDayOfWeek" data-color="#1E3A8A"></canvas></div>
         </div>
 
         <!-- ROW 2: HOURLY SALES DISTRIBUTION (prominent — full width) -->
         <div class="card mb-6" style="padding: 12px 14px; border-top: 4px solid #6D28D9;">
             <div class="card-title" style="margin-bottom: 2px;">
                 <span>&#9201; SALES DISTRIBUTION BY HOUR OF DAY</span>
-                <div style="display: flex; gap: 8px; font-size: 7.5px; align-items: center;">
+                <div style="display: flex; gap: 8px; font-size: 8px; align-items: center;">
                     <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 8px; height: 8px; background: #6D28D9; border-radius: 2px;"></span> % of Total Sales</span>
                 </div>
             </div>
-            <div style="font-size: 7.5px; color: #6B7280; margin-bottom: 6px;">Peak hours indicate optimal staffing and promotional windows</div>
+            <div style="font-size: 8px; color: #6B7280; margin-bottom: 6px;">Hour-by-hour sales distribution across the reporting period</div>
             <div class="chart-container" style="max-height: 170px;"><canvas data-chart="gradient-bar" data-field="achievements.salesTimeOfDay" data-color="#6D28D9"></canvas></div>
         </div>
 
-        <!-- ROW 3: Day of Week + Dual Axis side by side -->
-        <div class="grid-2 mb-6" style="flex: 1; min-height: 0;">
-            <div class="card" style="padding: 10px 12px;">
-                <div class="card-title">SALES BY DAY OF WEEK (<span th:text="${dto.currencyCode}">AED</span>)</div>
-                <div class="chart-container" style="max-height: 150px;"><canvas data-chart="gradient-bar" data-field="overview.salesByDayOfWeek" data-color="#1E3A8A"></canvas></div>
-            </div>
-            <div class="card" style="padding: 10px 12px;">
-                <div class="card-title"><span>SALES VALUE &amp; AVG VALUE BY DAY</span>
-                    <div style="display: flex; gap: 8px; font-size: 7px; align-items: center;">
+        <!-- ROW 3: Dual Axis full width -->
+        <div class="card mb-6" style="flex: 1; min-height: 0; padding: 10px 12px;">
+                <div class="card-title"><span>SALES VALUE &amp; ATV BY DAY OF WEEK</span>
+                    <div style="display: flex; gap: 8px; font-size: 8px; align-items: center;">
                         <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 10px; height: 3px; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 2px;"></span> Sales</span>
                         <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 10px; height: 3px; background: #DC2626; border-radius: 2px;"></span> Avg Value</span>
                     </div>
                 </div>
                 <div class="chart-container" style="max-height: 150px;"><canvas data-chart="dual-axis" data-field="achievements.salesAndAtvByDayOfWeek" data-color="#1E3A8A" data-color2="#DC2626"></canvas></div>
-            </div>
         </div>
 
         <!-- AI Insight -->
         <div class="ai-insight">
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">
-                <strong>Peak Hours:</strong> Focus staffing and promotional campaigns on the busiest hours shown above. Align push notifications and flash offers to this window for maximum conversion.
+                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.salesInsight != null ? dto.insights.salesInsight : 'The hourly distribution shows a clear peak window. Aligning resources with that pattern may help make the most of high-demand periods.'}"></span>
             </div>
         </div>
 

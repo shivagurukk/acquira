@@ -75,6 +75,8 @@ public class ExcelSplitterTasklet implements Tasklet {
         HEADER_ALIASES.put("card type acq",                  "card type");
         HEADER_ALIASES.put("dcc txn ind",                    "dcc");
         HEADER_ALIASES.put("transaction time",               "transaction time"); // now a target column
+        // Combined datetime column: map to "Transaction Date" target; time is extracted in CSV reader
+        HEADER_ALIASES.put("transaction datetime",           "transaction date");
     }
 
     /**

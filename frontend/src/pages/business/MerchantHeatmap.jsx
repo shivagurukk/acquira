@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Paper, Typography, Stack, MenuItem, Select, FormControl, InputLabel, Avatar } from '@mui/material';
+import { Box, Paper, Typography, Stack, MenuItem, Select, FormControl, InputLabel, Avatar, Autocomplete, TextField, Chip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { Grid as GridIcon, TrendingUp, DollarSign, Users } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
@@ -16,15 +16,30 @@ const MerchantHeatmap = () => {
     const [years, setYears] = useState([new Date().getFullYear()]);
     const [year, setYear] = useState(new Date().getFullYear());
     const [maxVolume, setMaxVolume] = useState(0);
+    const [sidList, setSidList] = useState([]);
+    const [sidOptions, setSidOptions] = useState([]);
 
-    useEffect(() => { setYears([2024, 2025, 2026]); }, []);
-    useEffect(() => { fetchData(); }, [year]);
+    useEffect(() => { setYears([2024, 2025, 2026]); fetchSidOptions(); }, []);
+    useEffect(() => { fetchData(); }, [year, sidList]);
+
+    const fetchSidOptions = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('/api/business/filter-options', { headers: { 'Authorization': `Bearer ${token}` } });
+            if (res.ok) {
+                const data = await res.json();
+                setSidOptions((data.sids || []).map(s => String(s)));
+            }
+        } catch (e) { console.error(e); }
+    };
 
     const fetchData = async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`/api/analytics/heatmap?year=${year}`, {
+            const params = new URLSearchParams({ year });
+            if (sidList.length > 0) sidList.forEach(s => params.append('sidList', s));
+            const response = await fetch(`/api/analytics/heatmap?${params.toString()}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (response.ok) processData(await response.json());
@@ -110,7 +125,6 @@ const MerchantHeatmap = () => {
         }
     ];
 
-    // Year picker and legend as children of PremiumReportHeader
     const extraControls = (
         <Stack direction="row" spacing={2} alignItems="center">
             <FormControl size="small" sx={{ minWidth: 120 }}>
@@ -120,6 +134,18 @@ const MerchantHeatmap = () => {
                     {years.map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
                 </Select>
             </FormControl>
+            <Autocomplete
+                multiple freeSolo size="small"
+                options={sidOptions} value={sidList}
+                onChange={(e, val) => setSidList(val)}
+                renderInput={(params) => <TextField {...params} label="Filter by SID" placeholder={sidList.length ? '' : 'All Stores'} sx={{ minWidth: 250 }} />}
+                renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                        <Chip {...getTagProps({ index })} key={option} label={option} size="small"
+                            sx={{ bgcolor: '#3B82F6', color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white', opacity: 0.7 } }} />
+                    ))
+                }
+            />
         </Stack>
     );
 
@@ -137,7 +163,6 @@ const MerchantHeatmap = () => {
 
             <KpiCards cards={kpis} />
 
-            {/* Legend Bar */}
             <Paper elevation={0} sx={{ p: 1.5, mb: 2, borderRadius: '10px', display: 'flex', alignItems: 'center', gap: 3, bgcolor: 'white', border: '1px solid #e2e8f0' }}>
                 <Typography variant="caption" fontWeight="bold" color="#64748b">LEGEND:</Typography>
                 {[

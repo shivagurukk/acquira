@@ -10,7 +10,7 @@
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 180px; height: 180px; border-radius: 50%; border: 1px solid rgba(37,99,235,0.06);"></div>
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 220px; height: 220px; border-radius: 50%; border: 1px solid rgba(37,99,235,0.03);"></div>
 
-            <div style="font-size: 8px; font-weight: 700; color: #6B7280; letter-spacing: 0.08em; text-transform: uppercase;">Business Health Score</div>
+            <div style="font-size: 9px; font-weight: 700; color: #6B7280; letter-spacing: 0.08em; text-transform: uppercase;">Business Health Score</div>
             <div th:style="'font-size: 72px; font-weight: 900; line-height: 1; margin: 8px 0 4px 0; letter-spacing: -0.04em; position: relative; z-index: 2; color: ' + ${dto.healthScore.gradeColor}"
                  th:text="${dto.healthScore.compositeScore}">87</div>
             <div style="font-size: 14px; font-weight: 700; color: #6B7280; margin-bottom: 4px;">out of 100</div>
@@ -22,7 +22,7 @@
                 <div style="width: 100%; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden;">
                     <div th:style="'width: ' + ${dto.healthScore.compositeScore} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #2563EB, #3B82F6); border-radius: 4px;'"></div>
                 </div>
-                <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 7px; color: #9CA3AF;">
+                <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 8px; color: #9CA3AF;">
                     <span>0 — Critical</span>
                     <span>50 — Average</span>
                     <span>100 — Excellent</span>
@@ -39,8 +39,8 @@
                 <!-- Revenue Health -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
                     <div style="width: 110px; flex-shrink: 0;">
-                        <div style="font-size: 9px; font-weight: 700; color: #111827;">Revenue Health</div>
-                        <div style="font-size: 7.5px; color: #6B7280;">Sales volume &amp; consistency</div>
+                        <div style="font-size: 9.5px; font-weight: 700; color: #111827;">Revenue Health</div>
+                        <div style="font-size: 8.5px; color: #6B7280;">Sales volume &amp; consistency</div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -55,8 +55,8 @@
                 <!-- Growth Momentum -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
                     <div style="width: 110px; flex-shrink: 0;">
-                        <div style="font-size: 9px; font-weight: 700; color: #111827;">Growth Momentum</div>
-                        <div style="font-size: 7.5px; color: #6B7280;">MoM &amp; YoY trajectory</div>
+                        <div style="font-size: 9.5px; font-weight: 700; color: #111827;">Growth Momentum</div>
+                        <div style="font-size: 8.5px; color: #6B7280;">MoM &amp; YoY trajectory</div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -71,8 +71,8 @@
                 <!-- Customer Loyalty -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
                     <div style="width: 110px; flex-shrink: 0;">
-                        <div style="font-size: 9px; font-weight: 700; color: #111827;">Customer Loyalty</div>
-                        <div style="font-size: 7.5px; color: #6B7280;">Retention &amp; frequency</div>
+                        <div style="font-size: 9.5px; font-weight: 700; color: #111827;">Customer Loyalty</div>
+                        <div style="font-size: 8.5px; color: #6B7280;">Retention &amp; frequency</div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -87,8 +87,8 @@
                 <!-- Payment Efficiency -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
                     <div style="width: 110px; flex-shrink: 0;">
-                        <div style="font-size: 9px; font-weight: 700; color: #111827;">Payment Efficiency</div>
-                        <div style="font-size: 7.5px; color: #6B7280;">Mix, wallet &amp; card health</div>
+                        <div style="font-size: 9.5px; font-weight: 700; color: #111827;">Payment Efficiency</div>
+                        <div style="font-size: 8.5px; color: #6B7280;">Mix, wallet &amp; card health</div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -103,8 +103,8 @@
                 <!-- DCC Performance (conditionally shown) -->
                 <div th:if="${dto.healthScore.dccApplicable}" style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
                     <div style="width: 110px; flex-shrink: 0;">
-                        <div style="font-size: 9px; font-weight: 700; color: #111827;">DCC Performance</div>
-                        <div style="font-size: 7.5px; color: #6B7280;">Conversion &amp; revenue capture</div>
+                        <div style="font-size: 9.5px; font-weight: 700; color: #111827;">DCC Performance</div>
+                        <div style="font-size: 8.5px; color: #6B7280;">Conversion &amp; revenue capture</div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -119,8 +119,8 @@
                 <!-- DCC N/A row when not applicable -->
                 <div th:unless="${dto.healthScore.dccApplicable}" style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
                     <div style="width: 110px; flex-shrink: 0;">
-                        <div style="font-size: 9px; font-weight: 700; color: #9CA3AF;">DCC Performance</div>
-                        <div style="font-size: 7.5px; color: #9CA3AF;">Not applicable (domestic only)</div>
+                        <div style="font-size: 9.5px; font-weight: 700; color: #9CA3AF;">DCC Performance</div>
+                        <div style="font-size: 8.5px; color: #9CA3AF;">Not applicable (domestic only)</div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #F3F4F6; border-radius: 5px;"></div>

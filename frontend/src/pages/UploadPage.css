@@ -10,14 +10,15 @@
 }
 
 .page-header h1 {
-    font-size: 2rem;
-    font-weight: 600;
+    font-size: 1.5rem;
+    font-weight: 700;
     margin-bottom: 0.5rem;
-    color: var(--primary);
+    color: var(--text, #111827);
+    letter-spacing: -0.03em;
 }
 
 .page-header p {
-    color: var(--text-muted);
+    color: var(--text-muted, #9ca3af);
 }
 
 .upload-grid {
@@ -41,31 +42,32 @@
 }
 
 .card-header h2 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: var(--text-main);
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text, #111827);
+    letter-spacing: -0.02em;
 }
 
 .badge {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     padding: 0.25rem 0.75rem;
-    border-radius: 1rem;
-    background: var(--bg-dark);
-    color: var(--text-muted);
-    border: 1px solid var(--border-light);
-    font-weight: 500;
+    border-radius: 8px;
+    background: var(--bg-subtle, #f3f4f6);
+    color: var(--text-muted, #9ca3af);
+    border: 1px solid var(--border, #e5e7eb);
+    font-weight: 600;
 }
 
 .badge.info {
-    background: #eff6ff;
-    color: #3b82f6;
-    border-color: #bfdbfe;
+    background: var(--brand-50, #eff6ff);
+    color: var(--brand, #2563eb);
+    border-color: #dbeafe;
 }
 
 .card-desc {
-    color: var(--text-muted);
-    line-height: 1.5;
-    font-size: 0.95rem;
+    color: var(--text-secondary, #6b7280);
+    line-height: 1.6;
+    font-size: 0.88rem;
 }
 
 .btn-upload {
@@ -73,19 +75,19 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    background: var(--primary);
+    background: var(--brand, #2563eb);
     color: white;
     border: none;
     padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-weight: 500;
+    border-radius: 12px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
     margin-top: auto;
 }
 
 .btn-upload:hover {
-    background: #1e293b;
+    background: var(--brand-dark, #1d4ed8);
     transform: translateY(-1px);
 }
 
@@ -93,24 +95,24 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.75rem;
-    border-radius: 8px;
-    font-size: 0.9rem;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    font-size: 0.88rem;
     margin-top: 0.5rem;
 }
 
 .status-msg.uploading {
-    background: #eff6ff;
+    background: var(--info-bg, #eff6ff);
     color: #1e40af;
 }
 
 .status-msg.success {
-    background: #f0fdf4;
-    color: #166534;
+    background: var(--success-bg, #ecfdf5);
+    color: #065f46;
 }
 
 .status-msg.error {
-    background: #fef2f2;
+    background: var(--danger-bg, #fef2f2);
     color: #991b1b;
 }
 
@@ -119,11 +121,6 @@
 }
 
 @keyframes spin {
-    from {
-        transform: rotate(0deg);
-    }
-
-    to {
-        transform: rotate(360deg);
-    }
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }

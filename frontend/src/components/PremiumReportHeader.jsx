@@ -1,22 +1,20 @@
 import React, { useState } from 'react';
-import { Box, Typography, Stack, IconButton, Tooltip, Collapse, TextField, Chip } from '@mui/material';
-import { Download, Filter, RefreshCw, Calendar, X, ChevronDown } from 'lucide-react';
+import { Box, Typography, Stack, Tooltip, Collapse, TextField } from '@mui/material';
+import { Download, Filter, RefreshCw, ChevronDown } from 'lucide-react';
 import ActiveFilterChips from './ActiveFilterChips';
 
-// ─── Premium Date Presets ────────────────────────────────────────────
 const DATE_PRESETS = [
     { key: 'TODAY', label: 'Today' },
-    { key: 'MONTH', label: 'This Month' },
-    { key: 'LAST_MONTH', label: 'Last Month' },
-    { key: 'YEAR', label: 'This Year' },
-    { key: 'PY', label: 'Prev Year' },
+    { key: 'MONTH', label: 'This month' },
+    { key: 'LAST_MONTH', label: 'Last month' },
+    { key: 'YEAR', label: 'This year' },
+    { key: 'PY', label: 'Prev year' },
     { key: 'CUSTOM', label: 'Custom' },
 ];
 
 const computeDateRange = (preset) => {
     const now = new Date();
     const fmt = (d) => d.toISOString().split('T')[0];
-
     switch (preset) {
         case 'TODAY': return { startDate: fmt(now), endDate: fmt(now) };
         case 'MONTH': return { startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
@@ -33,31 +31,19 @@ const computeDateRange = (preset) => {
     }
 };
 
-// ─── Component ───────────────────────────────────────────────────────
 const PremiumReportHeader = ({
-    title,
-    subtitle,
-    icon: Icon,
-    onExport,
-    onRunReport,
-    onFilterChange,
-    loading = false,
-    showFilters,
-    onToggleFilters,
-    filters = {},
-    hideDatePresets = false,
-    children, // slot for extra controls (e.g. year picker on heatmap)
+    title, subtitle, icon: Icon,
+    onExport, onRunReport, onFilterChange,
+    loading = false, showFilters, onToggleFilters,
+    filters = {}, hideDatePresets = false, children,
 }) => {
     const [activePreset, setActivePreset] = useState(filters?.datePreset || 'MONTH');
-    const [showCustom, setShowCustom] = useState(false);
 
     const handlePreset = (preset) => {
         setActivePreset(preset);
-        setShowCustom(preset === 'CUSTOM');
         if (preset !== 'CUSTOM' && onFilterChange) {
-            const range = computeDateRange(preset);
-            onFilterChange({ ...range, datePreset: preset });
-        } else if (preset === 'CUSTOM' && onFilterChange) {
+            onFilterChange({ ...computeDateRange(preset), datePreset: preset });
+        } else if (onFilterChange) {
             onFilterChange({ datePreset: 'CUSTOM' });
         }
     };
@@ -88,152 +74,95 @@ const PremiumReportHeader = ({
     ].length + (filters.merchantName ? 1 : 0);
 
     return (
-        <Box sx={{ mb: 3 }}>
-            {/* ── Row 1: Title + Actions ── */}
+        <Box sx={{ mb: 2.5 }}>
+            {/* ── Row 1: Title + Action buttons ── */}
             <Box sx={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-                flexWrap: 'wrap', gap: 2, mb: 2,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                flexWrap: 'wrap', gap: 1.5, mb: 1.5,
             }}>
-                {/* Left: Title */}
+                {/* Left: Icon + Title */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     {Icon && (
                         <Box sx={{
-                            width: 42, height: 42, borderRadius: '12px', display: 'flex',
+                            width: 36, height: 36, borderRadius: 'var(--radius-md, 8px)', display: 'flex',
                             alignItems: 'center', justifyContent: 'center',
-                            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
+                            bgcolor: 'var(--brand-light, #eff6ff)',
                         }}>
-                            <Icon size={20} color="white" />
+                            <Icon size={17} style={{ color: 'var(--brand, #3b82f6)' }} />
                         </Box>
                     )}
                     <Box>
-                        <Typography variant="h5" fontWeight={800} color="#0f172a" sx={{ letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+                        <Typography sx={{
+                            fontSize: '1.15rem', fontWeight: 700, letterSpacing: '-0.02em',
+                            lineHeight: 1.2, color: 'var(--text, #0f172a)',
+                        }}>
                             {title}
                         </Typography>
                         {subtitle && (
-                            <Typography variant="body2" color="#64748b" sx={{ mt: 0.25 }}>
+                            <Typography sx={{ fontSize: '0.8rem', mt: 0.2, color: 'var(--text-secondary, #64748b)' }}>
                                 {subtitle}
                             </Typography>
                         )}
                     </Box>
                 </Box>
 
-                {/* Right: Actions */}
-                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                    {/* Date Presets */}
-                    {!hideDatePresets && (
-                        <Box sx={{
-                            display: 'flex', alignItems: 'center', gap: '2px',
-                            bgcolor: '#f1f5f9', borderRadius: '10px', p: '3px',
-                        }}>
-                            {DATE_PRESETS.map(p => (
-                                <Box
-                                    key={p.key}
-                                    onClick={() => handlePreset(p.key)}
-                                    sx={{
-                                        px: 1.5, py: 0.6, borderRadius: '8px', fontSize: '12px', fontWeight: 600,
-                                        cursor: 'pointer', transition: 'all 0.15s ease',
-                                        userSelect: 'none', whiteSpace: 'nowrap',
-                                        ...(activePreset === p.key ? {
-                                            bgcolor: 'white', color: '#0f172a',
-                                            boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-                                        } : {
-                                            bgcolor: 'transparent', color: '#64748b',
-                                            '&:hover': { color: '#334155', bgcolor: 'rgba(255,255,255,0.5)' },
-                                        }),
-                                    }}
-                                >
-                                    {p.label}
-                                </Box>
-                            ))}
-                        </Box>
-                    )}
-
-                    {/* Custom Date Inputs */}
-                    <Collapse in={showCustom || activePreset === 'CUSTOM'} orientation="horizontal" unmountOnExit>
-                        <Stack direction="row" spacing={1} alignItems="center" sx={{ pl: 0.5 }}>
-                            <TextField
-                                type="date" size="small" value={filters?.startDate || ''}
-                                onChange={(e) => onFilterChange && onFilterChange({ startDate: e.target.value })}
-                                sx={{ width: 145, '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '12px' } }}
-                            />
-                            <Typography variant="caption" color="#94a3b8" sx={{ px: 0.25 }}>→</Typography>
-                            <TextField
-                                type="date" size="small" value={filters?.endDate || ''}
-                                onChange={(e) => onFilterChange && onFilterChange({ endDate: e.target.value })}
-                                sx={{ width: 145, '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '12px' } }}
-                            />
-                        </Stack>
-                    </Collapse>
-
-                    {/* Extra Children (e.g. year picker) */}
-                    {children}
-
+                {/* Right: Action buttons only (compact) */}
+                <Stack direction="row" spacing={0.75} alignItems="center">
                     {/* Filters Toggle */}
                     {onToggleFilters && (
-                        <Tooltip title="Advanced Filters">
-                            <Box
-                                onClick={onToggleFilters}
-                                sx={{
-                                    display: 'flex', alignItems: 'center', gap: 0.75,
-                                    px: 1.5, py: 0.75, borderRadius: '10px', cursor: 'pointer',
-                                    fontSize: '13px', fontWeight: 600, transition: 'all 0.15s',
-                                    ...(showFilters ? {
-                                        bgcolor: '#eff6ff', color: '#3b82f6', border: '1px solid #bfdbfe',
-                                    } : {
-                                        bgcolor: '#f1f5f9', color: '#64748b', border: '1px solid transparent',
-                                        '&:hover': { bgcolor: '#e2e8f0', color: '#334155' },
-                                    }),
-                                }}
-                            >
-                                <Filter size={15} />
-                                Filters
-                                {activeCount > 0 && (
-                                    <Box sx={{
-                                        ml: 0.5, minWidth: 18, height: 18, borderRadius: '9px',
-                                        bgcolor: '#3b82f6', color: 'white', fontSize: '10px', fontWeight: 700,
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    }}>
-                                        {activeCount}
-                                    </Box>
-                                )}
-                            </Box>
-                        </Tooltip>
+                        <Box onClick={onToggleFilters} sx={{
+                            display: 'flex', alignItems: 'center', gap: 0.5,
+                            px: 1.2, py: 0.6, borderRadius: 'var(--radius-md, 8px)', cursor: 'pointer',
+                            fontSize: '12px', fontWeight: 600, transition: 'all 0.15s',
+                            ...(showFilters ? {
+                                bgcolor: 'var(--brand-light, #eff6ff)', color: 'var(--brand, #3b82f6)',
+                                border: '1px solid #bfdbfe',
+                            } : {
+                                bgcolor: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #64748b)',
+                                border: '1px solid var(--border, #e2e8f0)',
+                                '&:hover': { borderColor: 'var(--brand, #3b82f6)', color: 'var(--text, #334155)' },
+                            }),
+                        }}>
+                            <Filter size={13} />
+                            Filters
+                            {activeCount > 0 && (
+                                <Box sx={{
+                                    ml: 0.3, minWidth: 16, height: 16, borderRadius: '8px',
+                                    bgcolor: 'var(--brand, #3b82f6)', color: 'white', fontSize: '9px', fontWeight: 700,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}>{activeCount}</Box>
+                            )}
+                        </Box>
                     )}
 
                     {/* Run Report */}
                     {onRunReport && (
-                        <Box
-                            onClick={() => !loading && onRunReport()}
-                            sx={{
-                                display: 'flex', alignItems: 'center', gap: 0.75,
-                                px: 2, py: 0.75, borderRadius: '10px', cursor: loading ? 'not-allowed' : 'pointer',
-                                fontSize: '13px', fontWeight: 700, transition: 'all 0.15s',
-                                bgcolor: '#0f172a', color: 'white',
-                                boxShadow: '0 2px 8px rgba(15, 23, 42, 0.2)',
-                                opacity: loading ? 0.7 : 1,
-                                '&:hover': { bgcolor: '#1e293b', boxShadow: '0 4px 12px rgba(15, 23, 42, 0.3)' },
-                            }}
-                        >
-                            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-                            {loading ? 'Loading...' : 'Run Report'}
+                        <Box onClick={() => !loading && onRunReport()} sx={{
+                            display: 'flex', alignItems: 'center', gap: 0.5,
+                            px: 1.5, py: 0.6, borderRadius: 'var(--radius-md, 8px)',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontSize: '12px', fontWeight: 600, transition: 'all 0.15s',
+                            bgcolor: 'var(--brand, #3b82f6)', color: 'white',
+                            opacity: loading ? 0.7 : 1,
+                            '&:hover': { bgcolor: 'var(--brand-dark, #2563eb)' },
+                        }}>
+                            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+                            {loading ? 'Loading...' : 'Run report'}
                         </Box>
                     )}
 
                     {/* Export */}
                     {onExport && (
                         <Tooltip title="Export CSV">
-                            <Box
-                                onClick={onExport}
-                                sx={{
-                                    display: 'flex', alignItems: 'center', gap: 0.75,
-                                    px: 1.5, py: 0.75, borderRadius: '10px', cursor: 'pointer',
-                                    fontSize: '13px', fontWeight: 600, transition: 'all 0.15s',
-                                    bgcolor: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0',
-                                    '&:hover': { bgcolor: '#e2e8f0', color: '#0f172a' },
-                                }}
-                            >
-                                <Download size={14} />
+                            <Box onClick={onExport} sx={{
+                                display: 'flex', alignItems: 'center', gap: 0.5,
+                                px: 1.2, py: 0.6, borderRadius: 'var(--radius-md, 8px)', cursor: 'pointer',
+                                fontSize: '12px', fontWeight: 600, transition: 'all 0.15s',
+                                bgcolor: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)',
+                                border: '1px solid var(--border, #e2e8f0)',
+                                '&:hover': { borderColor: 'var(--brand, #3b82f6)', color: 'var(--text, #0f172a)' },
+                            }}>
+                                <Download size={13} />
                                 Export
                             </Box>
                         </Tooltip>
@@ -241,7 +170,51 @@ const PremiumReportHeader = ({
                 </Stack>
             </Box>
 
-            {/* ── Row 2: Active Filter Chips ── */}
+            {/* ── Row 2: Date presets + custom dates (separated from title for breathing room) ── */}
+            {!hideDatePresets && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5, flexWrap: 'wrap' }}>
+                    <Box sx={{
+                        display: 'flex', alignItems: 'center', gap: '2px',
+                        bgcolor: 'var(--bg-card, #fff)', borderRadius: 'var(--radius-md, 8px)',
+                        border: '1px solid var(--border, #e2e8f0)', p: '3px',
+                    }}>
+                        {DATE_PRESETS.map(p => (
+                            <Box key={p.key} onClick={() => handlePreset(p.key)} sx={{
+                                px: 1.2, py: 0.45, borderRadius: 'var(--radius-sm, 6px)',
+                                fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                                transition: 'all 0.12s ease', userSelect: 'none', whiteSpace: 'nowrap',
+                                ...(activePreset === p.key ? {
+                                    bgcolor: 'var(--brand, #3b82f6)', color: '#fff',
+                                } : {
+                                    bgcolor: 'transparent', color: 'var(--text-secondary, #64748b)',
+                                    '&:hover': { color: 'var(--text, #334155)', bgcolor: 'var(--border-light, #f1f5f9)' },
+                                }),
+                            }}>
+                                {p.label}
+                            </Box>
+                        ))}
+                    </Box>
+
+                    {/* Custom Date Inputs */}
+                    <Collapse in={activePreset === 'CUSTOM'} orientation="horizontal" unmountOnExit>
+                        <Stack direction="row" spacing={0.75} alignItems="center">
+                            <TextField type="date" size="small" value={filters?.startDate || ''}
+                                onChange={(e) => onFilterChange && onFilterChange({ startDate: e.target.value })}
+                                sx={{ width: 140, '& .MuiOutlinedInput-root': { borderRadius: '6px', fontSize: '11px', height: 30 } }}
+                            />
+                            <Typography sx={{ fontSize: '11px', color: 'var(--text-secondary, #94a3b8)' }}>to</Typography>
+                            <TextField type="date" size="small" value={filters?.endDate || ''}
+                                onChange={(e) => onFilterChange && onFilterChange({ endDate: e.target.value })}
+                                sx={{ width: 140, '& .MuiOutlinedInput-root': { borderRadius: '6px', fontSize: '11px', height: 30 } }}
+                            />
+                        </Stack>
+                    </Collapse>
+
+                    {children}
+                </Box>
+            )}
+
+            {/* ── Row 3: Active Filter Chips ── */}
             {filters && !loading && (
                 <ActiveFilterChips filters={filters} onRemove={handleRemoveFilter} />
             )}

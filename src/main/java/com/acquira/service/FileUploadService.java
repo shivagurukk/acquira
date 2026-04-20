@@ -378,8 +378,33 @@ public class FileUploadService {
         return null;
     }
 
+    private static final java.util.Set<String> ALLOWED_EXTENSIONS = java.util.Set.of(
+            ".xlsx", ".xls", ".csv", ".tsv"
+    );
+
     private String saveFile(MultipartFile file) throws IOException {
-        String fileName = System.currentTimeMillis() + "_" + file.getOriginalFilename();
+        // ── Validation ──────────────────────────────────────────────
+        String originalName = file.getOriginalFilename();
+
+        // 1. Empty file check
+        if (file.isEmpty() || file.getSize() == 0) {
+            throw new IllegalArgumentException("Upload rejected: file is empty.");
+        }
+
+        // 2. Extension check
+        if (originalName == null || originalName.isBlank()) {
+            throw new IllegalArgumentException("Upload rejected: filename is missing.");
+        }
+        String lowerName = originalName.toLowerCase();
+        boolean allowed = ALLOWED_EXTENSIONS.stream().anyMatch(lowerName::endsWith);
+        if (!allowed) {
+            throw new IllegalArgumentException(
+                    "Upload rejected: unsupported file type. Allowed: .xlsx, .csv, .tsv, .xls");
+        }
+
+        // 3. Sanitize filename (remove path traversal characters)
+        String safeName = originalName.replaceAll("[^a-zA-Z0-9._-]", "_");
+        String fileName = System.currentTimeMillis() + "_" + safeName;
         Path path = Paths.get(UPLOAD_DIR + fileName);
         Files.copy(file.getInputStream(), path);
         return path.toAbsolutePath().toString();

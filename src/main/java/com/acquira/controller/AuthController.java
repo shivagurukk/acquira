@@ -1,6 +1,7 @@
 package com.acquira.controller;
 
 import com.acquira.security.JwtUtil;
+import com.acquira.service.RateLimiterService;
 import com.acquira.service.TenantService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -11,8 +12,6 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -25,18 +24,14 @@ public class AuthController {
     private final com.acquira.repository.SysUserGroupRepository groupRepository;
     private final com.acquira.repository.UserRepository userRepository;
     private final com.acquira.repository.UserTenantAccessRepository userTenantAccessRepository;
-
-    // ===== SECURITY FIX: Simple in-memory rate limiter =====
-    // Key: IP address, Value: [attempt count, first attempt timestamp]
-    private final ConcurrentHashMap<String, long[]> loginAttempts = new ConcurrentHashMap<>();
-    private static final int MAX_ATTEMPTS = 5;
-    private static final long WINDOW_MS = 60_000; // 1 minute
+    private final RateLimiterService rateLimiterService;
 
     public AuthController(JwtUtil jwtUtil, UserDetailsService userDetailsService, TenantService tenantService,
             AuthenticationManager authenticationManager,
             com.acquira.repository.SysUserGroupRepository groupRepository,
             com.acquira.repository.UserRepository userRepository,
-            com.acquira.repository.UserTenantAccessRepository userTenantAccessRepository) {
+            com.acquira.repository.UserTenantAccessRepository userTenantAccessRepository,
+            RateLimiterService rateLimiterService) {
         this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
         this.tenantService = tenantService;
@@ -44,6 +39,7 @@ public class AuthController {
         this.groupRepository = groupRepository;
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
+        this.rateLimiterService = rateLimiterService;
     }
 
     @PostMapping("/login")
@@ -51,16 +47,16 @@ public class AuthController {
             @RequestBody AuthRequest authenticationRequest,
             jakarta.servlet.http.HttpServletRequest httpRequest) {
 
-        // ===== SECURITY FIX: Input validation =====
+        // Input validation
         if (authenticationRequest.getUsername() == null || authenticationRequest.getUsername().trim().isEmpty()
                 || authenticationRequest.getPassword() == null
                 || authenticationRequest.getPassword().trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Username and password are required"));
         }
 
-        // ===== SECURITY FIX: Rate limiting =====
-        String clientIp = getClientIp(httpRequest);
-        if (isRateLimited(clientIp)) {
+        // Rate limiting
+        String clientIp = rateLimiterService.getClientIp(httpRequest);
+        if (rateLimiterService.isRateLimited(clientIp)) {
             return ResponseEntity.status(429).body(Map.of(
                     "error", "Too many login attempts. Please try again later."));
         }
@@ -71,12 +67,12 @@ public class AuthController {
                             authenticationRequest.getUsername(),
                             authenticationRequest.getPassword()));
         } catch (BadCredentialsException e) {
-            recordFailedAttempt(clientIp);
+            rateLimiterService.recordFailedAttempt(clientIp);
             return ResponseEntity.status(401).body(Map.of("error", "Incorrect username or password"));
         }
 
         // Successful login — clear rate limit
-        loginAttempts.remove(clientIp);
+        rateLimiterService.clearAttempts(clientIp);
 
         final UserDetails userDetails = userDetailsService.loadUserByUsername(authenticationRequest.getUsername());
         final String accessToken = jwtUtil.generateToken(userDetails);
@@ -100,6 +96,38 @@ public class AuthController {
                     .findByUserAndTenant_TenantId(user, effectiveTenantId);
             if (access.isPresent() && access.get().getSysUserGroup() != null) {
                 menus = access.get().getSysUserGroup().getMenus();
+            } else {
+                String userRole = user.getRole();
+                // SECURITY FIX: Only SUPER_ADMIN gets fallback to "Super Admin" group menus.
+                // Bank Admin without an explicit access row for this tenant gets NO menus
+                // (they shouldn't be accessing this tenant at all).
+                if ("ROLE_SUPER_ADMIN".equals(userRole)) {
+                    // Super Admin: try to find menus from any existing access, then fallback to Super Admin group
+                    List<com.acquira.model.UserTenantAccess> allAccess = userTenantAccessRepository.findByUser(user);
+                    allAccess.stream()
+                            .filter(a -> a.getSysUserGroup() != null)
+                            .findFirst()
+                            .ifPresent(a -> menus.addAll(a.getSysUserGroup().getMenus()));
+                    if (menus.isEmpty()) {
+                        groupRepository.findAll().stream()
+                                .filter(g -> "Super Admin".equalsIgnoreCase(g.getGroupName()))
+                                .findFirst()
+                                .ifPresent(g -> menus.addAll(g.getMenus()));
+                    }
+                } else if ("ROLE_ADMIN".equals(userRole)) {
+                    // Bank Admin: try to find menus from any existing access, then fallback to Bank Admin group
+                    List<com.acquira.model.UserTenantAccess> allAccess = userTenantAccessRepository.findByUser(user);
+                    allAccess.stream()
+                            .filter(a -> a.getSysUserGroup() != null)
+                            .findFirst()
+                            .ifPresent(a -> menus.addAll(a.getSysUserGroup().getMenus()));
+                    if (menus.isEmpty()) {
+                        groupRepository.findAll().stream()
+                                .filter(g -> "Bank Admin".equalsIgnoreCase(g.getGroupName()))
+                                .findFirst()
+                                .ifPresent(g -> menus.addAll(g.getMenus()));
+                    }
+                }
             }
         }
 
@@ -110,11 +138,15 @@ public class AuthController {
         response.put("defaultTenantId", defaultTenantId);
         response.put("roles", userDetails.getAuthorities());
         response.put("menus", menus);
+        // Include username and role so frontend can display them without JWT decode
+        response.put("username", user != null ? user.getUsername() : authenticationRequest.getUsername());
+        response.put("userRole", user != null ? user.getRole() : "ROLE_USER");
+        response.put("displayName", user != null ? user.getDisplayName() : null);
+        response.put("mustChangePassword", user != null && Boolean.TRUE.equals(user.getMustChangePassword()));
 
         return ResponseEntity.ok(response);
     }
 
-    // ===== Refresh Token Endpoint =====
     @PostMapping("/refresh")
     public ResponseEntity<?> refreshToken(@RequestBody Map<String, String> payload) {
         String refreshToken = payload.get("refreshToken");
@@ -134,13 +166,11 @@ public class AuthController {
                 return ResponseEntity.status(401).body(Map.of("error", "Expired or invalid refresh token"));
             }
 
-            // Check user is still active
             com.acquira.model.User dbUser = userRepository.findByUsername(username).orElse(null);
             if (dbUser == null || !dbUser.isActive()) {
                 return ResponseEntity.status(401).body(Map.of("error", "User account is disabled"));
             }
 
-            // Issue new tokens
             String newAccessToken = jwtUtil.generateToken(userDetails);
             String newRefreshToken = jwtUtil.generateRefreshToken(username);
 
@@ -175,10 +205,6 @@ public class AuthController {
         Set<com.acquira.model.SysMenu> menus = new HashSet<>();
 
         if (viewId != null) {
-            // Combined View: Fetch view to get tenant IDs
-            // For menu generation, we'll currently use the PRIMARY tenant of the view
-            // (first one)
-            // or perhaps a specific logic. For now: First valid tenant user has access to.
             List<com.acquira.model.UserCombinedView> views = tenantService.getCombinedViews(username);
             final Long finalViewId = viewId;
             com.acquira.model.UserCombinedView view = views.stream()
@@ -192,30 +218,58 @@ public class AuthController {
                     try {
                         tenantId = Long.parseLong(ids[0].trim());
                     } catch (Exception e) {
+                        // ignore parse error
                     }
                 }
             }
         }
 
+        boolean isSuperAdmin = "ROLE_SUPER_ADMIN".equals(user.getRole());
+
         if (tenantId != null) {
+            // SECURITY FIX: Validate Bank Admin has access to target tenant
+            if (!isSuperAdmin) {
+                boolean hasAccess = userTenantAccessRepository.findByUser(user).stream()
+                        .anyMatch(a -> a.getTenant().getTenantId().equals(tenantId));
+                if (!hasAccess) {
+                    return ResponseEntity.status(403).body(Map.of("error", "Access denied for this tenant"));
+                }
+            }
+
             Optional<com.acquira.model.UserTenantAccess> access = userTenantAccessRepository
                     .findByUserAndTenant_TenantId(user, tenantId);
             if (access.isPresent() && access.get().getSysUserGroup() != null) {
                 menus = access.get().getSysUserGroup().getMenus();
+            } else if (isSuperAdmin) {
+                // Super Admin fallback: use menus from any access, then fallback to Super Admin group
+                List<com.acquira.model.UserTenantAccess> allAccess = userTenantAccessRepository.findByUser(user);
+                allAccess.stream()
+                        .filter(a -> a.getSysUserGroup() != null)
+                        .findFirst()
+                        .ifPresent(a -> menus.addAll(a.getSysUserGroup().getMenus()));
+                if (menus.isEmpty()) {
+                    groupRepository.findAll().stream()
+                            .filter(g -> "Super Admin".equalsIgnoreCase(g.getGroupName()))
+                            .findFirst()
+                            .ifPresent(g -> menus.addAll(g.getMenus()));
+                }
             }
+            // Bank Admin without access row: menus stays empty (they shouldn't be here)
         }
 
         Map<String, Object> response = new HashMap<>();
         response.put("menus", menus);
         response.put("activeTenantId", tenantId);
 
-        // Include group name for role context
         if (tenantId != null) {
             Optional<com.acquira.model.UserTenantAccess> accessObj = userTenantAccessRepository
                     .findByUserAndTenant_TenantId(user, tenantId);
             if (accessObj.isPresent() && accessObj.get().getSysUserGroup() != null) {
                 response.put("groupName", accessObj.get().getSysUserGroup().getGroupName());
                 response.put("roleInTenant", accessObj.get().getRoleInTenant());
+            } else if (isSuperAdmin) {
+                response.put("groupName", "SUPER_ADMIN");
+                response.put("roleInTenant", "ROLE_SUPER_ADMIN");
             }
         }
 
@@ -238,38 +292,6 @@ public class AuthController {
         response.put("roles", auth.getAuthorities());
 
         return ResponseEntity.ok(response);
-    }
-
-    // ===== Rate Limiting Helpers =====
-    private boolean isRateLimited(String clientIp) {
-        long now = System.currentTimeMillis();
-        long[] data = loginAttempts.get(clientIp);
-        if (data == null)
-            return false;
-        if (now - data[1] > WINDOW_MS) {
-            loginAttempts.remove(clientIp);
-            return false;
-        }
-        return data[0] >= MAX_ATTEMPTS;
-    }
-
-    private void recordFailedAttempt(String clientIp) {
-        long now = System.currentTimeMillis();
-        loginAttempts.compute(clientIp, (key, data) -> {
-            if (data == null || now - data[1] > WINDOW_MS) {
-                return new long[] { 1, now };
-            }
-            data[0]++;
-            return data;
-        });
-    }
-
-    private String getClientIp(jakarta.servlet.http.HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isEmpty()) {
-            return xff.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
     }
 }
 

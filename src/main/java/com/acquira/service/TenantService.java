@@ -33,11 +33,11 @@ public class TenantService {
         com.acquira.model.User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // Admin Access: Return ALL tenants
-        // Supports both global roles (ROLE_SUPER_ADMIN) and checks against the User's
-        // primary role
+        // SECURITY FIX: Only SUPER_ADMIN sees ALL tenants.
+        // Bank Admin (ROLE_ADMIN) sees only their explicitly assigned tenants,
+        // just like regular users. This prevents cross-tenant data access.
         String userRole = user.getRole();
-        if ("ROLE_SUPER_ADMIN".equals(userRole) || "ROLE_ADMIN".equals(userRole)) {
+        if ("ROLE_SUPER_ADMIN".equals(userRole)) {
             return tenantRepository.findAll();
         }
 
@@ -81,9 +81,9 @@ public class TenantService {
             return accessList.get(0).getTenant().getTenantId();
         }
 
-        // 3. Super admin fallback — first tenant in system
+        // 3. Super admin fallback — first tenant in system (SUPER_ADMIN only)
         String role = user.getRole();
-        if ("ROLE_SUPER_ADMIN".equals(role) || "ROLE_ADMIN".equals(role)) {
+        if ("ROLE_SUPER_ADMIN".equals(role)) {
             List<Tenant> all = tenantRepository.findAll();
             return all.isEmpty() ? null : all.get(0).getTenantId();
         }

@@ -62,7 +62,12 @@ const IntegrationHub = lazy(() => import('./pages/admin/IntegrationHub'));
 const EmailCampaignHub = lazy(() => import('./pages/admin/EmailCampaignHub'));
 const SsoSettings = lazy(() => import('./pages/admin/SsoSettings'));
 const DataMigration = lazy(() => import('./pages/admin/DataMigration'));
+const SecuritySettings = lazy(() => import('./pages/admin/SecuritySettings'));
+const AlertsNotifications = lazy(() => import('./pages/admin/AlertsNotifications'));
+const ApiManagement = lazy(() => import('./pages/admin/ApiManagement'));
 const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
+// S3 report storage settings
+const S3Settings = lazy(() => import('./pages/admin/S3Settings'));
 
 function App() {
   return (
@@ -106,7 +111,6 @@ function App() {
               <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
               <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
               <Route path="/business/comparison" element={<MerchantComparison />} />
-              <Route path="/business/report-manager" element={<MerchantReportManager />} />
               <Route path="/business/opportunity" element={<OpportunityIntelligence />} />
               <Route path="/business/groups" element={<GroupReports />} />
               <Route path="/explorer" element={<DataExplorer />} />
@@ -122,6 +126,7 @@ function App() {
               <Route path="/finance/lists" element={<FinanceLists />} />
 
               {/* Operations */}
+              <Route path="/business/report-manager" element={<MerchantReportManager />} />
               <Route path="/upload" element={<UploadPage />} />
               <Route path="/ops/server-file" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><ServerFileProcessor /></RoleGuard>
@@ -141,6 +146,9 @@ function App() {
               } />
               <Route path="/admin/smtp-settings" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SmtpSettings /></RoleGuard>
+              } />
+              <Route path="/admin/s3-settings" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><S3Settings /></RoleGuard>
               } />
               <Route path="/admin/audit-logs" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><AuditLogViewer /></RoleGuard>
@@ -171,6 +179,15 @@ function App() {
               } />
               <Route path="/admin/data-migration" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><DataMigration /></RoleGuard>
+              } />
+              <Route path="/admin/security-settings" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SecuritySettings /></RoleGuard>
+              } />
+              <Route path="/admin/alerts" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><AlertsNotifications /></RoleGuard>
+              } />
+              <Route path="/admin/api-management" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><ApiManagement /></RoleGuard>
               } />
             </Route>
           </Routes>

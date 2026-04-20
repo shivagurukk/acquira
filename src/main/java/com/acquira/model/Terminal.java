@@ -1,17 +1,22 @@
 package com.acquira.model;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.EqualsAndHashCode;
 
 @Entity
 @Table(name = "dim_terminal", uniqueConstraints = {
         @UniqueConstraint(columnNames = { "tenant_id", "internal_id" })
 })
-@Data
+@Getter
+@Setter
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Terminal {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "terminal_id")
+    @EqualsAndHashCode.Include
     private Long terminalId;
 
     @Column(name = "tenant_id")
@@ -33,76 +38,4 @@ public class Terminal {
 
     @Column(name = "created_date")
     private java.time.LocalDateTime createdDate;
-
-    public Long getTerminalId() {
-        return terminalId;
-    }
-
-    public void setTerminalId(Long terminalId) {
-        this.terminalId = terminalId;
-    }
-
-    public Long getTenantId() {
-        return tenantId;
-    }
-
-    public void setTenantId(Long tenantId) {
-        this.tenantId = tenantId;
-    }
-
-    public String getInternalId() {
-        return internalId;
-    }
-
-    public void setInternalId(String internalId) {
-        this.internalId = internalId;
-    }
-
-    public Long getStoreId() {
-        return storeId;
-    }
-
-    public void setStoreId(Long storeId) {
-        this.storeId = storeId;
-    }
-
-    public String getTid() {
-        return tid;
-    }
-
-    public void setTid(String tid) {
-        this.tid = tid;
-    }
-
-    public String getDeviceNumber() {
-        return deviceNumber;
-    }
-
-    public void setDeviceNumber(String deviceNumber) {
-        this.deviceNumber = deviceNumber;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public void setType(String type) {
-        this.type = type;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public void setStatus(String status) {
-        this.status = status;
-    }
-
-    public java.time.LocalDateTime getCreatedDate() {
-        return createdDate;
-    }
-
-    public void setCreatedDate(java.time.LocalDateTime createdDate) {
-        this.createdDate = createdDate;
-    }
 }

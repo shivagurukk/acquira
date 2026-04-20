@@ -13,23 +13,23 @@
         <!-- ROW 1: MoM Comparison Table (compact) -->
         <div class="card mb-6" style="padding: 0; overflow: hidden;">
             <div style="display: flex; background: #F9FAFB; border-bottom: 1px solid #E5E7EB;">
-                <div style="flex: 1; padding: 5px 14px; font-size: 7.5px; font-weight: 800; color: #6B7280; letter-spacing: 0.05em;">METRIC</div>
-                <div style="width: 120px; text-align: center; padding: 5px; font-size: 7.5px; font-weight: 800; color: #6B7280;">PREV MONTH</div>
-                <div style="width: 120px; text-align: center; padding: 5px; font-size: 7.5px; font-weight: 800; color: #1E3A8A; background: #EFF6FF;">CURRENT MONTH</div>
-                <div style="width: 80px; text-align: center; padding: 5px; font-size: 7.5px; font-weight: 800; color: #6B7280;">CHANGE %</div>
+                <div style="flex: 1; padding: 5px 14px; font-size: 8px; font-weight: 800; color: #6B7280; letter-spacing: 0.05em;">METRIC</div>
+                <div style="width: 120px; text-align: center; padding: 5px; font-size: 8px; font-weight: 800; color: #6B7280;">PREV MONTH</div>
+                <div style="width: 120px; text-align: center; padding: 5px; font-size: 8px; font-weight: 800; color: #1E3A8A; background: #EFF6FF;">CURRENT MONTH</div>
+                <div style="width: 80px; text-align: center; padding: 5px; font-size: 8px; font-weight: 800; color: #6B7280;">CHANGE %</div>
             </div>
             <!-- Sales Row -->
             <div style="display: flex; align-items: center; border-bottom: 1px solid #F3F4F6;">
                 <div style="flex: 1; padding: 8px 14px; display: flex; align-items: center; gap: 8px;">
                     <div style="width: 24px; height: 24px; background: #DBEAFE; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#1E3A8A" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#1E3A8A" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
                     </div>
-                    <div style="font-size: 9px; font-weight: 700; color: #111827;">Total Sales (<span th:text="${dto.currencyCode}">AED</span>)</div>
+                    <div style="font-size: 9px; font-weight: 700; color: #111827;">Sales Volume (<span th:text="${dto.currencyCode}">AED</span>)</div>
                 </div>
                 <div style="width: 120px; text-align: center; font-size: 13px; font-weight: 700; color: #9CA3AF;" th:text="${dto.overview.prevSales != null ? dto.overview.prevSales.formattedValue : '-'}">-</div>
                 <div style="width: 120px; text-align: center; font-size: 13px; font-weight: 900; color: #111827; background: #F8FAFF;" th:text="${dto.overview.sales.formattedValue}">0</div>
                 <div style="width: 80px; text-align: center;">
-                    <span th:style="${dto.overview.sales.momGrowth >= 0 ? 'font-size:10px;font-weight:800;color:#059669' : 'font-size:10px;font-weight:800;color:#E87461'}" th:text="${(dto.overview.sales.momGrowth >= 0 ? '+' : '') + #numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</span>
+                    <span th:style="${dto.overview.sales.momGrowth >= 0 ? 'font-size:10px;font-weight:800;color:#059669' : 'font-size:10px;font-weight:800;color:#E87461'}" th:text="${(dto.overview.sales.momGrowth >= 0 ? '+' : '') + #numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</span>
                 </div>
             </div>
             <!-- Transactions Row -->
@@ -43,7 +43,7 @@
                 <div style="width: 120px; text-align: center; font-size: 13px; font-weight: 700; color: #9CA3AF;" th:text="${dto.overview.prevTransactions != null ? dto.overview.prevTransactions.formattedValue : '-'}">-</div>
                 <div style="width: 120px; text-align: center; font-size: 13px; font-weight: 900; color: #111827; background: #F8FAFF;" th:text="${dto.overview.transactions.formattedValue}">0</div>
                 <div style="width: 80px; text-align: center;">
-                    <span th:style="${dto.overview.transactions.momGrowth >= 0 ? 'font-size:10px;font-weight:800;color:#059669' : 'font-size:10px;font-weight:800;color:#E87461'}" th:text="${(dto.overview.transactions.momGrowth >= 0 ? '+' : '') + #numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '%'}">0%</span>
+                    <span th:style="${dto.overview.transactions.momGrowth >= 0 ? 'font-size:10px;font-weight:800;color:#059669' : 'font-size:10px;font-weight:800;color:#E87461'}" th:text="${(dto.overview.transactions.momGrowth >= 0 ? '+' : '') + #numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0) + '%'}">0%</span>
                 </div>
             </div>
             <!-- Customers Row -->
@@ -57,7 +57,7 @@
                 <div style="width: 120px; text-align: center; font-size: 13px; font-weight: 700; color: #9CA3AF;" th:text="${dto.overview.prevCustomers != null ? dto.overview.prevCustomers.formattedValue : '-'}">-</div>
                 <div style="width: 120px; text-align: center; font-size: 13px; font-weight: 900; color: #111827; background: #F8FAFF;" th:text="${dto.overview.customers.formattedValue}">0</div>
                 <div style="width: 80px; text-align: center;">
-                    <span th:style="${dto.overview.customers.momGrowth >= 0 ? 'font-size:10px;font-weight:800;color:#059669' : 'font-size:10px;font-weight:800;color:#E87461'}" th:text="${(dto.overview.customers.momGrowth >= 0 ? '+' : '') + #numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '%'}">0%</span>
+                    <span th:style="${dto.overview.customers.momGrowth >= 0 ? 'font-size:10px;font-weight:800;color:#059669' : 'font-size:10px;font-weight:800;color:#E87461'}" th:text="${(dto.overview.customers.momGrowth >= 0 ? '+' : '') + #numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 0) + '%'}">0%</span>
                 </div>
             </div>
             <!-- Avg TXN Row -->
@@ -71,7 +71,7 @@
                 <div style="width: 120px; text-align: center; font-size: 13px; font-weight: 700; color: #9CA3AF;" th:text="${dto.overview.prevAvgTxnValue != null ? dto.overview.prevAvgTxnValue.formattedValue : '-'}">-</div>
                 <div style="width: 120px; text-align: center; font-size: 13px; font-weight: 900; color: #111827; background: #F8FAFF;" th:text="${dto.overview.avgTxnValue.formattedValue}">0</div>
                 <div style="width: 80px; text-align: center;">
-                    <span th:style="${dto.overview.avgTxnValue.momGrowth >= 0 ? 'font-size:10px;font-weight:800;color:#059669' : 'font-size:10px;font-weight:800;color:#E87461'}" th:text="${(dto.overview.avgTxnValue.momGrowth >= 0 ? '+' : '') + #numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2) + '%'}">0%</span>
+                    <span th:style="${dto.overview.avgTxnValue.momGrowth >= 0 ? 'font-size:10px;font-weight:800;color:#059669' : 'font-size:10px;font-weight:800;color:#E87461'}" th:text="${(dto.overview.avgTxnValue.momGrowth >= 0 ? '+' : '') + #numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 0) + '%'}">0%</span>
                 </div>
             </div>
         </div>
@@ -80,25 +80,25 @@
         <div class="grid-4 mb-6">
             <div class="card" style="flex-direction: row; align-items: center; gap: 6px; padding: 8px 10px; border-top: 3px solid #1E3A8A;">
                 <div>
-                    <div style="font-size: 7px; color: #6B7280; font-weight: 700;">MAX DAILY SALES (<span th:text="${dto.currencyCode}">AED</span>)</div>
+                    <div style="font-size: 8px; color: #6B7280; font-weight: 700;">MAX DAILY SALES (<span th:text="${dto.currencyCode}">AED</span>)</div>
                     <div style="font-size: 14px; font-weight: 900; color: #111827;" th:text="${dto.overview.peakStats.maxDailySales != null ? dto.overview.peakStats.maxDailySales.formattedValue : '-'}">-</div>
                 </div>
             </div>
             <div class="card" style="flex-direction: row; align-items: center; gap: 6px; padding: 8px 10px; border-top: 3px solid #047857;">
                 <div>
-                    <div style="font-size: 7px; color: #6B7280; font-weight: 700;">PEAK DAY</div>
+                    <div style="font-size: 8px; color: #6B7280; font-weight: 700;">PEAK DAY</div>
                     <div style="font-size: 14px; font-weight: 900; color: #047857;" th:text="${dto.overview.peakDayName != null ? dto.overview.peakDayName : '-'}">-</div>
                 </div>
             </div>
             <div class="card" style="flex-direction: row; align-items: center; gap: 6px; padding: 8px 10px; border-top: 3px solid #0D9488;">
                 <div>
-                    <div style="font-size: 7px; color: #6B7280; font-weight: 700;">WEEKDAY REVENUE %</div>
+                    <div style="font-size: 8px; color: #6B7280; font-weight: 700;">WEEKDAY SALES SHARE</div>
                     <div style="font-size: 14px; font-weight: 900; color: #0D9488;" th:text="${dto.overview.weekdayRevenuePct != null ? dto.overview.weekdayRevenuePct + '%' : '-'}">-</div>
                 </div>
             </div>
             <div class="card" style="flex-direction: row; align-items: center; gap: 6px; padding: 8px 10px; border-top: 3px solid #6D28D9;">
                 <div>
-                    <div style="font-size: 7px; color: #6B7280; font-weight: 700;">WEEKEND REVENUE %</div>
+                    <div style="font-size: 8px; color: #6B7280; font-weight: 700;">WEEKEND SALES SHARE</div>
                     <div style="font-size: 14px; font-weight: 900; color: #6D28D9;" th:text="${dto.overview.weekendRevenuePct != null ? dto.overview.weekendRevenuePct + '%' : '-'}">-</div>
                 </div>
             </div>
@@ -109,21 +109,21 @@
             <div class="action-strip-item opportunity" style="padding: 10px 12px;">
                 <div class="strip-label">&#9650; WHAT IMPROVED</div>
                 <div class="strip-text" style="line-height: 1.7; font-size: 8px;">
-                    <span th:if="${dto.overview.sales.momGrowth > 0}">&#8226; Sales up <span style="font-weight:700" th:text="'+' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2)} + '%'">0%</span> vs prev month<br/></span>
-                    <span th:if="${dto.overview.transactions.momGrowth > 0}">&#8226; Transactions grew <span style="font-weight:700" th:text="'+' + ${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2)} + '%'">0%</span><br/></span>
-                    <span th:if="${dto.overview.customers.momGrowth > 0}">&#8226; Customer base expanded <span style="font-weight:700" th:text="'+' + ${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2)} + '%'">0%</span><br/></span>
-                    <span th:if="${dto.overview.avgTxnValue.momGrowth > 0}">&#8226; Avg ticket increased to <span style="font-weight:700" th:text="${dto.currencyCode} + ' ' + ${dto.overview.avgTxnValue.formattedValue}">0</span><br/></span>
-                    <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate >= 50}">&#8226; Retention strong at <span style="font-weight:700" th:text="${dto.loyalty.retentionRate + '%'}">0%</span><br/></span>
+                    <span th:if="${dto.overview.sales.momGrowth > 0}">&#8226; Sales volume up <span style="font-weight:700" th:text="'+' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0)} + '%'">0%</span> vs prev month<br/></span>
+                    <span th:if="${dto.overview.transactions.momGrowth > 0}">&#8226; Transactions grew <span style="font-weight:700" th:text="'+' + ${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0)} + '%'">0%</span><br/></span>
+                    <span th:if="${dto.overview.customers.momGrowth > 0}">&#8226; Unique customer count expanded <span style="font-weight:700" th:text="'+' + ${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 0)} + '%'">0%</span><br/></span>
+                    <span th:if="${dto.overview.avgTxnValue.momGrowth > 0}">&#8226; ATV increased to <span style="font-weight:700" th:text="${dto.currencyCode} + ' ' + ${dto.overview.avgTxnValue.formattedValue}">0</span><br/></span>
+                    <span th:if="${dto.loyalty.retentionRate != null}">&#8226; Retention rate at <span style="font-weight:700" th:text="${dto.loyalty.retentionRate + '%'}">0%</span><br/></span>
                 </div>
             </div>
             <div class="action-strip-item risk" style="padding: 10px 12px;">
-                <div class="strip-label">&#9660; WHAT DECLINED</div>
+                <div class="strip-label">&#9660; AREAS OF CHANGE</div>
                 <div class="strip-text" style="line-height: 1.7; font-size: 8px;">
-                    <span th:if="${dto.overview.sales.momGrowth < 0}">&#8226; Sales declined <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</span><br/></span>
-                    <span th:if="${dto.overview.transactions.momGrowth < 0}">&#8226; Transactions dropped <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '%'}">0%</span><br/></span>
-                    <span th:if="${dto.overview.customers.momGrowth < 0}">&#8226; Customer pace slowed <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '%'}">0%</span><br/></span>
-                    <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}">&#8226; Avg ticket fell <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2) + '%'}">0%</span><br/></span>
-                    <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate < 50}">&#8226; Retention below 50% — needs improvement<br/></span>
+                    <span th:if="${dto.overview.sales.momGrowth < 0}">&#8226; Sales volume down <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</span><br/></span>
+                    <span th:if="${dto.overview.transactions.momGrowth < 0}">&#8226; Transactions down <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0) + '%'}">0%</span><br/></span>
+                    <span th:if="${dto.overview.customers.momGrowth < 0}">&#8226; Unique customer count down <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 0) + '%'}">0%</span><br/></span>
+                    <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}">&#8226; ATV decreased <span style="font-weight:700;color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 0) + '%'}">0%</span><br/></span>
+
                 </div>
             </div>
         </div>

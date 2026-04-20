@@ -61,6 +61,7 @@ public class TransactionController {
     }
 
     @GetMapping("/export/csv")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public void exportTransactionsCsv(
             @RequestParam(required = false) String mid,
             @RequestParam(required = false) String sid,
@@ -73,8 +74,9 @@ public class TransactionController {
 
         Specification<Transaction> spec = createSpecification(mid, sid, tid, paymentDateFrom, paymentDateTo,
                 transactionDateFrom, transactionDateTo);
-        List<Transaction> transactions = transactionRepository.findAll(spec,
-                Sort.by(Sort.Direction.DESC, "paymentDate"));
+        // Cap export at 100,000 rows to prevent OOM on large datasets
+        org.springframework.data.domain.Pageable exportLimit = PageRequest.of(0, 100_000, Sort.by(Sort.Direction.DESC, "paymentDate"));
+        List<Transaction> transactions = transactionRepository.findAll(spec, exportLimit).getContent();
 
         response.setContentType("text/csv");
         response.setHeader("Content-Disposition", "attachment; filename=\"transactions.csv\"");
@@ -93,7 +95,7 @@ public class TransactionController {
                         t.getTxnCurrencyAmount() != null ? t.getTxnCurrencyAmount() : 0.0,
                         t.getTransactionType(),
                         t.getCardScheme(),
-                        t.getCardNumber(), // Mask if necessary, assuming already masked or internal use
+                        maskCardNumber(t.getCardNumber()),
                         t.getMerchantId(),
                         t.getStoreId(),
                         t.getTerminalId());
@@ -162,6 +164,14 @@ public class TransactionController {
         Specification<Store> spec = (root, query, cb) -> cb.like(root.get("sid"), "%" + sid + "%");
         List<Store> stores = storeRepository.findAll(spec);
         return stores.stream().map(Store::getStoreId).collect(Collectors.toList());
+    }
+
+    /** Mask card number to show only last 4 digits (PCI-DSS compliant) */
+    private String maskCardNumber(String cardNumber) {
+        if (cardNumber == null || cardNumber.length() < 4) return "****";
+        // If already masked (contains *), return as-is
+        if (cardNumber.contains("*")) return cardNumber;
+        return "****" + cardNumber.substring(cardNumber.length() - 4);
     }
 
     private List<Long> resolveTerminalIds(String tid) {

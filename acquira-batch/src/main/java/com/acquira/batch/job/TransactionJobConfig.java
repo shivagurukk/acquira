@@ -185,9 +185,152 @@ public class TransactionJobConfig {
         return reader;
     }
 
+    /**
+     * Processor: sets tenantId AND resolves raw TGEN509 codes:
+     *   - Card Type: CRD_TYP_CDE (e.g. 'VIDB') → 'DEBIT'/'CREDIT'/'PREPAID' via ref_card_scheme
+     *   - Currency: ISO numeric (e.g. '048') → alphabetic code (e.g. 'BHD') via ref_country
+     *   - Amounts: raw integers ÷ decimal_notation_value (e.g. ÷1000 for BHD, ÷100 for USD)
+     *   - MSF/VAT/Interchange: raw integers ÷ 10000
+     */
     @Bean @StepScope public ItemProcessor<StagingTransaction, StagingTransaction> transactionTenantProcessor(
             @Value("#{jobParameters['tenantId']}") Long tenantId) {
-        return item -> { item.setTenantId(tenantId); return item; };
+
+        // Pre-load ref tables into memory using a SEPARATE connection
+        // so that any SQL error does NOT poison the Spring Batch transaction.
+        java.util.Map<String, String> cardSchemeToType = new java.util.HashMap<>();
+        java.util.Map<String, String> isoNumericToCurrencyCode = new java.util.HashMap<>();
+        java.util.Map<String, Integer> currencyCodeToDecimal = new java.util.HashMap<>();
+        try (java.sql.Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(true); // independent of batch transaction
+
+            // Check if ref_card_scheme exists before querying
+            boolean hasCardScheme = false;
+            try (java.sql.ResultSet rs = conn.getMetaData().getTables(null, null, "ref_card_scheme", null)) {
+                hasCardScheme = rs.next();
+            }
+            if (hasCardScheme) {
+                try (java.sql.Statement stmt = conn.createStatement();
+                     java.sql.ResultSet rs = stmt.executeQuery("SELECT code, card_type FROM ref_card_scheme")) {
+                    while (rs.next()) {
+                        int ct = rs.getInt("card_type");
+                        String label = switch (ct) {
+                            case 2, 4 -> "DEBIT";
+                            case 0, 1 -> "CREDIT";
+                            case 3 -> "PREPAID";
+                            default -> "UNKNOWN";
+                        };
+                        cardSchemeToType.put(rs.getString("code"), label);
+                    }
+                }
+                System.out.printf("Loaded %d card scheme mappings from ref_card_scheme%n", cardSchemeToType.size());
+            } else {
+                System.err.println("WARN: ref_card_scheme table does not exist — card types will pass through as-is");
+            }
+
+            // Check if ref_country has iso_numeric + decimal_notation_value columns
+            boolean hasRefCountry = false;
+            try (java.sql.ResultSet rs = conn.getMetaData().getTables(null, null, "ref_country", null)) {
+                hasRefCountry = rs.next();
+            }
+            if (hasRefCountry) {
+                try (java.sql.Statement stmt = conn.createStatement();
+                     java.sql.ResultSet rs = stmt.executeQuery(
+                         "SELECT iso_numeric, currency_code, decimal_notation_value FROM ref_country WHERE iso_numeric IS NOT NULL")) {
+                    while (rs.next()) {
+                        String isoNum = rs.getString("iso_numeric");
+                        String curCode = rs.getString("currency_code");
+                        int decVal = rs.getInt("decimal_notation_value");
+                        if (isoNum != null && curCode != null) {
+                            isoNumericToCurrencyCode.put(isoNum.trim(), curCode.trim());
+                            currencyCodeToDecimal.put(curCode.trim(), decVal > 0 ? decVal : 100);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("WARN: ref_country missing iso_numeric/decimal_notation_value columns — currencies will pass through: " + e.getMessage());
+                }
+                System.out.printf("Loaded %d currency mappings from ref_country%n", isoNumericToCurrencyCode.size());
+            } else {
+                System.err.println("WARN: ref_country table does not exist — currencies will pass through as-is");
+            }
+        } catch (Exception e) {
+            System.err.println("WARN: Could not load ref tables (non-fatal) — raw codes will pass through: " + e.getMessage());
+        }
+
+        return item -> {
+            item.setTenantId(tenantId);
+
+            // ── Card Type resolution ──
+            String rawCardType = item.getCardType();
+            if (rawCardType != null && !rawCardType.isBlank()) {
+                String resolved = cardSchemeToType.get(rawCardType.trim());
+                if (resolved != null) {
+                    item.setCardType(resolved);
+                }
+                // If not in map, keep as-is (might already be 'DEBIT'/'CREDIT' from older queries)
+            }
+
+            // ── Currency resolution + amount division ──
+            java.math.BigDecimal BD_10000 = new java.math.BigDecimal("10000");
+
+            // Transaction currency
+            String rawTxnCcy = item.getTxnCurrency();
+            if (rawTxnCcy != null && !rawTxnCcy.isBlank()) {
+                String trimmed = rawTxnCcy.trim();
+                // Try exact match first, then zero-padded to 3 digits (e.g. "48" -> "048")
+                String resolved = isoNumericToCurrencyCode.get(trimmed);
+                if (resolved == null && trimmed.matches("\\d{1,2}")) {
+                    resolved = isoNumericToCurrencyCode.get(String.format("%03d", Integer.parseInt(trimmed)));
+                }
+                if (resolved != null) {
+                    item.setTxnCurrency(resolved);
+                    Integer decVal = currencyCodeToDecimal.get(resolved);
+                    if (decVal != null && item.getTxnCurrencyAmount() != null) {
+                        java.math.BigDecimal before = item.getTxnCurrencyAmount();
+                        item.setTxnCurrencyAmount(
+                            before.divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
+                    }
+                } else {
+                    System.out.printf("WARN: Txn currency '%s' not found in ref_country — no amount division applied%n", trimmed);
+                }
+                // If not numeric (already 'BHD'/'USD'), skip conversion
+            }
+
+            // Settlement currency
+            String rawSltCcy = item.getStoreBaseCurrency();
+            if (rawSltCcy != null && !rawSltCcy.isBlank()) {
+                String stlTrimmed = rawSltCcy.trim();
+                String resolved = isoNumericToCurrencyCode.get(stlTrimmed);
+                if (resolved == null && stlTrimmed.matches("\\d{1,2}")) {
+                    resolved = isoNumericToCurrencyCode.get(String.format("%03d", Integer.parseInt(stlTrimmed)));
+                }
+                if (resolved != null) {
+                    item.setStoreBaseCurrency(resolved);
+                    Integer decVal = currencyCodeToDecimal.get(resolved);
+                    if (decVal != null && item.getStoreBaseCurrencyAmount() != null) {
+                        item.setStoreBaseCurrencyAmount(
+                            item.getStoreBaseCurrencyAmount().divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
+                    }
+                    // Also divide Total Amount Settled (same currency)
+                    if (decVal != null && item.getTotalAmountSettled() != null) {
+                        item.setTotalAmountSettled(
+                            item.getTotalAmountSettled().divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
+                    }
+                }
+            }
+
+            // ── Fee division (raw 10000ths → actual decimals) ──
+            if (item.getMsf() != null) {
+                item.setMsf(item.getMsf().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
+            }
+            if (item.getVat() != null) {
+                item.setVat(item.getVat().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
+            }
+            if (item.getInterchangeFee() != null) {
+                item.setInterchangeFee(item.getInterchangeFee().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
+            }
+
+            return item;
+        };
     }
 
     @Bean public ItemWriter<StagingTransaction> highPerfTransactionWriter() {
@@ -421,7 +564,7 @@ public class TransactionJobConfig {
                 "total_txns, total_volume, total_msf, total_revenue) " +
                 "SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id, COUNT(*), SUM(txn_currency_amount), " +
                 "SUM(msf), SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)) " +
-                "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope + " " +
+                "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope + " " +
                 "GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id " +
                 "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET " +
                 "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, total_revenue=EXCLUDED.total_revenue",
@@ -462,7 +605,7 @@ public class TransactionJobConfig {
                 "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
                 "f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf) " +
                 "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
-                "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope + " " +
+                "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope + " " +
                 "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
                 "f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc " +
                 "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +
@@ -476,17 +619,17 @@ public class TransactionJobConfig {
                 jdbcTemplate.update(String.format(
                     "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                     "SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(txn_currency_amount) " +
-                    "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN %s " +
+                    "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN %s " +
                     "GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(%s,'UNKNOWN')) " +
                     "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                     "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume",
                     parts[0], parts[1], dateScope, parts[1]), tenantId, tenantId);
             }
 
-            // HOUR attribute
+            // HOUR attribute (skip rows where transaction_date is NULL)
             jdbcTemplate.update("INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                 "SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(txn_currency_amount) " +
-                "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope + " " +
+                "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND transaction_date IS NOT NULL AND DATE(payment_date) IN " + dateScope + " " +
                 "GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date) " +
                 "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                 "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId, tenantId);
@@ -497,7 +640,7 @@ public class TransactionJobConfig {
                 "CASE WHEN txn_currency_amount < 50 THEN '< 50' WHEN txn_currency_amount < 100 THEN '50-100' " +
                 "WHEN txn_currency_amount < 250 THEN '100-250' WHEN txn_currency_amount < 500 THEN '250-500' " +
                 "WHEN txn_currency_amount < 1000 THEN '500-1K' ELSE '1K+' END, COUNT(*), SUM(txn_currency_amount) " +
-                "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope + " " +
+                "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope + " " +
                 "GROUP BY tenant_id, merchant_id, DATE(payment_date), " +
                 "CASE WHEN txn_currency_amount < 50 THEN '< 50' WHEN txn_currency_amount < 100 THEN '50-100' " +
                 "WHEN txn_currency_amount < 250 THEN '100-250' WHEN txn_currency_amount < 500 THEN '250-500' " +
@@ -508,7 +651,7 @@ public class TransactionJobConfig {
             // 11. sum_monthly_card
             jdbcTemplate.update("INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend) " +
                 "SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(txn_currency_amount) " +
-                "FROM fact_transaction WHERE tenant_id=? AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN " + monthScope + " " +
+                "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN " + monthScope + " " +
                 "GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date,'YYYYMM'), card_number " +
                 "ON CONFLICT (tenant_id, merchant_id, month_key, card_number) DO UPDATE SET " +
                 "visit_count=EXCLUDED.visit_count, total_spend=EXCLUDED.total_spend", tenantId, tenantId);
@@ -623,10 +766,29 @@ public class TransactionJobConfig {
         if (val == null || val.trim().isEmpty()) return null;
         try {
             String v = val.trim();
-            if (v.matches("-?\\d+(\\.\\d+)?")) return java.time.LocalDateTime.of(1899, 12, 30, 0, 0).plusDays((long) Double.parseDouble(v));
+            if (v.matches("-?\\d+(\\.\\d+)?")) {
+                double serial = Double.parseDouble(v);
+                long days = (long) serial;
+                double fraction = serial - days;
+                java.time.LocalDateTime base = java.time.LocalDateTime.of(1899, 12, 30, 0, 0).plusDays(days);
+                if (fraction > 0) {
+                    long totalSeconds = Math.round(fraction * 86400);
+                    base = base.plusSeconds(totalSeconds);
+                }
+                return base;
+            }
             if (v.contains("T")) return java.time.LocalDateTime.parse(v);
-            if (v.contains(" ")) return java.time.LocalDateTime.parse(v, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-            return java.time.LocalDate.parse(v).atStartOfDay();
+            if (v.contains(" ")) {
+                // Try multiple datetime formats
+                for (String pattern : new String[]{"yyyy-MM-dd HH:mm:ss", "dd-MM-yyyy HH:mm:ss", "dd-MM-yyyy HH:mm", "M/d/yy H:mm", "M/d/yyyy H:mm:ss", "dd/MM/yyyy HH:mm:ss", "dd/MM/yyyy HH:mm"}) {
+                    try { return java.time.LocalDateTime.parse(v, java.time.format.DateTimeFormatter.ofPattern(pattern)); } catch (Exception ignored) {}
+                }
+            }
+            // Try date-only formats
+            for (String pattern : new String[]{"yyyy-MM-dd", "dd-MM-yyyy", "dd/MM/yyyy", "M/d/yyyy", "M/d/yy"}) {
+                try { return java.time.LocalDate.parse(v, java.time.format.DateTimeFormatter.ofPattern(pattern)).atStartOfDay(); } catch (Exception ignored) {}
+            }
+            return null; // No format matched
         } catch (Exception e) { return null; }
     }
 

@@ -20,21 +20,21 @@ public class Transaction {
     @Column(name = "merchant_id")
     private Long merchantId;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "merchant_id", insertable = false, updatable = false)
     private Merchant merchant;
 
     @Column(name = "store_id")
     private Long storeId;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "store_id", insertable = false, updatable = false)
     private Store store;
 
     @Column(name = "terminal_id")
     private Long terminalId;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "terminal_id", insertable = false, updatable = false)
     private Terminal terminal;
 

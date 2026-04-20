@@ -4,7 +4,7 @@ import com.acquira.dto.MerchantSummaryDTO;
 import com.acquira.service.AnalyticsService;
 import com.acquira.config.TenantContext;
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -25,13 +25,14 @@ public class AnalyticsController {
     private final AnalyticsService analyticsService;
     private final com.acquira.repository.SumDailyMerchantRepository sumDailyMerchantRepository;
 
-    @PersistenceContext
-    private EntityManager entityManager;
+    private final EntityManager entityManager;
 
     public AnalyticsController(AnalyticsService analyticsService,
-            com.acquira.repository.SumDailyMerchantRepository sumDailyMerchantRepository) {
+            com.acquira.repository.SumDailyMerchantRepository sumDailyMerchantRepository,
+            EntityManager entityManager) {
         this.analyticsService = analyticsService;
         this.sumDailyMerchantRepository = sumDailyMerchantRepository;
+        this.entityManager = entityManager;
     }
 
     @GetMapping("/executive")
@@ -218,9 +219,47 @@ public class AnalyticsController {
     }
 
     @GetMapping("/heatmap")
-    public ResponseEntity<List<com.acquira.dto.MerchantHeatmapDTO>> getMerchantHeatmap(
-            @RequestParam(defaultValue = "2025") int year) {
-        return ResponseEntity.ok(sumDailyMerchantRepository.findMerchantHeatmapData(year));
+    public ResponseEntity<List<Map<String, Object>>> getMerchantHeatmap(
+            @RequestParam(defaultValue = "2025") int year,
+            @RequestParam(required = false) List<String> sidList) {
+        return ResponseEntity.ok(getHeatmapData(year, sidList));
+    }
+
+    private List<Map<String, Object>> getHeatmapData(int year, List<String> sidList) {
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT m.name as merchant_name, m.mid as merchant_id, ");
+        sql.append("  EXTRACT(MONTH FROM s.business_date) as month, ");
+        sql.append("  SUM(s.total_volume) as total_volume ");
+        sql.append("FROM sum_daily_merchant s ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
+        if (sidList != null && !sidList.isEmpty()) {
+            sql.append("JOIN dim_store st ON st.merchant_id = m.merchant_id ");
+        }
+        sql.append("WHERE EXTRACT(YEAR FROM s.business_date) = :year ");
+        if (sidList != null && !sidList.isEmpty()) {
+            sql.append("AND st.sid IN (:sids) ");
+        }
+        sql.append("GROUP BY m.name, m.mid, EXTRACT(MONTH FROM s.business_date) ");
+        sql.append("ORDER BY m.name, EXTRACT(MONTH FROM s.business_date)");
+
+        jakarta.persistence.Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("year", year);
+        if (sidList != null && !sidList.isEmpty()) {
+            query.setParameter("sids", sidList);
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        for (Object[] row : rows) {
+            Map<String, Object> map = new java.util.HashMap<>();
+            map.put("merchantName", row[0]);
+            map.put("merchantId", row[1]);
+            map.put("month", ((Number) row[2]).intValue());
+            map.put("totalVolume", row[3]);
+            result.add(map);
+        }
+        return result;
     }
 
     @GetMapping("/available-years")

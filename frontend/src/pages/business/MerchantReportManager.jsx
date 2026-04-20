@@ -57,18 +57,12 @@ const PremiumButton = ({ children, onClick, color = 'primary', startIcon, ...pro
         }} {...props}>{children}</Button>
 );
 
-// ==========================================
-// Tenant Confirmation Dialog
-// Shows which tenant the reports will generate for.
-// Prevents accidental generation for wrong tenant.
-// ==========================================
 const TenantConfirmDialog = ({ open, onClose, onConfirm, activeTenant, tenants, merchantCount }) => {
     const theme = useTheme();
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
             PaperProps={{ sx: { borderRadius: 4, overflow: 'hidden', boxShadow: '0 25px 60px rgba(0,0,0,0.25)' } }}
         >
-            {/* Header */}
             <Box sx={{
                 background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #818cf8 100%)',
                 px: 3.5, py: 3, display: 'flex', alignItems: 'center', gap: 2
@@ -85,77 +79,39 @@ const TenantConfirmDialog = ({ open, onClose, onConfirm, activeTenant, tenants, 
                     </Typography>
                 </Box>
             </Box>
-
             <DialogContent sx={{ px: 3.5, py: 3 }}>
-                {/* Active Tenant Card */}
-                <Paper elevation={0} sx={{
-                    p: 2.5, borderRadius: 3, border: '2px solid #c7d2fe', bgcolor: '#eef2ff',
-                    display: 'flex', alignItems: 'center', gap: 2
-                }}>
+                <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '2px solid #c7d2fe', bgcolor: '#eef2ff', display: 'flex', alignItems: 'center', gap: 2 }}>
                     <Avatar variant="rounded" sx={{ bgcolor: '#4f46e5', width: 56, height: 56 }}>
                         <Building2 size={26} color="white" />
                     </Avatar>
                     <Box flex={1}>
-                        <Typography variant="h6" fontWeight="800" color="#312e81">
-                            {activeTenant?.bankName || 'Unknown'}
-                        </Typography>
+                        <Typography variant="h6" fontWeight="800" color="#312e81">{activeTenant?.bankName || 'Unknown'}</Typography>
                         <Typography variant="body2" color="text.secondary">
                             {[activeTenant?.bankShortCode, activeTenant?.country, activeTenant?.baseCurrency].filter(Boolean).join(' · ')}
                         </Typography>
                     </Box>
                     <Chip label="ACTIVE" size="small" sx={{ bgcolor: '#4f46e5', color: 'white', fontWeight: 800, fontSize: 11, letterSpacing: 0.5 }} />
                 </Paper>
-
-                {/* Multi-tenant warning */}
                 {tenants?.length > 1 && (
                     <Box sx={{ mt: 2.5, p: 2, borderRadius: 2.5, bgcolor: '#fffbeb', border: '1px solid #fde68a', display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
                         <AlertTriangle size={18} color="#b45309" style={{ marginTop: 1, flexShrink: 0 }} />
                         <Box>
-                            <Typography variant="body2" fontWeight="700" color="#92400e">
-                                You have access to {tenants.length} organizations
-                            </Typography>
+                            <Typography variant="body2" fontWeight="700" color="#92400e">You have access to {tenants.length} organizations</Typography>
                             <Typography variant="caption" color="#a16207">
                                 Reports will <strong>only</strong> include merchants belonging to "{activeTenant?.bankName}".
-                                To generate for a different tenant, cancel and switch tenants from the sidebar first.
                             </Typography>
                         </Box>
                     </Box>
                 )}
-
-                {/* Summary */}
                 <Box sx={{ mt: 2.5, p: 2, borderRadius: 2.5, bgcolor: '#f0fdf4', border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#22c55e', flexShrink: 0 }} />
                     <Typography variant="body2" fontWeight="600" color="#166534">
-                        {merchantCount} merchants found · PDF reports will be generated and saved under "{activeTenant?.bankName || 'tenant'}"
+                        {merchantCount} merchants found · PDFs will be generated under "{activeTenant?.bankName || 'tenant'}"
                     </Typography>
-                </Box>
-
-                {/* How it works */}
-                <Box sx={{ mt: 2.5, p: 2, borderRadius: 2.5, bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }}>
-                    <Typography variant="caption" fontWeight="700" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                        How Report Generation Works
-                    </Typography>
-                    <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                        {[
-                            'Only merchants belonging to the active tenant are included',
-                            'Reports are isolated per tenant — other tenants\' data is never mixed',
-                            'PDFs are stored in tenant-specific folders for organization',
-                            'Switching tenant in sidebar changes which merchants appear'
-                        ].map((text, i) => (
-                            <Typography key={i} variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Box component="span" sx={{ color: '#4f46e5', fontWeight: 800 }}>{i + 1}.</Box> {text}
-                            </Typography>
-                        ))}
-                    </Box>
                 </Box>
             </DialogContent>
-
-            {/* Actions */}
             <Box sx={{ px: 3.5, py: 2.5, bgcolor: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
-                <Button variant="outlined" color="inherit" onClick={onClose}
-                    sx={{ borderRadius: 3, px: 4, textTransform: 'none', fontWeight: 600 }}>
-                    Cancel
-                </Button>
+                <Button variant="outlined" color="inherit" onClick={onClose} sx={{ borderRadius: 3, px: 4, textTransform: 'none', fontWeight: 600 }}>Cancel</Button>
                 <PremiumButton onClick={onConfirm} startIcon={<PlayArrow />}>
                     Generate for {activeTenant?.bankShortCode || 'Tenant'}
                 </PremiumButton>
@@ -170,68 +126,49 @@ const MerchantReportManager = () => {
     const theme = useTheme();
     const { activeTenant, activeTenantId, tenants } = useAuth();
     const [merchants, setMerchants] = useState([]);
-    const [status, setStatus] = useState('idle'); // idle | checking | confirming | running | completed
+    const [status, setStatus] = useState('idle');
     const [showTenantConfirm, setShowTenantConfirm] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, success: 0, failed: 0 });
     const [logs, setLogs] = useState([]);
     const [existingReportCount, setExistingReportCount] = useState(0);
     const [sendEmail, setSendEmail] = useState(false);
+    const [sendS3, setSendS3] = useState(false);
     const [generatedReports, setGeneratedReports] = useState([]);
     const logsEndRef = useRef(null);
     const pollRef = useRef(null);
     const jobIdRef = useRef(null);
 
-    useEffect(() => { if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [logs]);
+    useEffect(() => { if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
     useEffect(() => { fetchMerchants(); return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, []);
-
-    // Re-fetch merchants when tenant changes
     useEffect(() => { fetchMerchants(); }, [activeTenantId]);
 
-    // Poll batch-status/{jobId} for real-time progress
     const startPolling = useCallback((jobId) => {
         if (pollRef.current) clearInterval(pollRef.current);
         jobIdRef.current = jobId;
-
         const poll = async () => {
             try {
                 const res = await api.get(`/business/insights/batch-status/${jobId}`);
                 const st = res.data;
-
                 const completed = st.completed || 0;
                 const total = st.totalMerchants || merchants.length;
                 const succeeded = st.succeeded || 0;
                 const failed = st.failed || 0;
-
                 setProgress({ current: completed, total, success: succeeded, failed });
-
-                // Build logs
                 const newLogs = [`🚀 Batch Job: ${jobId}`, `📊 Processing ${total} merchants...`];
                 if (st.avgRenderMs > 0) newLogs.push(`⚡ Avg render: ${st.avgRenderMs}ms/report`);
                 if (completed > 0) newLogs.push(`📈 Progress: ${completed}/${total} (${st.progressPercent || Math.round(completed / total * 100)}%)`);
-                if (st.estimatedRemainingMs > 0) {
-                    const remSec = (st.estimatedRemainingMs / 1000).toFixed(0);
-                    newLogs.push(`⏱️ ETA: ${remSec}s remaining`);
-                }
+                if (st.estimatedRemainingMs > 0) newLogs.push(`⏱️ ETA: ${(st.estimatedRemainingMs / 1000).toFixed(0)}s remaining`);
                 if (st.errors?.length > 0) st.errors.forEach(e => newLogs.push(`❌ ${e}`));
-
                 const phase = (st.phase || st.status || '').toUpperCase();
                 if (phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED') {
                     if (succeeded > 0) newLogs.push(`✅ Generated ${succeeded} reports in ${(st.totalSeconds || 0).toFixed(1)}s`);
                     if (failed > 0) newLogs.push(`⚠️ ${failed} reports failed`);
-                    setLogs(newLogs);
-                    setStatus('completed');
-                    clearInterval(pollRef.current);
-                    pollRef.current = null;
+                    setLogs(newLogs); setStatus('completed');
+                    clearInterval(pollRef.current); pollRef.current = null;
                     fetchGeneratedReports();
-                } else {
-                    setLogs(newLogs);
-                    setStatus('running');
-                }
-            } catch (err) {
-                console.error('Poll error:', err);
-            }
+                } else { setLogs(newLogs); setStatus('running'); }
+            } catch (err) { console.error('Poll error:', err); }
         };
-
         poll();
         pollRef.current = setInterval(poll, POLL_INTERVAL);
     }, [merchants.length]);
@@ -242,22 +179,19 @@ const MerchantReportManager = () => {
             const list = res.data.content || res.data;
             setMerchants(list);
             setProgress(prev => ({ ...prev, total: list.length }));
-        } catch (error) { console.error("Failed to fetch merchants", error); }
+        } catch (error) { console.error('Failed to fetch merchants', error); }
     };
 
     const fetchGeneratedReports = async () => {
         try {
             const res = await api.get('/business/insights/list-reports');
             setGeneratedReports(res.data?.reports || []);
-        } catch (e) {
-            console.error('Failed to fetch report list', e);
-        }
+        } catch (e) { console.error('Failed to fetch report list', e); }
     };
 
     const formatFileSize = (bytes) => {
         if (!bytes || bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB'];
+        const k = 1024, sizes = ['B', 'KB', 'MB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
@@ -265,101 +199,66 @@ const MerchantReportManager = () => {
     const handleDownloadAll = async () => {
         try {
             const res = await api.get('/business/insights/download-all-reports', { responseType: 'blob' });
-            const blob = new Blob([res.data], { type: 'application/zip' });
-            const url = window.URL.createObjectURL(blob);
+            const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/zip' }));
             const link = document.createElement('a');
-            link.href = url;
-            link.download = `Merchant_Reports_${activeTenant?.bankShortCode || 'ALL'}.zip`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            link.href = url; link.download = `Merchant_Reports_${activeTenant?.bankShortCode || 'ALL'}.zip`;
+            document.body.appendChild(link); link.click(); document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
-        } catch (e) {
-            console.error('Download all failed:', e);
-        }
+        } catch (e) { console.error('Download all failed:', e); }
     };
 
     const handleDownloadSingle = async (downloadUrl) => {
         try {
-            const apiPath = downloadUrl.replace(/^\/api/, '');
-            const res = await api.get(apiPath, { responseType: 'blob' });
-            const contentDisposition = res.headers['content-disposition'] || '';
-            const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-            const filename = filenameMatch ? filenameMatch[1] : 'report.pdf';
-            const blob = new Blob([res.data], { type: 'application/pdf' });
-            const url = window.URL.createObjectURL(blob);
+            const res = await api.get(downloadUrl.replace(/^\/api/, ''), { responseType: 'blob' });
+            const filename = (res.headers['content-disposition'] || '').match(/filename="?([^"]+)"?/)?.[1] || 'report.pdf';
+            const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
             const link = document.createElement('a');
-            link.href = url;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            link.href = url; link.download = filename;
+            document.body.appendChild(link); link.click(); document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
-        } catch (e) {
-            console.error('Download failed:', e);
-        }
+        } catch (e) { console.error('Download failed:', e); }
     };
 
-    // Step 1: User clicks "Initialize" → open tenant confirmation popup
-    const handleStartClick = () => {
-        setShowTenantConfirm(true);
-    };
+    const handleStartClick = () => setShowTenantConfirm(true);
 
-    // Step 2: User confirms tenant → check for existing reports
     const handleTenantConfirmed = async () => {
-        setShowTenantConfirm(false);
-        setStatus('checking');
+        setShowTenantConfirm(false); setStatus('checking');
         try {
             const res = await api.get('/business/insights/check-status');
-            if (res.data?.exists) {
-                setExistingReportCount(res.data.count);
-                setStatus('confirming');
-                return;
-            }
-        } catch (e) { console.error("Check status failed", e); }
+            if (res.data?.exists) { setExistingReportCount(res.data.count); setStatus('confirming'); return; }
+        } catch (e) { console.error('Check status failed', e); }
         startBatch();
     };
 
     const startBatch = async () => {
-        setStatus('running');
-        setLogs([]);
+        setStatus('running'); setLogs([]);
         setProgress({ current: 0, total: merchants.length, success: 0, failed: 0 });
-
         try {
-            const res = await api.post(`/business/insights/generate-all?sendEmail=${sendEmail}`);
+            // ── KEY: both sendEmail and sendS3 are passed ──────────────────
+            const res = await api.post(`/business/insights/generate-all?sendEmail=${sendEmail}&sendS3=${sendS3}`);
             const result = res.data;
             const jobId = result.jobId;
-
             if (!jobId) {
                 if (result.status === 'PDF_MODULE_NOT_LOADED') {
-                    setLogs(['⚠️ PDF module (acquira-pdf) is not included.', '💡 Add acquira-pdf dependency to acquira-core and rebuild.']);
-                    setStatus('completed');
-                    return;
+                    setLogs(['⚠️ PDF module not loaded.', '💡 Add acquira-pdf dependency to acquira-core.']); setStatus('completed'); return;
                 }
                 if (result.status === 'PDF_ENGINE_NOT_READY') {
-                    setLogs(['⚠️ PDF engine failed to initialize.', '💡 Playwright browsers not installed.', '🔧 Run: mvn exec:java -e -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args=install', '🔄 Then restart the application.']);
-                    setStatus('completed');
-                    return;
+                    setLogs(['⚠️ PDF engine not ready.', '💡 Run: mvn exec:java -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args=install']); setStatus('completed'); return;
                 }
-                const generated = result.generated || 0;
-                const failed = result.failed || 0;
+                const generated = result.generated || 0, failed = result.failed || 0;
                 setProgress({ current: generated + failed, total: merchants.length, success: generated, failed });
-                setLogs([`✅ Generated ${generated} reports`]);
-                setStatus('completed');
-                return;
+                setLogs([`✅ Generated ${generated} reports`]); setStatus('completed'); return;
             }
-
             setLogs([
                 `🏛️ Tenant: ${activeTenant?.bankName || 'Unknown'}`,
                 `🚀 Batch started — Job: ${jobId}`,
-                `📊 Processing ${result.totalMerchants} merchants...`
+                `📊 Processing ${result.totalMerchants} merchants...`,
+                `📦 Mode: ${!sendEmail && !sendS3 ? 'Local Only' : !sendEmail && sendS3 ? 'S3 Upload Only' : sendEmail && !sendS3 ? 'Email Only' : 'Email + S3 Upload'}`,
             ]);
             startPolling(jobId);
-
         } catch (err) {
             setLogs([`❌ Critical error: ${err.message}`]);
-            setProgress(prev => ({ ...prev, failed: merchants.length }));
-            setStatus('completed');
+            setProgress(prev => ({ ...prev, failed: merchants.length })); setStatus('completed');
         }
     };
 
@@ -370,39 +269,23 @@ const MerchantReportManager = () => {
         { title: 'Merchants Ready', value: merchants.length.toString(), icon: Zap, color: '#6366f1' },
         { title: 'Est. Duration', value: `~${estimatedTime} min`, icon: Clock, color: '#f59e0b' },
         { title: 'Report Type', value: 'PDF Insight', icon: FileCheck, color: '#10b981' },
-        ...(status === 'completed' ? [{ title: 'Success Rate', value: `${progress.total > 0 ? Math.round((progress.success / progress.total) * 100) : 0}%`, icon: FileText, color: progress.failed > 0 ? '#ef4444' : '#10b981', trend: progress.failed > 0 ? -(progress.failed / progress.total * 100) : 100 }] : []),
+        ...(status === 'completed' ? [{ title: 'Success Rate', value: `${progress.total > 0 ? Math.round((progress.success / progress.total) * 100) : 0}%`, icon: FileText, color: progress.failed > 0 ? '#ef4444' : '#10b981' }] : []),
     ], [merchants.length, estimatedTime, status, progress]);
 
     return (
         <Box sx={{ p: 3, bgcolor: '#F8FAFC', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-            <PremiumReportHeader
-                title="Merchant Report Manager" subtitle="Enterprise batch PDF generation system"
-                icon={FileText} hideDatePresets
-            />
+            <PremiumReportHeader title="Merchant Report Manager" subtitle="Enterprise batch PDF generation system" icon={FileText} hideDatePresets />
 
-            {/* Active Tenant Banner */}
             <Box sx={{ mb: 2, px: 2, py: 1.5, borderRadius: 3, bgcolor: '#eef2ff', border: '1px solid #c7d2fe', display: 'flex', alignItems: 'center', gap: 2 }}>
                 <Building2 size={18} color="#4f46e5" />
-                <Typography variant="body2" fontWeight="700" color="#312e81">
-                    Generating for: {activeTenant?.bankName || 'Unknown Tenant'}
-                </Typography>
+                <Typography variant="body2" fontWeight="700" color="#312e81">Generating for: {activeTenant?.bankName || 'Unknown Tenant'}</Typography>
                 <Chip label={activeTenant?.bankShortCode || '?'} size="small" sx={{ bgcolor: '#4f46e5', color: 'white', fontWeight: 700, fontSize: 11, ml: 'auto' }} />
-                {activeTenant?.baseCurrency && (
-                    <Chip label={activeTenant.baseCurrency} size="small" variant="outlined" sx={{ fontWeight: 600, fontSize: 11 }} />
-                )}
+                {activeTenant?.baseCurrency && <Chip label={activeTenant.baseCurrency} size="small" variant="outlined" sx={{ fontWeight: 600, fontSize: 11 }} />}
             </Box>
 
             <KpiCards cards={kpis} />
 
-            {/* Tenant Confirmation Popup */}
-            <TenantConfirmDialog
-                open={showTenantConfirm}
-                onClose={() => setShowTenantConfirm(false)}
-                onConfirm={handleTenantConfirmed}
-                activeTenant={activeTenant}
-                tenants={tenants}
-                merchantCount={merchants.length}
-            />
+            <TenantConfirmDialog open={showTenantConfirm} onClose={() => setShowTenantConfirm(false)} onConfirm={handleTenantConfirmed} activeTenant={activeTenant} tenants={tenants} merchantCount={merchants.length} />
 
             <Container maxWidth="lg" disableGutters sx={{ flex: 1 }}>
                 <GlassCard>
@@ -424,6 +307,7 @@ const MerchantReportManager = () => {
                             </Box>
 
                             <AnimatePresence mode="wait">
+                                {/* ── IDLE STATE ── */}
                                 {status === 'idle' && (
                                     <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, position: 'absolute' }} style={{ width: '100%' }}>
                                         <Grid container spacing={3} mb={6}>
@@ -431,16 +315,98 @@ const MerchantReportManager = () => {
                                             <Grid item xs={12} sm={4}><StatBadge icon={<AccessTime />} label="Est. Duration" value={`~${estimatedTime} min`} color="secondary" /></Grid>
                                             <Grid item xs={12} sm={4}><StatBadge icon={<AutoGraph />} label="Report Type" value="PDF Insight" color="info" /></Grid>
                                         </Grid>
-                                        <Box textAlign="center" py={4}>
-                                            <FormControlLabel
-                                                control={<Switch checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} color="primary" />}
-                                                label={<Typography fontWeight="600" color="text.secondary">Send Emails to Merchants after Generation</Typography>}
-                                                sx={{ mb: 2, display: 'block', textAlign: 'center' }}
-                                            />
-                                            <PremiumButton onClick={handleStartClick} startIcon={<PlayArrow />} size="large">
-                                                {sendEmail ? 'Generate & Send Emails' : 'Initialize Batch Process'}
-                                            </PremiumButton>
-                                            <Typography variant="body2" color="text.secondary" mt={2}>Generates individual reports for {merchants.length} active merchants</Typography>
+
+                                        <Box textAlign="center" py={3}>
+                                            {/* ── Delivery Options label ── */}
+                                            <Typography variant="subtitle2" fontWeight="700" color="text.secondary" mb={2}
+                                                sx={{ textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }}>
+                                                Delivery Options
+                                            </Typography>
+
+                                            {/* ── Two toggle cards ── */}
+                                            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mb: 2.5, flexWrap: 'wrap' }}>
+
+                                                {/* Email toggle */}
+                                                <Box onClick={() => setSendEmail(v => !v)} sx={{
+                                                    display: 'flex', alignItems: 'center', gap: 1.5,
+                                                    px: 2.5, py: 1.5, borderRadius: 3, cursor: 'pointer',
+                                                    border: `2px solid ${sendEmail ? '#818cf8' : '#e2e8f0'}`,
+                                                    background: sendEmail ? '#eef2ff' : '#f8fafc',
+                                                    transition: 'all 0.2s', minWidth: 200, userSelect: 'none',
+                                                    '&:hover': { borderColor: '#818cf8', background: '#eef2ff' },
+                                                }}>
+                                                    <Switch
+                                                        checked={sendEmail}
+                                                        onChange={(e) => { e.stopPropagation(); setSendEmail(e.target.checked); }}
+                                                        color="secondary" size="small"
+                                                    />
+                                                    <Box textAlign="left">
+                                                        <Typography fontWeight="700" fontSize={13} color={sendEmail ? '#312e81' : 'text.secondary'}>
+                                                            Send Emails
+                                                        </Typography>
+                                                        <Typography fontSize={11} color="text.secondary">
+                                                            Email PDF to each merchant
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+
+                                                {/* S3 toggle */}
+                                                <Box onClick={() => setSendS3(v => !v)} sx={{
+                                                    display: 'flex', alignItems: 'center', gap: 1.5,
+                                                    px: 2.5, py: 1.5, borderRadius: 3, cursor: 'pointer',
+                                                    border: `2px solid ${sendS3 ? '#06b6d4' : '#e2e8f0'}`,
+                                                    background: sendS3 ? '#ecfeff' : '#f8fafc',
+                                                    transition: 'all 0.2s', minWidth: 200, userSelect: 'none',
+                                                    '&:hover': { borderColor: '#06b6d4', background: '#ecfeff' },
+                                                }}>
+                                                    <Switch
+                                                        checked={sendS3}
+                                                        onChange={(e) => { e.stopPropagation(); setSendS3(e.target.checked); }}
+                                                        size="small"
+                                                        sx={{ '& .MuiSwitch-thumb': { bgcolor: sendS3 ? '#06b6d4' : undefined } }}
+                                                    />
+                                                    <Box textAlign="left">
+                                                        <Typography fontWeight="700" fontSize={13} color={sendS3 ? '#164e63' : 'text.secondary'}>
+                                                            Upload to S3
+                                                        </Typography>
+                                                        <Typography fontSize={11} color="text.secondary">
+                                                            Archive PDFs to AWS bucket
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+                                            </Box>
+
+                                            {/* ── Mode badge ── */}
+                                            <Box sx={{
+                                                display: 'inline-flex', px: 2, py: 0.6, borderRadius: 999, mb: 2.5,
+                                                ...(
+                                                    !sendEmail && !sendS3 ? { border: '1px solid #e2e8f0', background: '#f1f5f9' } :
+                                                    !sendEmail && sendS3  ? { border: '1px solid #a5f3fc', background: '#ecfeff' } :
+                                                    sendEmail && !sendS3  ? { border: '1px solid #c7d2fe', background: '#eef2ff' } :
+                                                    { border: '1px solid #a7f3d0', background: '#ecfdf5' }
+                                                )
+                                            }}>
+                                                <Typography fontSize={12} fontWeight={700} color="text.secondary">
+                                                    Mode:&nbsp;
+                                                    {!sendEmail && !sendS3 ? 'Local Only (save to disk)'
+                                                        : !sendEmail && sendS3 ? 'S3 Upload Only'
+                                                        : sendEmail && !sendS3 ? 'Email Only'
+                                                        : 'Email + S3 Upload'}
+                                                </Typography>
+                                            </Box>
+
+                                            {/* ── Generate button ── */}
+                                            <Box>
+                                                <PremiumButton onClick={handleStartClick} startIcon={<PlayArrow />} size="large">
+                                                    {!sendEmail && !sendS3 ? 'Generate PDFs (Local)'
+                                                        : !sendEmail && sendS3 ? 'Generate & Upload to S3'
+                                                        : sendEmail && !sendS3 ? 'Generate & Send Emails'
+                                                        : 'Generate, Email & Upload to S3'}
+                                                </PremiumButton>
+                                            </Box>
+                                            <Typography variant="body2" color="text.secondary" mt={2}>
+                                                Generates individual reports for {merchants.length} active merchants
+                                            </Typography>
                                         </Box>
                                     </motion.div>
                                 )}
@@ -515,37 +481,20 @@ const MerchantReportManager = () => {
                                             <Box mt={4}>
                                                 {generatedReports.length > 0 && (
                                                     <Box mb={3} textAlign="center">
-                                                        <Button
-                                                            variant="contained"
-                                                            size="large"
-                                                            onClick={handleDownloadAll}
-                                                            sx={{
-                                                                borderRadius: 3, px: 5, py: 1.5, fontWeight: 'bold',
-                                                                background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
-                                                                boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
-                                                                '&:hover': { boxShadow: '0 6px 20px rgba(0,0,0,0.25)' }
-                                                            }}
-                                                        >
+                                                        <Button variant="contained" size="large" onClick={handleDownloadAll}
+                                                            sx={{ borderRadius: 3, px: 5, py: 1.5, fontWeight: 'bold', background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`, boxShadow: '0 4px 14px rgba(0,0,0,0.15)', '&:hover': { boxShadow: '0 6px 20px rgba(0,0,0,0.25)' } }}>
                                                             ⬇ Download All ({generatedReports.length} PDFs as ZIP)
                                                         </Button>
                                                     </Box>
                                                 )}
-
                                                 {generatedReports.length > 0 && (
                                                     <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid #e2e8f0', overflow: 'hidden', mb: 3 }}>
-                                                        <Box sx={{ px: 2.5, py: 1.5, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                            <Typography variant="subtitle2" fontWeight="bold" color="text.secondary">
-                                                                GENERATED REPORTS ({generatedReports.length})
-                                                            </Typography>
+                                                        <Box sx={{ px: 2.5, py: 1.5, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                                            <Typography variant="subtitle2" fontWeight="bold" color="text.secondary">GENERATED REPORTS ({generatedReports.length})</Typography>
                                                         </Box>
                                                         <Box sx={{ maxHeight: 320, overflowY: 'auto' }}>
                                                             {generatedReports.map((report, i) => (
-                                                                <Box key={i} sx={{
-                                                                    px: 2.5, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                                                    borderBottom: '1px solid #f1f5f9',
-                                                                    '&:hover': { bgcolor: '#f0f9ff' },
-                                                                    transition: 'background 0.15s'
-                                                                }}>
+                                                                <Box key={i} sx={{ px: 2.5, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', '&:hover': { bgcolor: '#f0f9ff' }, transition: 'background 0.15s' }}>
                                                                     <Box display="flex" alignItems="center" gap={1.5} flex={1} minWidth={0}>
                                                                         <FileCheck size={18} style={{ color: theme.palette.success.main, flexShrink: 0 }} />
                                                                         <Typography variant="body2" fontWeight="600" noWrap>
@@ -553,15 +502,9 @@ const MerchantReportManager = () => {
                                                                         </Typography>
                                                                     </Box>
                                                                     <Box display="flex" alignItems="center" gap={2}>
-                                                                        <Typography variant="caption" color="text.secondary">
-                                                                            {formatFileSize(report.size)}
-                                                                        </Typography>
-                                                                        <Button
-                                                                            size="small"
-                                                                            variant="outlined"
-                                                                            onClick={() => handleDownloadSingle(report.downloadUrl)}
-                                                                            sx={{ borderRadius: 2, minWidth: 'auto', px: 2, fontSize: '0.75rem', textTransform: 'none' }}
-                                                                        >
+                                                                        <Typography variant="caption" color="text.secondary">{formatFileSize(report.size)}</Typography>
+                                                                        <Button size="small" variant="outlined" onClick={() => handleDownloadSingle(report.downloadUrl)}
+                                                                            sx={{ borderRadius: 2, minWidth: 'auto', px: 2, fontSize: '0.75rem', textTransform: 'none' }}>
                                                                             Download
                                                                         </Button>
                                                                     </Box>
@@ -570,9 +513,10 @@ const MerchantReportManager = () => {
                                                         </Box>
                                                     </Paper>
                                                 )}
-
                                                 <Box textAlign="center">
-                                                    <Button onClick={() => { setStatus('idle'); setLogs([]); setGeneratedReports([]); setProgress({ current: 0, total: merchants.length, success: 0, failed: 0 }); }} sx={{ color: 'text.secondary', fontWeight: 'bold' }}>Start New Batch</Button>
+                                                    <Button onClick={() => { setStatus('idle'); setLogs([]); setGeneratedReports([]); setSendEmail(false); setSendS3(false); setProgress({ current: 0, total: merchants.length, success: 0, failed: 0 }); }} sx={{ color: 'text.secondary', fontWeight: 'bold' }}>
+                                                        Start New Batch
+                                                    </Button>
                                                 </Box>
                                             </Box>
                                         )}

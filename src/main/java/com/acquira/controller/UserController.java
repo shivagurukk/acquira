@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/users")
@@ -72,7 +71,6 @@ public class UserController {
 
     /**
      * Enriched user list — each user includes their tenant assignments, group, and role info.
-     * Used by the UserManagement frontend.
      */
     @GetMapping("/enriched")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
@@ -93,7 +91,6 @@ public class UserController {
             userMap.put("lockedUntil", user.getLockedUntil());
             userMap.put("approvalStatus", user.getApprovalStatus());
 
-            // Tenant assignments
             List<UserTenantAccess> accesses = accessRepository.findByUser(user);
             List<Map<String, Object>> tenantList = new ArrayList<>();
             for (UserTenantAccess access : accesses) {
@@ -108,7 +105,6 @@ public class UserController {
                 tenantList.add(tenantInfo);
             }
             userMap.put("tenants", tenantList);
-
             result.add(userMap);
         }
 
@@ -136,9 +132,6 @@ public class UserController {
     // Tenant Access Management (Multi-Tenant)
     // ==========================================
 
-    /**
-     * Get all tenant assignments for a user.
-     */
     @GetMapping("/{userId}/tenant-access")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<List<Map<String, Object>>> getUserTenantAccess(@PathVariable Long userId) {
@@ -163,9 +156,6 @@ public class UserController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * Add a tenant assignment to a user. Supports multiple tenants per user.
-     */
     @PostMapping("/{userId}/tenant-access")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     @Transactional
@@ -185,13 +175,11 @@ public class UserController {
         SysUserGroup group = groupRepository.findById(groupId)
                 .orElseThrow(() -> new RuntimeException("Group not found"));
 
-        // Check for duplicate assignment
         Optional<UserTenantAccess> existing = accessRepository.findByUserAndTenant_TenantId(user, tenantId);
         if (existing.isPresent()) {
             return ResponseEntity.badRequest().body(Map.of("error", "User already has access to this tenant"));
         }
 
-        // If this is marked as default, unset other defaults
         if (Boolean.TRUE.equals(isDefault)) {
             List<UserTenantAccess> allAccess = accessRepository.findByUser(user);
             for (UserTenantAccess a : allAccess) {
@@ -202,7 +190,6 @@ public class UserController {
             }
         }
 
-        // If user has no other tenant access, make this the default
         List<UserTenantAccess> existingAccesses = accessRepository.findByUser(user);
         if (existingAccesses.isEmpty()) {
             isDefault = true;
@@ -214,7 +201,6 @@ public class UserController {
         access.setSysUserGroup(group);
         access.setIsDefaultTenant(isDefault);
 
-        // Derive roleInTenant from group name
         String groupName = group.getGroupName();
         if ("Super Admin".equalsIgnoreCase(groupName)) {
             access.setRoleInTenant("ROLE_SUPER_ADMIN");
@@ -227,13 +213,9 @@ public class UserController {
         }
 
         accessRepository.save(access);
-
         return ResponseEntity.ok(Map.of("message", "Tenant access added successfully"));
     }
 
-    /**
-     * Remove a tenant assignment from a user.
-     */
     @DeleteMapping("/{userId}/tenant-access/{accessId}")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     @Transactional
@@ -241,7 +223,6 @@ public class UserController {
         UserTenantAccess access = accessRepository.findById(accessId)
                 .orElseThrow(() -> new RuntimeException("Access record not found"));
 
-        // Safety check: ensure this access belongs to the specified user
         if (!access.getUser().getId().equals(userId)) {
             return ResponseEntity.badRequest().body(Map.of("error", "Access record does not belong to this user"));
         }
@@ -249,7 +230,6 @@ public class UserController {
         boolean wasDefault = access.getIsDefaultTenant();
         accessRepository.delete(access);
 
-        // If the deleted record was default, promote another one
         if (wasDefault) {
             User user = userRepository.findById(userId).orElse(null);
             if (user != null) {
@@ -265,14 +245,66 @@ public class UserController {
     }
 
     // ==========================================
-    // Password Reset
+    // Password Management
     // ==========================================
 
+    /**
+     * Self-service: Change own password.
+     * Uses 400 (not 401) for wrong current password to avoid axios logout interceptor.
+     */
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(@RequestBody Map<String, String> payload) {
+        String currentPassword = payload.get("currentPassword");
+        String newPassword = payload.get("newPassword");
+
+        if (currentPassword == null || currentPassword.isBlank() || newPassword == null || newPassword.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Current and new password are required"));
+        }
+
+        // Get authenticated user
+        org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        String username = auth.getName();
+
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        // Verify current password — getPassword() returns the hash (column: password_hash)
+        if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Current password is incorrect"));
+        }
+
+        // Validate new password strength
+        List<String> violations = validatePasswordStrength(newPassword);
+        if (!violations.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Password does not meet requirements",
+                    "violations", violations
+            ));
+        }
+
+        // Check new password != current password
+        if (passwordEncoder.matches(newPassword, user.getPassword())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "New password must be different from current password"));
+        }
+
+        // Save new password
+        user.setPassword(passwordEncoder.encode(newPassword));
+        user.setMustChangePassword(false);
+        user.setFailedLoginAttempts(0);
+        userRepository.save(user);
+
+        return ResponseEntity.ok(Map.of("message", "Password changed successfully"));
+    }
+
+    /**
+     * Admin: Force reset a user's password. Sets mustChangePassword flag.
+     */
     @PostMapping("/{userId}/reset-password")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> resetPassword(@PathVariable Long userId, @RequestBody Map<String, String> payload) {
         String newPassword = payload.get("newPassword");
-        if (newPassword == null || newPassword.trim().isEmpty()) {
+        if (newPassword == null || newPassword.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "New password is required"));
         }
 
@@ -280,10 +312,12 @@ public class UserController {
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
         user.setPassword(passwordEncoder.encode(newPassword));
-        user.setMustChangePassword(true); // Force password change on next login
+        user.setMustChangePassword(true);
+        user.setFailedLoginAttempts(0);
+        user.setLockedUntil(null);
         userRepository.save(user);
 
-        return ResponseEntity.ok(Map.of("message", "Password reset successfully"));
+        return ResponseEntity.ok(Map.of("message", "Password reset successfully. User must change on next login."));
     }
 
     // ==========================================
@@ -339,5 +373,40 @@ public class UserController {
     @GetMapping("/{username}/banks")
     public ResponseEntity<List<Tenant>> getUserTenants(@PathVariable String username) {
         return ResponseEntity.ok(tenantService.getAllowedTenantsForUser(username));
+    }
+
+    // ==========================================
+    // Password Policy (Phase 1: Hardcoded rules)
+    // TODO: Phase 3 — read from password_policy table
+    // ==========================================
+
+    /**
+     * Return the current password policy for the frontend to validate against.
+     * Phase 1: Returns hardcoded rules.
+     * Phase 3: Will read from password_policy table based on tenant.
+     */
+    @GetMapping("/password-policy")
+    public ResponseEntity<Map<String, Object>> getPasswordPolicy() {
+        Map<String, Object> policy = new LinkedHashMap<>();
+        policy.put("minLength", 8);
+        policy.put("maxLength", 128);
+        policy.put("requireUppercase", true);
+        policy.put("requireLowercase", true);
+        policy.put("requireDigit", true);
+        policy.put("requireSpecial", true);
+        policy.put("specialChars", "!@#$%^&*()_+-=[]{}|;':.,<>?/\\");
+        return ResponseEntity.ok(policy);
+    }
+
+    private List<String> validatePasswordStrength(String password) {
+        List<String> violations = new ArrayList<>();
+        if (password.length() < 8)         violations.add("At least 8 characters required");
+        if (password.length() > 128)       violations.add("Maximum 128 characters");
+        if (!password.matches(".*[A-Z].*")) violations.add("At least one uppercase letter required");
+        if (!password.matches(".*[a-z].*")) violations.add("At least one lowercase letter required");
+        if (!password.matches(".*[0-9].*")) violations.add("At least one digit required");
+        if (!password.matches(".*[!@#$%^&*()_+\\-=\\[\\]{};':.,<>?/|\\\\].*"))
+            violations.add("At least one special character required");
+        return violations;
     }
 }

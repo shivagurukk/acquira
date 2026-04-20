@@ -3,26 +3,17 @@
 <body>
     <div th:fragment="paymentContent">
 
-        <div class="section-subtitle" style="margin-bottom: 10px;">Card scheme performance, transaction mix and wallet usage</div>
+        <div class="section-subtitle" th:text="'Payment breakdown for ' + ${reportPeriod}" style="margin-bottom: 10px;">Payment breakdown</div>
 
-        <!-- ROW 1: 4 KPI Cards with icons — bold -->
-        <div class="grid-4 mb-8">
-            <div class="card" style="flex-direction: row; align-items: center; gap: 10px; padding: 12px; border-top: 4px solid #2563EB;">
-                <div class="icon-circle icon-circle-blue" style="width: 32px; height: 32px;">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg>
-                </div>
-                <div>
-                    <div style="font-size: 7.5px; color: #4B5563; font-weight: 700;">CARD PENETRATION</div>
-                    <div style="font-size: 18px; font-weight: 900; color: #111827;">98.2%</div>
-                </div>
-            </div>
+        <!-- ROW 1: 3 KPI Cards with icons — dynamic from DTO -->
+        <div class="grid-3 mb-8">
             <div class="card" style="flex-direction: row; align-items: center; gap: 10px; padding: 12px; border-top: 4px solid #059669;">
                 <div class="icon-circle icon-circle-green" style="width: 32px; height: 32px;">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
                 </div>
                 <div>
-                    <div style="font-size: 7.5px; color: #4B5563; font-weight: 700;">WALLET USAGE</div>
-                    <div style="font-size: 18px; font-weight: 900; color: #111827;">45%</div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700;">CONTACTLESS / WALLET</div>
+                    <div style="font-size: 18px; font-weight: 900; color: #111827;" th:text="${dto.demographics.walletUsagePct != null ? dto.demographics.walletUsagePct + '%' : '-'}">-</div>
                 </div>
             </div>
             <div class="card" style="flex-direction: row; align-items: center; gap: 10px; padding: 12px; border-top: 4px solid #D97706;">
@@ -30,17 +21,17 @@
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
                 </div>
                 <div>
-                    <div style="font-size: 7.5px; color: #4B5563; font-weight: 700;">CREDIT / DEBIT</div>
-                    <div style="font-size: 18px; font-weight: 900; color: #111827;">60 / 40</div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700;">CREDIT / DEBIT</div>
+                    <div style="font-size: 18px; font-weight: 900; color: #111827;" th:text="${dto.demographics.creditDebitRatio != null ? dto.demographics.creditDebitRatio : '-'}">-</div>
                 </div>
             </div>
-            <div class="card" style="flex-direction: row; align-items: center; gap: 10px; padding: 12px; border-top: 4px solid #DC2626;">
-                <div class="icon-circle icon-circle-red" style="width: 32px; height: 32px;">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            <div class="card" style="flex-direction: row; align-items: center; gap: 10px; padding: 12px; border-top: 4px solid #2563EB;">
+                <div class="icon-circle icon-circle-blue" style="width: 32px; height: 32px;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                 </div>
                 <div>
-                    <div style="font-size: 7.5px; color: #4B5563; font-weight: 700;">AVG INTERCHANGE</div>
-                    <div style="font-size: 18px; font-weight: 900; color: #111827;">1.2%</div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700;">LOCAL / INTERNATIONAL</div>
+                    <div style="font-size: 18px; font-weight: 900; color: #111827;" th:text="${dto.demographics.localCardPct != null ? dto.demographics.localCardPct + ' / ' + dto.demographics.internationalCardPct : '-'}">-</div>
                 </div>
             </div>
         </div>
@@ -57,12 +48,6 @@
             </div>
         </div>
 
-        <!-- ROW 3: Transaction Type horizontal bars -->
-        <div class="card mb-8" style="padding: 12px; min-height: 90px;">
-            <div class="card-title">TRANSACTION TYPE SPLIT</div>
-            <div id="payment-txn-types" style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
-        </div>
-
         <!-- ROW 4: Transaction Value Bands chart — FILLS remaining space -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
             <div class="card-title">TRANSACTION VALUE DISTRIBUTION</div>
@@ -73,11 +58,11 @@
         <div class="grid-2 mb-8">
             <div class="action-strip-item opportunity" style="padding: 10px 12px;">
                 <div class="strip-label">&#9650; MONETIZATION SIGNAL</div>
-                <div class="strip-text">Wallet adoption at 45% and growing 15% MoM. Credit card dominance (60%) supports premium upselling. Contactless-first terminals can lift ticket value by 8%.</div>
+                <div class="strip-text"><span th:text="${dto.insights != null and dto.insights.cardInsight != null ? dto.insights.cardInsight : 'Your payment mix shows a breakdown of how customers prefer to pay. This may be useful context for terminal configuration or promotional planning.'}"></span></div>
             </div>
             <div class="action-strip-item action" style="padding: 10px 12px;">
                 <div class="strip-label">&#9654; PAYMENT OPTIMIZATION</div>
-                <div class="strip-text">Enable DCC auto-prompt for international cards. Ensure all terminals support Apple Pay and Samsung Pay. Target 50% wallet adoption by Q3.</div>
+                <div class="strip-text"><span th:text="${dto.insights != null and dto.insights.cardTip != null ? dto.insights.cardTip : 'Reviewing whether your current terminal configuration supports all common payment methods may be worthwhile.'}"></span></div>
             </div>
         </div>
 
@@ -85,7 +70,7 @@
         <div class="ai-insight">
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">
-                <strong>AI Insight:</strong> Wallet usage growing 15% MoM signals a shift toward contactless-first behaviour. Merchants optimizing for tap-and-go see 8% higher average ticket values. Prioritize terminal upgrades.
+                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.cardInsight != null ? dto.insights.cardInsight : 'The payment data gives a useful view of how your customers are paying. Reviewing the domestic vs international split may help identify any DCC opportunities.'}"></span>
             </div>
         </div>
 

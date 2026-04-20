@@ -30,6 +30,7 @@ public class MerchantDailyMetrics {
 
     private String merchantName;
     private String mid;
+    private String sid;
 
     // --- Core Volume Metrics ---
     private Double todayVolume = 0.0;

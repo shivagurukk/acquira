@@ -1,80 +1,41 @@
 package com.acquira.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.EqualsAndHashCode;
 
 @Entity
 @Table(name = "user_tenant_access")
-@Data
+@Getter
+@Setter
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class UserTenantAccess {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Integer accessId;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private User user;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tenant_id", nullable = false)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private Tenant tenant;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "group_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private SysUserGroup sysUserGroup;
 
     @Column(name = "role_in_tenant")
-    private String roleInTenant; // ROLE_ADMIN, ROLE_VIEWER, etc.
+    private String roleInTenant;
 
     @Column(name = "is_default_tenant")
     private Boolean isDefaultTenant = false;
-
-    public Integer getAccessId() {
-        return accessId;
-    }
-
-    public void setAccessId(Integer accessId) {
-        this.accessId = accessId;
-    }
-
-    public User getUser() {
-        return user;
-    }
-
-    public void setUser(User user) {
-        this.user = user;
-    }
-
-    public Tenant getTenant() {
-        return tenant;
-    }
-
-    public void setTenant(Tenant tenant) {
-        this.tenant = tenant;
-    }
-
-    public SysUserGroup getSysUserGroup() {
-        return sysUserGroup;
-    }
-
-    public void setSysUserGroup(SysUserGroup sysUserGroup) {
-        this.sysUserGroup = sysUserGroup;
-    }
-
-    public String getRoleInTenant() {
-        return roleInTenant;
-    }
-
-    public void setRoleInTenant(String roleInTenant) {
-        this.roleInTenant = roleInTenant;
-    }
-
-    public Boolean getIsDefaultTenant() {
-        return isDefaultTenant;
-    }
-
-    public void setIsDefaultTenant(Boolean isDefaultTenant) {
-        this.isDefaultTenant = isDefaultTenant;
-    }
 }

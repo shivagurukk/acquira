@@ -510,7 +510,7 @@ public class MerchantInsightService {
                 .value(new BigDecimal(r.getUniqueCustomerCount() != null ? r.getUniqueCustomerCount() : 0))
                 .build()).collect(Collectors.toList());
 
-        List<ChartData> hourData = aggregateAttributes(attrs, "HOUR");
+        List<ChartData> hourData = aggregateHoursAllDay(attrs);
         List<ChartData> salesAtvByDow = buildSalesAndAtvByDow(dailyRows);
         List<ChartData> revenueHeatmap = buildRevenueHeatmap(dailyRows, attrs);
         List<ChartData> txnSizeDist = buildTxnSizeDistribution(attrs);
@@ -587,6 +587,30 @@ public class MerchantInsightService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Aggregate HOUR attributes and ensure all 24 hours (0-23) are represented,
+     * padding with zero for hours with no transactions.
+     * This ensures the hourly chart always shows the full 24-hour range.
+     */
+    private List<ChartData> aggregateHoursAllDay(List<com.acquira.common.model.SumDailyMerchantAttribute> attrs) {
+        Map<Integer, BigDecimal> hourMap = new java.util.TreeMap<>();
+        // Pre-fill all 24 hours with zero
+        for (int h = 0; h < 24; h++) hourMap.put(h, BigDecimal.ZERO);
+        for (com.acquira.common.model.SumDailyMerchantAttribute a : attrs) {
+            if ("HOUR".equals(a.getAttributeType())) {
+                try {
+                    int h = Integer.parseInt(a.getAttributeValue());
+                    hourMap.merge(h, a.getMetricVolume() != null ? a.getMetricVolume() : BigDecimal.ZERO, BigDecimal::add);
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        List<ChartData> result = new ArrayList<>();
+        for (Map.Entry<Integer, BigDecimal> e : hourMap.entrySet()) {
+            result.add(ChartData.builder().label(String.valueOf(e.getKey())).value(e.getValue()).build());
+        }
+        return result;
+    }
+
     private Map<String, BigDecimal> aggregateAttributeMap(List<com.acquira.common.model.SumDailyMerchantAttribute> attrs,
             String type, boolean useVolume) {
         Map<String, BigDecimal> map = new HashMap<>();
@@ -597,6 +621,49 @@ public class MerchantInsightService {
             }
         }
         return map;
+    }
+
+    /**
+     * Normalise raw card scheme codes to display names.
+     * e.g. MCRD / MAST / MC -> Mastercard, VISA / VISA_D -> Visa, AMEX -> American Express
+     */
+    private Map<String, BigDecimal> normalizeSchemeNames(Map<String, BigDecimal> raw) {
+        Map<String, BigDecimal> normalized = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, BigDecimal> entry : raw.entrySet()) {
+            String key = entry.getKey();
+            String display;
+            switch (key.toUpperCase()) {
+                case "MCRD": case "MAST": case "MC": case "MASTERCARD": display = "Mastercard"; break;
+                case "VISA": case "VISA_D": case "VISA_C": case "VISA_P": display = "Visa"; break;
+                case "AMEX": case "AMERICAN EXPRESS": case "AMERICANEXPRESS": display = "American Express"; break;
+                case "AANI": display = "Aani"; break;
+                case "UNION": case "UNIONPAY": case "CUP": display = "UnionPay"; break;
+                case "DINERS": case "DISCOVER": display = "Diners/Discover"; break;
+                default: display = key; break;
+            }
+            normalized.merge(display, entry.getValue(), BigDecimal::add);
+        }
+        return normalized;
+    }
+
+    /**
+     * Normalise raw card type codes to Title Case display names.
+     * e.g. CREDIT -> Credit, DEBIT -> Debit, PREPAID -> Prepaid
+     */
+    private Map<String, BigDecimal> normalizeCardTypeNames(Map<String, BigDecimal> raw) {
+        Map<String, BigDecimal> normalized = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, BigDecimal> entry : raw.entrySet()) {
+            String key = entry.getKey();
+            String display;
+            switch (key.toUpperCase()) {
+                case "CREDIT": display = "Credit"; break;
+                case "DEBIT": display = "Debit"; break;
+                case "PREPAID": display = "Prepaid"; break;
+                default: display = key.substring(0, 1).toUpperCase() + key.substring(1).toLowerCase(); break;
+            }
+            normalized.merge(display, entry.getValue(), BigDecimal::add);
+        }
+        return normalized;
     }
 
     private List<ChartData> buildSalesAndAtvByDow(List<com.acquira.common.model.SumDailyMerchant> rows) {
@@ -626,19 +693,19 @@ public class MerchantInsightService {
             List<java.util.Map<String, Object>> monthlyTrends) {
         CustomerDemographics demo = new CustomerDemographics();
 
-        demo.setCardSchemeValueSplit(aggregateAttributeMap(attrs, "CARD_SCHEME", true));
-        demo.setCardSchemeCountSplit(aggregateAttributeMap(attrs, "CARD_SCHEME", false));
-        demo.setCardTypeValueSplit(aggregateAttributeMap(attrs, "CARD_TYPE", true));
-        demo.setCardTypeCountSplit(aggregateAttributeMap(attrs, "CARD_TYPE", false));
+        demo.setCardSchemeValueSplit(normalizeSchemeNames(aggregateAttributeMap(attrs, "CARD_SCHEME", true)));
+        demo.setCardSchemeCountSplit(normalizeSchemeNames(aggregateAttributeMap(attrs, "CARD_SCHEME", false)));
+        demo.setCardTypeValueSplit(normalizeCardTypeNames(aggregateAttributeMap(attrs, "CARD_TYPE", true)));
+        demo.setCardTypeCountSplit(normalizeCardTypeNames(aggregateAttributeMap(attrs, "CARD_TYPE", false)));
 
         Map<String, BigDecimal> txnTypeValue = aggregateAttributeMap(attrs, "TRANSACTION_TYPE", true);
         Map<String, BigDecimal> txnTypeCount = aggregateAttributeMap(attrs, "TRANSACTION_TYPE", false);
         demo.setTransactionTypeValueSplit(txnTypeValue.isEmpty() ? new HashMap<>() : txnTypeValue);
         demo.setTransactionTypeCountSplit(txnTypeCount.isEmpty() ? new HashMap<>() : txnTypeCount);
 
-        BigDecimal creditVol = demo.getCardTypeValueSplit().getOrDefault("CREDIT", BigDecimal.ZERO);
-        BigDecimal debitVol = demo.getCardTypeValueSplit().getOrDefault("DEBIT", BigDecimal.ZERO);
-        BigDecimal prepaidVol = demo.getCardTypeValueSplit().getOrDefault("PREPAID", BigDecimal.ZERO);
+        BigDecimal creditVol = demo.getCardTypeValueSplit().getOrDefault("Credit", BigDecimal.ZERO);
+        BigDecimal debitVol = demo.getCardTypeValueSplit().getOrDefault("Debit", BigDecimal.ZERO);
+        BigDecimal prepaidVol = demo.getCardTypeValueSplit().getOrDefault("Prepaid", BigDecimal.ZERO);
         BigDecimal totalCardVol = creditVol.add(debitVol).add(prepaidVol);
         BigDecimal creditPct = totalCardVol.compareTo(BigDecimal.ZERO) > 0
                 ? creditVol.multiply(new BigDecimal(100)).divide(totalCardVol, 0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
@@ -649,9 +716,9 @@ public class MerchantInsightService {
         demo.setCreditDebitRatio(creditPct.intValue() + " / " + debitPct.intValue());
 
         Map<String, BigDecimal> cardTypeCountMap = demo.getCardTypeCountSplit();
-        BigDecimal creditCount = cardTypeCountMap.getOrDefault("CREDIT", BigDecimal.ZERO);
-        BigDecimal debitCount = cardTypeCountMap.getOrDefault("DEBIT", BigDecimal.ZERO);
-        BigDecimal prepaidCount = cardTypeCountMap.getOrDefault("PREPAID", BigDecimal.ZERO);
+        BigDecimal creditCount = cardTypeCountMap.getOrDefault("Credit", BigDecimal.ZERO);
+        BigDecimal debitCount = cardTypeCountMap.getOrDefault("Debit", BigDecimal.ZERO);
+        BigDecimal prepaidCount = cardTypeCountMap.getOrDefault("Prepaid", BigDecimal.ZERO);
 
         demo.setCreditPct(creditPct);
         demo.setCreditVolume(creditVol);
@@ -679,13 +746,13 @@ public class MerchantInsightService {
 
         List<ChartData> avgTicket = new ArrayList<>();
         if (creditCount.compareTo(BigDecimal.ZERO) > 0)
-            avgTicket.add(ChartData.builder().label("CREDIT").value(creditVol.divide(creditCount, 0, RoundingMode.HALF_UP))
+            avgTicket.add(ChartData.builder().label("Credit").value(creditVol.divide(creditCount, 0, RoundingMode.HALF_UP))
                     .value2(creditVol).value3(creditCount).build());
         if (debitCount.compareTo(BigDecimal.ZERO) > 0)
-            avgTicket.add(ChartData.builder().label("DEBIT").value(debitVol.divide(debitCount, 0, RoundingMode.HALF_UP))
+            avgTicket.add(ChartData.builder().label("Debit").value(debitVol.divide(debitCount, 0, RoundingMode.HALF_UP))
                     .value2(debitVol).value3(debitCount).build());
         if (prepaidCount.compareTo(BigDecimal.ZERO) > 0)
-            avgTicket.add(ChartData.builder().label("PREPAID").value(prepaidVol.divide(prepaidCount, 0, RoundingMode.HALF_UP))
+            avgTicket.add(ChartData.builder().label("Prepaid").value(prepaidVol.divide(prepaidCount, 0, RoundingMode.HALF_UP))
                     .value2(prepaidVol).value3(prepaidCount).build());
         demo.setAvgTicketByCardType(avgTicket);
 
@@ -694,13 +761,16 @@ public class MerchantInsightService {
         BigDecimal walletPct = totalCardVol.compareTo(BigDecimal.ZERO) > 0
                 ? contactlessVol.multiply(new BigDecimal(100)).divide(totalCardVol, 0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
         demo.setWalletUsagePct(walletPct);
-        demo.setCardPenetrationPct(new BigDecimal("98.2"));
+        // Card penetration: percentage of transactions that are card (vs cash)
+        // Estimated from available data — total card txns / total txns
+        // Card penetration not set — box removed from template (hardcoded 99 was misleading)
+        demo.setCardPenetrationPct(null);
 
         List<ChartData> mSales = new ArrayList<>(), mTxns = new ArrayList<>(), mCust = new ArrayList<>();
         for (java.util.Map<String, Object> r : monthlyTrends) {
             int y = ((Number) r.get("year")).intValue();
             int m = ((Number) r.get("month")).intValue();
-            String label = java.time.Month.of(m).name().substring(0, 3) + " " + y;
+            String label = java.time.Month.of(m).getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH) + " " + y;
             BigDecimal vol = r.get("totalBaseVolume") == null
                     ? (r.get("totalVolume") == null ? BigDecimal.ZERO : (BigDecimal) r.get("totalVolume"))
                     : (BigDecimal) r.get("totalBaseVolume");
@@ -710,6 +780,10 @@ public class MerchantInsightService {
             mTxns.add(ChartData.builder().label(label).value(new BigDecimal(txns)).build());
             mCust.add(ChartData.builder().label(label).value(new BigDecimal(cust)).build());
         }
+        // Pad to 12 months — always show a full 12-month window so chart formatting is consistent
+        mSales = padToTwelveMonths(mSales, monthlyTrends);
+        mTxns = padToTwelveMonths(mTxns, monthlyTrends);
+        mCust = padToTwelveMonths(mCust, monthlyTrends);
         demo.setMonthlySales(mSales);
         demo.setMonthlyTxns(mTxns);
         demo.setMonthlyCustomers(mCust);
@@ -746,26 +820,80 @@ public class MerchantInsightService {
         return demo;
     }
 
+    /**
+     * Pad a monthly chart data list to always contain exactly 12 entries.
+     * If fewer than 12 months of data exist, prepend zero-valued entries with
+     * full month name labels (e.g. "January 2025") so that charts always show
+     * a complete 12-month window.
+     */
+    private List<ChartData> padToTwelveMonths(List<ChartData> data, List<java.util.Map<String, Object>> monthlyTrends) {
+        if (data.size() >= 12) return data;
+        // Determine the earliest month in the data to work backwards from
+        if (data.isEmpty() || monthlyTrends.isEmpty()) return data;
+        // Find the earliest year/month in the trend data
+        int earliestYear = Integer.MAX_VALUE, earliestMonth = 1;
+        for (java.util.Map<String, Object> r : monthlyTrends) {
+            int y = ((Number) r.get("year")).intValue();
+            int m = ((Number) r.get("month")).intValue();
+            if (y < earliestYear || (y == earliestYear && m < earliestMonth)) {
+                earliestYear = y; earliestMonth = m;
+            }
+        }
+        // Prepend zero months before the earliest month
+        List<ChartData> padded = new ArrayList<>();
+        YearMonth earliest = YearMonth.of(earliestYear, earliestMonth);
+        int needed = 12 - data.size();
+        for (int i = needed; i >= 1; i--) {
+            YearMonth ym = earliest.minusMonths(i);
+            String label = java.time.Month.of(ym.getMonthValue()).getDisplayName(
+                java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH) + " " + ym.getYear();
+            padded.add(ChartData.builder().label(label).value(BigDecimal.ZERO).build());
+        }
+        padded.addAll(data);
+        // Trim to exactly 12 if somehow we overshot
+        return padded.size() > 12 ? padded.subList(padded.size() - 12, padded.size()) : padded;
+    }
+
     private List<ChartData> buildQuarterlyBreakdown(List<java.util.Map<String, Object>> monthlyTrends) {
+        // Use CALENDAR QUARTERS: Q1=Jan–Mar, Q2=Apr–Jun, Q3=Jul–Sep, Q4=Oct–Dec
+        // If a quarter is incomplete (e.g. only 2 of 3 months have data), still show it
+        // with a "*" suffix to indicate partial data.
         Map<String, BigDecimal> qSales = new LinkedHashMap<>();
         Map<String, Long> qTxns = new LinkedHashMap<>();
+        Map<String, Integer> qMonthCount = new LinkedHashMap<>(); // track how many months contributed
+
         for (java.util.Map<String, Object> r : monthlyTrends) {
-            int m = ((Number) r.get("month")).intValue();
             int y = ((Number) r.get("year")).intValue();
-            String q = "Q" + ((m - 1) / 3 + 1) + " " + y;
+            int m = ((Number) r.get("month")).intValue();
+            // Determine calendar quarter: Q1=1-3, Q2=4-6, Q3=7-9, Q4=10-12
+            int qNum = (m - 1) / 3 + 1;
+            String qLabel = "Q" + qNum + " " + y;
             BigDecimal vol = r.get("totalBaseVolume") == null
-                    ? (r.get("totalVolume") == null ? BigDecimal.ZERO : (BigDecimal) r.get("totalVolume"))
-                    : (BigDecimal) r.get("totalBaseVolume");
+                ? (r.get("totalVolume") == null ? BigDecimal.ZERO : (BigDecimal) r.get("totalVolume"))
+                : (BigDecimal) r.get("totalBaseVolume");
             Long txns = r.get("totalTxns") == null ? 0L : ((Number) r.get("totalTxns")).longValue();
-            qSales.put(q, qSales.getOrDefault(q, BigDecimal.ZERO).add(vol));
-            qTxns.put(q, qTxns.getOrDefault(q, 0L) + txns);
+            qSales.put(qLabel, qSales.getOrDefault(qLabel, BigDecimal.ZERO).add(vol));
+            qTxns.put(qLabel, qTxns.getOrDefault(qLabel, 0L) + txns);
+            qMonthCount.put(qLabel, qMonthCount.getOrDefault(qLabel, 0) + 1);
         }
+
+        // Sort by year then quarter number
+        List<String> sortedKeys = new ArrayList<>(qSales.keySet());
+        sortedKeys.sort((a, b) -> {
+            // Parse "Q1 2025" -> year=2025, q=1
+            int aQ = Integer.parseInt(a.substring(1, 2)), aY = Integer.parseInt(a.substring(3));
+            int bQ = Integer.parseInt(b.substring(1, 2)), bY = Integer.parseInt(b.substring(3));
+            return aY != bY ? aY - bY : aQ - bQ;
+        });
+
         List<ChartData> result = new ArrayList<>();
-        for (String q : qSales.keySet()) {
+        for (String q : sortedKeys) {
             BigDecimal s = qSales.get(q);
             long t = qTxns.get(q);
             BigDecimal atv = t > 0 ? s.divide(new BigDecimal(t), 0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-            result.add(ChartData.builder().label(q).value(s).value2(new BigDecimal(t)).value3(atv).build());
+            // Mark incomplete quarters (fewer than 3 months of data) with "*"
+            String label = qMonthCount.get(q) < 3 ? q + " *" : q;
+            result.add(ChartData.builder().label(label).value(s).value2(new BigDecimal(t)).value3(atv).build());
         }
         return result;
     }
@@ -851,21 +979,23 @@ public class MerchantInsightService {
 
         BigDecimal conversionRate = eligCount > 0
                 ? new BigDecimal(optinCount * 100.0 / eligCount).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-        BigDecimal missedRevenue = optoutVol.multiply(new BigDecimal("0.035")).setScale(0, RoundingMode.HALF_UP);
+        BigDecimal missedRevenue = optoutVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
 
         List<ChartData> missed = new ArrayList<>(), opt = new ArrayList<>();
         for (java.util.Map<String, Object> r : monthlyTrends) {
             int y = ((Number) r.get("year")).intValue();
             int m = ((Number) r.get("month")).intValue();
-            String label = java.time.Month.of(m).name().substring(0, 3) + " " + y;
+            String label = java.time.Month.of(m).getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH).substring(0, 3).toUpperCase() + " " + y;
             BigDecimal oout = r.get("dccOptoutVolume") == null ? BigDecimal.ZERO : (BigDecimal) r.get("dccOptoutVolume");
             BigDecimal oin = r.get("dccOptinVolume") == null ? BigDecimal.ZERO : (BigDecimal) r.get("dccOptinVolume");
-            missed.add(ChartData.builder().label(label).value(oout).build());
+            // Missed revenue shown as estimated DCC revenue at ~3% on opt-out volume
+            BigDecimal missedAmount = oout.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
+            missed.add(ChartData.builder().label(label).value(missedAmount).build());
             opt.add(ChartData.builder().label(label).value(oout).value2(oin).build());
         }
 
         long optoutCount = eligCount - optinCount;
-        BigDecimal revenueGenerated = optinVol.multiply(new BigDecimal("0.035")).setScale(0, RoundingMode.HALF_UP);
+        BigDecimal revenueGenerated = optinVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
 
         DccPerformance dcc = DccPerformance.builder()
                 .missedOpportunityTrend(missed).optOutOptInTrend(opt).eligibilityTrend(new ArrayList<>())
@@ -1045,13 +1175,12 @@ public class MerchantInsightService {
         double salesGrowth = ov.getSales() != null ? ov.getSales().getMomGrowth() : 0;
         BigDecimal totalSales = ov.getSales() != null ? ov.getSales().getValue() : BigDecimal.ZERO;
         BigDecimal avgTxn = ov.getAvgTxnValue() != null ? ov.getAvgTxnValue().getValue() : BigDecimal.ZERO;
-        String trend = salesGrowth >= 5 ? "a strong" : salesGrowth >= 0 ? "a steady" : salesGrowth >= -5 ? "a slightly challenging" : "a challenging";
+        String trend = salesGrowth >= 5 ? "an upward" : salesGrowth >= 0 ? "a steady" : salesGrowth >= -5 ? "a mixed" : "a slower";
         StringBuilder exec = new StringBuilder();
-        exec.append(String.format("This was %s month with total sales of %s %s (%s%% vs last month). ", trend, ccy, fmt(totalSales), String.format("%+.1f", salesGrowth)));
+        exec.append(String.format("This was %s month with total sales of %s %s (%s%% vs last month). ", trend, ccy, fmt(totalSales), String.format("%+.0f", salesGrowth)));
         exec.append(String.format("Average transaction value stood at %s %s across %s transactions. ", ccy, fmt(avgTxn), fmt(ov.getTransactions().getValue())));
         BigDecimal retRate = loyalty != null && loyalty.getRetentionRate() != null ? loyalty.getRetentionRate() : BigDecimal.ZERO;
-        if (retRate.compareTo(new BigDecimal(50)) >= 0) exec.append(String.format("Customer loyalty is healthy at %s%% retention.", fmt(retRate)));
-        else exec.append(String.format("Customer retention at %s%% has room for improvement.", fmt(retRate)));
+        exec.append(String.format("Repeat card holder rate for the period was %s%%.", fmt(retRate)));
         n.setExecSummary(exec.toString());
 
         // Page 4: Business Achievements
@@ -1064,85 +1193,85 @@ public class MerchantInsightService {
         n.setPeakWatch(String.format("Your best day was %.1fx your daily average of %s %s. %s",
             ratio, ccy, fmt(dailyAvg),
             ratio.compareTo(new BigDecimal("2.5")) > 0
-                ? "High volatility \u2014 consider loyalty programs to smooth revenue across all days."
-                : "Good consistency \u2014 revenue is well distributed across the month."));
+                ? "Sales look quite concentrated on a few days \u2014 loyalty incentives on quieter days may help spread demand more evenly."
+                : "Sales appear fairly distributed across the month \u2014 worth monitoring whether that pattern holds next month."));
 
         // Page 5: Sales & Hourly Intelligence
-        n.setSalesInsight(String.format("Your busiest hour is %s generating %s %s (%s%% of daily revenue). %s is the quietest period.",
+        n.setSalesInsight(String.format("Your busiest hour appears to be %s, generating %s %s (%s%% of total sales volume). %s tends to be the quietest window.",
             n.getPeakHourLabel(), ccy, fmt(peakHourVal),
             hourMap.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add).compareTo(BigDecimal.ZERO) > 0
                 ? fmt(peakHourVal.multiply(new BigDecimal(100)).divide(hourMap.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add), 0, RoundingMode.HALF_UP))
                 : "0",
             n.getSlowestHourLabel()));
-        n.setSalesWatch(String.format("Consider a %s promotion to redistribute traffic from peak hours and increase overall utilization.", n.getSlowestHourLabel()));
+        n.setSalesWatch(String.format("Exploring a light promotion or activity during %s could be worth considering to build footfall during that window.", n.getSlowestHourLabel()));
 
         // Page 5b: Heatmap
         String peakDay = ov.getPeakDayName() != null ? ov.getPeakDayName() : "Saturday";
         BigDecimal wkdPct = ov.getWeekdayRevenuePct() != null ? ov.getWeekdayRevenuePct() : BigDecimal.ZERO;
         BigDecimal wkePct = ov.getWeekendRevenuePct() != null ? ov.getWeekendRevenuePct() : BigDecimal.ZERO;
-        n.setHeatmapInsight(String.format("%s is your strongest day. Weekdays contribute %s%% and weekends %s%% of total revenue.", peakDay, fmt(wkdPct), fmt(wkePct)));
+        n.setHeatmapInsight(String.format("%s is your strongest day. Weekdays contribute %s%% and weekends %s%% of total sales volume.", peakDay, fmt(wkdPct), fmt(wkePct)));
         n.setHeatmapTip(wkePct.compareTo(new BigDecimal(40)) > 0
-            ? "You're weekend-heavy. Weekday lunch deals or early-bird promotions could balance the load."
-            : "Revenue is well balanced across the week. Focus staffing on " + peakDay + " to capitalize on peak traffic.");
+            ? "Sales are concentrated towards the weekend \u2014 weekday lunch deals or early-bird offers may be worth exploring to spread demand."
+            : "Sales look reasonably balanced across the week. Aligning staffing closely with " + peakDay + " patterns may help make the most of peak periods.");
 
         // Page 7: Growth & Seasonality
         BigDecimal yoy = demo.getYoyGrowthPct() != null ? demo.getYoyGrowthPct() : BigDecimal.ZERO;
         BigDecimal avgGrowth = demo.getAvgMonthlyGrowthPct() != null ? demo.getAvgMonthlyGrowthPct() : BigDecimal.ZERO;
         String bestMo = demo.getBestMonth() != null ? demo.getBestMonth() : "-";
-        n.setGrowthInsight(String.format("Your best performing month was %s. Average monthly growth rate is %s%%. %s",
+        n.setGrowthInsight(String.format("Your best performing month so far has been %s. Average monthly growth rate is %s%%. %s",
             bestMo, fmt(avgGrowth),
-            yoy.compareTo(BigDecimal.ZERO) > 0 ? String.format("Year-on-year growth is a healthy +%s%%.", fmt(yoy))
-                : yoy.compareTo(BigDecimal.ZERO) < 0 ? String.format("Year-on-year shows a %s%% decline \u2014 review pricing and marketing strategy.", fmt(yoy))
+            yoy.compareTo(BigDecimal.ZERO) > 0 ? String.format("Year-on-year growth looks encouraging at +%s%%.", fmt(yoy))
+                : yoy.compareTo(BigDecimal.ZERO) < 0 ? String.format("Year-on-year is showing a %s%% decline \u2014 it may be worth reviewing pricing or promotional activity.", fmt(yoy))
                     : ""));
         String peakSeason = demo.getPeakSeason() != null ? demo.getPeakSeason() : "-";
         String lowSeason = demo.getLowSeason() != null ? demo.getLowSeason() : "-";
-        n.setGrowthWatch(String.format("Peak season is %s; plan inventory and staffing accordingly. Low season (%s) is an opportunity for targeted promotions.", peakSeason, lowSeason));
+        n.setGrowthWatch(String.format("Peak season appears to be %s \u2014 planning inventory and staffing ahead of that period could be worthwhile. Quieter months (%s) may offer an opportunity to test targeted promotions.", peakSeason, lowSeason));
 
         // Page 8: Card & Payment Analytics
         BigDecimal creditPct = demo.getCreditPct() != null ? demo.getCreditPct() : BigDecimal.ZERO;
         BigDecimal debitPct = demo.getDebitPct() != null ? demo.getDebitPct() : BigDecimal.ZERO;
         BigDecimal intlPct = demo.getInternationalCardPct() != null ? demo.getInternationalCardPct() : BigDecimal.ZERO;
-        n.setCardInsight(String.format("Credit cards account for %s%% of volume and debit cards %s%%. International cards represent %s%% of transactions.", fmt(creditPct), fmt(debitPct), fmt(intlPct)));
+        n.setCardInsight(String.format("Credit cards represent %s%% of volume and debit cards %s%%. International cards account for %s%% of transactions this period.", fmt(creditPct), fmt(debitPct), fmt(intlPct)));
         n.setCardTip(creditPct.compareTo(new BigDecimal(60)) > 0
-            ? "High credit card usage suggests affluent customers. Consider premium offerings and higher-margin products."
+            ? "A high proportion of credit card usage may suggest an opportunity to explore premium offerings or higher-margin products."
             : intlPct.compareTo(new BigDecimal(20)) > 0
-                ? "Strong international card presence \u2014 ensure DCC is enabled and staff are trained to offer currency choice."
-                : "Balanced card mix. Focus on improving average transaction value across all card types.");
+                ? "There is a notable international card presence \u2014 it may be worth checking that DCC is enabled and that staff are comfortable offering currency choice."
+                : "The card mix looks balanced. Exploring ways to improve average transaction value across all card types could be beneficial.");
 
         // Page 9: Customer Intelligence
-        n.setCustomerInsight(String.format("You served %s unique cards this month with a %s%% returning customer rate. Average spend per customer is %s %s.",
+        n.setCustomerInsight(String.format("This month saw %s unique cards, with %s%% returning for more than one visit. Average spend per card holder was %s %s.",
             loyalty != null && loyalty.getTotalUniqueCards() != null ? fmt(loyalty.getTotalUniqueCards()) : "0",
             fmt(retRate), ccy, ov.getAvgSpendPerCustomer() != null ? fmt(ov.getAvgSpendPerCustomer().getValue()) : "0"));
-        n.setCustomerTip(retRate.compareTo(new BigDecimal(50)) < 0
-            ? String.format("Your repeat rate of %s%% is below the 50%% healthy benchmark. A loyalty program could increase repeat visits by 15-25%%.", fmt(retRate))
-            : String.format("Excellent loyalty at %s%%! Focus on increasing average spend per visit through upselling and cross-selling.", fmt(retRate)));
+        n.setCustomerTip(retRate.compareTo(new BigDecimal(30)) < 0
+            ? String.format("Your repeat card holder rate is currently %s%%. A loyalty or incentive programme may help grow that figure over time.", fmt(retRate))
+            : String.format("Repeat card holder rate is at %s%%. Looking for ways to grow average spend per visit \u2014 such as bundling or upselling \u2014 could be a natural next step.", fmt(retRate)));
 
         // Page 10: DCC
         BigDecimal dccConv = dcc != null && dcc.getDccConversionRate() != null ? dcc.getDccConversionRate() : BigDecimal.ZERO;
         BigDecimal missedRev = dcc != null && dcc.getDccMissedRevenue() != null ? dcc.getDccMissedRevenue() : BigDecimal.ZERO;
-        n.setDccInsight(String.format("DCC conversion rate is %s%%. %s", fmt(dccConv),
+        n.setDccInsight(String.format("DCC conversion rate stands at %s%% for this period. %s", fmt(dccConv),
             missedRev.compareTo(BigDecimal.ZERO) > 0
-                ? String.format("You missed an estimated %s %s in DCC revenue from opt-out transactions.", ccy, fmt(missedRev))
-                : "No significant missed DCC revenue this month."));
+                ? String.format("An estimated %s %s in potential DCC revenue came from transactions where customers chose to pay in local currency.", ccy, fmt(missedRev))
+                : "There is no significant uncaptured DCC revenue to note this month."));
         n.setDccTip(dccConv.compareTo(new BigDecimal(20)) < 0
-            ? "Low DCC acceptance suggests staff may not be offering currency choice consistently. A brief training session could increase opt-in by 10-15 percentage points."
-            : "Good DCC performance. Maintain staff awareness and consider displaying currency choice more prominently at the terminal.");
+            ? "Opt-in rates look relatively low, which may suggest currency choice isn't being consistently offered. A brief awareness session with staff could help \u2014 even small improvements in opt-in rates tend to add up quickly."
+            : "DCC performance is looking solid. Keeping staff awareness high and ensuring the currency choice prompt is visible at the terminal should help sustain this.");
 
         // Closing Page: 3 Action Items
         List<String> actions = new ArrayList<>();
-        if (retRate.compareTo(new BigDecimal(50)) < 0)
-            actions.add(String.format("Launch a loyalty program \u2014 your %s%% repeat rate has significant upside potential.", fmt(retRate)));
+        if (retRate.compareTo(new BigDecimal(30)) < 0)
+            actions.add(String.format("Your repeat card holder rate is %s%%. A loyalty or rewards programme could help grow this over time.", fmt(retRate)));
         if (dccConv.compareTo(new BigDecimal(15)) < 0 && dcc != null && dcc.getDccEligibleVolume() != null && dcc.getDccEligibleVolume().compareTo(BigDecimal.ZERO) > 0)
-            actions.add(String.format("Train staff on DCC \u2014 potential %s %s additional monthly revenue from better opt-in rates.", ccy, fmt(missedRev)));
+            actions.add(String.format("DCC opt-in rates may have room to grow \u2014 an estimated %s %s in potential revenue came from opt-out transactions this period. Staff awareness training is typically the highest-impact starting point.", ccy, fmt(missedRev)));
         if (salesGrowth < -5)
-            actions.add(String.format("Sales declined %.1f%% \u2014 review pricing, promotions, and competitor activity to reverse the trend.", salesGrowth));
+            actions.add(String.format("Sales are down %.0f%% versus last month \u2014 it may be worth looking at pricing, promotional activity, or external factors that could be contributing.", salesGrowth));
         if (wkePct.compareTo(new BigDecimal(45)) > 0)
-            actions.add("Launch weekday promotions \u2014 over 45% of revenue is concentrated on weekends, leaving weekday capacity underutilized.");
+            actions.add("Sales are currently leaning towards the weekend. Exploring weekday offers or programmes may help spread demand more evenly through the week.");
         if (avgTxn.compareTo(new BigDecimal(50)) < 0)
-            actions.add(String.format("Average transaction is only %s %s \u2014 consider bundling, minimum-order offers, or upselling to increase ticket size.", ccy, fmt(avgTxn)));
-        if (actions.isEmpty()) actions.add("Strong performance across all metrics. Continue current strategy and monitor for seasonal shifts.");
-        if (actions.size() < 2) actions.add(String.format("Focus staffing and promotions on %s (your peak day) and %s (peak hour) to maximize revenue.", peakDay, n.getPeakHourLabel()));
-        if (actions.size() < 3) actions.add(String.format("Your best month was %s \u2014 plan ahead to replicate that success with targeted marketing.", bestMo));
+            actions.add(String.format("Average transaction value is currently %s %s. Bundling, combination offers, or gentle upselling at point of sale may be worth exploring to grow the average ticket.", ccy, fmt(avgTxn)));
+        if (actions.isEmpty()) actions.add("Performance looks strong across the board. Maintaining the current approach while watching for seasonal shifts should serve well.");
+        if (actions.size() < 2) actions.add(String.format("Your data suggests %s and %s are your highest-traffic periods \u2014 aligning staffing and any promotional activity around these windows may help make the most of that demand.", peakDay, n.getPeakHourLabel()));
+        if (actions.size() < 3) actions.add(String.format("Your strongest month so far has been %s \u2014 it may be useful to think about what drove that performance and whether similar conditions could be created again.", bestMo));
 
         n.setActionItem1(actions.get(0));
         n.setActionItem2(actions.size() > 1 ? actions.get(1) : "");
@@ -1516,9 +1645,9 @@ public class MerchantInsightService {
                 } else {
                     return new String[]{String.format("Revenue Health at %d/100", score),
                         String.format("%s %s total revenue with %d/%d active days (%+.1f%% MoM). %s", ccy, fmt(totalSales), activeDays, totalDays, mom,
-                            activeDays < totalDays * 0.8 ? "Too many inactive days — investigate causes of downtime."
-                            : mom < -5 ? "Declining trend — review pricing, promotions, and competitor activity."
-                            : "Revenue volatility is high — consider loyalty programs to smooth daily sales.")};
+                            activeDays < totalDays * 0.8 ? "There are a notable number of inactive days \u2014 it may be worth exploring what's behind that pattern."
+                            : mom < -5 ? "Sales are trending down \u2014 reviewing pricing, promotions, or external factors may help identify the cause."
+                            : "Revenue looks a bit uneven day-to-day \u2014 loyalty incentives on quieter days could help smooth things out.")};
                 }
             }
             case 1: { // Growth Momentum
@@ -1530,9 +1659,9 @@ public class MerchantInsightService {
                 } else {
                     return new String[]{String.format("Growth Momentum at %d/100", score),
                         String.format("MoM growth is %+.1f%% and YoY is %+.1f%%. %s", mom, yoy,
-                            yoy < -5 ? "Year-on-year decline is concerning — review structural issues in pricing and market positioning."
-                            : mom < 0 ? "Recent month showed decline — targeted promotions and seasonal campaigns could reverse this."
-                            : "Growth is flat — explore new customer acquisition channels and upselling strategies.")};
+                            yoy < -5 ? "Year-on-year is showing a meaningful decline \u2014 it may be worth looking at structural pricing or marketing factors."
+                            : mom < 0 ? "The most recent month showed a dip \u2014 targeted promotions or seasonal activity could help reverse that."
+                            : "Growth looks fairly flat \u2014 exploring new ways to attract customers or grow average spend could be beneficial.")};
                 }
             }
             case 2: { // Customer Loyalty
@@ -1545,9 +1674,9 @@ public class MerchantInsightService {
                 } else {
                     return new String[]{String.format("Customer Loyalty at %d/100", score),
                         String.format("Repeat rate is %.0f%% with %s unique cards. %s", retRate, fmt(uniqueCards),
-                            retRate < 30 ? "Very low retention — a loyalty program could increase repeat visits by 15-25%%."
-                            : retRate < 50 ? "Below-average retention — consider personalized offers for returning customers."
-                            : "Customer base is moderate — focus on increasing average spend per visit through upselling.")};
+                            retRate < 30 ? "Retention looks quite low \u2014 a loyalty programme or incentive for repeat visits may help grow this over time."
+                            : retRate < 50 ? "Retention has room to grow \u2014 personalised offers for returning customers are worth exploring."
+                            : "There may be an opportunity to focus on growing average spend per visit, for example through bundling or complementary offers.")};
                 }
             }
             case 3: { // Payment Efficiency
@@ -1561,10 +1690,10 @@ public class MerchantInsightService {
                     return new String[]{String.format("Payment Efficiency at %d/100", score),
                         String.format("%s%% international cards, weekday/weekend split at %s%%/%s%%. %s", fmt(intlPct), fmt(wkdPct),
                             ov.getWeekendRevenuePct() != null ? fmt(ov.getWeekendRevenuePct()) : "0",
-                            wkdPct.doubleValue() < 50 ? "Too weekend-heavy — weekday promotions could balance capacity."
-                            : wkdPct.doubleValue() > 80 ? "Weekends underperforming — consider weekend events and promotions."
-                            : intlPct.doubleValue() < 10 ? "Low international card share — target tourist locations and travel partnerships."
-                            : "Card scheme diversity is low — ensure all major schemes are accepted and promoted.")};
+                            wkdPct.doubleValue() < 50 ? "Revenue is leaning heavily towards the weekend \u2014 weekday-focused activity may help balance things out."
+                            : wkdPct.doubleValue() > 80 ? "Weekend volumes look lower relative to weekdays \u2014 weekend-specific events or promotions might help."
+                            : intlPct.doubleValue() < 10 ? "International card share is relatively low \u2014 there may be an opportunity to attract more visitors or travellers."
+                            : "Expanding card scheme diversity could be worth looking into if not all major schemes are currently accepted.")};
                 }
             }
             case 4: { // DCC
@@ -1572,10 +1701,10 @@ public class MerchantInsightService {
                 BigDecimal missedRev = dcc != null && dcc.getDccMissedRevenue() != null ? dcc.getDccMissedRevenue() : BigDecimal.ZERO;
                 if (isStrength) {
                     return new String[]{"Strong DCC Performance",
-                        String.format("%.1f%% DCC conversion rate. Currency choice is being offered effectively.", convRate)};
+                        String.format("%.0f%% DCC conversion rate. Currency choice is being offered effectively.", convRate)};
                 } else {
                     return new String[]{String.format("DCC Conversion at %d/100", score),
-                        String.format("DCC conversion is only %.1f%%, missing %s %s/month. Staff training could recover 60%% immediately.", convRate, ccy, fmt(missedRev))};
+                        String.format("DCC conversion is currently %.0f%%, with an estimated %s %s in potential sales volume from opt-out transactions. Staff awareness training is often the most straightforward way to improve this.", convRate, ccy, fmt(missedRev))};
                 }
             }
             default:

@@ -201,73 +201,84 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
         <div style={{ padding: '24px', background: '#f8fafc', minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
             <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                     <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a' }}>
                         {viewMode === 'STORES' ? 'Store Management' : viewMode === 'TERMINALS' ? 'Terminal Management' : 'Merchant Universe'}
                     </h2>
-                    <button onClick={clearFilters} style={{ fontSize: '0.9rem', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <X size={16} /> Clear Filters
+                    <button onClick={clearFilters} style={{ fontSize: '0.85rem', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <X size={14} /> Clear Filters
                     </button>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
-                    <div style={{ position: 'relative', gridColumn: 'span 2' }}>
+                {/* Row 1: Search + text filters */}
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                    <div style={{ position: 'relative', flex: '2 1 280px', minWidth: '200px' }}>
                         <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                         <input
                             type="text"
                             placeholder="Search Merchant Name, MID..."
                             value={filters.search}
                             onChange={(e) => handleFilterChange('search', e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
                             style={{
-                                width: '100%', padding: '10px 10px 10px 35px', borderRadius: '8px',
-                                border: '1px solid #e2e8f0', fontSize: '0.9rem'
+                                width: '100%', padding: '9px 10px 9px 35px', borderRadius: '8px',
+                                border: '1px solid #e2e8f0', fontSize: '0.9rem', boxSizing: 'border-box'
                             }}
                         />
                     </div>
+                    <input type="text" placeholder="SID" value={filters.sid} onChange={(e) => handleFilterChange('sid', e.target.value)}
+                        style={{ ...inputStyle, flex: '1 1 120px', minWidth: '100px' }} />
+                    <input type="text" placeholder="TID" value={filters.tid} onChange={(e) => handleFilterChange('tid', e.target.value)}
+                        style={{ ...inputStyle, flex: '1 1 120px', minWidth: '100px' }} />
+                    <input type="text" placeholder="Store Name" value={filters.storeName} onChange={(e) => handleFilterChange('storeName', e.target.value)}
+                        style={{ ...inputStyle, flex: '1 1 150px', minWidth: '120px' }} />
+                </div>
 
-                    <input type="text" placeholder="Filter by SID" value={filters.sid} onChange={(e) => handleFilterChange('sid', e.target.value)} style={inputStyle} />
-                    <input type="text" placeholder="Filter by TID" value={filters.tid} onChange={(e) => handleFilterChange('tid', e.target.value)} style={inputStyle} />
-                    <input type="text" placeholder="Filter by Store Name" value={filters.storeName} onChange={(e) => handleFilterChange('storeName', e.target.value)} style={inputStyle} />
-
-                    <DateRangePicker
-                        label="Merchant Onboarded"
-                        startDate={filters.merchantOnboardingFrom}
-                        endDate={filters.merchantOnboardingTo}
-                        onChange={(start, end) => {
-                            handleFilterChange('merchantOnboardingFrom', start);
-                            handleFilterChange('merchantOnboardingTo', end);
-                        }}
-                    />
-
-                    <DateRangePicker
-                        label="Store Created"
-                        startDate={filters.storeCreatedFrom}
-                        endDate={filters.storeCreatedTo}
-                        onChange={(start, end) => {
-                            handleFilterChange('storeCreatedFrom', start);
-                            handleFilterChange('storeCreatedTo', end);
-                        }}
-                    />
-
-                    <DateRangePicker
-                        label="Terminal Created"
-                        startDate={filters.terminalCreatedFrom}
-                        endDate={filters.terminalCreatedTo}
-                        onChange={(start, end) => {
-                            handleFilterChange('terminalCreatedFrom', start);
-                            handleFilterChange('terminalCreatedTo', end);
-                        }}
-                    />
-
+                {/* Row 2: Date filters + Apply */}
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 220px', minWidth: '200px' }}>
+                        <DateRangePicker
+                            label="Merchant Onboarded"
+                            startDate={filters.merchantOnboardingFrom}
+                            endDate={filters.merchantOnboardingTo}
+                            onChange={(start, end) => {
+                                handleFilterChange('merchantOnboardingFrom', start);
+                                handleFilterChange('merchantOnboardingTo', end);
+                            }}
+                        />
+                    </div>
+                    <div style={{ flex: '1 1 220px', minWidth: '200px' }}>
+                        <DateRangePicker
+                            label="Store Created"
+                            startDate={filters.storeCreatedFrom}
+                            endDate={filters.storeCreatedTo}
+                            onChange={(start, end) => {
+                                handleFilterChange('storeCreatedFrom', start);
+                                handleFilterChange('storeCreatedTo', end);
+                            }}
+                        />
+                    </div>
+                    <div style={{ flex: '1 1 220px', minWidth: '200px' }}>
+                        <DateRangePicker
+                            label="Terminal Created"
+                            startDate={filters.terminalCreatedFrom}
+                            endDate={filters.terminalCreatedTo}
+                            onChange={(start, end) => {
+                                handleFilterChange('terminalCreatedFrom', start);
+                                handleFilterChange('terminalCreatedTo', end);
+                            }}
+                        />
+                    </div>
                     <button
                         onClick={applyFilters}
                         style={{
                             background: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px',
-                            padding: '0 20px', cursor: 'pointer', fontWeight: 'bold',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', height: '42px', marginTop: 'auto'
+                            padding: '9px 24px', cursor: 'pointer', fontWeight: '600',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                            whiteSpace: 'nowrap', flexShrink: 0, fontSize: '0.9rem'
                         }}
                     >
-                        <Filter size={16} /> Apply
+                        <Filter size={15} /> Apply
                     </button>
                 </div>
             </div>

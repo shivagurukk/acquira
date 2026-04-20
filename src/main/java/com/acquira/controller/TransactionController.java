@@ -8,7 +8,6 @@ import com.acquira.repository.MerchantRepository;
 import com.acquira.repository.StoreRepository;
 import com.acquira.repository.TerminalRepository;
 import com.acquira.repository.TransactionRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -20,7 +19,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -28,17 +26,20 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/transactions")
 public class TransactionController {
 
-    @Autowired
-    private TransactionRepository transactionRepository;
+    private final TransactionRepository transactionRepository;
+    private final MerchantRepository merchantRepository;
+    private final StoreRepository storeRepository;
+    private final TerminalRepository terminalRepository;
 
-    @Autowired
-    private MerchantRepository merchantRepository;
-
-    @Autowired
-    private StoreRepository storeRepository;
-
-    @Autowired
-    private TerminalRepository terminalRepository;
+    public TransactionController(TransactionRepository transactionRepository,
+                                 MerchantRepository merchantRepository,
+                                 StoreRepository storeRepository,
+                                 TerminalRepository terminalRepository) {
+        this.transactionRepository = transactionRepository;
+        this.merchantRepository = merchantRepository;
+        this.storeRepository = storeRepository;
+        this.terminalRepository = terminalRepository;
+    }
 
     @GetMapping
     public ResponseEntity<Page<Transaction>> getTransactions(
@@ -91,11 +92,9 @@ public class TransactionController {
         response.setHeader("Content-Disposition", "attachment; filename=\"transactions.csv\"");
 
         try (java.io.PrintWriter writer = response.getWriter()) {
-            // Header
             writer.println(
                     "TransactionID,Payment Date,Transaction Date,Amount,Type,Card Scheme,Card Number,MID,Store ID,Terminal ID");
 
-            // Data
             for (Transaction t : transactions) {
                 writer.printf("%s,%s,%s,%.2f,%s,%s,%s,%s,%s,%s%n",
                         t.getTransactionId(),
@@ -104,7 +103,7 @@ public class TransactionController {
                         t.getTxnCurrencyAmount() != null ? t.getTxnCurrencyAmount() : 0.0,
                         t.getTransactionType(),
                         t.getCardScheme(),
-                        t.getCardNumber(), // Mask if necessary, assuming already masked or internal use
+                        t.getCardNumber(),
                         t.getMerchantId(),
                         t.getStoreId(),
                         t.getTerminalId());
@@ -117,10 +116,8 @@ public class TransactionController {
             LocalDate transactionDateFrom, LocalDate transactionDateTo) {
         Specification<Transaction> spec = Specification.where(null);
 
-        // Tenant Filter (CRITICAL)
         spec = spec.and((root, query, cb) -> cb.equal(root.get("tenantId"), tenantId));
 
-        // Date Filters
         if (paymentDateFrom != null) {
             LocalDateTime start = paymentDateFrom.atStartOfDay();
             spec = spec.and((root, query, cb) -> cb.greaterThanOrEqualTo(root.get("paymentDate"), start));
@@ -139,11 +136,10 @@ public class TransactionController {
             spec = spec.and((root, query, cb) -> cb.lessThanOrEqualTo(root.get("transactionDate"), end));
         }
 
-        // ID Filters (MID, SID, TID)
         if (mid != null && !mid.isBlank()) {
             List<Long> merchantIds = resolveMerchantIds(mid);
             if (merchantIds.isEmpty())
-                return (root, query, cb) -> cb.disjunction(); // Return empty if no match
+                return (root, query, cb) -> cb.disjunction();
             spec = spec.and((root, query, cb) -> root.get("merchantId").in(merchantIds));
         }
 
@@ -165,21 +161,18 @@ public class TransactionController {
     }
 
     private List<Long> resolveMerchantIds(String mid) {
-        // Find merchants where MID contains the search string
         Specification<Merchant> spec = (root, query, cb) -> cb.like(root.get("mid"), "%" + mid + "%");
         List<Merchant> merchants = merchantRepository.findAll(spec);
         return merchants.stream().map(Merchant::getMerchantId).collect(Collectors.toList());
     }
 
     private List<Long> resolveStoreIds(String sid) {
-        // Find stores where SID contains search string
         Specification<Store> spec = (root, query, cb) -> cb.like(root.get("sid"), "%" + sid + "%");
         List<Store> stores = storeRepository.findAll(spec);
         return stores.stream().map(Store::getStoreId).collect(Collectors.toList());
     }
 
     private List<Long> resolveTerminalIds(String tid) {
-        // Find terminals where TID contains search string
         Specification<Terminal> spec = (root, query, cb) -> cb.like(root.get("tid"), "%" + tid + "%");
         List<Terminal> terminals = terminalRepository.findAll(spec);
         return terminals.stream().map(Terminal::getTerminalId).collect(Collectors.toList());

@@ -53,7 +53,7 @@ public class PlaywrightPdfService {
     @Value("${pdf.pool.size:2}")
     private int configuredPoolSize;
 
-    @Value("${pdf.chart.wait.ms:300}")
+    @Value("${pdf.chart.wait.ms:800}")
     private int chartWaitMs;
 
     @Value("${pdf.batch.data.threads:8}")
@@ -211,7 +211,7 @@ public class PlaywrightPdfService {
         void initContext() {
             this.persistentCtx = browser.newContext(new Browser.NewContextOptions()
                     .setViewportSize(794, 1123)
-                    .setDeviceScaleFactor(1.0)
+                    .setDeviceScaleFactor(2.0)   // 2× DPR → retina-sharp charts in PDF
                     .setJavaScriptEnabled(true));
 
             // Register font route ONCE on context — all pages inherit it.
@@ -579,16 +579,26 @@ public class PlaywrightPdfService {
             page.evaluate("() => document.fonts.ready");
             long tFonts = System.nanoTime();
 
-            // Wait for charts (poll, max chartWaitMs)
+            // Wait for ALL charts to fully render (checks width + height + non-blank pixels)
             try {
                 page.waitForFunction(
-                    "() => { const c = document.querySelectorAll('canvas');"
-                    + " if (!c.length) return true;"
-                    + " return Array.from(c).every(x => x.width > 0 && x.height > 0); }",
+                    "() => {"
+                    + "  const canvases = document.querySelectorAll('canvas');"
+                    + "  if (!canvases.length) return true;"
+                    + "  return Array.from(canvases).every(c => {"
+                    + "    if (c.width === 0 || c.height === 0) return false;"
+                    + "    try {"
+                    + "      const ctx = c.getContext('2d');"
+                    + "      if (!ctx) return true;"
+                    + "      const px = ctx.getImageData(0, 0, Math.min(c.width,4), Math.min(c.height,4)).data;"
+                    + "      return px.some(v => v > 0);"
+                    + "    } catch(e) { return true; }"
+                    + "  });"
+                    + "}",
                     new Page.WaitForFunctionOptions().setTimeout(chartWaitMs)
                 );
             } catch (Exception e) {
-                log.debug("Chart wait timeout ({}ms)", chartWaitMs);
+                log.debug("Chart wait timeout ({}ms) — proceeding with PDF", chartWaitMs);
             }
             long tChart = System.nanoTime();
 
@@ -656,9 +666,9 @@ public class PlaywrightPdfService {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private String inlineResources(String html) {
-        // 0. Force 1x DPR
+        // 0. Match DPR to context scale factor (2×) so Chart.js renders at retina resolution
         html = html.replace("<head>",
-                "<head>\n<script>Object.defineProperty(window,'devicePixelRatio',{value:1});</script>");
+                "<head>\n<script>Object.defineProperty(window,'devicePixelRatio',{get:function(){return 2;}});</script>");
 
         // 1. Inline CSS (font-face @url paths stay as-is → served by context route)
         if (replacementCss != null) {

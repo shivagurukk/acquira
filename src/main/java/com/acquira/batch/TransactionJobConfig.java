@@ -273,11 +273,102 @@ public class TransactionJobConfig {
         return reader;
     }
 
+    /**
+     * Processor: sets tenantId AND resolves raw TGEN509 codes:
+     *   - Card Type: CRD_TYP_CDE (e.g. 'VIDB') → 'DEBIT'/'CREDIT'/'PREPAID' via ref_card_scheme
+     *   - Currency: ISO numeric (e.g. '048') → alphabetic code (e.g. 'BHD') via ref_country
+     *   - Amounts: raw integers ÷ decimal_notation_value
+     *   - MSF/VAT/Interchange: raw integers ÷ 10000
+     */
     @Bean
     @StepScope
     public ItemProcessor<StagingTransaction, StagingTransaction> transactionTenantProcessor(
             @Value("#{jobParameters['tenantId']}") Long tenantId) {
-        return item -> { item.setTenantId(tenantId); return item; };
+
+        // Pre-load ref tables into memory (17 + 233 rows)
+        java.util.Map<String, String> cardSchemeToType = new java.util.HashMap<>();
+        try {
+            jdbcTemplate.query("SELECT code, card_type FROM ref_card_scheme", rs -> {
+                while (rs.next()) {
+                    int ct = rs.getInt("card_type");
+                    String label = switch (ct) {
+                        case 2, 4 -> "DEBIT";
+                        case 0, 1 -> "CREDIT";
+                        case 3 -> "PREPAID";
+                        default -> "UNKNOWN";
+                    };
+                    cardSchemeToType.put(rs.getString("code"), label);
+                }
+                return null;
+            });
+        } catch (Exception e) {
+            System.err.println("WARN: Could not load ref_card_scheme: " + e.getMessage());
+        }
+
+        java.util.Map<String, String> isoNumericToCurrencyCode = new java.util.HashMap<>();
+        java.util.Map<String, Integer> currencyCodeToDecimal = new java.util.HashMap<>();
+        try {
+            jdbcTemplate.query("SELECT iso_numeric, currency_code, decimal_notation_value FROM ref_country WHERE iso_numeric IS NOT NULL", rs -> {
+                while (rs.next()) {
+                    String isoNum = rs.getString("iso_numeric").trim();
+                    String curCode = rs.getString("currency_code");
+                    int decVal = rs.getInt("decimal_notation_value");
+                    if (curCode != null) {
+                        isoNumericToCurrencyCode.put(isoNum, curCode.trim());
+                        currencyCodeToDecimal.put(curCode.trim(), decVal > 0 ? decVal : 100);
+                    }
+                }
+                return null;
+            });
+        } catch (Exception e) {
+            System.err.println("WARN: Could not load ref_country: " + e.getMessage());
+        }
+
+        return item -> {
+            item.setTenantId(tenantId);
+
+            // Card Type resolution
+            String rawCardType = item.getCardType();
+            if (rawCardType != null && !rawCardType.isBlank()) {
+                String resolved = cardSchemeToType.get(rawCardType.trim());
+                if (resolved != null) item.setCardType(resolved);
+            }
+
+            java.math.BigDecimal BD_10000 = new java.math.BigDecimal("10000");
+
+            // Transaction currency
+            String rawTxnCcy = item.getTxnCurrency();
+            if (rawTxnCcy != null && !rawTxnCcy.isBlank()) {
+                String resolved = isoNumericToCurrencyCode.get(rawTxnCcy.trim());
+                if (resolved != null) {
+                    item.setTxnCurrency(resolved);
+                    Integer decVal = currencyCodeToDecimal.get(resolved);
+                    if (decVal != null && item.getTxnCurrencyAmount() != null)
+                        item.setTxnCurrencyAmount(item.getTxnCurrencyAmount().divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
+                }
+            }
+
+            // Settlement currency
+            String rawSltCcy = item.getStoreBaseCurrency();
+            if (rawSltCcy != null && !rawSltCcy.isBlank()) {
+                String resolved = isoNumericToCurrencyCode.get(rawSltCcy.trim());
+                if (resolved != null) {
+                    item.setStoreBaseCurrency(resolved);
+                    Integer decVal = currencyCodeToDecimal.get(resolved);
+                    if (decVal != null && item.getStoreBaseCurrencyAmount() != null)
+                        item.setStoreBaseCurrencyAmount(item.getStoreBaseCurrencyAmount().divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
+                    if (decVal != null && item.getTotalAmountSettled() != null)
+                        item.setTotalAmountSettled(item.getTotalAmountSettled().divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
+                }
+            }
+
+            // Fee division (raw 10000ths → decimals)
+            if (item.getMsf() != null) item.setMsf(item.getMsf().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
+            if (item.getVat() != null) item.setVat(item.getVat().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
+            if (item.getInterchangeFee() != null) item.setInterchangeFee(item.getInterchangeFee().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
+
+            return item;
+        };
     }
 
     // ==================================================================================
@@ -385,6 +476,10 @@ public class TransactionJobConfig {
                 tenantId, tenantId);
 
             // 2. Bulk INSERT from staging → fact (only rows with valid payment_date)
+            // DUAL-PATH RESOLUTION:
+            //   Path A (MID present): stg.mid → dim_merchant → dim_store (via merchant_id + sid)
+            //   Path B (MID empty, SID present): stg.sid → dim_store → dim_merchant (via store.merchant_id)
+            // COALESCE picks whichever path resolved a non-null value.
             String sql = """
                 INSERT INTO fact_transaction (
                     tenant_id, merchant_id, store_id, terminal_id,
@@ -395,23 +490,37 @@ public class TransactionJobConfig {
                 )
                 SELECT
                     stg.tenant_id,
-                    m.merchant_id, s.store_id, t.terminal_id,
+                    COALESCE(m.merchant_id, s_by_sid.merchant_id) as merchant_id,
+                    COALESCE(s.store_id, s_by_sid.store_id) as store_id,
+                    COALESCE(t.terminal_id, t_by_sid.terminal_id) as terminal_id,
                     stg.arn, stg.rrn_number, stg.card_number, stg.auth_code,
                     stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type,
                     stg.card_scheme, stg.card_type, stg.dcc,
                     stg.txn_currency, stg.txn_currency_amount, stg.store_base_currency, stg.store_base_currency_amount,
                     stg.msf, stg.vat, stg.total_amount_settled, stg.interchange_fee, stg.destination
                 FROM stg_trnx_raw stg
-                LEFT JOIN dim_merchant m ON stg.mid = m.mid AND m.tenant_id = ?
-                LEFT JOIN dim_store s ON s.merchant_id = m.merchant_id
+                -- Path A: MID-first resolution
+                LEFT JOIN dim_merchant m ON stg.mid IS NOT NULL AND stg.mid != ''
+                    AND stg.mid = m.mid AND m.tenant_id = ?
+                LEFT JOIN dim_store s ON m.merchant_id IS NOT NULL
+                    AND s.merchant_id = m.merchant_id
                     AND (s.sid = stg.sid OR s.internal_id = stg.merchant_store_internal_id OR s.internal_id = CONCAT('STORE_', stg.mid))
                     AND s.tenant_id = ?
-                LEFT JOIN dim_terminal t ON t.store_id = s.store_id
+                LEFT JOIN dim_terminal t ON s.store_id IS NOT NULL
+                    AND t.store_id = s.store_id
                     AND (t.tid = stg.tid OR t.internal_id = stg.tid OR t.internal_id = CONCAT('TERM_', stg.mid))
                     AND t.tenant_id = ?
+                -- Path B: SID-first resolution (when MID is empty)
+                LEFT JOIN dim_store s_by_sid ON m.merchant_id IS NULL
+                    AND stg.sid IS NOT NULL AND stg.sid != ''
+                    AND s_by_sid.sid = stg.sid AND s_by_sid.tenant_id = ?
+                LEFT JOIN dim_terminal t_by_sid ON s_by_sid.store_id IS NOT NULL
+                    AND t_by_sid.store_id = s_by_sid.store_id
+                    AND (t_by_sid.tid = stg.tid OR t_by_sid.internal_id = stg.tid)
+                    AND t_by_sid.tenant_id = ?
                 WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL
                 """;
-            jdbcTemplate.update(sql, tenantId, tenantId, tenantId, tenantId);
+            jdbcTemplate.update(sql, tenantId, tenantId, tenantId, tenantId, tenantId, tenantId);
 
             long elapsed = System.currentTimeMillis() - start;
             System.out.printf("stagingToFact completed in %.1fs%n", elapsed / 1000.0);
@@ -441,11 +550,11 @@ public class TransactionJobConfig {
             String dateScope = "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
             String monthScope = "(SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
 
-            // 1. sum_daily_bank
+            // 1. sum_daily_bank (uses settlement amount for volume)
             jdbcTemplate.update("""
                 INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_msf,
                     total_interchange, total_scheme_fee, total_vat, total_net_revenue)
-                SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(txn_currency_amount), SUM(msf),
+                SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(store_base_currency_amount), SUM(msf),
                     SUM(interchange_fee), 0, SUM(vat), SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0))
                 FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, DATE(payment_date)
@@ -455,21 +564,21 @@ public class TransactionJobConfig {
                     total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue
                 """, tenantId, tenantId);
 
-            // 2. sum_daily_merchant (the big one)
+            // 2. sum_daily_merchant (the big one — uses settlement amount for all volumes)
             jdbcTemplate.update("""
                 INSERT INTO sum_daily_merchant (tenant_id, business_date, merchant_id,
                     total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_margin,
                     total_debit_prepaid_volume, total_credit_volume, sales_user_id, unique_customer_count,
                     dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume, dcc_eligible_count, dcc_optin_count)
                 SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, COUNT(*),
-                    SUM(f.txn_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
+                    SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
                     SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0)),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.card_type,''))) IN ('DEBIT','PREPAID') THEN f.txn_currency_amount ELSE 0 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.card_type,''))) = 'CREDIT' THEN f.txn_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.card_type,''))) IN ('DEBIT','PREPAID') THEN f.store_base_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.card_type,''))) = 'CREDIT' THEN f.store_base_currency_amount ELSE 0 END),
                     m.sales_user_id, COUNT(DISTINCT f.card_number),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.destination,'')))='INTERNATIONAL' THEN f.txn_currency_amount ELSE 0 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.destination,'')))='INTERNATIONAL' AND f.dcc IS TRUE THEN f.txn_currency_amount ELSE 0 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.destination,'')))='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.txn_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.destination,'')))='INTERNATIONAL' THEN f.store_base_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.destination,'')))='INTERNATIONAL' AND f.dcc IS TRUE THEN f.store_base_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(f.destination,'')))='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.store_base_currency_amount ELSE 0 END),
                     COUNT(CASE WHEN UPPER(TRIM(COALESCE(f.destination,'')))='INTERNATIONAL' THEN 1 END),
                     COUNT(CASE WHEN UPPER(TRIM(COALESCE(f.destination,'')))='INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END)
                 FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id
@@ -490,7 +599,7 @@ public class TransactionJobConfig {
             jdbcTemplate.update("""
                 WITH DailyCustSpend AS (
                     SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number,
-                        SUM(txn_currency_amount) as total_spend
+                        SUM(store_base_currency_amount) as total_spend
                     FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN """ + dateScope + """
                     GROUP BY tenant_id, merchant_id, DATE(payment_date), card_number
                 ), Ranked AS (
@@ -507,7 +616,7 @@ public class TransactionJobConfig {
                 INSERT INTO sum_daily_mcc (tenant_id, business_date, mcc, card_scheme, total_txns,
                     total_volume, total_msf, total_scheme_fee, total_net_revenue)
                 SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*),
-                    SUM(f.txn_currency_amount), SUM(f.msf), 0, SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0))
+                    SUM(f.store_base_currency_amount), SUM(f.msf), 0, SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0))
                 FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id
                 WHERE f.tenant_id=? AND DATE(f.payment_date) IN """ + dateScope + """
                 GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme
@@ -521,7 +630,7 @@ public class TransactionJobConfig {
                 INSERT INTO sum_daily_scheme (tenant_id, business_date, card_scheme, total_txns,
                     total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue)
                 SELECT tenant_id, DATE(payment_date), card_scheme, COUNT(*),
-                    SUM(txn_currency_amount), SUM(msf), SUM(interchange_fee), 0, SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0))
+                    SUM(store_base_currency_amount), SUM(msf), SUM(interchange_fee), 0, SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0))
                 FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, DATE(payment_date), card_scheme
                 ON CONFLICT (tenant_id, business_date, card_scheme) DO UPDATE SET
@@ -535,7 +644,7 @@ public class TransactionJobConfig {
                 INSERT INTO sum_daily_channel (tenant_id, business_date, channel, total_txns,
                     total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue)
                 SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*),
-                    SUM(f.txn_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
+                    SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
                     SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0))
                 FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id
                 WHERE f.tenant_id=? AND DATE(f.payment_date) IN """ + dateScope + """
@@ -566,7 +675,7 @@ public class TransactionJobConfig {
                 INSERT INTO sum_daily_terminal (tenant_id, business_date, merchant_id, store_id, terminal_id,
                     total_txns, total_volume, total_msf, total_revenue)
                 SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id,
-                    COUNT(*), SUM(txn_currency_amount), SUM(msf), SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0))
+                    COUNT(*), SUM(store_base_currency_amount), SUM(msf), SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0))
                 FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id
                 ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET
@@ -582,18 +691,18 @@ public class TransactionJobConfig {
                     int_cnt, int_vol, int_msf, int_optin, total_vol, total_msf)
                 SELECT tenant_id, DATE(payment_date),
                     COUNT(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,''))) IN ('DEBIT','PREPAID') THEN 1 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,''))) IN ('DEBIT','PREPAID') THEN txn_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,''))) IN ('DEBIT','PREPAID') THEN store_base_currency_amount ELSE 0 END),
                     SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,''))) IN ('DEBIT','PREPAID') THEN msf ELSE 0 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,''))) IN ('DEBIT','PREPAID') AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,''))) IN ('DEBIT','PREPAID') AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
                     COUNT(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,'')))='CREDIT' THEN 1 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,'')))='CREDIT' THEN txn_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,'')))='CREDIT' THEN store_base_currency_amount ELSE 0 END),
                     SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,'')))='CREDIT' THEN msf ELSE 0 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,'')))='CREDIT' AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='DOMESTIC' AND UPPER(TRIM(COALESCE(card_type,'')))='CREDIT' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
                     COUNT(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='INTERNATIONAL' THEN 1 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='INTERNATIONAL' THEN txn_currency_amount ELSE 0 END),
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='INTERNATIONAL' THEN store_base_currency_amount ELSE 0 END),
                     SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='INTERNATIONAL' THEN msf ELSE 0 END),
-                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='INTERNATIONAL' AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
-                    SUM(txn_currency_amount), SUM(msf)
+                    SUM(CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='INTERNATIONAL' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
+                    SUM(store_base_currency_amount), SUM(msf)
                 FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, DATE(payment_date)
                 ON CONFLICT (tenant_id, business_date) DO UPDATE SET
@@ -606,19 +715,19 @@ public class TransactionJobConfig {
                     total_vol=EXCLUDED.total_vol, total_msf=EXCLUDED.total_msf
                 """, tenantId, tenantId);
 
-            // 9. sum_daily_insight
+            // 9. sum_daily_insight (includes total_interchange for Gap-12 fix)
             jdbcTemplate.update("""
                 INSERT INTO sum_daily_insight (tenant_id, business_date, merchant_id, store_id, terminal_id,
-                    card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf)
+                    card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf, total_interchange)
                 SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
                     f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc,
-                    COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf)
+                    COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(COALESCE(f.interchange_fee, 0))
                 FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id
                 WHERE f.tenant_id=? AND DATE(f.payment_date) IN """ + dateScope + """
                 GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
                     f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc
                 ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
-                DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf
+                DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, total_interchange=EXCLUDED.total_interchange
                 """, tenantId, tenantId);
 
             // 10. Merchant attributes (CARD_SCHEME, CARD_TYPE, DESTINATION, TRANSACTION_TYPE, HOUR)
@@ -628,7 +737,7 @@ public class TransactionJobConfig {
                 String[] parts = ac.split(":");
                 jdbcTemplate.update(String.format("""
                     INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
-                    SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(TRIM(%s),'UNKNOWN')), COUNT(*), SUM(txn_currency_amount)
+                    SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(TRIM(%s),'UNKNOWN')), COUNT(*), SUM(store_base_currency_amount)
                     FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN %s
                     GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(TRIM(%s),'UNKNOWN'))
                     ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
@@ -641,7 +750,7 @@ public class TransactionJobConfig {
                 INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
                 SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR',
                     COALESCE(CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), '0'),
-                    COUNT(*), SUM(txn_currency_amount)
+                    COUNT(*), SUM(store_base_currency_amount)
                 FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, merchant_id, DATE(payment_date), COALESCE(CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), '0')
                 ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
@@ -655,7 +764,7 @@ public class TransactionJobConfig {
                     CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='INTERNATIONAL' THEN
                         CASE WHEN dcc IS TRUE THEN 'OPT_IN' ELSE 'OPT_OUT' END
                     ELSE 'DOMESTIC' END,
-                    COUNT(*), SUM(txn_currency_amount)
+                    COUNT(*), SUM(store_base_currency_amount)
                 FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, merchant_id, DATE(payment_date),
                     CASE WHEN UPPER(TRIM(COALESCE(destination,'')))='INTERNATIONAL' THEN
@@ -669,7 +778,7 @@ public class TransactionJobConfig {
             jdbcTemplate.update("""
                 INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
                 SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_CURRENCY',
-                    COALESCE(txn_currency, 'UNKNOWN'), COUNT(*), SUM(txn_currency_amount)
+                    COALESCE(txn_currency, 'UNKNOWN'), COUNT(*), SUM(store_base_currency_amount)
                 FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, merchant_id, DATE(payment_date), COALESCE(txn_currency, 'UNKNOWN')
                 ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
@@ -681,24 +790,24 @@ public class TransactionJobConfig {
                 INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
                 SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_VALUE_BAND',
                     CASE
-                        WHEN txn_currency_amount < 20 THEN '0-20'
-                        WHEN txn_currency_amount < 50 THEN '20-50'
-                        WHEN txn_currency_amount < 100 THEN '50-100'
-                        WHEN txn_currency_amount < 200 THEN '100-200'
-                        WHEN txn_currency_amount < 500 THEN '200-500'
-                        WHEN txn_currency_amount < 1000 THEN '500-1K'
+                        WHEN store_base_currency_amount < 20 THEN '0-20'
+                        WHEN store_base_currency_amount < 50 THEN '20-50'
+                        WHEN store_base_currency_amount < 100 THEN '50-100'
+                        WHEN store_base_currency_amount < 200 THEN '100-200'
+                        WHEN store_base_currency_amount < 500 THEN '200-500'
+                        WHEN store_base_currency_amount < 1000 THEN '500-1K'
                         ELSE '1K+'
                     END,
-                    COUNT(*), SUM(txn_currency_amount)
+                    COUNT(*), SUM(store_base_currency_amount)
                 FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN """ + dateScope + """
                 GROUP BY tenant_id, merchant_id, DATE(payment_date),
                     CASE
-                        WHEN txn_currency_amount < 20 THEN '0-20'
-                        WHEN txn_currency_amount < 50 THEN '20-50'
-                        WHEN txn_currency_amount < 100 THEN '50-100'
-                        WHEN txn_currency_amount < 200 THEN '100-200'
-                        WHEN txn_currency_amount < 500 THEN '200-500'
-                        WHEN txn_currency_amount < 1000 THEN '500-1K'
+                        WHEN store_base_currency_amount < 20 THEN '0-20'
+                        WHEN store_base_currency_amount < 50 THEN '20-50'
+                        WHEN store_base_currency_amount < 100 THEN '50-100'
+                        WHEN store_base_currency_amount < 200 THEN '100-200'
+                        WHEN store_base_currency_amount < 500 THEN '200-500'
+                        WHEN store_base_currency_amount < 1000 THEN '500-1K'
                         ELSE '1K+'
                     END
                 ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
@@ -708,7 +817,7 @@ public class TransactionJobConfig {
             // 11. sum_monthly_card
             jdbcTemplate.update("""
                 INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend)
-                SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(txn_currency_amount)
+                SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(store_base_currency_amount)
                 FROM fact_transaction WHERE tenant_id=? AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN """ + monthScope + """
                 GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date,'YYYYMM'), card_number
                 ON CONFLICT (tenant_id, merchant_id, month_key, card_number) DO UPDATE SET
@@ -750,9 +859,9 @@ public class TransactionJobConfig {
                     m.tenant_id, m.merchant_id, d.target_date,
                     MIN(f.payment_date), MAX(f.payment_date),
                     COALESCE(COUNT(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN 1 END), 0),
-                    COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN f.txn_currency_amount ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN f.store_base_currency_amount ELSE 0 END), 0),
                     COALESCE(COUNT(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN 1 END), 0),
-                    COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN f.txn_currency_amount ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN f.store_base_currency_amount ELSE 0 END), 0),
                     CASE WHEN MAX(f.payment_date) >= d.target_date - INTERVAL '30 days' THEN 'ACTIVE'
                          WHEN MAX(f.payment_date) < d.target_date - INTERVAL '30 days' THEN 'DORMANT'
                          ELSE 'ONBOARDED' END,

@@ -26,7 +26,7 @@ public class SumMonthlyMerchantMetrics {
     @Column(name = "month_year")
     private String monthYear;
 
-    @Column(name = "volatility_index")
+    @Column(name = "volatility_index", precision = 19, scale = 4)
     private BigDecimal volatilityIndex;
 
     @Column(name = "stability_label")
@@ -53,16 +53,16 @@ public class SumMonthlyMerchantMetrics {
     @Column(name = "week_5_health")
     private String week5Health;
 
-    @Column(name = "total_volume")
+    @Column(name = "total_volume", precision = 19, scale = 2)
     private BigDecimal totalVolume;
 
-    @Column(name = "avg_daily_volume")
+    @Column(name = "avg_daily_volume", precision = 19, scale = 2)
     private BigDecimal avgDailyVolume;
 
-    @Column(name = "max_daily_volume")
+    @Column(name = "max_daily_volume", precision = 19, scale = 2)
     private BigDecimal maxDailyVolume;
 
-    @Column(name = "min_daily_volume")
+    @Column(name = "min_daily_volume", precision = 19, scale = 2)
     private BigDecimal minDailyVolume;
 
     @Column(name = "created_at")

@@ -1,11 +1,11 @@
 .dropzone {
-  border: 2px dashed var(--border-light);
-  border-radius: 12px;
-  padding: 2rem;
+  border: 2px dashed var(--border);
+  border-radius: 14px;
+  padding: 2.5rem;
   text-align: center;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
   cursor: pointer;
-  background: var(--bg-panel);
+  background: var(--bg-subtle, #f9fafb);
   min-height: 200px;
   display: flex;
   align-items: center;
@@ -13,13 +13,14 @@
 }
 
 .dropzone:hover, .dropzone.dragging {
-  border-color: var(--accent);
-  background: rgba(59, 130, 246, 0.02);
+  border-color: var(--brand, #2563eb);
+  background: var(--brand-50, #eff6ff);
 }
 
 .dropzone.has-file {
   border-style: solid;
-  border-color: var(--accent);
+  border-color: var(--brand, #2563eb);
+  background: var(--brand-50, #eff6ff);
 }
 
 .upload-prompt {
@@ -30,22 +31,24 @@
 }
 
 .icon-wrapper {
-  background: var(--bg-dark);
+  background: var(--bg-card, #fff);
   padding: 1rem;
   border-radius: 50%;
-  color: var(--accent);
+  color: var(--brand, #2563eb);
   margin-bottom: 0.5rem;
+  border: 1px solid var(--border, #e5e7eb);
 }
 
 .upload-prompt h3 {
-  font-size: 1.1rem;
-  font-weight: 500;
-  color: var(--text-main);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text, #111827);
+  letter-spacing: -0.02em;
 }
 
 .upload-prompt p {
-  color: var(--text-muted);
-  font-size: 0.9rem;
+  color: var(--text-muted, #9ca3af);
+  font-size: 0.85rem;
 }
 
 .file-info {
@@ -57,7 +60,7 @@
 }
 
 .icon-file {
-  color: var(--accent);
+  color: var(--brand, #2563eb);
 }
 
 .file-details {
@@ -68,26 +71,27 @@
 }
 
 .file-name {
-  font-weight: 500;
-  color: var(--text-main);
+  font-weight: 600;
+  color: var(--text, #111827);
+  font-size: 0.9rem;
 }
 
 .file-size {
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  font-size: 0.78rem;
+  color: var(--text-muted, #9ca3af);
 }
 
 .btn-remove {
   background: transparent;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-muted, #9ca3af);
   cursor: pointer;
   padding: 0.5rem;
-  border-radius: 50%;
-  transition: all 0.2s;
+  border-radius: 8px;
+  transition: all 0.15s;
 }
 
 .btn-remove:hover {
-  background: #fee2e2;
-  color: #ef4444;
+  background: var(--danger-bg, #fef2f2);
+  color: var(--danger, #dc2626);
 }

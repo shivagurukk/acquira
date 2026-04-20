@@ -20,6 +20,9 @@ import java.util.List;
 @RequestMapping("/api/admin")
 @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
 public class AdminController {
+    // NOTE: Class-level allows both ADMIN and SUPER_ADMIN.
+    // Sensitive operations (tenant creation, settings) are restricted
+    // to SUPER_ADMIN via method-level @PreAuthorize below.
 
     private final TenantRepository tenantRepository;
     private final UserRepository userRepository;
@@ -54,6 +57,7 @@ public class AdminController {
     }
 
     @PostMapping("/tenants")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<Tenant> createTenant(@RequestBody Tenant tenant) {
         Tenant saved = tenantRepository.save(tenant);
         auditService.log("CREATE_TENANT",
@@ -94,12 +98,14 @@ public class AdminController {
     // ==========================================
 
     @GetMapping("/tenants/{tenantId}/settings")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<java.util.List<com.acquira.model.TenantSetting>> getTenantSettings(
             @PathVariable Long tenantId) {
         return ResponseEntity.ok(tenantSettingRepository.findByTenant_TenantId(tenantId));
     }
 
     @PostMapping("/tenants/{tenantId}/settings")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<com.acquira.model.TenantSetting> saveTenantSetting(@PathVariable Long tenantId,
             @RequestBody com.acquira.model.TenantSetting setting) {
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
@@ -108,12 +114,14 @@ public class AdminController {
     }
 
     @GetMapping("/tenants/{tenantId}/dashboard-config")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<java.util.List<com.acquira.model.DashboardConfig>> getDashboardConfig(
             @PathVariable Long tenantId) {
         return ResponseEntity.ok(dashboardConfigRepository.findByTenant_TenantIdOrderByDisplayOrderAsc(tenantId));
     }
 
     @PostMapping("/tenants/{tenantId}/dashboard-config")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<com.acquira.model.DashboardConfig> saveDashboardConfig(@PathVariable Long tenantId,
             @RequestBody com.acquira.model.DashboardConfig config) {
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();

@@ -18,6 +18,7 @@
     <properties>
         <java.version>21</java.version>
         <jjwt.version>0.11.5</jjwt.version>
+        <aws.sdk.version>2.25.6</aws.sdk.version>
     </properties>
     <modules>
         <module>acquira-common</module>
@@ -26,7 +27,7 @@
         <module>acquira-ai</module>
         <module>acquira-core</module>
     </modules>
-   <dependencies>
+    <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -94,6 +95,14 @@
                 <groupId>com.acquira</groupId>
                 <artifactId>acquira-common</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <!-- AWS SDK v2 BOM — manages all AWS module versions centrally -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
             </dependency>
         </dependencies>
     </dependencyManagement>

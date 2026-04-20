@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import api from '../api/axios';
 
-const card = { background: '#fff', borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,.06)', border: '1px solid #e5e7eb' };
+const card = { background: 'var(--bg-card, #fff)', borderRadius: 'var(--radius-lg, 12px)', boxShadow: 'var(--shadow-xs)', border: '1px solid var(--border, #e2e8f0)' };
 const badge = (bg, fg) => ({ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: bg, color: fg, whiteSpace: 'nowrap' });
 
 const UserManagement = () => {
@@ -217,7 +217,7 @@ const UserManagement = () => {
   ];
 
   return (
-    <div style={{ padding: '24px 32px', color: '#1e293b', maxWidth: 1400, margin: '0 auto' }}>
+    <div style={{ padding: 'var(--space-page, 24px)', color: 'var(--text, #1e293b)', maxWidth: 1400, margin: '0 auto' }}>
       {/* Notification */}
       <AnimatePresence>
         {notification && (
@@ -238,13 +238,13 @@ const UserManagement = () => {
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>User & Access Management</h1>
           <p style={{ fontSize: 13, color: '#64748b', margin: '4px 0 0' }}>Manage users, tenant assignments, SSO access, and approval requests</p>
         </div>
-        <button onClick={openCreateModal} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0f172a', color: '#fff', padding: '10px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+        <button onClick={openCreateModal} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--brand, #3b82f6)', color: '#fff', padding: '9px 16px', borderRadius: 'var(--radius-md, 8px)', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
           <Plus size={16} /> Create User
         </button>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 2, marginBottom: 20, background: '#f3f4f6', borderRadius: 12, padding: 4 }}>
+      <div style={{ display: 'flex', gap: 2, marginBottom: 20, background: 'var(--bg, #f1f5f9)', borderRadius: 'var(--radius-md, 8px)', padding: 3 }}>
         {[
           { key: 'users', label: 'Users', icon: UserIcon, count: users.length },
           { key: 'requests', label: 'Access Requests', icon: Clock, count: pendingCount },
@@ -252,8 +252,8 @@ const UserManagement = () => {
           <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
             flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             padding: '10px 16px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-            background: activeTab === tab.key ? '#fff' : 'transparent', color: activeTab === tab.key ? '#2563eb' : '#6b7280',
-            boxShadow: activeTab === tab.key ? '0 1px 3px rgba(0,0,0,.1)' : 'none', transition: 'all .2s', position: 'relative' }}>
+            background: activeTab === tab.key ? 'var(--bg-card, #fff)' : 'transparent', color: activeTab === tab.key ? 'var(--brand, #3b82f6)' : 'var(--text-secondary, #6b7280)',
+            boxShadow: activeTab === tab.key ? 'var(--shadow-xs)' : 'none', transition: 'all .2s', position: 'relative' }}>
             <tab.icon size={16} /> {tab.label}
             {tab.key === 'requests' && pendingCount > 0 && (
               <span style={{ background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, minWidth: 18, textAlign: 'center' }}>{pendingCount}</span>

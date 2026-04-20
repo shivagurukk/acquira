@@ -1,280 +1,407 @@
 import React, { useState, useEffect } from 'react';
 import FileDropzone from '../components/FileDropzone';
 import FinancialLoader from '../components/FinancialLoader';
-import { Upload, CheckCircle, AlertCircle, FileText, X } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
+import { Upload, CheckCircle, AlertCircle, FileText, X, Zap, BarChart2, Activity } from 'lucide-react';
 import api from '../api/axios';
 import useNotifications from '../hooks/useNotifications';
-import './UploadPage.css';
 
 const UploadPage = () => {
     const [file, setFile] = useState(null);
-    const [status, setStatus] = useState(null); // idle, uploading, processing, success, error
-    const [msg, setMsg] = useState("");
+    const [status, setStatus] = useState(null);
+    const [msg, setMsg] = useState('');
     const [jobDetails, setJobDetails] = useState(null);
     const [showSummary, setShowSummary] = useState(false);
     const [uploadPercent, setUploadPercent] = useState(0);
 
-    const { uploadProgress, isConnected, subscribeToJob } = useNotifications();
+    const { uploadProgress, subscribeToJob } = useNotifications();
 
-    // React to SSE progress updates
     useEffect(() => {
         if (!uploadProgress) return;
-
         setJobDetails(uploadProgress);
         const s = (uploadProgress.status || '').toUpperCase();
-
         if (s === 'COMPLETED' || s === 'FINISHED' || (uploadProgress.progress === 100 && s !== 'FAILED')) {
-            setStatus('success');
-            setMsg('Processing Complete!');
-            setShowSummary(true);
+            setStatus('success'); setMsg('Processing Complete!'); setShowSummary(true);
         } else if (s === 'FAILED' || s === 'ABANDONED') {
             setStatus('error');
-            setMsg(uploadProgress.exitCode === 'FAILED'
-                ? 'Processing Failed — check Batch Logs for details.'
-                : 'Processing Failed');
+            setMsg(uploadProgress.exitCode === 'FAILED' ? 'Processing Failed — check Batch Logs.' : 'Processing Failed');
             setShowSummary(true);
         } else {
             setStatus('processing');
-            const pct = uploadProgress.progress >= 0 ? uploadProgress.progress : 0;
-            setMsg(`Processing... ${pct}%`);
+            setMsg(`Processing... ${uploadProgress.progress >= 0 ? uploadProgress.progress : 0}%`);
         }
     }, [uploadProgress]);
 
     const uploadFile = async () => {
         if (!file) return;
-
         const formData = new FormData();
         formData.append('file', file);
-
-        setStatus('uploading');
-        setMsg("Uploading file...");
-        setJobDetails(null);
-        setUploadPercent(0);
-        setShowSummary(false);
-
+        setStatus('uploading'); setMsg('Uploading file...'); setJobDetails(null); setUploadPercent(0); setShowSummary(false);
         try {
             const response = await api.post('/upload', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
-                onUploadProgress: (progressEvent) => {
-                    const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-                    setUploadPercent(percentCompleted);
-                }
+                onUploadProgress: (e) => setUploadPercent(Math.round((e.loaded * 100) / e.total)),
             });
-
             setUploadPercent(100);
-            const data = response.data;
-            setJobDetails(data);
+            setJobDetails(response.data);
             setStatus('processing');
-            setMsg("File uploaded. Processing...");
-
-            // Subscribe to real-time job progress via SSE
-            if (data.jobId) {
-                subscribeToJob(data.jobId);
-            }
-
+            setMsg('File uploaded. Processing...');
+            if (response.data.jobId) subscribeToJob(response.data.jobId);
         } catch (err) {
             setStatus('error');
-            if (err.code === 'ERR_NETWORK' || err.message?.includes('Network Error')) {
-                setMsg('Upload Error: Batch service (port 8085) is not running. Please start acquira-batch and retry.');
-            } else {
-                const errorMsg = err.response?.data?.message || err.response?.data || err.message;
-                setMsg(`Upload Error: ${typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg}`);
-            }
+            const errMsg = err.code === 'ERR_NETWORK'
+                ? 'Batch service (port 8085) is not running. Please start acquira-batch and retry.'
+                : err.response?.data?.message || err.response?.data || err.message;
+            setMsg(`Upload Error: ${typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg}`);
         }
     };
 
-    const resetUpload = () => {
-        setFile(null);
-        setStatus(null);
-        setMsg("");
-        setJobDetails(null);
-        setShowSummary(false);
-        setUploadPercent(0);
-    };
+    const reset = () => { setFile(null); setStatus(null); setMsg(''); setJobDetails(null); setShowSummary(false); setUploadPercent(0); };
+
+    const stages = [
+        { label: 'Splitting',   icon: FileText,  range: [0, 10],  desc: 'Splitting file into chunks' },
+        { label: 'Reading',     icon: Activity,  range: [10, 40], desc: 'Validating rows' },
+        { label: 'Processing',  icon: Zap,       range: [40, 70], desc: 'Resolving merchants' },
+        { label: 'Loading',     icon: BarChart2, range: [70, 90], desc: 'Writing to database' },
+        { label: 'Summarizing', icon: BarChart2, range: [90, 100],desc: 'Building summaries' },
+    ];
 
     return (
-        <div className="upload-page">
-            <header className="page-header">
-                <h1>Smart Data Upload</h1>
-                <p>Upload any operational file (Merchant Master or Transaction Log). The system will automatically detect the type and process it.</p>
-            </header>
+        <div style={{ background: 'var(--bg,#f9fafb)', minHeight: '100vh' }}>
+            <PageHeader
+                title="Data Upload"
+                subtitle="Upload merchant master or transaction files for processing"
+                icon={Upload}
+            />
 
-            <div className="upload-container" style={{ maxWidth: '800px', margin: '0 auto' }}>
-                <div className="glass-panel card" style={{ padding: '40px', textAlign: 'center' }}>
-                    <div style={{ marginBottom: '20px' }}>
-                        <div style={{ background: '#e0f2fe', width: '60px', height: '60px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 15px' }}>
-                            <FileText size={32} color="#0284c7" />
+            <div style={{ padding: '28px', maxWidth: 780, margin: '0 auto' }}>
+
+                {/* Drop Zone Card */}
+                <div style={{
+                    background: 'var(--bg-card,#fff)',
+                    border: '1px solid var(--border,#e5e7eb)',
+                    borderRadius: 'var(--radius-xl,18px)',
+                    overflow: 'hidden',
+                }}>
+                    {/* Card header */}
+                    <div style={{
+                        padding: '24px 28px',
+                        display: 'flex', alignItems: 'center', gap: 14,
+                        borderBottom: '1px solid var(--border-light,#f3f4f6)',
+                    }}>
+                        <div style={{
+                            width: 44, height: 44, borderRadius: 12,
+                            background: 'var(--brand-50,#eff6ff)',
+                            border: '1px solid rgba(37,99,235,0.1)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                            <FileText size={20} style={{ color: 'var(--brand,#2563eb)' }} strokeWidth={1.8} />
                         </div>
-                        <h2 style={{ fontSize: '24px', marginBottom: '10px' }}>Universal File Uploader</h2>
-                        <p style={{ color: '#64748b' }}>Drag & Drop your Excel/CSV file here.</p>
+                        <div>
+                            <h2 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text,#111827)', margin: 0, lineHeight: 1.3, letterSpacing: '-0.02em' }}>
+                                Universal File Uploader
+                            </h2>
+                            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted,#9ca3af)', margin: '3px 0 0' }}>
+                                Supports Excel (.xlsx) and CSV files · Auto-detects file type
+                            </p>
+                        </div>
                     </div>
 
-                    <FileDropzone type="unified" onFileSelect={setFile} />
+                    {/* Body */}
+                    <div style={{ padding: '28px' }}>
+                        {!status && <FileDropzone type="unified" onFileSelect={setFile} />}
 
-                    {file && status !== 'uploading' && status !== 'processing' && status !== 'success' && (
-                        <button className="btn-upload" onClick={uploadFile} style={{ marginTop: '20px', width: '100%', padding: '15px', fontSize: '16px' }}>
-                            <Upload size={20} style={{ marginRight: '8px' }} /> Process File
-                        </button>
-                    )}
+                        {file && !status && (
+                            <button
+                                onClick={uploadFile}
+                                style={{
+                                    marginTop: 20, width: '100%', padding: '14px',
+                                    background: '#2563eb',
+                                    color: '#fff', border: 'none',
+                                    borderRadius: '12px',
+                                    fontWeight: 600, fontSize: '0.95rem',
+                                    cursor: 'pointer', fontFamily: 'inherit',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                                    transition: 'all 0.15s ease',
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.background = '#1d4ed8'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(37,99,235,0.25)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = '#2563eb'; e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = 'none'; }}
+                            >
+                                <Upload size={18} /> Process File
+                            </button>
+                        )}
 
-                    {/* Uploading state */}
-                    {status === 'uploading' && (
-                        <div style={{ marginTop: '30px', width: '100%' }}>
-                            <FinancialLoader />
-                            <p style={{ marginTop: '10px', color: '#64748b', fontWeight: '500' }}>Uploading...</p>
-                            <div style={{ marginTop: '20px', textAlign: 'left' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.875rem', color: '#64748b' }}>
-                                    <span>Upload Progress</span>
-                                    <span style={{ fontWeight: 'bold', color: '#0f172a' }}>{uploadPercent}%</span>
+                        {status === 'uploading' && (
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+                                    <FinancialLoader />
                                 </div>
-                                <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
-                                    <div style={{
-                                        width: `${uploadPercent}%`,
-                                        height: '100%',
-                                        background: '#3b82f6',
-                                        transition: 'width 0.2s ease-in-out'
-                                    }}></div>
-                                </div>
+                                <ProgressBar value={uploadPercent} label="Uploading" color="#2563eb" />
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {/* Processing state */}
-                    {status === 'processing' && (
-                        <div style={{ marginTop: '30px', width: '100%' }}>
-                            <FinancialLoader />
-                            <p style={{ marginTop: '10px', color: '#64748b', fontWeight: '500' }}>Processing Records...</p>
-                            {jobDetails && (
-                                <div style={{ marginTop: '20px', textAlign: 'left' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.875rem', color: '#64748b' }}>
-                                        <span>Processing Progress</span>
-                                        <span style={{ fontWeight: 'bold', color: '#0f172a' }}>
-                                            {jobDetails.progress >= 0 ? jobDetails.progress : 0}%
-                                        </span>
+                        {status === 'processing' && jobDetails && (
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+                                    <FinancialLoader />
+                                </div>
+                                <StageTracker stages={stages} progress={jobDetails.progress || 0} />
+                                <div style={{ marginTop: 16 }}>
+                                    <ProgressBar
+                                        value={Math.max(0, jobDetails.progress || 0)}
+                                        label="Overall progress"
+                                        color="#2563eb"
+                                    />
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: '0.78rem', color: 'var(--text-secondary,#6b7280)' }}>
+                                        <span>Job: {jobDetails.jobId || jobDetails.executionId || '—'}</span>
+                                        <span>{(jobDetails.readCount || 0).toLocaleString()} / {jobDetails.totalRows > 0 ? jobDetails.totalRows.toLocaleString() : '...'} rows</span>
                                     </div>
-                                    <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
-                                        <div style={{
-                                            width: `${Math.max(0, jobDetails.progress || 0)}%`,
-                                            height: '100%',
-                                            background: '#2563eb',
-                                            transition: 'width 0.5s ease-in-out'
-                                        }}></div>
-                                    </div>
-                                    <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px', display: 'flex', justifyContent: 'space-between' }}>
-                                        <span>Job ID: {jobDetails.jobId || jobDetails.executionId}</span>
-                                        <span>
-                                            {jobDetails.readCount || 0} / {jobDetails.totalRows > 0 ? jobDetails.totalRows : 'Calculating...'}
-                                        </span>
-                                    </div>
-                                    {jobDetails.estimatedSecondsRemaining > 0 && (
-                                        <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '4px', textAlign: 'right' }}>
-                                            ~{jobDetails.estimatedSecondsRemaining}s remaining
+                                    {jobDetails.readCount > 0 && jobDetails.startTime && (
+                                        <div style={{ marginTop: 4, fontSize: '0.72rem', color: 'var(--text-muted,#9ca3af)' }}>
+                                            ⚡ {Math.round(jobDetails.readCount / Math.max(1, (Date.now() - new Date(jobDetails.startTime).getTime()) / 1000))} rows/sec
                                         </div>
                                     )}
                                 </div>
-                            )}
-                        </div>
-                    )}
+                            </div>
+                        )}
 
-                    {/* Success state (inline) */}
-                    {status === 'success' && !showSummary && (
-                        <div className="status-msg success" style={{ marginTop: '20px', padding: '20px', cursor: 'pointer' }} onClick={() => setShowSummary(true)}>
-                            <CheckCircle size={24} />
-                            <span style={{ marginLeft: '10px', fontSize: '16px' }}>Processing Complete! Click to view summary.</span>
-                        </div>
-                    )}
+                        {status === 'success' && !showSummary && (
+                            <StatusBanner type="success" message="Processing Complete!" onView={() => setShowSummary(true)} />
+                        )}
 
-                    {/* Error state */}
-                    {status === 'error' && (
-                        <div className="status-msg error" style={{ marginTop: '20px', padding: '20px' }}>
-                            <AlertCircle size={24} />
-                            <span style={{ marginLeft: '10px', fontSize: '16px' }}>{msg}</span>
-                        </div>
-                    )}
+                        {status === 'error' && <StatusBanner type="error" message={msg} />}
 
-                    {/* Upload another file button */}
-                    {(status === 'success' || status === 'error') && (
-                        <button onClick={resetUpload} style={{
-                            marginTop: '16px', padding: '10px 24px', background: 'none', border: '1px solid #cbd5e1',
-                            borderRadius: '8px', color: '#475569', cursor: 'pointer', fontSize: '0.875rem'
-                        }}>
-                            Upload Another File
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            {/* Batch Summary Modal */}
-            {showSummary && jobDetails && (
-                <div style={{
-                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-                    backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100,
-                    display: 'flex', justifyContent: 'center', alignItems: 'center',
-                    backdropFilter: 'blur(4px)'
-                }}>
-                    <div style={{
-                        background: 'white', borderRadius: '16px', padding: '32px',
-                        width: '500px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a' }}>Batch Summary</h2>
-                            <button onClick={() => setShowSummary(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                                <X size={24} color="#64748b" />
+                        {(status === 'success' || status === 'error') && (
+                            <button
+                                onClick={reset}
+                                style={{
+                                    marginTop: 14, width: '100%', padding: '11px',
+                                    background: 'none',
+                                    border: '1px solid var(--border,#e5e7eb)',
+                                    borderRadius: '10px',
+                                    color: 'var(--text-secondary,#6b7280)',
+                                    cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
+                                    fontFamily: 'inherit', transition: 'all 0.15s',
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--brand,#2563eb)'; e.currentTarget.style.color = 'var(--brand,#2563eb)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border,#e5e7eb)'; e.currentTarget.style.color = 'var(--text-secondary,#6b7280)'; }}
+                            >
+                                Upload Another File
                             </button>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
-                            <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '12px' }}>
-                                <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '4px' }}>Reads</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#3b82f6' }}>{jobDetails.readCount || 0}</div>
-                            </div>
-                            <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '12px' }}>
-                                <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '4px' }}>Writes</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#16a34a' }}>{jobDetails.writeCount || 0}</div>
-                            </div>
-                            <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '12px' }}>
-                                <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '4px' }}>Skips</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#f59e0b' }}>{jobDetails.skipCount || 0}</div>
-                            </div>
-                            <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '12px' }}>
-                                <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '4px' }}>Time Taken</div>
-                                <div style={{ fontSize: '1rem', fontWeight: '600', color: '#0f172a' }}>
-                                    {jobDetails.endTime && jobDetails.startTime
-                                        ? ((new Date(jobDetails.endTime) - new Date(jobDetails.startTime)) / 1000).toFixed(2) + 's'
-                                        : '...'}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style={{
-                            padding: '16px',
-                            background: (jobDetails.status || '').toUpperCase() === 'COMPLETED' ? '#f0fdf4' : '#fef2f2',
-                            borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px'
-                        }}>
-                            {(jobDetails.status || '').toUpperCase() === 'COMPLETED'
-                                ? <CheckCircle color="#16a34a" />
-                                : <AlertCircle color="#dc2626" />}
-                            <div>
-                                <div style={{ fontWeight: 'bold', color: (jobDetails.status || '').toUpperCase() === 'COMPLETED' ? '#166534' : '#991b1b' }}>
-                                    Job {jobDetails.status}
-                                </div>
-                                <div style={{ fontSize: '0.875rem', color: (jobDetails.status || '').toUpperCase() === 'COMPLETED' ? '#166534' : '#991b1b' }}>
-                                    Exit Code: {jobDetails.exitCode || 'N/A'}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style={{ marginTop: '24px', textAlign: 'right' }}>
-                            <button onClick={() => { setShowSummary(false); resetUpload(); }} style={{
-                                padding: '10px 20px', background: '#0f172a', color: 'white',
-                                borderRadius: '8px', border: 'none', fontWeight: '500', cursor: 'pointer'
-                            }}>
-                                Close
-                            </button>
-                        </div>
+                        )}
                     </div>
                 </div>
+
+                {/* Tips */}
+                {!status && (
+                    <div style={{
+                        marginTop: 16, padding: '16px 20px',
+                        background: 'var(--bg-card,#fff)',
+                        border: '1px solid var(--border,#e5e7eb)',
+                        borderRadius: 'var(--radius-lg,14px)',
+                        display: 'flex', gap: 28, flexWrap: 'wrap',
+                    }}>
+                        {[
+                            ['Merchant Master', 'MID, name, category, contact info'],
+                            ['Transaction Log', 'Date, MID, amount, scheme, channel'],
+                            ['Max file size', 'Up to 2 GB supported'],
+                        ].map(([title, desc]) => (
+                            <div key={title} style={{ flex: 1, minWidth: 140 }}>
+                                <p style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--brand,#2563eb)', margin: '0 0 3px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                    {title}
+                                </p>
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary,#6b7280)', margin: 0, lineHeight: 1.5 }}>
+                                    {desc}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {showSummary && jobDetails && (
+                <SummaryModal jobDetails={jobDetails} onClose={() => { setShowSummary(false); reset(); }} />
             )}
+        </div>
+    );
+};
+
+/* ── Sub-components ─────────────────────────────────────────── */
+
+const ProgressBar = ({ value, label, color = '#2563eb' }) => (
+    <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: '0.78rem', color: 'var(--text-secondary,#6b7280)' }}>
+            <span>{label}</span>
+            <span style={{ fontWeight: 600, color: 'var(--text,#111827)', fontVariantNumeric: 'tabular-nums' }}>{value}%</span>
+        </div>
+        <div style={{ height: 5, borderRadius: 999, background: 'var(--bg-subtle,#f3f4f6)', overflow: 'hidden' }}>
+            <div style={{
+                height: '100%', borderRadius: 999,
+                background: color, transition: 'width 0.4s ease',
+                width: `${value}%`,
+            }} />
+        </div>
+    </div>
+);
+
+const StageTracker = ({ stages, progress }) => {
+    const activeIdx = stages.findIndex(s => progress >= s.range[0] && progress < s.range[1]);
+    return (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, marginBottom: 16 }}>
+            {stages.map((s, i) => {
+                const done   = progress >= s.range[1];
+                const active = i === activeIdx;
+                const StageIcon = s.icon;
+                return (
+                    <div key={s.label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                        <div style={{
+                            width: 32, height: 32, borderRadius: '50%',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            background: done ? '#059669' : active ? '#2563eb' : 'var(--bg-subtle,#f3f4f6)',
+                            border: active ? '2px solid rgba(37,99,235,0.2)' : done ? 'none' : '1px solid var(--border,#e5e7eb)',
+                            transition: 'all 0.3s',
+                        }}>
+                            {done
+                                ? <CheckCircle size={14} color="#fff" />
+                                : <StageIcon size={13} color={active ? '#fff' : 'var(--text-muted,#9ca3af)'} />
+                            }
+                        </div>
+                        <span style={{
+                            fontSize: '10px', fontWeight: active ? 600 : 400,
+                            color: done ? '#059669' : active ? '#2563eb' : 'var(--text-muted,#9ca3af)',
+                            textAlign: 'center',
+                        }}>
+                            {s.label}
+                        </span>
+                    </div>
+                );
+            })}
+        </div>
+    );
+};
+
+const StatusBanner = ({ type, message, onView }) => {
+    const isSuccess = type === 'success';
+    return (
+        <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px',
+            borderRadius: '12px',
+            background: isSuccess ? 'var(--success-bg,#ecfdf5)' : 'var(--danger-bg,#fef2f2)',
+            border: `1px solid ${isSuccess ? 'rgba(5,150,105,0.15)' : 'rgba(220,38,38,0.15)'}`,
+        }}>
+            {isSuccess
+                ? <CheckCircle size={18} color="#059669" />
+                : <AlertCircle size={18} color="#dc2626" />
+            }
+            <span style={{ flex: 1, fontSize: '0.85rem', fontWeight: 500, color: isSuccess ? '#065f46' : '#991b1b' }}>
+                {message}
+            </span>
+            {isSuccess && onView && (
+                <button onClick={onView}
+                    style={{ fontSize: '0.82rem', fontWeight: 600, color: '#059669', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0, flexShrink: 0 }}>
+                    View Summary →
+                </button>
+            )}
+        </div>
+    );
+};
+
+const SummaryModal = ({ jobDetails, onClose }) => {
+    const isSuccess = (jobDetails.status || '').toUpperCase() === 'COMPLETED';
+    const elapsed = jobDetails.endTime && jobDetails.startTime
+        ? ((new Date(jobDetails.endTime) - new Date(jobDetails.startTime)) / 1000).toFixed(1) + 's'
+        : '—';
+
+    const stats = [
+        { label: 'Rows read',   value: (jobDetails.readCount  || 0).toLocaleString(), color: '#2563eb' },
+        { label: 'Rows written',value: (jobDetails.writeCount || 0).toLocaleString(), color: '#059669' },
+        { label: 'Skipped',     value: (jobDetails.skipCount  || 0).toLocaleString(), color: '#d97706' },
+        { label: 'Time taken',  value: elapsed,                                        color: '#7c3aed' },
+    ];
+
+    return (
+        <div style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.4)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20,
+        }}>
+            <div style={{
+                background: 'var(--bg-card,#fff)',
+                borderRadius: '18px',
+                padding: 32,
+                width: '100%', maxWidth: 480,
+                boxShadow: '0 24px 48px -8px rgba(0,0,0,0.2)',
+                border: '1px solid var(--border,#e5e7eb)',
+                animation: 'pageIn 0.2s ease-out',
+            }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                    <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text,#111827)', margin: 0, letterSpacing: '-0.02em' }}>
+                        Batch Summary
+                    </h2>
+                    <button onClick={onClose} style={{
+                        background: 'none', border: 'none', cursor: 'pointer', padding: 6,
+                        color: 'var(--text-muted,#9ca3af)', borderRadius: 8, transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-subtle,#f3f4f6)'; e.currentTarget.style.color = 'var(--text,#111827)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--text-muted,#9ca3af)'; }}
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
+                    {stats.map(({ label, value, color }) => (
+                        <div key={label} style={{
+                            padding: '16px 18px',
+                            background: 'var(--bg-subtle,#f3f4f6)',
+                            borderRadius: '14px',
+                            border: '1px solid var(--border-light,#f3f4f6)',
+                        }}>
+                            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted,#9ca3af)', margin: '0 0 6px', fontWeight: 500 }}>
+                                {label}
+                            </p>
+                            <p style={{ fontSize: '1.4rem', fontWeight: 700, color, margin: 0, letterSpacing: '-0.03em' }}>
+                                {value}
+                            </p>
+                        </div>
+                    ))}
+                </div>
+
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',
+                    borderRadius: '12px',
+                    background: isSuccess ? 'var(--success-bg,#ecfdf5)' : 'var(--danger-bg,#fef2f2)',
+                    border: `1px solid ${isSuccess ? 'rgba(5,150,105,0.15)' : 'rgba(220,38,38,0.15)'}`,
+                    marginBottom: 22,
+                }}>
+                    {isSuccess ? <CheckCircle size={18} color="#059669" /> : <AlertCircle size={18} color="#dc2626" />}
+                    <div>
+                        <p style={{ margin: 0, fontWeight: 600, fontSize: '0.88rem', color: isSuccess ? '#065f46' : '#991b1b' }}>
+                            Job {jobDetails.status}
+                        </p>
+                        <p style={{ margin: 0, fontSize: '0.75rem', color: isSuccess ? '#047857' : '#b91c1c' }}>
+                            Exit code: {jobDetails.exitCode || 'N/A'}
+                        </p>
+                    </div>
+                </div>
+
+                <button
+                    onClick={onClose}
+                    style={{
+                        width: '100%', padding: '12px',
+                        background: 'var(--text,#111827)', color: '#fff',
+                        border: 'none', borderRadius: '12px',
+                        fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer', fontFamily: 'inherit',
+                        transition: 'opacity 0.15s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = '0.85'}
+                    onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                >
+                    Close
+                </button>
+            </div>
         </div>
     );
 };

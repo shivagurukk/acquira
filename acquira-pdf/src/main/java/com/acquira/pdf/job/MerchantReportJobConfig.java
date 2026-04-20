@@ -21,13 +21,31 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import com.acquira.common.config.TenantContext;
+import com.acquira.common.model.Tenant;
+import com.acquira.common.repository.TenantRepository;
+
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.YearMonth;
 import java.util.Collections;
+import java.util.List;
 
+/**
+ * Spring Batch job for scheduled merchant PDF report generation.
+ *
+ * Flow:
+ *  1. Read all merchants from DB (one page at a time)
+ *  2. For each merchant: fetch insights → generate PDF bytes
+ *  3. Write PDF to local disk under reports/{bankShortCode}/{YYYY-MM}/
+ *
+ * S3 archiving (if enabled per tenant) happens AFTER email sending,
+ * not here — see PdfController.generateAllReports() email thread.
+ * This job only writes locally; S3 upload is a post-email concern.
+ */
 @Configuration
 @EnableBatchProcessing
 @RequiredArgsConstructor
@@ -39,6 +57,10 @@ public class MerchantReportJobConfig {
     private final MerchantRepository merchantRepository;
     private final MerchantInsightService insightService;
     private final PlaywrightPdfService playwrightPdfService;
+    private final TenantRepository tenantRepository;
+
+    @org.springframework.beans.factory.annotation.Value("${pdf.reports.dir:reports}")
+    private String reportsBaseDir;
 
     @Bean
     public Job merchantReportJob() {
@@ -49,8 +71,8 @@ public class MerchantReportJobConfig {
 
     @Bean
     public Step reportGenerationStep() {
-        return new StepBuilder("reportGenerationStep", jobRepository).<com.acquira.common.model.Merchant, ReportData>chunk(10,
-                transactionManager)
+        return new StepBuilder("reportGenerationStep", jobRepository)
+                .<com.acquira.common.model.Merchant, ReportData>chunk(10, transactionManager)
                 .reader(merchantReader())
                 .processor(merchantProcessor())
                 .writer(reportWriter())
@@ -73,14 +95,26 @@ public class MerchantReportJobConfig {
         return merchant -> {
             try {
                 YearMonth target = YearMonth.now().minusMonths(1);
-                log.info("Generating report for Merchant: {} Month: {}", merchant.getName(), target);
-                MerchantInsightsDTO insights = insightService.getInsights(merchant.getMerchantId(), target.getYear(),
-                        target.getMonthValue());
-                byte[] pdfBytes = playwrightPdfService.generatePdf(insights, merchant.getName(), target.toString());
-                return new ReportData(merchant, pdfBytes, target);
+                Long tenantId = merchant.getTenantId();
+                if (tenantId != null) {
+                    TenantContext.setCurrentTenant(tenantId);
+                }
+                log.info("[JOB] Generating report for Merchant: {} (tenant:{}) Month: {}",
+                        merchant.getName(), tenantId, target);
+
+                MerchantInsightsDTO insights = insightService.getInsights(
+                        merchant.getMerchantId(), target.getYear(), target.getMonthValue());
+
+                byte[] pdfBytes = playwrightPdfService.generatePdf(
+                        insights, merchant.getName(), target.toString());
+
+                return new ReportData(merchant, pdfBytes, target, tenantId);
             } catch (Exception e) {
-                log.error("Failed to generate report for merchant {}", merchant.getMerchantId(), e);
-                return null;
+                log.error("[JOB] Failed to generate report for merchant {} (tenant:{})",
+                        merchant.getMerchantId(), merchant.getTenantId(), e);
+                return null; // null items are skipped by Spring Batch writer
+            } finally {
+                TenantContext.clear();
             }
         };
     }
@@ -89,21 +123,66 @@ public class MerchantReportJobConfig {
     public ItemWriter<ReportData> reportWriter() {
         return items -> {
             for (ReportData item : items) {
+                if (item == null) continue;
                 try {
-                    String folder = "reports/" + item.target.toString();
-                    Files.createDirectories(Paths.get(folder));
-                    String filename = folder + "/Merchant_Insight_" + item.merchant.getMid() + ".pdf";
-                    try (FileOutputStream fos = new FileOutputStream(filename)) {
-                        fos.write(item.pdfBytes);
+                    // Tenant-aware folder: reports/{bankShortCode}/{YYYY-MM}/
+                    String bankCode = resolveBankCode(item.tenantId());
+                    Path folder = bankCode != null
+                        ? Paths.get(reportsBaseDir).resolve(bankCode).resolve(item.target().toString())
+                        : Paths.get(reportsBaseDir).resolve(item.target().toString());
+
+                    Files.createDirectories(folder);
+
+                    String rawName = item.merchant().getName() != null
+                            ? item.merchant().getName()
+                            : item.merchant().getMid();
+                    String safeName = (rawName != null ? rawName : "merchant_" + item.merchant().getMerchantId())
+                            .replaceAll("[^a-zA-Z0-9.\\-]", "_");
+
+                    String filename = "Insight_" + safeName + "_" + item.target() + ".pdf";
+                    Path filePath = folder.resolve(filename);
+
+                    try (FileOutputStream fos = new FileOutputStream(filePath.toFile())) {
+                        fos.write(item.pdfBytes());
                     }
-                    log.info("Saved report: {}", filename);
+
+                    log.info("[JOB] Saved report: {} ({} KB, tenant:{})",
+                            filePath, item.pdfBytes().length / 1024, item.tenantId());
+
+                    // NOTE: S3 upload is intentionally NOT done here.
+                    // S3 archiving happens in PdfController after each email is sent successfully.
+                    // This separation ensures:
+                    //   1. Local file is always available for email attachment
+                    //   2. S3 upload only occurs when user has opted in (per-tenant setting)
+                    //   3. Upload is tied to email confirmation, not just generation
+
                 } catch (IOException e) {
-                    log.error("Failed to save report for {}", item.merchant.getName(), e);
+                    log.error("[JOB] Failed to save report for {} (tenant:{})",
+                            item.merchant().getName(), item.tenantId(), e);
                 }
             }
         };
     }
 
-    record ReportData(com.acquira.common.model.Merchant merchant, byte[] pdfBytes, YearMonth target) {
+    private String resolveBankCode(Long tenantId) {
+        if (tenantId == null) return null;
+        try {
+            return tenantRepository.findById(tenantId)
+                .map(Tenant::getBankShortCode)
+                .orElse(null);
+        } catch (Exception e) {
+            log.debug("[JOB] Could not resolve bankCode for tenant {}: {}", tenantId, e.getMessage());
+            return null;
+        }
     }
+
+    /**
+     * Immutable record holding all data needed to write one merchant PDF report.
+     */
+    record ReportData(
+        com.acquira.common.model.Merchant merchant,
+        byte[] pdfBytes,
+        YearMonth target,
+        Long tenantId
+    ) {}
 }

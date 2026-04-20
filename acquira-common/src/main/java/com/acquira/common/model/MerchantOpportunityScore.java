@@ -11,6 +11,7 @@ public class MerchantOpportunityScore {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "score_id")
     private Long id;
 
     @Column(name = "tenant_id")

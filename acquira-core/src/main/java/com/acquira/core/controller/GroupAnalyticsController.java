@@ -89,9 +89,9 @@ public class GroupAnalyticsController {
             case "REFERRAL":
             case "REFERRAL_PARTNER":
                 // Fallback to Sales ID if referral is empty
-                selectClause = "COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id), COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id, 'Unassigned') as label, ";
+                selectClause = "COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id) as grp_key, COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id, 'Unassigned') as label, ";
                 sql = "FROM sum_daily_merchant s JOIN dim_merchant m ON s.merchant_id = m.merchant_id ";
-                groupBy = "GROUP BY COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id) ";
+                groupBy = "GROUP BY COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id), COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id, 'Unassigned') ";
                 break;
             default:
                 return ResponseEntity.badRequest().body("Invalid Report Type");
@@ -122,61 +122,15 @@ public class GroupAnalyticsController {
         // Let's refine the SQL for MCC.
 
         if ("MCC".equalsIgnoreCase(type)) {
-            // Use sum_daily_merchant joined with dim_store/dim_merchant to get MCC and
-            // count
-            // But sum_daily_merchant doesn't have MCC. dim_store has MCC.
-            // Join: sum_daily_merchant -> dim_store (via merchant_id? No, merchant can have
-            // multiple stores)
-            // sum_daily_terminal -> dim_store -> mcc? sum_daily_terminal is granular.
-            // sum_daily_mcc is pre-aggregated! But lost merchant count.
-
-            // Trade-off: Speed vs Accurate Merchant Count.
-            // If we use sum_daily_mcc, it's fast but no merchant count (only txns/vol).
-            // If user insists on merchant count, we must query sum_daily_merchant + join
-            // dim_store (assuming 1 MCC per merchant which is usually true for summary, or
-            // primary MCC).
-            // Or sum_daily_terminal.
-
-            // Let's try sum_daily_merchant joined with dim_merchant join dim_store (Primary
-            // store?).
-            // Actually, Merchants have MCC in dim_merchant?
-            // Checking Schema: dim_store has MCC. dim_merchant does not (schema.sql check).
-            // Checking stg_merchant_master_raw: business_mcc.
-            // dim_merchant: created_date, sales_user_id, risk_level, referral... No MCC.
-            // So MCC is at Store level.
-            // A merchant can have multiple stores with different MCCs.
-            // So "Merchant Count" per MCC is valid (how many merchants have processed txns
-            // under this MCC).
-
-            // Re-write MCC query:
-            // FROM sum_daily_terminal s JOIN dim_store st ON s.store_id = st.store_id
-            // GROUP BY st.mcc
-            // This is heaviest.
-
-            // Optimized approach: Use sum_daily_mcc for Volume/Txns (FAST).
-            // For Merchant Count estimate?
-            // User requirement: "referral partner wise top merchant with volume and count".
-            // "MCC wise top merchant" or "MCC wise summary"?
-            // Request: "MCC , merchant , sales email and referal partner wise top merchant
-            // with volume and count"
-            // Interpretation: 4 Menus.
-            // 1. MCC Report: List of MCCs, their total Volume, Count, Merchant Count.
-
-            // I will use sum_daily_mcc for now and return 0 for merchant count to keep
-            // speed < 2s.
-            // If accurate merchant count is critical, I need a new summary table
-            // `sum_daily_mcc_merchant` or similar.
-            // Or simply distinct count from sum_daily_merchant if we add MCC there.
-            // For now, I'll return 0 or NULL for merchant_count in MCC view to avoid
-            // expensive joins.
-
-            finalSql = "SELECT s.mcc, COALESCE(MAX(s.mcc), 'Unknown') as label, " +
-                    "0 as merchant_count, " +
+            // Join sum_daily_merchant with dim_store to get MCC and accurate merchant count
+            finalSql = "SELECT st.mcc, COALESCE(st.mcc, 'Unknown') as label, " +
+                    "COUNT(DISTINCT s.merchant_id) as merchant_count, " +
                     "SUM(s.total_txns) as total_txns, " +
                     "SUM(s.total_volume) as total_volume " +
-                    "FROM sum_daily_mcc s " +
+                    "FROM sum_daily_merchant s " +
+                    "JOIN dim_store st ON s.store_id = st.store_id " +
                     "WHERE s.tenant_id = :tenantId AND s.business_date >= :startDate AND s.business_date <= :endDate " +
-                    "GROUP BY s.mcc " +
+                    "GROUP BY st.mcc " +
                     orderBy;
         }
 

@@ -70,9 +70,28 @@ public class FileUploadController {
      *   POST /api/upload/process-server-file?path=/opt/acquira/data/uploads/
      *   POST /api/upload/process-server-file?path=/opt/acquira/data/uploads/transactions.xlsx
      */
+    // Allowed base directories for server-side file processing (prevent path traversal)
+    private static final java.util.List<String> ALLOWED_PREFIXES = java.util.List.of(
+        "data/uploads", "data/imports", "/opt/acquira/data"
+    );
+
     @PostMapping("/process-server-file")
     public ResponseEntity<?> processServerFile(@RequestParam("path") String filePath) {
         try {
+            // Security: normalize path and check against allowed directories
+            java.nio.file.Path normalized = java.nio.file.Paths.get(filePath).normalize().toAbsolutePath();
+            boolean allowed = ALLOWED_PREFIXES.stream()
+                .anyMatch(prefix -> normalized.startsWith(java.nio.file.Paths.get(prefix).normalize().toAbsolutePath()));
+            if (!allowed) {
+                return ResponseEntity.status(403).body(
+                    java.util.Map.of("error", "Access denied: path must be within allowed data directories"));
+            }
+            // Block path traversal attempts
+            if (filePath.contains("..")) {
+                return ResponseEntity.status(403).body(
+                    java.util.Map.of("error", "Path traversal not allowed"));
+            }
+
             java.io.File target = new java.io.File(filePath);
             if (!target.exists()) {
                 return ResponseEntity.badRequest().body(
@@ -82,7 +101,6 @@ public class FileUploadController {
             java.util.Map<String, Object> result = fileUploadService.processServerPath(filePath);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            e.printStackTrace();
             return ResponseEntity.badRequest().body(
                 java.util.Map.of("error", e.getMessage()));
         }

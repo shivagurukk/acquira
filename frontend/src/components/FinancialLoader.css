@@ -4,10 +4,10 @@
     align-items: center;
     justify-content: center;
     height: 100%;
-    min-height: 250px;
-    background: #f8fafc;
-    border-radius: 12px;
-    border: 1px solid #e2e8f0;
+    min-height: 200px;
+    background: var(--bg-subtle, #f3f4f6);
+    border-radius: 14px;
+    border: 1px solid var(--border, #e5e7eb);
 }
 
 .financial-loader {
@@ -17,75 +17,47 @@
     margin-bottom: 20px;
 }
 
-/* Coin Stack Animation */
 .coin {
     width: 40px;
     height: 14px;
-    /* Flattened circle to look like a side-view coin */
-    background: radial-gradient(ellipse at center, #ffd700 0%, #daa520 100%);
-    border: 1px solid #b8860b;
+    background: radial-gradient(ellipse at center, #fbbf24 0%, #d97706 100%);
+    border: 1px solid #b45309;
     border-radius: 50%;
     position: absolute;
     bottom: 0;
     left: 50%;
     transform: translateX(-50%);
-    box-shadow: 0 3px 0 #b8860b, 0 5px 5px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 3px 0 #b45309, 0 5px 5px rgba(0, 0, 0, 0.1);
     animation: bounce-in 1.5s infinite ease-out;
 }
 
 .coin::before {
     content: '';
     position: absolute;
-    top: 2px;
-    left: 2px;
-    right: 2px;
-    bottom: 2px;
+    top: 2px; left: 2px; right: 2px; bottom: 2px;
     border: 1px dashed rgba(255, 255, 255, 0.4);
     border-radius: 50%;
 }
 
-.coin:nth-child(1) {
-    animation-delay: 0s;
-    bottom: 0px;
-    z-index: 1;
-}
+.coin:nth-child(1) { animation-delay: 0s; bottom: 0px; z-index: 1; }
+.coin:nth-child(2) { animation-delay: 0.15s; bottom: 10px; z-index: 2; }
+.coin:nth-child(3) { animation-delay: 0.3s; bottom: 20px; z-index: 3; }
 
-.coin:nth-child(2) {
-    animation-delay: 0.15s;
-    bottom: 10px;
-    z-index: 2;
-}
-
-.coin:nth-child(3) {
-    animation-delay: 0.3s;
-    bottom: 20px;
-    z-index: 3;
-}
-
-.bar-graph {
-    display: none;
-}
-
-/* Hide old graph */
+.bar-graph { display: none; }
 
 @keyframes bounce-in {
-
-    0%,
-    20% {
+    0%, 20% {
         opacity: 0;
         transform: translateX(-50%) translateY(-50px) rotateX(60deg);
     }
-
     30% {
         opacity: 1;
         transform: translateX(-50%) translateY(0) rotateX(0deg);
     }
-
     80% {
         opacity: 1;
         transform: translateX(-50%) translateY(0);
     }
-
     100% {
         opacity: 0;
         transform: translateX(-50%) translateY(10px);
@@ -94,8 +66,8 @@
 
 .loader-text {
     font-family: 'Inter', sans-serif;
-    font-size: 0.95rem;
-    color: #475569;
+    font-size: 0.88rem;
+    color: var(--text-secondary, #6b7280);
     font-weight: 600;
     text-align: center;
 }

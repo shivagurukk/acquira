@@ -41,7 +41,10 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .csrf(csrf -> csrf.disable()) // Acceptable for stateless JWT API
+                // CSRF disabled: This API is stateless (JWT in Authorization header, no cookies).
+                // If cookie-based auth or same-origin HTML forms are ever added, re-enable CSRF.
+                // See: https://docs.spring.io/spring-security/reference/servlet/exploits/csrf.html
+                .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
 
                 // ===== Security Headers =====

@@ -18,15 +18,15 @@
             <div style="display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid #F3F4F6;">
                 <div style="flex: 1; display: flex; align-items: center; gap: 8px;">
                     <div style="width: 34px; height: 34px; background: #DBEAFE; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E3A8A" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E3A8A" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
                     </div>
-                    <div style="font-size: 10px; font-weight: 700; color: #111827;">Total Sales (AED)</div>
+                    <div style="font-size: 10px; font-weight: 700; color: #111827;">Sales Volume (<span th:text="${dto.currencyCode}">AED</span>)</div>
                 </div>
                 <div style="width: 160px; text-align: center; font-size: 16px; font-weight: 700; color: #6B7280;" th:text="${dto.overview.prevSales != null ? dto.overview.prevSales.formattedValue : '-'}">-</div>
                 <div style="width: 160px; text-align: center; font-size: 16px; font-weight: 900; color: #111827;" th:text="${dto.overview.sales.formattedValue}">28,024</div>
                 <div style="width: 100px; text-align: center;">
-                    <span th:if="${dto.overview.sales.momGrowth >= 0}" style="font-size: 11px; font-weight: 800; color: #059669;" th:text="${'+' + #numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</span>
-                    <span th:if="${dto.overview.sales.momGrowth < 0}" style="font-size: 11px; font-weight: 800; color: #E87461;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</span>
+                    <span th:if="${dto.overview.sales.momGrowth >= 0}" style="font-size: 11px; font-weight: 800; color: #059669;" th:text="${'+' + #numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</span>
+                    <span th:if="${dto.overview.sales.momGrowth < 0}" style="font-size: 11px; font-weight: 800; color: #E87461;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</span>
                 </div>
             </div>
             <!-- Transactions -->
@@ -40,8 +40,8 @@
                 <div style="width: 160px; text-align: center; font-size: 16px; font-weight: 700; color: #6B7280;" th:text="${dto.overview.prevTransactions != null ? dto.overview.prevTransactions.formattedValue : '-'}">-</div>
                 <div style="width: 160px; text-align: center; font-size: 16px; font-weight: 900; color: #111827;" th:text="${dto.overview.transactions.formattedValue}">109</div>
                 <div style="width: 100px; text-align: center;">
-                    <span th:if="${dto.overview.transactions.momGrowth >= 0}" style="font-size: 11px; font-weight: 800; color: #059669;" th:text="${'+' + #numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '%'}">0%</span>
-                    <span th:if="${dto.overview.transactions.momGrowth < 0}" style="font-size: 11px; font-weight: 800; color: #E87461;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '%'}">0%</span>
+                    <span th:if="${dto.overview.transactions.momGrowth >= 0}" style="font-size: 11px; font-weight: 800; color: #059669;" th:text="${'+' + #numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0) + '%'}">0%</span>
+                    <span th:if="${dto.overview.transactions.momGrowth < 0}" style="font-size: 11px; font-weight: 800; color: #E87461;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0) + '%'}">0%</span>
                 </div>
             </div>
             <!-- Customers -->
@@ -70,8 +70,8 @@
                 <div style="width: 160px; text-align: center; font-size: 16px; font-weight: 700; color: #6B7280;" th:text="${dto.overview.prevAvgTxnValue != null ? dto.overview.prevAvgTxnValue.formattedValue : '-'}">-</div>
                 <div style="width: 160px; text-align: center; font-size: 16px; font-weight: 900; color: #111827;" th:text="${dto.overview.avgTxnValue.formattedValue}">257</div>
                 <div style="width: 100px; text-align: center;">
-                    <span th:if="${dto.overview.avgTxnValue.momGrowth >= 0}" style="font-size: 11px; font-weight: 800; color: #059669;" th:text="${'+' + #numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2) + '%'}">0%</span>
-                    <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}" style="font-size: 11px; font-weight: 800; color: #E87461;" th:text="${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2) + '%'}">0%</span>
+                    <span th:if="${dto.overview.avgTxnValue.momGrowth >= 0}" style="font-size: 11px; font-weight: 800; color: #059669;" th:text="${'+' + #numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 0) + '%'}">0%</span>
+                    <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}" style="font-size: 11px; font-weight: 800; color: #E87461;" th:text="${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 0) + '%'}">0%</span>
                 </div>
             </div>
             <!-- Max Daily Sales -->
@@ -121,19 +121,19 @@
                     <span th:if="${dto.overview.sales.momGrowth > 0}">&#8226; Total sales up <span style="font-weight:700" th:text="'+' + ${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2)} + '%'">0%</span> vs previous month<br/></span>
                     <span th:if="${dto.overview.avgTxnValue.momGrowth > 0}">&#8226; Avg ticket size increased to <span style="font-weight:700" th:text="'AED ' + ${dto.overview.avgTxnValue.formattedValue}">0</span> — higher value purchases<br/></span>
                     <span th:if="${dto.overview.transactions.momGrowth > 0}">&#8226; Transaction volume grew <span style="font-weight:700" th:text="'+' + ${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2)} + '%'">0%</span> MoM<br/></span>
-                    <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate >= 50}">&#8226; Retention rate strong at <span style="font-weight:700" th:text="${dto.loyalty.retentionRate + '%'}">0%</span><br/></span>
+                    <span th:if="${dto.loyalty.retentionRate != null}">&#8226; Retention rate at <span style="font-weight:700" th:text="${dto.loyalty.retentionRate + '%'}">0%</span><br/></span>
                     <span th:if="${dto.overview.peakStats != null and dto.overview.peakStats.maxDailySales != null and dto.overview.peakStats.maxDailySales.momGrowth > 0}">&#8226; Peak daily sales reached <span style="font-weight:700" th:text="'AED ' + ${dto.overview.peakStats.maxDailySales.formattedValue}">0</span><br/></span>
                 </div>
             </div>
             <div class="action-strip-item risk" style="padding: 12px;">
-                <div class="strip-label">&#9660; WHAT DECLINED</div>
+                <div class="strip-label">&#9660; AREAS OF CHANGE</div>
                 <div class="strip-text" style="line-height: 1.7; font-size: 8.5px;">
                     <span th:if="${dto.overview.sales.momGrowth < 0}">&#8226; Total sales declined <span style="font-weight:700; color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</span> MoM<br/></span>
                     <span th:if="${dto.overview.transactions.momGrowth < 0}">&#8226; Transaction count dropped <span style="font-weight:700; color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '%'}">0%</span><br/></span>
                     <span th:if="${dto.overview.avgTxnValue.momGrowth < 0}">&#8226; Avg ticket fell to <span style="font-weight:700; color:#E87461;" th:text="'AED ' + ${dto.overview.avgTxnValue.formattedValue}">0</span> (<span th:text="${#numbers.formatDecimal(dto.overview.avgTxnValue.momGrowth, 1, 2) + '%'}">0%</span>)<br/></span>
                     <span th:if="${dto.overview.customers.momGrowth < 0}">&#8226; Customer acquisition pace slowed <span style="font-weight:700; color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '%'}">0%</span><br/></span>
-                    <span th:if="${dto.overview.peakStats != null and dto.overview.peakStats.maxDailySales != null and dto.overview.peakStats.maxDailySales.momGrowth < 0}">&#8226; Peak daily sales dropped <span style="font-weight:700; color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.peakStats.maxDailySales.momGrowth, 1, 2) + '%'}">0%</span><br/></span>
-                    <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate < 50}">&#8226; Customer retention below 50% — loyalty push needed<br/></span>
+                    <span th:if="${dto.overview.peakStats != null and dto.overview.peakStats.maxDailySales != null and dto.overview.peakStats.maxDailySales.momGrowth < 0}">&#8226; Peak daily sales down <span style="font-weight:700; color:#E87461;" th:text="${#numbers.formatDecimal(dto.overview.peakStats.maxDailySales.momGrowth, 1, 0) + '%'}">0%</span><br/></span>
+                    <span th:if="${dto.loyalty.retentionRate != null and dto.loyalty.retentionRate < 30}">&#8226; Repeat card holder rate at <span style="font-weight:700; color:#E87461;" th:text="${dto.loyalty.retentionRate + '%'}">0%</span><br/></span>
                     <span th:if="${dto.demographics.walletUsagePct != null and dto.demographics.walletUsagePct == 0}">&#8226; Wallet/contactless usage at 0% — terminal upgrade opportunity<br/></span>
                 </div>
             </div>
@@ -144,10 +144,10 @@
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">
                 <strong>Net Assessment:</strong>
-                <th:block th:if="${dto.overview.sales.momGrowth < 0 and dto.overview.avgTxnValue.momGrowth < 0}">Both revenue and ticket size declined. Prioritize customer acquisition campaigns and bundle offers to rebuild volume and value simultaneously.</th:block>
-                <th:block th:if="${dto.overview.sales.momGrowth < 0 and dto.overview.avgTxnValue.momGrowth >= 0}">Despite lower transaction volume, average ticket size held or grew — indicating a shift toward higher-value purchases. Focus on rebuilding transaction count through mid-week promotions while maintaining the premium ticket trend.</th:block>
-                <th:block th:if="${dto.overview.sales.momGrowth >= 0 and dto.overview.avgTxnValue.momGrowth >= 0}">Strong month with both sales and ticket size growing. Sustain momentum with loyalty programs and weekend amplification.</th:block>
-                <th:block th:if="${dto.overview.sales.momGrowth >= 0 and dto.overview.avgTxnValue.momGrowth < 0}">Sales grew despite lower ticket size — volume driving growth. Introduce upselling strategies and premium bundles to lift per-transaction value.</th:block>
+                <th:block th:if="${dto.overview.sales.momGrowth < 0 and dto.overview.avgTxnValue.momGrowth < 0}">Both sales volume and ATV were down compared to last month. It may be worth looking at both customer frequency and individual spend factors to understand the picture more fully.</th:block>
+                <th:block th:if="${dto.overview.sales.momGrowth < 0 and dto.overview.avgTxnValue.momGrowth >= 0}">Sales volume was lower, but ATV held steady or grew — customers who visited were spending at a similar or higher level. Rebuilding transaction frequency may be a useful area to focus on.</th:block>
+                <th:block th:if="${dto.overview.sales.momGrowth >= 0 and dto.overview.avgTxnValue.momGrowth >= 0}">Both sales volume and ATV moved positively this month. Maintaining consistency across peak and off-peak periods may help sustain that momentum.</th:block>
+                <th:block th:if="${dto.overview.sales.momGrowth >= 0 and dto.overview.avgTxnValue.momGrowth < 0}">Sales grew on the back of transaction volume, even as ATV dipped slightly. There may be an opportunity to explore ways to grow the value of each visit alongside frequency.</th:block>
             </div>
         </div>
 

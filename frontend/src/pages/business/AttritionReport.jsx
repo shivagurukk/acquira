@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Paper, Typography } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
-import { Activity, TrendingDown, TrendingUp, Users, DollarSign } from 'lucide-react';
+import { Activity, TrendingDown, TrendingUp, Users, DollarSign, CalendarDays } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
@@ -61,6 +61,7 @@ const AttritionReport = () => {
         if (!data.length) return [];
         const declining = data.filter(d => (d.ytd_pct || 0) < 0).length;
         const growing = data.filter(d => (d.ytd_pct || 0) > 0).length;
+        const momDeclining = data.filter(d => (d.mom_pct || 0) < 0).length;
         const totalCurrYtd = data.reduce((s, d) => s + (d.ytd_current || 0), 0);
         const totalPrevYtd = data.reduce((s, d) => s + (d.ytd_prev || 0), 0);
         const ytdChange = totalPrevYtd > 0 ? ((totalCurrYtd - totalPrevYtd) / totalPrevYtd) * 100 : 0;
@@ -68,12 +69,19 @@ const AttritionReport = () => {
             { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: '#6366f1' },
             { title: 'Declining (YTD)', value: declining.toString(), icon: TrendingDown, color: '#ef4444', subtitle: `${data.length > 0 ? ((declining / data.length) * 100).toFixed(0) : 0}% of total` },
             { title: 'Growing (YTD)', value: growing.toString(), icon: TrendingUp, color: '#10b981', subtitle: `${data.length > 0 ? ((growing / data.length) * 100).toFixed(0) : 0}% of total` },
+            { title: 'MoM Declining', value: momDeclining.toString(), icon: CalendarDays, color: '#f97316', subtitle: `${data.length > 0 ? ((momDeclining / data.length) * 100).toFixed(0) : 0}% month-over-month` },
             { title: 'YTD Volume Change', value: `${ytdChange >= 0 ? '+' : ''}${ytdChange.toFixed(1)}%`, icon: DollarSign, color: ytdChange >= 0 ? '#10b981' : '#ef4444', trend: ytdChange, trendLabel: `${prevYear} vs ${selectedYear}` },
         ];
     }, [data, selectedYear, prevYear]);
 
     const currencyFormatter = (value) => value == null ? '-' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', notation: 'compact' }).format(value);
-    const pctFormatter = (value) => value == null ? '-' : `${value.toFixed(1)}%`;
+    const pctFormatter = (value) => value == null ? '-' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+
+    const pctCell = (params) => (
+        <Typography variant="body2" sx={{ fontWeight: 'bold', color: params.value < 0 ? '#ef4444' : params.value > 0 ? '#10b981' : '#cbd5e1' }}>
+            {pctFormatter(params.value)}
+        </Typography>
+    );
 
     const columns = [
         {
@@ -84,29 +92,50 @@ const AttritionReport = () => {
             field: 'merchant_info', headerName: 'MERCHANT NAME', width: 250,
             renderCell: (params) => <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>{params.row.name}</Typography>
         },
+        // --- MoM columns ---
+        { field: 'mom_prev', headerName: 'Prev Month', width: 120, type: 'number', renderCell: (params) => <Typography variant="body2" sx={{ color: '#475569' }}>{currencyFormatter(params.value)}</Typography> },
+        { field: 'mtd_current_mom', headerName: 'Current Month', width: 120, type: 'number',
+            valueGetter: (value, row) => row.mtd_current,
+            renderCell: (params) => <Typography variant="body2" fontWeight="600" sx={{ color: '#0f172a' }}>{currencyFormatter(params.value)}</Typography>
+        },
+        { field: 'mom_pct', headerName: '% Change', width: 110, type: 'number', renderCell: pctCell },
+
+        // --- MTD YoY columns ---
         { field: 'mtd_prev', headerName: `${prevYear} Vol`, width: 120, type: 'number', renderCell: (params) => <Typography variant="body2" sx={{ color: '#475569' }}>{currencyFormatter(params.value)}</Typography> },
         { field: 'mtd_current', headerName: `${selectedYear} Vol`, width: 120, type: 'number', renderCell: (params) => <Typography variant="body2" fontWeight="600" sx={{ color: '#0f172a' }}>{currencyFormatter(params.value)}</Typography> },
-        {
-            field: 'mtd_pct', headerName: '% Change', width: 120, type: 'number',
-            renderCell: (params) => <Typography variant="body2" sx={{ fontWeight: 'bold', color: params.value < 0 ? '#ef4444' : params.value > 0 ? '#10b981' : '#cbd5e1' }}>{pctFormatter(params.value)}</Typography>
-        },
+        { field: 'mtd_pct', headerName: '% Change', width: 110, type: 'number', renderCell: pctCell },
+
+        // --- YTD YoY columns ---
         { field: 'ytd_prev', headerName: `${prevYear} Vol`, width: 120, type: 'number', renderCell: (params) => <Typography variant="body2" sx={{ color: '#475569' }}>{currencyFormatter(params.value)}</Typography> },
         { field: 'ytd_current', headerName: `${selectedYear} Vol`, width: 120, type: 'number', renderCell: (params) => <Typography variant="body2" fontWeight="600" sx={{ color: '#0f172a' }}>{currencyFormatter(params.value)}</Typography> },
-        {
-            field: 'ytd_pct', headerName: '% Change', width: 120, type: 'number',
-            renderCell: (params) => <Typography variant="body2" sx={{ fontWeight: 'bold', color: params.value < 0 ? '#ef4444' : params.value > 0 ? '#10b981' : '#cbd5e1' }}>{pctFormatter(params.value)}</Typography>
-        }
+        { field: 'ytd_pct', headerName: '% Change', width: 110, type: 'number', renderCell: pctCell },
     ];
 
     const columnGroupingModel = [
-        { groupId: 'mtd_group', headerName: `MTD Comparison (${prevYear} vs ${selectedYear})`, headerClassName: 'mtd-header-group', children: [{ field: 'mtd_prev' }, { field: 'mtd_current' }, { field: 'mtd_pct' }] },
-        { groupId: 'ytd_group', headerName: `YTD Comparison (${prevYear} vs ${selectedYear})`, headerClassName: 'ytd-header-group', children: [{ field: 'ytd_prev' }, { field: 'ytd_current' }, { field: 'ytd_pct' }] }
+        {
+            groupId: 'mom_group',
+            headerName: 'Month-on-Month',
+            headerClassName: 'mom-header-group',
+            children: [{ field: 'mom_prev' }, { field: 'mtd_current_mom' }, { field: 'mom_pct' }]
+        },
+        {
+            groupId: 'mtd_group',
+            headerName: `MTD (${prevYear} vs ${selectedYear})`,
+            headerClassName: 'mtd-header-group',
+            children: [{ field: 'mtd_prev' }, { field: 'mtd_current' }, { field: 'mtd_pct' }]
+        },
+        {
+            groupId: 'ytd_group',
+            headerName: `YTD (${prevYear} vs ${selectedYear})`,
+            headerClassName: 'ytd-header-group',
+            children: [{ field: 'ytd_prev' }, { field: 'ytd_current' }, { field: 'ytd_pct' }]
+        }
     ];
 
     return (
         <Box sx={pageContainer}>
             <PremiumReportHeader
-                title="Attrition Report (YoY)" subtitle="Year-over-year volume comparison performance"
+                title="Attrition Report (MoM & YoY)" subtitle="Month-on-month and year-over-year volume comparison"
                 icon={Activity}
                 onExport={() => exportToCSV(data, 'attrition_report')}
                 onRunReport={fetchData} onFilterChange={handleFilterChange}
@@ -117,6 +146,7 @@ const AttritionReport = () => {
             <KpiCards cards={kpis} />
             <Paper sx={{
                 ...premiumTableWrapper,
+                '& .mom-header-group': { bgcolor: '#fef3c7', color: '#92400e', fontWeight: 'bold' },
                 '& .mtd-header-group': { bgcolor: '#eff6ff', color: '#1e40af', fontWeight: 'bold' },
                 '& .ytd-header-group': { bgcolor: '#f8fafc', color: '#334155', fontWeight: 'bold' }
             }}>

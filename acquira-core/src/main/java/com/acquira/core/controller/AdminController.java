@@ -30,13 +30,15 @@ public class AdminController {
     private final com.acquira.common.repository.TenantSettingRepository tenantSettingRepository;
     private final com.acquira.common.repository.DashboardConfigRepository dashboardConfigRepository;
     private final RefCountryRepository refCountryRepository;
+    private final com.acquira.core.service.PasswordService passwordService;
 
     public AdminController(TenantRepository tenantRepository, UserRepository userRepository,
             UserTenantAccessRepository userTenantAccessRepository, RoleRepository roleRepository,
             PasswordEncoder passwordEncoder, com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantSettingRepository tenantSettingRepository,
             com.acquira.common.repository.DashboardConfigRepository dashboardConfigRepository,
-            RefCountryRepository refCountryRepository) { // Added repo
+            RefCountryRepository refCountryRepository,
+            com.acquira.core.service.PasswordService passwordService) {
         this.tenantRepository = tenantRepository;
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
@@ -46,6 +48,7 @@ public class AdminController {
         this.tenantSettingRepository = tenantSettingRepository;
         this.dashboardConfigRepository = dashboardConfigRepository;
         this.refCountryRepository = refCountryRepository;
+        this.passwordService = passwordService;
     }
 
     @GetMapping("/countries")
@@ -63,16 +66,32 @@ public class AdminController {
 
     @PostMapping("/users")
     @Transactional
-    public ResponseEntity<User> createUser(@RequestBody User user,
+    public ResponseEntity createUser(@RequestBody User user,
             @RequestParam(required = false) Long tenantId) {
-        user.setPassword(passwordEncoder.encode(user.getPassword()));
+        // Validate password strength before encoding
+        if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", "Password is required"));
+        }
+        String strengthError = passwordService.validatePasswordStrength(user.getPassword());
+        if (strengthError != null) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", strengthError));
+        }
+
+        // Encode password + record in history + set mustChangePassword
+        String rawPassword = user.getPassword();
+        user.setPassword(passwordEncoder.encode(rawPassword));
+        user.setMustChangePassword(true);
+        user.setPasswordChangedAt(java.time.LocalDateTime.now());
 
         // Default to ROLE_USER only if role is missing
         if (user.getRole() == null || user.getRole().isEmpty()) {
-            user.setRole("ROLE_BANK_USER"); // Default for Admin created users? Or just ROLE_USER
+            user.setRole("ROLE_BANK_USER");
         }
 
         User savedUser = userRepository.save(user);
+
+        // Record initial password in history (prevents immediate reuse)
+        passwordService.recordPasswordInHistory(savedUser, savedUser.getPassword());
         auditService.log("CREATE_USER", "Created user: " + savedUser.getUsername());
 
         if (tenantId != null) {
@@ -169,5 +188,99 @@ public class AdminController {
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
         config.setTenant(tenant);
         return ResponseEntity.ok(dashboardConfigRepository.save(config));
+    }
+
+    // ==========================================
+    // ===== Security: Locked Users + Unlock =====
+    // ==========================================
+
+    @GetMapping("/security/locked-users")
+    public ResponseEntity<?> getLockedUsers() {
+        // Efficient DB query instead of scanning all users in Java
+        java.util.List<User> lockedUsers = userRepository.findByLockedUntilAfter(java.time.LocalDateTime.now());
+        java.util.List<java.util.Map<String, Object>> locked = new java.util.ArrayList<>();
+        for (User u : lockedUsers) {
+            java.util.Map<String, Object> m = new java.util.HashMap<>();
+            m.put("id", u.getId());
+            m.put("username", u.getUsername());
+            m.put("email", u.getEmail());
+            m.put("failedAttempts", u.getFailedLoginAttempts());
+            m.put("lockedUntil", u.getLockedUntil());
+            m.put("lastFailedLogin", u.getLastFailedLogin());
+            locked.add(m);
+        }
+        return ResponseEntity.ok(locked);
+    }
+
+    @PostMapping("/security/unlock-user/{userId}")
+    public ResponseEntity<?> unlockUser(@PathVariable Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        user.setFailedLoginAttempts(0);
+        user.setLockedUntil(null);
+        user.setLastFailedLogin(null);
+        userRepository.save(user);
+        auditService.log("UNLOCK_USER", "Admin unlocked user: " + user.getUsername());
+        return ResponseEntity.ok(java.util.Map.of("message", "User unlocked successfully"));
+    }
+
+    // ==========================================
+    // ===== Security: Password Policy (from tenant_setting) =====
+    // ==========================================
+
+    @GetMapping("/security/policy")
+    public ResponseEntity<?> getPasswordPolicy(jakarta.servlet.http.HttpServletRequest request) {
+        Long tenantId = extractTenantId(request);
+        if (tenantId == null) return ResponseEntity.badRequest().body(java.util.Map.of("error", "No tenant context"));
+        var settings = tenantSettingRepository.findByTenant_TenantId(tenantId);
+        java.util.Map<String, Object> policy = new java.util.HashMap<>();
+        // Defaults
+        policy.put("minLength", 8); policy.put("maxLength", 128);
+        policy.put("requireUppercase", true); policy.put("requireLowercase", true);
+        policy.put("requireDigit", true); policy.put("requireSpecialChar", true);
+        policy.put("passwordHistoryCount", 5); policy.put("maxFailedAttempts", 5);
+        policy.put("lockoutDurationMinutes", 15); policy.put("passwordExpiryDays", 90);
+        policy.put("sessionTimeoutMinutes", 30); policy.put("forceChangeOnFirstLogin", true);
+        // Override from settings
+        for (var s : settings) {
+            String key = s.getKey();
+            if (key != null && key.startsWith("security.")) {
+                String prop = key.substring("security.".length());
+                String val = s.getValue();
+                if ("true".equals(val) || "false".equals(val)) {
+                    policy.put(prop, Boolean.parseBoolean(val));
+                } else {
+                    try { policy.put(prop, Integer.parseInt(val)); } catch (Exception e) { policy.put(prop, val); }
+                }
+            }
+        }
+        return ResponseEntity.ok(policy);
+    }
+
+    @PutMapping("/security/policy")
+    public ResponseEntity<?> updatePasswordPolicy(jakarta.servlet.http.HttpServletRequest request,
+            @RequestBody java.util.Map<String, Object> policyMap) {
+        Long tenantId = extractTenantId(request);
+        if (tenantId == null) return ResponseEntity.badRequest().body(java.util.Map.of("error", "No tenant context"));
+        Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
+        for (var entry : policyMap.entrySet()) {
+            String key = "security." + entry.getKey();
+            String value = String.valueOf(entry.getValue());
+            var existing = tenantSettingRepository.findByTenant_TenantIdAndKey(tenantId, key);
+            com.acquira.common.model.TenantSetting setting;
+            if (existing.isPresent()) {
+                setting = existing.get();
+                setting.setValue(value);
+            } else {
+                setting = new com.acquira.common.model.TenantSetting();
+                setting.setTenant(tenant);
+                setting.setKey(key);
+                setting.setValue(value);
+                setting.setType("STRING");
+            }
+            tenantSettingRepository.save(setting);
+        }
+        auditService.log("UPDATE_SECURITY_POLICY", "Updated password/security policy settings");
+        return ResponseEntity.ok(java.util.Map.of("message", "Security policy updated"));
     }
 }

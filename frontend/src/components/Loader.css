@@ -9,18 +9,16 @@
 
 .loader-container.fullscreen {
     position: fixed;
-    top: 0;
-    left: 0;
+    top: 0; left: 0;
     width: 100vw;
     height: 100vh;
-    background: #050507;
-    /* Super dark */
+    background: var(--bg, #f9fafb);
 }
 
 .orbital-spinner {
     position: relative;
-    width: 80px;
-    height: 80px;
+    width: 56px;
+    height: 56px;
 }
 
 .ring {
@@ -30,33 +28,20 @@
 }
 
 .ring-1 {
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    border-top-color: #6366f1;
-    /* Indigo */
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-top-color: #2563eb;
     animation: spin-right 1s linear infinite;
-    box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
 }
 
 .ring-2 {
-    top: 10px;
-    left: 10px;
-    right: 10px;
-    bottom: 10px;
-    border-right-color: #ec4899;
-    /* Pink */
+    top: 10px; left: 10px; right: 10px; bottom: 10px;
+    border-right-color: #7c3aed;
     animation: spin-left 1.5s linear infinite;
 }
 
 .ring-3 {
-    top: 20px;
-    left: 20px;
-    right: 20px;
-    bottom: 20px;
-    border-bottom-color: #06b6d4;
-    /* Cyan */
+    top: 20px; left: 20px; right: 20px; bottom: 20px;
+    border-bottom-color: #0891b2;
     animation: spin-right 2s linear infinite;
 }
 
@@ -65,62 +50,37 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 12px;
-    height: 12px;
-    background: white;
+    width: 8px;
+    height: 8px;
+    background: #2563eb;
     border-radius: 50%;
-    box-shadow: 0 0 20px white;
     animation: pulse 1s ease-in-out infinite alternate;
 }
 
 .loader-text {
-    font-family: 'Outfit', sans-serif;
-    color: #94a3b8;
-    font-size: 0.9rem;
-    letter-spacing: 1px;
+    font-family: 'Inter', sans-serif;
+    color: var(--text-muted, #9ca3af);
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
     animation: fadePulse 1.5s ease-in-out infinite;
 }
 
 @keyframes spin-right {
-    0% {
-        transform: rotate(0deg);
-    }
-
-    100% {
-        transform: rotate(360deg);
-    }
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 @keyframes spin-left {
-    0% {
-        transform: rotate(0deg);
-    }
-
-    100% {
-        transform: rotate(-360deg);
-    }
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(-360deg); }
 }
 
 @keyframes pulse {
-    0% {
-        transform: translate(-50%, -50%) scale(0.8);
-        opacity: 0.8;
-    }
-
-    100% {
-        transform: translate(-50%, -50%) scale(1.2);
-        opacity: 1;
-    }
+    0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.6; }
+    100% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
 }
 
 @keyframes fadePulse {
-
-    0%,
-    100% {
-        opacity: 0.5;
-    }
-
-    50% {
-        opacity: 1;
-    }
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
 }

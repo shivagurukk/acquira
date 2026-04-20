@@ -239,4 +239,45 @@ public class AnalyticsController {
         }
         return ResponseEntity.ok(years);
     }
+
+    /**
+     * Scheme breakdown for dashboard pie chart.
+     * Queries sum_daily_scheme grouped by card_scheme for a date range.
+     */
+    @PostMapping("/scheme-breakdown")
+    public ResponseEntity<List<Map<String, Object>>> getSchemeBreakdown(
+            @RequestBody Map<String, String> body) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
+
+        LocalDate startDate = body.get("startDate") != null ? LocalDate.parse(body.get("startDate")) : LocalDate.now().minusDays(30);
+        LocalDate endDate = body.get("endDate") != null ? LocalDate.parse(body.get("endDate")) : LocalDate.now();
+
+        String sql = """
+            SELECT card_scheme, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume,
+                   SUM(total_msf) as total_msf
+            FROM sum_daily_scheme
+            WHERE tenant_id = :tid AND business_date BETWEEN :start AND :end
+              AND card_scheme IS NOT NULL
+            GROUP BY card_scheme
+            ORDER BY total_volume DESC
+            """;
+
+        jakarta.persistence.Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("tid", tenantId);
+        query.setParameter("start", startDate);
+        query.setParameter("end", endDate);
+
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        for (Object[] row : rows) {
+            Map<String, Object> map = new java.util.HashMap<>();
+            map.put("card_scheme", row[0]);
+            map.put("total_txns", row[1]);
+            map.put("total_volume", row[2]);
+            map.put("total_msf", row[3]);
+            result.add(map);
+        }
+        return ResponseEntity.ok(result);
+    }
 }

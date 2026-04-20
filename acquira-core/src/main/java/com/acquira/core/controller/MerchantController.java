@@ -133,8 +133,15 @@ public class MerchantController {
         if (merchantIds == null || merchantIds.size() < 2) {
             return ResponseEntity.badRequest().body(Map.of("error", "At least 2 merchants required"));
         }
+        if (merchantIds.size() > 10) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Maximum 10 merchants can be compared at once"));
+        }
 
         List<Long> ids = merchantIds.stream().map(Number::longValue).collect(Collectors.toList());
+        // Safety: ensure all IDs are positive (defense-in-depth — Long.toString() is inherently safe)
+        if (ids.stream().anyMatch(id -> id <= 0)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid merchant ID"));
+        }
         String inClause = ids.stream().map(String::valueOf).collect(Collectors.joining(","));
 
         // Aggregate KPIs per merchant

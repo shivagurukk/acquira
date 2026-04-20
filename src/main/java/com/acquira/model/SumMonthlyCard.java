@@ -1,15 +1,20 @@
 package com.acquira.model;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.EqualsAndHashCode;
 import java.math.BigDecimal;
 
 @Entity
 @Table(name = "sum_monthly_card")
-@Data
+@Getter
+@Setter
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class SumMonthlyCard {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     @Column(name = "tenant_id")
@@ -19,7 +24,7 @@ public class SumMonthlyCard {
     private Long merchantId;
 
     @Column(name = "month_key")
-    private Integer monthKey; // YYYYMM
+    private Integer monthKey;
 
     @Column(name = "card_number")
     private String cardNumber;
@@ -29,35 +34,4 @@ public class SumMonthlyCard {
 
     @Column(name = "total_spend")
     private BigDecimal totalSpend;
-
-    // Optional indices for performance:
-    // (tenant_id, merchant_id, month_key)
-    // Manual Getters (Fallback if Lombok fails)
-    public Long getId() {
-        return id;
-    }
-
-    public Long getTenantId() {
-        return tenantId;
-    }
-
-    public Long getMerchantId() {
-        return merchantId;
-    }
-
-    public Integer getMonthKey() {
-        return monthKey;
-    }
-
-    public String getCardNumber() {
-        return cardNumber;
-    }
-
-    public Long getVisitCount() {
-        return visitCount;
-    }
-
-    public BigDecimal getTotalSpend() {
-        return totalSpend;
-    }
 }

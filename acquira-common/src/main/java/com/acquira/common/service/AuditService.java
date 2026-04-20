@@ -7,6 +7,9 @@ import com.acquira.common.repository.UserRepository;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import jakarta.servlet.http.HttpServletRequest;
 
 @Service
 public class AuditService {
@@ -35,8 +38,23 @@ public class AuditService {
 
         log.setActionType(actionType);
         log.setDetails(details);
-        // IP Address handling skipped for brevity or requires RequestContextHolder
-        log.setIpAddress("127.0.0.1");
+        // Resolve real client IP from request context
+        try {
+            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                HttpServletRequest request = attrs.getRequest();
+                String xff = request.getHeader("X-Forwarded-For");
+                if (xff != null && !xff.isEmpty()) {
+                    log.setIpAddress(xff.split(",")[0].trim());
+                } else {
+                    log.setIpAddress(request.getRemoteAddr());
+                }
+            } else {
+                log.setIpAddress("SYSTEM");
+            }
+        } catch (Exception e) {
+            log.setIpAddress("UNKNOWN");
+        }
 
         auditLogRepository.save(log);
     }

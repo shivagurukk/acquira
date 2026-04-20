@@ -86,6 +86,10 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                 // ===== Tenant Context Resolution (with validation) =====
                 try {
                     List<UserTenantAccess> accessList = userTenantAccessRepository.findByUser(dbUser);
+                    // SECURITY FIX: Only SUPER_ADMIN bypasses tenant access validation.
+                    // Bank Admin (ROLE_ADMIN) must have explicit user_tenant_access rows
+                    // to prevent cross-tenant data access.
+                    boolean isSuperAdmin = "ROLE_SUPER_ADMIN".equals(dbUser.getRole());
 
                     String tenantIdHeader = request.getHeader("X-Tenant-Id");
                     Long targetTenantId = null;
@@ -99,7 +103,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                             boolean hasAccess = accessList.stream()
                                     .anyMatch(a -> a.getTenant().getTenantId().equals(reqTenantId));
 
-                            if (hasAccess) {
+                            if (hasAccess || isSuperAdmin) {
                                 targetTenantId = reqTenantId;
                             } else {
                                 logger.warn("User " + username + " attempted unauthorized tenant " + reqTenantId);
@@ -154,12 +158,10 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                             }
                             if (role != null)
                                 TenantContext.setCurrentRole(role);
-
-                            // 2. Set Visible Tenants (for now, just the active one, or ALL if Super Admin)
-                            if ("ROLE_SUPER_ADMIN".equals(role)) {
-                                // Super admin sees all? For now let's keep it simple
-                                // In future fetch all tenant IDs
-                            }
+                        } else if (isSuperAdmin) {
+                            // Super admin may not have an explicit access row for this tenant
+                            // but is still allowed — set role from global user role
+                            TenantContext.setCurrentRole("ROLE_SUPER_ADMIN");
                         }
                     }
                 } catch (Exception e) {

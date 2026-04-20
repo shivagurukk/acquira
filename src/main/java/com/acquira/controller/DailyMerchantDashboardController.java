@@ -21,14 +21,13 @@ public class DailyMerchantDashboardController {
     @GetMapping("/daily-merchant-dashboard")
     public ResponseEntity<List<MerchantDailyMetricsDTO>> getDashboardData(
             @RequestParam(defaultValue = "0") int year,
-            @RequestParam(defaultValue = "0") int month) {
+            @RequestParam(defaultValue = "0") int month,
+            @RequestParam(required = false) List<String> sidList,
+            @RequestParam(required = false) List<String> midList) {
 
-        // Default to current date if params missing
         LocalDate now = LocalDate.now();
-        if (year == 0)
-            year = now.getYear();
-        if (month == 0)
-            month = now.getMonthValue();
+        if (year == 0) year = now.getYear();
+        if (month == 0) month = now.getMonthValue();
 
         LocalDate reportDate = LocalDate.of(year, month, 1);
 
@@ -36,8 +35,21 @@ public class DailyMerchantDashboardController {
 
         List<MerchantDailyMetricsDTO> dtos = entities.stream()
                 .map(MerchantDailyMetricsDTO::fromEntity)
-                // Filter out zero-volume rows if needed? User wants "Everything with Granular
-                // Detail".
+                .filter(dto -> {
+                    // Apply MID filter
+                    if (midList != null && !midList.isEmpty()) {
+                        if (dto.getMid() == null || !midList.contains(dto.getMid())) {
+                            return false;
+                        }
+                    }
+                    // Apply SID filter
+                    if (sidList != null && !sidList.isEmpty()) {
+                        if (dto.getSid() == null || !sidList.contains(dto.getSid())) {
+                            return false;
+                        }
+                    }
+                    return true;
+                })
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(dtos);

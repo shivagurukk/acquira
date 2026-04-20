@@ -8,11 +8,11 @@
         <!-- ROW 1: 3 Main KPI Cards -->
         <div class="grid-3 mb-8">
             <div class="card card-accent-blue" style="padding: 12px 14px;">
-                <div class="kpi-label">SALES (AED)</div>
+                <div class="kpi-label">SALES VOLUME (<span th:text="${dto.currencyCode}">AED</span>)</div>
                 <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.sales.formattedValue}">0</div>
                 <div>
                     <span th:class="${dto.overview.sales.momGrowth >= 0 ? 'trend-up' : 'trend-down'}">
-                        <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '%'}">0%</span>
+                        <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</span>
                     </span>
                     <span style="font-size: 8px; color: #6B7280; margin-left: 4px;">vs last month</span>
                 </div>
@@ -22,16 +22,16 @@
                 <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.transactions.formattedValue}">0</div>
                 <div>
                     <span th:class="${dto.overview.transactions.momGrowth >= 0 ? 'trend-up' : 'trend-down'}">
-                        <span th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 2) + '%'}">0%</span>
+                        <span th:text="${#numbers.formatDecimal(dto.overview.transactions.momGrowth, 1, 0) + '%'}">0%</span>
                     </span>
                 </div>
             </div>
             <div class="card card-accent-amber" style="padding: 12px 14px;">
-                <div class="kpi-label">CUSTOMERS</div>
+                <div class="kpi-label">UNIQUE CUSTOMERS</div>
                 <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.customers.formattedValue}">0</div>
                 <div>
                     <span th:class="${dto.overview.customers.momGrowth >= 0 ? 'trend-up' : 'trend-down'}">
-                        <span th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 2) + '%'}">0%</span>
+                        <span th:text="${#numbers.formatDecimal(dto.overview.customers.momGrowth, 1, 0) + '%'}">0%</span>
                     </span>
                 </div>
             </div>
@@ -44,7 +44,7 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
                 </div>
                 <div>
-                    <div style="font-size: 7.5px; color: #4B5563; font-weight: 700; letter-spacing: 0.03em;">MAX DAILY SALES</div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700; letter-spacing: 0.03em;">MAX DAILY SALES</div>
                     <div style="font-size: 15px; font-weight: 900; color: #111827;" th:text="${dto.overview.peakStats.maxDailySales != null ? dto.overview.peakStats.maxDailySales.formattedValue : '-'}">0</div>
                 </div>
             </div>
@@ -53,7 +53,7 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 </div>
                 <div>
-                    <div style="font-size: 7.5px; color: #4B5563; font-weight: 700; letter-spacing: 0.03em;">MAX TXNS / DAY</div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700; letter-spacing: 0.03em;">MAX TXNS / DAY</div>
                     <div style="font-size: 15px; font-weight: 900; color: #111827;" th:text="${dto.overview.peakStats.maxTxnsInDay != null ? dto.overview.peakStats.maxTxnsInDay.formattedValue : '-'}">0</div>
                 </div>
             </div>
@@ -62,7 +62,7 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
                 </div>
                 <div>
-                    <div style="font-size: 7.5px; color: #4B5563; font-weight: 700; letter-spacing: 0.03em;">HIGHEST TXN VALUE</div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700; letter-spacing: 0.03em;">HIGHEST TXN VALUE</div>
                     <div style="font-size: 15px; font-weight: 900; color: #111827;" th:text="${dto.overview.peakStats.highestTxnValue != null ? dto.overview.peakStats.highestTxnValue.formattedValue : '-'}">0</div>
                 </div>
             </div>
@@ -71,7 +71,7 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 </div>
                 <div>
-                    <div style="font-size: 7.5px; color: #4B5563; font-weight: 700; letter-spacing: 0.03em;">TOP CUSTOMER</div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700; letter-spacing: 0.03em;">TOP CUSTOMER</div>
                     <div style="font-size: 15px; font-weight: 900; color: #111827;" th:text="${dto.overview.peakStats.highestCustomerSpend != null ? dto.overview.peakStats.highestCustomerSpend.formattedValue : '-'}">0</div>
                 </div>
             </div>
@@ -80,12 +80,12 @@
         <!-- ROW 3: Customer Averages strip -->
         <div class="card mb-8" style="flex-direction: row; align-items: center; justify-content: space-around; padding: 12px 16px;">
             <div style="text-align: center;">
-                <div class="kpi-label">AVG SPEND / CUSTOMER</div>
+                <div class="kpi-label">AVG SPEND / UNIQUE CUSTOMER</div>
                 <div style="font-size: 20px; font-weight: 900; color: #2563EB; margin-top: 3px; letter-spacing: -0.02em;" th:text="${dto.overview.avgSpendPerCustomer != null ? dto.overview.avgSpendPerCustomer.formattedValue : dto.overview.avgTxnValue.formattedValue}">0</div>
             </div>
             <div style="width: 1px; height: 32px; background: #D1D5DB;"></div>
             <div style="text-align: center;">
-                <div class="kpi-label">AVG TXN VALUE</div>
+                <div class="kpi-label">ATV (Average Transaction Value)</div>
                 <div style="font-size: 20px; font-weight: 900; color: #111827; margin-top: 3px; letter-spacing: -0.02em;" th:text="${dto.overview.avgTxnValue.formattedValue}">0</div>
             </div>
             <div style="width: 1px; height: 32px; background: #D1D5DB;"></div>
@@ -115,8 +115,7 @@
         <div class="ai-insight">
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">
-                <strong>AI Insight:</strong> Saturday generates the highest revenue and transaction volume.
-                Consider allocating additional staff and inventory on weekends while running targeted mid-week promotions to balance daily revenue distribution.
+                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.heatmapInsight != null ? dto.insights.heatmapInsight : 'Your busiest day appears to drive a significant share of weekly sales. It may be worth reviewing staffing and stock levels around those periods.'}"></span>
             </div>
         </div>
 

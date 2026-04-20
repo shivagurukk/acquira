@@ -1,36 +1,10 @@
-/* Nuclear fix for UI Layout Artifacts */
-th,
-td,
-tr,
-thead,
-tbody,
-table,
-button,
-input,
-select,
-.bg-white,
-.aspect-square {
-    transform: none !important;
-    rotate: 0deg !important;
-    perspective: none !important;
-}
+/* Acquira — Targeted fixes only (nuclear overrides removed) */
 
-/* Allow specific icon rotations for UI state */
+/* Allow specific icon rotations for UI state indicators */
 svg.rotate-180 {
-    transform: rotate(180deg) !important;
+  transform: rotate(180deg);
 }
 
 svg.rotate-90 {
-    transform: rotate(90deg) !important;
-}
-
-/* Ensure no accidental 3D effects on the app root */
-#root {
-    transform: none !important;
-    perspective: none !important;
-}
-
-/* Fix specific Tailwind conflict if present */
-.transform-none {
-    transform: none !important;
+  transform: rotate(90deg);
 }

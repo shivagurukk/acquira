@@ -266,3 +266,50 @@ FROM (
 WHERE m.mid = sub.mid
   AND m.tenant_id = sub.tenant_id
   AND (m.name IS NULL OR m.name = '');
+
+-- =============================================================================
+-- 11. MENU: Move Merchant Report Manager → OPERATIONS category
+-- Safe to re-run: UPDATE is idempotent
+-- =============================================================================
+UPDATE sys_menu
+SET category      = 'OPERATIONS',
+    display_order = 12
+WHERE path = '/business/report-manager';
+
+-- =============================================================================
+-- 12. PDF BATCH LOG — Tracks all batch PDF generation runs for audit/monitoring
+-- Safe to re-run: CREATE IF NOT EXISTS + ADD COLUMN IF NOT EXISTS
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS pdf_batch_log (
+    id              BIGSERIAL PRIMARY KEY,
+    job_id          VARCHAR(64) NOT NULL,
+    tenant_id       BIGINT,
+    target_month    VARCHAR(10) NOT NULL,
+    merchant_count  INTEGER NOT NULL DEFAULT 0,
+    status          VARCHAR(20) NOT NULL DEFAULT 'STARTED',
+    error_message   TEXT,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pdf_batch_log_tenant ON pdf_batch_log(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_pdf_batch_log_month  ON pdf_batch_log(target_month);
+CREATE INDEX IF NOT EXISTS idx_pdf_batch_log_job    ON pdf_batch_log(job_id);
+
+-- =============================================================================
+-- 13. EMAIL QUEUE — Add tenant_id column (table already exists in schema.sql)
+-- Safe to re-run: ADD COLUMN IF NOT EXISTS is idempotent
+-- =============================================================================
+ALTER TABLE email_queue ADD COLUMN IF NOT EXISTS tenant_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_email_queue_tenant ON email_queue(tenant_id);
+
+-- =============================================================================
+-- 14. REPORT RUN LOG — Add tenant_id + pdf-specific columns for PDF batch audit
+-- Safe to re-run: ADD COLUMN IF NOT EXISTS is idempotent
+-- =============================================================================
+ALTER TABLE report_run_log ADD COLUMN IF NOT EXISTS tenant_id BIGINT;
+ALTER TABLE report_run_log ADD COLUMN IF NOT EXISTS job_id VARCHAR(64);
+ALTER TABLE report_run_log ADD COLUMN IF NOT EXISTS merchant_count INTEGER;
+ALTER TABLE report_run_log ADD COLUMN IF NOT EXISTS target_month VARCHAR(10);
+CREATE INDEX IF NOT EXISTS idx_report_run_log_tenant ON report_run_log(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_report_run_log_job    ON report_run_log(job_id);

@@ -9,7 +9,6 @@ import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
 
-/* ── Date Preset Resolver (same logic as PremiumReportHeader) ────── */
 const computeDateRange = (preset) => {
     const now = new Date();
     const fmt = (d) => d.toISOString().split('T')[0];
@@ -34,7 +33,6 @@ const DebitPrepaidMetrics = () => {
     const formatNumber  = (val) => new Intl.NumberFormat('en-US').format(val || 0);
     const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
-    // Initialize filters with resolved date range so first fetch has real dates
     const [filters, setFilters] = useState(() => {
         const range = computeDateRange('MONTH');
         return { datePreset: 'MONTH', ...range };
@@ -42,9 +40,11 @@ const DebitPrepaidMetrics = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
+    const [fetchError, setFetchError] = useState(null);
 
     const fetchData = useCallback(async (overrideFilters) => {
         setLoading(true);
+        setFetchError(null);
         try {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
@@ -70,18 +70,31 @@ const DebitPrepaidMetrics = () => {
                 },
                 body: JSON.stringify(body)
             });
+
             if (res.ok) {
                 const result = await res.json();
-                setData(result.map((r, i) => ({ id: r.mid || i, ...r })));
+                if (result.length === 0) {
+                    setFetchError('No data found for selected filters. Try expanding your date range or removing filters.');
+                }
+                setData(result.map((r, i) => ({
+                    id: `${r.mid || ''}-${r.sid || ''}-${i}`,
+                    ...r
+                })));
+            } else {
+                const errorText = await res.text();
+                console.error('Debit-Prepaid API error:', res.status, errorText);
+                setFetchError(`API returned ${res.status}. Check server logs.`);
+                setData([]);
             }
         } catch (error) {
             console.error('Failed to fetch debit/prepaid metrics:', error);
+            setFetchError(`Network error: ${error.message}`);
+            setData([]);
         } finally {
             setLoading(false);
         }
     }, [filters]);
 
-    // Initial load
     useEffect(() => { fetchData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleFilterChange = (keyOrObj, val) => {
@@ -96,12 +109,12 @@ const DebitPrepaidMetrics = () => {
         if (!data.length) return [];
         const totalVol   = data.reduce((s, d) => s + (d.volume || 0), 0);
         const totalCount = data.reduce((s, d) => s + (d.count || 0), 0);
-        const topVols    = data.slice().sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(d => d.volume || 0);
+        const uniqueMids = new Set(data.map(d => d.mid)).size;
         return [
-            { title: 'Total Merchants',      value: formatNumber(data.length), icon: CreditCard, color: '#6366f1' },
-            { title: 'Total Volume',          value: `${currencyCode} ${formatCompact(totalVol)}`, icon: DollarSign, color: '#3b82f6', sparkData: topVols },
+            { title: 'Total Merchants',      value: formatNumber(uniqueMids), icon: CreditCard, color: '#6366f1' },
+            { title: 'Total Volume',          value: `${currencyCode} ${formatCompact(totalVol)}`, icon: DollarSign, color: '#3b82f6' },
             { title: 'Total Transactions',    value: formatCompact(totalCount), icon: Hash,        color: '#10b981' },
-            { title: 'Avg per Merchant',      value: `${currencyCode} ${formatCompact(data.length > 0 ? totalVol / data.length : 0)}`, icon: TrendingUp, color: '#f59e0b' },
+            { title: 'Avg per Merchant',      value: `${currencyCode} ${formatCompact(uniqueMids > 0 ? totalVol / uniqueMids : 0)}`, icon: TrendingUp, color: '#f59e0b' },
         ];
     }, [data, currencyCode]);
 
@@ -111,6 +124,14 @@ const DebitPrepaidMetrics = () => {
             renderCell: (params) => (
                 <Typography variant="body2" sx={{ fontFamily: '"Roboto Mono", monospace', fontSize: '13px', color: '#475569', bgcolor: '#f1f5f9', px: 1, py: 0.5, borderRadius: '4px', border: '1px solid #e2e8f0' }}>
                     {params.value}
+                </Typography>
+            )
+        },
+        {
+            field: 'sid', headerName: 'SID', width: 150,
+            renderCell: (params) => (
+                <Typography variant="body2" sx={{ fontFamily: '"Roboto Mono", monospace', fontSize: '13px', color: '#475569', bgcolor: '#f1f5f9', px: 1, py: 0.5, borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                    {params.value || '-'}
                 </Typography>
             )
         },
@@ -131,7 +152,7 @@ const DebitPrepaidMetrics = () => {
     return (
         <Box sx={pageContainer}>
             <PremiumReportHeader
-                title="Debit & Prepaid Metrics" subtitle="Domestic debit and prepaid performance by merchant"
+                title="Debit & Prepaid Metrics" subtitle="Domestic debit and prepaid performance by merchant and store"
                 icon={CreditCard}
                 onExport={() => exportToCSV(data, 'debit_prepaid_metrics')}
                 onRunReport={() => fetchData()} onFilterChange={handleFilterChange}
@@ -140,6 +161,16 @@ const DebitPrepaidMetrics = () => {
             />
             <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchData()} isOpen={showFilters} onClose={() => setShowFilters(false)} />
             <KpiCards cards={kpis} />
+
+            {fetchError && !loading && data.length === 0 && (
+                <Paper sx={{ p: 3, mb: 2, borderRadius: 2, bgcolor: '#fffbeb', border: '1px solid #fde68a' }}>
+                    <Typography variant="body2" color="#92400e" fontWeight="600">{fetchError}</Typography>
+                    <Typography variant="caption" color="#a16207" sx={{ mt: 1, display: 'block' }}>
+                        This report filters for DOMESTIC DEBIT and PREPAID transactions only. Ensure your data has matching destination and card_type values.
+                    </Typography>
+                </Paper>
+            )}
+
             <Paper sx={premiumTableWrapper}>
                 <DataGrid rows={data} columns={columns} loading={loading} rowHeight={55}
                     disableRowSelectionOnClick

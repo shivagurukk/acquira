@@ -5,6 +5,9 @@ const api = axios.create({
     withCredentials: true, // #12: Send HttpOnly cookies with requests (for refresh token)
 });
 
+// In-memory refresh token (NOT localStorage) — survives tab lifetime only, not XSS-exfiltrable
+let _memRefreshToken = localStorage.getItem('refreshToken') || null;
+
 // Request interceptor — attach JWT and tenant header
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem('token');
@@ -43,7 +46,7 @@ api.interceptors.response.use(
 
         // If 401 and not already retrying, attempt refresh
         if (error.response && error.response.status === 401 && !originalRequest._retry) {
-            const refreshToken = localStorage.getItem('refreshToken');
+            let refreshToken = localStorage.getItem('refreshToken') || _memRefreshToken;
 
             // If no refresh token or this IS the refresh request, logout
             if (!refreshToken || originalRequest.url === '/auth/refresh') {
@@ -71,7 +74,9 @@ api.interceptors.response.use(
                 const { jwt, refreshToken: newRefresh } = res.data;
 
                 localStorage.setItem('token', jwt);
-                localStorage.setItem('refreshToken', newRefresh);
+                // Store refresh token in memory only (HttpOnly cookie is primary)
+                _memRefreshToken = newRefresh;
+                localStorage.setItem('refreshToken', newRefresh); // backward compat — remove after full migration
 
                 api.defaults.headers.common.Authorization = `Bearer ${jwt}`;
                 originalRequest.headers.Authorization = `Bearer ${jwt}`;

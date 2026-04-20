@@ -10,15 +10,15 @@
             <div style="font-size: 12px; margin-top: 1px;">⭐</div>
             <div>
                 <p style="font-size: 8px; color: #92400E; line-height: 1.5; margin: 0; font-weight: 600;" th:text="${dto.insights.peakAchievement}">Peak insight</p>
-                <p th:if="${dto.insights.peakWatch != null}" style="font-size: 7.5px; color: #A16207; line-height: 1.4; margin: 3px 0 0 0;" th:text="${dto.insights.peakWatch}">Watch text</p>
+                <p th:if="${dto.insights.peakWatch != null}" style="font-size: 8px; color: #A16207; line-height: 1.4; margin: 3px 0 0 0;" th:text="${dto.insights.peakWatch}">Watch text</p>
             </div>
         </div>
 
         <!-- ROW 1: 4 Hero KPI Cards (bold numbers, visual anchor) -->
         <div class="grid-4 mb-8">
             <div class="card card-accent-blue" style="padding: 10px 12px;">
-                <div class="kpi-label">MAX DAILY SALES (AED)</div>
-                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.maxDailySales != null ? 'AED ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">AED 0</div>
+                <div class="kpi-label">MAX DAILY SALES (<span th:text="${dto.currencyCode}">AED</span>)</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.maxDailySales != null ? dto.currencyCode + ' ' + dto.overview.peakStats.maxDailySales.formattedValue : '-'}">0</div>
                 <span class="text-xs text-muted">Single-day record</span>
             </div>
             <div class="card card-accent-green" style="padding: 10px 12px;">
@@ -27,39 +27,39 @@
                 <span class="text-xs text-muted">Peak transaction count</span>
             </div>
             <div class="card card-accent-amber" style="padding: 10px 12px;">
-                <div class="kpi-label">AVG DAILY SALES (AED)</div>
-                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.dailyAverage != null ? 'AED ' + #numbers.formatDecimal(dto.overview.dailyAverage, 1, 'COMMA', 0, 'POINT') : '-'}">AED 0</div>
-                <span class="text-xs text-muted">Daily average revenue</span>
+                <div class="kpi-label">AVG DAILY SALES (<span th:text="${dto.currencyCode}">AED</span>)</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.dailyAverage != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.overview.dailyAverage, 1, 'COMMA', 0, 'POINT') : '-'}">0</div>
+                <span class="text-xs text-muted">Daily average sales</span>
             </div>
-            <div class="card card-accent-red" style="padding: 10px 12px;">
-                <div class="kpi-label">TOP CUSTOMER SPEND (AED)</div>
-                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.highestCustomerSpend != null ? 'AED ' + dto.overview.peakStats.highestCustomerSpend.formattedValue : '-'}">AED 0</div>
+            <div class="card card-accent-amber" style="padding: 10px 12px;">
+                <div class="kpi-label">TOP CUSTOMER SPEND (<span th:text="${dto.currencyCode}">AED</span>)</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.highestCustomerSpend != null ? dto.currencyCode + ' ' + dto.overview.peakStats.highestCustomerSpend.formattedValue : '-'}">0</div>
                 <span class="text-xs text-muted">Highest individual spend</span>
             </div>
         </div>
 
         <!-- ROW 2: Daily Avg TXN Value — equal flex chart -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title">DAILY AVERAGE TRANSACTION VALUE (AED) — Day of Month</div>
+            <div class="card-title"><span>DAILY ATV (<span th:text="${dto.currencyCode}">AED</span>) — Day of Month</span></div>
             <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailyAvgTxnValue" data-color="#0D9488"></canvas></div>
         </div>
 
         <!-- ROW 3: Unique Customers — equal flex chart -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title">UNIQUE CUSTOMERS — Day of Month</div>
+            <div class="card-title">DISTINCT CARDS BY DAY — Day of Month</div>
             <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.uniqueCustomersByDay" data-color="#1E3A8A"></canvas></div>
         </div>
 
         <!-- ROW 4: Achievement + Watch summary strip -->
         <div class="grid-2 mb-8">
-            <div class="action-strip-item opportunity">
+            <div class="action-strip-item opportunity" style="border-left-color: #059669;">
                 <div class="strip-label">&#9650; KEY ACHIEVEMENT</div>
                 <div class="strip-text" th:text="${dto.insights != null and dto.insights.peakAchievement != null ? dto.insights.peakAchievement : 'Peak daily sales hit a record high.'}">
                     Peak daily sales hit a record high.
                 </div>
             </div>
-            <div class="action-strip-item risk">
-                <div class="strip-label">&#9660; AREA TO WATCH</div>
+            <div class="action-strip-item action">
+                <div class="strip-label">&#9654; AREA TO WATCH</div>
                 <div class="strip-text" th:text="${dto.insights != null and dto.insights.peakWatch != null ? dto.insights.peakWatch : 'Average transaction value shows day-to-day volatility.'}">
                     Average transaction value shows day-to-day volatility.
                 </div>
@@ -70,7 +70,7 @@
         <div class="ai-insight">
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">
-                <strong>AI Insight:</strong> Customer traffic is most consistent mid-month (days 14–20). Early-month and late-month dips suggest salary-cycle dependency — consider loyalty triggers for off-peak periods.
+                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.peakWatch != null ? dto.insights.peakWatch : 'Your data shows noticeable variation in daily performance across the month. It may be worth looking at whether promotions or staffing adjustments could help on quieter days.'}"></span>
             </div>
         </div>
 

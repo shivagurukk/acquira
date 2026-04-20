@@ -17,6 +17,8 @@ import com.acquira.common.model.Merchant;
 import com.acquira.common.model.Tenant;
 import com.acquira.common.repository.TenantRepository;
 import com.acquira.common.service.MerchantInsightService;
+import com.acquira.common.service.ReportStorageService;
+import com.acquira.common.service.S3Uploader;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -40,21 +42,23 @@ public class PdfController {
     private final MerchantInsightService merchantInsightService;
     private final CoreServiceClient coreClient;
     private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private final ReportStorageService reportStorageService;
 
     /** Optional: only available if spring-boot-starter-mail is on classpath */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.mail.javamail.JavaMailSender javaMailSender;
 
-    /** Configurable reports root — defaults to ./reports (relative to CWD).
-     *  On RHEL, set pdf.reports.dir=/opt/acquira/reports in application.properties */
+    /**
+     * S3 upload service — injected via S3Uploader interface (acquira-common).
+     * Implementation (ReportS3UploadService) lives in acquira-core.
+     * @Autowired(required=false) keeps pdf module compilable standalone.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private S3Uploader reportS3UploadService;
+
     @org.springframework.beans.factory.annotation.Value("${pdf.reports.dir:reports}")
     private String reportsBaseDir;
 
-    /**
-     * Absolute, normalized path to reports root.
-     * Resolved once at startup so every method uses the same directory
-     * regardless of how the JVM CWD changes at runtime.
-     */
     private Path reportsRoot;
 
     @PostConstruct
@@ -68,17 +72,14 @@ public class PdfController {
         }
     }
 
-    /** Get the folder for a given month: {reportsRoot}/{bankShortCode}/{YYYY-MM} */
     private Path monthFolder(YearMonth ym) {
         return monthFolder(ym, null);
     }
 
-    /** Tenant-aware folder: {reportsRoot}/{bankShortCode}/{YYYY-MM} */
     private Path monthFolder(YearMonth ym, String bankShortCode) {
         if (bankShortCode != null && !bankShortCode.isBlank()) {
             return reportsRoot.resolve(bankShortCode).resolve(ym.toString());
         }
-        // Fallback: resolve from current tenant context
         String code = resolveBankShortCode();
         if (code != null) {
             return reportsRoot.resolve(code).resolve(ym.toString());
@@ -86,7 +87,6 @@ public class PdfController {
         return reportsRoot.resolve(ym.toString());
     }
 
-    /** Resolve bankShortCode from TenantContext */
     private String resolveBankShortCode() {
         try {
             Long tenantId = TenantContext.getCurrentTenant();
@@ -106,13 +106,15 @@ public class PdfController {
                          TenantRepository tenantRepository,
                          MerchantInsightService merchantInsightService,
                          CoreServiceClient coreClient,
-                         org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
-        this.playwrightPdfService = playwrightPdfService;
-        this.merchantRepository = merchantRepository;
-        this.tenantRepository = tenantRepository;
+                         org.springframework.jdbc.core.JdbcTemplate jdbcTemplate,
+                         ReportStorageService reportStorageService) {
+        this.playwrightPdfService   = playwrightPdfService;
+        this.merchantRepository     = merchantRepository;
+        this.tenantRepository       = tenantRepository;
         this.merchantInsightService = merchantInsightService;
-        this.coreClient = coreClient;
-        this.jdbcTemplate = jdbcTemplate;
+        this.coreClient             = coreClient;
+        this.jdbcTemplate           = jdbcTemplate;
+        this.reportStorageService   = reportStorageService;
     }
 
     // ─── Single PDF (on-the-fly via Playwright) ────────────────────────
@@ -129,7 +131,6 @@ public class PdfController {
 
         MerchantInsightsDTO data = coreClient.fetchInsights(merchantId,
                 targetMonth.getYear(), targetMonth.getMonthValue());
-
         String merchantName = resolvemerchantName(merchantId);
 
         byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName,
@@ -144,12 +145,23 @@ public class PdfController {
     }
 
     // ─── Batch Generation ──────────────────────────────────────────────
+    //
+    //  sendEmail | sendS3 | Behaviour
+    //  ----------|--------|--------------------------------------------------
+    //  false     | false  | Generate PDFs to local disk only
+    //  false     | true   | Generate PDFs → upload ALL to S3 after batch done
+    //  true      | false  | Generate PDFs → send email only, no S3
+    //  true      | true   | Generate PDFs → send email → upload to S3 per PDF
+    //                       (S3 upload only happens after successful email)
+    // ─────────────────────────────────────────────────────────────────────
 
     @PostMapping("/generate-all")
     public ResponseEntity<Map<String, Object>> generateAllReports(
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month,
-            @RequestParam(defaultValue = "false") boolean sendEmail) {
+            @RequestParam(defaultValue = "false") boolean sendEmail,
+            @RequestParam(defaultValue = "false") boolean sendS3) {
+
         if (!playwrightPdfService.isEngineReady()) {
             return ResponseEntity.ok(Map.of(
                 "status", "PDF_ENGINE_NOT_READY",
@@ -157,20 +169,26 @@ public class PdfController {
                     + "Run: mvn exec:java -e -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args=install"
             ));
         }
+
+        // S3 requires the uploader service to be available
+        final boolean s3Requested = sendS3 && reportS3UploadService != null;
+        if (sendS3 && reportS3UploadService == null) {
+            log.warn("[BATCH] S3 upload requested but S3Uploader service is not available — S3 will be skipped");
+        }
+
         try {
-            YearMonth targetMonth = resolveTargetMonth(year, month);
-            Long currentTenant = TenantContext.getCurrentTenant();
+            YearMonth targetMonth  = resolveTargetMonth(year, month);
+            Long currentTenant     = TenantContext.getCurrentTenant();
+            String bankShortCode   = resolveBankShortCode();
+            Path   folder          = monthFolder(targetMonth, bankShortCode);
+            String monthYear       = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
 
-            // Resolve tenant for folder structure
-            String bankShortCode = resolveBankShortCode();
-            Path folder = monthFolder(targetMonth, bankShortCode);
-            String monthYear = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
-
-            List<Merchant> merchants = merchantRepository.findAll();
-            List<long[]> merchantIds = new ArrayList<>(merchants.size());
-            List<String> merchantNames = new ArrayList<>(merchants.size());
+            List<Merchant> merchants     = merchantRepository.findAll();
+            List<long[]>   merchantIds   = new ArrayList<>(merchants.size());
+            List<String>   merchantNames = new ArrayList<>(merchants.size());
             Map<Long, String> merchantEmailMap = new HashMap<>();
-            for (var m : merchants) {
+
+            for (Merchant m : merchants) {
                 merchantIds.add(new long[]{m.getMerchantId()});
                 String name = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
                 merchantNames.add(name);
@@ -179,8 +197,9 @@ public class PdfController {
                 }
             }
 
-            // ━━━ BULK PRE-FETCH: 6 queries for ALL merchants ━━━
-            log.info("[BATCH] Starting bulk pre-fetch for {} merchants (month: {})", merchants.size(), targetMonth);
+            log.info("[BATCH] Starting bulk pre-fetch for {} merchants (month:{} email:{} s3:{})",
+                merchants.size(), targetMonth, sendEmail, s3Requested);
+
             List<Long> midList = merchants.stream().map(Merchant::getMerchantId).collect(Collectors.toList());
             Map<Long, MerchantInsightsDTO> bulkData;
             try {
@@ -192,92 +211,218 @@ public class PdfController {
             }
             log.info("[BATCH] Bulk pre-fetch complete: {} DTOs ready", bulkData.size());
 
-            // Data fetcher uses pre-computed map (zero DB queries per merchant)
+            final Long capturedTenant    = currentTenant;
+            final String capturedBankCode = bankShortCode;
+            final String capturedYearMonth = targetMonth.toString();
+
             BatchJobStatus status = playwrightPdfService.generateBatch(
                     merchantIds, merchantNames,
                     (mid, ctx) -> {
                         MerchantInsightsDTO dto = bulkData.get(mid);
                         if (dto != null) return dto;
-                        // Fallback to single fetch if bulk missed this merchant
-                        if (currentTenant != null) TenantContext.setCurrentTenant(currentTenant);
                         try {
+                            if (capturedTenant != null) TenantContext.setCurrentTenant(capturedTenant);
                             return coreClient.fetchInsights(mid, targetMonth.getYear(), targetMonth.getMonthValue());
                         } finally {
                             TenantContext.clear();
                         }
                     },
-                    folder.toString(), monthYear, targetMonth.toString());
+                    folder.toString(), monthYear, capturedYearMonth);
 
-            // ━━━ POST-BATCH EMAIL SENDING (async) ━━━
-            if (sendEmail && !merchantEmailMap.isEmpty()) {
-                final String batchJobId = status.jobId;
-                final Path emailFolder = folder;
-                final String emailMonthYear = monthYear;
-                Thread emailThread = new Thread(() -> {
-                    // Wait for batch to complete
-                    BatchJobStatus jobStatus = playwrightPdfService.getJobStatus(batchJobId);
-                    while (jobStatus != null && !"COMPLETED".equals(jobStatus.phase)
-                            && !"FAILED".equals(jobStatus.phase) && !"CANCELLED".equals(jobStatus.phase)) {
-                        try { Thread.sleep(3000); } catch (InterruptedException e) { return; }
-                        jobStatus = playwrightPdfService.getJobStatus(batchJobId);
-                    }
-                    if (jobStatus == null || !"COMPLETED".equals(jobStatus.phase)) {
-                        log.warn("[EMAIL] Batch did not complete successfully, skipping email send");
-                        return;
-                    }
-                    log.info("[EMAIL] Batch complete, sending {} emails...", merchantEmailMap.size());
-                    int sent = 0, failed = 0;
-                    for (var entry : merchantEmailMap.entrySet()) {
-                        Long mid = entry.getKey();
-                        String email = entry.getValue();
-                        String mName = merchants.stream()
-                            .filter(m -> m.getMerchantId().equals(mid))
-                            .map(Merchant::getName)
-                            .findFirst().orElse("Merchant");
-                        String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-                        Path pdfFile = emailFolder.resolve("Insight_" + safeName + "_" + targetMonth + ".pdf");
-                        if (!Files.exists(pdfFile)) {
-                            log.warn("[EMAIL] PDF not found for {}: {}", mName, pdfFile);
-                            failed++;
-                            continue;
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            //  POST-BATCH ASYNC THREAD
+            //
+            //  Case 1: sendEmail=false, sendS3=true
+            //    → Wait for batch → upload ALL PDFs to S3 directly
+            //
+            //  Case 2: sendEmail=true, sendS3=true
+            //    → Wait for batch → for each merchant:
+            //        send email → if email OK → upload that PDF to S3
+            //
+            //  Case 3: sendEmail=true, sendS3=false
+            //    → Wait for batch → send emails only
+            //
+            //  Case 4: sendEmail=false, sendS3=false
+            //    → No post-batch thread needed — PDFs already on local disk
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            final boolean needsPostThread = sendEmail || s3Requested;
+
+            if (needsPostThread) {
+                final String  batchJobId    = status.jobId;
+                final Path    batchFolder   = folder;
+                final String  batchMonthYear = monthYear;
+                final Long    threadTenantId = currentTenant;
+
+                Thread postBatchThread = new Thread(() -> {
+                    if (threadTenantId != null) TenantContext.setCurrentTenant(threadTenantId);
+                    try {
+                        // ── Wait for PDF generation to fully complete ──
+                        BatchJobStatus jobStatus = playwrightPdfService.getJobStatus(batchJobId);
+                        while (jobStatus != null
+                                && !"COMPLETED".equals(jobStatus.phase)
+                                && !"FAILED".equals(jobStatus.phase)
+                                && !"CANCELLED".equals(jobStatus.phase)) {
+                            try { Thread.sleep(3000); } catch (InterruptedException e) { return; }
+                            jobStatus = playwrightPdfService.getJobStatus(batchJobId);
                         }
-                        try {
-                            sendReportEmail(email, mName, emailMonthYear, pdfFile);
-                            sent++;
-                        } catch (Exception e) {
-                            log.error("[EMAIL] Failed to send to {} ({}): {}", mName, email, e.getMessage());
-                            failed++;
+
+                        if (jobStatus == null || !"COMPLETED".equals(jobStatus.phase)) {
+                            log.warn("[POST-BATCH] Batch did not complete (phase={}) — skipping email/S3",
+                                jobStatus != null ? jobStatus.phase : "null");
+                            return;
                         }
+
+                        log.info("[POST-BATCH] Batch complete. sendEmail={} s3={}", sendEmail, s3Requested);
+
+                        // ── CASE 1: S3 only (no email) ──────────────────────────────
+                        if (!sendEmail && s3Requested) {
+                            log.info("[S3-ONLY] Uploading all PDFs to S3...");
+                            int s3Ok = 0, s3Fail = 0;
+
+                            for (Merchant m : merchants) {
+                                String mName    = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
+                                String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
+                                Path   pdfFile  = batchFolder.resolve("Insight_" + safeName + "_" + capturedYearMonth + ".pdf");
+
+                                if (!Files.exists(pdfFile)) {
+                                    log.warn("[S3-ONLY] PDF not found, skipping: {}", pdfFile.getFileName());
+                                    s3Fail++;
+                                    continue;
+                                }
+
+                                try {
+                                    boolean ok = reportS3UploadService.uploadIfEnabled(
+                                        threadTenantId, pdfFile, capturedBankCode, capturedYearMonth);
+                                    if (ok) {
+                                        s3Ok++;
+                                        log.info("[S3-ONLY] Uploaded: {}", pdfFile.getFileName());
+                                    } else {
+                                        s3Fail++;
+                                        log.warn("[S3-ONLY] Upload skipped/failed: {}", pdfFile.getFileName());
+                                    }
+                                } catch (Exception e) {
+                                    s3Fail++;
+                                    log.error("[S3-ONLY] Upload error for {}: {}", pdfFile.getFileName(), e.getMessage());
+                                }
+                            }
+
+                            log.info("[S3-ONLY] Done — uploaded:{} failed:{}", s3Ok, s3Fail);
+                            return;
+                        }
+
+                        // ── CASE 2 & 3: Email (with optional S3) ────────────────────
+                        if (sendEmail) {
+                            log.info("[EMAIL] Sending {} emails (s3={})", merchantEmailMap.size(), s3Requested);
+                            int emailSent = 0, emailFailed = 0, s3Ok = 0, s3Skipped = 0, s3Fail = 0;
+
+                            for (Map.Entry<Long, String> entry : merchantEmailMap.entrySet()) {
+                                Long   mid   = entry.getKey();
+                                String email = entry.getValue();
+                                String mName = merchants.stream()
+                                    .filter(m -> m.getMerchantId().equals(mid))
+                                    .map(Merchant::getName)
+                                    .findFirst().orElse("Merchant");
+
+                                String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
+                                Path   pdfFile  = batchFolder.resolve("Insight_" + safeName + "_" + capturedYearMonth + ".pdf");
+
+                                if (!Files.exists(pdfFile)) {
+                                    log.warn("[EMAIL] PDF not found for {}: {}", mName, pdfFile);
+                                    emailFailed++;
+                                    continue;
+                                }
+
+                                // Send email first
+                                boolean emailOk = false;
+                                try {
+                                    sendReportEmail(email, mName, batchMonthYear, pdfFile);
+                                    emailSent++;
+                                    emailOk = true;
+                                    log.info("[EMAIL] Sent to {} ({})", mName, email);
+                                } catch (Exception e) {
+                                    log.error("[EMAIL] Failed to send to {} ({}): {}", mName, email, e.getMessage());
+                                    emailFailed++;
+                                }
+
+                                // Upload to S3 only if email was sent AND s3 is enabled (Case 2)
+                                // If email failed, skip S3 for this merchant (Case 3 n/a, Case 2 guard)
+                                if (s3Requested) {
+                                    if (emailOk) {
+                                        // Case 2: email=true, s3=true → upload after successful email
+                                        try {
+                                            boolean uploaded = reportS3UploadService.uploadIfEnabled(
+                                                threadTenantId, pdfFile, capturedBankCode, capturedYearMonth);
+                                            if (uploaded) {
+                                                s3Ok++;
+                                                log.info("[S3] Uploaded after email: {}", pdfFile.getFileName());
+                                            } else {
+                                                s3Skipped++;
+                                            }
+                                        } catch (Exception e) {
+                                            s3Fail++;
+                                            log.error("[S3] Upload failed for {}: {}", pdfFile.getFileName(), e.getMessage());
+                                        }
+                                    } else {
+                                        // Email failed → skip S3 for this merchant
+                                        s3Skipped++;
+                                        log.debug("[S3] Skipping S3 for {} — email failed", mName);
+                                    }
+                                }
+                                // Case 3: email=true, s3=false → nothing more to do after email
+                            }
+
+                            log.info("[POST-BATCH] Done — email sent:{} failed:{} | S3 ok:{} skipped:{} failed:{}",
+                                emailSent, emailFailed, s3Ok, s3Skipped, s3Fail);
+                        }
+
+                    } finally {
+                        TenantContext.clear();
                     }
-                    log.info("[EMAIL] Email sending complete: {} sent, {} failed", sent, failed);
-                }, "pdf-email-sender");
-                emailThread.setDaemon(true);
-                emailThread.start();
+                }, "pdf-post-batch");
+                postBatchThread.setDaemon(true);
+                postBatchThread.start();
+            } else {
+                // Case 4: email=false, s3=false — PDFs written to disk, nothing else to do
+                log.info("[BATCH] Local-only mode — PDFs will be saved to: {}", folder);
             }
 
+            logBatchRun(status.jobId, currentTenant, targetMonth.toString(), merchants.size(), "STARTED");
+
             Map<String, Object> response = new LinkedHashMap<>();
-            response.put("jobId", status.jobId);
-            response.put("totalMerchants", merchants.size());
-            response.put("bulkPreFetched", bulkData.size());
-            response.put("targetFolder", folder.toString());
-            response.put("targetMonth", targetMonth.toString());
-            response.put("sendEmail", sendEmail);
+            response.put("jobId",           status.jobId);
+            response.put("totalMerchants",  merchants.size());
+            response.put("bulkPreFetched",  bulkData.size());
+            response.put("targetFolder",    folder.toString());
+            response.put("targetMonth",     targetMonth.toString());
+            response.put("sendEmail",       sendEmail);
+            response.put("sendS3",          s3Requested);
             response.put("emailRecipients", merchantEmailMap.size());
+            response.put("mode",            resolveMode(sendEmail, s3Requested));
+            response.put("storageType",     reportStorageService.getStorageInfo());
             return ResponseEntity.ok(response);
+
         } catch (Exception e) {
+            log.error("[BATCH] Unexpected error", e);
             return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
 
     /**
-     * Send insight report PDF to merchant via email.
-     * Uses reflection to call EmailService if spring-boot-starter-mail is on classpath.
-     * Falls back to console logging if not configured.
+     * Human-readable description of the current batch mode.
+     * Returned in the API response so the UI can display it clearly.
      */
+    private String resolveMode(boolean sendEmail, boolean sendS3) {
+        if (!sendEmail && !sendS3) return "LOCAL_ONLY";
+        if (!sendEmail &&  sendS3) return "S3_ONLY";
+        if ( sendEmail && !sendS3) return "EMAIL_ONLY";
+        return "EMAIL_AND_S3";
+    }
+
+    // ─── Email helper ──────────────────────────────────────────────────
+
     private void sendReportEmail(String toEmail, String merchantName, String monthYear, Path pdfFile) {
         try {
             if (javaMailSender == null) {
-                // Fallback: use JdbcTemplate to log email to a table for external processing
                 try {
                     jdbcTemplate.update(
                         "INSERT INTO email_queue (recipient, subject, body, attachment_path, status, created_at) " +
@@ -285,36 +430,32 @@ public class PdfController {
                         toEmail,
                         "Your Business Insight Report — " + monthYear,
                         "Dear " + merchantName + ",\n\nPlease find your monthly business insight report attached.\n\nBest regards,\nAFS NEXUS",
-                        pdfFile.toString()
-                    );
+                        pdfFile.toString());
                     log.info("[EMAIL] Queued email for {} to {}", merchantName, toEmail);
                 } catch (Exception e) {
-                    // If email_queue table doesn't exist, just log
                     log.info("[EMAIL] Would send to {} ({}): Report for {} — PDF: {}",
                         merchantName, toEmail, monthYear, pdfFile.getFileName());
                 }
                 return;
             }
 
-            // JavaMailSender is available — send directly with PDF attachment
             var message = javaMailSender.createMimeMessage();
-            var helper = new org.springframework.mail.javamail.MimeMessageHelper(message, true, "UTF-8");
+            var helper  = new org.springframework.mail.javamail.MimeMessageHelper(message, true, "UTF-8");
             helper.setTo(toEmail);
             helper.setSubject("Your Business Insight Report — " + monthYear);
             helper.setText(
                 "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto'>"
                 + "<h2 style='color:#0F2042'>AFS NEXUS — Monthly Business Insight</h2>"
                 + "<p>Dear " + merchantName + ",</p>"
-                + "<p>Please find your <strong>" + monthYear + "</strong> business insight report attached to this email.</p>"
+                + "<p>Please find your <strong>" + monthYear + "</strong> business insight report attached.</p>"
                 + "<p>This report includes your sales performance, customer analytics, payment insights, and actionable recommendations.</p>"
                 + "<p style='color:#6B7280;font-size:12px;margin-top:30px'>This is an automated report from AFS NEXUS. Do not reply to this email.</p>"
                 + "</div>", true);
             helper.addAttachment(pdfFile.getFileName().toString(),
                 new org.springframework.core.io.FileSystemResource(pdfFile.toFile()));
             javaMailSender.send(message);
-            log.info("[EMAIL] Sent report to {} ({})", merchantName, toEmail);
         } catch (Exception e) {
-            log.error("[EMAIL] Failed to send to {}: {}", toEmail, e.getMessage());
+            throw new RuntimeException("Email failed for " + merchantName + ": " + e.getMessage(), e);
         }
     }
 
@@ -342,7 +483,11 @@ public class PdfController {
 
     @GetMapping("/engine-stats")
     public ResponseEntity<Map<String, Object>> getEngineStats() {
-        return ResponseEntity.ok(playwrightPdfService.getEngineStats());
+        Map<String, Object> stats = new LinkedHashMap<>(playwrightPdfService.getEngineStats());
+        stats.put("storageType",        reportStorageService.getStorageInfo());
+        stats.put("reportsRoot",        reportsRoot.toString());
+        stats.put("s3ServiceAvailable", reportS3UploadService != null);
+        return ResponseEntity.ok(stats);
     }
 
     // ─── Report Status & Listing ───────────────────────────────────────
@@ -361,9 +506,9 @@ public class PdfController {
                     count = (int) files.filter(p -> p.toString().endsWith(".pdf")).count();
                 }
             }
-            response.put("exists", count > 0);
-            response.put("count", count);
-            response.put("targetMonth", targetMonth.toString());
+            response.put("exists",       count > 0);
+            response.put("count",        count);
+            response.put("targetMonth",  targetMonth.toString());
             response.put("resolvedPath", folderPath.toString());
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -383,29 +528,27 @@ public class PdfController {
 
             if (Files.exists(folderPath)) {
                 try (Stream<Path> files = Files.list(folderPath)) {
-                    files.filter(p -> p.toString().endsWith(".pdf"))
-                         .sorted()
-                         .forEach(p -> {
-                             Map<String, Object> entry = new LinkedHashMap<>();
-                             entry.put("filename", p.getFileName().toString());
-                             try {
-                                 entry.put("size", Files.size(p));
-                                 entry.put("createdAt", Files.getLastModifiedTime(p).toString());
-                             } catch (IOException ignored) {
-                                 entry.put("size", 0);
-                             }
-                             entry.put("downloadUrl", "/api/business/insights/download-report?file="
-                                 + p.getFileName().toString()
-                                 + "&year=" + targetMonth.getYear()
-                                 + "&month=" + targetMonth.getMonthValue());
-                             reports.add(entry);
-                         });
+                    files.filter(p -> p.toString().endsWith(".pdf")).sorted().forEach(p -> {
+                        Map<String, Object> entry = new LinkedHashMap<>();
+                        entry.put("filename", p.getFileName().toString());
+                        try {
+                            entry.put("size",      Files.size(p));
+                            entry.put("createdAt", Files.getLastModifiedTime(p).toString());
+                        } catch (IOException ignored) {
+                            entry.put("size", 0);
+                        }
+                        entry.put("downloadUrl", "/api/business/insights/download-report?file="
+                            + p.getFileName().toString()
+                            + "&year="  + targetMonth.getYear()
+                            + "&month=" + targetMonth.getMonthValue());
+                        reports.add(entry);
+                    });
                 }
             }
             return ResponseEntity.ok(Map.of(
-                "targetMonth", targetMonth.toString(),
-                "count", reports.size(),
-                "reports", reports,
+                "targetMonth",  targetMonth.toString(),
+                "count",        reports.size(),
+                "reports",      reports,
                 "resolvedPath", folderPath.toString()
             ));
         } catch (Exception e) {
@@ -413,7 +556,7 @@ public class PdfController {
         }
     }
 
-    // ─── Download Pre-generated Reports ────────────────────────────────
+    // ─── Download ──────────────────────────────────────────────────────
 
     @GetMapping("/download-report")
     public void downloadReport(
@@ -423,19 +566,14 @@ public class PdfController {
             HttpServletResponse response) throws IOException {
 
         YearMonth targetMonth = resolveTargetMonth(year, month);
-
-        // Security: prevent path traversal — extract just the filename
         String safeName = Paths.get(file).getFileName().toString();
         if (!safeName.endsWith(".pdf")) {
             response.sendError(400, "Invalid file type");
             return;
         }
 
-        // Try tenant folder first, then legacy flat folder
         Path filePath = resolveReportFile(safeName, targetMonth);
-
-        // Log resolved path for debugging
-        log.info("Download request: file={}, resolved={}, exists={}", safeName, filePath, filePath != null && Files.exists(filePath));
+        log.info("Download: file={} resolved={} exists={}", safeName, filePath, filePath != null && Files.exists(filePath));
 
         if (filePath == null || !Files.exists(filePath)) {
             Path folder = monthFolder(targetMonth);
@@ -446,11 +584,8 @@ public class PdfController {
                     pdfCount = fs.filter(p -> p.toString().endsWith(".pdf")).count();
                 }
             }
-            log.warn("Download 404: {} | folder={} exists={} pdfCount={}",
-                    safeName, folder, folderExists, pdfCount);
-            response.sendError(404, "Report not found: " + safeName
-                    + " (folder: " + folder + ", exists: " + folderExists
-                    + ", pdfs in folder: " + pdfCount + ")");
+            log.warn("Download 404: {} | folder={} exists={} pdfs={}", safeName, folder, folderExists, pdfCount);
+            response.sendError(404, "Report not found: " + safeName);
             return;
         }
 
@@ -494,7 +629,7 @@ public class PdfController {
         }
     }
 
-    // ─── Overview endpoint (data only, no PDF) ─────────────────────────
+    // ─── Overview (data only, no PDF) ─────────────────────────────────
 
     @GetMapping("/overview")
     public ResponseEntity<MerchantInsightsDTO> getInsights(
@@ -513,7 +648,9 @@ public class PdfController {
     public ResponseEntity<Map<String, Object>> generateReport(
             @PathVariable Long merchantId,
             @RequestParam(required = false) Integer year,
-            @RequestParam(required = false) Integer month) {
+            @RequestParam(required = false) Integer month,
+            @RequestParam(defaultValue = "false") boolean force) {
+
         if (!playwrightPdfService.isEngineReady()) {
             return ResponseEntity.ok(Map.of("status", "PDF_ENGINE_NOT_READY"));
         }
@@ -522,24 +659,37 @@ public class PdfController {
             Path folder = monthFolder(targetMonth);
             Files.createDirectories(folder);
 
+            String merchantName = resolvemerchantName(merchantId);
+            String safeName  = merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
+            String filename  = "Insight_" + safeName + "_" + targetMonth + ".pdf";
+            Path   outPath   = folder.resolve(filename);
+
+            if (!force && Files.exists(outPath) && Files.size(outPath) > 0) {
+                log.info("Report cached for merchant {} ({}): {}", merchantId, merchantName, outPath);
+                return ResponseEntity.ok(Map.of(
+                    "status",      "CACHED",
+                    "filename",    filename,
+                    "size",        Files.size(outPath),
+                    "path",        outPath.toString(),
+                    "downloadUrl", "/api/business/insights/download-report?file="
+                            + filename + "&year=" + targetMonth.getYear()
+                            + "&month=" + targetMonth.getMonthValue()
+                ));
+            }
+
             MerchantInsightsDTO data = coreClient.fetchInsights(merchantId,
                     targetMonth.getYear(), targetMonth.getMonthValue());
-
-            String merchantName = resolvemerchantName(merchantId);
 
             byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName,
                     targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy")));
 
-            String safeName = merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-            String filename = "Insight_" + safeName + "_" + targetMonth + ".pdf";
-            Path outPath = folder.resolve(filename);
             Files.write(outPath, pdfBytes);
 
             return ResponseEntity.ok(Map.of(
-                    "status", "SUCCESS",
-                    "filename", filename,
-                    "size", pdfBytes.length,
-                    "path", outPath.toString(),
+                    "status",      "SUCCESS",
+                    "filename",    filename,
+                    "size",        pdfBytes.length,
+                    "path",        outPath.toString(),
                     "downloadUrl", "/api/business/insights/download-report?file="
                             + filename + "&year=" + targetMonth.getYear()
                             + "&month=" + targetMonth.getMonthValue()
@@ -550,34 +700,33 @@ public class PdfController {
         }
     }
 
-    /**
-     * Resolve the report file path — tries tenant folder first, then legacy flat folder.
-     * This ensures backward compatibility with reports generated before tenant folders.
-     */
+    // ─── Private helpers ───────────────────────────────────────────────
+
     private Path resolveReportFile(String filename, YearMonth targetMonth) {
-        // 1. Try tenant-aware path: reports/{bankShortCode}/{YYYY-MM}/file.pdf
         Path tenantPath = monthFolder(targetMonth).resolve(filename);
         if (Files.exists(tenantPath)) return tenantPath;
-
-        // 2. Try legacy flat path: reports/{YYYY-MM}/file.pdf
         Path legacyPath = reportsRoot.resolve(targetMonth.toString()).resolve(filename);
         if (Files.exists(legacyPath)) return legacyPath;
-
-        return tenantPath; // return the expected path (for error reporting)
+        return tenantPath;
     }
 
-    /**
-     * Resolve the report folder — tries tenant folder first, falls back to legacy.
-     * Returns the folder that actually exists and contains PDFs.
-     */
     private Path resolveReportFolder(YearMonth targetMonth) {
         Path tenantFolder = monthFolder(targetMonth);
         if (Files.exists(tenantFolder)) return tenantFolder;
-
         Path legacyFolder = reportsRoot.resolve(targetMonth.toString());
         if (Files.exists(legacyFolder)) return legacyFolder;
+        return tenantFolder;
+    }
 
-        return tenantFolder; // return the expected path
+    private void logBatchRun(String jobId, Long tenantId, String targetMonth, int merchantCount, String status) {
+        try {
+            jdbcTemplate.update(
+                "INSERT INTO pdf_batch_log (job_id, tenant_id, target_month, merchant_count, status, created_at) " +
+                "VALUES (?, ?, ?, ?, ?, NOW())",
+                jobId, tenantId, targetMonth, merchantCount, status);
+        } catch (Exception e) {
+            log.debug("[BATCH-LOG] Could not log batch run: {}", e.getMessage());
+        }
     }
 
     private YearMonth resolveTargetMonth(Integer year, Integer month) {
@@ -585,17 +734,6 @@ public class PdfController {
         return YearMonth.now().minusMonths(1);
     }
 
-    /**
-     * Resolve merchant name with multiple fallbacks:
-     * 1. dim_merchant.name (preferred — clean business name)
-     * 2. Look up merchant_name from stg_trnx_raw (raw file data)
-     * 3. Look up merchant_name from fact_transaction
-     * 4. dim_merchant.mid (numeric ID — last resort before generic)
-     * 5. "Merchant {id}" as absolute fallback
-     *
-     * If a name is found via fallback, it's persisted back to dim_merchant.name
-     * so subsequent lookups are instant.
-     */
     private String resolvemerchantName(Long merchantId) {
         String mid = null;
         try {
@@ -603,56 +741,37 @@ public class PdfController {
             if (mOpt.isPresent()) {
                 var m = mOpt.get();
                 mid = m.getMid();
-                if (m.getName() != null && !m.getName().isBlank()) {
-                    log.debug("Merchant {} name from dim_merchant: {}", merchantId, m.getName());
-                    return m.getName();
-                }
+                if (m.getName() != null && !m.getName().isBlank()) return m.getName();
             }
         } catch (Exception e) {
-            log.warn("Failed to lookup merchant {} from dim_merchant: {}", merchantId, e.getMessage());
+            log.warn("Failed to lookup merchant {}: {}", merchantId, e.getMessage());
         }
 
-        // Fallback 1: stg_trnx_raw directly by MID (simplest, most reliable)
-        String resolvedName = null;
+        String resolved;
         if (mid != null) {
-            resolvedName = tryQueryMerchantName(
-                    "SELECT merchant_name FROM stg_trnx_raw " +
-                    "WHERE mid = ? AND merchant_name IS NOT NULL " +
-                    "AND TRIM(merchant_name) <> '' LIMIT 1",
-                    mid, "stg_trnx_raw (direct mid)");
-            if (resolvedName != null) { persistMerchantName(merchantId, resolvedName); return resolvedName; }
+            resolved = tryQueryMerchantName(
+                "SELECT merchant_name FROM stg_trnx_raw WHERE mid = ? AND merchant_name IS NOT NULL AND TRIM(merchant_name) <> '' LIMIT 1",
+                mid, "stg_trnx_raw (direct)");
+            if (resolved != null) { persistMerchantName(merchantId, resolved); return resolved; }
         }
 
-        // Fallback 2: stg_trnx_raw.merchant_name via dim_merchant join
-        resolvedName = tryQueryMerchantName(
-                "SELECT s.merchant_name FROM stg_trnx_raw s " +
-                "JOIN dim_merchant m ON s.mid = m.mid " +
-                "WHERE m.merchant_id = ? AND s.merchant_name IS NOT NULL " +
-                "AND TRIM(s.merchant_name) <> '' LIMIT 1",
-                merchantId, "stg_trnx_raw (join)");
-        if (resolvedName != null) { persistMerchantName(merchantId, resolvedName); return resolvedName; }
+        resolved = tryQueryMerchantName(
+            "SELECT s.merchant_name FROM stg_trnx_raw s JOIN dim_merchant m ON s.mid = m.mid " +
+            "WHERE m.merchant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' LIMIT 1",
+            merchantId, "stg_trnx_raw (join)");
+        if (resolved != null) { persistMerchantName(merchantId, resolved); return resolved; }
 
-        // Fallback 3: stg_merchant_master_raw (merchant master file)
         if (mid != null) {
-            resolvedName = tryQueryMerchantName(
-                    "SELECT merchant_name FROM stg_merchant_master_raw " +
-                    "WHERE mid = ? AND merchant_name IS NOT NULL " +
-                    "AND TRIM(merchant_name) <> '' LIMIT 1",
-                    mid, "stg_merchant_master_raw");
-            if (resolvedName != null) { persistMerchantName(merchantId, resolvedName); return resolvedName; }
+            resolved = tryQueryMerchantName(
+                "SELECT merchant_name FROM stg_merchant_master_raw WHERE mid = ? AND merchant_name IS NOT NULL AND TRIM(merchant_name) <> '' LIMIT 1",
+                mid, "stg_merchant_master_raw");
+            if (resolved != null) { persistMerchantName(merchantId, resolved); return resolved; }
         }
 
-        // Fallback 4: Use MID as name (better than generic)
-        if (mid != null && !mid.isBlank()) {
-            log.warn("No merchant name found for merchantId={}, using MID: {}", merchantId, mid);
-            return mid;
-        }
-
-        log.warn("No merchant name found for merchantId={}, using generic fallback", merchantId);
+        if (mid != null && !mid.isBlank()) return mid;
         return "Merchant " + merchantId;
     }
 
-    /** Safe query that returns null on any error (missing column, empty result, etc.) */
     private String tryQueryMerchantName(String sql, Object param, String source) {
         try {
             String name = jdbcTemplate.queryForObject(sql, String.class, param);
@@ -666,13 +785,12 @@ public class PdfController {
         return null;
     }
 
-    /** Persist resolved name back to dim_merchant for future lookups */
     private void persistMerchantName(Long merchantId, String name) {
         try {
             int updated = jdbcTemplate.update(
-                    "UPDATE dim_merchant SET name = ? WHERE merchant_id = ? AND (name IS NULL OR TRIM(name) = '')",
-                    name, merchantId);
-            if (updated > 0) log.info("Persisted merchant name '{}' to dim_merchant for id={}", name, merchantId);
+                "UPDATE dim_merchant SET name = ? WHERE merchant_id = ? AND (name IS NULL OR TRIM(name) = '')",
+                name, merchantId);
+            if (updated > 0) log.info("Persisted merchant name '{}' for id={}", name, merchantId);
         } catch (Exception e) {
             log.debug("Could not persist merchant name: {}", e.getMessage());
         }

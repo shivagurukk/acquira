@@ -7,8 +7,8 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { useAuth } from '../../contexts/AuthContext';
 
-const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', minimumFractionDigits: 2 }).format(val || 0);
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
@@ -50,6 +50,8 @@ const computeDateRange = (preset) => {
 };
 
 const VolumeRevenueSummary = () => {
+    const { currencySymbol, formatCurrency: fmtCurrency } = useAuth();
+    const formatCurrency = (val) => fmtCurrency(val, { decimals: 2 });
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showFilters, setShowFilters] = useState(false);
@@ -153,25 +155,25 @@ const VolumeRevenueSummary = () => {
         const volTrend = prev && prev.volume > 0 ? ((latest.volume - prev.volume) / prev.volume) * 100 : 0;
         const msfTrend = prev && prev.msf > 0 ? ((latest.msf - prev.msf) / prev.msf) * 100 : 0;
         return [
-            { title: 'Total Volume', value: `AED ${formatCompact(totalVol)}`, icon: BarChart3, color: '#6366f1', trend: volTrend, trendLabel: 'vs prev month', sparkData: sparkVols },
-            { title: 'Total MSF Revenue', value: `AED ${formatCompact(totalMsf)}`, icon: DollarSign, color: '#10b981', trend: msfTrend, trendLabel: 'vs prev month', sparkData: sparkMsf },
+            { title: 'Total Volume', value: `${currencySymbol} ${formatCompact(totalVol)}`, icon: BarChart3, color: '#3b82f6', trend: volTrend, trendLabel: 'vs prev month', sparkData: sparkVols },
+            { title: 'Total MSF Revenue', value: `${currencySymbol} ${formatCompact(totalMsf)}`, icon: DollarSign, color: '#10b981', trend: msfTrend, trendLabel: 'vs prev month', sparkData: sparkMsf },
             { title: 'Transaction Count', value: formatNumber(totalCount), icon: Hash, color: '#f59e0b', sparkData: data.slice().reverse().map(d => d.count || 0) },
-            { title: 'Avg Monthly Volume', value: `AED ${formatCompact(avgVol)}`, icon: Percent, color: '#3b82f6' },
+            { title: 'Avg Monthly Volume', value: `${currencySymbol} ${formatCompact(avgVol)}`, icon: Percent, color: '#06b6d4' },
         ];
     }, [data]);
 
     const columns = [
         {
-            field: 'monthParams', headerName: 'MONTH', flex: 1.2, minWidth: 150,
+            field: 'monthParams', headerName: 'Month', flex: 1.2, minWidth: 150,
             sortComparator: (v1, v2) => v1.raw.localeCompare(v2.raw),
             renderCell: (params) => <Typography variant="body2" fontWeight="700" color="#1e293b">{params.value.str}</Typography>
         },
         {
-            field: 'count', headerName: 'COUNT', type: 'number', flex: 0.8, align: 'center', headerAlign: 'center',
+            field: 'count', headerName: 'Count', type: 'number', flex: 0.8, align: 'center', headerAlign: 'center',
             renderCell: (params) => <Chip label={formatNumber(params.value)} size="small" variant="outlined" sx={{ fontWeight: 600, borderColor: '#e2e8f0', bgcolor: '#f8fafc' }} />
         },
         {
-            field: 'volume', headerName: 'VOLUME (AED)', flex: 1.5, align: 'right', headerAlign: 'right',
+            field: 'volume', headerName: 'Volume', flex: 1.5, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
                 <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
                     <Typography variant="body2" fontWeight="700" color="#0f172a">{formatCurrency(params.value)}</Typography>
@@ -181,13 +183,13 @@ const VolumeRevenueSummary = () => {
                 </Box>
             )
         },
-        { field: 'momVol', headerName: 'TREND', flex: 0.8, align: 'center', headerAlign: 'center', renderCell: (params) => <TrendPill val={params.value} /> },
+        { field: 'momVol', headerName: 'Trend', flex: 0.8, align: 'center', headerAlign: 'center', renderCell: (params) => <TrendPill val={params.value} /> },
         {
-            field: 'msf', headerName: 'MSF (AED)', flex: 1.2, align: 'right', headerAlign: 'right',
+            field: 'msf', headerName: 'MSF', flex: 1.2, align: 'right', headerAlign: 'right',
             renderCell: (params) => <Typography variant="body2" fontWeight="600" color="#334155">{formatCurrency(params.value)}</Typography>
         },
         {
-            field: 'opt_in_volume', headerName: 'OPT-IN (AED)', flex: 1.2, align: 'right', headerAlign: 'right',
+            field: 'opt_in_volume', headerName: 'Opt-in volume', flex: 1.2, align: 'right', headerAlign: 'right',
             renderCell: (params) => <Typography variant="body2" fontWeight="500" color="#64748b">{formatCurrency(params.value)}</Typography>
         }
     ];

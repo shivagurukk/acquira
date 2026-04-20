@@ -13,7 +13,7 @@ import java.util.HashSet;
 
 @RestController
 @RequestMapping("/api/admin/rbac")
-@org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
 public class RbacController {
 
     private final SysUserGroupRepository groupRepository;
