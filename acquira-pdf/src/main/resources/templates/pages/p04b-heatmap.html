@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="heatmapContent">
+        <div class="section-title" style="margin-bottom: 2px;">Operational Intelligence</div>
+        <div class="section-subtitle" style="margin-bottom: 5px;">Sales intensity by day-of-week and hour — showing where volume is concentrated</div>
+
+        <!-- Peak Hours Summary Cards — compact row -->
+        <div class="grid-3" style="margin-bottom: 6px; gap: 6px;">
+            <div class="card" style="padding: 7px 12px; text-align: center; background: linear-gradient(135deg, #EFF6FF, #DBEAFE); border: 1px solid #93C5FD;">
+                <div style="font-size: 8px; font-weight: 700; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">🕐 PEAK HOUR</div>
+                <div id="heatmap-peak-hour" style="font-size: 18px; font-weight: 900; color: #1E3A8A; margin-top: 1px; line-height: 1.1;">-</div>
+                <div id="heatmap-peak-hour-rev" style="font-size: 7px; color: #3B82F6; margin-top: 1px; font-weight: 600;">-</div>
+            </div>
+            <div class="card" style="padding: 7px 12px; text-align: center; background: linear-gradient(135deg, #F0FDF4, #DCFCE7); border: 1px solid #86EFAC;">
+                <div style="font-size: 8px; font-weight: 700; color: #065F46; letter-spacing: 0.06em; text-transform: uppercase;">📅 PEAK DAY</div>
+                <div id="heatmap-peak-day" style="font-size: 18px; font-weight: 900; color: #065F46; margin-top: 1px; line-height: 1.1;">-</div>
+                <div id="heatmap-peak-day-rev" style="font-size: 7px; color: #059669; margin-top: 1px; font-weight: 600;">-</div>
+            </div>
+            <div class="card" style="padding: 7px 12px; text-align: center; background: linear-gradient(135deg, #FEF3C7, #FDE68A); border: 1px solid #FBBF24;">
+                <div style="font-size: 8px; font-weight: 700; color: #78350F; letter-spacing: 0.06em; text-transform: uppercase;">💤 QUIET HOUR</div>
+                <div id="heatmap-dead-zone" style="font-size: 18px; font-weight: 900; color: #78350F; margin-top: 1px; line-height: 1.1;">-</div>
+                <div id="heatmap-dead-zone-detail" style="font-size: 7px; color: #92400E; margin-top: 1px; font-weight: 600;">Lowest activity</div>
+            </div>
+        </div>
+
+        <!-- Heatmap Grid — dominant section, max height -->
+        <div class="card" style="padding: 10px 12px; margin-bottom: 6px; border: 1px solid #E2E8F0; flex: 1;">
+            <div class="card-title" style="margin-bottom: 8px;">
+                <span style="font-size: 8px; font-weight: 800; letter-spacing: 0.05em;">SALES HEATMAP — DAY × HOUR</span>
+                <div style="display: flex; gap: 8px; font-size: 7px; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 12px; height: 8px; background: linear-gradient(90deg, #DBEAFE, #BFDBFE); border-radius: 2px; border: 1px solid #E2E8F0;"></span> LOW</span>
+                    <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 12px; height: 8px; background: linear-gradient(90deg, #60A5FA, #3B82F6); border-radius: 2px;"></span> MEDIUM</span>
+                    <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 12px; height: 8px; background: linear-gradient(90deg, #1D4ED8, #1E3A8A); border-radius: 2px;"></span> HIGH</span>
+                    <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 12px; height: 8px; background: linear-gradient(90deg, #E11D48, #BE123C); border-radius: 2px;"></span> PEAK</span>
+                </div>
+            </div>
+            <div id="revenue-heatmap-grid" style="width: 100%;"></div>
+        </div>
+
+        <!-- Txn Size Distribution -->
+        <div class="card" style="padding: 10px 12px; margin-bottom: 6px;">
+            <div class="card-title" style="margin-bottom: 5px;"><span>TRANSACTION SIZE DISTRIBUTION</span></div>
+            <div id="txn-size-dist-chart" style="width: 100%;"></div>
+        </div>
+
+        <!-- Insight strip — replaces the bulky ai-insight box -->
+        <div th:if="${dto.insights != null and dto.insights.heatmapInsight != null}"
+             style="background: #F0FDF4; border: 1px solid #86EFAC; border-radius: 6px; padding: 5px 10px; display: flex; gap: 6px; align-items: flex-start;">
+            <span style="font-size: 10px; flex-shrink: 0; margin-top: 1px;">⭐</span>
+            <p style="font-size: 8.5px; color: #14532D; line-height: 1.5; margin: 0; font-weight: 600;"
+               th:text="${dto.insights.heatmapInsight}">Insight</p>
+        </div>
+
+    </div>
+</body>
+</html>

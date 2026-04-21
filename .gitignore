@@ -78,4 +78,6 @@ application-prod.properties
 # ─── Migration Artifacts ───
 migration/
 MIGRATION_GUIDE.md
-src/
+
+# ─── Root-level loose src folder (if any — NOT the module src folders) ───
+/src/

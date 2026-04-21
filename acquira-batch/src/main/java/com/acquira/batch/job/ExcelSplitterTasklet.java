@@ -1,5 +1,6 @@
 package com.acquira.batch.job;
 
+import org.dhatim.fastexcel.reader.Cell;
 import org.dhatim.fastexcel.reader.ReadableWorkbook;
 import org.dhatim.fastexcel.reader.Row;
 import org.dhatim.fastexcel.reader.Sheet;
@@ -23,16 +24,10 @@ import java.util.stream.Stream;
 /**
  * HIGH-PERFORMANCE File Splitter — handles Excel (.xlsx) and CSV files
  *
- * OPTIMIZATIONS:
- * 1. BufferedWriter with 256KB buffer (vs default 8KB)
- * 2. StringBuilder reuse (single allocation per row)
- * 3. Pre-computed header index array (no HashMap lookup per cell)
- * 4. Larger chunk size: 50K rows/file (fewer file handles, better I/O)
- * 5. fastexcel streaming reader for XLSX (no DOM loading)
- * 6. CSV passthrough: stream-split without Excel parsing
- *
- * For 1.5GB CSV files: pure streaming, ~0 memory overhead.
- * For 1.5GB XLSX files: fastexcel SAX-based streaming, ~50MB overhead.
+ * FIXES APPLIED:
+ *  - Null-safe cell access (handles sparse rows + missing columns)
+ *  - "Transaction DateTime" auto-split into Transaction Date + Transaction Time
+ *  - VAT column gracefully handled when absent in source file
  */
 @Component
 @Scope(value = "step", proxyMode = ScopedProxyMode.TARGET_CLASS)
@@ -54,15 +49,20 @@ public class ExcelSplitterTasklet implements Tasklet {
             "MSF", "VAT", "Total Amount Settled", "Interchange Fee", "Destination"
     };
 
+    // Indexes of target columns that need special handling
+    private static final int IDX_TRANSACTION_DATE = 18;
+    private static final int IDX_TRANSACTION_TIME = 19;
+
     private static final int CHUNK_SIZE = 50_000;
     private static final int BUFFER_SIZE = 256 * 1024; // 256KB
 
-    /** Normalize header: trim, lowercase, underscores→spaces, collapse whitespace */
+    /** Normalize header: trim, lowercase, underscores->spaces, collapse whitespace */
     private static String normalizeHeader(String h) {
+        if (h == null) return "";
         return h.trim().toLowerCase().replace('_', ' ').replaceAll("\\s+", " ");
     }
 
-    /** Alias map: alternative Excel header names → our TARGET_HEADER (all normalized) */
+    /** Alias map: alternative Excel header names -> our TARGET_HEADER (all normalized) */
     private static final Map<String, String> HEADER_ALIASES = new HashMap<>();
     static {
         HEADER_ALIASES.put("aggregator code",                "aggregatorcode");
@@ -74,8 +74,8 @@ public class ExcelSplitterTasklet implements Tasklet {
         HEADER_ALIASES.put("card destination",               "destination");
         HEADER_ALIASES.put("card type acq",                  "card type");
         HEADER_ALIASES.put("dcc txn ind",                    "dcc");
-        HEADER_ALIASES.put("transaction time",               "transaction time"); // now a target column
-        // Combined datetime column: map to "Transaction Date" target; time is extracted in CSV reader
+        // Combined datetime column maps to Transaction Date target slot;
+        // the time portion is auto-split at write time (see splitDateTime()).
         HEADER_ALIASES.put("transaction datetime",           "transaction date");
     }
 
@@ -84,7 +84,6 @@ public class ExcelSplitterTasklet implements Tasklet {
      * Uses normalized names + alias fallback.
      */
     private static int[] buildSourceIndexes(Map<String, Integer> normalizedHeaderMap) {
-        // Expand headerMap with aliases: if source has "original currency", also register as "txn currency"
         Map<String, Integer> expanded = new HashMap<>(normalizedHeaderMap);
         for (Map.Entry<String, Integer> entry : normalizedHeaderMap.entrySet()) {
             String alias = HEADER_ALIASES.get(entry.getKey());
@@ -98,6 +97,57 @@ public class ExcelSplitterTasklet implements Tasklet {
             sourceIndexes[i] = (idx != null) ? idx : -1;
         }
         return sourceIndexes;
+    }
+
+    /**
+     * Check if the source uses a combined "Transaction DateTime" column.
+     */
+    private static boolean hasCombinedDateTime(Map<String, Integer> normalizedHeaderMap) {
+        return normalizedHeaderMap.containsKey("transaction datetime")
+                && !normalizedHeaderMap.containsKey("transaction time");
+    }
+
+    /**
+     * Split a combined datetime string into [datePart, timePart].
+     */
+    private static String[] splitDateTime(String raw) {
+        if (raw == null || raw.isEmpty()) return new String[]{"", ""};
+        String v = raw.trim();
+
+        // Excel serial number (e.g., "45716.847742")
+        if (v.matches("-?\\d+(\\.\\d+)?")) {
+            try {
+                double serial = Double.parseDouble(v);
+                long days = (long) serial;
+                double fraction = serial - days;
+                String dateStr = Long.toString(days);
+                if (fraction <= 0) return new String[]{v, ""};
+                long totalSecs = Math.round(fraction * 86400);
+                long hh = totalSecs / 3600;
+                long mm = (totalSecs % 3600) / 60;
+                long ss = totalSecs % 60;
+                String timeStr = String.format("%02d:%02d:%02d", hh, mm, ss);
+                return new String[]{dateStr, timeStr};
+            } catch (NumberFormatException ignored) {
+                return new String[]{v, ""};
+            }
+        }
+
+        int tIdx = v.indexOf('T');
+        if (tIdx > 0 && tIdx < v.length() - 1) {
+            return new String[]{v.substring(0, tIdx), v.substring(tIdx + 1)};
+        }
+
+        int spaceIdx = v.indexOf(' ');
+        if (spaceIdx > 0 && spaceIdx < v.length() - 1) {
+            String date = v.substring(0, spaceIdx);
+            String time = v.substring(spaceIdx + 1);
+            int dot = time.indexOf('.');
+            if (dot > 0) time = time.substring(0, dot);
+            return new String[]{date, time};
+        }
+
+        return new String[]{v, ""};
     }
 
     @Override
@@ -130,14 +180,25 @@ public class ExcelSplitterTasklet implements Tasklet {
         return RepeatStatus.FINISHED;
     }
 
+    /** Safely read a cell's text - never throws NPE. */
+    private static String safeCellText(Row row, int idx, int maxCell) {
+        if (idx < 0 || idx >= maxCell) return "";
+        Cell cell = row.getCell(idx);
+        if (cell == null) return "";
+        String val = cell.getText();
+        if (val == null || val.isEmpty()) {
+            val = cell.getRawValue();
+        }
+        return val != null ? val : "";
+    }
+
     // ==================================================================================
-    // CSV SPLITTER — pure streaming, handles any file size with ~0 memory
+    // CSV SPLITTER
     // ==================================================================================
     private long splitCsvFile(File inputFile, Path outputDir) throws Exception {
         long startTime = System.currentTimeMillis();
         long totalRows = 0;
 
-        // Detect delimiter from first line
         String firstLine;
         try (BufferedReader peek = new BufferedReader(new FileReader(inputFile))) {
             firstLine = peek.readLine();
@@ -146,23 +207,22 @@ public class ExcelSplitterTasklet implements Tasklet {
 
         char delimiter = firstLine.contains("\t") ? '\t' : ',';
 
-        // Parse header and build column mapping
         String[] sourceHeaders = parseCsvLine(firstLine, delimiter);
         Map<String, Integer> headerMap = new HashMap<>();
         for (int i = 0; i < sourceHeaders.length; i++) {
             headerMap.put(normalizeHeader(sourceHeaders[i]), i);
         }
         int[] sourceIndexes = buildSourceIndexes(headerMap);
+        boolean combinedDateTime = hasCombinedDateTime(headerMap);
 
-        // Debug: log header mapping
         System.out.println("=== CSV HEADER MAPPING ===");
         System.out.println("Source headers found: " + headerMap.keySet());
+        System.out.println("Combined DateTime mode: " + combinedDateTime);
         for (int i = 0; i < TARGET_HEADERS.length; i++) {
-            String status = sourceIndexes[i] >= 0 ? "MAPPED (col " + sourceIndexes[i] + ")" : "*** MISSING ***";
+            String status = sourceIndexes[i] >= 0 ? "MAPPED (col " + sourceIndexes[i] + ")" : "*** MISSING (will be empty) ***";
             System.out.printf("  [%d] %-30s -> %s%n", i, TARGET_HEADERS[i], status);
         }
 
-        // Build CSV header
         StringBuilder headerSb = new StringBuilder(512);
         for (int i = 0; i < TARGET_HEADERS.length; i++) {
             if (i > 0) headerSb.append(',');
@@ -170,20 +230,8 @@ public class ExcelSplitterTasklet implements Tasklet {
         }
         String headerLine = headerSb.toString();
 
-        // Check if source matches target exactly (common case — skip remapping)
-        boolean directCopy = (sourceHeaders.length == TARGET_HEADERS.length);
-        if (directCopy) {
-            for (int i = 0; i < TARGET_HEADERS.length; i++) {
-                if (!TARGET_HEADERS[i].equals(sourceHeaders[i].trim())) {
-                    directCopy = false;
-                    break;
-                }
-            }
-        }
-
-        // Stream and split
         try (BufferedReader reader = new BufferedReader(new FileReader(inputFile), BUFFER_SIZE)) {
-            reader.readLine(); // skip header (already read)
+            reader.readLine();
 
             int fileIndex = 1;
             int rowCount = 0;
@@ -194,31 +242,43 @@ public class ExcelSplitterTasklet implements Tasklet {
             while ((line = reader.readLine()) != null) {
                 if (line.trim().isEmpty()) continue;
 
-                if (directCopy) {
-                    // Headers match exactly — write line as-is (fastest path)
-                    writer.write(line);
-                } else {
-                    // Remap columns to target order
-                    String[] fields = parseCsvLine(line, delimiter);
-                    sb.setLength(0);
-                    for (int i = 0; i < TARGET_HEADERS.length; i++) {
-                        if (i > 0) sb.append(',');
-                        sb.append('"');
+                String[] fields = parseCsvLine(line, delimiter);
+
+                String splitDate = null, splitTime = null;
+                if (combinedDateTime) {
+                    int dtIdx = sourceIndexes[IDX_TRANSACTION_DATE];
+                    if (dtIdx >= 0 && dtIdx < fields.length) {
+                        String[] parts = splitDateTime(fields[dtIdx]);
+                        splitDate = parts[0];
+                        splitTime = parts[1];
+                    }
+                }
+
+                sb.setLength(0);
+                for (int i = 0; i < TARGET_HEADERS.length; i++) {
+                    if (i > 0) sb.append(',');
+                    sb.append('"');
+
+                    String val = "";
+                    if (combinedDateTime && i == IDX_TRANSACTION_DATE && splitDate != null) {
+                        val = splitDate;
+                    } else if (combinedDateTime && i == IDX_TRANSACTION_TIME && splitTime != null) {
+                        val = splitTime;
+                    } else {
                         int srcIdx = sourceIndexes[i];
                         if (srcIdx >= 0 && srcIdx < fields.length) {
-                            String val = fields[srcIdx];
-                            if (val != null && !val.isEmpty()) {
-                                for (int c = 0; c < val.length(); c++) {
-                                    char ch = val.charAt(c);
-                                    if (ch == '"') sb.append('"');
-                                    sb.append(ch);
-                                }
-                            }
+                            val = fields[srcIdx] != null ? fields[srcIdx] : "";
                         }
-                        sb.append('"');
                     }
-                    writer.write(sb.toString());
+
+                    for (int c = 0; c < val.length(); c++) {
+                        char ch = val.charAt(c);
+                        if (ch == '"') sb.append('"');
+                        sb.append(ch);
+                    }
+                    sb.append('"');
                 }
+                writer.write(sb.toString());
                 writer.newLine();
                 rowCount++;
                 totalRows++;
@@ -241,10 +301,6 @@ public class ExcelSplitterTasklet implements Tasklet {
         return totalRows;
     }
 
-    /**
-     * Parse a single CSV line respecting quoted fields.
-     * Handles: "field with, comma", "field with ""quote""", simple_field
-     */
     private String[] parseCsvLine(String line, char delimiter) {
         List<String> fields = new ArrayList<>();
         StringBuilder field = new StringBuilder();
@@ -256,7 +312,7 @@ public class ExcelSplitterTasklet implements Tasklet {
                 if (c == '"') {
                     if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
                         field.append('"');
-                        i++; // skip escaped quote
+                        i++;
                     } else {
                         inQuotes = false;
                     }
@@ -279,7 +335,7 @@ public class ExcelSplitterTasklet implements Tasklet {
     }
 
     // ==================================================================================
-    // EXCEL SPLITTER — fastexcel streaming (existing logic)
+    // EXCEL SPLITTER - NULL-SAFE
     // ==================================================================================
     private long splitExcelFile(File inputFile, Path outputDir) throws Exception {
         long startTime = System.currentTimeMillis();
@@ -294,25 +350,28 @@ public class ExcelSplitterTasklet implements Tasklet {
 
                 if (!iterator.hasNext()) return 0;
 
-                // Read header and build INDEX ARRAY
                 Row headerRow = iterator.next();
                 Map<String, Integer> headerMap = new HashMap<>();
                 int cellCount = headerRow.getCellCount();
                 for (int i = 0; i < cellCount; i++) {
-                    String val = headerRow.getCell(i).getText();
-                    if (val != null) headerMap.put(normalizeHeader(val), i);
+                    Cell hc = headerRow.getCell(i);
+                    if (hc == null) continue;
+                    String val = hc.getText();
+                    if (val != null && !val.isEmpty()) {
+                        headerMap.put(normalizeHeader(val), i);
+                    }
                 }
                 int[] sourceIndexes = buildSourceIndexes(headerMap);
+                boolean combinedDateTime = hasCombinedDateTime(headerMap);
 
-                // Debug: log header mapping
                 System.out.println("=== EXCEL HEADER MAPPING ===");
                 System.out.println("Source headers found: " + headerMap.keySet());
+                System.out.println("Combined DateTime mode: " + combinedDateTime);
                 for (int i = 0; i < TARGET_HEADERS.length; i++) {
-                    String status = sourceIndexes[i] >= 0 ? "MAPPED (col " + sourceIndexes[i] + ")" : "*** MISSING ***";
+                    String status = sourceIndexes[i] >= 0 ? "MAPPED (col " + sourceIndexes[i] + ")" : "*** MISSING (will be empty) ***";
                     System.out.printf("  [%d] %-30s -> %s%n", i, TARGET_HEADERS[i], status);
                 }
 
-                // Build CSV header string once
                 StringBuilder headerSb = new StringBuilder(512);
                 for (int i = 0; i < TARGET_HEADERS.length; i++) {
                     if (i > 0) headerSb.append(',');
@@ -320,7 +379,6 @@ public class ExcelSplitterTasklet implements Tasklet {
                 }
                 String headerLine = headerSb.toString();
 
-                // Stream rows into chunked CSV files
                 int fileIndex = 1;
                 int rowCount = 0;
                 BufferedWriter writer = createWriter(outputDir, fileIndex, headerLine);
@@ -330,26 +388,33 @@ public class ExcelSplitterTasklet implements Tasklet {
                     Row row = iterator.next();
                     int maxCell = row.getCellCount();
 
+                    String splitDate = null, splitTime = null;
+                    if (combinedDateTime) {
+                        int dtIdx = sourceIndexes[IDX_TRANSACTION_DATE];
+                        String rawDt = safeCellText(row, dtIdx, maxCell);
+                        String[] parts = splitDateTime(rawDt);
+                        splitDate = parts[0];
+                        splitTime = parts[1];
+                    }
+
                     sb.setLength(0);
                     for (int i = 0; i < TARGET_HEADERS.length; i++) {
                         if (i > 0) sb.append(',');
                         sb.append('"');
 
-                        int srcIdx = sourceIndexes[i];
-                        if (srcIdx >= 0 && srcIdx < maxCell) {
-                            String val = row.getCell(srcIdx).getText();
-                            // Fallback: getText() returns empty for date/numeric cells
-                            // stored as Excel serial numbers — use raw value instead
-                            if (val == null || val.isEmpty()) {
-                                val = row.getCell(srcIdx).getRawValue();
-                            }
-                            if (val != null && !val.isEmpty()) {
-                                for (int c = 0; c < val.length(); c++) {
-                                    char ch = val.charAt(c);
-                                    if (ch == '"') sb.append('"');
-                                    sb.append(ch);
-                                }
-                            }
+                        String val;
+                        if (combinedDateTime && i == IDX_TRANSACTION_DATE) {
+                            val = splitDate != null ? splitDate : "";
+                        } else if (combinedDateTime && i == IDX_TRANSACTION_TIME) {
+                            val = splitTime != null ? splitTime : "";
+                        } else {
+                            val = safeCellText(row, sourceIndexes[i], maxCell);
+                        }
+
+                        for (int c = 0; c < val.length(); c++) {
+                            char ch = val.charAt(c);
+                            if (ch == '"') sb.append('"');
+                            sb.append(ch);
                         }
                         sb.append('"');
                     }
