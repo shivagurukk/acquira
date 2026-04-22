@@ -1,0 +1,100 @@
+Deploy + Fix Permissions on RHEL
+Nginx runs as the nginx user, which needs write access to /opt/acquira/logs/. On RHEL with SELinux, there are a few things to configure. Run these on the server:
+Step 1: Copy the new config
+bash# Either scp it from Windows, or paste directly:
+sudo tee /etc/nginx/conf.d/acquira.conf > /dev/null <<'EOF'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    root /opt/acquira/frontend;
+    index index.html;
+
+    client_max_body_size 2048M;
+    proxy_connect_timeout 60s;
+    proxy_read_timeout    600s;
+    proxy_send_timeout    600s;
+
+    access_log /opt/acquira/logs/nginx-access.log;
+    error_log  /opt/acquira/logs/nginx-error.log warn;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization     $http_authorization;
+        proxy_set_header X-Tenant-Id       $http_x_tenant_id;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        "upgrade";
+        proxy_buffering off;
+    }
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+
+    location ~* \.(woff2?|ttf|jpg|jpeg|png|gif|ico|svg)$ {
+        expires 30d;
+        access_log off;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml image/svg+xml;
+
+    add_header X-Frame-Options        "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+}
+EOF
+Step 2: Create the log files & set permissions
+The acquira user owns /opt/acquira/logs/ — nginx (running as nginx user) needs write access. Easiest fix: add nginx to the acquira group:
+bash# Create empty log files with correct ownership
+sudo touch /opt/acquira/logs/nginx-access.log
+sudo touch /opt/acquira/logs/nginx-error.log
+
+# Make nginx the owner of these two files (keeps acquira ownership of directory)
+sudo chown nginx:nginx /opt/acquira/logs/nginx-access.log /opt/acquira/logs/nginx-error.log
+sudo chmod 644 /opt/acquira/logs/nginx-access.log /opt/acquira/logs/nginx-error.log
+
+# Nginx needs to traverse /opt/acquira to reach /opt/acquira/logs
+# Make sure the directory is accessible
+sudo chmod 755 /opt/acquira
+sudo chmod 775 /opt/acquira/logs
+Step 3: SELinux — allow nginx to write to /opt/acquira/logs
+This is the critical step on RHEL. Without it, nginx gets "Permission denied" even with correct Unix permissions:
+bash# Tell SELinux that /opt/acquira/logs is a valid log directory for httpd
+sudo semanage fcontext -a -t httpd_log_t "/opt/acquira/logs(/.*)?"
+sudo restorecon -Rv /opt/acquira/logs
+
+# Also allow nginx to connect to backend on localhost:8081
+sudo setsebool -P httpd_can_network_connect 1
+
+# Allow nginx to read frontend files
+sudo semanage fcontext -a -t httpd_sys_content_t "/opt/acquira/frontend(/.*)?"
+sudo restorecon -Rv /opt/acquira/frontend
+If semanage isn't installed:
+bashsudo dnf install -y policycoreutils-python-utils
+Step 4: Test and reload
+bash# Test config syntax
+sudo nginx -t
+
+# If OK, reload
+sudo systemctl reload nginx
+
+# Verify nginx is running
+sudo systemctl status nginx --no-pager
+Step 5: Verify logs are being written
+bash# Make a test request
+curl -v http://localhost/
+
+# Check logs
+sudo tail -f /opt/acquira/logs/nginx-access.log
