@@ -153,6 +153,17 @@ public class PdfController {
     //  true      | false  | Generate PDFs → send email only, no S3
     //  true      | true   | Generate PDFs → send email → upload to S3 per PDF
     //                       (S3 upload only happens after successful email)
+    //
+    //  Merchant selection:
+    //    - If `merchantIds` is NOT provided (or empty) → runs for ALL merchants
+    //    - If `merchantIds` IS provided → runs ONLY for those merchant IDs
+    //      (missing IDs are logged and skipped; batch proceeds with valid ones)
+    //
+    //  Examples:
+    //    /generate-all?year=2026&month=3                                → all, local
+    //    /generate-all?year=2026&month=3&sendEmail=true&sendS3=true     → all, email+S3
+    //    /generate-all?year=2026&month=3&merchantIds=1,5,12             → 3 merchants, local
+    //    /generate-all?year=2026&month=3&merchantIds=1,5&sendEmail=true → 2 merchants, email only
     // ─────────────────────────────────────────────────────────────────────
 
     @PostMapping("/generate-all")
@@ -160,7 +171,8 @@ public class PdfController {
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month,
             @RequestParam(defaultValue = "false") boolean sendEmail,
-            @RequestParam(defaultValue = "false") boolean sendS3) {
+            @RequestParam(defaultValue = "false") boolean sendS3,
+            @RequestParam(required = false) List<Long> merchantIds) {
 
         if (!playwrightPdfService.isEngineReady()) {
             return ResponseEntity.ok(Map.of(
@@ -176,6 +188,9 @@ public class PdfController {
             log.warn("[BATCH] S3 upload requested but S3Uploader service is not available — S3 will be skipped");
         }
 
+        // Detect selective mode
+        final boolean selective = merchantIds != null && !merchantIds.isEmpty();
+
         try {
             YearMonth targetMonth  = resolveTargetMonth(year, month);
             Long currentTenant     = TenantContext.getCurrentTenant();
@@ -183,13 +198,52 @@ public class PdfController {
             Path   folder          = monthFolder(targetMonth, bankShortCode);
             String monthYear       = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
 
-            List<Merchant> merchants     = merchantRepository.findAll();
-            List<long[]>   merchantIds   = new ArrayList<>(merchants.size());
-            List<String>   merchantNames = new ArrayList<>(merchants.size());
+            // ── Resolve the merchant list based on selective vs all ──
+            List<Merchant> merchants;
+            List<Long> missingIds = Collections.emptyList();
+
+            if (selective) {
+                // Deduplicate requested IDs, preserve caller order for logs
+                List<Long> uniqueRequested = merchantIds.stream()
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .collect(Collectors.toList());
+
+                merchants = merchantRepository.findAllById(uniqueRequested);
+
+                Set<Long> foundIds = merchants.stream()
+                        .map(Merchant::getMerchantId)
+                        .collect(Collectors.toSet());
+                missingIds = uniqueRequested.stream()
+                        .filter(id -> !foundIds.contains(id))
+                        .collect(Collectors.toList());
+
+                if (!missingIds.isEmpty()) {
+                    log.warn("[BATCH] Requested merchant IDs not found (will be skipped): {}", missingIds);
+                }
+
+                if (merchants.isEmpty()) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "status",  "NO_VALID_MERCHANTS",
+                        "message", "None of the requested merchantIds were found.",
+                        "requestedIds", uniqueRequested,
+                        "missingIds",   missingIds
+                    ));
+                }
+
+                log.info("[BATCH] Selective mode — {} of {} requested merchants resolved",
+                        merchants.size(), uniqueRequested.size());
+            } else {
+                merchants = merchantRepository.findAll();
+                log.info("[BATCH] Full mode — running for ALL {} merchants", merchants.size());
+            }
+
+            List<long[]>   batchMerchantIds = new ArrayList<>(merchants.size());
+            List<String>   merchantNames    = new ArrayList<>(merchants.size());
             Map<Long, String> merchantEmailMap = new HashMap<>();
 
             for (Merchant m : merchants) {
-                merchantIds.add(new long[]{m.getMerchantId()});
+                batchMerchantIds.add(new long[]{m.getMerchantId()});
                 String name = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
                 merchantNames.add(name);
                 if (sendEmail && m.getContactEmail() != null && !m.getContactEmail().isBlank()) {
@@ -197,8 +251,8 @@ public class PdfController {
                 }
             }
 
-            log.info("[BATCH] Starting bulk pre-fetch for {} merchants (month:{} email:{} s3:{})",
-                merchants.size(), targetMonth, sendEmail, s3Requested);
+            log.info("[BATCH] Starting bulk pre-fetch for {} merchants (month:{} email:{} s3:{} selective:{})",
+                merchants.size(), targetMonth, sendEmail, s3Requested, selective);
 
             List<Long> midList = merchants.stream().map(Merchant::getMerchantId).collect(Collectors.toList());
             Map<Long, MerchantInsightsDTO> bulkData;
@@ -214,9 +268,10 @@ public class PdfController {
             final Long capturedTenant    = currentTenant;
             final String capturedBankCode = bankShortCode;
             final String capturedYearMonth = targetMonth.toString();
+            final List<Merchant> capturedMerchants = merchants; // snapshot for post-batch thread
 
             BatchJobStatus status = playwrightPdfService.generateBatch(
-                    merchantIds, merchantNames,
+                    batchMerchantIds, merchantNames,
                     (mid, ctx) -> {
                         MerchantInsightsDTO dto = bulkData.get(mid);
                         if (dto != null) return dto;
@@ -276,10 +331,10 @@ public class PdfController {
 
                         // ── CASE 1: S3 only (no email) ──────────────────────────────
                         if (!sendEmail && s3Requested) {
-                            log.info("[S3-ONLY] Uploading all PDFs to S3...");
+                            log.info("[S3-ONLY] Uploading {} PDFs to S3...", capturedMerchants.size());
                             int s3Ok = 0, s3Fail = 0;
 
-                            for (Merchant m : merchants) {
+                            for (Merchant m : capturedMerchants) {
                                 String mName    = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
                                 String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
                                 Path   pdfFile  = batchFolder.resolve("Insight_" + safeName + "_" + capturedYearMonth + ".pdf");
@@ -318,7 +373,7 @@ public class PdfController {
                             for (Map.Entry<Long, String> entry : merchantEmailMap.entrySet()) {
                                 Long   mid   = entry.getKey();
                                 String email = entry.getValue();
-                                String mName = merchants.stream()
+                                String mName = capturedMerchants.stream()
                                     .filter(m -> m.getMerchantId().equals(mid))
                                     .map(Merchant::getName)
                                     .findFirst().orElse("Merchant");
@@ -397,7 +452,12 @@ public class PdfController {
             response.put("sendEmail",       sendEmail);
             response.put("sendS3",          s3Requested);
             response.put("emailRecipients", merchantEmailMap.size());
-            response.put("mode",            resolveMode(sendEmail, s3Requested));
+            response.put("mode",            resolveMode(sendEmail, s3Requested, selective));
+            response.put("selective",       selective);
+            if (selective) {
+                response.put("processedMerchantIds", midList);
+                response.put("missingMerchantIds",   missingIds);
+            }
             response.put("storageType",     reportStorageService.getStorageInfo());
             return ResponseEntity.ok(response);
 
@@ -410,12 +470,15 @@ public class PdfController {
     /**
      * Human-readable description of the current batch mode.
      * Returned in the API response so the UI can display it clearly.
+     * Appends "_SELECTIVE" when only a subset of merchants was requested.
      */
-    private String resolveMode(boolean sendEmail, boolean sendS3) {
-        if (!sendEmail && !sendS3) return "LOCAL_ONLY";
-        if (!sendEmail &&  sendS3) return "S3_ONLY";
-        if ( sendEmail && !sendS3) return "EMAIL_ONLY";
-        return "EMAIL_AND_S3";
+    private String resolveMode(boolean sendEmail, boolean sendS3, boolean selective) {
+        String base;
+        if (!sendEmail && !sendS3)      base = "LOCAL_ONLY";
+        else if (!sendEmail && sendS3)  base = "S3_ONLY";
+        else if ( sendEmail && !sendS3) base = "EMAIL_ONLY";
+        else                            base = "EMAIL_AND_S3";
+        return selective ? base + "_SELECTIVE" : base;
     }
 
     // ─── Email helper ──────────────────────────────────────────────────

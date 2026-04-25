@@ -1,6 +1,7 @@
 package com.acquira.batch.controller;
 
 import com.acquira.batch.service.FileUploadService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -10,6 +11,18 @@ import org.springframework.web.multipart.MultipartFile;
 public class FileUploadController {
 
     private final FileUploadService fileUploadService;
+
+    /**
+     * Allowed directories for server-side file processing.
+     * Configurable via application property: app.upload.allowed-paths
+     *
+     * Defaults to: /opt/acquira/data, data/uploads, data/imports
+     *
+     * Override in application-prod.properties:
+     *   app.upload.allowed-paths=/opt/acquira/data,/mnt/nfs/acquira-data,/home/acquira/drops
+     */
+    @Value("${app.upload.allowed-paths:/opt/acquira/data,data/uploads,data/imports}")
+    private String allowedPathsCsv;
 
     public FileUploadController(FileUploadService fileUploadService) {
         this.fileUploadService = fileUploadService;
@@ -67,29 +80,39 @@ public class FileUploadController {
      * If path is a FILE: processes that single file.
      *
      * Usage:
-     *   POST /api/upload/process-server-file?path=/opt/acquira/data/uploads/
-     *   POST /api/upload/process-server-file?path=/opt/acquira/data/uploads/transactions.xlsx
+     *   POST /api/upload/process-server-file?path=/opt/acquira/data/imports/
+     *   POST /api/upload/process-server-file?path=/opt/acquira/data/imports/transactions.xlsx
      */
-    // Allowed base directories for server-side file processing (prevent path traversal)
-    private static final java.util.List<String> ALLOWED_PREFIXES = java.util.List.of(
-        "data/uploads", "data/imports", "/opt/acquira/data"
-    );
-
     @PostMapping("/process-server-file")
     public ResponseEntity<?> processServerFile(@RequestParam("path") String filePath) {
         try {
-            // Security: normalize path and check against allowed directories
-            java.nio.file.Path normalized = java.nio.file.Paths.get(filePath).normalize().toAbsolutePath();
-            boolean allowed = ALLOWED_PREFIXES.stream()
-                .anyMatch(prefix -> normalized.startsWith(java.nio.file.Paths.get(prefix).normalize().toAbsolutePath()));
-            if (!allowed) {
-                return ResponseEntity.status(403).body(
-                    java.util.Map.of("error", "Access denied: path must be within allowed data directories"));
-            }
-            // Block path traversal attempts
+            // Block path traversal BEFORE normalization — normalization collapses ".." silently
             if (filePath.contains("..")) {
                 return ResponseEntity.status(403).body(
                     java.util.Map.of("error", "Path traversal not allowed"));
+            }
+
+            // Security: normalize user-supplied path and check against allowed directories
+            java.nio.file.Path normalized = java.nio.file.Paths.get(filePath).normalize().toAbsolutePath();
+
+            // Split the configured CSV into prefixes and normalize each one
+            String[] prefixes = allowedPathsCsv.split(",");
+            boolean allowed = false;
+            for (String prefix : prefixes) {
+                String trimmed = prefix.trim();
+                if (trimmed.isEmpty()) continue;
+                java.nio.file.Path prefixPath = java.nio.file.Paths.get(trimmed).normalize().toAbsolutePath();
+                if (normalized.startsWith(prefixPath)) {
+                    allowed = true;
+                    break;
+                }
+            }
+
+            if (!allowed) {
+                return ResponseEntity.status(403).body(java.util.Map.of(
+                    "error", "Access denied: path must be within allowed data directories",
+                    "requestedPath", normalized.toString(),
+                    "allowedPrefixes", allowedPathsCsv));
             }
 
             java.io.File target = new java.io.File(filePath);
