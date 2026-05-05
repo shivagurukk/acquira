@@ -12,6 +12,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EntityScan(basePackages = "com.acquira.common.model")
 @EnableJpaRepositories(basePackages = "com.acquira.common.repository")
 @EnableScheduling
+@org.springframework.scheduling.annotation.EnableAsync
 public class CoreApplication {
     public static void main(String[] args) {
         // Raise SpEL expression length limit BEFORE Spring context initializes.

@@ -31,10 +31,20 @@ public class ManualIngestionService {
      * Triggered after a file upload or manually.
      * Queries Staging for all dates present in the latest upload and updates
      * Reporting Tables for those dates.
-     * 
+     *
+     * PERF: marked @Async so the upload HTTP request returns immediately
+     * instead of waiting for the per-date reporting loop (~80 dates x several
+     * RDS round-trips each = the visible "upload is very slow" symptom).
+     * Reporting still runs in the background; failures are logged.
+     *
+     * NOTE: removed the outer @Transactional. With it, every date in the loop
+     * was joining the same long-running transaction that held locks on reporting
+     * tables for the entire run — blocking concurrent reads. Each per-date update
+     * now commits independently via processSingleDate's own transactional context.
+     *
      * @param tenantId The tenant context
      */
-    @Transactional
+    @org.springframework.scheduling.annotation.Async
     public void processManualUpload(Long tenantId) {
         log.info("Starting Manual Ingestion Processing for Tenant: {}", tenantId);
 

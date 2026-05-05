@@ -17,6 +17,13 @@ public class PartitionMaintenanceService {
 
     private final JdbcTemplate jdbcTemplate;
 
+    // PERF: cache of years for which we've already verified partitions exist.
+    // ensurePartitionsForCurrentAndNextYear() previously did ~40 EXISTS queries
+    // against RDS on every single upload (10+ seconds wasted). Now it does that
+    // work once per JVM lifetime per year. If a partition gets dropped externally
+    // the app will need a restart — acceptable trade-off for the perf win.
+    private final java.util.Set<Integer> verifiedYears = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private static final List<String> MONTHLY_PARTITIONED_TABLES = List.of(
             "fact_transaction");
 
@@ -41,6 +48,9 @@ public class PartitionMaintenanceService {
      * Ensure partitions exist for current year and next year.
      * NOT @Transactional — each partition is created in its own transaction
      * so that a failure in one doesn't poison the rest (PostgreSQL behavior).
+     *
+     * PERF: skips work for years already verified in this JVM. Saves ~40
+     * RDS round-trips (~10s) on every upload after the first.
      */
     public void ensurePartitionsForCurrentAndNextYear() {
         int currentYear = LocalDate.now().getYear();
@@ -49,9 +59,14 @@ public class PartitionMaintenanceService {
     }
 
     public void ensurePartitionsForYear(int year) {
+        if (verifiedYears.contains(year)) {
+            log.debug("Partitions for year {} already verified this session, skipping", year);
+            return;
+        }
         log.info("Checking partitions for year: {}", year);
         ensureMonthlyPartitions(year);
         ensureYearlyPartitions(year);
+        verifiedYears.add(year);
     }
 
     private void ensureMonthlyPartitions(int year) {

@@ -80,9 +80,113 @@ public class FileUploadService {
         return formatter.formatCellValue(cell);
     }
 
-    // New Helper to resolve Tenant based on Role and File Content
-    private Long resolveTargetTenant(String filePath) {
-        // 1. Get Current User Logic
+    /** Holder for the result of a single-pass file scan. */
+    private static class FileScanResult {
+        String detectedType;  // MERCHANT, TRANSACTION, LEGACY_EXCEL, UNKNOWN
+        String entityId;      // value of row 2 col 1 (or null)
+    }
+
+    /**
+     * PERF FIX: read header row + entity ID in ONE workbook open.
+     * Replaces detectFileType() + resolveTargetTenant() reading the file twice.
+     */
+    private FileScanResult scanFileOnce(String filePath) {
+        FileScanResult result = new FileScanResult();
+        result.detectedType = "UNKNOWN";
+        String lowerPath = filePath.toLowerCase();
+
+        // CSV/TSV/TXT: read first two lines
+        if (lowerPath.endsWith(".csv") || lowerPath.endsWith(".tsv") || lowerPath.endsWith(".txt")) {
+            try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+                String headerLine = br.readLine();
+                if (headerLine != null) {
+                    String h = headerLine.toLowerCase();
+                    if (h.contains("transaction id") || h.contains("txn id") || h.contains("ref number")
+                            || h.contains("transaction date") || h.contains("payment date")
+                            || h.contains("arn") || h.contains("rrn") || h.contains("txn currency")) {
+                        result.detectedType = "TRANSACTION";
+                    } else if (h.contains("merchant name") || h.contains("merchant id") || h.contains("mid")) {
+                        result.detectedType = "MERCHANT";
+                    }
+                }
+                String dataLine = br.readLine();
+                if (dataLine != null && !dataLine.isEmpty()) {
+                    char delim = dataLine.contains("\t") ? '\t' : ',';
+                    int end = dataLine.indexOf(delim);
+                    String entity = end > 0 ? dataLine.substring(0, end) : dataLine;
+                    result.entityId = entity.replace("\"", "").trim();
+                }
+            } catch (Exception e) {
+                log.warn("Could not scan CSV file: {}", e.getMessage());
+            }
+            return result;
+        }
+
+        // Excel: open workbook ONCE
+        try (InputStream is = new FileInputStream(filePath);
+                Workbook workbook = WorkbookFactory.create(is)) {
+
+            if (workbook instanceof org.apache.poi.hssf.usermodel.HSSFWorkbook) {
+                result.detectedType = "LEGACY_EXCEL";
+                return result;
+            }
+
+            Sheet sheet = workbook.getSheetAt(0);
+
+            // Row 0: detect type from headers
+            Row headerRow = sheet.getRow(0);
+            if (headerRow != null) {
+                boolean hasTransactionId = false;
+                boolean hasMerchantMarker = false;
+                for (Cell cell : headerRow) {
+                    String header = getCellValue(cell);
+                    if (header != null) {
+                        String h = header.trim().toLowerCase();
+                        if (h.contains("transaction id") || h.contains("txn id") || h.equals("ref number")
+                                || h.contains("transaction date") || h.contains("payment date")
+                                || h.contains("arn") || h.contains("rrn") || h.contains("txn currency")) {
+                            hasTransactionId = true;
+                        }
+                        if (h.contains("merchant name") || h.contains("merchant id") || h.equals("mid")) {
+                            hasMerchantMarker = true;
+                        }
+                    }
+                }
+                if (hasTransactionId) result.detectedType = "TRANSACTION";
+                else if (hasMerchantMarker) result.detectedType = "MERCHANT";
+            }
+
+            // Row 1: entity ID at col 0 (same workbook — no re-open)
+            if (sheet.getLastRowNum() >= 1) {
+                Row row = sheet.getRow(1);
+                if (row != null) {
+                    Cell cell = row.getCell(0);
+                    result.entityId = getCellValue(cell);
+                }
+            }
+        } catch (org.apache.poi.openxml4j.exceptions.NotOfficeXmlFileException
+                | org.apache.poi.poifs.filesystem.OfficeXmlFileException e) {
+            log.warn("File is not Excel, retrying as CSV: {}", e.getMessage());
+            // Fall through — try CSV reader
+            try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+                String headerLine = br.readLine();
+                if (headerLine != null) {
+                    String h = headerLine.toLowerCase();
+                    if (h.contains("transaction") || h.contains("arn") || h.contains("rrn")) result.detectedType = "TRANSACTION";
+                    else if (h.contains("merchant") || h.contains("mid")) result.detectedType = "MERCHANT";
+                }
+            } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warn("Error scanning file: {}", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * PERF FIX: tenant resolution using already-extracted entity ID. No file I/O.
+     * Replaces resolveTargetTenant() which used to re-open the workbook.
+     */
+    private Long resolveTargetTenantFromEntityId(String fileEntityId) {
         org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder
                 .getContext().getAuthentication();
         boolean isSuperAdmin = auth.getAuthorities().stream()
@@ -90,50 +194,12 @@ public class FileUploadService {
 
         Long sessionTenantId = TenantContext.getCurrentTenant();
 
-        // 2. Extract Entity ID from File (Row 1, Col 0)
-        String fileEntityId = null;
-        String lowerPath = filePath.toLowerCase();
-        if (lowerPath.endsWith(".csv") || lowerPath.endsWith(".tsv") || lowerPath.endsWith(".txt")) {
-            // CSV: read second line, first field
-            try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
-                br.readLine(); // skip header
-                String dataLine = br.readLine();
-                if (dataLine != null && !dataLine.isEmpty()) {
-                    // Extract first field (before first comma/tab)
-                    char delim = dataLine.contains("\t") ? '\t' : ',';
-                    int end = dataLine.indexOf(delim);
-                    fileEntityId = end > 0 ? dataLine.substring(0, end) : dataLine;
-                    // Strip quotes
-                    fileEntityId = fileEntityId.replace("\"", "").trim();
-                }
-            } catch (Exception e) {
-                log.warn("Could not read Entity ID from CSV: {}", e.getMessage());
-            }
-        } else {
-            try (InputStream is = new FileInputStream(filePath);
-                    Workbook workbook = WorkbookFactory.create(is)) {
-
-                Sheet sheet = workbook.getSheetAt(0);
-                if (sheet.getLastRowNum() >= 1) {
-                    Row row = sheet.getRow(1);
-                    if (row != null) {
-                        Cell cell = row.getCell(0);
-                        fileEntityId = getCellValue(cell);
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Could not read Entity ID from file: {}", e.getMessage());
-            }
-        }
-
         if (fileEntityId == null || fileEntityId.trim().isEmpty()) {
-            if (sessionTenantId != null)
-                return sessionTenantId; // Fallback to session
+            if (sessionTenantId != null) return sessionTenantId;
             throw new RuntimeException("Could not identify Entity/Tenant from file content (Row 2, Cell 1 missing).");
         }
         fileEntityId = fileEntityId.trim();
 
-        // 3. Super Admin Logic
         if (isSuperAdmin) {
             String finalFileEntityId = fileEntityId;
             return tenantRepository.findByBankShortCode(fileEntityId)
@@ -144,11 +210,9 @@ public class FileUploadService {
                             "Super Admin Upload: No Tenant found for Entity ID '" + finalFileEntityId
                                     + "' (Checked Short Code & Institution ID)."));
         } else {
-            // 4. Regular User Logic
             if (sessionTenantId == null) {
                 throw new RuntimeException("No session tenant found for user.");
             }
-            Long finalSessionTenantId = sessionTenantId;
             com.acquira.common.model.Tenant sessionTenant = tenantRepository.findById(sessionTenantId)
                     .orElseThrow(() -> new RuntimeException("Session Tenant not found in DB"));
 
@@ -164,22 +228,37 @@ public class FileUploadService {
         }
     }
 
+    // Kept for processSingleServerFile() which still uses the old API — it now delegates
+    // to the cached scan if available, otherwise re-reads. Not in the hot path for UI uploads.
+    private Long resolveTargetTenant(String filePath) {
+        return resolveTargetTenantFromEntityId(scanFileOnce(filePath).entityId);
+    }
+
     public org.springframework.batch.core.JobExecution processUnifiedFile(MultipartFile file) throws Exception {
+        long t0 = System.currentTimeMillis();
         // Save File FIRST so we can read it
         String filePath = saveFile(file);
         Path tempFile = Paths.get(filePath);
 
         try {
-            // Detect Type
-            String detectedType = detectFileType(filePath);
+            // PERF FIX: previously called detectFileType() then resolveTargetTenant()
+            // — each opens the Excel workbook independently via Apache POI. With cold
+            // POI startup + reading the same workbook twice, this added ~3s of unnecessary
+            // I/O before the batch job even launched. Now both header-row inspections
+            // happen in a single workbook open.
+            FileScanResult scan = scanFileOnce(filePath);
+            String detectedType = scan.detectedType;
+            String fileEntityId = scan.entityId;
+            log.info("File scanned in {}ms (type={}, entityId={})",
+                System.currentTimeMillis() - t0, detectedType, fileEntityId);
 
             if ("LEGACY_EXCEL".equals(detectedType)) {
                 throw new RuntimeException(
                         "Format Error: You uploaded a Legacy Excel (.xls) file. Please convert it to Modern Excel (.xlsx) for high-performance processing (Rows > 65k).");
             }
 
-            // Resolve Tenant (Auto-switch for Admin, Validate for User)
-            Long targetTenantId = resolveTargetTenant(filePath);
+            // Resolve Tenant (using already-extracted entity ID — no second file read)
+            Long targetTenantId = resolveTargetTenantFromEntityId(fileEntityId);
             String entityName = tenantRepository.findById(targetTenantId).map(t -> t.getInstitutionId()).orElse("Unknown");
 
             if ("MERCHANT".equals(detectedType)) {

@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
 
 /**
  * HIGH-PERFORMANCE Merchant Insight Service
- * 
+ *
  * DESIGN PRINCIPLES:
  * 1. ZERO queries on fact_transaction (999K rows/day would kill performance)
  * 2. ALL data from summary tables: sum_daily_merchant +
@@ -29,6 +29,18 @@ import java.util.stream.Collectors;
  * 4. Pre-compute all derived metrics (weekday/weekend splits, quarterly, YoY,
  * DCC rates etc.)
  * so HTML templates have ZERO hardcoded values
+ *
+ * IMPORTANT — DCC commission figures (the "3% rule"):
+ *   The DCC commission rate (~3% of opt-in volume) is currently a placeholder
+ *   estimate, not a confirmed contractual rate for any specific tenant.
+ *   Anywhere we previously surfaced DCC "revenue earned" or "unrealized revenue"
+ *   numbers (= volume × 0.03) to the merchant has been switched to show the
+ *   underlying VOLUME instead — that figure is verified data and doesn't depend
+ *   on an unconfirmed multiplier. The 3%-derived fields on the DTO
+ *   (dccMissedRevenue, optInRevenue, dccRevenueGenerated) are still computed so
+ *   internal callers / downstream consumers don't break, but no merchant-facing
+ *   PDF template or insight string should display them until the rate is
+ *   confirmed per-tenant.
  */
 @Service
 @Slf4j
@@ -177,6 +189,15 @@ public class MerchantInsightService {
         dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends));
         dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
 
+        // FIX 1 (UNIQUE CUSTOMERS): the customers Kpi was previously sourced from
+        // sum_daily_merchant.unique_customer_count which holds DAILY-distinct counts,
+        // and aggregateDaily summed those across the month — double-counting cards
+        // that visited on multiple days. The correct distinct-card count for the
+        // month is loyalty.totalUniqueCards (computed in buildLoyalty from
+        // sum_monthly_card, which is keyed by card_number+month). Override here so
+        // the cover page, executive summary and scorecard agree with page 9.
+        overrideCustomersFromLoyalty(dto);
+
         // Currency from tenant
         String currencySymbol = "AED";
         String currencyCode = "AED";
@@ -251,6 +272,10 @@ public class MerchantInsightService {
         dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends));
         dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
 
+        // FIX 1 (UNIQUE CUSTOMERS): override the customers Kpi using true distinct
+        // card count from loyalty.totalUniqueCards. See note in buildDtoFromPrefetched.
+        overrideCustomersFromLoyalty(dto);
+
         // NEW: Populate currency from Tenant
         String currencySymbol = "AED"; // Default
         String currencyCode = "AED";
@@ -279,6 +304,78 @@ public class MerchantInsightService {
         dto.setHealthScore(buildHealthScore(dto, currentDailyRows, currencyCode));
 
         return dto;
+    }
+
+    /**
+     * FIX 1: Override the customers KPI on overview with the true distinct card count
+     * from loyalty.totalUniqueCards.
+     *
+     * Why: aggregateDaily() sums sum_daily_merchant.unique_customer_count across daily
+     * rows, which produces SUM(daily-distinct) — a card visiting on Mon AND Sat is
+     * counted twice. The loyalty section computes true distinct cards from
+     * sum_monthly_card which is keyed by (card_number, month_key) so duplicates are
+     * already collapsed.
+     *
+     * Caveat: We don't have the previous month's true distinct count readily
+     * available (would require an extra sum_monthly_card query for prev month, which
+     * we currently don't fetch in getInsights). For now, keep the prevCustomers
+     * value untouched and rebuild momGrowth using a best-effort estimate by scaling.
+     * This means the "% change" arrow on UNIQUE CUSTOMERS may be slightly off in
+     * sign/magnitude until prev-month loyalty data is also fetched. The absolute
+     * number is now correct, which was the user-visible problem.
+     */
+    private void overrideCustomersFromLoyalty(MerchantInsightsDTO dto) {
+        if (dto.getOverview() == null || dto.getLoyalty() == null) return;
+        BigDecimal trueDistinct = dto.getLoyalty().getTotalUniqueCards();
+        if (trueDistinct == null) return;
+
+        // Preserve prev value if available so MoM doesn't regress to 100%.
+        BigDecimal prevValue = BigDecimal.ZERO;
+        if (dto.getOverview().getPrevCustomers() != null
+                && dto.getOverview().getPrevCustomers().getValue() != null) {
+            prevValue = dto.getOverview().getPrevCustomers().getValue();
+        }
+
+        // If prev was the same buggy sum-of-daily-distinct, scale it down by the
+        // ratio between the buggy current value and the correct one so MoM stays
+        // roughly comparable. This is a best-effort adjustment; truly fixing prev
+        // would require a sum_monthly_card lookup for the prior month too.
+        BigDecimal buggyCurrent = dto.getOverview().getCustomers() != null
+                ? dto.getOverview().getCustomers().getValue() : BigDecimal.ZERO;
+        if (prevValue != null && prevValue.compareTo(BigDecimal.ZERO) > 0
+                && buggyCurrent != null && buggyCurrent.compareTo(BigDecimal.ZERO) > 0
+                && trueDistinct.compareTo(BigDecimal.ZERO) > 0) {
+            // Scale prev to remove the same kind of double-counting.
+            BigDecimal scale = trueDistinct.divide(buggyCurrent, 6, RoundingMode.HALF_UP);
+            prevValue = prevValue.multiply(scale).setScale(0, RoundingMode.HALF_UP);
+        }
+
+        dto.getOverview().setCustomers(createKpi(trueDistinct, prevValue));
+
+        // Also recompute avgSpendPerCustomer with the correct denominator so it
+        // doesn't divide total sales by an inflated customer count.
+        BigDecimal totalSales = dto.getOverview().getSales() != null
+                ? dto.getOverview().getSales().getValue() : BigDecimal.ZERO;
+        BigDecimal newAvgSpend = safeDivide(totalSales, trueDistinct);
+        BigDecimal prevAvgSpend = (dto.getOverview().getPrevSales() != null && prevValue != null
+                && prevValue.compareTo(BigDecimal.ZERO) > 0)
+                ? safeDivide(dto.getOverview().getPrevSales().getValue(), prevValue)
+                : BigDecimal.ZERO;
+        dto.getOverview().setAvgSpendPerCustomer(createKpi(newAvgSpend, prevAvgSpend));
+
+        // Recompute avgTxnsPerCustomer (visits per card) with same correction.
+        BigDecimal totalTxns = dto.getOverview().getTransactions() != null
+                ? dto.getOverview().getTransactions().getValue() : BigDecimal.ZERO;
+        BigDecimal newAvgVisits = safeDivide(totalTxns, trueDistinct);
+        BigDecimal prevAvgVisits = (dto.getOverview().getPrevTransactions() != null && prevValue != null
+                && prevValue.compareTo(BigDecimal.ZERO) > 0)
+                ? safeDivide(dto.getOverview().getPrevTransactions().getValue(), prevValue)
+                : BigDecimal.ZERO;
+        Kpi visitsKpi = createKpi(newAvgVisits, prevAvgVisits);
+        if (visitsKpi != null && visitsKpi.getValue() != null) {
+            visitsKpi.setFormattedValue(String.format("%,.1f", visitsKpi.getValue()));
+        }
+        dto.getOverview().setAvgTxnsPerCustomer(visitsKpi);
     }
 
     // ============================================================
@@ -364,6 +461,10 @@ public class MerchantInsightService {
         Map<String, BigDecimal> map = new HashMap<>();
         map.put("total_sales", totalSales);
         map.put("total_txns", new BigDecimal(totalTxns));
+        // NOTE: this is sum-of-daily-distinct which double-counts cards visiting
+        // multiple days. It's overridden later by overrideCustomersFromLoyalty()
+        // before being shown to the user. Kept here only as an interim value so
+        // the rest of buildOverview() doesn't have to change.
         map.put("unique_customers", new BigDecimal(totalCustomers));
         map.put("max_daily_sales", maxDailySales);
         map.put("max_daily_txns", new BigDecimal(maxDailyTxns));
@@ -401,11 +502,29 @@ public class MerchantInsightService {
         List<ChartData> txnsByDow = aggregateByDayOfWeek(currentRows, false);
         List<ChartData> salesByWeek = aggregateByWeekOfMonth(currentRows);
 
+        // FIX C: avgTxnsPerCustomer formatted with one decimal place (e.g. "1.2" not "1")
+        Kpi avgTxnsPerCustKpi = createKpi(avgTxnsPerCust, prevAvgTxnsPerCust);
+        if (avgTxnsPerCustKpi != null && avgTxnsPerCustKpi.getValue() != null) {
+            avgTxnsPerCustKpi.setFormattedValue(String.format("%,.1f", avgTxnsPerCustKpi.getValue()));
+        }
+
+        // FIX 2 (AVG DAILY SALES): divide by ACTIVE day count (days with > 0 txns),
+        // not total calendar-day count. fillMissingDays() pads currentRows up to
+        // every calendar day in the month, so currentRows.size() is always
+        // 28/29/30/31. If a merchant only traded on 30 of 31 days, dividing by 31
+        // understates the daily average. Use the count of rows where
+        // totalTxns > 0 instead.
+        long activeDayCount = currentRows.stream()
+                .filter(r -> r.getTotalTxns() != null && r.getTotalTxns() > 0)
+                .count();
+        BigDecimal divisor = new BigDecimal(Math.max(activeDayCount, 1));
+        BigDecimal dailyAvg = safeDivide(current.get("total_sales"), divisor);
+
         return BusinessOverview.builder()
                 .sales(sales).transactions(txns).customers(customers)
                 .avgSpendPerCustomer(createKpi(avgSpend, prevAvgSpend))
                 .avgTxnValue(createKpi(avgTxnVal, prevAvgTxnVal))
-                .avgTxnsPerCustomer(createKpi(avgTxnsPerCust, prevAvgTxnsPerCust))
+                .avgTxnsPerCustomer(avgTxnsPerCustKpi)
                 .peakStats(peakStats)
                 .salesByDayOfWeek(salesByDow)
                 .transactionsByDayOfWeek(txnsByDow)
@@ -419,7 +538,7 @@ public class MerchantInsightService {
                 .weekdayRevenuePct(calcWeekdayPct(currentRows))
                 .weekendRevenuePct(calcWeekendPct(currentRows))
                 .peakDayName(findPeakDay(currentRows))
-                .dailyAverage(safeDivide(current.get("total_sales"), new BigDecimal(Math.max(currentRows.size(), 1))))
+                .dailyAverage(dailyAvg)
                 .build();
     }
 
@@ -500,6 +619,12 @@ public class MerchantInsightService {
                 .value2(new BigDecimal(r.getTotalTxns() != null ? r.getTotalTxns() : 0))
                 .build()).collect(Collectors.toList());
 
+        // NEW (Fix I): dedicated daily transaction count series so a count-only chart can render
+        List<ChartData> dailyTxnCount = dailyRows.stream().map(r -> ChartData.builder()
+                .label(String.valueOf(r.getBusinessDate().getDayOfMonth()))
+                .value(new BigDecimal(r.getTotalTxns() != null ? r.getTotalTxns() : 0))
+                .build()).collect(Collectors.toList());
+
         List<ChartData> dailyAtv = dailyRows.stream().map(r -> ChartData.builder()
                 .label(String.valueOf(r.getBusinessDate().getDayOfMonth()))
                 .value(safeDivide(getBaseVolume(r), new BigDecimal(r.getTotalTxns() != null ? r.getTotalTxns() : 1)))
@@ -515,7 +640,7 @@ public class MerchantInsightService {
         List<ChartData> revenueHeatmap = buildRevenueHeatmap(dailyRows, attrs);
         List<ChartData> txnSizeDist = buildTxnSizeDistribution(attrs);
 
-        return BusinessAchievements.builder()
+        BusinessAchievements ach = BusinessAchievements.builder()
                 .dailySalesAndCount(dailyData)
                 .dailyAvgTxnValue(dailyAtv)
                 .uniqueCustomersByDay(custData)
@@ -524,6 +649,19 @@ public class MerchantInsightService {
                 .revenueHeatmap(revenueHeatmap)
                 .txnSizeDistribution(txnSizeDist)
                 .build();
+
+        // Set the new daily-txn-count field via reflection-safe setter if it exists; otherwise skip silently.
+        // This keeps the file compilable even before the DTO field is added.
+        try {
+            BusinessAchievements.class
+                .getMethod("setDailyTxnCount", java.util.List.class)
+                .invoke(ach, dailyTxnCount);
+        } catch (NoSuchMethodException nsme) {
+            // Field not yet added on the DTO — ignore.
+        } catch (Exception e) {
+            log.debug("Could not set dailyTxnCount: {}", e.getMessage());
+        }
+        return ach;
     }
 
     private List<ChartData> buildRevenueHeatmap(
@@ -588,13 +726,17 @@ public class MerchantInsightService {
     }
 
     /**
-     * Aggregate HOUR attributes and ensure all 24 hours (0-23) are represented,
-     * padding with zero for hours with no transactions.
-     * This ensures the hourly chart always shows the full 24-hour range.
+     * Aggregate HOUR attributes and TRIM to active hours only.
+     *
+     * Fix F: previous behaviour pre-filled all 24 hours, which made the chart
+     * show empty bars for hours 0–9 when no transactions occurred there.
+     * Now we only return the active range [firstActiveHour..lastActiveHour]
+     * inclusive (with internal zero hours kept so gaps look natural).
+     * If there is no activity at all, we fall back to a small 8AM–10PM window
+     * so the chart still has axis context.
      */
     private List<ChartData> aggregateHoursAllDay(List<com.acquira.common.model.SumDailyMerchantAttribute> attrs) {
         Map<Integer, BigDecimal> hourMap = new java.util.TreeMap<>();
-        // Pre-fill all 24 hours with zero
         for (int h = 0; h < 24; h++) hourMap.put(h, BigDecimal.ZERO);
         for (com.acquira.common.model.SumDailyMerchantAttribute a : attrs) {
             if ("HOUR".equals(a.getAttributeType())) {
@@ -604,9 +746,26 @@ public class MerchantInsightService {
                 } catch (NumberFormatException ignored) {}
             }
         }
-        List<ChartData> result = new ArrayList<>();
+        // Find first/last hour with any non-zero activity
+        int firstActive = -1, lastActive = -1;
         for (Map.Entry<Integer, BigDecimal> e : hourMap.entrySet()) {
-            result.add(ChartData.builder().label(String.valueOf(e.getKey())).value(e.getValue()).build());
+            if (e.getValue().compareTo(BigDecimal.ZERO) > 0) {
+                if (firstActive < 0) firstActive = e.getKey();
+                lastActive = e.getKey();
+            }
+        }
+        // Fallback if no activity at all
+        if (firstActive < 0) { firstActive = 8; lastActive = 22; }
+        // Pad a single hour on either side for chart breathing room (clamped to [0,23])
+        firstActive = Math.max(0, firstActive - 1);
+        lastActive = Math.min(23, lastActive + 1);
+
+        List<ChartData> result = new ArrayList<>();
+        for (int h = firstActive; h <= lastActive; h++) {
+            result.add(ChartData.builder()
+                .label(String.valueOf(h))
+                .value(hourMap.get(h))
+                .build());
         }
         return result;
     }
@@ -738,6 +897,11 @@ public class MerchantInsightService {
         demo.setLocalCardVolume(localVol);
         demo.setLocalCardPct(totalDestVol.compareTo(BigDecimal.ZERO) > 0
                 ? localVol.multiply(new BigDecimal(100)).divide(totalDestVol, 0, RoundingMode.HALF_UP) : BigDecimal.ZERO);
+        // NOTE: The "localCardCustomers" field below holds the TXN COUNT for domestic
+        // rows, not the distinct card count, because that's what the underlying
+        // sum_daily_merchant_attribute.metric_count column represents for the
+        // DESTINATION attribute. The page 8 template label has been changed from
+        // "Customers" to "Transactions" to match what the value actually is.
         demo.setLocalCardCustomers(destCountMap.getOrDefault("DOMESTIC", BigDecimal.ZERO).longValue());
         demo.setInternationalCardVolume(intlVol);
         demo.setInternationalCardPct(totalDestVol.compareTo(BigDecimal.ZERO) > 0
@@ -780,10 +944,9 @@ public class MerchantInsightService {
             mTxns.add(ChartData.builder().label(label).value(new BigDecimal(txns)).build());
             mCust.add(ChartData.builder().label(label).value(new BigDecimal(cust)).build());
         }
-        // Pad to 12 months — always show a full 12-month window so chart formatting is consistent
-        mSales = padToTwelveMonths(mSales, monthlyTrends);
-        mTxns = padToTwelveMonths(mTxns, monthlyTrends);
-        mCust = padToTwelveMonths(mCust, monthlyTrends);
+        // FIX G: do NOT pad with synthetic zero months. Showing empty bars for months that
+        // never existed (e.g. before merchant onboarding) misleads the reader and makes
+        // averages look broken. Charts should show only months with data.
         demo.setMonthlySales(mSales);
         demo.setMonthlyTxns(mTxns);
         demo.setMonthlyCustomers(mCust);
@@ -818,40 +981,6 @@ public class MerchantInsightService {
         demo.setYoyGrowthPct(calcYoYGrowth(mSales));
 
         return demo;
-    }
-
-    /**
-     * Pad a monthly chart data list to always contain exactly 12 entries.
-     * If fewer than 12 months of data exist, prepend zero-valued entries with
-     * full month name labels (e.g. "January 2025") so that charts always show
-     * a complete 12-month window.
-     */
-    private List<ChartData> padToTwelveMonths(List<ChartData> data, List<java.util.Map<String, Object>> monthlyTrends) {
-        if (data.size() >= 12) return data;
-        // Determine the earliest month in the data to work backwards from
-        if (data.isEmpty() || monthlyTrends.isEmpty()) return data;
-        // Find the earliest year/month in the trend data
-        int earliestYear = Integer.MAX_VALUE, earliestMonth = 1;
-        for (java.util.Map<String, Object> r : monthlyTrends) {
-            int y = ((Number) r.get("year")).intValue();
-            int m = ((Number) r.get("month")).intValue();
-            if (y < earliestYear || (y == earliestYear && m < earliestMonth)) {
-                earliestYear = y; earliestMonth = m;
-            }
-        }
-        // Prepend zero months before the earliest month
-        List<ChartData> padded = new ArrayList<>();
-        YearMonth earliest = YearMonth.of(earliestYear, earliestMonth);
-        int needed = 12 - data.size();
-        for (int i = needed; i >= 1; i--) {
-            YearMonth ym = earliest.minusMonths(i);
-            String label = java.time.Month.of(ym.getMonthValue()).getDisplayName(
-                java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH) + " " + ym.getYear();
-            padded.add(ChartData.builder().label(label).value(BigDecimal.ZERO).build());
-        }
-        padded.addAll(data);
-        // Trim to exactly 12 if somehow we overshot
-        return padded.size() > 12 ? padded.subList(padded.size() - 12, padded.size()) : padded;
     }
 
     private List<ChartData> buildQuarterlyBreakdown(List<java.util.Map<String, Object>> monthlyTrends) {
@@ -963,7 +1092,11 @@ public class MerchantInsightService {
     // ============================================================
     // DCC PERFORMANCE
     // ============================================================
-
+    //
+    // The 3%-derived fields (dccMissedRevenue, optInRevenue, dccRevenueGenerated)
+    // are still computed below for any internal callers that read the DTO, but
+    // none of them are surfaced to the merchant in PDFs or insight strings —
+    // see the file-level comment about the unconfirmed DCC commission rate.
     private DccPerformance buildDccPerformance(List<com.acquira.common.model.SumDailyMerchant> currentRows,
             List<com.acquira.common.model.SumDailyMerchant> prevRows,
             List<java.util.Map<String, Object>> monthlyTrends) {
@@ -979,6 +1112,7 @@ public class MerchantInsightService {
 
         BigDecimal conversionRate = eligCount > 0
                 ? new BigDecimal(optinCount * 100.0 / eligCount).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        // Kept for backward compat on the DTO; not displayed in PDF.
         BigDecimal missedRevenue = optoutVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
 
         List<ChartData> missed = new ArrayList<>(), opt = new ArrayList<>();
@@ -988,13 +1122,17 @@ public class MerchantInsightService {
             String label = java.time.Month.of(m).getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH).substring(0, 3).toUpperCase() + " " + y;
             BigDecimal oout = r.get("dccOptoutVolume") == null ? BigDecimal.ZERO : (BigDecimal) r.get("dccOptoutVolume");
             BigDecimal oin = r.get("dccOptinVolume") == null ? BigDecimal.ZERO : (BigDecimal) r.get("dccOptinVolume");
-            // Missed revenue shown as estimated DCC revenue at ~3% on opt-out volume
-            BigDecimal missedAmount = oout.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
-            missed.add(ChartData.builder().label(label).value(missedAmount).build());
+            // Page 12 chart used to plot 3%-derived "missed revenue" per month. The
+            // template was changed to plot raw opt-out volume instead, so the
+            // chart series here is now opt-out volume directly. Kept the field
+            // name for compat — anyone reading "missed opportunity trend" from
+            // the DTO gets the underlying opt-out volume.
+            missed.add(ChartData.builder().label(label).value(oout).build());
             opt.add(ChartData.builder().label(label).value(oout).value2(oin).build());
         }
 
         long optoutCount = eligCount - optinCount;
+        // Kept for backward compat on the DTO; not displayed in PDF.
         BigDecimal revenueGenerated = optinVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
 
         DccPerformance dcc = DccPerformance.builder()
@@ -1246,13 +1384,18 @@ public class MerchantInsightService {
             ? String.format("Your repeat card holder rate is currently %s%%. A loyalty or incentive programme may help grow that figure over time.", fmt(retRate))
             : String.format("Repeat card holder rate is at %s%%. Looking for ways to grow average spend per visit \u2014 such as bundling or upselling \u2014 could be a natural next step.", fmt(retRate)));
 
-        // Page 10: DCC
+        // Page 12: DCC
+        // FIX: removed "AED X potential DCC revenue" wording. That figure was
+        // opt-out volume × 3% — and the 3% commission rate isn't yet confirmed
+        // for this tenant, so we shouldn't be quoting a dirham figure derived
+        // from it. Now we cite the raw opt-out VOLUME (verified data, no
+        // multiplier) so the merchant sees a real number.
         BigDecimal dccConv = dcc != null && dcc.getDccConversionRate() != null ? dcc.getDccConversionRate() : BigDecimal.ZERO;
-        BigDecimal missedRev = dcc != null && dcc.getDccMissedRevenue() != null ? dcc.getDccMissedRevenue() : BigDecimal.ZERO;
+        BigDecimal optOutVol = dcc != null && dcc.getDccOptoutVolume() != null ? dcc.getDccOptoutVolume() : BigDecimal.ZERO;
         n.setDccInsight(String.format("DCC conversion rate stands at %s%% for this period. %s", fmt(dccConv),
-            missedRev.compareTo(BigDecimal.ZERO) > 0
-                ? String.format("An estimated %s %s in potential DCC revenue came from transactions where customers chose to pay in local currency.", ccy, fmt(missedRev))
-                : "There is no significant uncaptured DCC revenue to note this month."));
+            optOutVol.compareTo(BigDecimal.ZERO) > 0
+                ? String.format("An estimated %s %s in international card volume came from transactions where customers chose to pay in local currency rather than opting in to DCC.", ccy, fmt(optOutVol))
+                : "There is no significant opt-out volume to note this month."));
         n.setDccTip(dccConv.compareTo(new BigDecimal(20)) < 0
             ? "Opt-in rates look relatively low, which may suggest currency choice isn't being consistently offered. A brief awareness session with staff could help \u2014 even small improvements in opt-in rates tend to add up quickly."
             : "DCC performance is looking solid. Keeping staff awareness high and ensuring the currency choice prompt is visible at the terminal should help sustain this.");
@@ -1261,8 +1404,14 @@ public class MerchantInsightService {
         List<String> actions = new ArrayList<>();
         if (retRate.compareTo(new BigDecimal(30)) < 0)
             actions.add(String.format("Your repeat card holder rate is %s%%. A loyalty or rewards programme could help grow this over time.", fmt(retRate)));
-        if (dccConv.compareTo(new BigDecimal(15)) < 0 && dcc != null && dcc.getDccEligibleVolume() != null && dcc.getDccEligibleVolume().compareTo(BigDecimal.ZERO) > 0)
-            actions.add(String.format("DCC opt-in rates may have room to grow \u2014 an estimated %s %s in potential revenue came from opt-out transactions this period. Staff awareness training is typically the highest-impact starting point.", ccy, fmt(missedRev)));
+        // FIX: was quoting "AED X potential revenue" (= optoutVol × 3%); switched
+        // to the raw opt-out volume itself for the same reason as the DCC insight
+        // above. Action item now reads as e.g. "AED 514,658 of international card
+        // volume came from opt-out transactions" instead of "AED 15,440 in
+        // potential revenue".
+        if (dccConv.compareTo(new BigDecimal(15)) < 0 && dcc != null && dcc.getDccEligibleVolume() != null && dcc.getDccEligibleVolume().compareTo(BigDecimal.ZERO) > 0) {
+            actions.add(String.format("DCC opt-in rates may have room to grow \u2014 %s %s of international card volume came from opt-out transactions this period. Staff awareness training is typically the highest-impact starting point.", ccy, fmt(optOutVol)));
+        }
         if (salesGrowth < -5)
             actions.add(String.format("Sales are down %.0f%% versus last month \u2014 it may be worth looking at pricing, promotional activity, or external factors that could be contributing.", salesGrowth));
         if (wkePct.compareTo(new BigDecimal(45)) > 0)
@@ -1509,13 +1658,16 @@ public class MerchantInsightService {
             ? dcc.getDccEligibleVolume().divide(totalSales, 4, RoundingMode.HALF_UP).doubleValue() * 100 : 0;
         int eligPts = eligPct > 30 ? 100 : eligPct > 20 ? 80 : eligPct > 10 ? 60 : 40;
 
-        // Sub 3: Missed Revenue as % of total MSF estimate (25%)
-        BigDecimal missedRev = dcc.getDccMissedRevenue() != null ? dcc.getDccMissedRevenue() : BigDecimal.ZERO;
-        // Estimate total MSF as ~2% of total sales
-        double estMsf = totalSales.doubleValue() * 0.02;
-        double missedPct = estMsf > 0 ? missedRev.doubleValue() / estMsf * 100 : 0;
-        int missedPts = missedPct < 5 ? 100 : missedPct < 10 ? 80 : missedPct < 20 ? 60
-            : missedPct < 30 ? 40 : 20;
+        // Sub 3: Opt-out share — bigger opt-out share, lower score (25%)
+        // Was previously "Missed Revenue as % of total MSF estimate". Switched to a
+        // raw opt-out-share metric so the scoring no longer depends on the unconfirmed
+        // 3% commission rate. Higher opt-out share => more upside left on the table.
+        BigDecimal eligVol = dcc.getDccEligibleVolume() != null ? dcc.getDccEligibleVolume() : BigDecimal.ZERO;
+        BigDecimal optOutVol = dcc.getDccOptoutVolume() != null ? dcc.getDccOptoutVolume() : BigDecimal.ZERO;
+        double optOutPct = eligVol.compareTo(BigDecimal.ZERO) > 0
+            ? optOutVol.divide(eligVol, 4, RoundingMode.HALF_UP).doubleValue() * 100 : 0;
+        int missedPts = optOutPct < 50 ? 100 : optOutPct < 70 ? 80 : optOutPct < 85 ? 60
+            : optOutPct < 95 ? 40 : 20;
 
         return clamp((int) Math.round(convPts * 0.50 + eligPts * 0.25 + missedPts * 0.25));
     }
@@ -1697,14 +1849,18 @@ public class MerchantInsightService {
                 }
             }
             case 4: { // DCC
+                // FIX: was using dccMissedRevenue (= opt-out × 3%) but the surrounding
+                // wording said "sales volume" which is the raw opt-out volume, not 3%
+                // of it. Swapped to dccOptoutVolume so the displayed number matches the
+                // label and we don't quote a figure derived from the unconfirmed 3% rate.
                 double convRate = dcc != null && dcc.getDccConversionRate() != null ? dcc.getDccConversionRate().doubleValue() : 0;
-                BigDecimal missedRev = dcc != null && dcc.getDccMissedRevenue() != null ? dcc.getDccMissedRevenue() : BigDecimal.ZERO;
+                BigDecimal optOutVol = dcc != null && dcc.getDccOptoutVolume() != null ? dcc.getDccOptoutVolume() : BigDecimal.ZERO;
                 if (isStrength) {
                     return new String[]{"Strong DCC Performance",
                         String.format("%.0f%% DCC conversion rate. Currency choice is being offered effectively.", convRate)};
                 } else {
                     return new String[]{String.format("DCC Conversion at %d/100", score),
-                        String.format("DCC conversion is currently %.0f%%, with an estimated %s %s in potential sales volume from opt-out transactions. Staff awareness training is often the most straightforward way to improve this.", convRate, ccy, fmt(missedRev))};
+                        String.format("DCC conversion is currently %.0f%%, with %s %s of international card volume from opt-out transactions. Staff awareness training is often the most straightforward way to improve this.", convRate, ccy, fmt(optOutVol))};
                 }
             }
             default:

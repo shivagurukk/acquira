@@ -3,7 +3,9 @@
 <body>
     <div th:fragment="dccContent">
         <div class="section-title" style="margin-bottom: 2px;">DCC Revenue Optimization</div>
-        <div class="section-subtitle" style="margin-bottom: 6px;">Dynamic Currency Conversion (DCC) performance, opt-in rates and missed revenue opportunities</div>
+        <!-- Subtitle: dropped "missed revenue opportunities" wording. We're not displaying
+             a dirham-revenue figure since the 3% commission rate is not yet confirmed. -->
+        <div class="section-subtitle" style="margin-bottom: 6px;">Dynamic Currency Conversion (DCC) performance and opt-in behaviour</div>
 
         <!-- Dynamic Insight -->
         <div th:if="${dto.insights != null and dto.insights.dccInsight != null}" style="background: linear-gradient(135deg, #FFFBEB, #FEF3C7); border: 1px solid #FDE68A; border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; display: flex; gap: 8px;">
@@ -14,25 +16,28 @@
             </div>
         </div>
 
-        <!-- ROW 1: Hero Banner — ALL DYNAMIC -->
+        <!-- ROW 1: Hero Banner — DYNAMIC -->
+        <!-- Middle box was previously "Unrealized Revenue (AED X)" computed as opt-out volume × 3%.
+             Replaced with "Opt-Out Volume" — the same underlying number without the 3% multiplier,
+             so we're showing a verified figure rather than an estimated commission. -->
         <div class="card mb-6" style="padding: 18px 24px; background: linear-gradient(135deg, #0F2042 0%, #1E3A8A 100%); border: none; color: white;">
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-                <div>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px;">
+                <div style="flex: 1 1 0; min-width: 180px;">
                     <div style="font-size: 8px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">DCC Eligible Volume</div>
-                    <div style="font-size: 26px; font-weight: 900; color: #FFFFFF; margin-top: 4px; letter-spacing: -0.03em;"><span th:if="${dto.dccPerformance.dccEligibleVolume != null}" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT')}"><span th:text="${dto.currencyCode}">AED</span> 0</span><span th:if="${dto.dccPerformance.dccEligibleVolume == null}"><span th:text="${dto.currencyCode}">AED</span> 0</span></div>
+                    <div style="font-size: 24px; font-weight: 900; color: #FFFFFF; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span th:if="${dto.dccPerformance.dccEligibleVolume != null}" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT')}"><span th:text="${dto.currencyCode}">AED</span> 0</span><span th:if="${dto.dccPerformance.dccEligibleVolume == null}"><span th:text="${dto.currencyCode}">AED</span> 0</span></div>
                     <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">International card transactions</div>
                 </div>
-                <div style="width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
-                <div style="text-align: center;">
-                    <div style="font-size: 8px; font-weight: 700; color: #FBBF24; letter-spacing: 0.06em; text-transform: uppercase;">Unrealized Revenue</div>
-                    <div style="font-size: 30px; font-weight: 900; color: #FBBF24; margin-top: 4px; letter-spacing: -0.03em;" th:text="${dto.currencyCode} + ' ' + ${dto.dccPerformance.dccMissedRevenue != null ? #numbers.formatDecimal(dto.dccPerformance.dccMissedRevenue, 1, 'COMMA', 0, 'POINT') : '0'}"><span th:text="${dto.currencyCode}">AED</span> 0</div>
-                    <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">Recoverable with optimization</div>
+                <div style="flex: 0 0 auto; width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
+                <div style="flex: 1 1 0; min-width: 180px; text-align: center;">
+                    <div style="font-size: 8px; font-weight: 700; color: #FBBF24; letter-spacing: 0.06em; text-transform: uppercase;">Opt-Out Volume</div>
+                    <div style="font-size: 26px; font-weight: 900; color: #FBBF24; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" th:text="${dto.currencyCode} + ' ' + ${dto.dccPerformance.dccOptoutVolume != null ? #numbers.formatDecimal(dto.dccPerformance.dccOptoutVolume, 1, 'COMMA', 0, 'POINT') : '0'}"><span th:text="${dto.currencyCode}">AED</span> 0</div>
+                    <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">Volume from declined opt-ins</div>
                 </div>
-                <div style="width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
-                <div style="text-align: right;">
+                <div style="flex: 0 0 auto; width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
+                <div style="flex: 1 1 0; min-width: 180px; text-align: right;">
                     <div style="font-size: 8px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">Conversion Rate</div>
                     <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 6px; margin-top: 4px;">
-                        <span style="font-size: 26px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.03em;" th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '0%'}">0%</span>
+                        <span style="font-size: 24px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.03em;" th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '0%'}">0%</span>
                         <span style="font-size: 10px; font-weight: 600; color: #60A5FA;">/ 25% target</span>
                     </div>
                     <th:block th:with="rate=${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate.doubleValue() : 0}, pctOfTarget=${rate / 25.0 * 100}">
@@ -46,6 +51,10 @@
         </div>
 
         <!-- ROW 2: DCC CONVERSION FUNNEL -->
+        <!-- Step 4 was "Revenue Earned (AED X)" computed as opt-in volume × 3%. Replaced with
+             a "Conversion Rate" tile that shows the same funnel-end information without
+             quoting an unverified commission figure. The funnel still reads:
+             total intl txns -> eligible -> opted-in -> what % of eligible converted. -->
         <div class="card mb-6" style="padding: 16px 20px;">
             <div class="card-title" style="margin-bottom: 10px;"><span>DCC CONVERSION FUNNEL</span></div>
             <div style="display: flex; align-items: center; justify-content: center; gap: 0; padding: 4px 0;">
@@ -79,12 +88,12 @@
                 </div>
                 <!-- Arrow -->
                 <div style="font-size: 14px; color: #CBD5E1; margin: 0 -6px; z-index: 1;">&#9654;</div>
-                <!-- Step 4: Revenue Generated -->
+                <!-- Step 4: Conversion Rate (replaces the "Revenue Earned" gold box) -->
                 <div style="text-align: center; flex: 1;">
                     <div style="background: linear-gradient(135deg, #C9A962, #D4B878); color: white; padding: 12px 8px; border-radius: 0 8px 8px 0; clip-path: polygon(0 10%, 10% 0, 100% 0, 100% 100%, 10% 100%, 0 90%);">
-                        <div style="font-size: 8px; font-weight: 700; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.05em;">Revenue Earned</div>
-                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccRevenueGenerated != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccRevenueGenerated, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
-                        <div style="font-size: 8px; color: rgba(255,255,255,0.7); margin-top: 1px;">c. 3% of transaction value</div>
+                        <div style="font-size: 8px; font-weight: 700; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.05em;">Conversion Rate</div>
+                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '0%'}">0%</div>
+                        <div style="font-size: 8px; color: rgba(255,255,255,0.7); margin-top: 1px;">Opted-in / Eligible</div>
                     </div>
                 </div>
             </div>
@@ -100,10 +109,13 @@
             </div>
         </div>
 
-        <!-- ROW 3: Missed Opportunity Chart (full width) -->
+        <!-- ROW 3: Opt-Out Volume Trend (full width) -->
+        <!-- Was "MISSED OPPORTUNITY TREND" plotting opt-out × 3% per month. Now plots
+             raw monthly opt-out VOLUME, which is verified data without the unconfirmed
+             commission multiplier. Reads value (opt-out vol) from optOutOptInTrend. -->
         <div class="card mb-6" style="padding: 10px 12px;">
-            <div class="card-title"><span>MISSED OPPORTUNITY TREND (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
-            <div class="chart-container" style="max-height: 160px;"><canvas data-chart="gradient-bar" data-field="dccPerformance.missedOpportunityTrend" data-color="#1E3A8A"></canvas></div>
+            <div class="card-title"><span>OPT-OUT VOLUME TREND (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
+            <div class="chart-container" style="max-height: 160px;"><canvas data-chart="gradient-bar" data-field="dccPerformance.optOutOptInTrend" data-color="#1E3A8A"></canvas></div>
         </div>
 
         <!-- ROW 4: Recovery Roadmap -->

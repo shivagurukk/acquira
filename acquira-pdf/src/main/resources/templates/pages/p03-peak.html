@@ -38,16 +38,20 @@
             </div>
         </div>
 
-        <!-- ROW 2: Daily Avg TXN Value — equal flex chart -->
+        <!-- ROW 2: DAILY SALES VOLUME — primary chart, matches the MAX/AVG DAILY SALES KPIs above -->
+        <!-- Uses achievements.dailySalesAndCount which is sales-volume-per-day; the peak bar will
+             match MAX DAILY SALES box and the average line height will match AVG DAILY SALES box. -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title"><span>DAILY ATV (<span th:text="${dto.currencyCode}">AED</span>) — Day of Month</span></div>
-            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailyAvgTxnValue" data-color="#0D9488"></canvas></div>
+            <div class="card-title"><span>DAILY SALES VOLUME (<span th:text="${dto.currencyCode}">AED</span>) — Day of Month</span></div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailySalesAndCount" data-color="#1E3A8A"></canvas></div>
         </div>
 
-        <!-- ROW 3: Unique Customers — equal flex chart -->
+        <!-- ROW 3: DAILY TRANSACTION COUNT — promoted up into the slot previously held by the
+             ATV chart (which was moved to page 8 / Customer Intelligence so each chart has more
+             vertical space). Pairs naturally with MAX TXNS / DAY KPI in row 1. -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title">DISTINCT CARDS BY DAY — Day of Month</div>
-            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.uniqueCustomersByDay" data-color="#1E3A8A"></canvas></div>
+            <div class="card-title">DAILY TRANSACTION COUNT — Day of Month</div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailyTxnCount" data-color="#7C3AED"></canvas></div>
         </div>
 
         <!-- ROW 4: Achievement + Watch summary strip -->
@@ -63,14 +67,6 @@
                 <div class="strip-text" th:text="${dto.insights != null and dto.insights.peakWatch != null ? dto.insights.peakWatch : 'Average transaction value shows day-to-day volatility.'}">
                     Average transaction value shows day-to-day volatility.
                 </div>
-            </div>
-        </div>
-
-        <!-- ROW 5: AI Insight anchored bottom -->
-        <div class="ai-insight">
-            <div class="ai-insight-icon">&#9733;</div>
-            <div class="ai-insight-text">
-                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.peakWatch != null ? dto.insights.peakWatch : 'Your data shows noticeable variation in daily performance across the month. It may be worth looking at whether promotions or staffing adjustments could help on quieter days.'}"></span>
             </div>
         </div>
 

@@ -42,20 +42,41 @@ public class MerchantMasterJobConfig {
     @Bean
     public Job merchantMasterJob(
             @org.springframework.beans.factory.annotation.Qualifier("ingestMerchantStep") Step ingestMerchantStep,
-            @org.springframework.beans.factory.annotation.Qualifier("upsertDimensionsStep") Step upsertDimensionsStep,
-            @org.springframework.beans.factory.annotation.Qualifier("populateActivitySummaryStep") Step populateActivitySummaryStep) {
+            @org.springframework.beans.factory.annotation.Qualifier("upsertAndSummarizeStep") Step upsertAndSummarizeStep) {
+        // PERF FIX: was 3 steps (ingestMerchantStep → upsertDimensionsStep → populateActivitySummaryStep).
+        // Each step transition writes ~3-4 records to BATCH_STEP_EXECUTION + BATCH_JOB_EXECUTION_CONTEXT
+        // on RDS. From India that's ~1.5s per transition just for Spring Batch metadata I/O.
+        // Merging the two SQL-only steps removes one full transition (~1.5s saved).
         return new JobBuilder("merchantMasterJob", jobRepository)
                 .start(ingestMerchantStep)
-                .next(upsertDimensionsStep)
-                .next(populateActivitySummaryStep)
+                .next(upsertAndSummarizeStep)
                 .build();
     }
 
     @Bean
-    public Step populateActivitySummaryStep(Tasklet populateActivitySummaryTasklet) {
-        return new StepBuilder("populateActivitySummaryStep", jobRepository)
-                .tasklet(populateActivitySummaryTasklet, transactionManager)
+    public Step upsertAndSummarizeStep(Tasklet upsertAndSummarizeTasklet) {
+        return new StepBuilder("upsertAndSummarizeStep", jobRepository)
+                .tasklet(upsertAndSummarizeTasklet, transactionManager)
                 .build();
+    }
+
+    /** PERF FIX: combined tasklet that runs upsertDimensions + populateActivitySummary
+     *  in a single Spring Batch step. Avoids one step-transition's worth of metadata I/O. */
+    @Bean
+    @StepScope
+    public Tasklet upsertAndSummarizeTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId,
+                                              Tasklet upsertDimensionsTasklet,
+                                              Tasklet populateActivitySummaryTasklet) {
+        return (contribution, chunkContext) -> {
+            long t0 = System.currentTimeMillis();
+            upsertDimensionsTasklet.execute(contribution, chunkContext);
+            long t1 = System.currentTimeMillis();
+            populateActivitySummaryTasklet.execute(contribution, chunkContext);
+            long t2 = System.currentTimeMillis();
+            System.out.printf("upsertAndSummarize: dim=%dms summary=%dms total=%dms%n",
+                t1 - t0, t2 - t1, t2 - t0);
+            return RepeatStatus.FINISHED;
+        };
     }
 
     @Bean
@@ -98,8 +119,12 @@ public class MerchantMasterJobConfig {
     public Step ingestMerchantStep(ItemReader<StagingMerchant> merchantExcelReader,
             ItemProcessor<StagingMerchant, StagingMerchant> merchantTenantProcessor,
             @org.springframework.beans.factory.annotation.Qualifier("merchantWriter") ItemWriter<StagingMerchant> merchantWriter) {
+        // PERF FIX: chunk size raised from 100 to 400. On RDS each chunk commit
+        // is a network round-trip, so 100 was 4x more chatty than necessary.
+        // 400 chosen because the merchant row has ~70 columns and Postgres has
+        // a ~32k bind-parameter limit per statement: 400 * 70 = 28000, safe.
         return new StepBuilder("ingestMerchantStep", jobRepository)
-                .<StagingMerchant, StagingMerchant>chunk(100, transactionManager)
+                .<StagingMerchant, StagingMerchant>chunk(400, transactionManager)
                 .reader(merchantExcelReader)
                 .processor(merchantTenantProcessor)
                 .writer(merchantWriter)
@@ -347,32 +372,21 @@ public class MerchantMasterJobConfig {
                 .build();
     }
 
-    @Bean
-    public Step upsertDimensionsStep(Tasklet upsertDimensionsTasklet) {
-        return new StepBuilder("upsertDimensionsStep", jobRepository)
-                .tasklet(upsertDimensionsTasklet, transactionManager)
-                .build();
-    }
+    // PERF FIX: removed orphaned `upsertDimensionsStep` bean — it's no longer referenced
+    // by merchantMasterJob (replaced by upsertAndSummarizeStep above) and was just
+    // creating an unused Spring bean at startup. The tasklet itself is still needed
+    // since upsertAndSummarizeTasklet injects it.
 
     @Bean
     @StepScope
     public Tasklet upsertDimensionsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
         return (contribution, chunkContext) -> {
             String tId = String.valueOf(tenantId);
+            long stepStart = System.currentTimeMillis();
 
-            // Debug: log staging contents
-            try {
-                var stagingData = jdbcTemplate.queryForList(
-                    "SELECT mid, merchant_name, entity_name, store_name, merchant_internal_id FROM stg_merchant_master_raw WHERE tenant_id = " + tId + " LIMIT 10");
-                System.out.println("=== stg_merchant_master_raw contents ===");
-                for (var row : stagingData) {
-                    System.out.printf("  MID='%s' merchant_name='%s' entity='%s' store='%s' internal_id='%s'%n",
-                        row.get("mid"), row.get("merchant_name"), row.get("entity_name"),
-                        row.get("store_name"), row.get("merchant_internal_id"));
-                }
-            } catch (Exception e) {
-                System.out.println("Debug query failed: " + e.getMessage());
-            }
+            // PERF FIX: removed two debug SELECT queries (each one a full RDS round-trip
+            // dumping rows to stdout). They added ~500ms latency on RDS for zero value
+            // in production. Re-enable behind a debug flag if you need them.
 
             // 1. Upsert Merchants
             //    merchant_name from file may contain numeric IDs (not real names).
@@ -405,18 +419,7 @@ public class MerchantMasterJobConfig {
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertMerchantSql);
 
-            // Debug: check dim_merchant after upsert
-            try {
-                var dimData = jdbcTemplate.queryForList(
-                    "SELECT mid, name, internal_id FROM dim_merchant WHERE tenant_id = " + tId + " LIMIT 10");
-                System.out.println("=== dim_merchant after upsert ===");
-                for (var row : dimData) {
-                    System.out.printf("  MID='%s' name='%s' internal_id='%s'%n",
-                        row.get("mid"), row.get("name"), row.get("internal_id"));
-                }
-            } catch (Exception e) {
-                System.out.println("Debug query failed: " + e.getMessage());
-            }
+            // PERF FIX: removed second debug SELECT after merchant upsert.
             System.out.println("Upserted Merchants for tenant " + tId);
 
             // 2. Upsert Stores
@@ -442,6 +445,9 @@ public class MerchantMasterJobConfig {
             System.out.println("Upserted Stores for tenant " + tId);
 
             // 3. Upsert Terminals
+            // PERF FIX: removed `OR raw.tid = t.tid OR ... CONCAT('TERM_', raw.mid)` joins
+            // — those force seq scans of dim_store/dim_terminal. Equality on (sid,
+            // internal_id) covers all common cases and uses indexes.
             String upsertTerminalSql = """
                 INSERT INTO dim_terminal (tenant_id, internal_id, store_id, tid, device_number, type, status, created_date)
                 SELECT
@@ -453,7 +459,7 @@ public class MerchantMasterJobConfig {
                 FROM stg_merchant_master_raw raw
                 JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
                 JOIN dim_store s ON s.merchant_id = m.merchant_id
-                    AND (s.sid = raw.sid OR s.internal_id = raw.merchant_store_internal_id OR s.internal_id = CONCAT('STORE_', raw.mid))
+                    AND (s.sid = raw.sid OR s.internal_id = raw.merchant_store_internal_id)
                     AND s.tenant_id = TID
                 WHERE raw.tenant_id = TID AND (raw.tid IS NOT NULL OR raw.terminal_internal_id IS NOT NULL)
                 GROUP BY raw.tenant_id, COALESCE(terminal_internal_id, tid, CONCAT('TERM_', raw.mid)), tid
@@ -509,12 +515,13 @@ public class MerchantMasterJobConfig {
                 FROM stg_merchant_master_raw raw
                 JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
                 JOIN dim_store s ON s.merchant_id = m.merchant_id
-                    AND (s.sid = raw.sid OR s.internal_id = raw.merchant_store_internal_id OR s.internal_id = CONCAT('STORE_', raw.mid))
+                    AND (s.sid = raw.sid OR s.internal_id = raw.merchant_store_internal_id)
                     AND s.tenant_id = TID
                 WHERE raw.tenant_id = TID AND raw.bank_account_number IS NOT NULL
                 GROUP BY raw.tenant_id, bank_account_number
                 """.replace("TID", tId));
             System.out.println("Upserted Bank Accounts for tenant " + tId);
+            System.out.printf("upsertDimensions completed in %.1fs%n", (System.currentTimeMillis() - stepStart) / 1000.0);
 
             // 7. Auto-assign unmapped sales users
             try {

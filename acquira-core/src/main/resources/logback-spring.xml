@@ -11,7 +11,7 @@
 
     <springProperty scope="context" name="APP_LOGS_DIR" source="app.logs.dir" defaultValue="logs"/>
 
-    <!-- ─── DEV PROFILE: Pretty console output ─── -->
+    <!-- ─── DEV PROFILE: Pretty console output + plain file ─── -->
     <springProfile name="!prod">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
@@ -19,8 +19,23 @@
             </encoder>
         </appender>
 
+        <!-- DEV file appender so logs persist between runs and are easy to share/diff -->
+        <appender name="DEV_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${APP_LOGS_DIR}/core.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>20MB</maxFileSize>
+                <maxHistory>7</maxHistory>
+                <totalSizeCap>200MB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-no-ctx}] %-40.40logger{39} : %msg%n</pattern>
+            </encoder>
+        </appender>
+
         <root level="INFO">
             <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="DEV_FILE"/>
         </root>
 
         <logger name="com.acquira" level="DEBUG"/>

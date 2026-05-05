@@ -19,6 +19,7 @@ public class DatabaseFixer implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         fixUserTenantAccessAndSalesTeamMapping();
+        fixUsersTable();
     }
 
     private void fixUserTenantAccessAndSalesTeamMapping() {
@@ -55,6 +56,43 @@ public class DatabaseFixer implements CommandLineRunner {
             logger.info("Database schema check completed.");
         } catch (Exception e) {
             logger.error("DatabaseFixer failed", e);
+        }
+    }
+
+    /**
+     * Fix missing columns in 'users' table that the User entity requires.
+     * Older schema.sql versions didn't include SSO/approval/display columns.
+     */
+    private void fixUsersTable() {
+        try {
+            logger.info("Checking users table columns...");
+
+            jdbcTemplate.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_provider VARCHAR(50)");
+            logger.info("✓ Ensured column sso_provider exists in users");
+
+            jdbcTemplate.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_id VARCHAR(255)");
+            logger.info("✓ Ensured column sso_id exists in users");
+
+            jdbcTemplate.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) DEFAULT 'APPROVED'");
+            logger.info("✓ Ensured column approval_status exists in users");
+
+            jdbcTemplate.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100)");
+            logger.info("✓ Ensured column display_name exists in users");
+
+            // Make sure any existing users without approval_status get it set to APPROVED
+            int updated = jdbcTemplate.update(
+                    "UPDATE users SET approval_status = 'APPROVED' WHERE approval_status IS NULL");
+            if (updated > 0) {
+                logger.info("✓ Updated {} users to approval_status = APPROVED", updated);
+            }
+
+            logger.info("users table check completed.");
+        } catch (Exception e) {
+            logger.error("fixUsersTable failed", e);
         }
     }
 }

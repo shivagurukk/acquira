@@ -141,6 +141,10 @@
 
         <div class="grid-2 mb-6">
             <!-- Local Cards -->
+            <!-- NOTE: localCardCustomers field is populated from sum_daily_merchant_attribute.metric_count
+                 for attribute_type=DESTINATION which is actually the TRANSACTION COUNT, not distinct card count.
+                 Label changed from "Customers" to "Transactions" to match what the underlying value represents.
+                 A future enhancement could populate true distinct domestic card count via a separate query. -->
             <div class="card" style="padding: 12px 14px; border-left: 4px solid #1E3A8A;">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div>
@@ -151,7 +155,7 @@
                     <div style="text-align: right;">
                         <div style="font-size: 8px; color: #6B7280;">Volume</div>
                         <div style="font-size: 14px; font-weight: 900; color: #1E3A8A;" th:text="${dto.demographics.localCardVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.localCardVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
-                        <div style="font-size: 8px; color: #6B7280; margin-top: 4px;">Customers</div>
+                        <div style="font-size: 8px; color: #6B7280; margin-top: 4px;">Transactions</div>
                         <div style="font-size: 14px; font-weight: 900; color: #1E3A8A;" th:text="${dto.demographics.localCardCustomers != null ? #numbers.formatDecimal(dto.demographics.localCardCustomers, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
                     </div>
                 </div>
@@ -171,7 +175,7 @@
                     <div style="text-align: right;">
                         <div style="font-size: 8px; color: #6B7280;">Volume</div>
                         <div style="font-size: 14px; font-weight: 900; color: #D97706;" th:text="${dto.demographics.internationalCardVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.internationalCardVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
-                        <div style="font-size: 8px; color: #6B7280; margin-top: 4px;">Customers</div>
+                        <div style="font-size: 8px; color: #6B7280; margin-top: 4px;">Transactions</div>
                         <div style="font-size: 14px; font-weight: 900; color: #D97706;" th:text="${dto.demographics.internationalCardCustomers != null ? #numbers.formatDecimal(dto.demographics.internationalCardCustomers, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
                     </div>
                 </div>
@@ -185,6 +189,15 @@
         <div class="card mb-6" style="padding: 10px;">
             <div class="card-title">CARD SCHEMES (BY VALUE)</div>
             <div id="payment-card-schemes" style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
+        </div>
+
+        <!-- ═══ SECTION D: UNIQUE CARDS BY DAY ═══ -->
+        <!-- Moved here from Customer Intelligence (page 8 in deck order). It belongs on the
+             card-analytics page since it shows the daily unique-card footprint (a card-side
+             metric), not the loyalty/retention angle that lives on Customer Intelligence. -->
+        <div class="card mb-6" style="padding: 10px 12px;">
+            <div class="card-title">UNIQUE CARDS BY DAY &mdash; Day of Month</div>
+            <div class="chart-container" style="max-height: 140px;"><canvas data-chart="gradient-bar" data-field="achievements.uniqueCustomersByDay" data-color="#1E3A8A"></canvas></div>
         </div>
 
         <!-- AI Insight -->

@@ -730,11 +730,15 @@ public class MerchantInsightsDTO {
         private List<ChartData> salesAndAtvByDayOfWeek;
         private List<ChartData> revenueHeatmap;
         private List<ChartData> txnSizeDistribution;
+        // NEW (Fix I): Daily transaction count series — count-only (no value)
+        private List<ChartData> dailyTxnCount;
 
         public List<ChartData> getRevenueHeatmap() { return revenueHeatmap; }
         public void setRevenueHeatmap(List<ChartData> v) { this.revenueHeatmap = v; }
         public List<ChartData> getTxnSizeDistribution() { return txnSizeDistribution; }
         public void setTxnSizeDistribution(List<ChartData> v) { this.txnSizeDistribution = v; }
+        public List<ChartData> getDailyTxnCount() { return dailyTxnCount; }
+        public void setDailyTxnCount(List<ChartData> v) { this.dailyTxnCount = v; }
 
         public BusinessAchievements() {
         }
@@ -811,6 +815,7 @@ public class MerchantInsightsDTO {
             private List<ChartData> salesAndAtvByDayOfWeek;
             private List<ChartData> revenueHeatmap;
             private List<ChartData> txnSizeDistribution;
+            private List<ChartData> dailyTxnCount;
 
             public BusinessAchievementsBuilder dailySalesAndCount(List<ChartData> dailySalesAndCount) {
                 this.dailySalesAndCount = dailySalesAndCount;
@@ -852,11 +857,17 @@ public class MerchantInsightsDTO {
                 return this;
             }
 
+            public BusinessAchievementsBuilder dailyTxnCount(List<ChartData> dailyTxnCount) {
+                this.dailyTxnCount = dailyTxnCount;
+                return this;
+            }
+
             public BusinessAchievements build() {
                 BusinessAchievements ba = new BusinessAchievements(dailySalesAndCount, dailyAvgTxnValue, uniqueCustomersByDay,
                         salesTimeOfDay, salesByDayOfMonth, salesAndAtvByDayOfWeek);
                 ba.setRevenueHeatmap(revenueHeatmap);
                 ba.setTxnSizeDistribution(txnSizeDistribution);
+                ba.setDailyTxnCount(dailyTxnCount);
                 return ba;
             }
         }

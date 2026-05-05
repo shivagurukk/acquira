@@ -21,7 +21,7 @@
                 <th:block th:if="${dto.demographics.yoyGrowthPct != null and dto.demographics.yoyGrowthPct.doubleValue() != 0.0}">
                     <div style="font-size: 20px; font-weight: 900; margin: 2px 0 1px 0; letter-spacing: -0.02em;"
                          th:style="${dto.demographics.yoyGrowthPct >= 0 ? 'color: #047857' : 'color: #E87461'}"
-                         th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 0) + '%'}">0%</div>
+                         th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">0%</div>
                     <span th:class="${dto.demographics.yoyGrowthPct >= 0 ? 'trend-up' : 'trend-down'}" th:text="${dto.demographics.yoyGrowthPct >= 0 ? 'Growth' : 'Decline'}">-</span>
                 </th:block>
                 <th:block th:if="${dto.demographics.yoyGrowthPct == null or dto.demographics.yoyGrowthPct.doubleValue() == 0.0}">
@@ -33,14 +33,14 @@
                 <div class="kpi-label">MONTH ON MONTH</div>
                 <div style="font-size: 20px; font-weight: 900; margin: 2px 0 1px 0; letter-spacing: -0.02em;"
                      th:style="${dto.overview.sales.momGrowth >= 0 ? 'color: #047857' : 'color: #E87461'}"
-                     th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</div>
+                     th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 1) + '%'}">0%</div>
                 <span th:class="${dto.overview.sales.momGrowth >= 0 ? 'trend-up' : 'trend-down'}" th:text="${dto.overview.sales.momGrowth >= 0 ? 'Positive' : 'Decline'}">-</span>
             </div>
             <div class="card card-accent-amber" style="padding: 8px 10px;">
                 <div class="kpi-label">AVG MONTHLY GROWTH</div>
                 <div style="font-size: 20px; font-weight: 900; margin: 2px 0 1px 0; letter-spacing: -0.02em;"
                      th:style="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'color: #047857' : 'color: #E87461'}"
-                     th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 0) + '%'}">0%</div>
+                     th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 1) + '%'}">0%</div>
                 <span style="font-size: 8px; color: #6B7280; font-weight: 600;">12-month avg</span>
             </div>
             <div class="card card-accent-purple" style="padding: 8px 10px;">
@@ -124,9 +124,9 @@
                 <strong>Insight:</strong>
                 <span th:if="${dto.insights != null and dto.insights.growthInsight != null}" th:text="${dto.insights.growthInsight}"></span>
                 <span th:if="${dto.insights == null or dto.insights.growthInsight == null}">
-                    <th:block th:if="${dto.demographics.yoyGrowthPct != null and dto.demographics.yoyGrowthPct.doubleValue() != 0.0}">Year-on-year performance at <span th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 0) + '%'}">0%</span>.</th:block>
+                    <th:block th:if="${dto.demographics.yoyGrowthPct != null and dto.demographics.yoyGrowthPct.doubleValue() != 0.0}">Year-on-year performance at <span th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">0%</span>.</th:block>
                     <th:block th:if="${dto.demographics.yoyGrowthPct == null or dto.demographics.yoyGrowthPct.doubleValue() == 0.0}">Year-on-year data will be available once more history builds up.</th:block>
-                    Month-on-month: <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 0) + '%'}">0%</span>.
+                    Month-on-month: <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 1) + '%'}">0%</span>.
                 </span>
             </div>
         </div>
