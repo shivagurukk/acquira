@@ -167,6 +167,41 @@ public class TransactionJobConfig {
             // The pre-check uses LIMIT 1 inside EXISTS so PostgreSQL can short-circuit
             // as soon as the first unmapped MID is found.
 
+            // ============================================================
+            // ORPHAN CLEANUP (runs BEFORE auto-create).
+            // ============================================================
+            // Why: when transactions were uploaded BEFORE the merchant master
+            // file, autoCreate inserted placeholder rows like:
+            //   dim_merchant{ internal_id='AUTO_SID_<sid>', mid='AUTO_MID_<sid>', name=NULL }
+            // After the merchant master file later inserts the REAL merchant for
+            // that same SID, dim_store gets a proper row, but the original
+            // AUTO_SID_ placeholder in dim_merchant is left behind. It's not
+            // referenced by any fact_transaction (those got resolved to the real
+            // merchant_id via SID), and it shows as a NULL-name row in dim_merchant.
+            //
+            // This block deletes those orphans — dim_merchant rows where:
+            //   1. internal_id starts with 'AUTO_SID_' (created by this tasklet),
+            //   2. The same SID now exists in dim_store with a DIFFERENT merchant_id
+            //      (i.e. the merchant master superseded the placeholder).
+            //
+            // Idempotent: if no orphans exist, the DELETE finds nothing and returns 0.
+            int orphansRemoved = jdbcTemplate.update(
+                "DELETE FROM dim_merchant m " +
+                "WHERE m.tenant_id = ? " +
+                "  AND m.internal_id LIKE 'AUTO_SID_%' " +
+                "  AND (m.name IS NULL OR TRIM(m.name) = '') " +
+                // Don't delete if any fact rows still point to this placeholder.
+                // (Shouldn't happen with the SID-primary join, but guard anyway.)
+                "  AND NOT EXISTS (SELECT 1 FROM fact_transaction f " +
+                "    WHERE f.tenant_id = m.tenant_id AND f.merchant_id = m.merchant_id LIMIT 1) " +
+                // Don't delete if any sum_daily_merchant rows reference it either.
+                "  AND NOT EXISTS (SELECT 1 FROM sum_daily_merchant s " +
+                "    WHERE s.tenant_id = m.tenant_id AND s.merchant_id = m.merchant_id LIMIT 1)",
+                tenantId);
+            if (orphansRemoved > 0) {
+                System.out.printf("  cleanup: removed %d orphan auto-created merchant placeholder(s)%n", orphansRemoved);
+            }
+
             // 1. Auto-create missing merchants — fast pre-check first.
             //
             // FIX: production transaction files only carry SID (MID is empty), so we
@@ -187,8 +222,16 @@ public class TransactionJobConfig {
                     "SELECT s.tenant_id, " +
                     "  'AUTO_SID_' || TRIM(s.sid), " +
                     "  COALESCE(NULLIF(TRIM(MAX(s.mid)), ''), 'AUTO_MID_' || TRIM(s.sid)), " +
-                    "  MAX(CASE WHEN s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
-                    "           AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + " THEN s.merchant_name END), " +
+                    // FIX: when the file has no merchant name, fall back to a
+                    // human-readable label like 'Merchant <sid>' instead of NULL.
+                    // This way PDFs/charts always show *something* meaningful for
+                    // auto-created placeholders — not a blank field.
+                    "  COALESCE(" +
+                    "    MAX(CASE WHEN s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
+                    "             AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + " THEN s.merchant_name END), " +
+                    "    MAX(NULLIF(TRIM(s.merchant_store_legal_name), '')), " +
+                    "    MAX(NULLIF(TRIM(s.store_name), '')), " +
+                    "    'Merchant ' || TRIM(s.sid)), " +
                     "  'ACTIVE', NOW() " +
                     "FROM stg_trnx_raw s " +
                     "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
