@@ -288,13 +288,34 @@ public class FileUploadService {
                         .toJobParameters();
                 org.springframework.batch.core.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
 
-                // Trigger Reporting Update (Multi-Date / Data-Driven)
-                try {
-                    manualIngestionService.processManualUpload(targetTenantId);
-                } catch (Exception e) {
-                    log.warn("Failed to update Reporting DB: {}", e.getMessage());
-                    // Don't fail the upload just because reporting failed
-                }
+                // PERF FIX: Trigger Reporting Update ASYNCHRONOUSLY.
+                //
+                // Previously this was a synchronous call which blocked the HTTP response
+                // until ManualIngestionService finished processing every distinct payment
+                // date in the upload. With 180+ dates that was 2-3 extra seconds of wall
+                // time tacked onto the response, pushing some uploads past the browser's
+                // HTTP timeout and producing a misleading 500 error in the UI even though
+                // the batch job had completed successfully.
+                //
+                // Now: the batch job's COMPLETED status returns to the UI immediately, and
+                // reporting metrics refresh in a background thread. Failures are logged but
+                // do not affect the upload's success status (same as before).
+                //
+                // The captured tenantId/entityName are effectively final and safe to use
+                // inside the async lambda.
+                final Long asyncTenantId = targetTenantId;
+                final String asyncEntityName = entityName;
+                java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        long t = System.currentTimeMillis();
+                        manualIngestionService.processManualUpload(asyncTenantId);
+                        log.info("[async] Reporting update completed for tenant {} ({}) in {} ms",
+                            asyncEntityName, asyncTenantId, System.currentTimeMillis() - t);
+                    } catch (Exception e) {
+                        log.warn("[async] Reporting update failed for tenant {} ({}): {}",
+                            asyncEntityName, asyncTenantId, e.getMessage());
+                    }
+                });
 
                 // Clean up temp file after successful processing
                 deleteTempFile(tempFile);
@@ -318,6 +339,132 @@ public class FileUploadService {
     public org.springframework.batch.core.JobExecution processTransactionFile(MultipartFile file, String paymentDate)
             throws Exception {
         return processUnifiedFile(file);
+    }
+
+    /**
+     * Multi-file UPLOAD path (screen → multiple files in one request).
+     * Saves every file to disk, classifies each, then runs the SAME pipeline as the
+     * server-folder path: merchants first, then transactions, then ONE reporting update
+     * per tenant. This keeps screen-upload-multi and server-folder-upload behaviorally
+     * identical so users can drop multiple files either way and get the same result.
+     *
+     * Returns a per-file status map matching the shape of processServerPath().
+     */
+    public java.util.Map<String, Object> processMultipleUploadedFiles(java.util.List<MultipartFile> files) throws Exception {
+        if (files == null || files.isEmpty()) {
+            throw new RuntimeException("No files provided");
+        }
+
+        // 1. Save every uploaded file to disk and remember the saved path.
+        java.util.List<java.io.File> savedFiles = new java.util.ArrayList<>();
+        java.util.List<Path> tempPaths = new java.util.ArrayList<>();
+        for (MultipartFile mf : files) {
+            if (mf == null || mf.isEmpty()) continue;
+            String saved = saveFile(mf);
+            tempPaths.add(Paths.get(saved));
+            savedFiles.add(new java.io.File(saved));
+        }
+
+        if (savedFiles.isEmpty()) {
+            throw new RuntimeException("All uploaded files were empty");
+        }
+
+        // 2. Classify and run via the same internal helpers as processServerPath().
+        // Reuses processSingleServerFile() so the upload path is byte-for-byte identical to
+        // the server-folder path past this point.
+        try {
+            return runMultiFileBatch(savedFiles);
+        } finally {
+            // Always clean up temp files — success or failure.
+            for (Path p : tempPaths) deleteTempFile(p);
+        }
+    }
+
+    /**
+     * Internal: classify a list of files (already on disk), launch jobs in the right order,
+     * run reporting update per tenant. Shared between screen-multi-upload and server-folder.
+     */
+    private java.util.Map<String, Object> runMultiFileBatch(java.util.List<java.io.File> dataFiles) {
+        java.util.List<java.io.File> merchantFiles = new java.util.ArrayList<>();
+        java.util.List<java.io.File> transactionFiles = new java.util.ArrayList<>();
+        java.util.List<java.util.Map<String, Object>> skippedFiles = new java.util.ArrayList<>();
+
+        for (java.io.File f : dataFiles) {
+            String type = detectFileType(f.getAbsolutePath());
+            if ("MERCHANT".equals(type)) {
+                merchantFiles.add(f);
+            } else if ("TRANSACTION".equals(type)) {
+                transactionFiles.add(f);
+            } else if ("LEGACY_EXCEL".equals(type)) {
+                skippedFiles.add(java.util.Map.of(
+                        "file", f.getName(), "reason", "Legacy Excel (.xls) — convert to .xlsx"));
+            } else {
+                skippedFiles.add(java.util.Map.of(
+                        "file", f.getName(), "reason", "Unknown format — could not detect MERCHANT or TRANSACTION headers"));
+            }
+        }
+
+        log.info("Multi-file batch: {} merchant, {} transaction, {} skipped",
+                merchantFiles.size(), transactionFiles.size(), skippedFiles.size());
+
+        java.util.List<java.util.Map<String, Object>> results = new java.util.ArrayList<>();
+        java.util.Set<Long> processedTenants = new java.util.LinkedHashSet<>();
+        int successCount = 0;
+        int failCount = 0;
+
+        // Phase 1: MERCHANT files first
+        for (java.io.File f : merchantFiles) {
+            java.util.Map<String, Object> r = processSingleServerFile(f, "MERCHANT");
+            results.add(r);
+            if ("SUCCESS".equals(r.get("status"))) {
+                successCount++;
+                if (r.get("tenantId") != null) processedTenants.add((Long) r.get("tenantId"));
+            } else failCount++;
+        }
+
+        // Phase 2: TRANSACTION files
+        for (java.io.File f : transactionFiles) {
+            java.util.Map<String, Object> r = processSingleServerFile(f, "TRANSACTION");
+            results.add(r);
+            if ("SUCCESS".equals(r.get("status"))) {
+                successCount++;
+                if (r.get("tenantId") != null) processedTenants.add((Long) r.get("tenantId"));
+            } else failCount++;
+        }
+
+        // Phase 3: ONE reporting update per tenant (not per file) — ASYNCHRONOUS.
+        //
+        // PERF FIX: same reasoning as the single-file TRANSACTION branch above.
+        // Reporting metrics no longer block the HTTP response. With multiple tenants
+        // this is especially important because reporting time scales with tenant count.
+        if (!transactionFiles.isEmpty()) {
+            for (Long tenantId : processedTenants) {
+                final Long asyncTenantId = tenantId;
+                java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        long t = System.currentTimeMillis();
+                        log.info("[async] Running reporting update for tenant {}", asyncTenantId);
+                        manualIngestionService.processManualUpload(asyncTenantId);
+                        log.info("[async] Reporting update completed for tenant {} in {} ms",
+                            asyncTenantId, System.currentTimeMillis() - t);
+                    } catch (Exception e) {
+                        log.warn("[async] Reporting update failed for tenant {}: {}",
+                            asyncTenantId, e.getMessage());
+                    }
+                });
+            }
+        }
+
+        java.util.Map<String, Object> response = new java.util.LinkedHashMap<>();
+        response.put("totalFiles", dataFiles.size());
+        response.put("merchantFiles", merchantFiles.size());
+        response.put("transactionFiles", transactionFiles.size());
+        response.put("success", successCount);
+        response.put("failed", failCount);
+        response.put("skipped", skippedFiles);
+        response.put("fileResults", results);
+        response.put("status", failCount == 0 ? "ALL_SUCCESS" : (successCount > 0 ? "PARTIAL" : "ALL_FAILED"));
+        return response;
     }
 
     /**
@@ -358,89 +505,19 @@ public class FileUploadService {
             throw new RuntimeException("No data files (.xlsx, .csv, .tsv) found in: " + path);
         }
 
-        // Classify each file
-        java.util.List<java.io.File> merchantFiles = new java.util.ArrayList<>();
-        java.util.List<java.io.File> transactionFiles = new java.util.ArrayList<>();
-        java.util.List<java.util.Map<String, Object>> skippedFiles = new java.util.ArrayList<>();
+        // PERF/CONSISTENCY FIX: classification + launch + reporting are now in
+        // runMultiFileBatch(), shared with the screen-multi-upload path. Behavior
+        // is identical regardless of whether files arrived via screen or server folder.
+        java.util.Map<String, Object> response = runMultiFileBatch(dataFiles);
 
-        for (java.io.File f : dataFiles) {
-            String type = detectFileType(f.getAbsolutePath());
-            if ("MERCHANT".equals(type)) {
-                merchantFiles.add(f);
-            } else if ("TRANSACTION".equals(type)) {
-                transactionFiles.add(f);
-            } else if ("LEGACY_EXCEL".equals(type)) {
-                skippedFiles.add(java.util.Map.of(
-                        "file", f.getName(), "reason", "Legacy Excel (.xls) — convert to .xlsx"));
-            } else {
-                skippedFiles.add(java.util.Map.of(
-                        "file", f.getName(), "reason", "Unknown format — could not detect MERCHANT or TRANSACTION headers"));
-            }
-        }
-
-        log.info("Server path scan: {} merchant files, {} transaction files, {} skipped",
-                merchantFiles.size(), transactionFiles.size(), skippedFiles.size());
-
-        // Process results tracker
-        java.util.List<java.util.Map<String, Object>> results = new java.util.ArrayList<>();
-        java.util.Set<Long> processedTenants = new java.util.LinkedHashSet<>();
-        int successCount = 0;
-        int failCount = 0;
-
-        // ── Phase 1: MERCHANT files first (dim tables must exist before transactions) ──
-        for (java.io.File f : merchantFiles) {
-            java.util.Map<String, Object> fileResult = processSingleServerFile(f, "MERCHANT");
-            results.add(fileResult);
-            if ("SUCCESS".equals(fileResult.get("status"))) {
-                successCount++;
-                if (fileResult.get("tenantId") != null)
-                    processedTenants.add((Long) fileResult.get("tenantId"));
-            } else {
-                failCount++;
-            }
-        }
-
-        // ── Phase 2: TRANSACTION files ──
-        for (java.io.File f : transactionFiles) {
-            java.util.Map<String, Object> fileResult = processSingleServerFile(f, "TRANSACTION");
-            results.add(fileResult);
-            if ("SUCCESS".equals(fileResult.get("status"))) {
-                successCount++;
-                if (fileResult.get("tenantId") != null)
-                    processedTenants.add((Long) fileResult.get("tenantId"));
-            } else {
-                failCount++;
-            }
-        }
-
-        // ── Phase 3: Run reporting update once per tenant (not per file) ──
-        if (!transactionFiles.isEmpty()) {
-            for (Long tenantId : processedTenants) {
-                try {
-                    log.info("Running reporting update for tenant {}", tenantId);
-                    manualIngestionService.processManualUpload(tenantId);
-                } catch (Exception e) {
-                    log.warn("Reporting update failed for tenant {}: {}", tenantId, e.getMessage());
-                }
-            }
-        }
-
-        // Build response
-        java.util.Map<String, Object> response = new java.util.LinkedHashMap<>();
-        response.put("path", path);
-        response.put("totalFiles", dataFiles.size());
-        response.put("merchantFiles", merchantFiles.size());
-        response.put("transactionFiles", transactionFiles.size());
-        response.put("success", successCount);
-        response.put("failed", failCount);
-        response.put("skipped", skippedFiles);
-        response.put("fileResults", results);
-        response.put("status", failCount == 0 ? "ALL_SUCCESS" : (successCount > 0 ? "PARTIAL" : "ALL_FAILED"));
-
+        // Add server-path-specific fields
+        java.util.Map<String, Object> wrapped = new java.util.LinkedHashMap<>();
+        wrapped.put("path", path);
+        wrapped.putAll(response);
         log.info("Server path processing complete: {} success, {} failed, {} skipped",
-                successCount, failCount, skippedFiles.size());
-
-        return response;
+                response.get("success"), response.get("failed"),
+                ((java.util.List<?>) response.get("skipped")).size());
+        return wrapped;
     }
 
     /**

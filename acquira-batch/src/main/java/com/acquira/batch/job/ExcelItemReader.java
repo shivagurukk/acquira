@@ -152,7 +152,9 @@ public class ExcelItemReader<T> extends AbstractItemCountingItemStreamItemReader
         this.rowIterator = rowStream.iterator();
 
         logger.info("ExcelItemReader opened resource: {}", resource.getDescription());
-        logger.info("Raw Excel headers (before normalization):");
+        // PERF: header-mapping detail dropped from INFO to DEBUG. The merchant master file
+        // has ~70 columns, which produced 70+ log lines per upload. With file logging
+        // enabled that's measurable latency per upload and noise in production logs.
 
         if (linesToSkip > 0 && rowIterator.hasNext()) {
             Row headerRow = rowIterator.next();
@@ -161,7 +163,9 @@ public class ExcelItemReader<T> extends AbstractItemCountingItemStreamItemReader
                 if (h != null) {
                     String key = h.trim().toLowerCase().replace(" ", "").replace("_", "");
                     headerMap.put(key, cell.getColumnIndex());
-                    logger.info("  Col {}: '{}' -> normalized: '{}'", cell.getColumnIndex(), h, key);
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("  Col {}: '{}' -> normalized: '{}'", cell.getColumnIndex(), h, key);
+                    }
                 }
             }
             logger.info("Mapped {} headers from Excel file.", headerMap.size());
@@ -175,8 +179,11 @@ public class ExcelItemReader<T> extends AbstractItemCountingItemStreamItemReader
     private T readExcel() throws Exception {
         if (rowIterator != null && rowIterator.hasNext()) {
             Row row = rowIterator.next();
-            if (row.getRowNum() < 5) {
-                logger.info("Reading Row #{}", row.getRowNum());
+            // PERF: per-row INFO log dropped to DEBUG. With ~100k transaction rows this
+            // produced 5 "Reading Row #N" log lines per upload at INFO — fine, but the
+            // condition was checked inside the hot loop. Move to DEBUG entirely.
+            if (logger.isDebugEnabled() && row.getRowNum() < 5) {
+                logger.debug("Reading Row #{}", row.getRowNum());
             }
             return rowMapper.mapRow(row, row.getRowNum());
         }

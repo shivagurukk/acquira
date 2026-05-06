@@ -67,6 +67,32 @@ public class FileUploadController {
     }
 
     /**
+     * Multi-file upload endpoint: accepts an array of MultipartFiles in one request.
+     * Files are auto-classified (MERCHANT vs TRANSACTION) and processed in the right order:
+     *   1. all MERCHANT files first (so dim tables exist for transaction joins)
+     *   2. then all TRANSACTION files
+     *   3. then ONE reporting update per tenant
+     *
+     * This is byte-for-byte the same logic the server-folder endpoint runs, so users
+     * can drop multiple files via the screen and get identical behavior to dropping
+     * them in a server folder.
+     *
+     * Usage from a multipart form: multiple <input name="files"> fields, or
+     *   curl -F "files=@a.xlsx" -F "files=@b.csv" -F "files=@c.xlsx" /api/upload/multi
+     */
+    @PostMapping("/multi")
+    public ResponseEntity<?> uploadMultipleFiles(@RequestParam("files") java.util.List<MultipartFile> files) {
+        try {
+            java.util.Map<String, Object> result = fileUploadService.processMultipleUploadedFiles(files);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.badRequest().body(
+                java.util.Map.of("error", "Error processing files: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Process file(s) from the server filesystem (skip HTTP upload).
      * Accepts a file path OR a folder path.
      *

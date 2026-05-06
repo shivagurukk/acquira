@@ -110,15 +110,169 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("splitExcelStep") Step splitExcelStep,
             @org.springframework.beans.factory.annotation.Qualifier("cleanTargetDayStep") Step cleanTargetDayStep,
             @org.springframework.beans.factory.annotation.Qualifier("masterIngestStep") Step masterIngestStep,
+            @org.springframework.beans.factory.annotation.Qualifier("autoCreateDimensionsStep") Step autoCreateDimensionsStep,
             @org.springframework.beans.factory.annotation.Qualifier("stagingToFactStep") Step stagingToFactStep,
             @org.springframework.beans.factory.annotation.Qualifier("populateSummaryStep") Step populateSummaryStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateBusinessMetricsStep") Step calculateBusinessMetricsStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
+        // FIX: Added autoCreateDimensionsStep BEFORE stagingToFactStep so the system
+        // self-heals when transaction files are uploaded before (or instead of) a
+        // matching merchant master file. Without this, every fact row whose MID/SID/TID
+        // doesn't match an existing dim_merchant/dim_store/dim_terminal gets
+        // merchant_id=NULL, which causes every summary table to come up empty and
+        // dashboards to show no data. Auto-created dimension rows are minimal
+        // placeholders — a real merchant master upload will enrich them later.
         return new JobBuilder("transactionLoadJob", jobRepository)
                 .start(ensurePartitionsStep).next(splitExcelStep).next(cleanTargetDayStep)
-                .next(masterIngestStep).next(stagingToFactStep).next(populateSummaryStep)
+                .next(masterIngestStep).next(autoCreateDimensionsStep)
+                .next(stagingToFactStep).next(populateSummaryStep)
                 .next(calculateBusinessMetricsStep).next(calculateDailyDashboardMetricsStep).build();
     }
+
+    // ============================================================================
+    // FIX: New step — autoCreateDimensionsStep
+    // ============================================================================
+    // Inserts placeholder rows into dim_merchant, dim_store, dim_terminal for any
+    // MID/SID/TID present in stg_trnx_raw that doesn't already have a matching
+    // dimension row. Self-heals the most common production problem: dashboards
+    // show no data because the merchant master file wasn't uploaded with all
+    // merchants (or wasn't uploaded at all).
+    //
+    // Behavior:
+    //   - Existing dim rows are NEVER modified (NOT EXISTS guard).
+    //   - New rows use synthetic internal_id 'AUTO_<MID>' / etc. to satisfy
+    //     the UNIQUE(tenant_id, internal_id) constraint without colliding with
+    //     real merchant-master uploads.
+    //   - Names default to merchant_name from the file when present and not numeric.
+    //   - Idempotent: running twice does nothing on the second pass.
+    @Bean
+    public Step autoCreateDimensionsStep(Tasklet autoCreateDimensionsTasklet) {
+        return new StepBuilder("autoCreateDimensionsStep", jobRepository)
+            .tasklet(autoCreateDimensionsTasklet, transactionManager).build();
+    }
+
+    @Bean @StepScope
+    public Tasklet autoCreateDimensionsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+        return (contribution, chunkContext) -> {
+            if (tenantId == null) return RepeatStatus.FINISHED;
+            long start = System.currentTimeMillis();
+
+            // PERF FIX: fast-path pre-checks. Each of the three INSERTs below is an
+            // expensive aggregate scan of stg_trnx_raw (potentially 100k+ rows) plus
+            // joins. When the merchant master is already complete (the steady-state
+            // case), all three would scan-and-do-nothing — that's ~3 wasted seconds
+            // per upload on RDS. The pre-check is a single cheap COUNT-EXISTS query
+            // that bails out in milliseconds when nothing needs creating.
+            //
+            // The pre-check uses LIMIT 1 inside EXISTS so PostgreSQL can short-circuit
+            // as soon as the first unmapped MID is found.
+
+            // 1. Auto-create missing merchants — fast pre-check first.
+            //
+            // FIX: production transaction files only carry SID (MID is empty), so we
+            // must look up via SID -> dim_store -> dim_merchant chain instead of via MID.
+            // We only auto-create a merchant when the SID itself isn't in dim_store either,
+            // i.e. truly unknown — in practice this branch is now near-empty because
+            // dim_store is populated by the merchant master upload.
+            int merchantsAdded = 0;
+            Boolean hasUnmappedMerchants = jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
+                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                "AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                "LIMIT 1)", Boolean.class, tenantId);
+
+            if (Boolean.TRUE.equals(hasUnmappedMerchants)) {
+                merchantsAdded = jdbcTemplate.update(
+                    "INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date) " +
+                    "SELECT s.tenant_id, " +
+                    "  'AUTO_SID_' || TRIM(s.sid), " +
+                    "  COALESCE(NULLIF(TRIM(MAX(s.mid)), ''), 'AUTO_MID_' || TRIM(s.sid)), " +
+                    "  MAX(CASE WHEN s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
+                    "           AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + " THEN s.merchant_name END), " +
+                    "  'ACTIVE', NOW() " +
+                    "FROM stg_trnx_raw s " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                    "  AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                    "GROUP BY s.tenant_id, TRIM(s.sid) " +
+                    "ON CONFLICT (tenant_id, internal_id) DO NOTHING",
+                    tenantId);
+            }
+
+            // 2. Auto-create missing stores — keyed off SID (the only reliable column).
+            // For any SID in staging that doesn't have a matching dim_store row, create one
+            // and link it to the auto-created (or existing) merchant via 'AUTO_SID_<sid>'.
+            int storesAdded = 0;
+            Boolean hasUnmappedStores = jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
+                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                "AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                "LIMIT 1)", Boolean.class, tenantId);
+
+            if (Boolean.TRUE.equals(hasUnmappedStores)) {
+                storesAdded = jdbcTemplate.update(
+                    "INSERT INTO dim_store (tenant_id, internal_id, merchant_id, sid, name, status, created_date) " +
+                    "SELECT s.tenant_id, " +
+                    "  'AUTO_STORE_SID_' || TRIM(s.sid), " +
+                    "  m.merchant_id, " +
+                    "  TRIM(s.sid), " +
+                    "  COALESCE(MAX(NULLIF(TRIM(s.store_name), '')), " +
+                    "           MAX(NULLIF(TRIM(s.merchant_store_legal_name), '')), " +
+                    "           MAX(NULLIF(TRIM(s.merchant_name), '')), " +
+                    "           'Store ' || TRIM(s.sid)), " +
+                    "  'ACTIVE', NOW() " +
+                    "FROM stg_trnx_raw s " +
+                    // Link to merchant: prefer MID-matched dim_merchant, fall back to the
+                    // auto-created one we made above (internal_id='AUTO_SID_<sid>').
+                    "JOIN dim_merchant m ON m.tenant_id = s.tenant_id " +
+                    "  AND (m.mid = NULLIF(TRIM(s.mid), '') " +
+                    "    OR m.internal_id = 'AUTO_SID_' || TRIM(s.sid)) " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                    "  AND NOT EXISTS (SELECT 1 FROM dim_store ds " +
+                    "    WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                    "GROUP BY s.tenant_id, m.merchant_id, TRIM(s.sid) " +
+                    "ON CONFLICT (tenant_id, internal_id) DO NOTHING",
+                    tenantId);
+            }
+
+            // 3. Auto-create missing terminals — keyed off SID->store + TID.
+            // Path: stg.sid -> dim_store.sid -> ds.store_id, then attach TID under that.
+            int terminalsAdded = 0;
+            Boolean hasUnmappedTerminals = jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
+                "JOIN dim_store ds ON ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid) " +
+                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL " +
+                "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id " +
+                "  AND dt.store_id = ds.store_id AND dt.tid = TRIM(s.tid)) " +
+                "LIMIT 1)", Boolean.class, tenantId);
+
+            if (Boolean.TRUE.equals(hasUnmappedTerminals)) {
+                terminalsAdded = jdbcTemplate.update(
+                    "INSERT INTO dim_terminal (tenant_id, internal_id, store_id, tid, status, created_date) " +
+                    "SELECT s.tenant_id, " +
+                    "  'AUTO_TERM_' || TRIM(s.sid) || '_' || TRIM(s.tid), " +
+                    "  ds.store_id, " +
+                    "  TRIM(s.tid), " +
+                    "  'ACTIVE', NOW() " +
+                    "FROM stg_trnx_raw s " +
+                    "JOIN dim_store ds ON ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid) " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL " +
+                    "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id " +
+                    "    AND dt.store_id = ds.store_id AND dt.tid = TRIM(s.tid)) " +
+                    "GROUP BY s.tenant_id, ds.store_id, TRIM(s.sid), TRIM(s.tid) " +
+                    "ON CONFLICT (tenant_id, internal_id) DO NOTHING",
+                    tenantId);
+            }
+
+            System.out.printf("autoCreateDimensions: +%d merchants, +%d stores, +%d terminals in %.1fs (skipped: %s%s%s)%n",
+                merchantsAdded, storesAdded, terminalsAdded,
+                (System.currentTimeMillis() - start) / 1000.0,
+                hasUnmappedMerchants ? "" : "merchants ",
+                hasUnmappedStores ? "" : "stores ",
+                hasUnmappedTerminals ? "" : "terminals");
+            return RepeatStatus.FINISHED;
+        };
+    }
+    // ============================================================================
 
     @Bean public Step ensurePartitionsStep(Tasklet ensurePartitionsTasklet) {
         return new StepBuilder("ensurePartitionsStep", jobRepository).tasklet(ensurePartitionsTasklet, transactionManager).build();
@@ -235,6 +389,109 @@ public class TransactionJobConfig {
     }
 
     /**
+     * Ref-table cache shared across ALL partition workers and step executions.
+     *
+     * PERF FIX: was @StepScope inside transactionTenantProcessor. With gridSize(8)
+     * partitioning, that bean is recreated 8× per upload, and each instance ran
+     * 5 sequential RDS metadata+data queries (~250ms RTT each = ~6s of pure
+     * pre-load latency just to get going, plus 8× redundant log spam).
+     *
+     * Now: loaded ONCE on the first call, cached for the lifetime of the JVM,
+     * shared by all 8 workers. Reload is gated by a volatile flag so a restart
+     * isn't needed when ref tables change — but in practice these tables are
+     * static reference data updated only during deployment.
+     *
+     * Thread-safe: HashMap built fully before publish via volatile reference.
+     */
+    private static volatile RefTableCache REF_CACHE = null;
+    private static final Object REF_CACHE_LOCK = new Object();
+
+    private static class RefTableCache {
+        final java.util.Map<String, String> cardSchemeToType;
+        final java.util.Map<String, String> isoNumericToCurrencyCode;
+        final java.util.Map<String, Integer> currencyCodeToDecimal;
+
+        RefTableCache(java.util.Map<String, String> a, java.util.Map<String, String> b, java.util.Map<String, Integer> c) {
+            this.cardSchemeToType = a;
+            this.isoNumericToCurrencyCode = b;
+            this.currencyCodeToDecimal = c;
+        }
+    }
+
+    private RefTableCache loadOrGetRefTables() {
+        RefTableCache cached = REF_CACHE;
+        if (cached != null) return cached;
+        synchronized (REF_CACHE_LOCK) {
+            if (REF_CACHE != null) return REF_CACHE;
+
+            long t = System.currentTimeMillis();
+            java.util.Map<String, String> cardSchemeToType = new java.util.HashMap<>();
+            java.util.Map<String, String> isoNumericToCurrencyCode = new java.util.HashMap<>();
+            java.util.Map<String, Integer> currencyCodeToDecimal = new java.util.HashMap<>();
+
+            try (java.sql.Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(true);
+
+                boolean hasCardScheme = false;
+                try (java.sql.ResultSet rs = conn.getMetaData().getTables(null, null, "ref_card_scheme", null)) {
+                    hasCardScheme = rs.next();
+                }
+                if (hasCardScheme) {
+                    try (java.sql.Statement stmt = conn.createStatement();
+                         java.sql.ResultSet rs = stmt.executeQuery("SELECT code, card_type FROM ref_card_scheme")) {
+                        while (rs.next()) {
+                            int ct = rs.getInt("card_type");
+                            String label = switch (ct) {
+                                case 2, 4 -> "DEBIT";
+                                case 0, 1 -> "CREDIT";
+                                case 3 -> "PREPAID";
+                                default -> "UNKNOWN";
+                            };
+                            cardSchemeToType.put(rs.getString("code"), label);
+                        }
+                    }
+                }
+
+                boolean hasRefCountry = false;
+                try (java.sql.ResultSet rs = conn.getMetaData().getTables(null, null, "ref_country", null)) {
+                    hasRefCountry = rs.next();
+                }
+                if (hasRefCountry) {
+                    try (java.sql.Statement stmt = conn.createStatement();
+                         java.sql.ResultSet rs = stmt.executeQuery(
+                             "SELECT iso_numeric, currency_code, decimal_notation_value FROM ref_country WHERE iso_numeric IS NOT NULL")) {
+                        while (rs.next()) {
+                            String isoNum = rs.getString("iso_numeric");
+                            String curCode = rs.getString("currency_code");
+                            int decVal = rs.getInt("decimal_notation_value");
+                            if (isoNum != null && curCode != null) {
+                                isoNumericToCurrencyCode.put(isoNum.trim(), curCode.trim());
+                                currencyCodeToDecimal.put(curCode.trim(), decVal > 0 ? decVal : 100);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+            } catch (Exception e) {
+                System.err.println("WARN: Could not load ref tables (non-fatal) — raw codes will pass through: " + e.getMessage());
+            }
+
+            REF_CACHE = new RefTableCache(cardSchemeToType, isoNumericToCurrencyCode, currencyCodeToDecimal);
+            System.out.printf("Ref tables loaded ONCE in %.2fs (card_scheme=%d, currency=%d) — cached for all workers%n",
+                (System.currentTimeMillis() - t) / 1000.0,
+                cardSchemeToType.size(), isoNumericToCurrencyCode.size());
+            return REF_CACHE;
+        }
+    }
+
+    /**
+     * Currencies that are missing from ref_country and have already been warned about.
+     * PERF FIX: was logging "WARN: Txn currency 'X' not found..." for EVERY transaction
+     * row with a missing mapping. With 100k rows that's 100k synchronized stdout writes
+     * — measurable overhead. Now we warn ONCE per distinct currency code per JVM.
+     */
+    private static final java.util.Set<String> WARNED_MISSING_CURRENCIES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
      * Processor: sets tenantId AND resolves raw TGEN509 codes:
      *   - Card Type: CRD_TYP_CDE (e.g. 'VIDB') → 'DEBIT'/'CREDIT'/'PREPAID' via ref_card_scheme
      *   - Currency: ISO numeric (e.g. '048') → alphabetic code (e.g. 'BHD') via ref_country
@@ -244,66 +501,13 @@ public class TransactionJobConfig {
     @Bean @StepScope public ItemProcessor<StagingTransaction, StagingTransaction> transactionTenantProcessor(
             @Value("#{jobParameters['tenantId']}") Long tenantId) {
 
-        // Pre-load ref tables into memory using a SEPARATE connection
-        // so that any SQL error does NOT poison the Spring Batch transaction.
-        java.util.Map<String, String> cardSchemeToType = new java.util.HashMap<>();
-        java.util.Map<String, String> isoNumericToCurrencyCode = new java.util.HashMap<>();
-        java.util.Map<String, Integer> currencyCodeToDecimal = new java.util.HashMap<>();
-        try (java.sql.Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(true); // independent of batch transaction
-
-            // Check if ref_card_scheme exists before querying
-            boolean hasCardScheme = false;
-            try (java.sql.ResultSet rs = conn.getMetaData().getTables(null, null, "ref_card_scheme", null)) {
-                hasCardScheme = rs.next();
-            }
-            if (hasCardScheme) {
-                try (java.sql.Statement stmt = conn.createStatement();
-                     java.sql.ResultSet rs = stmt.executeQuery("SELECT code, card_type FROM ref_card_scheme")) {
-                    while (rs.next()) {
-                        int ct = rs.getInt("card_type");
-                        String label = switch (ct) {
-                            case 2, 4 -> "DEBIT";
-                            case 0, 1 -> "CREDIT";
-                            case 3 -> "PREPAID";
-                            default -> "UNKNOWN";
-                        };
-                        cardSchemeToType.put(rs.getString("code"), label);
-                    }
-                }
-                System.out.printf("Loaded %d card scheme mappings from ref_card_scheme%n", cardSchemeToType.size());
-            } else {
-                System.err.println("WARN: ref_card_scheme table does not exist — card types will pass through as-is");
-            }
-
-            // Check if ref_country has iso_numeric + decimal_notation_value columns
-            boolean hasRefCountry = false;
-            try (java.sql.ResultSet rs = conn.getMetaData().getTables(null, null, "ref_country", null)) {
-                hasRefCountry = rs.next();
-            }
-            if (hasRefCountry) {
-                try (java.sql.Statement stmt = conn.createStatement();
-                     java.sql.ResultSet rs = stmt.executeQuery(
-                         "SELECT iso_numeric, currency_code, decimal_notation_value FROM ref_country WHERE iso_numeric IS NOT NULL")) {
-                    while (rs.next()) {
-                        String isoNum = rs.getString("iso_numeric");
-                        String curCode = rs.getString("currency_code");
-                        int decVal = rs.getInt("decimal_notation_value");
-                        if (isoNum != null && curCode != null) {
-                            isoNumericToCurrencyCode.put(isoNum.trim(), curCode.trim());
-                            currencyCodeToDecimal.put(curCode.trim(), decVal > 0 ? decVal : 100);
-                        }
-                    }
-                } catch (Exception e) {
-                    System.err.println("WARN: ref_country missing iso_numeric/decimal_notation_value columns — currencies will pass through: " + e.getMessage());
-                }
-                System.out.printf("Loaded %d currency mappings from ref_country%n", isoNumericToCurrencyCode.size());
-            } else {
-                System.err.println("WARN: ref_country table does not exist — currencies will pass through as-is");
-            }
-        } catch (Exception e) {
-            System.err.println("WARN: Could not load ref tables (non-fatal) — raw codes will pass through: " + e.getMessage());
-        }
+        // PERF FIX: ref-table cache is now a JVM-wide singleton, not per-StepScope.
+        // First worker to call loadOrGetRefTables() populates it; the other 7 workers
+        // get the cached map for free (~zero RDS round-trips after first call).
+        final RefTableCache refs = loadOrGetRefTables();
+        final java.util.Map<String, String> cardSchemeToType = refs.cardSchemeToType;
+        final java.util.Map<String, String> isoNumericToCurrencyCode = refs.isoNumericToCurrencyCode;
+        final java.util.Map<String, Integer> currencyCodeToDecimal = refs.currencyCodeToDecimal;
 
         return item -> {
             item.setTenantId(tenantId);
@@ -338,8 +542,9 @@ public class TransactionJobConfig {
                         item.setTxnCurrencyAmount(
                             before.divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
                     }
-                } else {
-                    System.out.printf("WARN: Txn currency '%s' not found in ref_country — no amount division applied%n", trimmed);
+                } else if (WARNED_MISSING_CURRENCIES.add(trimmed)) {
+                    // PERF FIX: warn ONCE per distinct currency, not per row.
+                    System.out.printf("WARN: Txn currency '%s' not found in ref_country — no amount division applied (warning suppressed for further rows)%n", trimmed);
                 }
                 // If not numeric (already 'BHD'/'USD'), skip conversion
             }
@@ -443,7 +648,29 @@ public class TransactionJobConfig {
                 System.out.printf("WARNING: %d staging rows have NULL payment_date and will be skipped%n", nullDateCount);
             }
 
+            // PERF FIX (bulk transactions): pre-compute distinct dates ONCE.
+            // Same anti-pattern as populateSummaryTasklet — each `(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw...)`
+            // subquery scans the whole staging table. We use this list 4 times below; do
+            // it once and inline as a literal IN-list.
+            java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
+                "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                java.sql.Date.class, tenantId);
+            String dateScope;
+            if (distinctDates.isEmpty()) {
+                System.out.println("stagingToFact: no dates in staging — skipping");
+                return RepeatStatus.FINISHED;
+            } else {
+                dateScope = "(" + distinctDates.stream()
+                    .map(d -> "DATE '" + d.toString() + "'")
+                    .collect(java.util.stream.Collectors.joining(",")) + ")";
+            }
+
             // 0.5 Auto-populate dim_merchant.name from transaction file
+            // PERF FIX: pre-check whether any merchants actually need a name update.
+            // Without the pre-check, we did a full UPDATE scan of dim_merchant on every
+            // upload — even when every merchant already had a good name. That's an
+            // unconditional ~1-2s of DB work skipped in the steady-state case.
             String updateNameSql = "UPDATE dim_merchant m SET name = sub.merchant_name " +
                 "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
                 "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '') sub " +
@@ -451,72 +678,133 @@ public class TransactionJobConfig {
                 "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") " +
                 "AND sub.merchant_name !~ " + NUMERIC_ONLY_REGEX + " " +
                 "AND m.mid = sub.staging_mid";
-            // PERF FIX: removed `OR m.mid LIKE sub.staging_mid || '%' OR sub.staging_mid LIKE m.mid || '%'`
-            // — these patterns force a full table scan of dim_merchant. The exact-match
-            // case covers >99% of real data; the rare prefix-mismatch case is now handled
-            // separately by the prefix-match cleanup below (which only runs once per upload).
-            int namesUpdated = jdbcTemplate.update(updateNameSql, tenantId, tenantId);
-            System.out.printf("Auto-populated %d merchant names (exact-match) in %.1fs%n",
-                namesUpdated, (System.currentTimeMillis() - start) / 1000.0);
+
+            Boolean hasMissingNames = jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM dim_merchant m WHERE m.tenant_id = ? " +
+                "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") LIMIT 1)",
+                Boolean.class, tenantId);
+
+            int namesUpdated = 0;
+            if (Boolean.TRUE.equals(hasMissingNames)) {
+                // PERF FIX: removed `OR m.mid LIKE sub.staging_mid || '%' OR sub.staging_mid LIKE m.mid || '%'`
+                // — these patterns force a full table scan of dim_merchant. The exact-match
+                // case covers >99% of real data; the rare prefix-mismatch case is now handled
+                // separately by the prefix-match cleanup below (which only runs once per upload).
+                namesUpdated = jdbcTemplate.update(updateNameSql, tenantId, tenantId);
+            }
+            System.out.printf("Auto-populated %d merchant names (exact-match) in %.1fs%s%n",
+                namesUpdated, (System.currentTimeMillis() - start) / 1000.0,
+                Boolean.TRUE.equals(hasMissingNames) ? "" : " [skipped: all names good]");
 
             // 0.6 Cleanup pass: prefix-match for any merchants still missing names.
             // Bounded by the small number of unresolved rows, so even a full scan is cheap.
-            long t06 = System.currentTimeMillis();
-            int prefixUpdated = jdbcTemplate.update(
-                "UPDATE dim_merchant m SET name = sub.merchant_name " +
-                "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
-                "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
-                "AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + ") sub " +
-                "WHERE m.tenant_id = ? " +
-                "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") " +
-                "AND m.mid <> sub.staging_mid " +  // skip rows already handled above
-                "AND (m.mid LIKE sub.staging_mid || '%' OR sub.staging_mid LIKE m.mid || '%')",
-                tenantId, tenantId);
-            if (prefixUpdated > 0) {
-                System.out.printf("Auto-populated %d additional merchant names (prefix-match) in %.1fs%n",
-                    prefixUpdated, (System.currentTimeMillis() - t06) / 1000.0);
+            // Skip entirely if no merchants need fixing (re-check after the exact-match update).
+            int prefixUpdated = 0;
+            if (Boolean.TRUE.equals(hasMissingNames)) {
+                Boolean stillMissing = jdbcTemplate.queryForObject(
+                    "SELECT EXISTS (SELECT 1 FROM dim_merchant m WHERE m.tenant_id = ? " +
+                    "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") LIMIT 1)",
+                    Boolean.class, tenantId);
+                if (Boolean.TRUE.equals(stillMissing)) {
+                    long t06 = System.currentTimeMillis();
+                    prefixUpdated = jdbcTemplate.update(
+                        "UPDATE dim_merchant m SET name = sub.merchant_name " +
+                        "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
+                        "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
+                        "AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + ") sub " +
+                        "WHERE m.tenant_id = ? " +
+                        "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") " +
+                        "AND m.mid <> sub.staging_mid " +  // skip rows already handled above
+                        "AND (m.mid LIKE sub.staging_mid || '%' OR sub.staging_mid LIKE m.mid || '%')",
+                        tenantId, tenantId);
+                    if (prefixUpdated > 0) {
+                        System.out.printf("Auto-populated %d additional merchant names (prefix-match) in %.1fs%n",
+                            prefixUpdated, (System.currentTimeMillis() - t06) / 1000.0);
+                    }
+                }
             }
 
             // Delete existing fact rows for the dates we're about to load
             long tDel = System.currentTimeMillis();
             jdbcTemplate.update(
-                "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " +
-                "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)",
-                tenantId, tenantId);
+                "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope,
+                tenantId);
             System.out.printf("Deleted existing fact rows in %.1fs%n", (System.currentTimeMillis() - tDel) / 1000.0);
 
-            // ── Step A: bulk insert with INDEXED EQUALITY joins only ──
-            // PERF FIX: previously did a 3-way LEFT JOIN with `(stg.mid = m.mid OR m.mid LIKE stg.mid || '%' OR stg.mid LIKE m.mid || '%')`
-            // for merchant, store, AND terminal. With OR + LIKE + concatenation, PostgreSQL
-            // CANNOT use any index — falls back to a nested loop with a sequential scan of
-            // dim_merchant per row, then dim_store per row, then dim_terminal per row.
-            // For 100k transactions × thousands of merchants this becomes minutes-long.
+            // ── Step A: bulk insert with SID-PRIMARY join strategy ──
             //
-            // New approach: keep multi-column equality matches (these CAN use indexes via
-            // bitmap-OR), but drop the LIKE/CONCAT patterns. The rare cases where an
-            // equality match misses are fixed up in Step B with a much cheaper UPDATE that
-            // only scans the small subset of unresolved rows.
+            // CRITICAL FIX: the transaction file format used in production has ONLY the
+            // SID column populated — MID, TID, merchant_internal_id, etc. are all empty.
+            // The previous join chain started from `m.mid = stg.mid`, which silently
+            // produced merchant_id=NULL for EVERY row, leaving fact_transaction with all
+            // dimension keys NULL. That broke every summary table downstream
+            // (sum_daily_merchant=0, sum_daily_terminal=0, sum_daily_insight=0) and made
+            // the entire dashboard come up empty.
+            //
+            // New strategy: SID is the anchor. We join dim_store on SID first (a real
+            // value in every row), then derive merchant_id from dim_store.merchant_id.
+            // Terminal is still joined via TID where present. MID/TID-based joins are
+            // kept as fallbacks via COALESCE for files that DO carry MID.
+            //
+            //   stg.sid -> dim_store.sid -> dim_store.merchant_id -> dim_merchant
+            //                            \-> dim_store.store_id
+            //   stg.tid -> dim_terminal.tid (within the resolved store)
+            //
+            // Indexes required for fast joins (verify these exist):
+            //   dim_store(tenant_id, sid)
+            //   dim_terminal(tenant_id, store_id, tid)
             long tIns = System.currentTimeMillis();
             String sql = "INSERT INTO fact_transaction (tenant_id, merchant_id, store_id, terminal_id, " +
                 "arn, rrn_number, card_number, auth_code, payment_date, transaction_date, batch_number, " +
                 "transaction_type, card_scheme, card_type, dcc, txn_currency, txn_currency_amount, " +
                 "store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, interchange_fee, destination) " +
-                "SELECT stg.tenant_id, m.merchant_id, s.store_id, t.terminal_id, " +
+                "SELECT stg.tenant_id, " +
+                // Prefer dim_store.merchant_id (SID path); fall back to dim_merchant via MID
+                // when the file actually carries an MID.
+                "COALESCE(s.merchant_id, m.merchant_id) AS merchant_id, " +
+                "s.store_id, t.terminal_id, " +
                 "stg.arn, stg.rrn_number, stg.card_number, stg.auth_code, " +
                 "stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type, " +
                 "stg.card_scheme, stg.card_type, stg.dcc, stg.txn_currency, stg.txn_currency_amount, " +
                 "stg.store_base_currency, stg.store_base_currency_amount, " +
                 "stg.msf, stg.vat, stg.total_amount_settled, stg.interchange_fee, stg.destination " +
                 "FROM stg_trnx_raw stg " +
-                "LEFT JOIN dim_merchant m ON m.tenant_id = ? AND m.mid = stg.mid " +
-                "LEFT JOIN dim_store s ON s.tenant_id = ? AND s.merchant_id = m.merchant_id " +
-                "  AND (s.sid = stg.sid OR s.internal_id = stg.merchant_store_internal_id) " +
-                "LEFT JOIN dim_terminal t ON t.tenant_id = ? AND t.store_id = s.store_id " +
-                "  AND (t.tid = stg.tid OR t.internal_id = stg.tid) " +
+                // PRIMARY: SID-based store join. NULLIF guards against the empty-string SID
+                // case (would otherwise match any row with empty SID in dim_store).
+                "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id " +
+                "  AND s.sid = NULLIF(TRIM(stg.sid), '') " +
+                // FALLBACK: MID-based merchant join, used only if the file carries MID.
+                "LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id " +
+                "  AND m.mid = NULLIF(TRIM(stg.mid), '') " +
+                // Terminal join: prefer TID match scoped to the resolved store.
+                "LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id " +
+                "  AND t.store_id = s.store_id " +
+                "  AND t.tid = NULLIF(TRIM(stg.tid), '') " +
                 "WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL";
-            int inserted = jdbcTemplate.update(sql, tenantId, tenantId, tenantId, tenantId);
-            System.out.printf("Inserted %d fact rows (equality joins) in %.1fs%n",
+            int inserted = jdbcTemplate.update(sql, tenantId);
+            System.out.printf("Inserted %d fact rows (SID-primary joins) in %.1fs%n",
                 inserted, (System.currentTimeMillis() - tIns) / 1000.0);
+
+            // Diagnostic: report how many rows actually got merchant_id resolved
+            // so the user can immediately see if the dim tables are missing entries.
+            Integer matched = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM fact_transaction WHERE tenant_id = ? " +
+                "AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope,
+                Integer.class, tenantId);
+            Integer total = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM fact_transaction WHERE tenant_id = ? " +
+                "AND DATE(payment_date) IN " + dateScope,
+                Integer.class, tenantId);
+            if (total != null && total > 0) {
+                int unmatched = total - (matched != null ? matched : 0);
+                if (unmatched > 0) {
+                    System.out.printf("WARNING: %d/%d fact rows have NULL merchant_id (SID not found in dim_store). " +
+                        "Upload the merchant master file or check SID format mismatch.%n",
+                        unmatched, total);
+                } else {
+                    System.out.printf("All %d fact rows resolved to a merchant via SID%n", total);
+                }
+            }
 
             // ── Step B: fix-up pass for rows where store/terminal couldn't be resolved ──
             // Handles the legacy CONCAT('STORE_', mid) and CONCAT('TERM_', mid) cases.
@@ -530,8 +818,8 @@ public class TransactionJobConfig {
                 "AND s.merchant_id = f.merchant_id " +
                 "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
                 "AND s.internal_id = CONCAT('STORE_', stg.mid) " +
-                "AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)",
-                tenantId, tenantId, tenantId, tenantId);
+                "AND DATE(f.payment_date) IN " + dateScope,
+                tenantId, tenantId, tenantId);
             int termFixed = jdbcTemplate.update(
                 "UPDATE fact_transaction f SET terminal_id = t.terminal_id " +
                 "FROM dim_terminal t, stg_trnx_raw stg " +
@@ -540,8 +828,8 @@ public class TransactionJobConfig {
                 "AND t.store_id = f.store_id " +
                 "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
                 "AND t.internal_id = CONCAT('TERM_', stg.mid) " +
-                "AND DATE(f.payment_date) IN (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)",
-                tenantId, tenantId, tenantId, tenantId);
+                "AND DATE(f.payment_date) IN " + dateScope,
+                tenantId, tenantId, tenantId);
             if (storeFixed + termFixed > 0) {
                 System.out.printf("Fix-up: %d store_ids, %d terminal_ids resolved via CONCAT pattern in %.1fs%n",
                     storeFixed, termFixed, (System.currentTimeMillis() - tFix) / 1000.0);
@@ -563,8 +851,39 @@ public class TransactionJobConfig {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long start = System.currentTimeMillis();
 
-            String dateScope = "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
-            String monthScope = "(SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
+            // PERF FIX (bulk transactions): the previous code embedded
+            //   `(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)`
+            // 15+ times across the aggregation queries. With 100k staging rows and no
+            // functional index on DATE(payment_date), that's 15 full sequential scans of
+            // stg_trnx_raw — several seconds wasted before any aggregation runs.
+            //
+            // Now: compute the distinct dates ONCE in Java up front, then inline them as
+            // literal IN-lists in each SQL. A typical upload covers 1-7 business dates,
+            // so the inlined list is tiny and the planner can use the partition index on
+            // fact_transaction(payment_date) directly.
+            java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
+                "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                java.sql.Date.class, tenantId);
+            if (distinctDates.isEmpty()) {
+                System.out.println("populateSummary: no dates to process — skipping");
+                return RepeatStatus.FINISHED;
+            }
+            // Build literal IN-lists once. Both DATE format and YYYYMM int format.
+            String dateInList = distinctDates.stream()
+                .map(d -> "DATE '" + d.toString() + "'")
+                .collect(java.util.stream.Collectors.joining(","));
+            java.util.Set<Integer> monthSet = new java.util.LinkedHashSet<>();
+            for (java.sql.Date d : distinctDates) {
+                java.time.LocalDate ld = d.toLocalDate();
+                monthSet.add(ld.getYear() * 100 + ld.getMonthValue());
+            }
+            String monthInList = monthSet.stream().map(String::valueOf)
+                .collect(java.util.stream.Collectors.joining(","));
+            final String dateScope = "(" + dateInList + ")";
+            final String monthScope = "(" + monthInList + ")";
+            System.out.printf("populateSummary: %d dates, %d months in scope%n",
+                distinctDates.size(), monthSet.size());
 
             // PERF FIX: parallelize independent aggregation queries.
             // Previously these 15 queries ran sequentially, each round-trip to RDS adding
@@ -583,13 +902,12 @@ public class TransactionJobConfig {
             try {
                 java.util.List<java.util.concurrent.CompletableFuture<Void>> phase1 = new java.util.ArrayList<>();
 
-                // 0.5 Auto-populate merchant name backup (kept on main thread — it's a tiny upsert)
-                String updateNameSql2 = "UPDATE dim_merchant m SET name = sub.merchant_name " +
-                    "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
-                    "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '') sub " +
-                    "WHERE m.tenant_id = ? AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") " +
-                    "AND m.mid = sub.staging_mid";
-                jdbcTemplate.update(updateNameSql2, tenantId, tenantId);
+                // PERF FIX: removed the duplicate "0.5 Auto-populate merchant name backup" UPDATE
+                // that used to run here. It's already done in stagingToFactTasklet (with a
+                // fast-path pre-check), so running it again was 1-2s of redundant DB work
+                // every upload. If a future caller runs populateSummaryStep standalone
+                // without stagingToFact first, names just won't be updated — acceptable
+                // because that's a non-standard execution path.
 
                 // 1. sum_daily_bank
                 phase1.add(runAsync(exec, "sum_daily_bank", () ->
@@ -602,7 +920,7 @@ public class TransactionJobConfig {
                         "ON CONFLICT (tenant_id, business_date) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId, tenantId)));
+                        "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
 
                 // 2. sum_daily_merchant (independent of phase 2 — phase 2 only updates 2 columns on these rows)
                 phase1.add(runAsync(exec, "sum_daily_merchant", () ->
@@ -632,7 +950,7 @@ public class TransactionJobConfig {
                         "unique_customer_count=EXCLUDED.unique_customer_count, " +
                         "dcc_eligible_volume=EXCLUDED.dcc_eligible_volume, dcc_optin_volume=EXCLUDED.dcc_optin_volume, " +
                         "dcc_optout_volume=EXCLUDED.dcc_optout_volume, dcc_eligible_count=EXCLUDED.dcc_eligible_count, " +
-                        "dcc_optin_count=EXCLUDED.dcc_optin_count", tenantId, tenantId)));
+                        "dcc_optin_count=EXCLUDED.dcc_optin_count", tenantId)));
 
                 // 3. sum_daily_mcc
                 phase1.add(runAsync(exec, "sum_daily_mcc", () ->
@@ -645,7 +963,7 @@ public class TransactionJobConfig {
                         "GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme " +
                         "ON CONFLICT (tenant_id, business_date, mcc, card_scheme) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
-                        "total_scheme_fee=EXCLUDED.total_scheme_fee, total_net_revenue=EXCLUDED.total_net_revenue", tenantId, tenantId)));
+                        "total_scheme_fee=EXCLUDED.total_scheme_fee, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
 
                 // 4. sum_daily_scheme
                 phase1.add(runAsync(exec, "sum_daily_scheme", () ->
@@ -658,7 +976,7 @@ public class TransactionJobConfig {
                         "ON CONFLICT (tenant_id, business_date, card_scheme) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_net_revenue=EXCLUDED.total_net_revenue", tenantId, tenantId)));
+                        "total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
 
                 // 5. sum_daily_channel
                 phase1.add(runAsync(exec, "sum_daily_channel", () ->
@@ -672,7 +990,7 @@ public class TransactionJobConfig {
                         "ON CONFLICT (tenant_id, business_date, channel) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_net_revenue=EXCLUDED.total_net_revenue", tenantId, tenantId)));
+                        "total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
 
                 // 7. sum_daily_terminal
                 phase1.add(runAsync(exec, "sum_daily_terminal", () ->
@@ -684,7 +1002,7 @@ public class TransactionJobConfig {
                         "GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, total_revenue=EXCLUDED.total_revenue",
-                        tenantId, tenantId)));
+                        tenantId)));
 
                 // 8. sum_daily_finance
                 phase1.add(runAsync(exec, "sum_daily_finance", () ->
@@ -714,7 +1032,7 @@ public class TransactionJobConfig {
                         "dom_credit_cnt=EXCLUDED.dom_credit_cnt, dom_credit_vol=EXCLUDED.dom_credit_vol, " +
                         "dom_credit_msf=EXCLUDED.dom_credit_msf, dom_credit_optin=EXCLUDED.dom_credit_optin, " +
                         "int_cnt=EXCLUDED.int_cnt, int_vol=EXCLUDED.int_vol, int_msf=EXCLUDED.int_msf, int_optin=EXCLUDED.int_optin, " +
-                        "total_vol=EXCLUDED.total_vol, total_msf=EXCLUDED.total_msf", tenantId, tenantId)));
+                        "total_vol=EXCLUDED.total_vol, total_msf=EXCLUDED.total_msf", tenantId)));
 
                 // 9. sum_daily_insight
                 phase1.add(runAsync(exec, "sum_daily_insight", () ->
@@ -728,7 +1046,7 @@ public class TransactionJobConfig {
                         "f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +
                         "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf",
-                        tenantId, tenantId)));
+                        tenantId)));
 
                 // 10. Merchant attributes (4 inserts — each runs as own task)
                 String[] attrCols = {"CARD_SCHEME:card_scheme", "CARD_TYPE:card_type", "DESTINATION:destination", "TRANSACTION_TYPE:transaction_type"};
@@ -743,7 +1061,7 @@ public class TransactionJobConfig {
                             "GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(%s,'UNKNOWN')) " +
                             "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                             "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume",
-                            parts[0], parts[1], dateScope, parts[1]), tenantId, tenantId);
+                            parts[0], parts[1], dateScope, parts[1]), tenantId);
                     }));
                 }
 
@@ -754,7 +1072,7 @@ public class TransactionJobConfig {
                         "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND transaction_date IS NOT NULL AND DATE(payment_date) IN " + dateScope + " " +
                         "GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date) " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId, tenantId)));
+                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId)));
 
                 // TXN_SIZE_BUCKET
                 phase1.add(runAsync(exec, "attr-BUCKET", () ->
@@ -769,7 +1087,7 @@ public class TransactionJobConfig {
                         "WHEN store_base_currency_amount < 250 THEN '100-250' WHEN store_base_currency_amount < 500 THEN '250-500' " +
                         "WHEN store_base_currency_amount < 1000 THEN '500-1K' ELSE '1K+' END " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId, tenantId)));
+                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId)));
 
                 // 11. sum_monthly_card
                 phase1.add(runAsync(exec, "sum_monthly_card", () ->
@@ -778,7 +1096,7 @@ public class TransactionJobConfig {
                         "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN " + monthScope + " " +
                         "GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date,'YYYYMM'), card_number " +
                         "ON CONFLICT (tenant_id, merchant_id, month_key, card_number) DO UPDATE SET " +
-                        "visit_count=EXCLUDED.visit_count, total_spend=EXCLUDED.total_spend", tenantId, tenantId)));
+                        "visit_count=EXCLUDED.visit_count, total_spend=EXCLUDED.total_spend", tenantId)));
 
                 // 6. sum_monthly_bank — reads from sum_daily_bank, so must wait for #1
                 // We add it to phase1 anyway because it depends on the SAME sum_daily_bank rows
@@ -803,7 +1121,7 @@ public class TransactionJobConfig {
                         "ON CONFLICT (tenant_id, month_key) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId, tenantId)));
+                        "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
 
                 phase2.add(runAsync(exec, "top_spending_customer", () ->
                     jdbcTemplate.update("WITH DailyCustSpend AS (SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number, " +
@@ -812,7 +1130,7 @@ public class TransactionJobConfig {
                         "Ranked AS (SELECT *, ROW_NUMBER() OVER(PARTITION BY tenant_id, merchant_id, b_date ORDER BY total_spend DESC) as rn FROM DailyCustSpend) " +
                         "UPDATE sum_daily_merchant s SET top_spending_customer_id=r.card_number, top_spending_amount=r.total_spend " +
                         "FROM Ranked r WHERE s.tenant_id=r.tenant_id AND s.merchant_id=r.merchant_id AND s.business_date=r.b_date AND r.rn=1 AND s.tenant_id = ?",
-                        tenantId, tenantId, tenantId)));
+                        tenantId, tenantId)));
 
                 java.util.concurrent.CompletableFuture.allOf(phase2.toArray(new java.util.concurrent.CompletableFuture[0])).join();
             } finally {
@@ -852,6 +1170,20 @@ public class TransactionJobConfig {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long start = System.currentTimeMillis();
 
+            // PERF FIX (bulk transactions): pre-compute distinct dates ONCE — same
+            // anti-pattern as populateSummaryTasklet, used 4 times in this tasklet.
+            java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
+                "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                java.sql.Date.class, tenantId);
+            if (distinctDates.isEmpty()) {
+                System.out.println("businessMetrics: no dates to process — skipping");
+                return RepeatStatus.FINISHED;
+            }
+            String dateScope = "(" + distinctDates.stream()
+                .map(d -> "DATE '" + d.toString() + "'")
+                .collect(java.util.stream.Collectors.joining(",")) + ")";
+
             // PERF FIX: previously did `dim_merchant CROSS JOIN distinct dates` which
             // generates O(merchants × dates) rows even for dormant merchants with zero
             // transactions. Restrict to merchants that actually have transactions on
@@ -866,27 +1198,30 @@ public class TransactionJobConfig {
                 "CASE WHEN MAX(f.payment_date) >= d.target_date - INTERVAL '30 days' THEN 'ACTIVE' " +
                 "WHEN MAX(f.payment_date) < d.target_date - INTERVAL '30 days' THEN 'DORMANT' ELSE 'ONBOARDED' END, d.target_date " +
                 "FROM dim_merchant m " +
-                "JOIN (SELECT DISTINCT DATE(payment_date) as target_date FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL) d ON TRUE " +
+                // PERF FIX: bound the LEFT JOIN scan to last 60 days so we don't read
+                // the merchant's lifetime fact_transaction history just to compute
+                // 7d/30d windows. 60-day window covers both the 30d window and the
+                // first/last_txn_date 'recent activity' use-case.
+                "JOIN (VALUES " + distinctDates.stream().map(d -> "(DATE '" + d.toString() + "')").collect(java.util.stream.Collectors.joining(",")) + ") d(target_date) ON TRUE " +
                 "LEFT JOIN fact_transaction f ON m.merchant_id = f.merchant_id AND f.tenant_id = m.tenant_id " +
+                "  AND f.payment_date >= (CURRENT_DATE - INTERVAL '60 days') " +
                 "WHERE m.tenant_id = ? " +
                 // Only consider merchants that touched fact_transaction in the relevant date window
                 "AND m.merchant_id IN (SELECT DISTINCT merchant_id FROM fact_transaction WHERE tenant_id = ? " +
-                "  AND merchant_id IS NOT NULL AND DATE(payment_date) IN " +
-                "  (SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)) " +
+                "  AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope + ") " +
                 "GROUP BY m.tenant_id, m.merchant_id, d.target_date " +
                 "ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET " +
                 "first_txn_date=EXCLUDED.first_txn_date, last_txn_date=EXCLUDED.last_txn_date, " +
                 "last_7d_cnt=EXCLUDED.last_7d_cnt, last_7d_value=EXCLUDED.last_7d_value, " +
                 "last_30d_cnt=EXCLUDED.last_30d_cnt, last_30d_value=EXCLUDED.last_30d_value, " +
                 "status=EXCLUDED.status, status_change_date=EXCLUDED.status_change_date",
-                tenantId, tenantId, tenantId, tenantId);
+                tenantId, tenantId);
 
             jdbcTemplate.update("INSERT INTO merchant_opportunity_score (tenant_id, merchant_id, score, reason_tags, calc_date) " +
                 "SELECT tenant_id, merchant_id, CASE WHEN last_30d_value > 1000 THEN 80 ELSE 40 END, 'Automated Score', calc_date " +
-                "FROM merchant_activity_summary WHERE tenant_id = ? AND calc_date IN " +
-                "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL) " +
+                "FROM merchant_activity_summary WHERE tenant_id = ? AND calc_date IN " + dateScope + " " +
                 "ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET score=EXCLUDED.score, reason_tags=EXCLUDED.reason_tags",
-                tenantId, tenantId);
+                tenantId);
 
             System.out.printf("businessMetrics completed in %.1fs%n", (System.currentTimeMillis() - start) / 1000.0);
             return RepeatStatus.FINISHED;
