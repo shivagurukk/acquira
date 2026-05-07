@@ -681,7 +681,17 @@ public class TransactionJobConfig {
 
     // Step 4: Staging to Fact
     @Bean public Step stagingToFactStep(Tasklet stagingToFactTasklet) {
-        return new StepBuilder("stagingToFactStep", jobRepository).tasklet(stagingToFactTasklet, transactionManager).build();
+        // FIX: this step runs many large jdbcTemplate.update() statements that take
+        // tens of seconds each (DELETE existing rows + INSERT INTO fact + UPDATE fix-up).
+        // With the default Spring Batch wrapping transaction they all share ONE transaction,
+        // which on a 250 MB upload runs >30 minutes — long enough that PostgreSQL's
+        // idle_in_transaction_session_timeout kills the connection mid-job.
+        // setting propagation NEVER means each jdbcTemplate.update() commits on its
+        // own auto-commit boundary instead of accumulating in a single huge transaction.
+        return new StepBuilder("stagingToFactStep", jobRepository)
+            .tasklet(stagingToFactTasklet, transactionManager)
+            .transactionAttribute(noTxn())
+            .build();
     }
 
     @Bean @StepScope
@@ -902,7 +912,15 @@ public class TransactionJobConfig {
 
     // Step 5: Populate Summary Tables
     @Bean public Step populateSummaryStep(Tasklet populateSummaryTasklet) {
-        return new StepBuilder("populateSummaryStep", jobRepository).tasklet(populateSummaryTasklet, transactionManager).build();
+        // FIX: 15 parallel aggregation queries, each can run for minutes on 250 MB data.
+        // Holding them all in a single batch-managed transaction caused PostgreSQL's
+        // idle_in_transaction_session_timeout to fire after ~30 min, killing the upload
+        // with a misleading "Connection is closed" error. With NEVER propagation each
+        // jdbcTemplate.update() commits immediately on its own connection from the pool.
+        return new StepBuilder("populateSummaryStep", jobRepository)
+            .tasklet(populateSummaryTasklet, transactionManager)
+            .transactionAttribute(noTxn())
+            .build();
     }
 
     @Bean @StepScope
@@ -1221,7 +1239,14 @@ public class TransactionJobConfig {
 
     // Step 6: Business Metrics
     @Bean public Step calculateBusinessMetricsStep(Tasklet calculateBusinessMetricsTasklet) {
-        return new StepBuilder("calculateBusinessMetricsStep", jobRepository).tasklet(calculateBusinessMetricsTasklet, transactionManager).build();
+        // FIX: same idle-in-transaction risk as stagingToFact / populateSummary above.
+        // The big merchant_activity_summary INSERT can run for 2+ minutes on its own;
+        // putting it under a step-level transaction stacks it on top of whatever the
+        // job repository UPDATE locked, which is what triggered the timeout.
+        return new StepBuilder("calculateBusinessMetricsStep", jobRepository)
+            .tasklet(calculateBusinessMetricsTasklet, transactionManager)
+            .transactionAttribute(noTxn())
+            .build();
     }
 
     @Bean @StepScope
@@ -1286,6 +1311,23 @@ public class TransactionJobConfig {
             System.out.printf("businessMetrics completed in %.1fs%n", (System.currentTimeMillis() - start) / 1000.0);
             return RepeatStatus.FINISHED;
         };
+    }
+
+    /**
+     * Returns a transaction attribute that tells Spring Batch NOT to wrap the
+     * tasklet in a managed transaction. Used by the long-running summary/fact
+     * steps where each jdbcTemplate.update() should commit on its own boundary
+     * rather than accumulating in a single huge transaction.
+     *
+     * Without this, PostgreSQL's idle_in_transaction_session_timeout (typically
+     * 30 min on RDS) kills the connection partway through a 250 MB upload, with
+     * a confusing "Connection is closed" stack trace.
+     */
+    private static org.springframework.transaction.interceptor.DefaultTransactionAttribute noTxn() {
+        org.springframework.transaction.interceptor.DefaultTransactionAttribute attr =
+            new org.springframework.transaction.interceptor.DefaultTransactionAttribute(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_NEVER);
+        return attr;
     }
 
     // Step 7: Dashboard Metrics
