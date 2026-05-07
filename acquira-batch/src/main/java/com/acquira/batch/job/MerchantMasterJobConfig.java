@@ -181,13 +181,13 @@ public class MerchantMasterJobConfig {
             m.setAggregatorName(reader.getCellValue(row, "Aggregator Name"));
             m.setAggregatorCode(reader.getCellValue(row, "Aggregator Code"));
             m.setMerchantInternalId(reader.getCellValue(row, "MerchantInternalId"));
-            m.setMid(reader.getCellValue(row, "MID"));
+            m.setMid(normalizeSid(reader.getCellValue(row, "MID")));
             m.setMerchantName(reader.getCellValue(row, "MerchantName"));
             m.setMerchantStatus(reader.getCellValue(row, "MerchantStatus"));
             m.setRiskLevel(reader.getCellValue(row, "RiskLevel"));
             m.setProduct(reader.getCellValue(row, "Product"));
             m.setMerchantStoreInternalId(reader.getCellValue(row, "MerchantStoreInternalId"));
-            m.setSid(reader.getCellValue(row, "SID"));
+            m.setSid(normalizeSid(reader.getCellValue(row, "SID")));
             m.setStoreLegalName(reader.getCellValue(row, "StoreLegalName"));
             m.setStoreName(reader.getCellValue(row, "StoreName"));
             m.setStoreStatus(reader.getCellValue(row, "Store Status"));
@@ -259,13 +259,13 @@ public class MerchantMasterJobConfig {
             m.setAggregatorName(rr.getCsvCellValue("Aggregator Name"));
             m.setAggregatorCode(rr.getCsvCellValue("Aggregator Code"));
             m.setMerchantInternalId(rr.getCsvCellValue("MerchantInternalId"));
-            m.setMid(rr.getCsvCellValue("MID"));
+            m.setMid(normalizeSid(rr.getCsvCellValue("MID")));
             m.setMerchantName(rr.getCsvCellValue("MerchantName"));
             m.setMerchantStatus(rr.getCsvCellValue("MerchantStatus"));
             m.setRiskLevel(rr.getCsvCellValue("RiskLevel"));
             m.setProduct(rr.getCsvCellValue("Product"));
             m.setMerchantStoreInternalId(rr.getCsvCellValue("MerchantStoreInternalId"));
-            m.setSid(rr.getCsvCellValue("SID"));
+            m.setSid(normalizeSid(rr.getCsvCellValue("SID")));
             m.setStoreLegalName(rr.getCsvCellValue("StoreLegalName"));
             m.setStoreName(rr.getCsvCellValue("StoreName"));
             m.setStoreStatus(rr.getCsvCellValue("Store Status"));
@@ -343,6 +343,47 @@ public class MerchantMasterJobConfig {
         if (val == null || val.trim().isEmpty()) return null;
         try { return java.time.LocalDate.parse(val.trim()).atStartOfDay(); }
         catch (Exception e) { return null; }
+    }
+
+    /**
+     * Normalize SID/MID/TID values that may have been mangled by Excel into
+     * scientific notation. When a 13+ digit number sits in a General-format
+     * cell, Excel renders it as e.g. "4.00E+14" and that string is what
+     * fastexcel/POI hand back as the cell text.
+     *
+     * If we store "4.00E+14" in dim_store.sid, the SID-primary join in the
+     * transaction job (which sees the real "400000107230009" from the txn file)
+     * will MISS, fact rows get NULL merchant_id, and the dashboard for that
+     * merchant goes blank.
+     *
+     * Strategy: if the value matches scientific-notation pattern, parse it
+     * back to a plain integer string via BigDecimal.toBigInteger(). Otherwise
+     * return as-is (trimmed, null for empty).
+     *
+     * IMPORTANT CAVEAT: when Excel rounds, the rounded SID will not exactly
+     * match the txn file's full-precision SID. The proper fix is for users
+     * to format the SID column as TEXT in Excel before saving (or save as CSV).
+     * This normalizer at least catches cases where the file has the FULL value
+     * but in scientific notation.
+     *
+     * Called from MerchantMasterJobConfig CSV/Excel readers AND from
+     * TransactionJobConfig CSV reader — must remain `static` and
+     * package-visible.
+     */
+    static String normalizeSid(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim();
+        if (s.isEmpty()) return null;
+        // Match scientific notation: digits.digits[E|e][+|-]digits
+        if (s.matches("-?\\d+(?:\\.\\d+)?[Ee][+-]?\\d+")) {
+            try {
+                java.math.BigDecimal bd = new java.math.BigDecimal(s);
+                return bd.toBigInteger().toString();
+            } catch (NumberFormatException e) {
+                return s;
+            }
+        }
+        return s;
     }
 
     /** PERF FIX (bulk merchant upload): replaced JdbcBatchItemWriter (named-param,
@@ -558,6 +599,7 @@ public class MerchantMasterJobConfig {
                 WHERE tenant_id = TID
                 GROUP BY tenant_id, COALESCE(merchant_internal_id, mid), mid
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
+                    mid = EXCLUDED.mid,
                     name = CASE WHEN EXCLUDED.name IS NOT NULL AND TRIM(EXCLUDED.name) <> ''
                                 THEN EXCLUDED.name ELSE dim_merchant.name END,
                     status = EXCLUDED.status,
@@ -587,6 +629,8 @@ public class MerchantMasterJobConfig {
                 WHERE s.tenant_id = TID
                 GROUP BY s.tenant_id, COALESCE(merchant_store_internal_id, sid, CONCAT('STORE_', s.mid)), sid
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
+                    sid = EXCLUDED.sid,
+                    merchant_id = EXCLUDED.merchant_id,
                     name = EXCLUDED.name, address = EXCLUDED.address,
                     city = EXCLUDED.city, state = EXCLUDED.state, status = EXCLUDED.status
                 """.replace("TID", tId);

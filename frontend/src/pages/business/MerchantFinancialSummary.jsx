@@ -12,7 +12,14 @@ import { useAuth } from '../../contexts/AuthContext';
 /* ── Date Preset Resolver ──────────────────────────────────────── */
 const computeDateRange = (preset) => {
     const now = new Date();
-    const fmt = (d) => d.toISOString().split('T')[0];
+    // Local-date formatter — toISOString() shifts dates by one day in non-UTC timezones.
+    // See PremiumReportHeader.jsx for the full bug explanation.
+    const fmt = (d) => {
+        const yr = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        return `${yr}-${mo}-${dy}`;
+    };
     switch (preset) {
         case 'TODAY':      return { startDate: fmt(now), endDate: fmt(now) };
         case 'MONTH':      return { startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
@@ -36,12 +43,53 @@ const MerchantFinancialSummary = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showFilters, setShowFilters] = useState(false);
+    const [boundsLoaded, setBoundsLoaded] = useState(false);
     const [filters, setFilters] = useState(() => {
-        const range = computeDateRange('MONTH');
-        return { datePreset: 'MONTH', ...range };
+        // Empty defaults; data-bounds effect below populates these with the latest
+        // month that actually has data. Falls back to current month on error.
+        return { datePreset: 'MONTH', startDate: '', endDate: '' };
     });
 
-    useEffect(() => { fetchReport(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        // Local-date formatter — see PremiumReportHeader.jsx for the timezone bug.
+        const fmtLocal = (d) => {
+            const yr = d.getFullYear();
+            const mo = String(d.getMonth() + 1).padStart(2, '0');
+            const dy = String(d.getDate()).padStart(2, '0');
+            return `${yr}-${mo}-${dy}`;
+        };
+        const loadBounds = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const tenantId = localStorage.getItem('defaultTenantId');
+                const res = await fetch('/api/business/data-bounds', {
+                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
+                });
+                if (res.ok) {
+                    const b = await res.json();
+                    if (b?.latest) {
+                        const latest = new Date(b.latest);
+                        const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
+                        setFilters(prev => ({
+                            ...prev,
+                            startDate: fmtLocal(first),
+                            endDate:   fmtLocal(latest),
+                        }));
+                        setBoundsLoaded(true);
+                        return;
+                    }
+                }
+            } catch (e) { /* fall through */ }
+            const range = computeDateRange('MONTH');
+            setFilters(prev => ({ ...prev, ...range }));
+            setBoundsLoaded(true);
+        };
+        loadBounds();
+    }, []);
+
+    useEffect(() => {
+        if (boundsLoaded) fetchReport();
+    }, [boundsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchReport = async () => {
         setLoading(true);

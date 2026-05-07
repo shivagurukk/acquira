@@ -20,8 +20,24 @@ public class ExecutiveDashboardRepository {
     private EntityManager entityManager;
 
     public ExecutiveDashboardDTO getDashboardData(String dataset, LocalDate asOfDate) {
+        return getDashboardData(dataset, asOfDate, null);
+    }
+
+    /**
+     * Tenant-scoped variant. When tenantId is non-null every query in this method
+     * appends an `AND <alias>.tenant_id = :tenantId` clause so cross-tenant rows
+     * cannot leak. Previously this entire repository ran un-scoped which meant the
+     * Executive Dashboard would mix data across tenants in any multi-tenant deployment.
+     */
+    public ExecutiveDashboardDTO getDashboardData(String dataset, LocalDate asOfDate, Long tenantId) {
         if (asOfDate == null)
             asOfDate = LocalDate.now();
+        // Tenant clauses appended to each query when tenantId is non-null. Kept as
+        // local variables (rather than rewriting every query inline) so the patch is
+        // minimally invasive and easy to audit.
+        final String tStore   = (tenantId != null) ? " AND s.tenant_id = :tenantId"  : "";
+        final String tStoreSt = (tenantId != null) ? " AND st.tenant_id = :tenantId" : "";
+        final String tSdi     = (tenantId != null) ? " AND sdi.tenant_id = :tenantId" : "";
 
         // Dates
         LocalDate yearStart = asOfDate.with(TemporalAdjusters.firstDayOfYear());
@@ -59,26 +75,26 @@ public class ExecutiveDashboardRepository {
         // 1. KPI Queries
 
         // YTD SID (Stores created)
-        String sqlSid = "SELECT count(s.store_id) FROM dim_store s WHERE s.created_date BETWEEN :yearStart AND :asOfDate";
+        String sqlSid = "SELECT count(s.store_id) FROM dim_store s WHERE s.created_date BETWEEN :yearStart AND :asOfDate" + tStore;
         // YTD MID
-        String sqlMid = "SELECT count(distinct s.merchant_id) FROM dim_store s WHERE s.created_date BETWEEN :yearStart AND :asOfDate";
+        String sqlMid = "SELECT count(distinct s.merchant_id) FROM dim_store s WHERE s.created_date BETWEEN :yearStart AND :asOfDate" + tStore;
 
         // MTD SID
-        String sqlMtdSid = "SELECT count(s.store_id) FROM dim_store s WHERE s.created_date BETWEEN :monthStart AND :asOfDate";
+        String sqlMtdSid = "SELECT count(s.store_id) FROM dim_store s WHERE s.created_date BETWEEN :monthStart AND :asOfDate" + tStore;
 
         // WTD SID
-        String sqlWtdSid = "SELECT count(s.store_id) FROM dim_store s WHERE s.created_date BETWEEN :weekStart AND :asOfDate";
+        String sqlWtdSid = "SELECT count(s.store_id) FROM dim_store s WHERE s.created_date BETWEEN :weekStart AND :asOfDate" + tStore;
 
         // MTD MSF (Sum Daily Insight joined with Store to ensure active checks?)
         // Actually sum_daily_insight has store_id.
-        String sqlMtdMsf = "SELECT SUM(sdi.total_msf) FROM sum_daily_insight sdi WHERE sdi.business_date BETWEEN :monthStart AND :asOfDate";
+        String sqlMtdMsf = "SELECT SUM(sdi.total_msf) FROM sum_daily_insight sdi WHERE sdi.business_date BETWEEN :monthStart AND :asOfDate" + tSdi;
 
-        kpis.setYtdSid(count(sqlSid, yearStart, asOfDate));
-        kpis.setYtdMid(count(sqlMid, yearStart, asOfDate));
-        kpis.setMtdSid(count(sqlMtdSid, monthStart, asOfDate));
-        kpis.setWtdSid(count(sqlWtdSid, weekStart, asOfDate));
+        kpis.setYtdSid(count(sqlSid, yearStart, asOfDate, tenantId));
+        kpis.setYtdMid(count(sqlMid, yearStart, asOfDate, tenantId));
+        kpis.setMtdSid(count(sqlMtdSid, monthStart, asOfDate, tenantId));
+        kpis.setWtdSid(count(sqlWtdSid, weekStart, asOfDate, tenantId));
 
-        kpis.setMtdMsfUsd(sum(sqlMtdMsf, monthStart, asOfDate));
+        kpis.setMtdMsfUsd(sum(sqlMtdMsf, monthStart, asOfDate, tenantId));
 
         dto.setKpis(kpis);
 
@@ -90,58 +106,57 @@ public class ExecutiveDashboardRepository {
         // Join store -> merchant
         String chart1Sql = "SELECT m.sales_user_id, COUNT(st.store_id) as cnt " +
                 "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id " +
-                "WHERE st.created_date BETWEEN :yearStart AND :asOfDate " +
+                "WHERE st.created_date BETWEEN :yearStart AND :asOfDate" + tStoreSt + " " +
                 "GROUP BY m.sales_user_id ORDER BY cnt DESC LIMIT 10";
-        charts.put("ytdByAgent", queryList(chart1Sql, yearStart, asOfDate, "agent", "count"));
+        charts.put("ytdByAgent", queryList(chart1Sql, yearStart, asOfDate, "agent", "count", tenantId));
 
         // Chart 2: YTD by Program (Referral Partner)
         String chart2Sql = "SELECT m.referral_partner, COUNT(st.store_id) as cnt " +
                 "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id " +
-                "WHERE st.created_date BETWEEN :yearStart AND :asOfDate " +
+                "WHERE st.created_date BETWEEN :yearStart AND :asOfDate" + tStoreSt + " " +
                 "GROUP BY m.referral_partner ORDER BY cnt DESC";
-        charts.put("ytdByProgram", queryList(chart2Sql, yearStart, asOfDate, "program", "count"));
+        charts.put("ytdByProgram", queryList(chart2Sql, yearStart, asOfDate, "program", "count", tenantId));
 
         // Chart 3: MTD Volume Split by Program
         // Join sum_daily -> merchant
         String chart3Sql = "SELECT m.referral_partner, SUM(sdi.total_volume) as vol " +
                 "FROM sum_daily_insight sdi JOIN dim_merchant m ON sdi.merchant_id = m.merchant_id " +
-                "WHERE sdi.business_date BETWEEN :monthStart AND :asOfDate " +
+                "WHERE sdi.business_date BETWEEN :monthStart AND :asOfDate" + tSdi + " " +
                 "GROUP BY m.referral_partner ORDER BY vol DESC";
-        charts.put("mtdVolumeSplit", queryList(chart3Sql, monthStart, asOfDate, "program", "value"));
+        charts.put("mtdVolumeSplit", queryList(chart3Sql, monthStart, asOfDate, "program", "value", tenantId));
 
         // Chart 4: MTD SID by Program
         String chart4Sql = "SELECT m.referral_partner, COUNT(st.store_id) as cnt " +
                 "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id " +
-                "WHERE st.created_date BETWEEN :monthStart AND :asOfDate " +
+                "WHERE st.created_date BETWEEN :monthStart AND :asOfDate" + tStoreSt + " " +
                 "GROUP BY m.referral_partner ORDER BY cnt DESC";
-        charts.put("mtdSidByProgram", queryList(chart4Sql, monthStart, asOfDate, "program", "count"));
+        charts.put("mtdSidByProgram", queryList(chart4Sql, monthStart, asOfDate, "program", "count", tenantId));
 
         dto.setCharts(charts);
 
         return dto;
     }
 
+    // Backward-compatible overloads (no tenantId)
     private long count(String sql, LocalDate start, LocalDate end) {
+        return count(sql, start, end, null);
+    }
+    private double sum(String sql, LocalDate start, LocalDate end) {
+        return sum(sql, start, end, null);
+    }
+    private List<Map<String, Object>> queryList(String sql, LocalDate start, LocalDate end, String keyCol, String valCol) {
+        return queryList(sql, start, end, keyCol, valCol, null);
+    }
+
+    private long count(String sql, LocalDate start, LocalDate end, Long tenantId) {
         try {
             Query q = entityManager.createNativeQuery(sql);
-            // Attempt to set standardized params blindly (robustness hack for dynamic
-            // queries)
-            try {
-                q.setParameter("yearStart", start);
-            } catch (Exception e) {
-            }
-            try {
-                q.setParameter("monthStart", start);
-            } catch (Exception e) {
-            }
-            try {
-                q.setParameter("weekStart", start);
-            } catch (Exception e) {
-            }
-            try {
-                q.setParameter("asOfDate", end);
-            } catch (Exception e) {
-            }
+            // Attempt to set standardized params blindly (robustness hack for dynamic queries)
+            try { q.setParameter("yearStart", start); }  catch (Exception e) {}
+            try { q.setParameter("monthStart", start); } catch (Exception e) {}
+            try { q.setParameter("weekStart", start); }  catch (Exception e) {}
+            try { q.setParameter("asOfDate", end); }     catch (Exception e) {}
+            if (tenantId != null) { try { q.setParameter("tenantId", tenantId); } catch (Exception e) {} }
 
             Object res = q.getSingleResult();
             return res != null ? ((Number) res).longValue() : 0;
@@ -150,11 +165,12 @@ public class ExecutiveDashboardRepository {
         }
     }
 
-    private double sum(String sql, LocalDate start, LocalDate end) {
+    private double sum(String sql, LocalDate start, LocalDate end, Long tenantId) {
         try {
             Query q = entityManager.createNativeQuery(sql);
             q.setParameter("monthStart", start);
             q.setParameter("asOfDate", end);
+            if (tenantId != null) { try { q.setParameter("tenantId", tenantId); } catch (Exception e) {} }
             Object res = q.getSingleResult();
             return res != null ? ((Number) res).doubleValue() : 0.0;
         } catch (Exception e) {
@@ -163,20 +179,15 @@ public class ExecutiveDashboardRepository {
     }
 
     private List<Map<String, Object>> queryList(String sql, LocalDate start, LocalDate end, String keyCol,
-            String valCol) {
+            String valCol, Long tenantId) {
         List<Map<String, Object>> list = new ArrayList<>();
         try {
             Query q = entityManager.createNativeQuery(sql);
             // Attempt to set standardized params
-            try {
-                q.setParameter("yearStart", start);
-            } catch (Exception e) {
-            }
-            try {
-                q.setParameter("monthStart", start);
-            } catch (Exception e) {
-            }
+            try { q.setParameter("yearStart", start); }  catch (Exception e) {}
+            try { q.setParameter("monthStart", start); } catch (Exception e) {}
             q.setParameter("asOfDate", end);
+            if (tenantId != null) { try { q.setParameter("tenantId", tenantId); } catch (Exception e) {} }
 
             List<Object[]> rows = q.getResultList();
             for (Object[] row : rows) {

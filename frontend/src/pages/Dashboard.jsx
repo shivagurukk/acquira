@@ -30,6 +30,31 @@ const Dashboard = () => {
     const [schemeData, setSchemeData] = useState([]);
     const [topMerchants, setTopMerchants] = useState([]);
     const [lastRefresh, setLastRefresh] = useState(new Date());
+    // Latest date for which data exists; resolved from /api/business/data-bounds.
+    // Used as the end-date of the rolling window so the dashboard isn't empty
+    // when transaction data lags real time (e.g. it's May but data ends in April).
+    const [latestDataDate, setLatestDataDate] = useState(null);
+    const [boundsLoaded, setBoundsLoaded] = useState(false);
+
+    useEffect(() => {
+        const loadBounds = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const tenantId = localStorage.getItem('defaultTenantId');
+                const res = await fetch('/api/business/data-bounds', {
+                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
+                });
+                if (res.ok) {
+                    const b = await res.json();
+                    if (b?.latest) {
+                        setLatestDataDate(new Date(b.latest));
+                    }
+                }
+            } catch (e) { console.warn('data-bounds fetch failed; falling back to today', e); }
+            setBoundsLoaded(true);
+        };
+        loadBounds();
+    }, []);
 
     const fetchAllData = async () => {
         setLoading(true);
@@ -37,10 +62,19 @@ const Dashboard = () => {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId };
-            const end = new Date();
-            const start = new Date();
+            // Anchor the rolling window on the latest date that actually has data.
+            // Falls back to today if the bounds endpoint hasn't returned yet.
+            const end = latestDataDate ? new Date(latestDataDate) : new Date();
+            const start = new Date(end);
             start.setDate(end.getDate() - parseInt(period));
-            const body = JSON.stringify({ startDate: start.toISOString().split('T')[0], endDate: end.toISOString().split('T')[0] });
+            // Local-date formatter — toISOString() shifts dates by one day in non-UTC timezones.
+            const fmtLocal = (d) => {
+                const yr = d.getFullYear();
+                const mo = String(d.getMonth() + 1).padStart(2, '0');
+                const dy = String(d.getDate()).padStart(2, '0');
+                return `${yr}-${mo}-${dy}`;
+            };
+            const body = JSON.stringify({ startDate: fmtLocal(start), endDate: fmtLocal(end) });
 
             const metricsRes = await fetch('/api/business/executive-metrics', { method: 'POST', headers, body });
             if (metricsRes.ok) setMetrics(await metricsRes.json());
@@ -88,7 +122,11 @@ const Dashboard = () => {
         finally { setLoading(false); }
     };
 
-    useEffect(() => { fetchAllData(); }, [period]);
+    useEffect(() => {
+        // Wait for bounds before issuing the first fetch — otherwise the very first
+        // load uses today as end-date and renders empty before refetching when bounds resolve.
+        if (boundsLoaded) fetchAllData();
+    }, [period, boundsLoaded]);
 
     const kpis = useMemo(() => {
         if (!metrics) return [];

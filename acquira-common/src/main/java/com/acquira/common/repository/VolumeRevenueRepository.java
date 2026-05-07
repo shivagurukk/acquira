@@ -17,6 +17,15 @@ public class VolumeRevenueRepository {
     private EntityManager entityManager;
 
     public List<Map<String, Object>> getSummary(VolumeRevenueFilterDTO filter) {
+        return getSummary(filter, null);
+    }
+
+    /**
+     * Tenant-scoped variant. When tenantId is non-null we add
+     * `AND s.tenant_id = :tenantId` so cross-tenant rows can never appear in
+     * the volume/revenue summary.
+     */
+    public List<Map<String, Object>> getSummary(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
         // Base Query joining Fact/Summary with Dimensions
@@ -39,6 +48,9 @@ public class VolumeRevenueRepository {
         }
 
         sql.append("WHERE 1=1 ");
+        if (tenantId != null) {
+            sql.append("AND s.tenant_id = :tenantId ");
+        }
         if (filter.getStartDate() != null) {
             sql.append("AND s.business_date >= :startDate ");
         }
@@ -95,6 +107,8 @@ public class VolumeRevenueRepository {
 
         Query query = entityManager.createNativeQuery(sql.toString());
 
+        if (tenantId != null)
+            query.setParameter("tenantId", tenantId);
         if (filter.getStartDate() != null)
             query.setParameter("startDate", filter.getStartDate());
         if (filter.getEndDate() != null)
@@ -135,6 +149,14 @@ public class VolumeRevenueRepository {
     }
 
     public List<Map<String, Object>> getMerchantFinancialSummary(VolumeRevenueFilterDTO filter) {
+        return getMerchantFinancialSummary(filter, null);
+    }
+
+    /**
+     * Tenant-scoped variant. Adds `AND s.tenant_id = :tenantId` so the per-MID/SID
+     * financial summary cannot show rows belonging to other tenants.
+     */
+    public List<Map<String, Object>> getMerchantFinancialSummary(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
         sql.append("SELECT ");
@@ -150,6 +172,8 @@ public class VolumeRevenueRepository {
         sql.append("JOIN dim_store st ON s.store_id = st.store_id "); // Need store for SID
 
         sql.append("WHERE 1=1 ");
+        if (tenantId != null)
+            sql.append("AND s.tenant_id = :tenantId ");
 
         if (filter.getStartDate() != null)
             sql.append("AND s.business_date >= :startDate ");
@@ -179,6 +203,8 @@ public class VolumeRevenueRepository {
 
         Query query = entityManager.createNativeQuery(sql.toString());
 
+        if (tenantId != null)
+            query.setParameter("tenantId", tenantId);
         if (filter.getStartDate() != null)
             query.setParameter("startDate", filter.getStartDate());
         if (filter.getEndDate() != null)
@@ -216,6 +242,15 @@ public class VolumeRevenueRepository {
 
     public List<Map<String, Object>> getPerformanceDashboardData(VolumeRevenueFilterDTO filter, String groupBy,
             String parentValue, String grandParentValue) {
+        return getPerformanceDashboardData(filter, groupBy, parentValue, grandParentValue, null);
+    }
+
+    /**
+     * Tenant-scoped variant. Adds `AND s.tenant_id = :tenantId` so drill-down
+     * tables across MONTH/DAY/MERCHANT/STORE granularities never mix tenants.
+     */
+    public List<Map<String, Object>> getPerformanceDashboardData(VolumeRevenueFilterDTO filter, String groupBy,
+            String parentValue, String grandParentValue, Long tenantId) {
         // groupBy: MONTH, DAY, MERCHANT, STORE
         StringBuilder sql = new StringBuilder();
 
@@ -290,6 +325,9 @@ public class VolumeRevenueRepository {
             sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
 
         sql.append("WHERE 1=1 ");
+
+        if (tenantId != null)
+            sql.append("AND s.tenant_id = :tenantId ");
 
         // Base Filters
         if (filter.getStartDate() != null)
@@ -367,6 +405,9 @@ public class VolumeRevenueRepository {
         sql.append(orderByClause);
 
         Query query = entityManager.createNativeQuery(sql.toString());
+
+        if (tenantId != null)
+            query.setParameter("tenantId", tenantId);
 
         if (filter.getStartDate() != null)
             query.setParameter("startDate", filter.getStartDate());
@@ -447,55 +488,100 @@ public class VolumeRevenueRepository {
     }
 
     public Map<String, List<String>> getFilterOptions() {
+        return getFilterOptions(null);
+    }
+
+    /**
+     * Tenant-scoped filter options. When a tenantId is provided, dim_store and
+     * dim_merchant lookups (sids, mids, mccs) filter to that tenant. Cross-tenant
+     * lookups (referral_partner, sales_email, schemes) remain unscoped because
+     * those values are typically shared.
+     *
+     * Adds sids and mids — these were previously missing from the response
+     * causing the SID and MID dropdowns in BusinessFilters and DailyMerchantDashboard
+     * to render empty.
+     */
+    public Map<String, List<String>> getFilterOptions(Long tenantId) {
         Map<String, List<String>> options = new HashMap<>();
 
         try {
             // Partners
             Query qPartner = entityManager.createNativeQuery(
-                    "SELECT DISTINCT referral_partner FROM dim_merchant WHERE referral_partner IS NOT NULL ORDER BY 1");
+                    "SELECT DISTINCT referral_partner FROM dim_merchant WHERE referral_partner IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
+            if (tenantId != null) qPartner.setParameter("tid", tenantId);
             options.put("partners", qPartner.getResultList());
 
             // RMs
             Query qRm = entityManager.createNativeQuery(
-                    "SELECT DISTINCT sales_email FROM dim_merchant WHERE sales_email IS NOT NULL ORDER BY 1");
+                    "SELECT DISTINCT sales_email FROM dim_merchant WHERE sales_email IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
+            if (tenantId != null) qRm.setParameter("tid", tenantId);
             options.put("rms", qRm.getResultList());
 
             // MCCs
-            Query qMcc = entityManager
-                    .createNativeQuery("SELECT DISTINCT mcc FROM dim_store WHERE mcc IS NOT NULL ORDER BY 1");
+            Query qMcc = entityManager.createNativeQuery(
+                    "SELECT DISTINCT mcc FROM dim_store WHERE mcc IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
+            if (tenantId != null) qMcc.setParameter("tid", tenantId);
             options.put("mccs", qMcc.getResultList());
+
+            // SIDs (NEW — unblocks the SID dropdown in BusinessFilters / DailyMerchantDashboard)
+            // Capped at 5000 — if a tenant has more stores than that, the dropdown UX
+            // is broken anyway and a search-as-you-type endpoint would be the right fix.
+            Query qSids = entityManager.createNativeQuery(
+                    "SELECT DISTINCT sid FROM dim_store WHERE sid IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1 LIMIT 5000");
+            if (tenantId != null) qSids.setParameter("tid", tenantId);
+            options.put("sids", qSids.getResultList());
+
+            // MIDs (NEW — same rationale as sids)
+            Query qMids = entityManager.createNativeQuery(
+                    "SELECT DISTINCT mid FROM dim_merchant WHERE mid IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1 LIMIT 5000");
+            if (tenantId != null) qMids.setParameter("tid", tenantId);
+            options.put("mids", qMids.getResultList());
 
             // Team Leaders
             Query qTeamLeads = entityManager.createNativeQuery(
-                    "SELECT DISTINCT team_lead_name FROM sales_team_mapping WHERE team_lead_name IS NOT NULL ORDER BY 1");
+                    "SELECT DISTINCT team_lead_name FROM sales_team_mapping WHERE team_lead_name IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
+            if (tenantId != null) qTeamLeads.setParameter("tid", tenantId);
             options.put("teamLeaders", qTeamLeads.getResultList());
 
             // Destinations
             Query qDest = entityManager.createNativeQuery(
-                    "SELECT DISTINCT destination FROM sum_daily_insight WHERE destination IS NOT NULL ORDER BY 1");
+                    "SELECT DISTINCT destination FROM sum_daily_insight WHERE destination IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
+            if (tenantId != null) qDest.setParameter("tid", tenantId);
             options.put("destinations", qDest.getResultList());
 
             // Channels
-            // Check sum_daily_channel for channels
-            List<String> channels = entityManager.createNativeQuery(
-                    "SELECT DISTINCT channel FROM sum_daily_insight WHERE channel IS NOT NULL ORDER BY channel")
-                    .getResultList();
-            options.put("channels", channels);
+            Query qChan = entityManager.createNativeQuery(
+                    "SELECT DISTINCT channel FROM sum_daily_insight WHERE channel IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY channel");
+            if (tenantId != null) qChan.setParameter("tid", tenantId);
+            options.put("channels", qChan.getResultList());
 
-            // Terminal Types (New)
-            List<String> terminalTypes = entityManager.createNativeQuery(
-                    "SELECT DISTINCT type FROM dim_terminal WHERE type IS NOT NULL ORDER BY type")
-                    .getResultList();
-            options.put("terminalTypes", terminalTypes);
+            // Terminal Types
+            Query qTermType = entityManager.createNativeQuery(
+                    "SELECT DISTINCT type FROM dim_terminal WHERE type IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY type");
+            if (tenantId != null) qTermType.setParameter("tid", tenantId);
+            options.put("terminalTypes", qTermType.getResultList());
 
             // Schemes
             Query qScheme = entityManager.createNativeQuery(
-                    "SELECT DISTINCT card_scheme FROM sum_daily_insight WHERE card_scheme IS NOT NULL ORDER BY 1");
+                    "SELECT DISTINCT card_scheme FROM sum_daily_insight WHERE card_scheme IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
+            if (tenantId != null) qScheme.setParameter("tid", tenantId);
             options.put("schemes", qScheme.getResultList());
 
             // Card Types
             Query qCardType = entityManager.createNativeQuery(
-                    "SELECT DISTINCT card_type FROM sum_daily_insight WHERE card_type IS NOT NULL ORDER BY 1");
+                    "SELECT DISTINCT card_type FROM sum_daily_insight WHERE card_type IS NOT NULL " +
+                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
+            if (tenantId != null) qCardType.setParameter("tid", tenantId);
             options.put("cardTypes", qCardType.getResultList());
 
         } catch (Exception e) {
@@ -506,6 +592,14 @@ public class VolumeRevenueRepository {
     }
 
     public List<Map<String, Object>> getDebitPrepaidMetrics(VolumeRevenueFilterDTO filter) {
+        return getDebitPrepaidMetrics(filter, null);
+    }
+
+    /**
+     * Tenant-scoped variant. Adds `AND s.tenant_id = :tenantId` so debit/prepaid
+     * metrics never include rows from other tenants.
+     */
+    public List<Map<String, Object>> getDebitPrepaidMetrics(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
         sql.append("SELECT ");
@@ -522,6 +616,9 @@ public class VolumeRevenueRepository {
         sql.append("WHERE (UPPER(s.card_type) IN ('DEBIT', 'PREPAID', 'DEBIT PREPAID', 'CREDIT PREPAID') ");
         sql.append("   OR s.card_type IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4)) ");
         sql.append("   OR s.card_scheme IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4))) ");
+
+        if (tenantId != null)
+            sql.append("AND s.tenant_id = :tenantId ");
 
         if (filter.getStartDate() != null)
             sql.append("AND s.business_date >= :startDate ");
@@ -555,6 +652,8 @@ public class VolumeRevenueRepository {
 
         Query query = entityManager.createNativeQuery(sql.toString());
 
+        if (tenantId != null)
+            query.setParameter("tenantId", tenantId);
         if (filter.getStartDate() != null)
             query.setParameter("startDate", filter.getStartDate());
         if (filter.getEndDate() != null)
@@ -589,6 +688,14 @@ public class VolumeRevenueRepository {
     }
 
     public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter) {
+        return getAttritionReport(filter, null);
+    }
+
+    /**
+     * Tenant-scoped variant. Adds `AND s.tenant_id = :tenantId` so attrition
+     * comparisons never include other tenants' merchants.
+     */
+    public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
         // Logic:
@@ -638,6 +745,9 @@ public class VolumeRevenueRepository {
         // Let's filter WHERE business_date >= prevYtdStartDate (Oldest date we care
         // about)
         sql.append("WHERE s.business_date >= :prevYtdStartDate ");
+
+        if (tenantId != null)
+            sql.append("AND s.tenant_id = :tenantId ");
 
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             sql.append("AND m.referral_partner IN (:partners) ");
@@ -689,6 +799,9 @@ public class VolumeRevenueRepository {
         query.setParameter("prevYtdStartDate", globalLowerBound); // Global lower bound for WHERE
         query.setParameter("momStartDate", momStartDate);
         query.setParameter("momEndDate", momEndDate);
+
+        if (tenantId != null)
+            query.setParameter("tenantId", tenantId);
 
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
@@ -760,6 +873,14 @@ public class VolumeRevenueRepository {
     }
 
     public Map<String, Object> getExecutiveMetrics(VolumeRevenueFilterDTO filter) {
+        return getExecutiveMetrics(filter, null);
+    }
+
+    /**
+     * Tenant-scoped variant. Adds `AND tenant_id = :tenantId` so executive
+     * KPIs (volume, txns, active merchants) are scoped to the requesting tenant.
+     */
+    public Map<String, Object> getExecutiveMetrics(VolumeRevenueFilterDTO filter, Long tenantId) {
         Map<String, Object> metrics = new HashMap<>();
 
         // Dates
@@ -792,12 +913,16 @@ public class VolumeRevenueRepository {
         sql.append("FROM sum_daily_insight ");
         // Optimize: Broad filter to cover both ranges
         sql.append("WHERE business_date >= :prevStart AND business_date <= :end ");
+        if (tenantId != null) {
+            sql.append("AND tenant_id = :tenantId ");
+        }
 
         Query query = entityManager.createNativeQuery(sql.toString());
         query.setParameter("start", start);
         query.setParameter("end", end);
         query.setParameter("prevStart", prevStart);
         query.setParameter("prevEnd", prevEnd);
+        if (tenantId != null) query.setParameter("tenantId", tenantId);
 
         Object[] result = null;
         try {
@@ -848,6 +973,15 @@ public class VolumeRevenueRepository {
     }
 
     public Map<String, Object> getMerchantAnalyticsReport(VolumeRevenueFilterDTO filter, int page, int size) {
+        return getMerchantAnalyticsReport(filter, page, size, null);
+    }
+
+    /**
+     * Tenant-scoped variant. When tenantId is non-null, the SQL adds
+     * `AND s.tenant_id = :tenantId` so cross-tenant rows can never leak.
+     * In single-tenant deployments this is a no-op.
+     */
+    public Map<String, Object> getMerchantAnalyticsReport(VolumeRevenueFilterDTO filter, int page, int size, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
         // Select columns matching frontend expectation:
@@ -871,7 +1005,10 @@ public class VolumeRevenueRepository {
         sql.append("  m.name as legal_name, "); // Fallback to name
         sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dcc_optin, ");
         sql.append("  count(*) OVER() as total_count, "); // Window function
-        sql.append("  t.type as terminal_type "); // New Column
+        // FIX (duplicate-rows bug): we used to group by t.type which multiplied rows
+        // when one (sid, mid) combo had terminals of different types. Aggregate the
+        // type via MAX so each (sid, mid, mcc) triple gets exactly one row.
+        sql.append("  MAX(t.type) as terminal_type ");
 
         sql.append("FROM sum_daily_insight s ");
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
@@ -881,6 +1018,7 @@ public class VolumeRevenueRepository {
                                                                                   // is null or missing
 
         sql.append("WHERE 1=1 ");
+        if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
 
         if (filter.getStartDate() != null)
             sql.append("AND s.business_date >= :startDate ");
@@ -914,14 +1052,17 @@ public class VolumeRevenueRepository {
             sql.append("AND t.type IN (:terminalTypes) ");
         }
 
-        // Grouping - now includes terminal_type
-        sql.append("GROUP BY st.sid, m.mid, m.name, st.mcc, t.type ");
+        // Grouping (FIX: dropped t.type — see SELECT above for why)
+        sql.append("GROUP BY st.sid, m.mid, m.name, st.mcc ");
 
         // Sorting and Pagination
         sql.append("ORDER BY m.name ASC, st.sid ASC ");
         sql.append("OFFSET :offset LIMIT :limit");
 
         Query query = entityManager.createNativeQuery(sql.toString());
+
+        // Bind tenantId early so the binding logic below can stay unchanged.
+        if (tenantId != null) query.setParameter("tenantId", tenantId);
 
         // Params
         if (filter.getStartDate() != null)

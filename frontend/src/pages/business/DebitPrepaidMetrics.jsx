@@ -11,7 +11,13 @@ import { useAuth } from '../../contexts/AuthContext';
 
 const computeDateRange = (preset) => {
     const now = new Date();
-    const fmt = (d) => d.toISOString().split('T')[0];
+    // Local-date formatter — see PremiumReportHeader.jsx for the timezone bug explanation.
+    const fmt = (d) => {
+        const yr = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        return `${yr}-${mo}-${dy}`;
+    };
     switch (preset) {
         case 'TODAY':      return { startDate: fmt(now), endDate: fmt(now) };
         case 'MONTH':      return { startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
@@ -34,13 +40,55 @@ const DebitPrepaidMetrics = () => {
     const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
     const [filters, setFilters] = useState(() => {
-        const range = computeDateRange('MONTH');
-        return { datePreset: 'MONTH', ...range };
+        // Start with empty dates; the data-bounds effect below replaces these with
+        // the latest month that actually has data. Avoids the "empty by default"
+        // problem when transaction data lags real time.
+        return { datePreset: 'MONTH', startDate: '', endDate: '' };
     });
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
     const [fetchError, setFetchError] = useState(null);
+    const [boundsLoaded, setBoundsLoaded] = useState(false);
+
+    // Resolve sensible default date range from /api/business/data-bounds.
+    useEffect(() => {
+        // Local-date formatter — toISOString() shifts dates by one day in non-UTC timezones
+        const fmtLocal = (d) => {
+            const yr = d.getFullYear();
+            const mo = String(d.getMonth() + 1).padStart(2, '0');
+            const dy = String(d.getDate()).padStart(2, '0');
+            return `${yr}-${mo}-${dy}`;
+        };
+        const loadBounds = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const tenantId = localStorage.getItem('defaultTenantId');
+                const res = await fetch('/api/business/data-bounds', {
+                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
+                });
+                if (res.ok) {
+                    const b = await res.json();
+                    if (b?.latest) {
+                        const latest = new Date(b.latest);
+                        const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
+                        setFilters(prev => ({
+                            ...prev,
+                            startDate: fmtLocal(first),
+                            endDate:   fmtLocal(latest),
+                        }));
+                        setBoundsLoaded(true);
+                        return;
+                    }
+                }
+            } catch (e) { /* fall through */ }
+            // Fallback to current month if bounds endpoint fails or has no data.
+            const range = computeDateRange('MONTH');
+            setFilters(prev => ({ ...prev, ...range }));
+            setBoundsLoaded(true);
+        };
+        loadBounds();
+    }, []);
 
     const fetchData = useCallback(async (overrideFilters) => {
         setLoading(true);
@@ -95,7 +143,10 @@ const DebitPrepaidMetrics = () => {
         }
     }, [filters]);
 
-    useEffect(() => { fetchData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        // Wait until data-bounds resolved so we don't fire a guaranteed-empty fetch first.
+        if (boundsLoaded) fetchData();
+    }, [boundsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleFilterChange = (keyOrObj, val) => {
         if (typeof keyOrObj === 'object') {

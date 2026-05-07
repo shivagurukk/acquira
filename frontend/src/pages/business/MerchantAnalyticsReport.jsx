@@ -19,12 +19,63 @@ const MerchantAnalyticsReport = () => {
     const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 25 });
     const [showFilters, setShowFilters] = useState(false);
     const [filters, setFilters] = useState(() => {
-        const now = new Date();
-        const fmt = (d) => d.toISOString().split('T')[0];
-        return { datePreset: 'MONTH', startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
+        // FIX: previously defaulted to current calendar month (e.g. May 2026) which
+        // shows zero data when the system has only April 2026. We start with empty
+        // dates and let the boundsLoader effect below populate them from the
+        // /data-bounds endpoint.
+        return { datePreset: 'MONTH', startDate: '', endDate: '' };
     });
+    const [boundsLoaded, setBoundsLoaded] = useState(false);
 
-    useEffect(() => { fetchReport(); }, [paginationModel]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Auto-detect the latest month that actually has data and use it as the
+    // initial date range. See DailyMerchantDashboard for the same pattern.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const tenantId = localStorage.getItem('defaultTenantId');
+                const res = await fetch('/api/business/data-bounds', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+                    },
+                });
+                let startDate, endDate;
+                if (res.ok) {
+                    const b = await res.json();
+                    if (b.latest) {
+                        const latest = new Date(b.latest);
+                        const fmt = (d) => d.toISOString().split('T')[0];
+                        startDate = fmt(new Date(latest.getFullYear(), latest.getMonth(), 1));
+                        endDate = fmt(latest);
+                    }
+                }
+                if (!startDate) {
+                    // Fall back to current month if bounds unavailable
+                    const now = new Date();
+                    const fmt = (d) => d.toISOString().split('T')[0];
+                    startDate = fmt(new Date(now.getFullYear(), now.getMonth(), 1));
+                    endDate = fmt(now);
+                }
+                if (!cancelled) {
+                    setFilters(prev => ({ ...prev, startDate, endDate }));
+                    setBoundsLoaded(true);
+                }
+            } catch (e) {
+                console.error('data-bounds fetch failed', e);
+                if (!cancelled) setBoundsLoaded(true);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    useEffect(() => {
+        // Only fire the report once we've initialised the date range, otherwise
+        // we'd query with empty dates and the WHERE clause would short-circuit.
+        if (!boundsLoaded) return;
+        fetchReport();
+    }, [boundsLoaded, paginationModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchReport = async () => {
         setLoading(true);

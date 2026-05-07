@@ -392,10 +392,14 @@ public class TransactionJobConfig {
                 t.setAggregatorInternalId(fieldSet.readString("Aggregator Internal Id"));
                 t.setAggregatorName(fieldSet.readString("Aggregator Name"));
                 t.setAggregatorCode(fieldSet.readString("AggregatorCode"));
-                t.setMid(fieldSet.readString("MID"));
+                t.setMid(MerchantMasterJobConfig.normalizeSid(fieldSet.readString("MID")));
                 t.setMerchantInternalId(fieldSet.readString("Merchant Internal Id"));
                 t.setMerchantName(fieldSet.readString("Merchant Name"));
-                t.setSid(fieldSet.readString("SID"));
+                // Normalize SID: handles the case where the source CSV has SID in
+                // scientific notation like "4.00E+14" (happens when CSV was exported
+                // from Excel without formatting the column as TEXT). See
+                // MerchantMasterJobConfig.normalizeSid for full rationale.
+                t.setSid(MerchantMasterJobConfig.normalizeSid(fieldSet.readString("SID")));
                 t.setMerchantStoreInternalId(fieldSet.readString("Merchant Store Internal Id"));
                 t.setCmmMerchantStoreInternalId(fieldSet.readString("CMM Merchant Store Internal Id"));
                 t.setMerchantStoreLegalName(fieldSet.readString("Merchant Store Legal Name"));
@@ -802,10 +806,14 @@ public class TransactionJobConfig {
                 "transaction_type, card_scheme, card_type, dcc, txn_currency, txn_currency_amount, " +
                 "store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, interchange_fee, destination) " +
                 "SELECT stg.tenant_id, " +
-                // Prefer dim_store.merchant_id (SID path); fall back to dim_merchant via MID
-                // when the file actually carries an MID.
-                "COALESCE(s.merchant_id, m.merchant_id) AS merchant_id, " +
-                "s.store_id, t.terminal_id, " +
+                // Resolution order:
+                //   1. dim_store.merchant_id via SID match (s.merchant_id)
+                //   2. dim_merchant.merchant_id via MID match (m.merchant_id)
+                //   3. dim_store.merchant_id via TID->terminal->store fallback (s2.merchant_id)
+                // The 3rd path saves us when SID is Excel-mangled (e.g. '4.00E+14') but
+                // TID is preserved and resolves cleanly to the real store/merchant.
+                "COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id) AS merchant_id, " +
+                "COALESCE(s.store_id, s2.store_id) AS store_id, t.terminal_id, " +
                 "stg.arn, stg.rrn_number, stg.card_number, stg.auth_code, " +
                 "stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type, " +
                 "stg.card_scheme, stg.card_type, stg.dcc, stg.txn_currency, stg.txn_currency_amount, " +
@@ -819,10 +827,19 @@ public class TransactionJobConfig {
                 // FALLBACK: MID-based merchant join, used only if the file carries MID.
                 "LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id " +
                 "  AND m.mid = NULLIF(TRIM(stg.mid), '') " +
-                // Terminal join: prefer TID match scoped to the resolved store.
+                // Terminal join: prefer TID match scoped to the resolved store, but ALSO
+                // try TID alone (any store) for the case where store/SID resolution failed.
+                // This unlocks TID-fallback resolution below.
                 "LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id " +
-                "  AND t.store_id = s.store_id " +
                 "  AND t.tid = NULLIF(TRIM(stg.tid), '') " +
+                "  AND (t.store_id = s.store_id OR s.store_id IS NULL) " +
+                // FALLBACK 2 (TID-PRIMARY): when SID is corrupted (e.g. Excel-mangled to
+                // '4.00E+14' which doesn't match any real dim_store.sid), use the resolved
+                // dim_terminal -> dim_store -> dim_merchant chain instead. TIDs are short
+                // (8 digits) so Excel preserves them faithfully, making them the most
+                // reliable identifier when SIDs/MIDs are corrupt.
+                "LEFT JOIN dim_store s2 ON s2.tenant_id = stg.tenant_id " +
+                "  AND s2.store_id = t.store_id " +
                 "WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL";
             int inserted = jdbcTemplate.update(sql, tenantId);
             System.out.printf("Inserted %d fact rows (SID-primary joins) in %.1fs%n",

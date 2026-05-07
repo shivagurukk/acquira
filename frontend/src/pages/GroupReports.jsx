@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCw, Filter, Calendar, ArrowUp, ArrowDown, Search } from 'lucide-react';
+import api from '../api/axios';
 
 const GroupReports = () => {
     const [activeTab, setActiveTab] = useState('MCC'); // MCC, MERCHANT, SALES, REFERRAL
@@ -17,15 +18,14 @@ const GroupReports = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:8081/api/group-analytics/${activeTab}?period=${period}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) {
-                setData(await res.json());
-            }
+            // Use api/axios.js — the interceptor attaches Authorization + X-Tenant-Id
+            // automatically and uses a relative URL so the Vite dev proxy / production
+            // origin both work without hardcoding `localhost:8081`.
+            const res = await api.get(`/group-analytics/${activeTab}`, { params: { period } });
+            setData(res.data || []);
         } catch (error) {
-            console.error(error);
+            console.error('group-analytics fetch failed', error);
+            setData([]);
         } finally {
             setLoading(false);
         }

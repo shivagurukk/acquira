@@ -48,18 +48,27 @@ const MerchantUniverse = () => {
                     setAvailableTenants(data.allowedTenants);
                     localStorage.setItem('allowedTenants', JSON.stringify(data.allowedTenants));
 
-                    const currentTenant = localStorage.getItem('tenantId');
+                    // CONSOLIDATION (2026-05): the rest of the app (axios interceptor +
+                    // all dashboard pages) reads `defaultTenantId`. This component used
+                    // to read/write `tenantId` causing tenant switches to silently fail
+                    // for the rest of the app. We now read both for backward compat
+                    // and ALWAYS write `defaultTenantId` so other pages stay in sync.
+                    const currentTenant = localStorage.getItem('defaultTenantId') || localStorage.getItem('tenantId');
                     // If no valid tenant selected, verify if current is in allowed list or default
                     const isValid = data.allowedTenants.some(t => t.tenantId == currentTenant);
 
                     if (!currentTenant || currentTenant === 'null' || !isValid) {
                         // Auto-select Default if available, else show modal
                         if (data.defaultTenantId) {
-                            localStorage.setItem('tenantId', data.defaultTenantId);
+                            localStorage.setItem('defaultTenantId', data.defaultTenantId);
+                            localStorage.setItem('tenantId', data.defaultTenantId); // legacy mirror
                             setRefreshKey(prev => prev + 1);
                         } else {
                             setShowTenantModal(true);
                         }
+                    } else if (!localStorage.getItem('defaultTenantId')) {
+                        // Migrate stale `tenantId`-only setups to also have `defaultTenantId`.
+                        localStorage.setItem('defaultTenantId', currentTenant);
                     }
                     // No need to fetchMerchants here, children will fetch on mount
                 } else {
@@ -76,11 +85,14 @@ const MerchantUniverse = () => {
 
         const fallbackInit = () => {
             const storedTenants = localStorage.getItem('allowedTenants');
-            const currentTenant = localStorage.getItem('tenantId');
+            const currentTenant = localStorage.getItem('defaultTenantId') || localStorage.getItem('tenantId');
             if (storedTenants) setAvailableTenants(JSON.parse(storedTenants));
 
             if (!currentTenant || currentTenant === 'null' || currentTenant === 'undefined') {
                 setShowTenantModal(true);
+            } else if (!localStorage.getItem('defaultTenantId')) {
+                // Forward-fill so axios interceptor finds the tenant
+                localStorage.setItem('defaultTenantId', currentTenant);
             }
             setLoading(false);
         };
@@ -91,6 +103,9 @@ const MerchantUniverse = () => {
     }, []);
 
     const handleTenantSelect = (tenantId) => {
+        // Write BOTH keys so the entire app sees the new tenant.
+        // The axios interceptor reads `defaultTenantId`; legacy code paths read `tenantId`.
+        localStorage.setItem('defaultTenantId', tenantId);
         localStorage.setItem('tenantId', tenantId);
         setShowTenantModal(false);
         setRefreshKey(prev => prev + 1); // Trigger remount of children

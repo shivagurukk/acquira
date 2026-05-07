@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Filter, Search, Calendar, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
 import { SmartEmptyState } from '../../components/CockpitControls';
+import api from '../../api/axios';
 
 // --- Preset Values ---
 const PRESETS = [
@@ -43,27 +44,22 @@ const MerchantInsightHub = () => {
     // --- Data Fetching ---
     useEffect(() => {
         // Fetch Masters
+        // Use api/axios.js so the interceptor adds Authorization + X-Tenant-Id
+        // and so we use a relative URL (works in dev via Vite proxy AND in production).
         const fetchMasters = async () => {
-            const token = localStorage.getItem('token');
-            const headers = { 'Authorization': `Bearer ${token}` };
             try {
                 const [mccRes, rmRes, partnerRes, channelRes] = await Promise.all([
-                    fetch('http://localhost:8081/api/reports/filters/mcc', { headers }),
-                    fetch('http://localhost:8081/api/reports/filters/rm', { headers }),
-                    fetch('http://localhost:8081/api/reports/filters/partners', { headers }),
-                    fetch('http://localhost:8081/api/reports/filters/channels', { headers })
+                    api.get('/reports/filters/mcc'),
+                    api.get('/reports/filters/rm'),
+                    api.get('/reports/filters/partners'),
+                    api.get('/reports/filters/channels'),
                 ]);
 
-                const mccData = mccRes.ok ? await mccRes.json() : [];
-                const rmData = rmRes.ok ? await rmRes.json() : [];
-                const partnerData = partnerRes.ok ? await partnerRes.json() : [];
-                const channelData = channelRes.ok ? await channelRes.json() : [];
-
                 setOptions({
-                    mcc: mccData || [],
-                    rm: rmData || [],
-                    partner: partnerData || [],
-                    posEcom: channelData || [],
+                    mcc: mccRes.data || [],
+                    rm: rmRes.data || [],
+                    partner: partnerRes.data || [],
+                    posEcom: channelRes.data || [],
                     mid: [] // Loaded lazily if needed/requested, or we can add it back
                 });
 
@@ -85,22 +81,15 @@ const MerchantInsightHub = () => {
         if (pageOverride && pageOverride !== currentPage) setCurrentPage(pageOverride);
 
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/reports/insight/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({
-                    ...filters,
-                    page: pageToFetch - 1,  // Backend is 0-indexed
-                    size: itemsPerPage
-                })
+            const res = await api.post('/reports/insight/generate', {
+                ...filters,
+                page: pageToFetch - 1,  // Backend is 0-indexed
+                size: itemsPerPage
             });
-            if (res.ok) {
-                const json = await res.json();
-                setData(json.content || []); // Handle new wrapper
-                setTotalElements(json.totalElements || 0);
-                setPageCount(json.totalPages || 0);
-            }
+            const json = res.data || {};
+            setData(json.content || []); // Handle new wrapper
+            setTotalElements(json.totalElements || 0);
+            setPageCount(json.totalPages || 0);
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };

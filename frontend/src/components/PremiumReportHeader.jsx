@@ -14,7 +14,18 @@ const DATE_PRESETS = [
 
 const computeDateRange = (preset) => {
     const now = new Date();
-    const fmt = (d) => d.toISOString().split('T')[0];
+    // Format using LOCAL date components, not toISOString() which converts to UTC.
+    // In timezones east of UTC (e.g. IST = UTC+5:30), `new Date(yr, mo, 1)` is
+    // local midnight which translates to the PREVIOUS day in UTC — so the old
+    // `toISOString().split('T')[0]` made "This month" produce e.g. 2026-04-30
+    // instead of 2026-05-01 in IST. This bug is the root cause of "This month"
+    // showing data labelled with the previous month across the app.
+    const fmt = (d) => {
+        const yr = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        return `${yr}-${mo}-${dy}`;
+    };
     switch (preset) {
         case 'TODAY': return { startDate: fmt(now), endDate: fmt(now) };
         case 'MONTH': return { startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };

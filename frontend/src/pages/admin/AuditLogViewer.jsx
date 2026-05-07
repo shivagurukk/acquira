@@ -63,7 +63,7 @@ const AuditLogViewer = () => {
 
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [stats, setStats] = useState({ totalToday: 0, errorRate: 0 });
+    const [stats, setStats] = useState({ totalToday: 0, errors: 0, activeUsers: 0, errorRate: 0 });
     const [filters, setFilters] = useState({
         search: '',
         category: '',
@@ -306,6 +306,30 @@ const AuditLogViewer = () => {
                         <CardContent>
                             <Typography color="textSecondary" gutterBottom>Total Events Today</Typography>
                             <Typography variant="h4">{stats.totalToday || 0}</Typography>
+                        </CardContent>
+                    </Card>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                    <Card sx={{ bgcolor: isDark ? 'rgba(244,67,54,0.15)' : '#ffebee' }}>
+                        <CardContent>
+                            <Typography color="textSecondary" gutterBottom>Errors Today</Typography>
+                            <Typography variant="h4">{stats.errors ?? 0}</Typography>
+                        </CardContent>
+                    </Card>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                    <Card sx={{ bgcolor: isDark ? 'rgba(76,175,80,0.15)' : '#e8f5e9' }}>
+                        <CardContent>
+                            <Typography color="textSecondary" gutterBottom>Active Users</Typography>
+                            <Typography variant="h4">{stats.activeUsers ?? 0}</Typography>
+                        </CardContent>
+                    </Card>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                    <Card sx={{ bgcolor: isDark ? 'rgba(255,152,0,0.15)' : '#fff3e0' }}>
+                        <CardContent>
+                            <Typography color="textSecondary" gutterBottom>Error Rate</Typography>
+                            <Typography variant="h4">{(stats.errorRate ?? 0).toFixed(1)}%</Typography>
                         </CardContent>
                     </Card>
                 </Grid>

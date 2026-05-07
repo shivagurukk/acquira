@@ -3,6 +3,7 @@ import { Box, Paper, Typography, Stack, MenuItem, Select, FormControl, InputLabe
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { Grid as GridIcon, TrendingUp, DollarSign, Users } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
+import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
@@ -18,14 +19,35 @@ const MerchantHeatmap = () => {
     const [maxVolume, setMaxVolume] = useState(0);
     const [sidList, setSidList] = useState([]);
     const [sidOptions, setSidOptions] = useState([]);
+    const [showFilters, setShowFilters] = useState(false);
+    // Full-feature filter set (matches the rest of the business screens). The
+    // heatmap previously only had a Year+SID inline picker; this adds Partners,
+    // MCC, RM, Schemes, Card Types, Channels etc. via the BusinessFilters drawer.
+    const [filters, setFilters] = useState({
+        startDate: '', endDate: '',
+        partnerList: [], mccList: [], industryList: [], rmList: [], teamLeaderList: [],
+        sectorList: [], destinationList: [], schemeList: [], cardTypeList: [], channelList: [],
+        merchantName: '', midList: [], sidList: [],
+    });
 
-    useEffect(() => { setYears([2024, 2025, 2026]); fetchSidOptions(); }, []);
-    useEffect(() => { fetchData(); }, [year, sidList]);
+    useEffect(() => {
+        // Build year list dynamically: current year and a few back. Was hardcoded
+        // [2024, 2025, 2026] which would silently stop showing the current year
+        // once the calendar advances.
+        const cy = new Date().getFullYear();
+        setYears([cy - 2, cy - 1, cy]);
+        fetchSidOptions();
+    }, []);
+    useEffect(() => { fetchData(); }, [year, sidList, filters]);
 
     const fetchSidOptions = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('/api/business/filter-options', { headers: { 'Authorization': `Bearer ${token}` } });
+            const tenantId = localStorage.getItem('defaultTenantId');
+            // Pass tenant header explicitly so dropdown is scoped to the user's tenant.
+            const res = await fetch('/api/business/filter-options', {
+                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
+            });
             if (res.ok) {
                 const data = await res.json();
                 setSidOptions((data.sids || []).map(s => String(s)));
@@ -37,10 +59,25 @@ const MerchantHeatmap = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
+            const tenantId = localStorage.getItem('defaultTenantId');
             const params = new URLSearchParams({ year });
-            if (sidList.length > 0) sidList.forEach(s => params.append('sidList', s));
+            // Inline SID picker takes precedence over the drawer's sidList.
+            const effSidList = sidList.length > 0 ? sidList : (filters.sidList || []);
+            if (effSidList.length > 0) effSidList.forEach(s => params.append('sidList', s));
+            // Forward the standard filters as repeat params so the backend can scope
+            // by partner / MCC / RM / scheme / card-type / channel / etc.
+            (filters.partnerList    || []).forEach(v => params.append('partnerList',    v));
+            (filters.mccList        || []).forEach(v => params.append('mccList',        v));
+            (filters.rmList         || []).forEach(v => params.append('rmList',         v));
+            (filters.teamLeaderList || []).forEach(v => params.append('teamLeaderList', v));
+            (filters.schemeList     || []).forEach(v => params.append('schemeList',     v));
+            (filters.cardTypeList   || []).forEach(v => params.append('cardTypeList',   v));
+            (filters.destinationList|| []).forEach(v => params.append('destinationList',v));
+            (filters.channelList    || []).forEach(v => params.append('channelList',    v));
+            (filters.midList        || []).forEach(v => params.append('midList',        v));
+            if (filters.merchantName) params.append('merchantName', filters.merchantName);
             const response = await fetch(`/api/analytics/heatmap?${params.toString()}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
             });
             if (response.ok) processData(await response.json());
             else processData([]);
@@ -156,10 +193,22 @@ const MerchantHeatmap = () => {
                 icon={GridIcon}
                 onExport={() => exportToCSV(data, `heatmap_${year}`)}
                 onRunReport={fetchData} loading={loading}
+                showFilters={showFilters}
+                onToggleFilters={() => setShowFilters(s => !s)}
+                filters={filters}
+                onFilterChange={(patch) => setFilters(prev => ({ ...prev, ...patch }))}
                 hideDatePresets
             >
                 {extraControls}
             </PremiumReportHeader>
+
+            <BusinessFilters
+                filters={filters}
+                onChange={setFilters}
+                onApply={fetchData}
+                isOpen={showFilters}
+                onClose={() => setShowFilters(false)}
+            />
 
             <KpiCards cards={kpis} />
 

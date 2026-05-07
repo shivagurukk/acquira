@@ -336,7 +336,11 @@ const TABS = [
 
 const SalesLeaderboard = () => {
   const [activeTab, setActiveTab] = useState('agents');
-  const [period, setPeriod] = useState('MTD');
+  // Default to LAST_MONTH instead of MTD: in environments where transaction
+  // data lags real-time (e.g. it's May but data ends in April), MTD will
+  // render an empty leaderboard on first load. LAST_MONTH always reaches
+  // back to a complete month and is much more likely to have data.
+  const [period, setPeriod] = useState('LAST_MONTH');
   const [overview, setOverview] = useState(null);
   const [agents, setAgents] = useState([]);
   const [teams, setTeams] = useState([]);

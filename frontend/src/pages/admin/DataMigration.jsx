@@ -342,10 +342,22 @@ const ProgressMonitor = ({ progress, onRefresh }) => {
 // ═══════════════════════════════════════════════════════════════
 const DataMigration = () => {
   const { activeTenantId } = useAuth(); // #12: Dynamic tenantId from auth context
+
+  // Dynamic month defaults: roughly 2 years back to last completed month.
+  // Was hardcoded '2024-01' → '2025-12' which is in the past as of mid-2026 and
+  // would force users to update them every time they came to the screen.
+  const _defaultMonths = (() => {
+    const now = new Date();
+    const lastFull = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const start = new Date(lastFull.getFullYear() - 2, lastFull.getMonth(), 1);
+    const ymOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return { start: ymOf(start), end: ymOf(lastFull) };
+  })();
+
   const [config, setConfig] = useState({
     sourceTable: '',
-    startMonth: '2024-01',
-    endMonth: '2025-12',
+    startMonth: _defaultMonths.start,
+    endMonth: _defaultMonths.end,
     columnMapping: { mid: 'mid', payment_date: 'payment_date', txn_currency_amount: 'txn_currency_amount' }
   });
   const [dryRunResult, setDryRunResult] = useState(null);
@@ -374,9 +386,14 @@ const DataMigration = () => {
   const handleDryRun = async (cleanedMapping) => {
     setDryRunLoading(true);
     setDryRunResult(null);
+    if (!activeTenantId) {
+      setDryRunResult({ error: 'No active tenant. Please re-login or pick a tenant.' });
+      setDryRunLoading(false);
+      return;
+    }
     try {
       const res = await api.post('/admin/migration/dry-run', {
-        tenantId: activeTenantId || 1, // #12: uses active tenant
+        tenantId: activeTenantId,
         sourceTable: config.sourceTable,
         columnMapping: cleanedMapping
       });
@@ -390,13 +407,18 @@ const DataMigration = () => {
   const handleStart = async () => {
     setStarting(true);
     setConfirmStart(false);
+    if (!activeTenantId) {
+      alert('No active tenant. Please re-login or pick a tenant.');
+      setStarting(false);
+      return;
+    }
     try {
       // Clean mapping — remove empty values
       const cleaned = {};
       Object.entries(config.columnMapping).forEach(([k, v]) => { if (v && v.trim()) cleaned[k] = v.trim(); });
 
       await api.post('/admin/migration/start', {
-        tenantId: activeTenantId || 1, // #12: uses active tenant
+        tenantId: activeTenantId,
         sourceTable: config.sourceTable,
         startMonth: config.startMonth,
         endMonth: config.endMonth,

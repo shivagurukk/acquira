@@ -14,13 +14,13 @@ const AttritionReport = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
-
-    const today = new Date();
-    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-    const lastDay = today.toISOString().split('T')[0];
+    const [boundsLoaded, setBoundsLoaded] = useState(false);
 
     const [filters, setFilters] = useState({
-        startDate: firstDay, endDate: lastDay,
+        // Default to empty; overridden by /api/business/data-bounds in the effect below.
+        // Previously defaulted to first-of-current-month → today, which rendered empty
+        // when transaction data lagged real-time.
+        startDate: '', endDate: '',
         openDateStart: '', openDateEnd: '',
         partnerList: [], mccList: [], industryList: [],
         rmList: [], teamLeaderList: [], sectorList: [],
@@ -29,7 +29,52 @@ const AttritionReport = () => {
         datePreset: 'MONTH'
     });
 
-    useEffect(() => { fetchData(); }, []);
+    // Fetch the latest date that actually has data and use it as the end-date,
+    // first-of-that-month as start-date. Falls back to current month on error.
+    useEffect(() => {
+        // Local-date formatter — toISOString() shifts dates by one day in non-UTC timezones
+        const fmtLocal = (d) => {
+            const yr = d.getFullYear();
+            const mo = String(d.getMonth() + 1).padStart(2, '0');
+            const dy = String(d.getDate()).padStart(2, '0');
+            return `${yr}-${mo}-${dy}`;
+        };
+        const loadBounds = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const tenantId = localStorage.getItem('defaultTenantId');
+                const res = await fetch('/api/business/data-bounds', {
+                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
+                });
+                if (res.ok) {
+                    const b = await res.json();
+                    if (b?.latest) {
+                        const latest = new Date(b.latest);
+                        const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
+                        setFilters(prev => ({
+                            ...prev,
+                            startDate: fmtLocal(first),
+                            endDate:   fmtLocal(latest),
+                        }));
+                        setBoundsLoaded(true);
+                        return;
+                    }
+                }
+            } catch (e) { /* fall through to fallback */ }
+            // Fallback: current month
+            const today = new Date();
+            const firstDay = fmtLocal(new Date(today.getFullYear(), today.getMonth(), 1));
+            const lastDay = fmtLocal(today);
+            setFilters(prev => ({ ...prev, startDate: firstDay, endDate: lastDay }));
+            setBoundsLoaded(true);
+        };
+        loadBounds();
+    }, []);
+
+    useEffect(() => {
+        // Wait until bounds resolved so we don't fire a guaranteed-empty fetch first.
+        if (boundsLoaded) fetchData();
+    }, [boundsLoaded]);
 
     const fetchData = async () => {
         setLoading(true);

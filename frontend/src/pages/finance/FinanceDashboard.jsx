@@ -53,9 +53,16 @@ const FinanceDashboard = () => {
     const [trends, setTrends] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showFilters, setShowFilters] = useState(false);
-    const [filters, setFilters] = useState({ datePreset: 'MONTH' });
+    // Default to YEAR rather than MONTH — reduces empty-on-first-load when data
+    // lags real time. The user can still pick MONTH/CUSTOM/etc. via the header.
+    const [filters, setFilters] = useState({ datePreset: 'YEAR' });
 
-    const tenantId = localStorage.getItem('tenantId') || localStorage.getItem('defaultTenantId') || 1;
+    // Tenant lookup. Reads `defaultTenantId` (the canonical key) first; falls back
+    // to legacy `tenantId` for backward compat. We do NOT fall back to literal `1`
+    // — that hides real auth/tenancy bugs and would silently leak across tenants
+    // in a multi-tenant deployment. The axios instance handles the missing-tenant
+    // case via its interceptor.
+    const tenantId = localStorage.getItem('defaultTenantId') || localStorage.getItem('tenantId');
 
     useEffect(() => { fetchData(); }, []);
 

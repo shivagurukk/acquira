@@ -2,6 +2,7 @@ package com.acquira.core.controller;
 
 import com.acquira.common.dto.ExecutiveDashboardDTO;
 import com.acquira.common.repository.ExecutiveDashboardRepository;
+import com.acquira.core.service.TenantService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,11 +17,17 @@ public class ExecutiveDashboardController {
     @Autowired
     private ExecutiveDashboardRepository repository;
 
+    @Autowired
+    private TenantService tenantService;
+
     @GetMapping("/data")
     public ExecutiveDashboardDTO getDashboardData(
             @RequestParam(required = false) String dataset,
             @RequestParam(required = false) LocalDate asOfDate) {
-        return repository.getDashboardData(dataset, asOfDate);
+        // Pass current tenant so the repository can scope all 9 queries.
+        // Without this, ExecutiveDashboard would mix data across tenants.
+        Long tenantId = tenantService.getCurrentTenantId();
+        return repository.getDashboardData(dataset, asOfDate, tenantId);
     }
 
     @GetMapping("/datasets")

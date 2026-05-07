@@ -5,7 +5,11 @@ import { RefreshCw, Download, Calendar, ArrowRight, ChevronRight, ChevronDown, L
 const FinanceSummary = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [period, setPeriod] = useState('MONTH'); // TODAY, MONTH, YEAR, PY, CUSTOM
+    // Default to YEAR rather than MONTH — the current month is often empty when
+    // transaction data lags real-time (e.g. it's May but data ends in April). YEAR
+    // is more likely to render something useful on first load. User can still pick
+    // TODAY/MONTH/PY/CUSTOM via the period chips.
+    const [period, setPeriod] = useState('YEAR');
     const [customRange, setCustomRange] = useState({ start: '', end: '' });
     const [showCustomPicker, setShowCustomPicker] = useState(false);
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Filter, Search, Calendar, ChevronRight, Loader2, PieChart } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import api from '../../api/axios';
 
 const TransactionTrendsHub = () => {
     // --- State ---
@@ -8,7 +9,8 @@ const TransactionTrendsHub = () => {
         datePreset: 'CURRENT_YEAR',
         dateFrom: '',
         dateTo: '',
-        year: 2025,
+        // Default to the current calendar year. (Was hardcoded to 2025.)
+        year: new Date().getFullYear(),
         mcc: [],
         rm: [],
         mid: [],
@@ -33,15 +35,12 @@ const TransactionTrendsHub = () => {
         setExpandedMonth(null);
         setExpandedDate(null);
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/trends/monthly', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify(filters)
-            });
-            if (res.ok) setMonthlyData(await res.json());
+            // Use api/axios.js — relative URL + auto Authorization + auto X-Tenant-Id
+            const res = await api.post('/trends/monthly', filters);
+            setMonthlyData(res.data || []);
         } catch (e) {
             console.error(e);
+            setMonthlyData([]);
         } finally {
             setLoading(false);
         }
@@ -63,16 +62,8 @@ const TransactionTrendsHub = () => {
         if (!dailyData[monthNum]) {
             setLoadingDaily(true);
             try {
-                const token = localStorage.getItem('token');
-                const res = await fetch('http://localhost:8081/api/trends/daily', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ ...filters, month: monthNum, year: year })
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    setDailyData(prev => ({ ...prev, [monthNum]: data }));
-                }
+                const res = await api.post('/trends/daily', { ...filters, month: monthNum, year: year });
+                setDailyData(prev => ({ ...prev, [monthNum]: res.data || [] }));
             } catch (e) { console.error(e); }
             finally { setLoadingDaily(false); }
         }
@@ -89,15 +80,11 @@ const TransactionTrendsHub = () => {
         if (!merchantData[dateStr]) {
             setLoadingMerchants(true);
             try {
-                const token = localStorage.getItem('token');
-                const res = await fetch(`http://localhost:8081/api/finance/profitability?groupBy=merchant&from=${dateStr}&to=${dateStr}&size=100`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                const res = await api.get('/finance/profitability', {
+                    params: { groupBy: 'merchant', from: dateStr, to: dateStr, size: 100 }
                 });
-                if (res.ok) {
-                    const json = await res.json();
-                    const list = json.content || json;
-                    setMerchantData(prev => ({ ...prev, [dateStr]: list }));
-                }
+                const list = res.data?.content || res.data || [];
+                setMerchantData(prev => ({ ...prev, [dateStr]: list }));
             } catch (e) { console.error(e); }
             finally { setLoadingMerchants(false); }
         }
@@ -109,7 +96,9 @@ const TransactionTrendsHub = () => {
     // Safer month name helpers
     const getMonthName = (m) => {
         if (!m) return '';
-        const date = new Date(2025, m - 1, 1); // Use specific year and day 1 to avoid overflow
+        // Use the currently-filtered year so month-day-1 doesn't accidentally land
+        // on a different month due to year-boundary timezone math.
+        const date = new Date(filters.year || new Date().getFullYear(), m - 1, 1);
         return date.toLocaleString('default', { month: 'long' });
     };
 

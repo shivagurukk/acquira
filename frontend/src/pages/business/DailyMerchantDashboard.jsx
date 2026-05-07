@@ -61,15 +61,69 @@ const DailyMerchantDashboard = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filterOptions, setFilterOptions] = useState({ sids: [], mids: [] });
+    // FIX (was defaulting to current calendar month, e.g. May 2026): start with
+    // null so we don't fire a load with no-data dates. We populate from
+    // /api/business/data-bounds first, then trigger fetchDashboardData.
     const [filters, setFilters] = useState({
-        year: new Date().getFullYear(),
-        month: new Date().getMonth() + 1,
+        year: null,
+        month: null,
         sidList: [],
         midList: [],
     });
+    const [boundsLoaded, setBoundsLoaded] = useState(false);
+
+    // Discover the latest month that actually has data, then default the filter
+    // to that month. Without this, the screen loads with "May 2026" but data
+    // only goes through April 2026, so users see "0 merchants" and assume the
+    // app is broken.
+    useEffect(() => {
+        let cancelled = false;
+        const loadBounds = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const tenantId = localStorage.getItem('defaultTenantId');
+                const res = await fetch('/api/business/data-bounds', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+                    }
+                });
+                let year = new Date().getFullYear();
+                let month = new Date().getMonth() + 1;
+                if (res.ok) {
+                    const b = await res.json();
+                    if (b.latest) {
+                        // latest is e.g. "2026-04-30"
+                        const [y, m] = b.latest.split('-');
+                        year = Number(y);
+                        month = Number(m);
+                    }
+                }
+                if (!cancelled) {
+                    setFilters(prev => ({ ...prev, year, month }));
+                    setBoundsLoaded(true);
+                }
+            } catch (e) {
+                console.error('data-bounds fetch failed, falling back to calendar month', e);
+                if (!cancelled) {
+                    setFilters(prev => ({
+                        ...prev,
+                        year: new Date().getFullYear(),
+                        month: new Date().getMonth() + 1,
+                    }));
+                    setBoundsLoaded(true);
+                }
+            }
+        };
+        loadBounds();
+        return () => { cancelled = true; };
+    }, []);
 
     useEffect(() => { fetchFilterOptions(); }, []);
-    useEffect(() => { fetchDashboardData(); }, [filters.year, filters.month, filters.sidList, filters.midList]);
+    useEffect(() => {
+        if (!boundsLoaded) return; // don't fire until we know the right month
+        fetchDashboardData();
+    }, [boundsLoaded, filters.year, filters.month, filters.sidList, filters.midList]);
 
     const fetchFilterOptions = async () => {
         try {
@@ -98,9 +152,12 @@ const DailyMerchantDashboard = () => {
             });
             if (res.ok) {
                 const result = await res.json();
+                // FIX: removed Math.random fake sparkline fallback. If backend doesn't
+                // provide sparklineData, leave it undefined and let the chart render
+                // empty rather than show meaningless random numbers.
                 setData(result.map((r, i) => ({
                     id: r.merchantId || i, ...r,
-                    sparklineData: r.sparklineData || Array.from({ length: 15 }, () => Math.floor(Math.random() * 5000) + 1000)
+                    sparklineData: r.sparklineData || []
                 })));
             }
         } catch (error) { console.error("Failed to fetch data", error); }

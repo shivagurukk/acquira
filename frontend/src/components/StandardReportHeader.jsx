@@ -7,22 +7,32 @@ const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterCh
     const [customRange, setCustomRange] = useState({ start: '', end: '' });
     const [showCustomPicker, setShowCustomPicker] = useState(false);
 
+    // Local-date formatter — toISOString() converts to UTC which can shift
+    // the date by one day in non-UTC timezones (e.g. IST). See PremiumReportHeader
+    // for the full explanation of this bug.
+    const fmtLocal = (d) => {
+        const yr = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        return `${yr}-${mo}-${dy}`;
+    };
+
     useEffect(() => {
         if (period === 'CUSTOM') return;
         const today = new Date();
         let start = '', end = '';
         if (period === 'TODAY') {
-            const dateStr = today.toISOString().split('T')[0];
+            const dateStr = fmtLocal(today);
             start = dateStr; end = dateStr;
         } else if (period === 'MONTH') {
-            start = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-            end = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+            start = fmtLocal(new Date(today.getFullYear(), today.getMonth(), 1));
+            end = fmtLocal(new Date(today.getFullYear(), today.getMonth() + 1, 0));
         } else if (period === 'YEAR') {
-            start = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
-            end = new Date(today.getFullYear(), 11, 31).toISOString().split('T')[0];
+            start = fmtLocal(new Date(today.getFullYear(), 0, 1));
+            end = fmtLocal(new Date(today.getFullYear(), 11, 31));
         } else if (period === 'PY') {
-            start = new Date(today.getFullYear() - 1, 0, 1).toISOString().split('T')[0];
-            end = new Date(today.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
+            start = fmtLocal(new Date(today.getFullYear() - 1, 0, 1));
+            end = fmtLocal(new Date(today.getFullYear() - 1, 11, 31));
         }
         if (onFilterChange) onFilterChange({ startDate: start, endDate: end });
         setTimeout(() => { if (onRefresh) onRefresh(); }, 50);

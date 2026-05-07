@@ -18,6 +18,16 @@ public class ZeroTransactionRepository {
     private EntityManager entityManager;
 
     public List<Map<String, Object>> getZeroTransactionList(VolumeRevenueFilterDTO filter) {
+        return getZeroTransactionList(filter, null);
+    }
+
+    /**
+     * Tenant-scoped variant. When tenantId is non-null, the join chain
+     * (dim_terminal -> dim_store -> dim_merchant) is filtered to that tenant
+     * AND the inner sum_daily_terminal subquery is also scoped, preventing
+     * cross-tenant rows from leaking through any path.
+     */
+    public List<Map<String, Object>> getZeroTransactionList(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
         // Base Query: Terminal granularity
@@ -34,9 +44,12 @@ public class ZeroTransactionRepository {
         sql.append("  st.name as store_name, ");
         sql.append("  t.tid as terminal_id, ");
 
-        // Last Txn Date Subquery
+        // Last Txn Date Subquery (also scoped to tenant when applicable so cross-tenant
+        // terminal-id reuse cannot leak transaction dates)
         sql.append(
-                "  (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id) as last_txn_date, ");
+                "  (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id"
+                + (tenantId != null ? " AND s.tenant_id = :tenantId" : "")
+                + ") as last_txn_date, ");
         sql.append("  t.created_date as onboarding_date "); // or m.created_date
 
         sql.append("FROM dim_terminal t ");
@@ -44,6 +57,14 @@ public class ZeroTransactionRepository {
         sql.append("JOIN dim_merchant m ON st.merchant_id = m.merchant_id ");
 
         sql.append("WHERE 1=1 ");
+
+        // Tenant scope. We attach to m (merchant) since dim_terminal/dim_store/dim_merchant
+        // are all tenant-partitioned in this schema.
+        if (tenantId != null) {
+            sql.append("AND m.tenant_id = :tenantId ");
+            sql.append("AND st.tenant_id = :tenantId ");
+            sql.append("AND t.tenant_id = :tenantId ");
+        }
 
         // Filters
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty()) {
@@ -104,6 +125,8 @@ public class ZeroTransactionRepository {
 
         Query query = entityManager.createNativeQuery(sql.toString());
 
+        if (tenantId != null) query.setParameter("tenantId", tenantId);
+
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
@@ -140,17 +163,31 @@ public class ZeroTransactionRepository {
 
     // Better implementation with filtering
     public List<Map<String, Object>> getZeroTransactionListSmart(VolumeRevenueFilterDTO filter, String rangeType) {
+        return getZeroTransactionListSmart(filter, rangeType, null);
+    }
+
+    public List<Map<String, Object>> getZeroTransactionListSmart(VolumeRevenueFilterDTO filter, String rangeType, Long tenantId) {
         // rangeType: "LAST_7", "LAST_30", "NEVER"
+
+        // Tenant predicate fragment (used both in the outer WHERE and in every
+        // inner sum_daily_terminal subquery so each scope is independently safe).
+        final String innerTenant = (tenantId != null) ? " AND s.tenant_id = :tenantId" : "";
 
         StringBuilder sql = new StringBuilder();
         sql.append(
                 "SELECT m.name, COALESCE(st.legal_name, m.name), m.referral_partner, m.mid, st.sid, st.name, t.tid, ");
         sql.append(
-                "(SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id) as last_txn ");
+                "(SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id" + innerTenant + ") as last_txn ");
         sql.append("FROM dim_terminal t ");
         sql.append("JOIN dim_store st ON t.store_id = st.store_id ");
         sql.append("JOIN dim_merchant m ON st.merchant_id = m.merchant_id ");
         sql.append("WHERE 1=1 ");
+
+        if (tenantId != null) {
+            sql.append("AND m.tenant_id = :tenantId ");
+            sql.append("AND st.tenant_id = :tenantId ");
+            sql.append("AND t.tenant_id = :tenantId ");
+        }
 
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty()) {
             sql.append("AND m.referral_partner IN (:partners) ");
@@ -160,25 +197,26 @@ public class ZeroTransactionRepository {
         }
 
         // Range Logic
-        // We use a HAVING-like clause in WHERE using the subquery
         if ("NEVER".equals(rangeType)) {
             sql.append(
-                    "AND (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id) IS NULL ");
+                    "AND (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id" + innerTenant + ") IS NULL ");
         } else if ("LAST_7".equals(rangeType)) {
             sql.append(
-                    "AND ((SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id) < :cutoff7 ");
+                    "AND ((SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id" + innerTenant + ") < :cutoff7 ");
             sql.append(
-                    "     OR (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id) IS NULL) ");
+                    "     OR (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id" + innerTenant + ") IS NULL) ");
         } else if ("LAST_30".equals(rangeType)) {
             sql.append(
-                    "AND ((SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id) < :cutoff30 ");
+                    "AND ((SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id" + innerTenant + ") < :cutoff30 ");
             sql.append(
-                    "     OR (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id) IS NULL) ");
+                    "     OR (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id" + innerTenant + ") IS NULL) ");
         }
 
         sql.append("LIMIT 500");
 
         Query query = entityManager.createNativeQuery(sql.toString());
+
+        if (tenantId != null) query.setParameter("tenantId", tenantId);
 
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
