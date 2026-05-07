@@ -219,8 +219,12 @@ public class AnalyticsController {
 
     @GetMapping("/heatmap")
     public ResponseEntity<List<com.acquira.common.dto.MerchantHeatmapDTO>> getMerchantHeatmap(
-            @RequestParam(defaultValue = "2025") int year) {
-        return ResponseEntity.ok(sumDailyMerchantRepository.findMerchantHeatmapData(year));
+            @RequestParam(required = false) Integer year) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
+        // Default to current calendar year (was hardcoded 2025).
+        int yr = (year != null) ? year : LocalDate.now().getYear();
+        return ResponseEntity.ok(sumDailyMerchantRepository.findMerchantHeatmapDataForTenant(yr, tenantId));
     }
 
     @GetMapping("/available-years")

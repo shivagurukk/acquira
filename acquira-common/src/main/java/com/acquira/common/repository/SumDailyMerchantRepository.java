@@ -193,6 +193,24 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
         java.util.List<com.acquira.common.dto.MerchantHeatmapDTO> findMerchantHeatmapData(
                         @org.springframework.data.repository.query.Param("year") int year);
 
+        /**
+         * Tenant-scoped variant of findMerchantHeatmapData. Adds `s.tenantId = :tenantId`
+         * AND `m.tenantId = :tenantId` so heatmap rows cannot leak across tenants.
+         * The original un-scoped variant is retained only for backward compat — callers
+         * should migrate to this one.
+         */
+        @Query("SELECT new com.acquira.common.dto.MerchantHeatmapDTO(" +
+                        "m.name, m.internalId, EXTRACT(MONTH FROM s.businessDate), SUM(s.totalVolume)) " +
+                        "FROM SumDailyMerchant s " +
+                        "JOIN com.acquira.common.model.Merchant m ON s.merchantId = m.merchantId " +
+                        "WHERE EXTRACT(YEAR FROM s.businessDate) = :year " +
+                        "  AND s.tenantId = :tenantId AND m.tenantId = :tenantId " +
+                        "GROUP BY m.name, m.internalId, EXTRACT(MONTH FROM s.businessDate) " +
+                        "ORDER BY m.name, EXTRACT(MONTH FROM s.businessDate)")
+        java.util.List<com.acquira.common.dto.MerchantHeatmapDTO> findMerchantHeatmapDataForTenant(
+                        @org.springframework.data.repository.query.Param("year") int year,
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId);
+
         @Query("SELECT m FROM SumDailyMerchant m WHERE m.tenantId = :tenantId AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.businessDate")
         java.util.List<SumDailyMerchant> findByTenantIdAndDateRange(
                         @org.springframework.data.repository.query.Param("tenantId") Integer tenantId,
