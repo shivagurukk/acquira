@@ -53,9 +53,32 @@ public class MerchantMasterJobConfig {
 
     @Bean
     public Step upsertAndSummarizeStep(Tasklet upsertAndSummarizeTasklet) {
+        // FIX: same idle-in-transaction risk as TransactionJobConfig's populateSummaryStep.
+        // The dim_merchant + dim_store + dim_terminal upserts plus parallel contacts/risk/
+        // bank-account DELETE+INSERTs can run for many minutes on a 17k+ row file. Holding
+        // them all in a single Spring-Batch-managed transaction:
+        //   - Causes PostgreSQL idle_in_transaction_session_timeout to kill the connection
+        //     mid-step on dev/RHEL (1-min default), with a misleading "Connection is closed"
+        //     stack trace.
+        //   - Holds locks on dim_merchant/dim_store for the duration of the entire step,
+        //     blocking other reads.
+        //
+        // With propagation=NEVER each jdbcTemplate.update() commits on its own auto-commit
+        // boundary. Acceptable for this workload because the upserts are idempotent
+        // (ON CONFLICT DO UPDATE) — re-running fixes any partial state from a crash.
         return new StepBuilder("upsertAndSummarizeStep", jobRepository)
                 .tasklet(upsertAndSummarizeTasklet, transactionManager)
+                .transactionAttribute(noTxn())
                 .build();
+    }
+
+    /**
+     * Returns a transaction attribute that tells Spring Batch NOT to wrap the
+     * tasklet in a managed transaction. Mirrors the helper in TransactionJobConfig.
+     */
+    private static org.springframework.transaction.interceptor.DefaultTransactionAttribute noTxn() {
+        return new org.springframework.transaction.interceptor.DefaultTransactionAttribute(
+            org.springframework.transaction.TransactionDefinition.PROPAGATION_NEVER);
     }
 
     /** PERF FIX (bulk merchant upload): combined tasklet that previously ran

@@ -89,16 +89,26 @@ public class BatchConfig {
      *  - To poll for completion, use JobExplorer.getJobExecution(id) or hit
      *    /api/batch/jobs/{id}/status.
      */
-    @Bean
+    @Bean("jobLauncher")
     @Primary
-    public org.springframework.batch.core.launch.JobLauncher asyncJobLauncher(
+    public org.springframework.batch.core.launch.JobLauncher jobLauncher(
             JobRepository jobRepository,
             @org.springframework.beans.factory.annotation.Qualifier("batchTaskExecutor")
             TaskExecutor taskExecutor) throws Exception {
+        // Bean is named exactly "jobLauncher" to win against Spring Boot's
+        // auto-configured bean of the same name. The previous version was named
+        // "asyncJobLauncher" and the auto-configured one (with SyncTaskExecutor)
+        // was still being injected into FileUploadService. Confirmed via stack
+        // trace showing job execution on http-nio-8081-exec-N thread.
         TaskExecutorJobLauncher launcher = new TaskExecutorJobLauncher();
         launcher.setJobRepository(jobRepository);
         launcher.setTaskExecutor(taskExecutor);
         launcher.afterPropertiesSet();
+        // Visible-at-startup proof that THIS bean is being used. If you see this
+        // line in the log on app start, async is wired. If you don't, Spring Boot
+        // auto-configuration is winning over our @Primary.
+        org.slf4j.LoggerFactory.getLogger(BatchConfig.class).warn(
+            "✓✓✓ Async JobLauncher initialized with batchTaskExecutor (corePool=2, maxPool=6). Batch jobs will run on background threads.");
         return launcher;
     }
 }

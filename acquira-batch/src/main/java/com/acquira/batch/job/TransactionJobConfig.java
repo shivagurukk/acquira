@@ -964,18 +964,22 @@ public class TransactionJobConfig {
                 distinctDates.size(), monthSet.size());
 
             // PERF FIX: parallelize independent aggregation queries.
-            // Previously these 15 queries ran sequentially, each round-trip to RDS adding
-            // ~250ms of pure network latency before the SQL even started executing
-            // (~4s of unavoidable network overhead). Running them in parallel collapses
-            // that to ~one round-trip's worth, since they target different summary tables
-            // and don't conflict.
+            // Previously these 15 queries ran sequentially. Now they run on a small
+            // thread pool sized for what RDS can usefully do in parallel.
+            //
+            // Pool size = 4 (down from 8). On same-AZ EC2+RDS the bottleneck is no
+            // longer per-query latency (sub-ms) but the actual disk/buffer-cache work
+            // each aggregation does on fact_transaction. Eight concurrent heavy
+            // aggregations were saturating shared RDS resources and serializing on
+            // the buffer pool, which made each one SLOWER than running 4 at a time
+            // on smaller RDS instance classes (db.t3, db.m5.large, db.r5.large).
             //
             // The dependency graph:
             //   PHASE 1 (parallel): all the simple INSERT-from-fact_transaction aggregations
             //   PHASE 2 (depends on PHASE 1): top-spending-customer UPDATE on sum_daily_merchant
             // Each task uses its own JDBC connection from the pool.
             java.util.concurrent.ExecutorService exec =
-                java.util.concurrent.Executors.newFixedThreadPool(8,
+                java.util.concurrent.Executors.newFixedThreadPool(4,
                     r -> { Thread t = new Thread(r, "summary-agg-"); t.setDaemon(true); return t; });
             try {
                 java.util.List<java.util.concurrent.CompletableFuture<Void>> phase1 = new java.util.ArrayList<>();
@@ -1229,9 +1233,19 @@ public class TransactionJobConfig {
             long t = System.currentTimeMillis();
             try {
                 int rows = work.get();
-                System.out.printf("  [parallel] %-25s %d rows in %.2fs%n", name, rows, (System.currentTimeMillis() - t) / 1000.0);
+                // FIX: use SLF4J at WARN level so per-query timings show up regardless of
+                // logging.level.com.acquira / org.springframework.batch settings on prod.
+                // System.out.printf was being swallowed by logback's prod profile.
+                org.slf4j.LoggerFactory.getLogger(TransactionJobConfig.class).warn(
+                    "  [populateSummary] {} {} rows in {}s",
+                    String.format("%-25s", name), rows,
+                    String.format("%.2f", (System.currentTimeMillis() - t) / 1000.0));
             } catch (Exception e) {
-                System.err.printf("  [parallel] %-25s FAILED in %.2fs: %s%n", name, (System.currentTimeMillis() - t) / 1000.0, e.getMessage());
+                org.slf4j.LoggerFactory.getLogger(TransactionJobConfig.class).error(
+                    "  [populateSummary] {} FAILED in {}s: {}",
+                    String.format("%-25s", name),
+                    String.format("%.2f", (System.currentTimeMillis() - t) / 1000.0),
+                    e.getMessage());
                 throw e;
             }
         }, exec);

@@ -9753,3 +9753,47 @@ ON CONFLICT (country_code) DO UPDATE SET
   phone_code = EXCLUDED.phone_code,
   iso_numeric = EXCLUDED.iso_numeric,
   decimal_notation_value = EXCLUDED.decimal_notation_value;
+
+-- ============================================================
+-- Performance indexes for batch ingestion (added 2026-05-07)
+-- ============================================================
+-- pg_stat_user_indexes showed idx_dim_store_sid, idx_dim_terminal_tid,
+-- idx_dim_terminal_store, and idx_dim_merchant_mid had ZERO scans, while
+-- the batch ingestion SQL relies on lookups by (tenant_id, sid/mid/tid).
+-- Without composite indexes covering tenant_id, the planner falls back to
+-- seq scans, making merchant uploads take 10+ minutes on tenants with
+-- many existing rows.
+--
+-- These do NOT use CONCURRENTLY because schema.sql runs inside a single
+-- transaction at startup and CONCURRENTLY can't run in a transaction.
+-- For prod (where schema.sql doesn't run) the same indexes are also
+-- defined in db/migration/V2026_05_07_01__performance_indexes.sql with
+-- CONCURRENTLY, to be applied manually post-deploy.
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_dim_store_tenant_sid
+    ON dim_store (tenant_id, sid)
+    WHERE sid IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_dim_merchant_tenant_mid
+    ON dim_merchant (tenant_id, mid)
+    WHERE mid IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_dim_terminal_tenant_tid
+    ON dim_terminal (tenant_id, tid)
+    WHERE tid IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_dim_terminal_tenant_store
+    ON dim_terminal (tenant_id, store_id);
+
+CREATE INDEX IF NOT EXISTS idx_stg_merchant_tenant_loadtime
+    ON stg_merchant_master_raw (tenant_id, load_time);
+
+CREATE INDEX IF NOT EXISTS idx_stg_trnx_tenant_paydate
+    ON stg_trnx_raw (tenant_id, payment_date);
+
+CREATE INDEX IF NOT EXISTS idx_fact_transaction_tenant_merchant_date
+    ON fact_transaction (tenant_id, merchant_id, payment_date);
+
+CREATE INDEX IF NOT EXISTS idx_sum_daily_merchant_tenant_date
+    ON sum_daily_merchant (tenant_id, business_date);
