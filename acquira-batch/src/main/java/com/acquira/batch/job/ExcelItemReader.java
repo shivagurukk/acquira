@@ -75,13 +75,26 @@ public class ExcelItemReader<T> extends AbstractItemCountingItemStreamItemReader
     // ==================================================================================
     private void openCsv() throws Exception {
         InputStream is = resource.getInputStream();
-        csvReader = new BufferedReader(new InputStreamReader(is), 256 * 1024);
+        csvReader = new BufferedReader(new InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8), 256 * 1024);
 
-        // Read header line
-        String headerLine = csvReader.readLine();
+        // FIX (CSV embedded-newline support): we now read RECORDS rather than
+        // "lines" so quoted fields containing newlines (very common in address
+        // columns, e.g. multi-line postal addresses) are kept on one logical row.
+        // The previous implementation called csvReader.readLine() which broke at
+        // every \n regardless of quoting, splitting a single CSV record into
+        // multiple half-rows. That produced records with the wrong number of
+        // columns, which the writer then sent to Postgres with the wrong number
+        // of bind parameters — throwing DataIntegrityViolationException.
+        //
+        // Strip a UTF-8 BOM if the file has one (Excel adds it on "Save As CSV").
+        // The first record we read is the header.
+        String headerLine = readCsvRecord();
         if (headerLine == null) {
             logger.warn("CSV file is empty: {}", resource.getDescription());
             return;
+        }
+        if (!headerLine.isEmpty() && headerLine.charAt(0) == '\uFEFF') {
+            headerLine = headerLine.substring(1);
         }
 
         // Detect delimiter
@@ -94,23 +107,84 @@ public class ExcelItemReader<T> extends AbstractItemCountingItemStreamItemReader
             headerMap.put(key, i);
         }
 
-        // Skip additional lines if needed (linesToSkip includes header which we already read)
+        // Skip additional records if needed (linesToSkip includes header which we already read)
         for (int i = 1; i < linesToSkip; i++) {
-            csvReader.readLine();
+            readCsvRecord();
         }
 
         logger.info("CSV reader opened: {} — {} headers, delimiter='{}'",
                 resource.getDescription(), headerMap.size(), csvDelimiter == '\t' ? "TAB" : ",");
     }
 
-    private T readCsv() throws Exception {
-        String line = csvReader.readLine();
-        while (line != null && line.trim().isEmpty()) {
-            line = csvReader.readLine(); // skip blank lines
+    /**
+     * Read one logical CSV RECORD (not raw line). A record may span multiple
+     * physical lines if a field is quoted and contains newlines. Tracks quote
+     * state across newlines and only returns when we're out of quoted context.
+     *
+     * Returns null at EOF.
+     *
+     * Handles:
+     *   - quoted fields with embedded \n or \r\n
+     *   - escaped double-quote ("" inside a quoted field)
+     *   - blank lines BETWEEN records (skipped) but not within a quoted field
+     *   - both \r\n and \n line endings
+     */
+    private String readCsvRecord() throws IOException {
+        StringBuilder sb = new StringBuilder(256);
+        boolean inQuotes = false;
+        int c;
+        boolean started = false;
+        while ((c = csvReader.read()) != -1) {
+            char ch = (char) c;
+            if (ch == '"') {
+                // Toggle quote state, but handle the "" escape: peek next char.
+                if (inQuotes) {
+                    csvReader.mark(1);
+                    int next = csvReader.read();
+                    if (next == '"') {
+                        // Escaped quote inside quoted field — keep both, stay in quotes.
+                        sb.append('"').append('"');
+                        started = true;
+                        continue;
+                    } else if (next != -1) {
+                        csvReader.reset();
+                    }
+                }
+                inQuotes = !inQuotes;
+                sb.append(ch);
+                started = true;
+            } else if (ch == '\r') {
+                if (inQuotes) {
+                    sb.append(ch);
+                } else {
+                    // Look ahead for \n (Windows CRLF). Treat \r alone or \r\n as record terminator.
+                    csvReader.mark(1);
+                    int next = csvReader.read();
+                    if (next != -1 && next != '\n') csvReader.reset();
+                    if (started) return sb.toString();
+                    // else: blank line before any data — skip and keep reading
+                }
+            } else if (ch == '\n') {
+                if (inQuotes) {
+                    sb.append(ch);
+                } else if (started) {
+                    return sb.toString();
+                }
+                // else: blank line, skip
+            } else {
+                sb.append(ch);
+                started = true;
+            }
         }
-        if (line == null) return null;
+        // EOF: return whatever we have, or null if we never started.
+        return started ? sb.toString() : null;
+    }
 
-        currentCsvFields = parseCsvLine(line, csvDelimiter);
+    private T readCsv() throws Exception {
+        String record = readCsvRecord();
+        if (record == null) return null;
+
+        currentCsvFields = parseCsvLine(record, csvDelimiter);
         csvRowNum++;
 
         if (csvRowMapper != null) {

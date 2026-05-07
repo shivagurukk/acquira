@@ -794,6 +794,30 @@ public class PdfController {
 
     private YearMonth resolveTargetMonth(Integer year, Integer month) {
         if (year != null && month != null) return YearMonth.of(year, month);
+        // FIX: previously defaulted to last calendar month (e.g. April 2026 if today
+        // is May 2026). That's wrong when production data lags real time — e.g.
+        // transaction files might cover Aug/Sep 2025 even though we're in May 2026.
+        // Default would generate empty PDFs (zero data for April 2026) and look broken.
+        //
+        // New behaviour: query sum_daily_merchant for the most recent business_date
+        // for the current tenant, and use THAT month. Falls back to (now - 1 month)
+        // only if the table is empty (truly fresh install with no data yet).
+        try {
+            Long tenantId = TenantContext.getCurrentTenant();
+            if (tenantId != null) {
+                java.sql.Date latest = jdbcTemplate.queryForObject(
+                    "SELECT MAX(business_date) FROM sum_daily_merchant WHERE tenant_id = ?",
+                    java.sql.Date.class, tenantId);
+                if (latest != null) {
+                    YearMonth ym = YearMonth.from(latest.toLocalDate());
+                    log.debug("resolveTargetMonth: defaulting to most recent data month {} for tenant {}",
+                        ym, tenantId);
+                    return ym;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("resolveTargetMonth: could not auto-detect latest month, falling back: {}", e.getMessage());
+        }
         return YearMonth.now().minusMonths(1);
     }
 
