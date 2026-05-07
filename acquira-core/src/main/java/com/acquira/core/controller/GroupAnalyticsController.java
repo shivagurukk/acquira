@@ -50,6 +50,10 @@ public class GroupAnalyticsController {
         } else if ("TODAY".equalsIgnoreCase(period)) {
             start = now;
             end = now;
+        } else if ("LAST_MONTH".equalsIgnoreCase(period)) {
+            // Previous calendar month: first to last day
+            start = now.minusMonths(1).withDayOfMonth(1);
+            end   = now.withDayOfMonth(1).minusDays(1);
         } else if ("YEAR".equalsIgnoreCase(period)) {
             start = now.withDayOfYear(1);
             end = now;

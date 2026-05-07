@@ -203,7 +203,7 @@ const DebitPrepaidMetrics = () => {
     return (
         <Box sx={pageContainer}>
             <PremiumReportHeader
-                title="Debit & Prepaid Metrics" subtitle="Domestic debit and prepaid performance by merchant and store"
+                title="Debit & Prepaid Metrics" subtitle="Debit and prepaid card performance by merchant and store"
                 icon={CreditCard}
                 onExport={() => exportToCSV(data, 'debit_prepaid_metrics')}
                 onRunReport={() => fetchData()} onFilterChange={handleFilterChange}
@@ -217,7 +217,9 @@ const DebitPrepaidMetrics = () => {
                 <Paper sx={{ p: 3, mb: 2, borderRadius: 2, bgcolor: '#fffbeb', border: '1px solid #fde68a' }}>
                     <Typography variant="body2" color="#92400e" fontWeight="600">{fetchError}</Typography>
                     <Typography variant="caption" color="#a16207" sx={{ mt: 1, display: 'block' }}>
-                        This report filters for DOMESTIC DEBIT and PREPAID transactions only. Ensure your data has matching destination and card_type values.
+                        This report shows transactions where card_type is DEBIT or PREPAID (any destination unless you've narrowed it via filters).
+                        If this is empty, the underlying data may not have card_type populated — check the server log for the
+                        "[DebitPrepaid] EMPTY result" diagnostic line which lists the actual card_type values present.
                     </Typography>
                 </Paper>
             )}

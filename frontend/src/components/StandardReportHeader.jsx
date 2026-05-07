@@ -27,6 +27,10 @@ const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterCh
         } else if (period === 'MONTH') {
             start = fmtLocal(new Date(today.getFullYear(), today.getMonth(), 1));
             end = fmtLocal(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+        } else if (period === 'LAST_MONTH') {
+            // First and last day of the previous calendar month.
+            start = fmtLocal(new Date(today.getFullYear(), today.getMonth() - 1, 1));
+            end   = fmtLocal(new Date(today.getFullYear(), today.getMonth(), 0));
         } else if (period === 'YEAR') {
             start = fmtLocal(new Date(today.getFullYear(), 0, 1));
             end = fmtLocal(new Date(today.getFullYear(), 11, 31));
@@ -94,10 +98,11 @@ const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterCh
                         borderRadius: '10px', display: 'flex', gap: '2px',
                         border: '1px solid var(--border, #e5e7eb)',
                     }}>
-                        {periodBtn('TODAY')}
-                        {periodBtn('MONTH')}
-                        {periodBtn('YEAR')}
-                        {periodBtn('PY', 'Prev Year')}
+                        {periodBtn('TODAY', 'Today')}
+                        {periodBtn('MONTH', 'This Month')}
+                        {periodBtn('LAST_MONTH', 'Last Month')}
+                        {periodBtn('YEAR', 'This Year')}
+                        {periodBtn('PY', 'Last Year')}
                         <button
                             onClick={() => setShowCustomPicker(!showCustomPicker)}
                             style={{

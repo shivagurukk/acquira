@@ -69,13 +69,15 @@ const FinanceDashboard = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const queryParams = new URLSearchParams();
-            if (filters.startDate) queryParams.append('from', filters.startDate);
-            if (filters.endDate) queryParams.append('to', filters.endDate);
-
+            // Use the filtered POST endpoints. The old GET endpoints silently
+            // dropped every drawer field except startDate/endDate.
             const [kpiRes, trendRes] = await Promise.all([
-                axios.get(`/finance/dashboard/kpis?${queryParams.toString()}`, { headers: { 'X-Tenant-Id': tenantId } }),
-                axios.get(`/finance/dashboard/trends/MTD?${queryParams.toString()}`, { headers: { 'X-Tenant-Id': tenantId } })
+                axios.post(`/finance/dashboard/kpis-filtered`,
+                    filters,
+                    { headers: { 'X-Tenant-Id': tenantId } }),
+                axios.post(`/finance/dashboard/trends-filtered?mode=MTD`,
+                    filters,
+                    { headers: { 'X-Tenant-Id': tenantId } }),
             ]);
             setKpis(kpiRes.data);
             setTrends(trendRes.data);

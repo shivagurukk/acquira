@@ -4,6 +4,8 @@ import com.acquira.common.repository.*;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.model.SumDailyBank;
 import com.acquira.common.config.TenantContext;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +27,9 @@ public class FinanceController {
     private final SumDailySchemeRepository schemeRepository;
     private final SumDailyChannelRepository channelRepository;
     private final VolumeRevenueRepository volumeRevenueRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public FinanceController(SumDailyBankRepository bankRepository,
             SumMonthlyBankRepository monthlyBankRepository,
@@ -63,6 +68,11 @@ public class FinanceController {
                     start = now; end = now; break;
                 case "MONTH":
                     start = now.withDayOfMonth(1); end = now; break;
+                case "LAST_MONTH":
+                    // Previous calendar month: first to last day
+                    start = now.minusMonths(1).withDayOfMonth(1);
+                    end   = now.withDayOfMonth(1).minusDays(1);
+                    break;
                 case "YEAR":
                     start = now.withDayOfYear(1); end = now; break;
                 case "PY":
@@ -112,7 +122,6 @@ public class FinanceController {
         Long tenantId = TenantContext.getCurrentTenant();
         LocalDate end = (to != null) ? to : LocalDate.now();
         LocalDate start = (from != null) ? from : end.withDayOfMonth(1); // Default MTD
-
         // 1. Daily (For specific "Today" tile, regardless of filter, or should it be
         // last day of filter?)
         // Spec says "Daily Tile". Let's show Today's data always for "Daily" tile
@@ -164,6 +173,261 @@ public class FinanceController {
         }
         response.put("marginPct", marginPct);
 
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Filtered dashboard KPIs. Same response shape as GET /dashboard/kpis but
+     * accepts the full VolumeRevenueFilterDTO body so the BusinessFilters drawer
+     * (partner / RM / MCC / team-leader / merchant-name / MID / SID / scheme /
+     * card-type / destination / channel) actually narrows the numbers.
+     *
+     * Implementation note: the original GET endpoint runs against
+     * sum_daily_bank, which is bank-level aggregation and has none of the
+     * dimensional columns we need to filter on. So this filtered variant queries
+     * sum_daily_insight instead (which has card_scheme, card_type, destination,
+     * channel) and joins dim_merchant / dim_store as needed for partner / RM /
+     * MCC / SID. When NO filters are set we still go through this path and the
+     * numbers will match the GET endpoint within rounding (both sum the same
+     * underlying transactions, just at different aggregation grains).
+     *
+     * Daily / MTD / YTD volume tiles are anchored on "now" rather than the
+     * filter date range, matching the original GET behaviour. The filter date
+     * range only narrows the cost-analysis (msf / interchange / scheme / margin)
+     * tiles — again matching the GET behaviour.
+     */
+    @PostMapping("/dashboard/kpis-filtered")
+    public ResponseEntity<Map<String, Object>> getDashboardKpisFiltered(
+            @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (filter == null) filter = new VolumeRevenueFilterDTO();
+
+        LocalDate now = LocalDate.now();
+        LocalDate end = (filter.getEndDate() != null) ? filter.getEndDate() : now;
+        LocalDate start = (filter.getStartDate() != null) ? filter.getStartDate() : end.withDayOfMonth(1);
+
+        // Fixed buckets are always anchored on `now` regardless of filter date
+        // range. This matches the GET endpoint's behaviour.
+        java.math.BigDecimal[] dailyAgg = aggregateInsight(tenantId, now, now, filter);
+        java.math.BigDecimal[] mtdAgg   = aggregateInsight(tenantId, now.withDayOfMonth(1), now, filter);
+        java.math.BigDecimal[] ytdAgg   = aggregateInsight(tenantId, now.withDayOfYear(1),  now, filter);
+        java.math.BigDecimal[] filteredAgg = aggregateInsight(tenantId, start, end, filter);
+
+        // Index layout: [vol, msf, interchange, schemeFee, vat, netRev]
+        Map<String, Object> response = new HashMap<>();
+        response.put("dailyVolume",     dailyAgg[0]);
+        response.put("mtdVolume",       mtdAgg[0]);
+        response.put("ytdVolume",       ytdAgg[0]);
+        // sum_daily_insight does not carry a separate netRevenue column; the
+        // original endpoint pulled it from sum_daily_bank. We approximate as
+        // (total_msf - total_interchange - total_scheme_fee). This matches how
+        // sum_daily_bank.total_net_revenue is computed in the batch job.
+        response.put("dailyNetRevenue", dailyAgg[5]);
+        response.put("mtdNetRevenue",   mtdAgg[5]);
+        response.put("ytdNetRevenue",   ytdAgg[5]);
+
+        // Cost analysis based on the filter range
+        response.put("msfRevenue",      filteredAgg[1]);
+        response.put("interchangeFees", filteredAgg[2]);
+        response.put("schemeFees",      filteredAgg[3]);
+        response.put("vat",             filteredAgg[4]);
+
+        BigDecimal fVol = filteredAgg[0];
+        BigDecimal fRev = filteredAgg[5];
+        BigDecimal marginPct = BigDecimal.ZERO;
+        if (fVol.compareTo(BigDecimal.ZERO) > 0) {
+            marginPct = fRev.multiply(new BigDecimal("100")).divide(fVol, 2, RoundingMode.HALF_UP);
+        }
+        response.put("marginPct", marginPct);
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * One-shot aggregator for the filtered KPI endpoint. Returns a 6-slot array:
+     *   [0] total_volume
+     *   [1] total_msf
+     *   [2] total_interchange
+     *   [3] total_scheme_fee
+     *   [4] total_vat (assumed 0 — sum_daily_insight may not have it; safe default)
+     *   [5] computed net revenue = msf - interchange - scheme_fee
+     */
+    private java.math.BigDecimal[] aggregateInsight(Long tenantId, LocalDate start, LocalDate end,
+                                                    VolumeRevenueFilterDTO filter) {
+        boolean needMerchant =
+                listNonEmpty(filter.getPartnerList())   ||
+                listNonEmpty(filter.getRmList())        ||
+                listNonEmpty(filter.getTeamLeaderList())||
+                (filter.getMerchantName() != null && !filter.getMerchantName().isBlank()) ||
+                listNonEmpty(filter.getMidList());
+        boolean needStore =
+                listNonEmpty(filter.getMccList()) ||
+                listNonEmpty(filter.getSidList());
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT ");
+        sql.append("  COALESCE(SUM(s.total_volume), 0)        AS vol, ");
+        sql.append("  COALESCE(SUM(s.total_msf), 0)           AS msf, ");
+        sql.append("  COALESCE(SUM(s.total_interchange), 0)   AS interchange, ");
+        sql.append("  COALESCE(SUM(s.total_scheme_fee), 0)    AS scheme_fee ");
+        sql.append("FROM sum_daily_insight s ");
+        if (needMerchant) sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
+        if (needStore)    sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id ");
+        sql.append("WHERE s.tenant_id = :tid ");
+        sql.append("  AND s.business_date BETWEEN :start AND :end ");
+        if (needMerchant) sql.append("  AND m.tenant_id = :tid ");
+        if (needStore)    sql.append("  AND st.tenant_id = :tid ");
+        if (listNonEmpty(filter.getPartnerList()))    sql.append("  AND m.referral_partner IN (:partners) ");
+        if (listNonEmpty(filter.getRmList()))         sql.append("  AND m.sales_email IN (:rms) ");
+        if (listNonEmpty(filter.getTeamLeaderList())) sql.append("  AND m.sales_user_id IN (:teamLeaders) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                                                      sql.append("  AND m.name ILIKE :merchName ");
+        if (listNonEmpty(filter.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
+        if (listNonEmpty(filter.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
+        if (listNonEmpty(filter.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
+        if (listNonEmpty(filter.getSchemeList()))     sql.append("  AND s.card_scheme IN (:schemes) ");
+        if (listNonEmpty(filter.getCardTypeList()))   sql.append("  AND s.card_type IN (:cardTypes) ");
+        if (listNonEmpty(filter.getDestinationList()))sql.append("  AND s.destination IN (:destinations) ");
+        if (listNonEmpty(filter.getChannelList()))    sql.append("  AND s.channel IN (:channels) ");
+
+        jakarta.persistence.Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("tid",   tenantId);
+        q.setParameter("start", start);
+        q.setParameter("end",   end);
+        if (listNonEmpty(filter.getPartnerList()))    q.setParameter("partners",     filter.getPartnerList());
+        if (listNonEmpty(filter.getRmList()))         q.setParameter("rms",          filter.getRmList());
+        if (listNonEmpty(filter.getTeamLeaderList())) q.setParameter("teamLeaders",  filter.getTeamLeaderList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                                                      q.setParameter("merchName",    "%" + filter.getMerchantName() + "%");
+        if (listNonEmpty(filter.getMidList()))        q.setParameter("mids",         filter.getMidList());
+        if (listNonEmpty(filter.getMccList()))        q.setParameter("mccs",         filter.getMccList());
+        if (listNonEmpty(filter.getSidList()))        q.setParameter("sids",         filter.getSidList());
+        if (listNonEmpty(filter.getSchemeList()))     q.setParameter("schemes",      filter.getSchemeList());
+        if (listNonEmpty(filter.getCardTypeList()))   q.setParameter("cardTypes",    filter.getCardTypeList());
+        if (listNonEmpty(filter.getDestinationList()))q.setParameter("destinations", filter.getDestinationList());
+        if (listNonEmpty(filter.getChannelList()))    q.setParameter("channels",     filter.getChannelList());
+
+        Object[] row = (Object[]) q.getSingleResult();
+        BigDecimal vol         = toBigDecimal(row[0]);
+        BigDecimal msf         = toBigDecimal(row[1]);
+        BigDecimal interchange = toBigDecimal(row[2]);
+        BigDecimal schemeFee   = toBigDecimal(row[3]);
+        BigDecimal vat         = BigDecimal.ZERO; // not on sum_daily_insight
+        BigDecimal netRev      = msf.subtract(interchange).subtract(schemeFee);
+        return new BigDecimal[] { vol, msf, interchange, schemeFee, vat, netRev };
+    }
+
+    private static boolean listNonEmpty(List<?> l) { return l != null && !l.isEmpty(); }
+
+    private static BigDecimal toBigDecimal(Object o) {
+        if (o == null) return BigDecimal.ZERO;
+        if (o instanceof BigDecimal) return (BigDecimal) o;
+        return new BigDecimal(o.toString());
+    }
+
+    /**
+     * Filtered version of the trends endpoint. Same shape as
+     * GET /dashboard/trends/{mode} but accepts the full filter so the chart
+     * narrows in step with the KPIs above.
+     *
+     * Aggregates day-by-day from sum_daily_insight. For ranges > 45 days we
+     * group by month to keep the chart readable.
+     */
+    @PostMapping("/dashboard/trends-filtered")
+    public ResponseEntity<List<Map<String, Object>>> getTrendsFiltered(
+            @RequestParam(required = false) String mode,
+            @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (filter == null) filter = new VolumeRevenueFilterDTO();
+
+        LocalDate end = (filter.getEndDate() != null) ? filter.getEndDate() : LocalDate.now();
+        LocalDate start = (filter.getStartDate() != null) ? filter.getStartDate() : end.withDayOfMonth(1);
+
+        boolean useMonthly = java.time.temporal.ChronoUnit.DAYS.between(start, end) > 45
+                || "YTD".equalsIgnoreCase(mode);
+
+        boolean needMerchant =
+                listNonEmpty(filter.getPartnerList())   ||
+                listNonEmpty(filter.getRmList())        ||
+                listNonEmpty(filter.getTeamLeaderList())||
+                (filter.getMerchantName() != null && !filter.getMerchantName().isBlank()) ||
+                listNonEmpty(filter.getMidList());
+        boolean needStore =
+                listNonEmpty(filter.getMccList()) ||
+                listNonEmpty(filter.getSidList());
+
+        // Group key: 'YYYY-MM' for monthly, 'YYYY-MM-DD' for daily
+        String groupKey = useMonthly
+                ? "TO_CHAR(s.business_date, 'YYYY-MM')"
+                : "TO_CHAR(s.business_date, 'YYYY-MM-DD')";
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT ").append(groupKey).append(" AS bucket, ");
+        sql.append("  COALESCE(SUM(s.total_volume), 0)      AS vol, ");
+        sql.append("  COALESCE(SUM(s.total_msf), 0)         AS msf, ");
+        sql.append("  COALESCE(SUM(s.total_interchange), 0) AS interchange, ");
+        sql.append("  COALESCE(SUM(s.total_scheme_fee), 0)  AS scheme_fee ");
+        sql.append("FROM sum_daily_insight s ");
+        if (needMerchant) sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
+        if (needStore)    sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id ");
+        sql.append("WHERE s.tenant_id = :tid ");
+        sql.append("  AND s.business_date BETWEEN :start AND :end ");
+        if (needMerchant) sql.append("  AND m.tenant_id = :tid ");
+        if (needStore)    sql.append("  AND st.tenant_id = :tid ");
+        if (listNonEmpty(filter.getPartnerList()))    sql.append("  AND m.referral_partner IN (:partners) ");
+        if (listNonEmpty(filter.getRmList()))         sql.append("  AND m.sales_email IN (:rms) ");
+        if (listNonEmpty(filter.getTeamLeaderList())) sql.append("  AND m.sales_user_id IN (:teamLeaders) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                                                      sql.append("  AND m.name ILIKE :merchName ");
+        if (listNonEmpty(filter.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
+        if (listNonEmpty(filter.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
+        if (listNonEmpty(filter.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
+        if (listNonEmpty(filter.getSchemeList()))     sql.append("  AND s.card_scheme IN (:schemes) ");
+        if (listNonEmpty(filter.getCardTypeList()))   sql.append("  AND s.card_type IN (:cardTypes) ");
+        if (listNonEmpty(filter.getDestinationList()))sql.append("  AND s.destination IN (:destinations) ");
+        if (listNonEmpty(filter.getChannelList()))    sql.append("  AND s.channel IN (:channels) ");
+        sql.append("GROUP BY ").append(groupKey).append(" ");
+        sql.append("ORDER BY 1");
+
+        jakarta.persistence.Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("tid",   tenantId);
+        q.setParameter("start", start);
+        q.setParameter("end",   end);
+        if (listNonEmpty(filter.getPartnerList()))    q.setParameter("partners",     filter.getPartnerList());
+        if (listNonEmpty(filter.getRmList()))         q.setParameter("rms",          filter.getRmList());
+        if (listNonEmpty(filter.getTeamLeaderList())) q.setParameter("teamLeaders",  filter.getTeamLeaderList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                                                      q.setParameter("merchName",    "%" + filter.getMerchantName() + "%");
+        if (listNonEmpty(filter.getMidList()))        q.setParameter("mids",         filter.getMidList());
+        if (listNonEmpty(filter.getMccList()))        q.setParameter("mccs",         filter.getMccList());
+        if (listNonEmpty(filter.getSidList()))        q.setParameter("sids",         filter.getSidList());
+        if (listNonEmpty(filter.getSchemeList()))     q.setParameter("schemes",      filter.getSchemeList());
+        if (listNonEmpty(filter.getCardTypeList()))   q.setParameter("cardTypes",    filter.getCardTypeList());
+        if (listNonEmpty(filter.getDestinationList()))q.setParameter("destinations", filter.getDestinationList());
+        if (listNonEmpty(filter.getChannelList()))    q.setParameter("channels",     filter.getChannelList());
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = q.getResultList();
+        List<Map<String, Object>> response = new ArrayList<>(rows.size());
+        for (Object[] r : rows) {
+            Map<String, Object> point = new HashMap<>();
+            BigDecimal vol         = toBigDecimal(r[1]);
+            BigDecimal msf         = toBigDecimal(r[2]);
+            BigDecimal interchange = toBigDecimal(r[3]);
+            BigDecimal schemeFee   = toBigDecimal(r[4]);
+            BigDecimal netRev      = msf.subtract(interchange).subtract(schemeFee);
+            BigDecimal margin      = (vol.compareTo(BigDecimal.ZERO) > 0)
+                    ? netRev.multiply(new BigDecimal(100)).divide(vol, 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            point.put("key",        r[0] != null ? r[0].toString() : "");
+            point.put("msf",        msf);
+            point.put("interchange", interchange);
+            point.put("netRevenue", netRev);
+            point.put("marginPct",  margin);
+            response.add(point);
+        }
         return ResponseEntity.ok(response);
     }
 

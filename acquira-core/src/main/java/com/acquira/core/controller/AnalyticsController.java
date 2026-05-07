@@ -227,6 +227,142 @@ public class AnalyticsController {
         return ResponseEntity.ok(sumDailyMerchantRepository.findMerchantHeatmapDataForTenant(yr, tenantId));
     }
 
+    /**
+     * Filtered heatmap. Same shape as GET /heatmap but accepts a full
+     * VolumeRevenueFilterDTO so the caller can narrow by partner / RM / MCC /
+     * team leader / merchant name / MID / SID / scheme / card type / destination /
+     * channel.
+     *
+     * Two query strategies:
+     *  1. "Fast path" (no card-level filters) — query sum_daily_merchant which is
+     *     pre-aggregated at the merchant level; ~12 rows-per-merchant per year.
+     *  2. "Slow but correct path" (any of scheme/cardType/destination/channel set)
+     *     — query sum_daily_insight which has those columns; orders of magnitude
+     *     more rows but necessary when the filter logically requires per-card-line
+     *     scoping.
+     *
+     * In both paths we always tenant-scope on s.tenant_id AND m.tenant_id.
+     */
+    @PostMapping("/heatmap-filtered")
+    public ResponseEntity<List<com.acquira.common.dto.MerchantHeatmapDTO>> getMerchantHeatmapFiltered(
+            @RequestParam(required = false) Integer year,
+            @RequestBody(required = false) com.acquira.common.dto.VolumeRevenueFilterDTO filter) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
+        if (filter == null) filter = new com.acquira.common.dto.VolumeRevenueFilterDTO();
+        int yr = (year != null) ? year : LocalDate.now().getYear();
+
+        boolean usesCardFilters =
+                (filter.getSchemeList()      != null && !filter.getSchemeList().isEmpty())     ||
+                (filter.getCardTypeList()    != null && !filter.getCardTypeList().isEmpty())   ||
+                (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())||
+                (filter.getChannelList()     != null && !filter.getChannelList().isEmpty());
+
+        StringBuilder sql = new StringBuilder();
+        if (usesCardFilters) {
+            // sum_daily_insight base. Joins dim_merchant for partner/RM/team-leader/name
+            // and dim_store for MCC/SID. Per-card-line columns live directly on s.
+            sql.append("SELECT m.name AS merchantName, m.internal_id AS merchantId, ");
+            sql.append("       EXTRACT(MONTH FROM s.business_date) AS mo, ");
+            sql.append("       SUM(s.total_volume) AS totalVolume ");
+            sql.append("FROM sum_daily_insight s ");
+            sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
+            sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id ");
+            sql.append("WHERE EXTRACT(YEAR FROM s.business_date) = :yr ");
+            sql.append("  AND s.tenant_id = :tid AND m.tenant_id = :tid ");
+        } else {
+            // sum_daily_merchant base — fast path. Card-level columns aren't here.
+            sql.append("SELECT m.name AS merchantName, m.internal_id AS merchantId, ");
+            sql.append("       EXTRACT(MONTH FROM s.business_date) AS mo, ");
+            sql.append("       SUM(s.total_volume) AS totalVolume ");
+            sql.append("FROM sum_daily_merchant s ");
+            sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
+            // dim_store join only when MCC or SID filtering is needed; avoids
+            // multiplying merchant-level rows by store count.
+            boolean needStore =
+                    (filter.getMccList() != null && !filter.getMccList().isEmpty()) ||
+                    (filter.getSidList() != null && !filter.getSidList().isEmpty());
+            if (needStore) sql.append("LEFT JOIN dim_store st ON st.merchant_id = m.merchant_id AND st.tenant_id = :tid ");
+            sql.append("WHERE EXTRACT(YEAR FROM s.business_date) = :yr ");
+            sql.append("  AND s.tenant_id = :tid AND m.tenant_id = :tid ");
+        }
+
+        // Optional filters — only emit the WHERE fragment AND the parameter when
+        // the list is non-empty, so the SQL stays clean and the parameter binder
+        // never sees an unused name.
+        if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
+            sql.append("  AND m.referral_partner IN (:partners) ");
+        if (filter.getRmList() != null && !filter.getRmList().isEmpty())
+            sql.append("  AND m.sales_email IN (:rms) ");
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
+            sql.append("  AND m.sales_user_id IN (:teamLeaders) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            sql.append("  AND m.name ILIKE :merchName ");
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            sql.append("  AND m.mid IN (:mids) ");
+        // MCC / SID via dim_store — in fast path the join only exists when needed.
+        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
+            sql.append("  AND st.mcc IN (:mccs) ");
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            sql.append("  AND st.sid IN (:sids) ");
+        // Card-level filters — only valid against sum_daily_insight.
+        if (usesCardFilters) {
+            if (filter.getSchemeList() != null && !filter.getSchemeList().isEmpty())
+                sql.append("  AND s.card_scheme IN (:schemes) ");
+            if (filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty())
+                sql.append("  AND s.card_type IN (:cardTypes) ");
+            if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+                sql.append("  AND s.destination IN (:destinations) ");
+            if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+                sql.append("  AND s.channel IN (:channels) ");
+        }
+
+        sql.append("GROUP BY m.name, m.internal_id, EXTRACT(MONTH FROM s.business_date) ");
+        sql.append("ORDER BY m.name, mo");
+
+        jakarta.persistence.Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("yr", yr);
+        q.setParameter("tid", tenantId);
+        if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
+            q.setParameter("partners", filter.getPartnerList());
+        if (filter.getRmList() != null && !filter.getRmList().isEmpty())
+            q.setParameter("rms", filter.getRmList());
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
+            q.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            q.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            q.setParameter("mids", filter.getMidList());
+        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
+            q.setParameter("mccs", filter.getMccList());
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            q.setParameter("sids", filter.getSidList());
+        if (usesCardFilters) {
+            if (filter.getSchemeList() != null && !filter.getSchemeList().isEmpty())
+                q.setParameter("schemes", filter.getSchemeList());
+            if (filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty())
+                q.setParameter("cardTypes", filter.getCardTypeList());
+            if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+                q.setParameter("destinations", filter.getDestinationList());
+            if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+                q.setParameter("channels", filter.getChannelList());
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = q.getResultList();
+        List<com.acquira.common.dto.MerchantHeatmapDTO> result = new java.util.ArrayList<>(rows.size());
+        for (Object[] row : rows) {
+            String merchantName = (String) row[0];
+            String merchantId   = (String) row[1];
+            Integer mo          = ((Number) row[2]).intValue();
+            BigDecimal vol      = (row[3] instanceof BigDecimal)
+                    ? (BigDecimal) row[3]
+                    : (row[3] != null ? new BigDecimal(row[3].toString()) : BigDecimal.ZERO);
+            result.add(new com.acquira.common.dto.MerchantHeatmapDTO(merchantName, merchantId, mo, vol));
+        }
+        return ResponseEntity.ok(result);
+    }
+
     @GetMapping("/available-years")
     public ResponseEntity<List<Integer>> getAvailableYears() {
         Long tenantId = TenantContext.getCurrentTenant();

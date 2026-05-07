@@ -26,7 +26,14 @@ const TransactionPerformanceDashboard = () => {
     const [showFilters, setShowFilters] = useState(false);
     const [filters, setFilters] = useState(() => {
         const now = new Date();
-        const fmt = (d) => d.toISOString().split('T')[0];
+        // Local-date formatter — toISOString() shifts dates by one day in non-UTC
+        // timezones. See PremiumReportHeader for the full bug explanation.
+        const fmt = (d) => {
+            const yr = d.getFullYear();
+            const mo = String(d.getMonth() + 1).padStart(2, '0');
+            const dy = String(d.getDate()).padStart(2, '0');
+            return `${yr}-${mo}-${dy}`;
+        };
         return { datePreset: 'YEAR', startDate: fmt(new Date(now.getFullYear(), 0, 1)), endDate: fmt(now) };
     });
     const [expanded, setExpanded] = useState({});
@@ -39,9 +46,24 @@ const TransactionPerformanceDashboard = () => {
         const body = { ...filters };
         if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
             const now = new Date();
-            const fmt = (d) => d.toISOString().split('T')[0];
+            // Local-date formatter — same timezone bug fix as above.
+            const fmt = (d) => {
+                const yr = d.getFullYear();
+                const mo = String(d.getMonth() + 1).padStart(2, '0');
+                const dy = String(d.getDate()).padStart(2, '0');
+                return `${yr}-${mo}-${dy}`;
+            };
             if (body.datePreset === 'YEAR') { body.startDate = fmt(new Date(now.getFullYear(), 0, 1)); body.endDate = fmt(now); }
             else if (body.datePreset === 'MONTH') { body.startDate = fmt(new Date(now.getFullYear(), now.getMonth(), 1)); body.endDate = fmt(now); }
+            else if (body.datePreset === 'LAST_MONTH') {
+                body.startDate = fmt(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+                body.endDate   = fmt(new Date(now.getFullYear(), now.getMonth(), 0));
+            }
+            else if (body.datePreset === 'TODAY') { body.startDate = fmt(now); body.endDate = fmt(now); }
+            else if (body.datePreset === 'PY') {
+                body.startDate = fmt(new Date(now.getFullYear() - 1, 0, 1));
+                body.endDate   = fmt(new Date(now.getFullYear() - 1, 11, 31));
+            }
         }
         delete body.datePreset;
         const res = await fetch(`/api/business/performance-dashboard?${queryParams}`, {

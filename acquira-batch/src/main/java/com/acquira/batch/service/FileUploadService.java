@@ -272,8 +272,11 @@ public class FileUploadService {
                         .toJobParameters();
                 org.springframework.batch.core.JobExecution execution = jobLauncher.run(merchantMasterJob, jobParameters);
 
-                // Clean up temp file after successful processing
-                deleteTempFile(tempFile);
+                // ASYNC NOTE: with the async JobLauncher, we cannot delete the temp file here —
+                // the batch job has only just been queued; reading the file happens later on a
+                // background thread. Deleting now would crash the in-progress job.
+                // The @Scheduled cleanupOrphanedTempFiles() task removes files older than 1 hour,
+                // which is more than enough for any single batch job to complete.
                 return execution;
 
             } else if ("TRANSACTION".equals(detectedType)) {
@@ -317,15 +320,19 @@ public class FileUploadService {
                     }
                 });
 
-                // Clean up temp file after successful processing
-                deleteTempFile(tempFile);
+                // ASYNC NOTE: see merchant branch above — the batch job runs on a background
+                // thread now; deleting the temp file here would yank the input out from under it.
+                // Cleanup is handled by the @Scheduled cleanupOrphanedTempFiles() task.
                 return execution;
 
             } else {
                 throw new RuntimeException("Unknown file format.");
             }
         } catch (Exception e) {
-            // Clean up temp file even on failure
+            // On synchronous failure (e.g. wrong tenant, legacy excel) the batch job
+            // never started, so it's safe to delete the temp file. We only skip
+            // deletion when the job WAS submitted — which can only happen on the
+            // success paths above.
             deleteTempFile(tempFile);
             throw e;
         }
@@ -357,11 +364,9 @@ public class FileUploadService {
 
         // 1. Save every uploaded file to disk and remember the saved path.
         java.util.List<java.io.File> savedFiles = new java.util.ArrayList<>();
-        java.util.List<Path> tempPaths = new java.util.ArrayList<>();
         for (MultipartFile mf : files) {
             if (mf == null || mf.isEmpty()) continue;
             String saved = saveFile(mf);
-            tempPaths.add(Paths.get(saved));
             savedFiles.add(new java.io.File(saved));
         }
 
@@ -372,12 +377,12 @@ public class FileUploadService {
         // 2. Classify and run via the same internal helpers as processServerPath().
         // Reuses processSingleServerFile() so the upload path is byte-for-byte identical to
         // the server-folder path past this point.
-        try {
-            return runMultiFileBatch(savedFiles);
-        } finally {
-            // Always clean up temp files — success or failure.
-            for (Path p : tempPaths) deleteTempFile(p);
-        }
+        //
+        // ASYNC NOTE: with the async JobLauncher, runMultiFileBatch() returns as soon as
+        // every job has been submitted — not after they complete. So we cannot delete the
+        // temp files in a finally block; the in-flight batch jobs are still reading them.
+        // The @Scheduled cleanupOrphanedTempFiles() task removes files older than 1 hour.
+        return runMultiFileBatch(savedFiles);
     }
 
     /**
@@ -563,8 +568,8 @@ public class FileUploadService {
             result.put("jobStatus", execution.getStatus().toString());
             result.put("status", "SUCCESS");
 
-            log.info("{} file processed: {} — Job {} — {}",
-                    fileType, file.getName(), execution.getId(), execution.getStatus());
+            log.info("{} file submitted to batch: {} — Job {} — {} (status will update asynchronously; poll /api/batch/jobs/{}/status)",
+                    fileType, file.getName(), execution.getId(), execution.getStatus(), execution.getId());
 
         } catch (Exception e) {
             result.put("status", "FAILED");

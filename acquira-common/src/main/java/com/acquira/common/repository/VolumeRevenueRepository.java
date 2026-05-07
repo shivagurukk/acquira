@@ -598,6 +598,17 @@ public class VolumeRevenueRepository {
     /**
      * Tenant-scoped variant. Adds `AND s.tenant_id = :tenantId` so debit/prepaid
      * metrics never include rows from other tenants.
+     *
+     * The card_type filter is intentionally permissive: real-world card_type
+     * values vary wildly across processors (single letter 'D', abbreviations
+     * like 'DBT', numeric codes '2'/'3'/'4', full words 'DEBIT', etc.) so we
+     * accept any of the common spellings AND join through ref_card_scheme as a
+     * fallback.
+     *
+     * Note: the frontend banner historically claimed this filter required
+     * `destination = 'DOMESTIC'` but the SQL never actually enforced that
+     * — the banner was wrong. We honor the user's destinationList filter from
+     * the drawer instead, which is the correct behaviour.
      */
     public List<Map<String, Object>> getDebitPrepaidMetrics(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
@@ -612,10 +623,22 @@ public class VolumeRevenueRepository {
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
         sql.append("LEFT JOIN dim_store st2 ON s.store_id = st2.store_id ");
 
-        // Match debit and prepaid card types - support both text labels and scheme codes
-        sql.append("WHERE (UPPER(s.card_type) IN ('DEBIT', 'PREPAID', 'DEBIT PREPAID', 'CREDIT PREPAID') ");
+        // Permissive card_type matching. Cover the variants we've actually seen in
+        // production data plus the canonical forms.
+        // - Full words:    DEBIT, PREPAID, DEBIT PREPAID, CREDIT PREPAID
+        // - Abbreviated:   DEB, DBT, PREP, PPD
+        // - Single-letter: D (debit), P (prepaid)  -- common in tokenised feeds
+        // - Numeric codes: 2, 3, 4 (per ref_card_scheme convention)
+        // - Suffixed:      'DEBIT CARD', 'PREPAID CARD', etc — caught by LIKE
+        // Plus the original ref_card_scheme join as a final fallback.
+        sql.append("WHERE ( ");
+        sql.append("      UPPER(TRIM(s.card_type)) IN ('DEBIT','PREPAID','DEBIT PREPAID','CREDIT PREPAID', ");
+        sql.append("                                   'DEB','DBT','PREP','PPD','D','P','2','3','4') ");
+        sql.append("   OR UPPER(TRIM(s.card_type)) LIKE 'DEBIT%' ");
+        sql.append("   OR UPPER(TRIM(s.card_type)) LIKE 'PREPAID%' ");
         sql.append("   OR s.card_type IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4)) ");
-        sql.append("   OR s.card_scheme IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4))) ");
+        sql.append("   OR s.card_scheme IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4)) ");
+        sql.append("     ) ");
 
         if (tenantId != null)
             sql.append("AND s.tenant_id = :tenantId ");
@@ -650,6 +673,9 @@ public class VolumeRevenueRepository {
         sql.append("GROUP BY m.mid, st2.sid, m.name ");
         sql.append("ORDER BY m.mid ASC, st2.sid ASC");
 
+        // Diagnostic logging: when the result is empty we want to know whether the
+        // problem is the card_type filter (data exists in this date range but no
+        // matching card_types) or a different filter. One log line, only on empty.
         Query query = entityManager.createNativeQuery(sql.toString());
 
         if (tenantId != null)
@@ -682,6 +708,32 @@ public class VolumeRevenueRepository {
             map.put("count", row[3]);
             map.put("volume", row[4]);
             result.add(map);
+        }
+
+        // Diagnostic: if empty, find out what card_types DO exist in the date
+        // range so we can extend the matcher above. One-time log per empty call.
+        if (result.isEmpty()) {
+            try {
+                StringBuilder diag = new StringBuilder();
+                diag.append("SELECT DISTINCT s.card_type, s.card_scheme, COUNT(*) cnt ");
+                diag.append("FROM sum_daily_insight s ");
+                diag.append("WHERE 1=1 ");
+                if (tenantId != null) diag.append("AND s.tenant_id = :tid ");
+                if (filter.getStartDate() != null) diag.append("AND s.business_date >= :start ");
+                if (filter.getEndDate() != null)   diag.append("AND s.business_date <= :end ");
+                diag.append("GROUP BY s.card_type, s.card_scheme ORDER BY cnt DESC LIMIT 20");
+                Query dq = entityManager.createNativeQuery(diag.toString());
+                if (tenantId != null) dq.setParameter("tid", tenantId);
+                if (filter.getStartDate() != null) dq.setParameter("start", filter.getStartDate());
+                if (filter.getEndDate() != null)   dq.setParameter("end",   filter.getEndDate());
+                List<Object[]> diagRows = dq.getResultList();
+                System.out.println("[DebitPrepaid] EMPTY result. card_type/card_scheme distribution in range: " + diagRows.size() + " distinct combos");
+                for (Object[] r : diagRows) {
+                    System.out.println("  card_type='" + r[0] + "' scheme='" + r[1] + "' count=" + r[2]);
+                }
+            } catch (Exception e) {
+                System.out.println("[DebitPrepaid] diagnostic query failed: " + e.getMessage());
+            }
         }
 
         return result;

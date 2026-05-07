@@ -8,7 +8,7 @@ const DATE_PRESETS = [
     { key: 'MONTH', label: 'This month' },
     { key: 'LAST_MONTH', label: 'Last month' },
     { key: 'YEAR', label: 'This year' },
-    { key: 'PY', label: 'Prev year' },
+    { key: 'PY', label: 'Last year' },
     { key: 'CUSTOM', label: 'Custom' },
 ];
 

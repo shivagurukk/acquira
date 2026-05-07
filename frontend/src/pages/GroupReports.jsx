@@ -65,10 +65,16 @@ const GroupReports = () => {
                     <p style={{ color: '#64748b' }}>Analyze performance across different business groups</p>
                 </div>
                 <div style={{ display: 'flex', gap: '10px' }}>
-                    {['TODAY', 'MONTH', 'YEAR', 'PY'].map(p => (
+                    {[
+                        { key: 'TODAY',      label: 'Today' },
+                        { key: 'MONTH',      label: 'This Month' },
+                        { key: 'LAST_MONTH', label: 'Last Month' },
+                        { key: 'YEAR',       label: 'This Year' },
+                        { key: 'PY',         label: 'Last Year' },
+                    ].map(p => (
                         <button
-                            key={p}
-                            onClick={() => setPeriod(p)}
+                            key={p.key}
+                            onClick={() => setPeriod(p.key)}
                             style={{
                                 padding: '8px 16px',
                                 borderRadius: '8px',
@@ -76,12 +82,12 @@ const GroupReports = () => {
                                 fontWeight: '600',
                                 border: 'none',
                                 cursor: 'pointer',
-                                background: period === p ? '#0f172a' : '#e2e8f0',
-                                color: period === p ? 'white' : '#64748b',
+                                background: period === p.key ? '#0f172a' : '#e2e8f0',
+                                color: period === p.key ? 'white' : '#64748b',
                                 transition: 'all 0.2s'
                             }}
                         >
-                            {p === 'PY' ? 'Prev Year' : p}
+                            {p.label}
                         </button>
                     ))}
                     <button onClick={fetchData} style={{ padding: '8px', background: '#f1f5f9', borderRadius: '8px', border: 'none', cursor: 'pointer' }}>

@@ -60,27 +60,32 @@ const MerchantHeatmap = () => {
         try {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
-            const params = new URLSearchParams({ year });
             // Inline SID picker takes precedence over the drawer's sidList.
             const effSidList = sidList.length > 0 ? sidList : (filters.sidList || []);
-            if (effSidList.length > 0) effSidList.forEach(s => params.append('sidList', s));
-            // Forward the standard filters as repeat params so the backend can scope
-            // by partner / MCC / RM / scheme / card-type / channel / etc.
-            (filters.partnerList    || []).forEach(v => params.append('partnerList',    v));
-            (filters.mccList        || []).forEach(v => params.append('mccList',        v));
-            (filters.rmList         || []).forEach(v => params.append('rmList',         v));
-            (filters.teamLeaderList || []).forEach(v => params.append('teamLeaderList', v));
-            (filters.schemeList     || []).forEach(v => params.append('schemeList',     v));
-            (filters.cardTypeList   || []).forEach(v => params.append('cardTypeList',   v));
-            (filters.destinationList|| []).forEach(v => params.append('destinationList',v));
-            (filters.channelList    || []).forEach(v => params.append('channelList',    v));
-            (filters.midList        || []).forEach(v => params.append('midList',        v));
-            if (filters.merchantName) params.append('merchantName', filters.merchantName);
-            const response = await fetch(`/api/analytics/heatmap?${params.toString()}`, {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
+            // Build the filter body. Send empty arrays/strings for unset filters so
+            // the backend treats them as "not specified" and skips the WHERE clause.
+            const body = {
+                ...filters,
+                sidList: effSidList,
+                // The heatmap is year-scoped; the date range is implied by `year`.
+                // Sending null start/end avoids a redundant WHERE business_date BETWEEN.
+                startDate: null,
+                endDate: null,
+            };
+            const response = await fetch(`/api/analytics/heatmap-filtered?year=${year}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
+                },
+                body: JSON.stringify(body),
             });
             if (response.ok) processData(await response.json());
-            else processData([]);
+            else {
+                console.error('heatmap-filtered failed', response.status, await response.text());
+                processData([]);
+            }
         } catch (error) { console.error("Failed to fetch heatmap data", error); }
         finally { setLoading(false); }
     };

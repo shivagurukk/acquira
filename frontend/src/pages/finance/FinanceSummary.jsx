@@ -196,19 +196,25 @@ const FinanceSummary = () => {
 
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                     <div style={{ background: '#f1f5f9', padding: '4px', borderRadius: '8px', display: 'flex', gap: '4px' }}>
-                        {['TODAY', 'MONTH', 'YEAR', 'PY'].map(p => (
+                        {[
+                            { key: 'TODAY',      label: 'Today' },
+                            { key: 'MONTH',      label: 'This Month' },
+                            { key: 'LAST_MONTH', label: 'Last Month' },
+                            { key: 'YEAR',       label: 'This Year' },
+                            { key: 'PY',         label: 'Last Year' },
+                        ].map(p => (
                             <button
-                                key={p}
-                                onClick={() => { setPeriod(p); setShowCustomPicker(false); }}
+                                key={p.key}
+                                onClick={() => { setPeriod(p.key); setShowCustomPicker(false); }}
                                 style={{
                                     padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', border: 'none', cursor: 'pointer',
-                                    background: period === p ? 'white' : 'transparent',
-                                    color: period === p ? '#0f172a' : '#64748b',
-                                    boxShadow: period === p ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
+                                    background: period === p.key ? 'white' : 'transparent',
+                                    color: period === p.key ? '#0f172a' : '#64748b',
+                                    boxShadow: period === p.key ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
                                     transition: 'all 0.2s'
                                 }}
                             >
-                                {p === 'PY' ? 'Prev Year' : p}
+                                {p.label}
                             </button>
                         ))}
                         <button

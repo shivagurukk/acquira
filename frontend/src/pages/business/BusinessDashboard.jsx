@@ -31,13 +31,22 @@ const BusinessDashboard = () => {
         try {
             const token    = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
-            const queryParams = new URLSearchParams();
-            if (filters.startDate) queryParams.append('startDate', filters.startDate);
-            if (filters.endDate)   queryParams.append('endDate',   filters.endDate);
-            const res = await fetch(`/api/business/dashboard/kpis?${queryParams.toString()}`, {
-                headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }
+            // Use the filtered POST endpoint so the BusinessFilters drawer fields
+            // (partner / RM / MCC / scheme / card-type / destination / channel /
+            // team-leader / MID / SID / merchant-name) actually scope the result.
+            // The previous GET endpoint silently dropped everything except
+            // startDate/endDate, leaving the drawer cosmetic.
+            const res = await fetch('/api/business/dashboard/kpis-filtered', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                    'X-Tenant-Id': tenantId,
+                },
+                body: JSON.stringify(filters),
             });
             if (res.ok) setKpis(await res.json());
+            else console.error('kpis-filtered failed', res.status, await res.text());
         } catch (error) {
             console.error(error);
         } finally {

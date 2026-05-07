@@ -3,6 +3,7 @@ import { Box, Paper, Typography, Avatar, Stack, Tooltip, MenuItem, Select, FormC
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, Activity } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
+import BusinessFilters from '../../components/BusinessFilters';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 
@@ -67,9 +68,20 @@ const DailyMerchantDashboard = () => {
     const [filters, setFilters] = useState({
         year: null,
         month: null,
+        // BusinessFilters drawer fields. Inline midList/sidList still take
+        // precedence; the drawer's are merged in the request body.
         sidList: [],
         midList: [],
+        partnerList: [], rmList: [], teamLeaderList: [], mccList: [],
+        merchantName: '',
+        // Card-level filters — the backend silently ignores these for this
+        // dashboard (see DailyMerchantDashboardController), but the drawer still
+        // shows them for visual consistency with other screens.
+        schemeList: [], cardTypeList: [], destinationList: [], channelList: [],
+        industryList: [], sectorList: [], terminalTypeList: [],
+        startDate: '', endDate: '',
     });
+    const [showFilters, setShowFilters] = useState(false);
     const [boundsLoaded, setBoundsLoaded] = useState(false);
 
     // Discover the latest month that actually has data, then default the filter
@@ -123,7 +135,9 @@ const DailyMerchantDashboard = () => {
     useEffect(() => {
         if (!boundsLoaded) return; // don't fire until we know the right month
         fetchDashboardData();
-    }, [boundsLoaded, filters.year, filters.month, filters.sidList, filters.midList]);
+    }, [boundsLoaded, filters.year, filters.month, filters.sidList, filters.midList,
+        filters.partnerList, filters.rmList, filters.teamLeaderList, filters.mccList,
+        filters.merchantName]);
 
     const fetchFilterOptions = async () => {
         try {
@@ -144,12 +158,27 @@ const DailyMerchantDashboard = () => {
         try {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
-            const params = new URLSearchParams({ month: filters.month, year: filters.year });
-            if (filters.sidList.length > 0) filters.sidList.forEach(s => params.append('sidList', s));
-            if (filters.midList.length > 0) filters.midList.forEach(m => params.append('midList', m));
-            const res = await fetch(`/api/business/daily-merchant-dashboard?${params.toString()}`, {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-            });
+            // POST to the filtered endpoint so we can send the full drawer filter
+            // shape. Year/month stay as query params; everything else goes in body.
+            const body = {
+                ...filters,
+                // Don't send year/month in body — they're query params
+                year: undefined, month: undefined,
+                // Date fields are not used by this endpoint (it's month-scoped)
+                startDate: null, endDate: null,
+            };
+            const res = await fetch(
+                `/api/business/daily-merchant-dashboard-filtered?year=${filters.year}&month=${filters.month}`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                        ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+                    },
+                    body: JSON.stringify(body),
+                }
+            );
             if (res.ok) {
                 const result = await res.json();
                 // FIX: removed Math.random fake sparkline fallback. If backend doesn't
@@ -159,6 +188,9 @@ const DailyMerchantDashboard = () => {
                     id: r.merchantId || i, ...r,
                     sparklineData: r.sparklineData || []
                 })));
+            } else {
+                console.error('daily-merchant-dashboard-filtered failed', res.status, await res.text());
+                setData([]);
             }
         } catch (error) { console.error("Failed to fetch data", error); }
         finally { setLoading(false); }
@@ -317,9 +349,21 @@ const DailyMerchantDashboard = () => {
                 icon={Calendar}
                 onExport={() => exportToCSV(data, 'daily_merchant_dashboard')}
                 onRunReport={fetchDashboardData} loading={loading} hideDatePresets
+                showFilters={showFilters}
+                onToggleFilters={() => setShowFilters(s => !s)}
+                filters={filters}
+                onFilterChange={(patch) => setFilters(prev => ({ ...prev, ...patch }))}
             >
                 {extraControls}
             </PremiumReportHeader>
+
+            <BusinessFilters
+                filters={filters}
+                onChange={setFilters}
+                onApply={fetchDashboardData}
+                isOpen={showFilters}
+                onClose={() => setShowFilters(false)}
+            />
 
             <Stack direction="row" spacing={3} mb={4}>
                 {kpis.map((kpi, idx) => <StatCard key={idx} {...kpi} />)}
