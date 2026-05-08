@@ -51,6 +51,17 @@ public class ScheduledDbPullJob {
     }
 
     private void executeReport(ReportQueryConfig query) {
+        // P0-3 follow-up: every metrics row written by this job must be tenant-scoped,
+        // because the merchant_id strings (e.g. bank-internal IDs) are NOT unique
+        // across tenants. If tenantId is unset on the query, refuse to run it —
+        // running unscoped would silently overwrite metrics rows belonging to
+        // OTHER tenants whose internal IDs collide.
+        if (query.getTenantId() == null) {
+            log.warn("Skipping report '{}' (id={}) — tenantId is not set. Update report_query_config.tenant_id to enable.",
+                query.getReportName(), query.getId());
+            return;
+        }
+
         ReportRunLog runLog = new ReportRunLog();
         runLog.setQuery(query);
         runLog.setStartTime(LocalDateTime.now());
@@ -71,7 +82,7 @@ public class ScheduledDbPullJob {
             List<Map<String, Object>> rawRows = dbClient.executeQuery(ds, query.getSqlText(), params);
 
             // 3. Process Data: Group by Merchant
-            processRawData(rawRows, now.withDayOfMonth(1));
+            processRawData(query.getTenantId(), rawRows, now.withDayOfMonth(1));
 
             // 4. Success Log
             runLog.setStatus(ReportRunLog.Status.SUCCESS);
@@ -87,7 +98,7 @@ public class ScheduledDbPullJob {
         }
     }
 
-    private void processRawData(List<Map<String, Object>> rows, LocalDate reportDate) {
+    private void processRawData(Long tenantId, List<Map<String, Object>> rows, LocalDate reportDate) {
         // Assume SQL returns: MERCHANT_ID, MID, MERCHANT_NAME, DAY, VOLUME
 
         // Group by Merchant ID
@@ -131,8 +142,11 @@ public class ScheduledDbPullJob {
             MerchantDailyMetrics metrics = calculator.computeMetrics(
                     merchId, mid, name, dailyMap, reportDate, MerchantDailyMetrics.SourceType.DB_PULL);
 
-            // Save (Upsert logic)
-            metricsRepo.findByMerchantIdAndReportDate(merchId, reportDate)
+            // P0-3 follow-up: tenant-scoped lookup AND tenant-scoped write.
+            // Without this the upsert would key on (merchId, reportDate) only,
+            // which collides across tenants whose internal merchant IDs overlap.
+            metrics.setTenantId(tenantId);
+            metricsRepo.findByTenantIdAndMerchantIdAndReportDate(tenantId, merchId, reportDate)
                     .ifPresent(existing -> metrics.setId(existing.getId()));
 
             metricsRepo.save(metrics);

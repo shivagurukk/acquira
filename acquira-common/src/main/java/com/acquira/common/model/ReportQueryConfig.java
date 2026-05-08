@@ -13,6 +13,17 @@ public class ReportQueryConfig {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /**
+     * Tenant this query belongs to. Used by ScheduledDbPullJob to scope
+     * the metrics it writes to merchant_daily_metrics.
+     *
+     * Nullable for now so existing rows don't break the migration. The
+     * scheduler skips rows with tenantId=null and logs a warning. New
+     * report_query_config rows MUST set this.
+     */
+    @Column(name = "tenant_id")
+    private Long tenantId;
+
     @ManyToOne
     @JoinColumn(name = "source_id", nullable = false)
     private DataSourceConfig dataSource;
