@@ -2,6 +2,7 @@ package com.acquira.batch.service;
 
 import com.acquira.common.model.*;
 import com.acquira.common.repository.*;
+import com.acquira.common.service.CryptoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,6 +32,8 @@ public class IntegrationPullService {
     private final IntegrationScheduleRepository scheduleRepo;
     private final JdbcTemplate jdbcTemplate;
     private final ManualIngestionService manualIngestionService;
+    // P0 fix: decrypt the stored connection password (was stored & used as plaintext)
+    private final CryptoService cryptoService;
 
     /**
      * Execute a DB pull for a given report configuration.
@@ -134,7 +137,11 @@ public class IntegrationPullService {
 
         Properties props = new Properties();
         props.setProperty("user", config.getUsername());
-        props.setProperty("password", config.getEncryptedPassword()); // TODO: decrypt
+        // P0 fix: decrypt before handing to the JDBC driver. The column is
+        // named encryptedPassword but historical data may be plaintext — the
+        // CryptoService handles both transparently (logs a warning on legacy
+        // plaintext rows so they get re-encrypted on next edit).
+        props.setProperty("password", cryptoService.decrypt(config.getEncryptedPassword()));
         props.setProperty("loginTimeout", String.valueOf(timeout));
 
         try (Connection conn = DriverManager.getConnection(url, props)) {
@@ -534,7 +541,8 @@ public class IntegrationPullService {
 
     public boolean testConnection(IntegrationConnection config) {
         try (Connection conn = DriverManager.getConnection(
-                config.getJdbcUrl(), config.getUsername(), config.getEncryptedPassword())) {
+                config.getJdbcUrl(), config.getUsername(),
+                cryptoService.decrypt(config.getEncryptedPassword()))) {
             return conn.isValid(config.getTimeoutSeconds() != null ? config.getTimeoutSeconds() : 5);
         } catch (SQLException e) {
             log.error("Test connection failed for '{}': {}", config.getName(), e.getMessage());

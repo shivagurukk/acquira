@@ -1,6 +1,8 @@
 package com.acquira.batch.service;
 
 import com.acquira.common.model.DataSourceConfig;
+import com.acquira.common.service.CryptoService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -12,7 +14,11 @@ import java.util.Map;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class UniversalDatabaseClient {
+
+    // P0 fix: decrypt stored password before opening JDBC connection.
+    private final CryptoService cryptoService;
 
     /**
      * Executes a query against any supported DB (Oracle, Postgres, MSSQL).
@@ -26,9 +32,8 @@ public class UniversalDatabaseClient {
         String url = config.getJdbcUrl();
         log.info("Connecting to {} ({})", config.getName(), config.getDbType());
 
-        try (Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getEncryptedPassword()); // TODO:
-                                                                                                                      // Decrypt
-                                                                                                                      // password
+        try (Connection conn = DriverManager.getConnection(url, config.getUsername(),
+                    cryptoService.decrypt(config.getEncryptedPassword()));
                 PreparedStatement ps = prepareStatement(conn, sql, params)) {
 
             try (ResultSet rs = ps.executeQuery()) {
@@ -88,7 +93,7 @@ public class UniversalDatabaseClient {
 
     public boolean testConnection(DataSourceConfig config) {
         try (Connection conn = DriverManager.getConnection(config.getJdbcUrl(), config.getUsername(),
-                config.getEncryptedPassword())) {
+                cryptoService.decrypt(config.getEncryptedPassword()))) {
             return conn.isValid(5);
         } catch (SQLException e) {
             log.error("Test connection failed: {}", e.getMessage());

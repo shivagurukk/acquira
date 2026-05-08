@@ -957,6 +957,54 @@ public class TransactionJobConfig {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long start = System.currentTimeMillis();
 
+            // CONCURRENT-UPLOAD GUARD: take a Postgres advisory lock keyed by
+            // tenantId so two transactionLoadJob runs for the same tenant
+            // serialize through populateSummary instead of fighting on the
+            // shared partitions of sum_daily_merchant, sum_daily_terminal,
+            // sum_daily_insight, and sum_daily_merchant_attribute.
+            //
+            // Without this guard, an accidental double-upload (frontend
+            // re-fire, multi-file batch overlapping with a manual upload, or
+            // the runMultiFileBatch sequencing breaking) produces deadlocks
+            // like:
+            //   ERROR: deadlock detected
+            //   while inserting index tuple ... in relation "sum_daily_merch_attr_y2026"
+            //
+            // IMPLEMENTATION NOTE: pg_advisory_lock is session-scoped, so we
+            // hold a DEDICATED connection for the entire lock lifetime. The
+            // jdbcTemplate calls below borrow their own connections from
+            // Hikari, but the advisory lock is enforced server-side: any
+            // connection (ours or another job's) that tries to take the same
+            // lock key blocks until we release it. We don't need the SAME
+            // connection to write the data — we just need to keep one
+            // connection ALIVE somewhere holding the lock.
+            //
+            // The 11_000_000 prefix namespaces this lock so it doesn't
+            // collide with any other code that might use advisory locks.
+            final long lockKey = 11_000_000L + tenantId;
+            org.slf4j.Logger lockLog = org.slf4j.LoggerFactory.getLogger(TransactionJobConfig.class);
+            java.sql.Connection lockConn = null;
+            try {
+                lockConn = dataSource.getConnection();
+                lockConn.setAutoCommit(true);
+                long lockWaitStart = System.currentTimeMillis();
+                try (java.sql.PreparedStatement ps = lockConn.prepareStatement("SELECT pg_advisory_lock(?)")) {
+                    ps.setLong(1, lockKey);
+                    try (java.sql.ResultSet rs = ps.executeQuery()) { rs.next(); }
+                }
+                long lockWaitMs = System.currentTimeMillis() - lockWaitStart;
+                if (lockWaitMs > 1000) {
+                    lockLog.warn("populateSummary: waited {}ms for tenant lock (concurrent upload in progress?)",
+                        lockWaitMs);
+                }
+            } catch (Exception e) {
+                if (lockConn != null) try { lockConn.close(); } catch (Exception ignore) {}
+                throw new RuntimeException("Failed to acquire advisory lock for tenant " + tenantId, e);
+            }
+            final java.sql.Connection lockConnFinal = lockConn;
+
+            try {
+
             // PERF FIX (bulk transactions): the previous code embedded
             //   `(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)`
             // 15+ times across the aggregation queries. With 100k staging rows and no
@@ -1157,13 +1205,46 @@ public class TransactionJobConfig {
                         "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf",
                         tenantId)));
 
-                // 10. Merchant attributes (4 inserts — each runs as own task)
-                String[] attrCols = {"CARD_SCHEME:card_scheme", "CARD_TYPE:card_type", "DESTINATION:destination", "TRANSACTION_TYPE:transaction_type"};
-                for (String ac : attrCols) {
-                    final String acFinal = ac;
-                    phase1.add(runAsync(exec, "attr-" + ac.split(":")[0], () -> {
-                        String[] parts = acFinal.split(":");
-                        return jdbcTemplate.update(String.format(
+                // 10. Merchant attributes — SERIALIZED into one task.
+                //
+                // DEADLOCK FIX: previously each of the 6 attribute aggregations
+                // (CARD_SCHEME, CARD_TYPE, DESTINATION, TRANSACTION_TYPE,
+                //  TXN_SIZE_BUCKET, HOUR) ran as its own runAsync task, all 6
+                // writing to sum_daily_merchant_attribute (partition
+                // sum_daily_merch_attr_y2026) at the same time with
+                // INSERT ... ON CONFLICT DO UPDATE.
+                //
+                // The unique key is (tenant_id, merchant_id, business_date,
+                // attribute_type, attribute_value). Different attribute_types
+                // do NOT collide at the row level, but the pages they update
+                // overlap in the unique-index B-tree. Two parallel inserts
+                // can take page locks in opposite order → PostgreSQL detects
+                // the cycle and aborts one with SQLSTATE 40P01.
+                //
+                // Production logs show this firing repeatedly:
+                //   attr-CARD_TYPE FAILED in 1188s: deadlock detected
+                //   attr-BUCKET    FAILED in  489s: deadlock detected
+                //   attr-HOUR      FAILED in 1043s: deadlock detected
+                //
+                // Fix: collapse the 6 attribute aggregations into a SINGLE
+                // task that runs them sequentially on one connection. The
+                // other summary aggregations keep their parallelism because
+                // they target different tables/unique keys and don't fight
+                // each other.
+                //
+                // Performance: sequential 6 × ~5-15s = 30-90s vs the previous
+                // parallel-with-deadlock-and-retry of 1000s+. Net win.
+                phase1.add(runAsync(exec, "attr-ALL", () -> {
+                    int totalRows = 0;
+                    String[] simpleAttrs = {
+                        "CARD_SCHEME:card_scheme",
+                        "CARD_TYPE:card_type",
+                        "DESTINATION:destination",
+                        "TRANSACTION_TYPE:transaction_type"
+                    };
+                    for (String ac : simpleAttrs) {
+                        String[] parts = ac.split(":");
+                        totalRows += jdbcTemplate.update(String.format(
                             "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                             "SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(store_base_currency_amount) " +
                             "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN %s " +
@@ -1171,21 +1252,18 @@ public class TransactionJobConfig {
                             "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                             "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume",
                             parts[0], parts[1], dateScope, parts[1]), tenantId);
-                    }));
-                }
-
-                // HOUR attribute
-                phase1.add(runAsync(exec, "attr-HOUR", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
+                    }
+                    // HOUR
+                    totalRows += jdbcTemplate.update(
+                        "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                         "SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(store_base_currency_amount) " +
                         "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND transaction_date IS NOT NULL AND DATE(payment_date) IN " + dateScope + " " +
                         "GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date) " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId)));
-
-                // TXN_SIZE_BUCKET
-                phase1.add(runAsync(exec, "attr-BUCKET", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
+                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
+                    // TXN_SIZE_BUCKET
+                    totalRows += jdbcTemplate.update(
+                        "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                         "SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_SIZE_BUCKET', " +
                         "CASE WHEN store_base_currency_amount < 50 THEN '< 50' WHEN store_base_currency_amount < 100 THEN '50-100' " +
                         "WHEN store_base_currency_amount < 250 THEN '100-250' WHEN store_base_currency_amount < 500 THEN '250-500' " +
@@ -1196,7 +1274,9 @@ public class TransactionJobConfig {
                         "WHEN store_base_currency_amount < 250 THEN '100-250' WHEN store_base_currency_amount < 500 THEN '250-500' " +
                         "WHEN store_base_currency_amount < 1000 THEN '500-1K' ELSE '1K+' END " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId)));
+                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
+                    return totalRows;
+                }));
 
                 // 11. sum_monthly_card
                 phase1.add(runAsync(exec, "sum_monthly_card", () ->
@@ -1249,6 +1329,24 @@ public class TransactionJobConfig {
             log.info(String.format("populateSummary completed in %.1fs (parallelized 15 queries)",
                 (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;
+            } finally {
+                // Always release the advisory lock and close the dedicated
+                // connection, even on failure, so a failed run doesn't
+                // permanently block subsequent uploads for this tenant.
+                // pg_advisory_unlock returns true if the session held the
+                // lock, false otherwise. Either way Postgres releases the
+                // lock when the connection closes.
+                if (lockConnFinal != null) {
+                    try (java.sql.PreparedStatement ps = lockConnFinal.prepareStatement("SELECT pg_advisory_unlock(?)")) {
+                        ps.setLong(1, lockKey);
+                        try (java.sql.ResultSet rs = ps.executeQuery()) { rs.next(); }
+                    } catch (Exception unlockErr) {
+                        log.warn("populateSummary: pg_advisory_unlock failed (non-fatal, lock auto-releases on disconnect): {}",
+                            unlockErr.getMessage());
+                    }
+                    try { lockConnFinal.close(); } catch (Exception ignore) {}
+                }
+            }
         };
     }
 

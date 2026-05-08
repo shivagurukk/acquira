@@ -11,14 +11,24 @@ import { HardDrive, Server, FolderOpen, FileText, AlertTriangle } from 'lucide-r
 import api from '../api/axios';
 
 const POLL_INTERVAL = 3000;
+const MAX_POLL_DURATION_MS = 30 * 60 * 1000;  // 30-minute cap per batch
+const MAX_CONSECUTIVE_ERRORS = 5;             // surface persistent failures
 
+// Status colour map.
+// IMPORTANT: SUCCESS is the legacy backend pre-completion state — it now means
+// "submitted to batch, not yet COMPLETED". The Chip is therefore styled the
+// same as SUBMITTED/STARTING (blue, in-flight) so users don't see a misleading
+// green tick while the job is actually still running. Real completion is shown
+// only when the polling loop reports COMPLETED.
 const STATUS_COLORS = {
-    SUCCESS: { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
-    COMPLETED: { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
-    FAILED: { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
-    STARTED: { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
-    STARTING: { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
-    RUNNING: { bg: '#fefce8', color: '#ca8a04', border: '#fef08a' },
+    SUBMITTED:  { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
+    SUCCESS:    { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' }, // legacy = in-flight
+    COMPLETED:  { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
+    FAILED:     { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
+    ABANDONED:  { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
+    STARTED:    { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
+    STARTING:   { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
+    RUNNING:    { bg: '#fefce8', color: '#ca8a04', border: '#fef08a' },
 };
 
 const getStatusStyle = (status) => STATUS_COLORS[status] || STATUS_COLORS.RUNNING;
@@ -32,6 +42,11 @@ const ServerFileProcessor = () => {
     const [errorMsg, setErrorMsg] = useState('');
     const pollRef = useRef(null);
     const logsEndRef = useRef(null);
+    // Guard against double-click / React StrictMode double-invoke firing
+    // POST /process-server-file twice. setPhase('scanning') is async, so the
+    // button can fire two requests in rapid succession before the disabled
+    // state actually renders. A ref flips synchronously and blocks the second.
+    const inFlightRef = useRef(false);
 
     useEffect(() => {
         if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -46,13 +61,37 @@ const ServerFileProcessor = () => {
         setLogs(prev => [...prev, { ts, msg }]);
     };
 
-    // Poll multiple job IDs
+    // Poll multiple job IDs.
+    // Termination conditions (mirrors useNotifications):
+    //   - all jobs reach a terminal state (COMPLETED / FAILED / ABANDONED)
+    //   - 30-minute wall-clock cap from when polling started
+    //   - 5 consecutive errors across the whole batch
+    const startedAtRef = useRef(null);
+    const errorCountRef = useRef(0);
+
     const startPolling = useCallback((jobIds) => {
         if (pollRef.current) clearInterval(pollRef.current);
         if (!jobIds || jobIds.length === 0) return;
 
+        startedAtRef.current = Date.now();
+        errorCountRef.current = 0;
+
+        const stopWith = (msg, isError = false) => {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+            setPhase('done');
+            addLog(`${isError ? '⚠️' : '✅'} ${msg}`);
+        };
+
         const poll = async () => {
+            // Wall-clock guard.
+            if (Date.now() - startedAtRef.current > MAX_POLL_DURATION_MS) {
+                stopWith('Polling timed out after 30 minutes. Check Batch Monitoring for live status.', true);
+                return;
+            }
+
             let allDone = true;
+            let pollErrorThisRound = false;
 
             for (const jobId of jobIds) {
                 try {
@@ -77,14 +116,23 @@ const ServerFileProcessor = () => {
                         allDone = false;
                     }
                 } catch (err) {
+                    pollErrorThisRound = true;
                     allDone = false; // Keep polling on transient errors
                 }
             }
 
+            if (pollErrorThisRound) {
+                errorCountRef.current += 1;
+                if (errorCountRef.current >= MAX_CONSECUTIVE_ERRORS) {
+                    stopWith('Lost connection to batch service. Check Batch Monitoring for actual status.', true);
+                    return;
+                }
+            } else {
+                errorCountRef.current = 0;  // any clean round resets the counter
+            }
+
             if (allDone) {
-                clearInterval(pollRef.current);
-                setPhase('done');
-                addLog('✅ All jobs completed');
+                stopWith('All jobs completed');
             }
         };
 
@@ -94,6 +142,8 @@ const ServerFileProcessor = () => {
 
     const handleProcess = async () => {
         if (!serverPath.trim()) return;
+        if (inFlightRef.current) return;  // double-click guard
+        inFlightRef.current = true;
 
         setPhase('scanning');
         setLogs([]);
@@ -119,6 +169,13 @@ const ServerFileProcessor = () => {
             addLog(`📂 Found ${data.totalFiles} file(s): ${data.merchantFiles} merchant, ${data.transactionFiles} transaction`);
             if (data.skipped && data.skipped.length > 0) {
                 data.skipped.forEach(s => addLog(`⚠️ Skipped: ${s.file} — ${s.reason}`));
+            }
+
+            // Surface backend's aggregated failure summary as a top-level error
+            // banner so the user sees ONE reason rather than having to scan rows.
+            if (data.errorSummary) {
+                setErrorMsg(data.errorSummary);
+                addLog(`❌ ${data.errorSummary}`);
             }
 
             // Log each file result
@@ -150,6 +207,8 @@ const ServerFileProcessor = () => {
             const msg = err.response?.data?.error || err.response?.data || err.message;
             setErrorMsg(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
             addLog(`❌ ${typeof msg === 'object' ? JSON.stringify(msg) : String(msg)}`);
+        } finally {
+            inFlightRef.current = false;
         }
     };
 
@@ -321,7 +380,7 @@ const ServerFileProcessor = () => {
                                     <Grid item xs={4}>
                                         <Paper elevation={0} sx={{ p: 1.5, bgcolor: '#f0fdf4', borderRadius: 2, textAlign: 'center' }}>
                                             <Typography variant="h5" fontWeight="800" color="#16a34a">{scanResult.success}</Typography>
-                                            <Typography variant="caption" fontWeight="600" color="text.secondary">Success</Typography>
+                                            <Typography variant="caption" fontWeight="600" color="text.secondary">Submitted</Typography>
                                         </Paper>
                                     </Grid>
                                     <Grid item xs={4}>
@@ -356,7 +415,17 @@ const ServerFileProcessor = () => {
                                         <TableBody>
                                             {scanResult.fileResults.map((fr, i) => {
                                                 const js = fr.jobId ? fileStatuses[fr.jobId] : null;
-                                                const displayStatus = js ? js.status : (fr.status || 'UNKNOWN');
+                                                // FIX: previously fell back to fr.status ("SUCCESS" from backend
+                                                // = "submitted, not done"), which painted a green tick the moment
+                                                // the response arrived — before any poll happened. Now: if a job
+                                                // was launched, ALWAYS use the polled status. fr.status only shows
+                                                // for failures (no jobId).
+                                                let displayStatus;
+                                                if (fr.jobId) {
+                                                    displayStatus = js?.status || 'SUBMITTED';
+                                                } else {
+                                                    displayStatus = fr.status === 'SUCCESS' ? 'SUBMITTED' : (fr.status || 'UNKNOWN');
+                                                }
                                                 const style = getStatusStyle(displayStatus);
 
                                                 return (

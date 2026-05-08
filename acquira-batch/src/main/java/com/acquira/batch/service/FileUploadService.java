@@ -428,10 +428,13 @@ public class FileUploadService {
         int failCount = 0;
 
         // Phase 1: MERCHANT files first
+        // Track per-file outcome by the new SUBMITTED state too. "SUCCESS" was
+        // misleading: it meant "job submitted" but read as "file processed".
         for (java.io.File f : merchantFiles) {
             java.util.Map<String, Object> r = processSingleServerFile(f, "MERCHANT");
             results.add(r);
-            if ("SUCCESS".equals(r.get("status"))) {
+            String st = String.valueOf(r.get("status"));
+            if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
                 successCount++;
                 if (r.get("tenantId") != null) processedTenants.add((Long) r.get("tenantId"));
             } else failCount++;
@@ -441,7 +444,8 @@ public class FileUploadService {
         for (java.io.File f : transactionFiles) {
             java.util.Map<String, Object> r = processSingleServerFile(f, "TRANSACTION");
             results.add(r);
-            if ("SUCCESS".equals(r.get("status"))) {
+            String st = String.valueOf(r.get("status"));
+            if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
                 successCount++;
                 if (r.get("tenantId") != null) processedTenants.add((Long) r.get("tenantId"));
             } else failCount++;
@@ -474,11 +478,36 @@ public class FileUploadService {
         response.put("totalFiles", dataFiles.size());
         response.put("merchantFiles", merchantFiles.size());
         response.put("transactionFiles", transactionFiles.size());
-        response.put("success", successCount);
+        // "submitted" reflects the truth: the count of files whose batch jobs were
+        // queued. Whether they COMPLETED is for the UI to determine via polling.
+        response.put("submitted", successCount);
+        response.put("success", successCount); // back-compat for any older UI
         response.put("failed", failCount);
         response.put("skipped", skippedFiles);
         response.put("fileResults", results);
-        response.put("status", failCount == 0 ? "ALL_SUCCESS" : (successCount > 0 ? "PARTIAL" : "ALL_FAILED"));
+        response.put("status", failCount == 0 ? "ALL_SUBMITTED" : (successCount > 0 ? "PARTIAL" : "ALL_FAILED"));
+
+        // Aggregated error summary so the UI can show ONE banner explaining what
+        // went wrong, rather than forcing the user to scan every per-file row.
+        // Heuristic: if every failed file shares the same error message, surface
+        // it as the batch-level reason. Otherwise list distinct messages.
+        if (failCount > 0) {
+            java.util.LinkedHashSet<String> distinctErrors = new java.util.LinkedHashSet<>();
+            for (java.util.Map<String, Object> r : results) {
+                if ("FAILED".equals(r.get("status"))) {
+                    Object err = r.get("error");
+                    if (err != null) distinctErrors.add(String.valueOf(err));
+                }
+            }
+            if (distinctErrors.size() == 1) {
+                response.put("errorSummary", distinctErrors.iterator().next() +
+                    " (" + failCount + " file" + (failCount == 1 ? "" : "s") + ")");
+            } else if (!distinctErrors.isEmpty()) {
+                response.put("errorSummary",
+                    failCount + " files failed with " + distinctErrors.size() + " distinct errors");
+                response.put("distinctErrors", new java.util.ArrayList<>(distinctErrors));
+            }
+        }
         return response;
     }
 
@@ -657,7 +686,11 @@ public class FileUploadService {
 
             result.put("jobId", execution.getId());
             result.put("jobStatus", execution.getStatus().toString());
-            result.put("status", "SUCCESS");
+            // Was "SUCCESS" — misleading. The job has only been SUBMITTED to the
+            // async JobLauncher; actual completion is determined by polling
+            // /api/batch/jobs/{id}/status. The frontend interprets SUBMITTED as
+            // "in flight, keep polling" rather than green-tick "done".
+            result.put("status", "SUBMITTED");
 
             log.info("{} file submitted to batch: {} — Job {} — {} (status will update asynchronously; poll /api/batch/jobs/{}/status)",
                     fileType, file.getName(), execution.getId(), execution.getStatus(), execution.getId());

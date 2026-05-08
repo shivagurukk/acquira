@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/batch/jobs")
@@ -26,36 +25,56 @@ public class BatchJobController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
 
+        // FIX: previously hardcoded to "transactionLoadJob", which made the
+        // Batch Monitoring screen blind to every merchant master upload. We now
+        // pull instances for ALL registered job names so the operator sees
+        // BOTH transaction and merchant runs in chronological order.
         try {
-            long count = jobExplorer.getJobInstanceCount("transactionLoadJob");
-            int start = (int) Math.max(0, count - ((page + 1) * size));
+            java.util.List<String> jobNames = jobExplorer.getJobNames();
+            if (jobNames == null || jobNames.isEmpty()) {
+                return ResponseEntity.ok(java.util.Collections.emptyList());
+            }
 
-            List<JobInstance> instances = jobExplorer.getJobInstances("transactionLoadJob", start, size);
+            // Collect a recent window for every job name, then sort by start
+            // time and slice. We over-fetch by `(page+1)*size` per job, then
+            // sort + page in-memory — cheap because Spring Batch metadata is
+            // small and indexed, and the alternative (a single union query)
+            // requires a custom DAO.
+            int perJob = Math.max(size * (page + 1), size);
+            java.util.List<Map<String, Object>> history = new java.util.ArrayList<>();
 
-            List<Map<String, Object>> history = instances.stream()
-                    .map(instance -> {
-                        JobExecution lastExec = jobExplorer.getJobExecutions(instance).stream()
-                                .reduce((first, second) -> second).orElse(null);
+            for (String jobName : jobNames) {
+                long count = jobExplorer.getJobInstanceCount(jobName);
+                int start = (int) Math.max(0, count - perJob);
+                List<JobInstance> instances = jobExplorer.getJobInstances(jobName, start, perJob);
+                for (JobInstance instance : instances) {
+                    JobExecution lastExec = jobExplorer.getJobExecutions(instance).stream()
+                            .reduce((first, second) -> second).orElse(null);
+                    if (lastExec == null) continue;
 
-                        if (lastExec == null)
-                            return null;
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("jobName", instance.getJobName());
+                    map.put("jobId", instance.getInstanceId());
+                    map.put("executionId", lastExec.getId());
+                    map.put("status", lastExec.getStatus().toString());
+                    map.put("startTime", lastExec.getStartTime() != null ? lastExec.getStartTime().toString() : "");
+                    map.put("endTime", lastExec.getEndTime() != null ? lastExec.getEndTime().toString() : "");
+                    map.put("exitCode", lastExec.getExitStatus().getExitCode());
+                    history.add(map);
+                }
+            }
 
-                        Map<String, Object> map = new HashMap<>();
-                        map.put("jobName", instance.getJobName());
-                        map.put("jobId", instance.getInstanceId());
-                        map.put("executionId", lastExec.getId());
-                        map.put("status", lastExec.getStatus().toString());
-                        map.put("startTime", lastExec.getStartTime() != null ? lastExec.getStartTime().toString() : "");
-                        map.put("endTime", lastExec.getEndTime() != null ? lastExec.getEndTime().toString() : "");
-                        map.put("exitCode", lastExec.getExitStatus().getExitCode());
-                        return map;
-                    })
-                    .filter(java.util.Objects::nonNull)
-                    .collect(Collectors.toList());
+            // Sort newest first by startTime (string sort works because ISO-8601),
+            // then page.
+            history.sort((a, b) -> {
+                String ta = String.valueOf(a.getOrDefault("startTime", ""));
+                String tb = String.valueOf(b.getOrDefault("startTime", ""));
+                return tb.compareTo(ta);
+            });
 
-            java.util.Collections.reverse(history);
-
-            return ResponseEntity.ok(history);
+            int from = Math.min(page * size, history.size());
+            int to   = Math.min(from + size, history.size());
+            return ResponseEntity.ok(history.subList(from, to));
         } catch (org.springframework.batch.core.launch.NoSuchJobException e) {
             return ResponseEntity.ok(java.util.Collections.emptyList());
         }

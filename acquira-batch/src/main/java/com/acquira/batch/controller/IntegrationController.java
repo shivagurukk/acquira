@@ -5,6 +5,7 @@ import com.acquira.batch.service.IntegrationPullService;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.model.*;
 import com.acquira.common.repository.*;
+import com.acquira.common.service.CryptoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -28,6 +29,9 @@ public class IntegrationController {
     private final IntegrationRunLogRepository runLogRepo;
     private final IntegrationPullService pullService;
     private final DynamicSchedulerService schedulerService;
+    // P0 fix: encrypt connection password before persisting it. Was being
+    // saved as plaintext into integration_connection.encrypted_password.
+    private final CryptoService cryptoService;
 
     // ═══════════════════════════════════════════════════════════
     //  CONNECTIONS
@@ -36,7 +40,28 @@ public class IntegrationController {
     @GetMapping("/connections")
     public ResponseEntity<List<IntegrationConnection>> getConnections() {
         Long tenantId = TenantContext.getCurrentTenant();
-        return ResponseEntity.ok(connectionRepo.findByTenantIdOrderByNameAsc(tenantId));
+        // P0 fix: never return the encrypted password to the UI. The list
+        // endpoint returned the full ciphertext token, which lets anyone with
+        // browser dev-tools copy a credential to a different account.
+        List<IntegrationConnection> connections = connectionRepo.findByTenantIdOrderByNameAsc(tenantId);
+        connections.forEach(this::sanitizeForResponse);
+        return ResponseEntity.ok(connections);
+    }
+
+    /**
+     * Strip the password ciphertext from a connection before sending it to
+     * the client. Replace with a placeholder so the UI can detect "already
+     * has a password" without ever seeing the value. On update the UI sends
+     * either a real new password (we re-encrypt) or this placeholder back
+     * (we leave the existing ciphertext alone via the isBlank() guard
+     * combined with encrypt()'s idempotent prefix check).
+     */
+    private static final String PASSWORD_PLACEHOLDER = "__UNCHANGED__";
+    private IntegrationConnection sanitizeForResponse(IntegrationConnection c) {
+        if (c != null && c.getEncryptedPassword() != null && !c.getEncryptedPassword().isBlank()) {
+            c.setEncryptedPassword(PASSWORD_PLACEHOLDER);
+        }
+        return c;
     }
 
     @PostMapping("/connections")
@@ -49,7 +74,13 @@ public class IntegrationController {
             return ResponseEntity.badRequest().body(Map.of("error", "Connection name already exists"));
         }
 
-        return ResponseEntity.ok(connectionRepo.save(conn));
+        // P0 fix: encrypt password at rest. CryptoService.encrypt is idempotent
+        // so re-saving an already-encrypted token is a no-op.
+        if (conn.getEncryptedPassword() != null && !conn.getEncryptedPassword().isBlank()) {
+            conn.setEncryptedPassword(cryptoService.encrypt(conn.getEncryptedPassword()));
+        }
+
+        return ResponseEntity.ok(sanitizeForResponse(connectionRepo.save(conn)));
     }
 
     @PutMapping("/connections/{id}")
@@ -64,14 +95,20 @@ public class IntegrationController {
                     existing.setPort(updated.getPort());
                     existing.setDbName(updated.getDbName());
                     existing.setUsername(updated.getUsername());
-                    if (updated.getEncryptedPassword() != null && !updated.getEncryptedPassword().isBlank()) {
-                        existing.setEncryptedPassword(updated.getEncryptedPassword());
+                    if (updated.getEncryptedPassword() != null
+                            && !updated.getEncryptedPassword().isBlank()
+                            && !PASSWORD_PLACEHOLDER.equals(updated.getEncryptedPassword())) {
+                        // P0 fix: encrypt before persisting. encrypt() is a no-op
+                        // if the value is already an encrypted token. The placeholder
+                        // check above means "UI didn't change the password" — leave
+                        // the existing ciphertext untouched.
+                        existing.setEncryptedPassword(cryptoService.encrypt(updated.getEncryptedPassword()));
                     }
                     existing.setTimeoutSeconds(updated.getTimeoutSeconds());
                     existing.setMaxRetries(updated.getMaxRetries());
                     existing.setIsActive(updated.getIsActive());
                     existing.setUpdatedAt(LocalDateTime.now());
-                    return ResponseEntity.ok(connectionRepo.save(existing));
+                    return ResponseEntity.ok(sanitizeForResponse(connectionRepo.save(existing)));
                 })
                 .orElse(ResponseEntity.notFound().build());
     }

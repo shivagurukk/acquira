@@ -50,7 +50,7 @@ const UploadPage = () => {
         } catch (err) {
             setStatus('error');
             const errMsg = err.code === 'ERR_NETWORK'
-                ? 'Batch service (port 8085) is not running. Please start acquira-batch and retry.'
+                ? 'Batch service is not running. Please start acquira-core (port 8081) and retry.'
                 : err.response?.data?.message || err.response?.data || err.message;
             setMsg(`Upload Error: ${typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg}`);
         }

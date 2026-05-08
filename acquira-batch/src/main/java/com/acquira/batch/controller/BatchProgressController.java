@@ -41,18 +41,42 @@ public class BatchProgressController {
     /**
      * SSE: Stream progress for a SINGLE job execution.
      * GET /api/batch/jobs/{id}/progress (text/event-stream)
+     *
+     * Lifetime caps:
+     *   - SseEmitter timeout: 30 minutes (was 5 min, too short for big uploads).
+     *   - Hard scheduler-level kill at the same 30-min mark, in case the emitter
+     *     dies but Spring doesn't fire onCompletion/onError (rare but observed
+     *     with mid-stream client disconnects). Without this the scheduler kept
+     *     trying to send to a dead emitter, swallowed the IOException via the
+     *     "transient error" catch, and leaked work forever.
+     *   - Terminates as soon as the job reaches COMPLETED/FAILED/STOPPED/ABANDONED.
      */
     @GetMapping(value = "/jobs/{executionId}/progress", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamJobProgress(@PathVariable Long executionId) {
-        SseEmitter emitter = new SseEmitter(300_000L); // 5 min timeout
+        final long maxStreamMs = 30L * 60_000L;
+        SseEmitter emitter = new SseEmitter(maxStreamMs);
+        final long startedAt = System.currentTimeMillis();
+        // Holder so the lambda can self-cancel cleanly.
+        final ScheduledFuture<?>[] futureHolder = new ScheduledFuture<?>[1];
 
-        ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
+        futureHolder[0] = scheduler.scheduleAtFixedRate(() -> {
             try {
+                if (System.currentTimeMillis() - startedAt > maxStreamMs) {
+                    try {
+                        emitter.send(SseEmitter.event().name("timeout")
+                                .data("{\"error\":\"Stream timed out after 30 minutes\"}"));
+                    } catch (Exception ignored) { /* emitter may already be dead */ }
+                    emitter.complete();
+                    if (futureHolder[0] != null) futureHolder[0].cancel(false);
+                    return;
+                }
+
                 JobExecution jobExec = jobExplorer.getJobExecution(executionId);
                 if (jobExec == null) {
                     emitter.send(SseEmitter.event().name("error")
                             .data("{\"error\":\"Job not found\"}"));
                     emitter.complete();
+                    if (futureHolder[0] != null) futureHolder[0].cancel(false);
                     return;
                 }
 
@@ -64,14 +88,19 @@ public class BatchProgressController {
                         || "STOPPED".equals(status) || "ABANDONED".equals(status)) {
                     emitter.send(SseEmitter.event().name("complete").data(progress));
                     emitter.complete();
+                    if (futureHolder[0] != null) futureHolder[0].cancel(false);
                 }
             } catch (IOException e) {
+                // Real I/O failure on the emitter — client gone. Bail.
                 emitter.completeWithError(e);
+                if (futureHolder[0] != null) futureHolder[0].cancel(false);
             } catch (Exception e) {
-                // Transient error — don't kill the stream
+                // Transient backend issue — keep the stream alive, the next tick
+                // will try again. (Stale ResultSet, momentary RDS flake, etc.)
             }
         }, 0, 2, TimeUnit.SECONDS);
 
+        final ScheduledFuture<?> future = futureHolder[0];
         emitter.onCompletion(() -> future.cancel(true));
         emitter.onTimeout(() -> future.cancel(true));
         emitter.onError(e -> future.cancel(true));
@@ -83,60 +112,69 @@ public class BatchProgressController {
      * SSE: Stream status of ALL running jobs.
      * GET /api/batch/jobs/live (text/event-stream)
      * For the batch monitoring dashboard.
+     *
+     * FIX: previously hardcoded to "transactionLoadJob", missing every merchant
+     * master run. Now iterates every registered job name.
      */
     @GetMapping(value = "/jobs/live", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamAllJobs() {
         SseEmitter emitter = new SseEmitter(600_000L); // 10 min timeout
+        final ScheduledFuture<?>[] futureHolder = new ScheduledFuture<?>[1];
 
-        ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
+        futureHolder[0] = scheduler.scheduleAtFixedRate(() -> {
             try {
                 List<Map<String, Object>> allJobs = new ArrayList<>();
+                List<String> jobNames = jobExplorer.getJobNames();
+                if (jobNames == null) jobNames = java.util.Collections.emptyList();
 
-                // Get running jobs
-                try {
-                    Set<JobExecution> running = jobExplorer.findRunningJobExecutions("transactionLoadJob");
-                    for (JobExecution exec : running) {
-                        allJobs.add(buildProgressPayload(exec));
+                for (String jobName : jobNames) {
+                    // Get running jobs for this name
+                    try {
+                        Set<JobExecution> running = jobExplorer.findRunningJobExecutions(jobName);
+                        for (JobExecution exec : running) {
+                            allJobs.add(buildProgressPayload(exec));
+                        }
+                    } catch (Exception e) {
+                        // Job name might not exist yet — keep iterating
                     }
-                } catch (Exception e) {
-                    // Job name might not exist yet
-                }
 
-                // Also include recently completed jobs (last 5 minutes)
-                try {
-                    long count = jobExplorer.getJobInstanceCount("transactionLoadJob");
-                    if (count > 0) {
-                        var instances = jobExplorer.getJobInstances("transactionLoadJob",
-                                (int) Math.max(0, count - 5), 5);
-                        for (var instance : instances) {
-                            var executions = jobExplorer.getJobExecutions(instance);
-                            for (var exec : executions) {
-                                if (exec.getEndTime() != null) {
-                                    Duration sinceEnd = Duration.between(exec.getEndTime(), LocalDateTime.now());
-                                    if (sinceEnd.toMinutes() <= 5) {
-                                        // Don't duplicate if already in running
-                                        boolean alreadyAdded = allJobs.stream()
-                                                .anyMatch(j -> j.get("executionId").equals(exec.getId()));
-                                        if (!alreadyAdded) {
-                                            allJobs.add(buildProgressPayload(exec));
+                    // Also include recently completed jobs (last 5 minutes)
+                    try {
+                        long count = jobExplorer.getJobInstanceCount(jobName);
+                        if (count > 0) {
+                            var instances = jobExplorer.getJobInstances(jobName,
+                                    (int) Math.max(0, count - 5), 5);
+                            for (var instance : instances) {
+                                var executions = jobExplorer.getJobExecutions(instance);
+                                for (var exec : executions) {
+                                    if (exec.getEndTime() != null) {
+                                        Duration sinceEnd = Duration.between(exec.getEndTime(), LocalDateTime.now());
+                                        if (sinceEnd.toMinutes() <= 5) {
+                                            boolean alreadyAdded = allJobs.stream()
+                                                    .anyMatch(j -> j.get("executionId").equals(exec.getId()));
+                                            if (!alreadyAdded) {
+                                                allJobs.add(buildProgressPayload(exec));
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
+                    } catch (Exception e) {
+                        // Ignore one job name's failure; keep streaming the rest
                     }
-                } catch (Exception e) {
-                    // Ignore
                 }
 
                 emitter.send(SseEmitter.event().name("jobs").data(allJobs));
             } catch (IOException e) {
                 emitter.completeWithError(e);
+                if (futureHolder[0] != null) futureHolder[0].cancel(false);
             } catch (Exception e) {
                 // Transient — don't kill
             }
         }, 0, 3, TimeUnit.SECONDS);
 
+        final ScheduledFuture<?> future = futureHolder[0];
         emitter.onCompletion(() -> future.cancel(true));
         emitter.onTimeout(() -> future.cancel(true));
         emitter.onError(e -> future.cancel(true));
