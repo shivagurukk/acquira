@@ -355,13 +355,30 @@ public class TransactionJobConfig {
         };
     }
 
-    @Bean public Step masterIngestStep(Step csvWorkerStep, CsvPartitioner partitioner) {
+    @Bean public Step masterIngestStep(Step csvWorkerStep, CsvPartitioner partitioner,
+            @org.springframework.beans.factory.annotation.Qualifier("transactionPartitionExecutor")
+            org.springframework.core.task.TaskExecutor partitionExecutor) {
         return new StepBuilder("masterIngestStep", jobRepository).partitioner("csvWorkerStep", partitioner)
-                .step(csvWorkerStep).taskExecutor(batchTaskExecutor()).gridSize(8).build();
+                .step(csvWorkerStep).taskExecutor(partitionExecutor).gridSize(8).build();
     }
-    @Bean public org.springframework.core.task.TaskExecutor batchTaskExecutor() {
-        org.springframework.core.task.SimpleAsyncTaskExecutor executor = new org.springframework.core.task.SimpleAsyncTaskExecutor("batch-ingest-");
-        executor.setConcurrencyLimit(8); return executor;
+
+    /**
+     * Dedicated partition executor for the masterIngestStep CSV workers.
+     *
+     * RENAMED (was 'batchTaskExecutor') to avoid colliding with
+     * BatchConfig.batchTaskExecutor — that bean is a ThreadPoolTaskExecutor
+     * sized for JobLauncher (one job at a time, pool 2/6). This bean is a
+     * different animal: a SimpleAsyncTaskExecutor sized for the 8 partition
+     * workers that ingest CSV chunks in parallel within a single job. The two
+     * are unrelated; collapsing them under the same name caused the bean
+     * definition conflict on app startup.
+     */
+    @Bean("transactionPartitionExecutor")
+    public org.springframework.core.task.TaskExecutor transactionPartitionExecutor() {
+        org.springframework.core.task.SimpleAsyncTaskExecutor executor =
+            new org.springframework.core.task.SimpleAsyncTaskExecutor("batch-ingest-");
+        executor.setConcurrencyLimit(8);
+        return executor;
     }
     @Bean @StepScope public CsvPartitioner csvPartitioner(@Value("#{jobExecutionContext['partitionDirectory']}") String dir) {
         CsvPartitioner partitioner = new CsvPartitioner(); partitioner.setPartitionDirectory(dir); return partitioner;
