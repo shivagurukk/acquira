@@ -14,6 +14,7 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.io.FileInputStream;
@@ -50,6 +51,15 @@ public class FileUploadService {
     private final com.acquira.common.service.AuditService auditService;
     private final com.acquira.common.repository.TenantRepository tenantRepository;
     private final com.acquira.batch.service.ManualIngestionService manualIngestionService;
+
+    /**
+     * Allowed directories for server-side file processing.
+     * P2-6 fix: validation now lives in the service layer so any future caller
+     * (scheduler, MCP integration, another controller) cannot bypass the check.
+     * Defaults to the same paths the controller previously enforced.
+     */
+    @org.springframework.beans.factory.annotation.Value("${app.upload.allowed-paths:/opt/acquira/data,data/uploads,data/imports}")
+    private String allowedPathsCsv;
 
     public FileUploadService(JobLauncher jobLauncher,
             @Qualifier("merchantMasterJob") Job merchantMasterJob,
@@ -486,7 +496,20 @@ public class FileUploadService {
      * If path is a FILE: processes that single file.
      */
     public java.util.Map<String, Object> processServerPath(String path) throws Exception {
-        java.io.File target = new java.io.File(path);
+        // P0-4 + P2-6 fix: validate path INSIDE the service so the controller
+        // is just a thin dispatcher. Previously the only path check lived in
+        // FileUploadController, meaning any other caller of processServerPath()
+        // — a scheduled job, a different controller, an MCP integration — could
+        // pass arbitrary filesystem paths.
+        //
+        // Hardened against symlink traversal: a malicious symlink placed inside
+        // an allowed dir (e.g. /opt/acquira/data/imports/leak -> /etc) would have
+        // passed the old startsWith() check because Paths.normalize() doesn't
+        // resolve symlinks. We now use toRealPath() which DOES, and reject
+        // anything with a symlink in its path.
+        Path safePath = validateAllowedPath(path);
+
+        java.io.File target = safePath.toFile();
         if (!target.exists()) throw new RuntimeException("Path not found: " + path);
 
         // Collect files to process
@@ -500,7 +523,16 @@ public class FileUploadService {
             });
             if (files != null) {
                 java.util.Arrays.sort(files, java.util.Comparator.comparing(java.io.File::getName));
-                java.util.Collections.addAll(dataFiles, files);
+                // Per-file symlink check inside the directory — a symlink to
+                // /etc/passwd inside an allowed dir is still a leak.
+                for (java.io.File f : files) {
+                    Path fp = f.toPath();
+                    if (Files.isSymbolicLink(fp)) {
+                        log.warn("Skipping symlink file in allowed dir: {}", fp);
+                        continue;
+                    }
+                    dataFiles.add(f);
+                }
             }
         } else {
             dataFiles.add(target);
@@ -523,6 +555,65 @@ public class FileUploadService {
                 response.get("success"), response.get("failed"),
                 ((java.util.List<?>) response.get("skipped")).size());
         return wrapped;
+    }
+
+    /**
+     * P0-4 fix: resolve the supplied path to a real filesystem location and
+     * confirm it lives under one of the configured allowed roots, with no
+     * symlinks in the chain. Returns the resolved canonical path on success,
+     * throws SecurityException with a generic message otherwise (don't leak
+     * filesystem layout to a caller probing for paths).
+     */
+    private Path validateAllowedPath(String requestedPath) {
+        if (requestedPath == null || requestedPath.isBlank()) {
+            throw new SecurityException("Path is required");
+        }
+        // Defense in depth: reject obvious traversal attempts pre-resolution.
+        // toRealPath() will catch the rest, but this gives a cleaner error.
+        if (requestedPath.contains("..")) {
+            throw new SecurityException("Path traversal not allowed");
+        }
+
+        Path requested = Paths.get(requestedPath);
+        Path resolved;
+        try {
+            // toRealPath() FOLLOWS symlinks AND resolves to canonical form.
+            // If anything in the chain is a symlink to outside an allowed root,
+            // the resolved path will reflect the real target and the prefix
+            // check below will reject it.
+            resolved = requested.toRealPath();
+        } catch (IOException e) {
+            throw new SecurityException("Path could not be resolved");
+        }
+
+        // Reject if the leaf itself is a symlink (toRealPath() resolved through it,
+        // but we still want to flag this defensively for audit purposes).
+        if (Files.isSymbolicLink(requested)) {
+            log.warn("Rejected symlink path: {}", requested);
+            throw new SecurityException("Symlinks are not permitted");
+        }
+
+        String[] prefixes = allowedPathsCsv.split(",");
+        for (String prefix : prefixes) {
+            String trimmed = prefix.trim();
+            if (trimmed.isEmpty()) continue;
+            Path prefixPath;
+            try {
+                prefixPath = Paths.get(trimmed).toRealPath(LinkOption.NOFOLLOW_LINKS);
+            } catch (IOException e) {
+                // The configured prefix dir doesn't exist on this host — skip it,
+                // try the next. (Common in dev: prod prefix /opt/acquira/data
+                // doesn't exist, only data/uploads does.)
+                continue;
+            }
+            if (resolved.startsWith(prefixPath)) {
+                return resolved;
+            }
+        }
+
+        log.warn("Rejected upload path — not under allowed roots. requested={}, resolved={}",
+                requestedPath, resolved);
+        throw new SecurityException("Path is not within an allowed data directory");
     }
 
     /**

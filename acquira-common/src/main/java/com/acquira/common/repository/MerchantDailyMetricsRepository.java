@@ -24,7 +24,23 @@ public interface MerchantDailyMetricsRepository extends JpaRepository<MerchantDa
      */
     List<MerchantDailyMetrics> findByReportDateAndTenantId(LocalDate reportDate, Long tenantId);
 
-    Optional<MerchantDailyMetrics> findByMerchantIdAndReportDate(String merchantId, LocalDate reportDate);
+    /**
+     * P0-3 fix: tenant-scoped lookup. The legacy two-arg version omitted
+     * tenantId, and `merchantId` here is a bank-assigned internal_id which is
+     * NOT unique across tenants — so two banks with overlapping internal_ids
+     * would silently overwrite each other's metrics rows. Always use this
+     * variant; the unscoped one is removed.
+     */
+    Optional<MerchantDailyMetrics> findByTenantIdAndMerchantIdAndReportDate(
+            Long tenantId, String merchantId, LocalDate reportDate);
+
+    /**
+     * P2-9 fix: bulk fetch existing rows for a (tenant, reportDate) so the
+     * caller can do an in-memory join and a single batch save instead of
+     * N+1 round-trips per merchant per month.
+     */
+    List<MerchantDailyMetrics> findByTenantIdAndReportDate(
+            Long tenantId, LocalDate reportDate);
 
     // Efficient Deletion for re-runs
     @Modifying

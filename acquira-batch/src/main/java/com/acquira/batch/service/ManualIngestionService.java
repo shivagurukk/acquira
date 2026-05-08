@@ -76,6 +76,7 @@ public class ManualIngestionService {
 
         LocalDateTime start = reportDate.withDayOfMonth(1).atStartOfDay();
         LocalDateTime end = reportDate.withDayOfMonth(reportDate.lengthOfMonth()).atTime(LocalTime.MAX);
+        LocalDate monthKey = reportDate.withDayOfMonth(1);
 
         // 2. Fetch Aggregated Data
         List<Object[]> results = transactionRepo.findDailyVolumesByDateRange(tenantId, start, end);
@@ -96,22 +97,45 @@ public class ManualIngestionService {
             merchantMeta.putIfAbsent(merchId, new String[] { mid, name });
         }
 
-        // 3. Compute & Save
+        if (merchantData.isEmpty()) {
+            log.info("No merchant rows for tenant {} date {} — nothing to compute", tenantId, reportDate);
+            return;
+        }
+
+        // P2-9 fix: bulk fetch existing rows for this (tenant, monthKey) ONCE so
+        // we can join in-memory and save in a single batch, instead of doing
+        // 2 * merchantCount round-trips per month.
+        // P0-3 fix: lookup is now tenant-scoped — the previous version omitted
+        // tenantId and overwrote rows from other tenants whose merchant
+        // internal_ids collided with this tenant's.
+        Map<String, MerchantDailyMetrics> existingByMerchant = new HashMap<>();
+        for (MerchantDailyMetrics e : metricsRepo.findByTenantIdAndReportDate(tenantId, monthKey)) {
+            existingByMerchant.put(e.getMerchantId(), e);
+        }
+
+        // 3. Compute & build the save batch
+        java.util.List<MerchantDailyMetrics> toSave = new java.util.ArrayList<>(merchantData.size());
         for (Map.Entry<String, Map<Integer, Double>> entry : merchantData.entrySet()) {
             String merchId = entry.getKey();
             Map<Integer, Double> dailyMap = entry.getValue();
             String[] meta = merchantMeta.get(merchId);
 
             MerchantDailyMetrics metrics = calculator.computeMetrics(
-                    merchId, meta[0], meta[1], dailyMap, reportDate.withDayOfMonth(1),
+                    merchId, meta[0], meta[1], dailyMap, monthKey,
                     MerchantDailyMetrics.SourceType.FILE_UPLOAD);
 
             metrics.setTenantId(tenantId);
 
-            metricsRepo.findByMerchantIdAndReportDate(merchId, reportDate.withDayOfMonth(1))
-                    .ifPresent(existing -> metrics.setId(existing.getId()));
-
-            metricsRepo.save(metrics);
+            MerchantDailyMetrics existing = existingByMerchant.get(merchId);
+            if (existing != null) {
+                metrics.setId(existing.getId());
+            }
+            toSave.add(metrics);
         }
+
+        // ONE batch round-trip instead of N saves
+        metricsRepo.saveAll(toSave);
+        log.info("Saved {} metrics rows for tenant {} date {} (existing matched: {})",
+                toSave.size(), tenantId, reportDate, existingByMerchant.size());
     }
 }

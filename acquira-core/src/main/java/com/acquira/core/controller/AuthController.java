@@ -42,9 +42,18 @@ public class AuthController {
     private final com.acquira.common.service.AuditService auditService;
 
     // ===== IP-based rate limiter (defense-in-depth, kept alongside per-user lockout) =====
+    // P2-7 fix: bucket key is now (ip|username), not just ip. Previously a single
+    // typo'd password from a corporate NAT could lock the whole office out for 1
+    // minute, because every employee shared one IP. Now the bucket is per-pair so
+    // one user's failures only affect that user's logins from that IP.
     private final ConcurrentHashMap<String, long[]> loginAttempts = new ConcurrentHashMap<>();
     private static final int MAX_IP_ATTEMPTS = 10;
     private static final long WINDOW_MS = 60_000;
+
+    // P1-5 fix: collapse multiple distinct auth-failure responses into one
+    // generic 401 message to prevent username enumeration. The specific reason
+    // (bad creds vs inactive vs pending) is captured in the audit log only.
+    private static final String GENERIC_AUTH_FAILURE = "Invalid username or password";
 
     // Per-user lockout settings (could load from tenant_setting)
     private static final int MAX_USER_ATTEMPTS = 5;
@@ -86,11 +95,13 @@ public class AuthController {
             return ResponseEntity.badRequest().body(Map.of("error", "Username and password are required"));
         }
 
-        // IP rate limiting (defense-in-depth layer)
+        // IP rate limiting (defense-in-depth layer) — P2-7: keyed by (ip, username)
         String clientIp = getClientIp(httpRequest);
-        if (isRateLimited(clientIp)) {
+        String rateKey = clientIp + "|" + (authenticationRequest.getUsername() == null ? ""
+                : authenticationRequest.getUsername().trim().toLowerCase());
+        if (isRateLimited(rateKey)) {
             return ResponseEntity.status(429).body(Map.of(
-                    "error", "Too many login attempts from this address. Please try again later."));
+                    "error", "Too many login attempts. Please try again later."));
         }
 
         // ===== Per-user lockout check =====
@@ -98,25 +109,37 @@ public class AuthController {
         if (userOpt.isPresent()) {
             User dbUser = userOpt.get();
 
-            // Check if account is locked
+            // P1-4 fix: if a previous lockout has expired, reset the counter so
+            // the user gets a fresh 5 attempts instead of being immediately re-locked.
+            if (dbUser.getLockedUntil() != null
+                    && dbUser.getLockedUntil().isBefore(LocalDateTime.now())) {
+                dbUser.setFailedLoginAttempts(0);
+                dbUser.setLockedUntil(null);
+                userRepository.save(dbUser);
+            }
+
+            // P1-5 fix: do NOT short-circuit with distinct status codes for
+            // 'inactive' / 'pending approval' — that lets an attacker enumerate
+            // valid usernames. We still record an audit entry with the real reason.
+            // The actual auth attempt below will return the generic failure for
+            // any of: bad creds / inactive / pending. Lockout (423) stays distinct
+            // because it's the user's OWN account state and they need to know
+            // why they can't log in even with the right password.
             if (dbUser.isAccountLocked()) {
                 long minutesRemaining = Duration.between(LocalDateTime.now(), dbUser.getLockedUntil()).toMinutes() + 1;
                 return ResponseEntity.status(423).body(Map.of(
                         "error", "Account is locked. Try again in " + minutesRemaining + " minute(s).",
-                        "lockedUntil", dbUser.getLockedUntil().toString(),
                         "locked", true));
             }
 
-            // Check if account is deactivated
-            if (!dbUser.isActive()) {
-                return ResponseEntity.status(403).body(Map.of(
-                        "error", "Account is deactivated. Contact your administrator."));
-            }
-
-            // Check if account is pending approval
-            if (dbUser.isPendingApproval()) {
-                return ResponseEntity.status(403).body(Map.of(
-                        "error", "Your account is pending admin approval."));
+            if (!dbUser.isActive() || dbUser.isPendingApproval()) {
+                // Audit the real reason for ops to see; respond generically to the user.
+                String reason = !dbUser.isActive() ? "INACTIVE" : "PENDING_APPROVAL";
+                auditService.log("LOGIN_DENIED",
+                        "User '" + dbUser.getUsername() + "' login denied: " + reason +
+                        " from " + clientIp);
+                recordFailedAttempt(rateKey);
+                return ResponseEntity.status(401).body(Map.of("error", GENERIC_AUTH_FAILURE));
             }
         }
 
@@ -127,7 +150,7 @@ public class AuthController {
                             authenticationRequest.getUsername(),
                             authenticationRequest.getPassword()));
         } catch (BadCredentialsException e) {
-            recordFailedAttempt(clientIp);
+            recordFailedAttempt(rateKey);
 
             // Per-user failed attempt tracking
             if (userOpt.isPresent()) {
@@ -139,24 +162,20 @@ public class AuthController {
                     dbUser.setLockedUntil(LocalDateTime.now().plusMinutes(LOCKOUT_MINUTES));
                     userRepository.save(dbUser);
                     return ResponseEntity.status(423).body(Map.of(
-                            "error", "Account locked after " + MAX_USER_ATTEMPTS
-                                    + " failed attempts. Try again in " + LOCKOUT_MINUTES + " minutes.",
+                            "error", "Account locked due to too many failed attempts. Try again later.",
                             "locked", true));
                 }
 
                 userRepository.save(dbUser);
-                int remaining = MAX_USER_ATTEMPTS - dbUser.getFailedLoginAttempts();
-                return ResponseEntity.status(401).body(Map.of(
-                        "error", "Incorrect username or password. "
-                                + remaining + " attempt(s) remaining before lockout.",
-                        "attemptsRemaining", remaining));
+                // P1-5: don't include attemptsRemaining — that's a side-channel
+                // hint that the username exists.
             }
 
-            return ResponseEntity.status(401).body(Map.of("error", "Incorrect username or password"));
+            return ResponseEntity.status(401).body(Map.of("error", GENERIC_AUTH_FAILURE));
         }
 
         // ===== Successful login — reset lockout counters =====
-        loginAttempts.remove(clientIp);
+        loginAttempts.remove(rateKey);
 
         User user = userOpt.orElse(null);
         if (user != null) {

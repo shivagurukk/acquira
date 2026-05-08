@@ -19,49 +19,44 @@ public class TenantAspect {
     @PersistenceContext
     private EntityManager entityManager;
 
-    /**
-     * Track whether we've already set the tenant for the current thread/request.
-     * This prevents re-executing SET LOCAL on every nested service/repository call
-     * within the same request, which avoids the "transaction aborted" cascade.
-     */
-    private static final ThreadLocal<Long> lastSetTenant = new ThreadLocal<>();
-
     @Around("execution(* com.acquira..service..*(..)) || execution(* com.acquira..repository..*(..))")
     public Object setTenantContext(ProceedingJoinPoint joinPoint) throws Throwable {
         Long tenantId = TenantContext.getCurrentTenant();
 
         if (tenantId != null) {
-            // Only execute SET LOCAL if we haven't already set it for this tenant in this request
-            Long alreadySet = lastSetTenant.get();
-            if (alreadySet == null || !alreadySet.equals(tenantId)) {
-                try {
-                    Session session = entityManager.unwrap(Session.class);
-                    session.doWork(connection -> {
-                        // tenantId is a Long — guaranteed numeric, no injection possible
-                        try (java.sql.Statement stmt = connection.createStatement()) {
-                            stmt.execute("SET LOCAL app.current_tenant = '" + tenantId.longValue() + "'");
-                            logger.trace("Set DB Session app.current_tenant = {}", tenantId);
-                        }
-                    });
-                    lastSetTenant.set(tenantId);
-                } catch (Exception e) {
-                    logger.error("Failed to set tenant context in DB session for method: {}",
-                            joinPoint.getSignature().toShortString(), e);
-                    // Don't block — RLS will restrict data access as a safety net
-                }
+            // P1-2 fix:
+            //   - Use set_config('app.current_tenant', ?, false) instead of
+            //     SET LOCAL. SET LOCAL is silently a no-op outside a transaction
+            //     (PG just emits a WARNING), which means it does NOTHING when
+            //     called from a tasklet running with propagation NEVER — the
+            //     exact pattern most batch steps use. set_config(..., false)
+            //     is session-scoped and works regardless of transaction state.
+            //   - Use a parameterized statement so the value can never escape
+            //     into SQL even if tenantId's type is later widened.
+            //   - Removed the lastSetTenant ThreadLocal cache. The setting is
+            //     per-CONNECTION (not per-thread), and HikariCP returns connections
+            //     to the pool — so the next request on the same thread might get a
+            //     different connection that has stale or no tenant context. Setting
+            //     it on every aspect invocation guarantees correctness; the cost is
+            //     a sub-millisecond local PG roundtrip, dwarfed by the actual query.
+            try {
+                Session session = entityManager.unwrap(Session.class);
+                session.doWork(connection -> {
+                    try (java.sql.PreparedStatement ps = connection.prepareStatement(
+                            "SELECT set_config('app.current_tenant', ?, false)")) {
+                        ps.setString(1, String.valueOf(tenantId.longValue()));
+                        try (java.sql.ResultSet rs = ps.executeQuery()) { rs.next(); }
+                    }
+                });
+                logger.trace("Set DB session app.current_tenant = {}", tenantId);
+            } catch (Exception e) {
+                logger.error("Failed to set tenant context in DB session for method: {}",
+                        joinPoint.getSignature().toShortString(), e);
+                // Don't block: app-layer WHERE tenant_id = ? still enforces isolation;
+                // RLS, if/when forced, will block reads rather than leak them.
             }
         }
 
-        try {
-            return joinPoint.proceed();
-        } finally {
-            // Clean up only at the outermost call (when we're about to exit the service layer)
-            // We check if this is a top-level service call by checking the stack
-            // Simple approach: let JwtRequestFilter's finally block handle TenantContext.clear()
-            // We just clear our tracking here if tenant context is null (request ending)
-            if (TenantContext.getCurrentTenant() == null) {
-                lastSetTenant.remove();
-            }
-        }
+        return joinPoint.proceed();
     }
 }

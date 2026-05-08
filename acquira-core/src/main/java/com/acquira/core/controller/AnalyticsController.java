@@ -75,25 +75,28 @@ public class AnalyticsController {
                     COALESCE(m.sales_user_id, '') as salesUserId
                 FROM dim_merchant m
 
-                -- Daily Join
+                -- Daily Join — P2-1: tenant_id added so subquery scans only this tenant's rows
                 LEFT JOIN sum_daily_merchant daily ON daily.merchant_id = m.merchant_id
+                    AND daily.tenant_id = m.tenant_id
                     AND daily.business_date = :targetDate
 
-                -- MTD Join (Aggregation)
+                -- MTD Join (Aggregation) — P2-1: tenant_id pushed inside subquery
                 LEFT JOIN (
-                    SELECT merchant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
+                    SELECT merchant_id, tenant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
                     FROM sum_daily_merchant
                     WHERE business_date >= :startOfMonth AND business_date <= :targetDate
-                    GROUP BY merchant_id
-                ) mtd ON mtd.merchant_id = m.merchant_id
+                      AND tenant_id = :tenantId
+                    GROUP BY merchant_id, tenant_id
+                ) mtd ON mtd.merchant_id = m.merchant_id AND mtd.tenant_id = m.tenant_id
 
-                -- YTD Join (Aggregation)
+                -- YTD Join (Aggregation) — P2-1: tenant_id pushed inside subquery
                 LEFT JOIN (
-                    SELECT merchant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
+                    SELECT merchant_id, tenant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
                     FROM sum_daily_merchant
                     WHERE business_date >= :startOfYear AND business_date <= :targetDate
-                    GROUP BY merchant_id
-                ) ytd ON ytd.merchant_id = m.merchant_id
+                      AND tenant_id = :tenantId
+                    GROUP BY merchant_id, tenant_id
+                ) ytd ON ytd.merchant_id = m.merchant_id AND ytd.tenant_id = m.tenant_id
 
                 WHERE m.tenant_id = :tenantId
                 ORDER BY m.name
@@ -163,25 +166,28 @@ public class AnalyticsController {
                     COALESCE(m.sales_user_id, '') as salesUserId
                 FROM dim_merchant m
 
-                -- Daily Join
+                -- Daily Join — P2-1: tenant_id added so subquery scans only this tenant's rows
                 LEFT JOIN sum_daily_merchant daily ON daily.merchant_id = m.merchant_id
+                    AND daily.tenant_id = m.tenant_id
                     AND daily.business_date = :targetDate
 
-                -- MTD Join (Aggregation)
+                -- MTD Join (Aggregation) — P2-1: tenant_id pushed inside subquery
                 LEFT JOIN (
-                    SELECT merchant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
+                    SELECT merchant_id, tenant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
                     FROM sum_daily_merchant
                     WHERE business_date >= :startOfMonth AND business_date <= :targetDate
-                    GROUP BY merchant_id
-                ) mtd ON mtd.merchant_id = m.merchant_id
+                      AND tenant_id = :tenantId
+                    GROUP BY merchant_id, tenant_id
+                ) mtd ON mtd.merchant_id = m.merchant_id AND mtd.tenant_id = m.tenant_id
 
-                -- YTD Join (Aggregation)
+                -- YTD Join (Aggregation) — P2-1: tenant_id pushed inside subquery
                 LEFT JOIN (
-                    SELECT merchant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
+                    SELECT merchant_id, tenant_id, SUM(total_txns) as total_txns, SUM(total_volume) as total_volume
                     FROM sum_daily_merchant
                     WHERE business_date >= :startOfYear AND business_date <= :targetDate
-                    GROUP BY merchant_id
-                ) ytd ON ytd.merchant_id = m.merchant_id
+                      AND tenant_id = :tenantId
+                    GROUP BY merchant_id, tenant_id
+                ) ytd ON ytd.merchant_id = m.merchant_id AND ytd.tenant_id = m.tenant_id
 
                 WHERE m.tenant_id = :tenantId
                 ORDER BY m.name

@@ -21,8 +21,16 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 @Configuration
 public class MerchantMasterJobConfig {
+
+    // P3-6: SLF4J for per-step diagnostics so they honour logback config
+    // (file rotation, levels, JSON encoder). Was System.out.printf, which
+    // the prod profile's logback was swallowing.
+    private static final Logger log = LoggerFactory.getLogger(MerchantMasterJobConfig.class);
 
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
@@ -101,8 +109,8 @@ public class MerchantMasterJobConfig {
             long t0 = System.currentTimeMillis();
             upsertDimensionsTasklet.execute(contribution, chunkContext);
             long t1 = System.currentTimeMillis();
-            System.out.printf("upsertAndSummarize: dim=%dms total=%dms (activity summary skipped — not affected by merchant upload)%n",
-                t1 - t0, t1 - t0);
+            log.info(String.format("upsertAndSummarize: dim=%dms total=%dms (activity summary skipped — not affected by merchant upload)",
+                t1 - t0, t1 - t0));
             return RepeatStatus.FINISHED;
         };
     }
@@ -154,8 +162,8 @@ public class MerchantMasterJobConfig {
             java.time.LocalDate date30d = today.minusDays(30);
             java.time.LocalDate date365d = today.minusDays(365);
             jdbcTemplate.update(sql, today, date7d, date7d, date30d, date30d, date30d, date30d, today, date365d, tenantId);
-            System.out.printf("populateActivitySummary completed in %.1fs%n",
-                (System.currentTimeMillis() - t0) / 1000.0);
+            log.info(String.format("populateActivitySummary completed in %.1fs",
+                (System.currentTimeMillis() - t0) / 1000.0));
             return RepeatStatus.FINISHED;
         };
     }
@@ -553,7 +561,7 @@ public class MerchantMasterJobConfig {
                 }
             });
             if (System.currentTimeMillis() - t0 > 200) {
-                System.out.printf("  staging-insert chunk=%d in %dms%n", items.size(), System.currentTimeMillis() - t0);
+                log.info("  staging-insert chunk={} in {}ms", items.size(), System.currentTimeMillis() - t0);
             }
         };
     }
@@ -594,7 +602,7 @@ public class MerchantMasterJobConfig {
             int purged = jdbcTemplate.update(
                 "DELETE FROM stg_merchant_master_raw WHERE tenant_id = ? AND load_time < ?",
                 tenantId, new java.sql.Timestamp(cutoffMs));
-            System.out.printf("  staging cleanup: removed %d stale rows for tenant %s in %dms%n",
+            log.info("  staging cleanup: removed {} stale rows for tenant {} in {}ms",
                 purged, tId, System.currentTimeMillis() - t0);
 
             // PERF FIX: removed two debug SELECT queries (each one a full RDS round-trip
@@ -634,7 +642,7 @@ public class MerchantMasterJobConfig {
             jdbcTemplate.execute(upsertMerchantSql);
 
             // PERF FIX: removed second debug SELECT after merchant upsert.
-            System.out.println("Upserted Merchants for tenant " + tId);
+            log.info("Upserted Merchants for tenant {}", tId);
 
             // 2. Upsert Stores
             String upsertStoreSql = """
@@ -658,7 +666,7 @@ public class MerchantMasterJobConfig {
                     city = EXCLUDED.city, state = EXCLUDED.state, status = EXCLUDED.status
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertStoreSql);
-            System.out.println("Upserted Stores for tenant " + tId);
+            log.info("Upserted Stores for tenant {}", tId);
 
             // 3. Upsert Terminals
             // PERF FIX: removed `OR raw.tid = t.tid OR ... CONCAT('TERM_', raw.mid)` joins
@@ -683,7 +691,7 @@ public class MerchantMasterJobConfig {
                     tid = EXCLUDED.tid, device_number = EXCLUDED.device_number, status = EXCLUDED.status
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertTerminalSql);
-            System.out.println("Upserted Terminals for tenant " + tId);
+            log.info("Upserted Terminals for tenant {}", tId);
 
             // PERF FIX (bulk merchant upload): steps 4 (Contacts), 5 (Risk Profile),
             // 6 (Bank Accounts) used to do `DELETE WHERE tenant_id = ?` — which scales
@@ -734,7 +742,7 @@ public class MerchantMasterJobConfig {
                         FROM stg_merchant_master_raw raw JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
                         WHERE raw.tenant_id = TID AND raw.secondary_contact_person IS NOT NULL
                         """.replace("TID", tId));
-                    System.out.printf("  [parallel] contacts          %.2fs%n", (System.currentTimeMillis() - t) / 1000.0);
+                    log.info(String.format("  [parallel] contacts          %.2fs", (System.currentTimeMillis() - t) / 1000.0));
                 }, dimExec));
 
                 // 5. Risk Profile (parallel) — delete scoped to merchants in this upload
@@ -753,7 +761,7 @@ public class MerchantMasterJobConfig {
                         FROM stg_merchant_master_raw raw JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
                         WHERE raw.tenant_id = TID
                         """.replace("TID", tId));
-                    System.out.printf("  [parallel] risk_profile      %.2fs%n", (System.currentTimeMillis() - t) / 1000.0);
+                    log.info(String.format("  [parallel] risk_profile      %.2fs", (System.currentTimeMillis() - t) / 1000.0));
                 }, dimExec));
 
                 // 6. Bank Accounts (parallel) — delete scoped to stores of merchants in this upload
@@ -775,7 +783,7 @@ public class MerchantMasterJobConfig {
                         WHERE raw.tenant_id = TID AND raw.bank_account_number IS NOT NULL
                         GROUP BY raw.tenant_id, bank_account_number
                         """.replace("TID", tId));
-                    System.out.printf("  [parallel] bank_accounts     %.2fs%n", (System.currentTimeMillis() - t) / 1000.0);
+                    log.info(String.format("  [parallel] bank_accounts     %.2fs", (System.currentTimeMillis() - t) / 1000.0));
                 }, dimExec));
 
                 java.util.concurrent.CompletableFuture.allOf(
@@ -783,9 +791,9 @@ public class MerchantMasterJobConfig {
             } finally {
                 dimExec.shutdown();
             }
-            System.out.printf("contacts+risk+bank (parallel) completed in %.1fs%n",
-                (System.currentTimeMillis() - t456) / 1000.0);
-            System.out.printf("upsertDimensions completed in %.1fs%n", (System.currentTimeMillis() - stepStart) / 1000.0);
+            log.info(String.format("contacts+risk+bank (parallel) completed in %.1fs",
+                (System.currentTimeMillis() - t456) / 1000.0));
+            log.info(String.format("upsertDimensions completed in %.1fs", (System.currentTimeMillis() - stepStart) / 1000.0));
 
             // 7. Auto-assign unmapped sales users
             try {
@@ -800,10 +808,10 @@ public class MerchantMasterJobConfig {
                         " AND m.sales_user_id IS NOT NULL AND m.sales_user_id != '' " +
                         "AND NOT EXISTS (SELECT 1 FROM sales_user_assignment a WHERE a.tenant_id = m.tenant_id AND a.sales_user_id = m.sales_user_id) " +
                         "ON CONFLICT (tenant_id, sales_user_id) DO NOTHING");
-                    System.out.println("Auto-assigned " + assigned + " unmapped sales users for tenant " + tId);
+                    log.info("Auto-assigned {} unmapped sales users for tenant {}", assigned, tId);
                 }
             } catch (Exception e) {
-                System.err.println("Warning: Auto-assign failed (non-fatal): " + e.getMessage());
+                log.warn("Auto-assign failed (non-fatal): {}", e.getMessage());
             }
 
             return RepeatStatus.FINISHED;

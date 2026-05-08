@@ -31,6 +31,9 @@ import java.sql.PreparedStatement;
 import java.time.LocalDate;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * HIGH-PERFORMANCE Transaction Job
  *
@@ -60,6 +63,11 @@ import java.util.List;
  */
 @Configuration
 public class TransactionJobConfig {
+
+    // P3-6: per-step timings and diagnostics now go through SLF4J so they
+            // honour logback config (file rotation, levels, JSON encoder, etc.).
+            // System.out.printf was being swallowed by the prod profile's logback config.
+    private static final Logger log = LoggerFactory.getLogger(TransactionJobConfig.class);
 
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
@@ -199,7 +207,7 @@ public class TransactionJobConfig {
                 "    WHERE s.tenant_id = m.tenant_id AND s.merchant_id = m.merchant_id LIMIT 1)",
                 tenantId);
             if (orphansRemoved > 0) {
-                System.out.printf("  cleanup: removed %d orphan auto-created merchant placeholder(s)%n", orphansRemoved);
+                log.info("  cleanup: removed {} orphan auto-created merchant placeholder(s)", orphansRemoved);
             }
 
             // 1. Auto-create missing merchants — fast pre-check first.
@@ -306,12 +314,12 @@ public class TransactionJobConfig {
                     tenantId);
             }
 
-            System.out.printf("autoCreateDimensions: +%d merchants, +%d stores, +%d terminals in %.1fs (skipped: %s%s%s)%n",
+            log.info(String.format("autoCreateDimensions: +%d merchants, +%d stores, +%d terminals in %.1fs (skipped: %s%s%s)",
                 merchantsAdded, storesAdded, terminalsAdded,
                 (System.currentTimeMillis() - start) / 1000.0,
                 hasUnmappedMerchants ? "" : "merchants ",
                 hasUnmappedStores ? "" : "stores ",
-                hasUnmappedTerminals ? "" : "terminals");
+                hasUnmappedTerminals ? "" : "terminals"));
             return RepeatStatus.FINISHED;
         };
     }
@@ -324,7 +332,7 @@ public class TransactionJobConfig {
         return (contribution, chunkContext) -> {
             long t = System.currentTimeMillis();
             partitionMaintenanceService.ensurePartitionsForCurrentAndNextYear();
-            System.out.printf("ensurePartitions completed in %.1fs%n", (System.currentTimeMillis() - t) / 1000.0);
+            log.info(String.format("ensurePartitions completed in %.1fs", (System.currentTimeMillis() - t) / 1000.0));
             return RepeatStatus.FINISHED;
         };
     }
@@ -341,8 +349,8 @@ public class TransactionJobConfig {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long t = System.currentTimeMillis();
             int rows = jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ?", tenantId);
-            System.out.printf("cleanTargetDay completed in %.1fs (deleted %d staging rows)%n",
-                (System.currentTimeMillis() - t) / 1000.0, rows);
+            log.info(String.format("cleanTargetDay completed in %.1fs (deleted %d staging rows)",
+                (System.currentTimeMillis() - t) / 1000.0, rows));
             return RepeatStatus.FINISHED;
         };
     }
@@ -519,13 +527,13 @@ public class TransactionJobConfig {
                     } catch (Exception ignored) {}
                 }
             } catch (Exception e) {
-                System.err.println("WARN: Could not load ref tables (non-fatal) — raw codes will pass through: " + e.getMessage());
+                log.warn("Could not load ref tables (non-fatal) — raw codes will pass through: {}", e.getMessage());
             }
 
             REF_CACHE = new RefTableCache(cardSchemeToType, isoNumericToCurrencyCode, currencyCodeToDecimal);
-            System.out.printf("Ref tables loaded ONCE in %.2fs (card_scheme=%d, currency=%d) — cached for all workers%n",
+            log.info(String.format("Ref tables loaded ONCE in %.2fs (card_scheme=%d, currency=%d) — cached for all workers",
                 (System.currentTimeMillis() - t) / 1000.0,
-                cardSchemeToType.size(), isoNumericToCurrencyCode.size());
+                cardSchemeToType.size(), isoNumericToCurrencyCode.size()));
             return REF_CACHE;
         }
     }
@@ -591,7 +599,7 @@ public class TransactionJobConfig {
                     }
                 } else if (WARNED_MISSING_CURRENCIES.add(trimmed)) {
                     // PERF FIX: warn ONCE per distinct currency, not per row.
-                    System.out.printf("WARN: Txn currency '%s' not found in ref_country — no amount division applied (warning suppressed for further rows)%n", trimmed);
+                    log.warn("Txn currency '{}' not found in ref_country — no amount division applied (warning suppressed for further rows)", trimmed);
                 }
                 // If not numeric (already 'BHD'/'USD'), skip conversion
             }
@@ -702,7 +710,7 @@ public class TransactionJobConfig {
             Integer nullDateCount = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NULL", Integer.class, tenantId);
             if (nullDateCount != null && nullDateCount > 0) {
-                System.out.printf("WARNING: %d staging rows have NULL payment_date and will be skipped%n", nullDateCount);
+                log.warn("{} staging rows have NULL payment_date and will be skipped", nullDateCount);
             }
 
             // PERF FIX (bulk transactions): pre-compute distinct dates ONCE.
@@ -715,12 +723,15 @@ public class TransactionJobConfig {
                 java.sql.Date.class, tenantId);
             String dateScope;
             if (distinctDates.isEmpty()) {
-                System.out.println("stagingToFact: no dates in staging — skipping");
+                log.info("stagingToFact: no dates in staging — skipping");
                 return RepeatStatus.FINISHED;
             } else {
-                dateScope = "(" + distinctDates.stream()
-                    .map(d -> "DATE '" + d.toString() + "'")
-                    .collect(java.util.stream.Collectors.joining(",")) + ")";
+                // P2-10: defense-in-depth. Values come from the DB driver, not user
+                // input, so this is not an injection vector today. But it IS a
+                // 25+ SQL-string interpolation surface, and a future code change
+                // (e.g. swapping the DISTINCT source) could change that. Validate
+                // every element matches strict YYYY-MM-DD before we build the IN-list.
+                dateScope = buildSafeDateInList(distinctDates);
             }
 
             // 0.5 Auto-populate dim_merchant.name from transaction file
@@ -749,9 +760,9 @@ public class TransactionJobConfig {
                 // separately by the prefix-match cleanup below (which only runs once per upload).
                 namesUpdated = jdbcTemplate.update(updateNameSql, tenantId, tenantId);
             }
-            System.out.printf("Auto-populated %d merchant names (exact-match) in %.1fs%s%n",
+            log.info(String.format("Auto-populated %d merchant names (exact-match) in %.1fs%s",
                 namesUpdated, (System.currentTimeMillis() - start) / 1000.0,
-                Boolean.TRUE.equals(hasMissingNames) ? "" : " [skipped: all names good]");
+                Boolean.TRUE.equals(hasMissingNames) ? "" : " [skipped: all names good]"));
 
             // 0.6 Cleanup pass: prefix-match for any merchants still missing names.
             // Bounded by the small number of unresolved rows, so even a full scan is cheap.
@@ -775,8 +786,8 @@ public class TransactionJobConfig {
                         "AND (m.mid LIKE sub.staging_mid || '%' OR sub.staging_mid LIKE m.mid || '%')",
                         tenantId, tenantId);
                     if (prefixUpdated > 0) {
-                        System.out.printf("Auto-populated %d additional merchant names (prefix-match) in %.1fs%n",
-                            prefixUpdated, (System.currentTimeMillis() - t06) / 1000.0);
+                        log.info(String.format("Auto-populated %d additional merchant names (prefix-match) in %.1fs",
+                            prefixUpdated, (System.currentTimeMillis() - t06) / 1000.0));
                     }
                 }
             }
@@ -786,7 +797,7 @@ public class TransactionJobConfig {
             jdbcTemplate.update(
                 "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope,
                 tenantId);
-            System.out.printf("Deleted existing fact rows in %.1fs%n", (System.currentTimeMillis() - tDel) / 1000.0);
+            log.info(String.format("Deleted existing fact rows in %.1fs", (System.currentTimeMillis() - tDel) / 1000.0));
 
             // ── Step A: bulk insert with SID-PRIMARY join strategy ──
             //
@@ -852,8 +863,8 @@ public class TransactionJobConfig {
                 "  AND s2.store_id = t.store_id " +
                 "WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL";
             int inserted = jdbcTemplate.update(sql, tenantId);
-            System.out.printf("Inserted %d fact rows (SID-primary joins) in %.1fs%n",
-                inserted, (System.currentTimeMillis() - tIns) / 1000.0);
+            log.info(String.format("Inserted %d fact rows (SID-primary joins) in %.1fs",
+                inserted, (System.currentTimeMillis() - tIns) / 1000.0));
 
             // Diagnostic: report how many rows actually got merchant_id resolved
             // so the user can immediately see if the dim tables are missing entries.
@@ -868,11 +879,11 @@ public class TransactionJobConfig {
             if (total != null && total > 0) {
                 int unmatched = total - (matched != null ? matched : 0);
                 if (unmatched > 0) {
-                    System.out.printf("WARNING: %d/%d fact rows have NULL merchant_id (SID not found in dim_store). " +
-                        "Upload the merchant master file or check SID format mismatch.%n",
-                        unmatched, total);
+                    log.warn(String.format("%d/%d fact rows have NULL merchant_id (SID not found in dim_store). " +
+                        "Upload the merchant master file or check SID format mismatch.",
+                        unmatched, total));
                 } else {
-                    System.out.printf("All %d fact rows resolved to a merchant via SID%n", total);
+                    log.info("All {} fact rows resolved to a merchant via SID", total);
                 }
             }
 
@@ -901,11 +912,11 @@ public class TransactionJobConfig {
                 "AND DATE(f.payment_date) IN " + dateScope,
                 tenantId, tenantId, tenantId);
             if (storeFixed + termFixed > 0) {
-                System.out.printf("Fix-up: %d store_ids, %d terminal_ids resolved via CONCAT pattern in %.1fs%n",
-                    storeFixed, termFixed, (System.currentTimeMillis() - tFix) / 1000.0);
+                log.info(String.format("Fix-up: %d store_ids, %d terminal_ids resolved via CONCAT pattern in %.1fs",
+                    storeFixed, termFixed, (System.currentTimeMillis() - tFix) / 1000.0));
             }
 
-            System.out.printf("stagingToFact completed in %.1fs%n", (System.currentTimeMillis() - start) / 1000.0);
+            log.info(String.format("stagingToFact completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;
         };
     }
@@ -944,13 +955,13 @@ public class TransactionJobConfig {
                 "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
                 java.sql.Date.class, tenantId);
             if (distinctDates.isEmpty()) {
-                System.out.println("populateSummary: no dates to process — skipping");
+                log.info("populateSummary: no dates to process — skipping");
                 return RepeatStatus.FINISHED;
             }
             // Build literal IN-lists once. Both DATE format and YYYYMM int format.
-            String dateInList = distinctDates.stream()
-                .map(d -> "DATE '" + d.toString() + "'")
-                .collect(java.util.stream.Collectors.joining(","));
+            // P2-10: validate every distinct date matches strict YYYY-MM-DD before
+            // we interpolate it into 25+ SQL strings.
+            final String dateScope = buildSafeDateInList(distinctDates);
             java.util.Set<Integer> monthSet = new java.util.LinkedHashSet<>();
             for (java.sql.Date d : distinctDates) {
                 java.time.LocalDate ld = d.toLocalDate();
@@ -958,9 +969,8 @@ public class TransactionJobConfig {
             }
             String monthInList = monthSet.stream().map(String::valueOf)
                 .collect(java.util.stream.Collectors.joining(","));
-            final String dateScope = "(" + dateInList + ")";
             final String monthScope = "(" + monthInList + ")";
-            System.out.printf("populateSummary: %d dates, %d months in scope%n",
+            log.info("populateSummary: {} dates, {} months in scope",
                 distinctDates.size(), monthSet.size());
 
             // PERF FIX: parallelize independent aggregation queries.
@@ -1219,13 +1229,32 @@ public class TransactionJobConfig {
                 exec.shutdown();
             }
 
-            System.out.printf("populateSummary completed in %.1fs (parallelized 15 queries)%n",
-                (System.currentTimeMillis() - start) / 1000.0);
+            log.info(String.format("populateSummary completed in %.1fs (parallelized 15 queries)",
+                (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;
         };
     }
 
-    /** Helper: run a query on the executor with timing + error logging. */
+    /** Helper: run a query on the executor with timing + error logging.
+     *
+     * AUTOCOMMIT NOTE:
+     *   The worker threads from newFixedThreadPool(4) are NOT Spring-managed.
+     *   With JPA on the classpath, Hikari's DEFAULT was autoCommit=false,
+     *   which made each jdbcTemplate.update(...) here open an implicit
+     *   PG transaction that JdbcTemplate never committed (no Spring tx in
+     *   scope). Connections returned to the pool 'idle in transaction',
+     *   holding locks indefinitely — visible in pg_stat_activity as
+     *   zombie sessions stuck for hours with stale query strings.
+     *
+     *   The fix is in application.properties:
+     *     spring.datasource.hikari.auto-commit=true
+     *   so each raw JDBC call commits on its own statement boundary. JPA
+     *   still works because JpaTransactionManager flips autoCommit=false
+     *   per-connection when it begins a managed transaction.
+     *
+     *   No transaction wrapping is needed in this helper — we WANT each
+     *   query to commit immediately on its own connection.
+     */
     private static java.util.concurrent.CompletableFuture<Void> runAsync(
             java.util.concurrent.ExecutorService exec, String name,
             java.util.function.Supplier<Integer> work) {
@@ -1233,9 +1262,6 @@ public class TransactionJobConfig {
             long t = System.currentTimeMillis();
             try {
                 int rows = work.get();
-                // FIX: use SLF4J at WARN level so per-query timings show up regardless of
-                // logging.level.com.acquira / org.springframework.batch settings on prod.
-                // System.out.printf was being swallowed by logback's prod profile.
                 org.slf4j.LoggerFactory.getLogger(TransactionJobConfig.class).warn(
                     "  [populateSummary] {} {} rows in {}s",
                     String.format("%-25s", name), rows,
@@ -1276,12 +1302,10 @@ public class TransactionJobConfig {
                 "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
                 java.sql.Date.class, tenantId);
             if (distinctDates.isEmpty()) {
-                System.out.println("businessMetrics: no dates to process — skipping");
+                log.info("businessMetrics: no dates to process — skipping");
                 return RepeatStatus.FINISHED;
             }
-            String dateScope = "(" + distinctDates.stream()
-                .map(d -> "DATE '" + d.toString() + "'")
-                .collect(java.util.stream.Collectors.joining(",")) + ")";
+            String dateScope = buildSafeDateInList(distinctDates);  // P2-10
 
             // PERF FIX: previously did `dim_merchant CROSS JOIN distinct dates` which
             // generates O(merchants × dates) rows even for dormant merchants with zero
@@ -1322,7 +1346,7 @@ public class TransactionJobConfig {
                 "ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET score=EXCLUDED.score, reason_tags=EXCLUDED.reason_tags",
                 tenantId);
 
-            System.out.printf("businessMetrics completed in %.1fs%n", (System.currentTimeMillis() - start) / 1000.0);
+            log.info(String.format("businessMetrics completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;
         };
     }
@@ -1346,7 +1370,15 @@ public class TransactionJobConfig {
 
     // Step 7: Dashboard Metrics
     @Bean public Step calculateDailyDashboardMetricsStep(Tasklet calculateDailyDashboardMetricsTasklet) {
-        return new StepBuilder("calculateDailyDashboardMetricsStep", jobRepository).tasklet(calculateDailyDashboardMetricsTasklet, transactionManager).build();
+        // P0-5 fix: was missing transactionAttribute(noTxn()). The tasklet does
+        // monthlyMetricsRepo.saveAll(toSave) per month inside a Java loop.
+        // Without NEVER propagation, every saveAll joined the step's outer
+        // transaction — exactly the idle_in_transaction_session_timeout pattern
+        // every other long step in this file was hardened against.
+        return new StepBuilder("calculateDailyDashboardMetricsStep", jobRepository)
+            .tasklet(calculateDailyDashboardMetricsTasklet, transactionManager)
+            .transactionAttribute(noTxn())
+            .build();
     }
 
     @Bean @StepScope
@@ -1386,7 +1418,7 @@ public class TransactionJobConfig {
                     }
                 } catch (Exception ex) {
                     // Repo method missing or query failed — fall back to per-merchant lookup
-                    System.err.println("WARN: bulk fetch of monthly metrics failed, falling back: " + ex.getMessage());
+                    log.warn("bulk fetch of monthly metrics failed, falling back: {}", ex.getMessage());
                     for (Long mId : grouped.keySet()) {
                         monthlyMetricsRepo.findByMerchantAndMonth(tenantId, mId, monthYear)
                             .ifPresent(e -> existingByMerchant.put(mId, e));
@@ -1412,8 +1444,8 @@ public class TransactionJobConfig {
                     totalSaved += toSave.size();
                 }
             }
-            System.out.printf("dashboardMetrics completed in %.1fs (saved %d rows across %d months)%n",
-                (System.currentTimeMillis() - start) / 1000.0, totalSaved, months.size());
+            log.info(String.format("dashboardMetrics completed in %.1fs (saved %d rows across %d months)",
+                (System.currentTimeMillis() - start) / 1000.0, totalSaved, months.size()));
             return RepeatStatus.FINISHED;
         };
     }
@@ -1439,6 +1471,41 @@ public class TransactionJobConfig {
         });
         org.springframework.batch.item.support.SynchronizedItemStreamReader<StagingTransaction> sync = new org.springframework.batch.item.support.SynchronizedItemStreamReader<>();
         sync.setDelegate(reader); return sync;
+    }
+
+    /**
+     * P2-10: build a literal IN-list of DATE values for inline SQL interpolation,
+     * after validating each entry matches strict ISO-8601 YYYY-MM-DD. Today the
+     * input always comes from a DB query (java.sql.Date.toString() is guaranteed
+     * YYYY-MM-DD), so this is purely defensive — catches the case where someone
+     * later refactors the source to user input or to a different formatter.
+     *
+     * Inline IN-list (vs parameterized = ANY(?)) is intentional: PostgreSQL's
+     * partition pruner on fact_transaction(payment_date) prunes more aggressively
+     * with literal DATE values than with a parameterized array. Switching to
+     * parameterization here would silently regress upload performance by 30-60
+     * seconds. The validation below makes the inline approach safe.
+     */
+    private static String buildSafeDateInList(java.util.List<java.sql.Date> dates) {
+        if (dates == null || dates.isEmpty()) return "(NULL)"; // matches no rows; defensive
+        java.util.regex.Pattern iso = java.util.regex.Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+        StringBuilder sb = new StringBuilder("(");
+        boolean first = true;
+        for (java.sql.Date d : dates) {
+            if (d == null) continue;
+            String s = d.toString();
+            if (!iso.matcher(s).matches()) {
+                throw new IllegalStateException(
+                    "Refusing to inline non-ISO date into SQL IN-list: '" + s + "'. " +
+                    "This indicates a bug in the date source — java.sql.Date.toString() " +
+                    "is documented to return YYYY-MM-DD.");
+            }
+            if (!first) sb.append(',');
+            sb.append("DATE '").append(s).append("'");
+            first = false;
+        }
+        sb.append(")");
+        return sb.toString();
     }
 
     private java.math.BigDecimal parseDecimal(String val) {

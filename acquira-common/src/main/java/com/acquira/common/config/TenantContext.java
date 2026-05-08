@@ -49,7 +49,15 @@ public class TenantContext {
             if (current != null) {
                 return List.of(current);
             }
-            return new ArrayList<>();
+            // P2-5 fix: previously returned an empty list, which silently
+            // turned every `WHERE tenant_id IN (?)` query into a zero-row
+            // result — masking missing-tenant-context bugs as "no data"
+            // in dashboards or, worse, as silent skips in batch jobs.
+            // Fail loud instead so the offending call site surfaces immediately.
+            throw new IllegalStateException(
+                "No tenant in context: neither currentTenant nor visibleTenants is set. " +
+                "This usually means TenantContext.setCurrentTenant(...) was not called " +
+                "on this thread (common cause: @Async or scheduled job missing context propagation).");
         }
         return list;
     }

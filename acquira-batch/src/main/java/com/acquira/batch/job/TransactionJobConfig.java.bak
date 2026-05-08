@@ -1,4 +1,12 @@
-REPLACE THIS FILE:
-
-Copy the file from outputs to:
-C:\Users\sivag\Desktop\cms\Acquira\acquira-batch\src\main\java\com\acquira\batch\job\TransactionJobConfig.java
+// DEPRECATED — DELETE THIS FILE
+//
+// This is a stale backup of TransactionJobConfig.java from a previous refactor.
+// The live file is TransactionJobConfig.java in this same directory.
+// This .bak file is not picked up by the Java compiler (extension is .java.bak,
+// not .java) so it does not affect builds, but it confuses readers and grep.
+//
+// To delete:
+//   PowerShell:  Remove-Item TransactionJobConfig.java.bak
+//   bash:        rm TransactionJobConfig.java.bak
+//
+// Tracked under audit finding P3-3.

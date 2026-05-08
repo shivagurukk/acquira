@@ -3,6 +3,7 @@ package com.acquira.common.security;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.model.User;
 import com.acquira.common.model.UserTenantAccess;
+import com.acquira.common.repository.TenantRepository;
 import com.acquira.common.repository.UserRepository;
 import com.acquira.common.repository.UserTenantAccessRepository;
 import jakarta.servlet.FilterChain;
@@ -26,15 +27,18 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
     private final UserTenantAccessRepository userTenantAccessRepository;
+    private final TenantRepository tenantRepository;
 
     public JwtRequestFilter(CustomUserDetailsService userDetailsService,
             JwtUtil jwtUtil,
             UserRepository userRepository,
-            UserTenantAccessRepository userTenantAccessRepository) {
+            UserTenantAccessRepository userTenantAccessRepository,
+            TenantRepository tenantRepository) {
         this.userDetailsService = userDetailsService;
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
+        this.tenantRepository = tenantRepository;
     }
 
     @Override
@@ -166,8 +170,21 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
                             // 2. Set Visible Tenants (for now, just the active one, or ALL if Super Admin)
                             if ("ROLE_SUPER_ADMIN".equals(role)) {
-                                // Super admin sees all? For now let's keep it simple
-                                // In future fetch all tenant IDs
+                                // P2-4 fix: super admin sees all tenants for cross-tenant
+                                // rollups (executive dashboards, group reports). Without
+                                // this, getVisibleTenants() returned only the currently
+                                // active tenant for SA users — silently scoping every
+                                // multi-tenant query to one tenant.
+                                try {
+                                    java.util.List<Long> allTenantIds = tenantRepository.findAll().stream()
+                                            .map(com.acquira.common.model.Tenant::getTenantId)
+                                            .collect(java.util.stream.Collectors.toList());
+                                    TenantContext.setVisibleTenants(allTenantIds);
+                                } catch (Exception e) {
+                                    logger.warn("Could not load all tenants for super admin scope: " + e.getMessage());
+                                    // Fall back to current-tenant-only scope; safer than
+                                    // accidentally widening visibility.
+                                }
                             }
                         }
                     }
