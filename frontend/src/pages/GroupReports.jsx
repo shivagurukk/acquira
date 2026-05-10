@@ -1,207 +1,317 @@
-import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { RefreshCw, Filter, Calendar, ArrowUp, ArrowDown, Search } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Box, Paper, Typography, Stack, Tabs, Tab, Chip } from '@mui/material';
+import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { Layers, AlertCircle, Users, Hash, DollarSign, TrendingUp } from 'lucide-react';
 import api from '../api/axios';
+import PremiumReportHeader from '../components/PremiumReportHeader';
+import BusinessFilters from '../components/BusinessFilters';
+import KpiCards from '../components/KpiCards';
+import { exportToCSV } from '../utils/exportUtils';
+import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../theme/dataGridStyles';
+import { useAuth } from '../contexts/AuthContext';
+
+/**
+ * Group Management Reports — restructured to match the rest of the business
+ * screens (DebitPrepaidMetrics, MerchantFinancialSummary, MerchantHeatmap):
+ *
+ *  - PremiumReportHeader with date-preset chips + Run/Export
+ *  - BusinessFilters drawer (partner / RM / MCC / team-leader / merchant /
+ *    MID / SID etc.)
+ *  - MUI DataGrid instead of the hand-rolled HTML table
+ *  - Hits the new POST /api/group-analytics/{type}/filtered endpoint that
+ *    accepts the full VolumeRevenueFilterDTO. The legacy GET still works as
+ *    a fallback if the new endpoint isn't deployed yet (P1-1).
+ *
+ * The four tabs (MCC / MERCHANT / SALES / REFERRAL) all use the same
+ * filter set; switching tab re-runs with the same applied filters.
+ */
+
+/* ── Date preset resolver (timezone-safe) ─────────────────────────── */
+const computeDateRange = (preset) => {
+    const now = new Date();
+    const fmt = (d) => {
+        const yr = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        return `${yr}-${mo}-${dy}`;
+    };
+    switch (preset) {
+        case 'TODAY':      return { startDate: fmt(now), endDate: fmt(now) };
+        case 'MONTH':      return { startDate: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmt(now) };
+        case 'LAST_MONTH': return { startDate: fmt(new Date(now.getFullYear(), now.getMonth() - 1, 1)), endDate: fmt(new Date(now.getFullYear(), now.getMonth(), 0)) };
+        case 'YEAR':       return { startDate: fmt(new Date(now.getFullYear(), 0, 1)), endDate: fmt(now) };
+        case 'PY':         return { startDate: fmt(new Date(now.getFullYear() - 1, 0, 1)), endDate: fmt(new Date(now.getFullYear() - 1, 11, 31)) };
+        default:           return {};
+    }
+};
+
+const TABS = [
+    { id: 'MCC',      label: 'MCC Performance' },
+    { id: 'MERCHANT', label: 'Top Merchants' },
+    { id: 'SALES',    label: 'Sales Performance' },
+    { id: 'REFERRAL', label: 'Referral Partners' },
+];
+
+const formatNumber  = (val) => new Intl.NumberFormat('en-US').format(val || 0);
+const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
 const GroupReports = () => {
-    const [activeTab, setActiveTab] = useState('MCC'); // MCC, MERCHANT, SALES, REFERRAL
+    const { currencyCode = 'AED', formatCurrency: fmtCurr } = useAuth() || {};
+    const formatCurrency = useCallback((val) => {
+        if (fmtCurr) return fmtCurr(val);
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(val || 0);
+    }, [fmtCurr, currencyCode]);
+
+    const [activeTab, setActiveTab] = useState('MCC');
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [period, setPeriod] = useState('MONTH'); // TODAY, MONTH, YEAR, PY
-    const [searchTerm, setSearchTerm] = useState('');
-    const [sortConfig, setSortConfig] = useState({ key: 'volume', direction: 'desc' });
+    const [showFilters, setShowFilters] = useState(false);
+    const [errorMsg, setErrorMsg] = useState(null);
+    const [boundsLoaded, setBoundsLoaded] = useState(false);
 
+    const [filters, setFilters] = useState({
+        datePreset: 'MONTH', startDate: '', endDate: '',
+        partnerList: [], mccList: [], industryList: [], rmList: [], teamLeaderList: [],
+        sectorList: [], destinationList: [], schemeList: [], cardTypeList: [], channelList: [],
+        merchantName: '', midList: [], sidList: [],
+    });
+
+    /* ── Resolve sensible default date range from /api/business/data-bounds ── */
     useEffect(() => {
-        fetchData();
-    }, [activeTab, period]);
+        const fmtLocal = (d) => {
+            const yr = d.getFullYear();
+            const mo = String(d.getMonth() + 1).padStart(2, '0');
+            const dy = String(d.getDate()).padStart(2, '0');
+            return `${yr}-${mo}-${dy}`;
+        };
+        const loadBounds = async () => {
+            try {
+                const res = await api.get('/business/data-bounds');
+                const b = res.data;
+                if (b?.latest) {
+                    const latest = new Date(b.latest);
+                    const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
+                    setFilters(prev => ({
+                        ...prev,
+                        startDate: fmtLocal(first),
+                        endDate:   fmtLocal(latest),
+                    }));
+                    setBoundsLoaded(true);
+                    return;
+                }
+            } catch (e) { /* fall through */ }
+            const range = computeDateRange('MONTH');
+            setFilters(prev => ({ ...prev, ...range }));
+            setBoundsLoaded(true);
+        };
+        loadBounds();
+    }, []);
 
-    const fetchData = async () => {
+    /* ── Fetch report data ──────────────────────────────────────────── */
+    const fetchData = useCallback(async (overrideFilters) => {
         setLoading(true);
+        setErrorMsg(null);
         try {
-            // Use api/axios.js — the interceptor attaches Authorization + X-Tenant-Id
-            // automatically and uses a relative URL so the Vite dev proxy / production
-            // origin both work without hardcoding `localhost:8081`.
-            const res = await api.get(`/group-analytics/${activeTab}`, { params: { period } });
-            setData(res.data || []);
+            const payload = overrideFilters || filters;
+            const body = { ...payload };
+            if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
+                const range = computeDateRange(body.datePreset);
+                body.startDate = range.startDate;
+                body.endDate = range.endDate;
+            }
+            delete body.datePreset;
+
+            // Try the new POST/filtered endpoint first. If the backend doesn't
+            // have it yet (404), gracefully fall back to the legacy GET so a
+            // partial deploy doesn't break the page.
+            try {
+                const res = await api.post(`/group-analytics/${activeTab}/filtered`, body);
+                setData(res.data || []);
+            } catch (err) {
+                if (err.response?.status === 404) {
+                    const period = payload.datePreset && payload.datePreset !== 'CUSTOM' ? payload.datePreset : 'MONTH';
+                    const res = await api.get(`/group-analytics/${activeTab}`, { params: { period } });
+                    setData(res.data || []);
+                    setErrorMsg('Backend running an older build — drawer filters are not applied. Period chip still works.');
+                } else {
+                    throw err;
+                }
+            }
         } catch (error) {
             console.error('group-analytics fetch failed', error);
+            const status = error.response?.status;
+            const msg = error.response?.data?.error
+                     || error.response?.data?.message
+                     || (typeof error.response?.data === 'string' ? error.response.data : null)
+                     || error.message;
+            if (status === 403) {
+                setErrorMsg('Access denied. Verify your tenant context (X-Tenant-Id header) and group permissions.');
+            } else if (status === 404) {
+                setErrorMsg(`Endpoint not found for ${activeTab}. Backend may need a redeploy.`);
+            } else if (status >= 500) {
+                setErrorMsg(`Server error (${status}): ${msg}. Check core.log for the underlying SQL/exception.`);
+            } else {
+                setErrorMsg(`Request failed: ${msg}`);
+            }
             setData([]);
         } finally {
             setLoading(false);
         }
+    }, [filters, activeTab]);
+
+    // Don't fire the first request until data-bounds resolved (avoids
+    // guaranteed-empty fetch on a fresh page where transaction data lags).
+    useEffect(() => {
+        if (boundsLoaded) fetchData();
+    }, [boundsLoaded, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handleFilterChange = (keyOrObj, val) => {
+        if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));
+        else setFilters(prev => ({ ...prev, [keyOrObj]: val }));
     };
 
-    const handleSort = (key) => {
-        let direction = 'desc';
-        if (sortConfig.key === key && sortConfig.direction === 'desc') {
-            direction = 'asc';
+    /* ── KPI cards ──────────────────────────────────────────────────── */
+    const kpis = useMemo(() => {
+        if (!data.length) return [];
+        const totalVol      = data.reduce((s, d) => s + (Number(d.volume) || 0), 0);
+        const totalTxns     = data.reduce((s, d) => s + (Number(d.txnCount) || 0), 0);
+        const totalMerch    = data.reduce((s, d) => s + (Number(d.merchantCount) || 0), 0);
+        const groupCount    = data.length;
+        return [
+            { title: 'Groups',             value: formatNumber(groupCount), icon: Layers,      color: '#6366f1' },
+            { title: 'Total Volume',       value: `${currencyCode} ${formatCompact(totalVol)}`, icon: DollarSign,  color: '#3b82f6' },
+            { title: 'Total Transactions', value: formatCompact(totalTxns), icon: Hash,        color: '#10b981' },
+            { title: 'Total Merchants',    value: formatNumber(totalMerch), icon: Users,       color: '#f59e0b' },
+        ];
+    }, [data, currencyCode]);
+
+    /* ── Grid rows + columns ────────────────────────────────────────── */
+    const rows = useMemo(() => {
+        // Compose unique id from group key + index so the same key never
+        // collides if it appears twice (shouldn't, but cheap insurance).
+        return data.map((d, i) => ({
+            id: `${d.id ?? ''}-${i}`,
+            label: d.label,
+            merchantCount: Number(d.merchantCount) || 0,
+            txnCount: Number(d.txnCount) || 0,
+            volume: Number(d.volume) || 0,
+        }));
+    }, [data]);
+
+    const labelHeader = useMemo(() => {
+        switch (activeTab) {
+            case 'MCC':      return 'MCC';
+            case 'MERCHANT': return 'MERCHANT NAME';
+            case 'SALES':    return 'SALES USER';
+            case 'REFERRAL': return 'REFERRAL PARTNER';
+            default:         return 'GROUP';
         }
-        setSortConfig({ key, direction });
-    };
+    }, [activeTab]);
 
-    const sortedData = [...data].sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
-        if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
-        return 0;
-    }).filter(item =>
-        item.label.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const tabs = [
-        { id: 'MCC', label: 'MCC Performance' },
-        { id: 'MERCHANT', label: 'Top Merchants' },
-        { id: 'SALES', label: 'Sales Performance' },
-        { id: 'REFERRAL', label: 'Referral Partners' }
-    ];
-
-    const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED' }).format(val);
+    const columns = useMemo(() => [
+        {
+            field: 'label', headerName: labelHeader, flex: 1.2, minWidth: 200,
+            renderCell: (params) => (
+                <Typography variant="body2" fontWeight="700" color="#0f172a">
+                    {params.value || '—'}
+                </Typography>
+            )
+        },
+        {
+            field: 'merchantCount', headerName: 'MERCHANTS', type: 'number', width: 130, align: 'right', headerAlign: 'right',
+            renderCell: (params) => (
+                <Chip label={formatNumber(params.value)} size="small" variant="outlined"
+                    sx={{ fontWeight: 600, borderColor: '#e2e8f0', bgcolor: '#f8fafc' }} />
+            )
+        },
+        {
+            field: 'txnCount', headerName: 'TRANSACTIONS', type: 'number', width: 150, align: 'right', headerAlign: 'right',
+            renderCell: (params) => (
+                <Typography variant="body2" color="#64748b" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {formatNumber(params.value)}
+                </Typography>
+            )
+        },
+        {
+            field: 'volume', headerName: `VOLUME (${currencyCode})`, type: 'number', flex: 1, minWidth: 180, align: 'right', headerAlign: 'right',
+            renderCell: (params) => (
+                <Typography variant="body2" fontWeight="700" color="#0f172a" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {formatCurrency(params.value)}
+                </Typography>
+            )
+        },
+    ], [labelHeader, currencyCode, formatCurrency]);
 
     return (
-        <div className="page-container" style={{ padding: '30px', color: '#1e293b' }}>
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
-                <div>
-                    <h1 style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a' }}>Group Management Reports</h1>
-                    <p style={{ color: '#64748b' }}>Analyze performance across different business groups</p>
-                </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                    {[
-                        { key: 'TODAY',      label: 'Today' },
-                        { key: 'MONTH',      label: 'This Month' },
-                        { key: 'LAST_MONTH', label: 'Last Month' },
-                        { key: 'YEAR',       label: 'This Year' },
-                        { key: 'PY',         label: 'Last Year' },
-                    ].map(p => (
-                        <button
-                            key={p.key}
-                            onClick={() => setPeriod(p.key)}
-                            style={{
-                                padding: '8px 16px',
-                                borderRadius: '8px',
-                                fontSize: '13px',
-                                fontWeight: '600',
-                                border: 'none',
-                                cursor: 'pointer',
-                                background: period === p.key ? '#0f172a' : '#e2e8f0',
-                                color: period === p.key ? 'white' : '#64748b',
-                                transition: 'all 0.2s'
-                            }}
-                        >
-                            {p.label}
-                        </button>
-                    ))}
-                    <button onClick={fetchData} style={{ padding: '8px', background: '#f1f5f9', borderRadius: '8px', border: 'none', cursor: 'pointer' }}>
-                        <RefreshCw size={18} color="#64748b" />
-                    </button>
-                </div>
-            </div>
+        <Box sx={pageContainer}>
+            <PremiumReportHeader
+                title="Group Management Reports"
+                subtitle="Analyze performance across MCC, merchants, sales users, and referral partners"
+                icon={Layers}
+                onExport={() => exportToCSV(data, `group_report_${activeTab.toLowerCase()}`)}
+                onRunReport={() => fetchData()}
+                onFilterChange={handleFilterChange}
+                onApplyAfterDatePreset={() => fetchData()}
+                loading={loading}
+                showFilters={showFilters}
+                onToggleFilters={() => setShowFilters(!showFilters)}
+                filters={filters}
+            />
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '20px', borderBottom: '1px solid #e2e8f0', marginBottom: '20px' }}>
-                {tabs.map(tab => (
-                    <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
-                        style={{
-                            padding: '12px 0',
-                            background: 'transparent',
-                            border: 'none',
-                            borderBottom: activeTab === tab.id ? '2px solid #3b82f6' : '2px solid transparent',
-                            color: activeTab === tab.id ? '#3b82f6' : '#64748b',
-                            fontWeight: activeTab === tab.id ? '600' : '500',
-                            cursor: 'pointer',
-                            fontSize: '15px'
-                        }}
-                    >
-                        {tab.label}
-                    </button>
-                ))}
-            </div>
+            <BusinessFilters
+                filters={filters}
+                onChange={setFilters}
+                onApply={() => { fetchData(); setShowFilters(false); }}
+                isOpen={showFilters}
+                onClose={() => setShowFilters(false)}
+            />
 
-            {/* Search & Stats */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-                <div style={{ position: 'relative', width: '300px' }}>
-                    <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                    <input
-                        placeholder="Search..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        style={{
-                            width: '100%', padding: '10px 10px 10px 36px',
-                            borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none'
-                        }}
-                    />
-                </div>
-                <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '12px', color: '#64748b' }}>Total Volume</div>
-                        <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
-                            {formatCurrency(data.reduce((sum, item) => sum + (item.volume || 0), 0))}
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <KpiCards cards={kpis} />
 
-            {/* Table */}
-            <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-                            <th style={{ padding: '16px', fontSize: '13px', color: '#64748b', fontWeight: '600' }}>
-                                Group / Label
-                            </th>
-                            <th
-                                style={{ padding: '16px', fontSize: '13px', color: '#64748b', fontWeight: '600', cursor: 'pointer' }}
-                                onClick={() => handleSort('merchantCount')}
-                            >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    Merchant Count
-                                    {sortConfig.key === 'merchantCount' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}
-                                </div>
-                            </th>
-                            <th
-                                style={{ padding: '16px', fontSize: '13px', color: '#64748b', fontWeight: '600', cursor: 'pointer' }}
-                                onClick={() => handleSort('txnCount')}
-                            >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    Total Txns
-                                    {sortConfig.key === 'txnCount' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}
-                                </div>
-                            </th>
-                            <th
-                                style={{ padding: '16px', fontSize: '13px', color: '#64748b', fontWeight: '600', cursor: 'pointer' }}
-                                onClick={() => handleSort('volume')}
-                            >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    Volume
-                                    {sortConfig.key === 'volume' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}
-                                </div>
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {loading ? (
-                            <tr>
-                                <td colSpan="4" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Loading...</td>
-                            </tr>
-                        ) : sortedData.length === 0 ? (
-                            <tr>
-                                <td colSpan="4" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No Data Found</td>
-                            </tr>
-                        ) : (
-                            sortedData.map((row, idx) => (
-                                <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                    <td style={{ padding: '16px', fontWeight: '500' }}>{row.label}</td>
-                                    <td style={{ padding: '16px', color: '#64748b' }}>{row.merchantCount}</td>
-                                    <td style={{ padding: '16px', color: '#64748b' }}>{row.txnCount}</td>
-                                    <td style={{ padding: '16px', fontWeight: '600' }}>{formatCurrency(row.volume)}</td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+            {/* Tabs — pick which grouping dimension to view */}
+            <Paper elevation={0} sx={{ mb: 2, borderRadius: '10px', border: '1px solid #e2e8f0', bgcolor: 'white' }}>
+                <Tabs
+                    value={activeTab}
+                    onChange={(_, v) => setActiveTab(v)}
+                    sx={{
+                        px: 2,
+                        '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, fontSize: '0.9rem' },
+                        '& .Mui-selected': { color: '#3b82f6' },
+                        '& .MuiTabs-indicator': { backgroundColor: '#3b82f6' },
+                    }}
+                >
+                    {TABS.map(t => <Tab key={t.id} value={t.id} label={t.label} />)}
+                </Tabs>
+            </Paper>
+
+            {errorMsg && (
+                <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, bgcolor: '#fef2f2', border: '1px solid #fecaca' }}>
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                        <AlertCircle size={18} color="#b91c1c" />
+                        <Box>
+                            <Typography variant="body2" fontWeight="600" color="#991b1b">Failed to load report</Typography>
+                            <Typography variant="caption" color="#7f1d1d">{errorMsg}</Typography>
+                        </Box>
+                    </Stack>
+                </Paper>
+            )}
+
+            <Paper sx={premiumTableWrapper}>
+                <DataGrid
+                    rows={rows} columns={columns} loading={loading}
+                    rowHeight={55}
+                    disableRowSelectionOnClick
+                    slots={{ toolbar: GridToolbar }}
+                    slotProps={{ toolbar: { showQuickFilter: true, quickFilterProps: { debounceMs: 500 } } }}
+                    initialState={{
+                        pagination: { paginationModel: { pageSize: 25 } },
+                        sorting: { sortModel: [{ field: 'volume', sort: 'desc' }] },
+                    }}
+                    pageSizeOptions={[25, 50, 100]}
+                    sx={premiumDataGridStyles}
+                />
+            </Paper>
+        </Box>
     );
 };
 

@@ -121,7 +121,11 @@ const MerchantFinancialSummary = () => {
     const rows = useMemo(() => {
         if (!data.length) return [];
         const maxVol = Math.max(...data.map(d => d.volume || 0));
-        return data.map((d, i) => ({ id: d.mid || d.sid || i, ...d, maxVol }));
+        // P0-2 FIX: previously used `d.mid || d.sid || i` which collided when one
+        // merchant had multiple stores (same mid, different sid). MUI DataGrid
+        // de-duplicates on `id` so the second store row silently disappeared.
+        // Compose mid+sid+index so every row is unique.
+        return data.map((d, i) => ({ id: `${d.mid || ''}-${d.sid || ''}-${i}`, ...d, maxVol }));
     }, [data]);
 
     const kpis = useMemo(() => {
@@ -193,6 +197,7 @@ const MerchantFinancialSummary = () => {
                 icon={DollarSign}
                 onExport={() => exportToCSV(data, 'merchant_financial_summary')}
                 onRunReport={fetchReport} onFilterChange={handleFilterChange}
+                onApplyAfterDatePreset={fetchReport}
                 loading={loading} showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />

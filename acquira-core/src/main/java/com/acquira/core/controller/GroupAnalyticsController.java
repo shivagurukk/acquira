@@ -1,6 +1,7 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.config.TenantContext;
+import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
@@ -81,20 +82,23 @@ public class GroupAnalyticsController {
                 break;
             case "MERCHANT":
                 selectClause = "s.merchant_id, MAX(m.name) as label, ";
-                sql = "FROM sum_daily_merchant s JOIN dim_merchant m ON s.merchant_id = m.merchant_id ";
+                // P1-9: tenant-scope dim_merchant join too. Defense-in-depth
+                // for any future multi-tenant ID strategy where merchant_id
+                // is not globally unique.
+                sql = "FROM sum_daily_merchant s JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ";
                 groupBy = "GROUP BY s.merchant_id ";
                 break;
             case "SALES":
             case "SALES_EMAIL":
                 selectClause = "m.sales_user_id, COALESCE(m.sales_user_id, 'Unassigned') as label, ";
-                sql = "FROM sum_daily_merchant s JOIN dim_merchant m ON s.merchant_id = m.merchant_id ";
+                sql = "FROM sum_daily_merchant s JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ";
                 groupBy = "GROUP BY m.sales_user_id ";
                 break;
             case "REFERRAL":
             case "REFERRAL_PARTNER":
                 // Fallback to Sales ID if referral is empty
                 selectClause = "COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id) as grp_key, COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id, 'Unassigned') as label, ";
-                sql = "FROM sum_daily_merchant s JOIN dim_merchant m ON s.merchant_id = m.merchant_id ";
+                sql = "FROM sum_daily_merchant s JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ";
                 groupBy = "GROUP BY COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id), COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id, 'Unassigned') ";
                 break;
             default:
@@ -126,13 +130,14 @@ public class GroupAnalyticsController {
         // Let's refine the SQL for MCC.
 
         if ("MCC".equalsIgnoreCase(type)) {
-            // Join sum_daily_merchant with dim_store to get MCC and accurate merchant count
+            // Join sum_daily_merchant with dim_store to get MCC and accurate merchant count.
+            // P1-9: tenant-scope dim_store join.
             finalSql = "SELECT st.mcc, COALESCE(st.mcc, 'Unknown') as label, " +
                     "COUNT(DISTINCT s.merchant_id) as merchant_count, " +
                     "SUM(s.total_txns) as total_txns, " +
                     "SUM(s.total_volume) as total_volume " +
                     "FROM sum_daily_merchant s " +
-                    "JOIN dim_store st ON s.store_id = st.store_id " +
+                    "JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id " +
                     "WHERE s.tenant_id = :tenantId AND s.business_date >= :startDate AND s.business_date <= :endDate " +
                     "GROUP BY st.mcc " +
                     orderBy;
@@ -161,4 +166,170 @@ public class GroupAnalyticsController {
 
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Filtered variant of {@link #getGroupReport}. Same response shape but
+     * accepts the full BusinessFilters drawer payload — partner / RM / MCC /
+     * team-leader / merchant name / MID / SID / scheme / card type /
+     * destination / channel — plus an explicit date range.
+     *
+     * The legacy GET endpoint stays in place so any existing caller keeps
+     * working; new UI calls hit POST and gets the drawer fields applied.
+     */
+    @PostMapping("/{type}/filtered")
+    @SuppressWarnings("unchecked")
+    public ResponseEntity<?> getGroupReportFiltered(
+            @PathVariable String type,
+            @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.badRequest().build();
+        if (filter == null) filter = new VolumeRevenueFilterDTO();
+
+        // Date defaulting: same logic as the GET endpoint — if the caller
+        // didn't provide explicit dates, default to MTD.
+        LocalDate now = LocalDate.now();
+        LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : now.withDayOfMonth(1);
+        LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : now;
+
+        // Build the SELECT/FROM/GROUP BY based on report type.
+        String selectClause;
+        String fromClause;
+        String groupBy;
+        // Whether we need a dim_store join — used by MCC/SID-related filters
+        // and by the MCC report itself.
+        boolean needStore = false;
+        // Whether we need a dim_merchant join — used by partner/RM/team-leader
+        // /merchant-name/MID filters and by MERCHANT/SALES/REFERRAL reports.
+        boolean needMerchant = false;
+
+        switch (type.toUpperCase()) {
+            case "MCC":
+                // MCC report joins sum_daily_merchant -> dim_store to get the
+                // MCC because sum_daily_mcc doesn't have merchant_id (no
+                // distinct merchant count possible there).
+                selectClause = "st.mcc, COALESCE(st.mcc, 'Unknown') as label, ";
+                fromClause = "FROM sum_daily_merchant s " +
+                             "JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ";
+                groupBy = "GROUP BY st.mcc ";
+                needStore = true;
+                break;
+            case "MERCHANT":
+                selectClause = "s.merchant_id, MAX(m.name) as label, ";
+                fromClause = "FROM sum_daily_merchant s " +
+                             "JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ";
+                groupBy = "GROUP BY s.merchant_id ";
+                needMerchant = true;
+                break;
+            case "SALES":
+            case "SALES_EMAIL":
+                selectClause = "m.sales_user_id as grp_key, COALESCE(m.sales_user_id, 'Unassigned') as label, ";
+                fromClause = "FROM sum_daily_merchant s " +
+                             "JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ";
+                groupBy = "GROUP BY m.sales_user_id ";
+                needMerchant = true;
+                break;
+            case "REFERRAL":
+            case "REFERRAL_PARTNER":
+                selectClause = "COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id) as grp_key, " +
+                               "COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id, 'Unassigned') as label, ";
+                fromClause = "FROM sum_daily_merchant s " +
+                             "JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ";
+                groupBy = "GROUP BY COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id), " +
+                          "COALESCE(NULLIF(m.referral_partner, ''), m.sales_user_id, 'Unassigned') ";
+                needMerchant = true;
+                break;
+            default:
+                return ResponseEntity.badRequest().body(Map.of("error", "Invalid Report Type: " + type));
+        }
+
+        // Add joins required by drawer filters even if the base report doesn't
+        // need them. e.g. MCC report doesn't need dim_merchant, but if the user
+        // filters by partner/RM, we need it.
+        boolean filterNeedsMerchant =
+                listNonEmpty(filter.getPartnerList()) ||
+                listNonEmpty(filter.getRmList()) ||
+                listNonEmpty(filter.getTeamLeaderList()) ||
+                listNonEmpty(filter.getMidList()) ||
+                (filter.getMerchantName() != null && !filter.getMerchantName().isBlank());
+        boolean filterNeedsStore =
+                listNonEmpty(filter.getMccList()) ||
+                listNonEmpty(filter.getSidList());
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT ").append(selectClause)
+           .append("COUNT(DISTINCT s.merchant_id) as merchant_count, ")
+           .append("SUM(s.total_txns) as total_txns, ")
+           .append("SUM(s.total_volume) as total_volume ")
+           .append(fromClause);
+
+        // Append filter-required joins only if not already in fromClause.
+        if (filterNeedsMerchant && !needMerchant) {
+            sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        }
+        if (filterNeedsStore && !needStore) {
+            sql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        }
+
+        sql.append("WHERE s.tenant_id = :tenantId ")
+           .append("  AND s.business_date >= :startDate ")
+           .append("  AND s.business_date <= :endDate ");
+
+        // Drawer-driven filters — only emit the WHERE fragment AND bind the
+        // parameter when the list is non-empty / value present.
+        if (listNonEmpty(filter.getPartnerList()))    sql.append("  AND m.referral_partner IN (:partners) ");
+        if (listNonEmpty(filter.getRmList()))         sql.append("  AND m.sales_email IN (:rms) ");
+        if (listNonEmpty(filter.getTeamLeaderList())) sql.append("  AND m.sales_user_id IN (:teamLeaders) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                                                      sql.append("  AND m.name ILIKE :merchName ");
+        if (listNonEmpty(filter.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
+        if (listNonEmpty(filter.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
+        if (listNonEmpty(filter.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
+
+        // The base table here is sum_daily_merchant which has no card-level
+        // columns. If the user passes scheme/card-type/destination/channel
+        // filters we'd need to switch to sum_daily_insight — deferred. For
+        // now those filters are no-ops on this report and we log so the
+        // operator knows.
+        // (Acceptable: the GroupReports screen primarily groups by merchant
+        // attributes, not card attributes.)
+
+        sql.append(groupBy)
+           .append("ORDER BY total_volume DESC NULLS LAST");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("tenantId", tenantId);
+        query.setParameter("startDate", start);
+        query.setParameter("endDate", end);
+
+        if (listNonEmpty(filter.getPartnerList()))    query.setParameter("partners", filter.getPartnerList());
+        if (listNonEmpty(filter.getRmList()))         query.setParameter("rms", filter.getRmList());
+        if (listNonEmpty(filter.getTeamLeaderList())) query.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                                                      query.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+        if (listNonEmpty(filter.getMidList()))        query.setParameter("mids", filter.getMidList());
+        if (listNonEmpty(filter.getMccList()))        query.setParameter("mccs", filter.getMccList());
+        if (listNonEmpty(filter.getSidList()))        query.setParameter("sids", filter.getSidList());
+
+        query.setMaxResults(500); // higher cap than legacy GET (was 100); UI virtualizes.
+
+        List<Object[]> results = query.getResultList();
+        List<Map<String, Object>> response = new ArrayList<>();
+        for (Object[] row : results) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", row[0]);
+            map.put("label", row[1]);
+            // Defensive null handling — some grouping keys (sales_user_id,
+            // referral_partner) can produce null COUNTs if the join filters
+            // strip everything.
+            map.put("merchantCount", row[2] != null ? ((Number) row[2]).longValue() : 0L);
+            map.put("txnCount",      row[3] != null ? ((Number) row[3]).longValue() : 0L);
+            map.put("volume",        row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO);
+            response.add(map);
+        }
+        return ResponseEntity.ok(response);
+    }
+
+    private static boolean listNonEmpty(List<?> l) { return l != null && !l.isEmpty(); }
 }

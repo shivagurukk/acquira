@@ -207,6 +207,7 @@ const DebitPrepaidMetrics = () => {
                 icon={CreditCard}
                 onExport={() => exportToCSV(data, 'debit_prepaid_metrics')}
                 onRunReport={() => fetchData()} onFilterChange={handleFilterChange}
+                onApplyAfterDatePreset={() => fetchData()}
                 loading={loading} showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />

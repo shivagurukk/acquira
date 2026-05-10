@@ -44,7 +44,7 @@ const computeDateRange = (preset) => {
 
 const PremiumReportHeader = ({
     title, subtitle, icon: Icon,
-    onExport, onRunReport, onFilterChange,
+    onExport, onRunReport, onFilterChange, onApplyAfterDatePreset,
     loading = false, showFilters, onToggleFilters,
     filters = {}, hideDatePresets = false, children,
 }) => {
@@ -54,6 +54,13 @@ const PremiumReportHeader = ({
         setActivePreset(preset);
         if (preset !== 'CUSTOM' && onFilterChange) {
             onFilterChange({ ...computeDateRange(preset), datePreset: preset });
+            // P1-4 FIX: clicking a date preset chip should immediately re-run
+            // the report. Previously it only updated state — users had to
+            // also click "Run" to see the new date range, which felt like
+            // "the filter doesn't work." Calling onApplyAfterDatePreset here
+            // (when supplied by the page) closes that gap. We defer to the
+            // next tick so React commits the state update first.
+            if (onApplyAfterDatePreset) setTimeout(onApplyAfterDatePreset, 0);
         } else if (onFilterChange) {
             onFilterChange({ datePreset: 'CUSTOM' });
         }

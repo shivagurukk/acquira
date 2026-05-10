@@ -197,6 +197,22 @@ public class VolumeRevenueRepository {
         if (filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty())
             sql.append("AND s.card_type IN (:cardTypes) ");
 
+        // P1-6 FIX: previously these filter fields were silently dropped from the SQL.
+        // Users could pick MCC / SID / MID / destination / channel / team-leader from
+        // the BusinessFilters drawer and the result wouldn't change. Wired through now.
+        if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+            sql.append("AND s.destination IN (:destinations) ");
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+            sql.append("AND s.channel IN (:channels) ");
+        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
+            sql.append("AND st.mcc IN (:mccs) ");
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            sql.append("AND m.mid IN (:mids) ");
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            sql.append("AND st.sid IN (:sids) ");
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
+            sql.append("AND m.sales_user_id IN (:teamLeaders) ");
+
         // Group by MID and SID
         sql.append("GROUP BY m.mid, m.name, st.sid ");
         sql.append("ORDER BY m.mid, st.sid");
@@ -209,6 +225,10 @@ public class VolumeRevenueRepository {
             query.setParameter("startDate", filter.getStartDate());
         if (filter.getEndDate() != null)
             query.setParameter("endDate", filter.getEndDate());
+        if (filter.getOpenDateStart() != null)
+            query.setParameter("openStart", filter.getOpenDateStart());
+        if (filter.getOpenDateEnd() != null)
+            query.setParameter("openEnd", filter.getOpenDateEnd());
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
         if (filter.getRmList() != null && !filter.getRmList().isEmpty())
@@ -219,8 +239,18 @@ public class VolumeRevenueRepository {
             query.setParameter("schemes", filter.getSchemeList());
         if (filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty())
             query.setParameter("cardTypes", filter.getCardTypeList());
+        if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+            query.setParameter("destinations", filter.getDestinationList());
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+            query.setParameter("channels", filter.getChannelList());
         if (filter.getMccList() != null && !filter.getMccList().isEmpty())
             query.setParameter("mccs", filter.getMccList());
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            query.setParameter("mids", filter.getMidList());
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            query.setParameter("sids", filter.getSidList());
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
+            query.setParameter("teamLeaders", filter.getTeamLeaderList());
 
         List<Object[]> rows = query.getResultList();
         List<Map<String, Object>> result = new ArrayList<>();
@@ -623,22 +653,31 @@ public class VolumeRevenueRepository {
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
         sql.append("LEFT JOIN dim_store st2 ON s.store_id = st2.store_id ");
 
-        // Permissive card_type matching. Cover the variants we've actually seen in
-        // production data plus the canonical forms.
-        // - Full words:    DEBIT, PREPAID, DEBIT PREPAID, CREDIT PREPAID
-        // - Abbreviated:   DEB, DBT, PREP, PPD
-        // - Single-letter: D (debit), P (prepaid)  -- common in tokenised feeds
-        // - Numeric codes: 2, 3, 4 (per ref_card_scheme convention)
-        // - Suffixed:      'DEBIT CARD', 'PREPAID CARD', etc — caught by LIKE
-        // Plus the original ref_card_scheme join as a final fallback.
-        sql.append("WHERE ( ");
-        sql.append("      UPPER(TRIM(s.card_type)) IN ('DEBIT','PREPAID','DEBIT PREPAID','CREDIT PREPAID', ");
-        sql.append("                                   'DEB','DBT','PREP','PPD','D','P','2','3','4') ");
-        sql.append("   OR UPPER(TRIM(s.card_type)) LIKE 'DEBIT%' ");
-        sql.append("   OR UPPER(TRIM(s.card_type)) LIKE 'PREPAID%' ");
-        sql.append("   OR s.card_type IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4)) ");
-        sql.append("   OR s.card_scheme IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4)) ");
-        sql.append("     ) ");
+        // P1-7 FIX: when the user explicitly picks card types from the drawer,
+        // honor THAT instead of forcing the hardcoded DEBIT/PREPAID matcher.
+        // The hardcoded matcher is only the *default* behaviour for this report.
+        boolean userPickedCardTypes = filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty();
+        sql.append("WHERE 1=1 ");
+        if (userPickedCardTypes) {
+            sql.append("AND s.card_type IN (:cardTypes) ");
+        } else {
+            // Permissive card_type matching. Cover the variants we've actually seen in
+            // production data plus the canonical forms.
+            // - Full words:    DEBIT, PREPAID, DEBIT PREPAID, CREDIT PREPAID
+            // - Abbreviated:   DEB, DBT, PREP, PPD
+            // - Single-letter: D (debit), P (prepaid)  -- common in tokenised feeds
+            // - Numeric codes: 2, 3, 4 (per ref_card_scheme convention)
+            // - Suffixed:      'DEBIT CARD', 'PREPAID CARD', etc — caught by LIKE
+            // Plus the original ref_card_scheme join as a final fallback.
+            sql.append("AND ( ");
+            sql.append("      UPPER(TRIM(s.card_type)) IN ('DEBIT','PREPAID','DEBIT PREPAID','CREDIT PREPAID', ");
+            sql.append("                                   'DEB','DBT','PREP','PPD','D','P','2','3','4') ");
+            sql.append("   OR UPPER(TRIM(s.card_type)) LIKE 'DEBIT%' ");
+            sql.append("   OR UPPER(TRIM(s.card_type)) LIKE 'PREPAID%' ");
+            sql.append("   OR s.card_type IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4)) ");
+            sql.append("   OR s.card_scheme IN (SELECT code FROM ref_card_scheme WHERE card_type IN (2, 3, 4)) ");
+            sql.append("    ) ");
+        }
 
         if (tenantId != null)
             sql.append("AND s.tenant_id = :tenantId ");
@@ -669,6 +708,20 @@ public class VolumeRevenueRepository {
         if (filter.getChannelList() != null && !filter.getChannelList().isEmpty()) {
             sql.append("AND s.channel IN (:channels) ");
         }
+        // P1-7 FIX: scheme / destination / mid / sid filters were silently dropped.
+        // Wired through now so the drawer picks actually narrow the result.
+        if (filter.getSchemeList() != null && !filter.getSchemeList().isEmpty()) {
+            sql.append("AND s.card_scheme IN (:schemes) ");
+        }
+        if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty()) {
+            sql.append("AND s.destination IN (:destinations) ");
+        }
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty()) {
+            sql.append("AND m.mid IN (:mids) ");
+        }
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty()) {
+            sql.append("AND st2.sid IN (:sids) ");
+        }
 
         sql.append("GROUP BY m.mid, st2.sid, m.name ");
         sql.append("ORDER BY m.mid ASC, st2.sid ASC");
@@ -696,6 +749,17 @@ public class VolumeRevenueRepository {
             query.setParameter("teamLeaders", filter.getTeamLeaderList());
         if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
             query.setParameter("channels", filter.getChannelList());
+        // P1-7 FIX: bind newly-supported filter parameters
+        if (userPickedCardTypes)
+            query.setParameter("cardTypes", filter.getCardTypeList());
+        if (filter.getSchemeList() != null && !filter.getSchemeList().isEmpty())
+            query.setParameter("schemes", filter.getSchemeList());
+        if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+            query.setParameter("destinations", filter.getDestinationList());
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            query.setParameter("mids", filter.getMidList());
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            query.setParameter("sids", filter.getSidList());
 
         List<Object[]> rows = query.getResultList();
         List<Map<String, Object>> result = new ArrayList<>();

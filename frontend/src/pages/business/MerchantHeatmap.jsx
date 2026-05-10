@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Paper, Typography, Stack, MenuItem, Select, FormControl, InputLabel, Avatar, Autocomplete, TextField, Chip } from '@mui/material';
+import { Box, Paper, Typography, Stack, MenuItem, Select, FormControl, InputLabel, Avatar } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { Grid as GridIcon, TrendingUp, DollarSign, Users } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
@@ -17,18 +17,22 @@ const MerchantHeatmap = () => {
     const [years, setYears] = useState([new Date().getFullYear()]);
     const [year, setYear] = useState(new Date().getFullYear());
     const [maxVolume, setMaxVolume] = useState(0);
-    const [sidList, setSidList] = useState([]);
-    const [sidOptions, setSidOptions] = useState([]);
     const [showFilters, setShowFilters] = useState(false);
     // Full-feature filter set (matches the rest of the business screens). The
-    // heatmap previously only had a Year+SID inline picker; this adds Partners,
-    // MCC, RM, Schemes, Card Types, Channels etc. via the BusinessFilters drawer.
+    // heatmap previously had two SID inputs (an inline Autocomplete in the header
+    // AND the drawer's sidList). Removed the inline one — the drawer is the
+    // single source of truth for filters now. P1-2 fix.
     const [filters, setFilters] = useState({
         startDate: '', endDate: '',
         partnerList: [], mccList: [], industryList: [], rmList: [], teamLeaderList: [],
         sectorList: [], destinationList: [], schemeList: [], cardTypeList: [], channelList: [],
         merchantName: '', midList: [], sidList: [],
     });
+    // P0-1 FIX: separate "applied" filters from the in-progress drawer state.
+    // Previously the useEffect re-fetched on every keystroke in the drawer,
+    // causing flicker and stale-data races. Now we only refetch when the user
+    // clicks Apply (or year changes).
+    const [appliedFilters, setAppliedFilters] = useState(filters);
 
     useEffect(() => {
         // Build year list dynamically: current year and a few back. Was hardcoded
@@ -36,37 +40,18 @@ const MerchantHeatmap = () => {
         // once the calendar advances.
         const cy = new Date().getFullYear();
         setYears([cy - 2, cy - 1, cy]);
-        fetchSidOptions();
     }, []);
-    useEffect(() => { fetchData(); }, [year, sidList, filters]);
 
-    const fetchSidOptions = async () => {
-        try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
-            // Pass tenant header explicitly so dropdown is scoped to the user's tenant.
-            const res = await fetch('/api/business/filter-options', {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setSidOptions((data.sids || []).map(s => String(s)));
-            }
-        } catch (e) { console.error(e); }
-    };
+    // P0-1 FIX: depend on appliedFilters (not the live `filters` object).
+    useEffect(() => { fetchData(); }, [year, appliedFilters]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchData = async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
-            // Inline SID picker takes precedence over the drawer's sidList.
-            const effSidList = sidList.length > 0 ? sidList : (filters.sidList || []);
-            // Build the filter body. Send empty arrays/strings for unset filters so
-            // the backend treats them as "not specified" and skips the WHERE clause.
             const body = {
-                ...filters,
-                sidList: effSidList,
+                ...appliedFilters,
                 // The heatmap is year-scoped; the date range is implied by `year`.
                 // Sending null start/end avoids a redundant WHERE business_date BETWEEN.
                 startDate: null,
@@ -88,6 +73,11 @@ const MerchantHeatmap = () => {
             }
         } catch (error) { console.error("Failed to fetch heatmap data", error); }
         finally { setLoading(false); }
+    };
+
+    const handleApply = () => {
+        setAppliedFilters(filters);
+        setShowFilters(false);
     };
 
     const processData = (rawData) => {
@@ -149,7 +139,10 @@ const MerchantHeatmap = () => {
         },
         ...Array.from({ length: 12 }, (_, i) => i + 1).map(month => ({
             field: `month_${month}`,
-            headerName: new Date(0, month - 1).toLocaleString('en-US', { month: 'short' }).toUpperCase(),
+            // P0-5 FIX: was `new Date(0, month-1)` which is December 1969 in any
+            // timezone east of UTC (it picks epoch + offset, which crosses the
+            // year boundary). Use a date well inside the target month instead.
+            headerName: new Date(2000, month - 1, 15).toLocaleString('en-US', { month: 'short' }).toUpperCase(),
             width: 95, align: 'center', headerAlign: 'center',
             renderCell: (params) => {
                 const val = params.value;
@@ -176,18 +169,8 @@ const MerchantHeatmap = () => {
                     {years.map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
                 </Select>
             </FormControl>
-            <Autocomplete
-                multiple freeSolo size="small"
-                options={sidOptions} value={sidList}
-                onChange={(e, val) => setSidList(val)}
-                renderInput={(params) => <TextField {...params} label="Filter by SID" placeholder={sidList.length ? '' : 'All Stores'} sx={{ minWidth: 250 }} />}
-                renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                        <Chip {...getTagProps({ index })} key={option} label={option} size="small"
-                            sx={{ bgcolor: '#3B82F6', color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white', opacity: 0.7 } }} />
-                    ))
-                }
-            />
+            {/* P1-2 FIX: removed inline SID Autocomplete. SID filtering now lives
+                in the BusinessFilters drawer (single source of truth). */}
         </Stack>
     );
 
@@ -210,7 +193,7 @@ const MerchantHeatmap = () => {
             <BusinessFilters
                 filters={filters}
                 onChange={setFilters}
-                onApply={fetchData}
+                onApply={handleApply}
                 isOpen={showFilters}
                 onClose={() => setShowFilters(false)}
             />
