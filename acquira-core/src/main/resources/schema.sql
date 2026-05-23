@@ -1848,6 +1848,12 @@ CREATE TABLE IF NOT EXISTS email_template_config (
     updated_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_email_tpl_tenant ON email_template_config(tenant_id);
+-- One template per (tenant, name) — required so the per-tenant default-template
+-- seed below can use ON CONFLICT to stay idempotent across restarts.
+ALTER TABLE email_template_config
+    DROP CONSTRAINT IF EXISTS uq_email_tpl_tenant_name;
+ALTER TABLE email_template_config
+    ADD CONSTRAINT uq_email_tpl_tenant_name UNIQUE (tenant_id, name);
 
 CREATE TABLE IF NOT EXISTS email_campaign (
     id BIGSERIAL PRIMARY KEY,
@@ -1890,21 +1896,40 @@ CREATE TABLE IF NOT EXISTS email_campaign_log (
 CREATE INDEX IF NOT EXISTS idx_email_clog_campaign ON email_campaign_log(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_email_clog_tenant ON email_campaign_log(tenant_id, sent_at DESC);
 
--- Default email templates
-INSERT INTO email_template_config (tenant_id, name, template_type, subject_template, body_html, is_active, is_default_for_type) VALUES
-(1, 'Monthly Statement', 'STATEMENT',
+-- Default email templates — seeded for EVERY tenant.
+-- Previously these were hardcoded to tenant_id = 1, so any other tenant
+-- started with no templates and statement campaigns had nothing to use.
+-- Each block is INSERT ... SELECT over the tenant table, so one row is
+-- created per tenant. ON CONFLICT (tenant_id, name) keeps it idempotent
+-- across restarts and harmless if an admin later edits the template
+-- (an edited template keeps its name, so the seed will not overwrite it).
+
+-- STATEMENT (default for type) — branded monthly performance statement.
+INSERT INTO email_template_config (tenant_id, name, template_type, subject_template, body_html, is_active, is_default_for_type)
+SELECT t.tenant_id, 'Monthly Statement', 'STATEMENT',
  'Your {{month}} Performance Statement - {{merchant_name}}',
  '<!DOCTYPE html><html><head><style>body{font-family:Helvetica,Arial,sans-serif;line-height:1.6;color:#333;background:#f9fafb;margin:0;padding:0}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,.05)}.header{background:#0f172a;color:#fff;padding:30px;text-align:center}.header h1{margin:0;font-size:24px}.content{padding:40px 30px}.greeting{font-size:18px;color:#1e293b;margin-bottom:20px}.card{background:#f1f5f9;border-radius:8px;padding:20px;margin-bottom:20px;border:1px solid #e2e8f0}.stats{display:flex;gap:20px;margin:20px 0}.stat{flex:1;text-align:center;padding:15px;background:#fff;border-radius:8px;border:1px solid #e2e8f0}.stat-value{font-size:22px;font-weight:700;color:#0f172a}.stat-label{font-size:12px;color:#64748b;text-transform:uppercase}.footer{background:#f8fafc;padding:20px;text-align:center;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0}</style></head><body><div class="container"><div class="header"><h1>{{tenant_name}}</h1></div><div class="content"><div class="greeting">Dear {{contact_name}},</div><p>Your performance statement for <strong>{{month}}</strong> is now available.</p><div class="card"><div style="font-size:14px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:10px">Performance Summary</div><div class="stats"><div class="stat"><div class="stat-value">{{total_count}}</div><div class="stat-label">Transactions</div></div><div class="stat"><div class="stat-value">{{total_volume}}</div><div class="stat-label">Volume</div></div><div class="stat"><div class="stat-value">{{total_msf}}</div><div class="stat-label">MSF Revenue</div></div></div></div><p style="color:#64748b">Please find the detailed PDF report attached to this email.</p></div><div class="footer">&copy; 2026 {{tenant_name}}. All rights reserved.<br>This is an automated message.</div></div></body></html>',
- TRUE, TRUE),
-(1, 'Welcome Email', 'WELCOME',
+ TRUE, TRUE
+FROM tenant t
+ON CONFLICT (tenant_id, name) DO NOTHING;
+
+-- WELCOME (default for type) — merchant onboarding welcome email.
+INSERT INTO email_template_config (tenant_id, name, template_type, subject_template, body_html, is_active, is_default_for_type)
+SELECT t.tenant_id, 'Welcome Email', 'WELCOME',
  'Welcome to {{tenant_name}} - {{merchant_name}}',
  '<!DOCTYPE html><html><head><style>body{font-family:Helvetica,Arial,sans-serif;line-height:1.6;color:#333;background:#f9fafb;margin:0;padding:0}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,.05)}.header{background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;padding:40px;text-align:center}.header h1{margin:0;font-size:28px}.content{padding:40px 30px}.footer{background:#f8fafc;padding:20px;text-align:center;font-size:12px;color:#94a3b8}</style></head><body><div class="container"><div class="header"><h1>Welcome!</h1></div><div class="content"><h2>Hello {{contact_name}},</h2><p>Welcome to <strong>{{tenant_name}}</strong>! We are excited to have <strong>{{merchant_name}}</strong> onboard.</p><p>Your Merchant ID is <strong>{{mid}}</strong>.</p><p>You can view your transaction data, performance analytics, and monthly statements through our portal.</p></div><div class="footer">&copy; 2026 {{tenant_name}}. All rights reserved.</div></div></body></html>',
- TRUE, TRUE),
-(1, 'Dormancy Alert', 'ALERT',
+ TRUE, TRUE
+FROM tenant t
+ON CONFLICT (tenant_id, name) DO NOTHING;
+
+-- ALERT (default for type) — internal dormancy / inactivity alert.
+INSERT INTO email_template_config (tenant_id, name, template_type, subject_template, body_html, is_active, is_default_for_type)
+SELECT t.tenant_id, 'Dormancy Alert', 'ALERT',
  'Action Required: {{merchant_name}} - No recent transactions',
  '<!DOCTYPE html><html><head><style>body{font-family:Helvetica,Arial,sans-serif;line-height:1.6;color:#333;background:#f9fafb;margin:0;padding:0}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden}.header{background:#dc2626;color:#fff;padding:30px;text-align:center}.content{padding:40px 30px}.alert-box{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:20px;margin:20px 0}.footer{background:#f8fafc;padding:20px;text-align:center;font-size:12px;color:#94a3b8}</style></head><body><div class="container"><div class="header"><h1>⚠ Activity Alert</h1></div><div class="content"><p>Dear Team,</p><div class="alert-box"><strong>{{merchant_name}}</strong> (MID: {{mid}}) has not processed transactions in <strong>{{days_since_last_txn}} days</strong>.</div><p>Location: {{city}}<br>Status: {{merchant_status}}<br>Stores: {{store_count}} | Terminals: {{terminal_count}}</p><p>Please follow up to ensure the merchant is still active.</p></div><div class="footer">&copy; 2026 {{tenant_name}}</div></div></body></html>',
- TRUE, TRUE)
-ON CONFLICT DO NOTHING;
+ TRUE, TRUE
+FROM tenant t
+ON CONFLICT (tenant_id, name) DO NOTHING;
 
 -- Menu entries for Email Campaign Hub
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
@@ -9755,45 +9780,100 @@ ON CONFLICT (country_code) DO UPDATE SET
   decimal_notation_value = EXCLUDED.decimal_notation_value;
 
 -- ============================================================
--- Performance indexes for batch ingestion (added 2026-05-07)
+-- Performance indexes for batch ingestion
 -- ============================================================
--- pg_stat_user_indexes showed idx_dim_store_sid, idx_dim_terminal_tid,
--- idx_dim_terminal_store, and idx_dim_merchant_mid had ZERO scans, while
--- the batch ingestion SQL relies on lookups by (tenant_id, sid/mid/tid).
--- Without composite indexes covering tenant_id, the planner falls back to
--- seq scans, making merchant uploads take 10+ minutes on tenants with
--- many existing rows.
+-- MOVED OUT of schema.sql (2026-05-21).
 --
--- These do NOT use CONCURRENTLY because schema.sql runs inside a single
--- transaction at startup and CONCURRENTLY can't run in a transaction.
--- For prod (where schema.sql doesn't run) the same indexes are also
--- defined in db/migration/V2026_05_07_01__performance_indexes.sql with
--- CONCURRENTLY, to be applied manually post-deploy.
+-- The batch-ingestion indexes now live in their own dedicated script:
+--   db/migration/V2026_05_07_01__performance_indexes.sql
+--
+-- That file is wired into startup via spring.sql.init.schema-locations
+-- in application.properties / application-prod.properties, so it runs
+-- automatically right after this schema.sql on every boot. It is
+-- idempotent (every statement uses IF NOT EXISTS).
+--
+-- They were previously duplicated here AND in that file; keeping them
+-- in one place only avoids the two copies silently drifting apart.
+-- See that file for the index list, rationale, and the CONCURRENTLY
+-- variants for large-table production cutovers.
 -- ============================================================
 
-CREATE INDEX IF NOT EXISTS idx_dim_store_tenant_sid
-    ON dim_store (tenant_id, sid)
-    WHERE sid IS NOT NULL;
+-- ============================================================
+-- Per-tenant SMTP configuration (SMTP Settings admin page)
+-- ============================================================
+-- Stores outbound mail server settings used to email merchant
+-- statement PDFs / campaigns. The `password` column holds the SMTP
+-- password ENCRYPTED (AES-256-GCM via CryptoService, "enc:v1:"
+-- prefixed) - never plaintext. At most one row per tenant should
+-- have is_active = TRUE; SmtpConfigService enforces that.
+-- IF NOT EXISTS so re-running schema.sql does not wipe saved configs.
+CREATE TABLE IF NOT EXISTS email_smtp_config (
+    id                    BIGSERIAL PRIMARY KEY,
+    tenant_id             BIGINT       NOT NULL,
+    config_name           VARCHAR(255) NOT NULL,
+    host                  VARCHAR(255) NOT NULL,
+    port                  INTEGER      NOT NULL DEFAULT 587,
+    username              VARCHAR(255),
+    password              VARCHAR(1024),          -- AES-256-GCM encrypted token
+    auth_enabled          BOOLEAN      DEFAULT TRUE,
+    starttls_enabled      BOOLEAN      DEFAULT TRUE,
+    ssl_enabled           BOOLEAN      DEFAULT FALSE,
+    from_address          VARCHAR(255),
+    from_name             VARCHAR(255),
+    reply_to              VARCHAR(255),
+    connection_timeout    INTEGER      DEFAULT 10000,
+    read_timeout          INTEGER      DEFAULT 10000,
+    write_timeout         INTEGER      DEFAULT 10000,
+    rate_limit_ms         INTEGER      DEFAULT 200,
+    max_retries           INTEGER      DEFAULT 3,
+    is_active             BOOLEAN      DEFAULT FALSE,
+    auto_send_after_batch BOOLEAN      DEFAULT FALSE,
+    created_at            TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_email_smtp_config_tenant
+    ON email_smtp_config (tenant_id);
+-- At most one active config per tenant (partial unique index).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_email_smtp_config_active
+    ON email_smtp_config (tenant_id) WHERE is_active = TRUE;
 
-CREATE INDEX IF NOT EXISTS idx_dim_merchant_tenant_mid
-    ON dim_merchant (tenant_id, mid)
-    WHERE mid IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_dim_terminal_tenant_tid
-    ON dim_terminal (tenant_id, tid)
-    WHERE tid IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_dim_terminal_tenant_store
-    ON dim_terminal (tenant_id, store_id);
-
-CREATE INDEX IF NOT EXISTS idx_stg_merchant_tenant_loadtime
-    ON stg_merchant_master_raw (tenant_id, load_time);
-
-CREATE INDEX IF NOT EXISTS idx_stg_trnx_tenant_paydate
-    ON stg_trnx_raw (tenant_id, payment_date);
-
-CREATE INDEX IF NOT EXISTS idx_fact_transaction_tenant_merchant_date
-    ON fact_transaction (tenant_id, merchant_id, payment_date);
-
-CREATE INDEX IF NOT EXISTS idx_sum_daily_merchant_tenant_date
-    ON sum_daily_merchant (tenant_id, business_date);
+-- ============================================================
+-- Outbound email queue (asynchronous, retryable delivery)
+-- ============================================================
+-- EmailQueueProcessor polls this table every 60s and sends PENDING
+-- rows via the tenant's active SMTP config, retrying up to max_retries.
+-- This table was previously referenced by code but never created in
+-- schema.sql, so the processor silently no-op'd. Defined here so the
+-- async queue path is usable. Columns match EmailQueueProcessor's query.
+--   status: PENDING -> SENT | FAILED
+--   attachment_path: optional absolute path to a file to attach
+CREATE TABLE IF NOT EXISTS email_queue (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT,
+    merchant_id     BIGINT,
+    merchant_name   VARCHAR(255),
+    recipient       VARCHAR(255) NOT NULL,
+    subject         VARCHAR(500),
+    body            TEXT,
+    is_html         BOOLEAN      DEFAULT TRUE,
+    attachment_path VARCHAR(1024),
+    statement_month VARCHAR(10),
+    status          VARCHAR(20)  DEFAULT 'PENDING',   -- PENDING, SENT, FAILED
+    retry_count     INTEGER      DEFAULT 0,
+    error_message   TEXT,
+    created_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    sent_at         TIMESTAMP
+);
+-- Processor polls WHERE status='PENDING' AND retry_count < N ORDER BY created_at.
+CREATE INDEX IF NOT EXISTS idx_email_queue_pending
+    ON email_queue (status, created_at) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_email_queue_tenant
+    ON email_queue (tenant_id);
+-- Email Manager page filters logs by tenant + statement month.
+CREATE INDEX IF NOT EXISTS idx_email_queue_tenant_month
+    ON email_queue (tenant_id, statement_month);
+-- Older deployments may already have email_queue without the newer columns.
+ALTER TABLE email_queue ADD COLUMN IF NOT EXISTS merchant_id     BIGINT;
+ALTER TABLE email_queue ADD COLUMN IF NOT EXISTS merchant_name   VARCHAR(255);
+ALTER TABLE email_queue ADD COLUMN IF NOT EXISTS statement_month VARCHAR(10);
+ALTER TABLE email_queue ADD COLUMN IF NOT EXISTS is_html         BOOLEAN DEFAULT TRUE;

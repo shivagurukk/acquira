@@ -3,8 +3,8 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
     PieChart, Pie, Cell
 } from 'recharts';
-import { Layers, BarChart3, Store, CreditCard, DollarSign, TrendingUp } from 'lucide-react';
-import { Grid, Box, Paper, Typography, Stack, FormControl, InputLabel, Select, MenuItem, TextField, Collapse } from '@mui/material';
+import { Layers, BarChart3, Store, CreditCard, DollarSign, TrendingUp, Inbox, AlertTriangle } from 'lucide-react';
+import { Grid, Box, Paper, Typography, Stack, FormControl, InputLabel, Select, MenuItem, TextField, Collapse, Alert } from '@mui/material';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { pageContainer } from '../../theme/dataGridStyles';
@@ -14,21 +14,38 @@ const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#3b82f6'
 const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val || 0);
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 
+// ─── Empty-state shown inside a chart card when a query returns no rows ──
+// Without this, an empty chart renders as blank axes — indistinguishable
+// from a styling glitch. This makes "no data" an explicit, readable state.
+const ChartEmpty = () => (
+    <Box sx={{
+        height: '100%', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 1, opacity: 0.7,
+    }}>
+        <Inbox size={32} color="var(--text-muted)" />
+        <Typography variant="caption" color="var(--text-muted)" fontWeight={600}>
+            No data for this period
+        </Typography>
+    </Box>
+);
+
 // ─── Premium Chart Card ──────────────────────────────────────────────
-const ChartCard = ({ title, children }) => (
+// `empty` flag lets the caller swap the chart for the empty-state without
+// each chart having to special-case a zero-length array.
+const ChartCard = ({ title, empty, children }) => (
     <Paper sx={{
-        p: 3, height: 400, borderRadius: '14px', border: '1px solid #e2e8f0',
-        bgcolor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        p: 3, height: 400, borderRadius: '14px', border: '1px solid var(--border)',
+        bgcolor: 'var(--bg-card)', boxShadow: 'var(--shadow-card)',
         transition: 'all 0.2s ease',
-        '&:hover': { boxShadow: '0 4px 16px rgba(0,0,0,0.06)', borderColor: '#cbd5e1' },
+        '&:hover': { boxShadow: 'var(--shadow-hover)', borderColor: 'var(--text-muted)' },
         display: 'flex', flexDirection: 'column',
     }}>
-        <Typography variant="subtitle2" fontWeight={800} color="#0f172a"
-            sx={{ mb: 2, pb: 1.5, borderBottom: '1px solid #f1f5f9', letterSpacing: '-0.01em' }}>
+        <Typography variant="subtitle2" fontWeight={800} color="var(--text)"
+            sx={{ mb: 2, pb: 1.5, borderBottom: '1px solid var(--border-light)', letterSpacing: '-0.01em' }}>
             {title}
         </Typography>
         <Box sx={{ flex: 1, minHeight: 0 }}>
-            {children}
+            {empty ? <ChartEmpty /> : children}
         </Box>
     </Paper>
 );
@@ -91,8 +108,22 @@ const ExecutiveDashboardReport = () => {
         { title: 'MTD MSF Revenue', value: formatCurrency(data.kpis.mtdMsfUsd), subtitle: 'USD Revenue', icon: DollarSign, color: '#8b5cf6' },
     ], [data.kpis]);
 
+    // Diagnostic: every KPI is zero AND every chart is empty. This almost always
+    // means the merchant master file's date columns didn't parse (so
+    // dim_store.created_date is NULL and the date-windowed KPI queries match
+    // nothing) rather than a genuine "no activity" period. Surfacing it as a
+    // banner saves the user guessing whether the dashboard is broken.
+    const allEmpty = useMemo(() => {
+        const k = data.kpis || {};
+        const c = data.charts || {};
+        const kpisZero = !k.ytdSid && !k.ytdMid && !k.mtdSid && !k.wtdSid && !k.mtdMsfUsd;
+        const chartsEmpty = !(c.ytdByAgent?.length) && !(c.ytdByProgram?.length)
+            && !(c.mtdVolumeSplit?.length) && !(c.mtdSidByProgram?.length);
+        return kpisZero && chartsEmpty;
+    }, [data]);
+
     const filterInputSx = {
-        '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '13px', bgcolor: '#f8fafc' },
+        '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '13px', bgcolor: 'var(--bg-subtle)' },
         '& .MuiInputLabel-root': { fontSize: '12px', fontWeight: 600 },
     };
 
@@ -110,8 +141,8 @@ const ExecutiveDashboardReport = () => {
 
             {/* Filter Panel */}
             <Collapse in={showFilters} unmountOnExit>
-                <Paper sx={{ p: 3, mb: 3, borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                    <Typography variant="caption" fontWeight={700} color="#94a3b8"
+                <Paper sx={{ p: 3, mb: 3, borderRadius: '14px', border: '1px solid var(--border)', bgcolor: 'var(--bg-card)' }}>
+                    <Typography variant="caption" fontWeight={700} color="var(--text-muted)"
                         sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 2, display: 'block' }}>
                         Data Source
                     </Typography>
@@ -139,10 +170,26 @@ const ExecutiveDashboardReport = () => {
             {/* KPI Row */}
             <KpiCards cards={kpis} />
 
+            {/* Diagnostic banner — all KPIs zero and all charts empty. */}
+            {!loading && allEmpty && (
+                <Alert
+                    severity="info"
+                    icon={<AlertTriangle size={18} />}
+                    sx={{ mb: 2.5, borderRadius: '12px', alignItems: 'center' }}
+                >
+                    No results for <strong>{asOfDate}</strong>. If you have already
+                    uploaded a merchant file, this usually means the file's date
+                    columns (e.g. "MerchantStore CreatedDate") were empty or in an
+                    unrecognized format, or the records fall outside the selected
+                    period. Try a different "As of Date", or re-upload with dates in
+                    YYYY-MM-DD format.
+                </Alert>
+            )}
+
             {/* Charts Grid (2×2) */}
             <Grid container spacing={2.5} sx={{ mb: 3 }}>
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="Number of SID YTD by Introducing Agent">
+                    <ChartCard title="Number of SID YTD by Introducing Agent" empty={!data.charts.ytdByAgent?.length}>
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart layout="vertical" data={data.charts.ytdByAgent} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
@@ -156,7 +203,7 @@ const ExecutiveDashboardReport = () => {
                 </Grid>
 
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="Number of SID YTD by Program">
+                    <ChartCard title="Number of SID YTD by Program" empty={!data.charts.ytdByProgram?.length}>
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={data.charts.ytdByProgram} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -170,7 +217,7 @@ const ExecutiveDashboardReport = () => {
                 </Grid>
 
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="MTD Volume USD Split by Program">
+                    <ChartCard title="MTD Volume USD Split by Program" empty={!data.charts.mtdVolumeSplit?.length}>
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                                 <Pie data={data.charts.mtdVolumeSplit} cx="50%" cy="50%"
@@ -191,7 +238,7 @@ const ExecutiveDashboardReport = () => {
                 </Grid>
 
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="Number of SID for the Month by Program">
+                    <ChartCard title="Number of SID for the Month by Program" empty={!data.charts.mtdSidByProgram?.length}>
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={data.charts.mtdSidByProgram} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />

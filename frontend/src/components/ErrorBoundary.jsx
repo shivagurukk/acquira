@@ -39,15 +39,15 @@ class ErrorBoundary extends React.Component {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    background: '#F9FAFB',
+                    background: 'var(--bg, #F9FAFB)',
                     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
                 }}>
                     <div style={{
                         maxWidth: 480,
                         padding: 40,
-                        background: 'white',
+                        background: 'var(--bg-card, #ffffff)',
                         borderRadius: 16,
-                        boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.12)',
                         textAlign: 'center',
                     }}>
                         <div style={{
@@ -59,10 +59,10 @@ class ErrorBoundary extends React.Component {
                         }}>
                             <AlertTriangle size={32} color="#D97706" />
                         </div>
-                        <h2 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: '0 0 8px' }}>
+                        <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text, #111827)', margin: '0 0 8px' }}>
                             Something went wrong
                         </h2>
-                        <p style={{ fontSize: 14, color: '#6B7280', margin: '0 0 24px', lineHeight: 1.5 }}>
+                        <p style={{ fontSize: 14, color: 'var(--text-secondary, #6B7280)', margin: '0 0 24px', lineHeight: 1.5 }}>
                             An unexpected error occurred. This has been logged. You can try reloading the page or going back to the dashboard.
                         </p>
                         {this.state.error && (

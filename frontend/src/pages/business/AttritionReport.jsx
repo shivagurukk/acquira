@@ -7,6 +7,7 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { useDataBounds } from '../../hooks/useDataBounds';
 
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
@@ -14,12 +15,11 @@ const AttritionReport = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
-    const [boundsLoaded, setBoundsLoaded] = useState(false);
 
     const [filters, setFilters] = useState({
-        // Default to empty; overridden by /api/business/data-bounds in the effect below.
-        // Previously defaulted to first-of-current-month → today, which rendered empty
-        // when transaction data lagged real-time.
+        // Default to empty; overridden by useDataBounds in the effect below.
+        // Previously defaulted to first-of-current-month → today, which rendered
+        // empty when transaction data lagged real-time.
         startDate: '', endDate: '',
         openDateStart: '', openDateEnd: '',
         partnerList: [], mccList: [], industryList: [],
@@ -29,47 +29,23 @@ const AttritionReport = () => {
         datePreset: 'MONTH'
     });
 
-    // Fetch the latest date that actually has data and use it as the end-date,
-    // first-of-that-month as start-date. Falls back to current month on error.
+    /* ── Default date range ─────────────────────────────────────── */
+    // Shared useDataBounds hook: resolves the FULL data window (earliest ->
+    // latest) from /api/business/data-bounds, with a wide fallback. One
+    // implementation shared across every business report page.
+    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds();
+
+    // Push the resolved window into filter state once it arrives. CUSTOM
+    // because we're supplying an explicit range, not a preset.
     useEffect(() => {
-        // Local-date formatter — toISOString() shifts dates by one day in non-UTC timezones
-        const fmtLocal = (d) => {
-            const yr = d.getFullYear();
-            const mo = String(d.getMonth() + 1).padStart(2, '0');
-            const dy = String(d.getDate()).padStart(2, '0');
-            return `${yr}-${mo}-${dy}`;
-        };
-        const loadBounds = async () => {
-            try {
-                const token = localStorage.getItem('token');
-                const tenantId = localStorage.getItem('defaultTenantId');
-                const res = await fetch('/api/business/data-bounds', {
-                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-                });
-                if (res.ok) {
-                    const b = await res.json();
-                    if (b?.latest) {
-                        const latest = new Date(b.latest);
-                        const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
-                        setFilters(prev => ({
-                            ...prev,
-                            startDate: fmtLocal(first),
-                            endDate:   fmtLocal(latest),
-                        }));
-                        setBoundsLoaded(true);
-                        return;
-                    }
-                }
-            } catch (e) { /* fall through to fallback */ }
-            // Fallback: current month
-            const today = new Date();
-            const firstDay = fmtLocal(new Date(today.getFullYear(), today.getMonth(), 1));
-            const lastDay = fmtLocal(today);
-            setFilters(prev => ({ ...prev, startDate: firstDay, endDate: lastDay }));
-            setBoundsLoaded(true);
-        };
-        loadBounds();
-    }, []);
+        if (!boundsLoaded) return;
+        setFilters(prev => ({
+            ...prev,
+            datePreset: 'CUSTOM',
+            startDate: boundsStart,
+            endDate:   boundsEnd,
+        }));
+    }, [boundsLoaded, boundsStart, boundsEnd]);
 
     useEffect(() => {
         // Wait until bounds resolved so we don't fire a guaranteed-empty fetch first.

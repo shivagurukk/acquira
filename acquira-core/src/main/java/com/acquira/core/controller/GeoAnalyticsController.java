@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.TenantContext;
 import com.acquira.common.dto.GeoMetricDTO;
 import com.acquira.common.repository.SumDailyTerminalRepository;
 import lombok.RequiredArgsConstructor;
@@ -28,8 +29,15 @@ public class GeoAnalyticsController {
             date = LocalDate.now().minusDays(1);
         }
 
-        log.info("Fetching Geo Heatmap data for date: {}", date);
-        List<GeoMetricDTO> geoMetrics = sumDailyTerminalRepository.findGeoMetricsByDate(date);
+        // SECURITY: scope to the caller's tenant. Without this the heatmap
+        // returned every tenant's store names, coordinates and volumes.
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            return ResponseEntity.status(403).build();
+        }
+
+        log.info("Fetching Geo Heatmap data for tenant {} date {}", tenantId, date);
+        List<GeoMetricDTO> geoMetrics = sumDailyTerminalRepository.findGeoMetricsByDateForTenant(date, tenantId);
 
         return ResponseEntity.ok(geoMetrics);
     }

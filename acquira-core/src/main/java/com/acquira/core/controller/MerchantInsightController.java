@@ -37,8 +37,18 @@ public class MerchantInsightController {
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month) {
         if (merchantId == null) merchantId = 1L;
+        // SECURITY: resolve the caller's tenant and require the merchant to
+        // belong to it. Previously any user could pass any merchantId and read
+        // another tenant's data (IDOR).
+        Long tenantId = com.acquira.common.config.TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
         YearMonth targetMonth = resolveTargetMonth(year, month);
-        return ResponseEntity.ok(insightService.getInsights(merchantId, targetMonth.getYear(), targetMonth.getMonthValue()));
+        try {
+            return ResponseEntity.ok(insightService.getInsights(
+                    merchantId, targetMonth.getYear(), targetMonth.getMonthValue(), tenantId));
+        } catch (SecurityException se) {
+            return ResponseEntity.status(403).build();
+        }
     }
 
     @GetMapping("/check-status")

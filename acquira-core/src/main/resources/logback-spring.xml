@@ -23,7 +23,9 @@
         <appender name="DEV_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
             <file>${APP_LOGS_DIR}/core.log</file>
             <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <!-- Rolled files are NOT compressed (no .gz) so yesterday's log
+                     can be opened/grepped/tailed directly without gunzip. -->
+                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
                 <maxFileSize>20MB</maxFileSize>
                 <maxHistory>7</maxHistory>
                 <totalSizeCap>200MB</totalSizeCap>
@@ -52,7 +54,9 @@
         <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
             <file>${APP_LOGS_DIR}/core.log</file>
             <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <!-- Rolled files are NOT compressed (no .gz) so they can be
+                     opened/grepped/tailed directly without gunzip. -->
+                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
                 <maxFileSize>50MB</maxFileSize>
                 <maxHistory>30</maxHistory>
                 <totalSizeCap>2GB</totalSizeCap>
@@ -66,7 +70,8 @@
         <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
             <file>${APP_LOGS_DIR}/audit.log</file>
             <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-                <fileNamePattern>${APP_LOGS_DIR}/audit.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <!-- Rolled files are NOT compressed (no .gz). -->
+                <fileNamePattern>${APP_LOGS_DIR}/audit.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
                 <maxFileSize>50MB</maxFileSize>
                 <maxHistory>90</maxHistory>
                 <totalSizeCap>5GB</totalSizeCap>
@@ -83,7 +88,8 @@
                 <level>WARN</level>
             </filter>
             <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-                <fileNamePattern>${APP_LOGS_DIR}/error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <!-- Rolled files are NOT compressed (no .gz). -->
+                <fileNamePattern>${APP_LOGS_DIR}/error.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
                 <maxFileSize>20MB</maxFileSize>
                 <maxHistory>30</maxHistory>
                 <totalSizeCap>1GB</totalSizeCap>

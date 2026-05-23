@@ -1,9 +1,14 @@
 package com.acquira.core.service;
 
+import com.acquira.common.dto.MerchantInsightsDTO;
 import com.acquira.common.model.*;
 import com.acquira.common.repository.*;
+import com.acquira.common.service.CryptoService;
+import com.acquira.common.service.MerchantInsightService;
+import com.acquira.pdf.service.PlaywrightPdfService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -13,6 +18,7 @@ import org.springframework.stereotype.Service;
 import jakarta.mail.internet.MimeMessage;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.*;
 
 /**
@@ -30,6 +36,11 @@ public class CampaignExecutionService {
     private final EmailTemplateConfigRepository templateRepo;
     private final TemplateRendererService templateRenderer;
     private final JdbcTemplate jdbcTemplate;
+    // Decrypts the SMTP password (stored AES-256-GCM encrypted).
+    private final CryptoService cryptoService;
+    // Builds the per-merchant statement data; PlaywrightPdfService renders it.
+    private final MerchantInsightService merchantInsightService;
+    private final PlaywrightPdfService playwrightPdfService;
 
     /**
      * Build a JavaMailSender from the active SMTP config in the database.
@@ -47,7 +58,11 @@ public class CampaignExecutionService {
             String username = (String) cfg.get("username");
             if (username != null && !username.isEmpty()) {
                 sender.setUsername(username);
-                sender.setPassword((String) cfg.get("password"));
+                // The password is stored AES-256-GCM encrypted ("enc:v1:" token).
+                // Decrypt it here so the real password reaches the SMTP server.
+                // cryptoService.decrypt() passes plaintext through unchanged, so
+                // this is safe for any legacy un-encrypted rows too.
+                sender.setPassword(cryptoService.decrypt((String) cfg.get("password")));
             }
 
             Properties props = sender.getJavaMailProperties();
@@ -141,11 +156,32 @@ public class CampaignExecutionService {
                     String body = templateRenderer.render(template.getBodyHtml(), vars);
 
                     MimeMessage message = mailSender.createMimeMessage();
+                    // Multipart so we can attach the statement PDF when requested.
                     MimeMessageHelper helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
                     helper.setTo(email);
                     helper.setFrom(fromAddress);
                     helper.setSubject(subject);
                     helper.setText(body, true);
+
+                    // Attach the branded statement PDF when the campaign is
+                    // configured for STATEMENT_PDF attachments. Generated per
+                    // merchant for the campaign's statement month.
+                    if (campaign.getAttachmentType() == EmailCampaign.AttachmentType.STATEMENT_PDF) {
+                        byte[] pdf = generateStatementPdf(merchantId, merchantName,
+                                campaign.getStatementMonth());
+                        if (pdf != null && pdf.length > 0) {
+                            String fileName = "Statement_"
+                                    + (merchantName != null ? merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_") : merchantId)
+                                    + "_" + (campaign.getStatementMonth() != null ? campaign.getStatementMonth() : "")
+                                    + ".pdf";
+                            helper.addAttachment(fileName, new ByteArrayResource(pdf), "application/pdf");
+                        } else {
+                            // PDF could not be built - send the email anyway (body
+                            // still has the statement summary) but record why.
+                            log.warn("[Campaign] No statement PDF for merchant {} ({}) - sending without attachment",
+                                    merchantName, merchantId);
+                        }
+                    }
 
                     mailSender.send(message);
 
@@ -226,6 +262,45 @@ public class CampaignExecutionService {
     @Async
     public void retryFailed(Long campaignId) {
         launchCampaign(campaignId);
+    }
+
+    /**
+     * Generate the branded statement PDF for one merchant for a given month.
+     *
+     * statementMonth is expected as "yyyy-MM" (e.g. "2026-04"); if null/blank
+     * or unparseable, the previous calendar month is used as a sensible default.
+     * Returns null on any failure so the caller can still send the email body
+     * without the attachment rather than failing the whole recipient.
+     */
+    private byte[] generateStatementPdf(Long merchantId, String merchantName, String statementMonth) {
+        try {
+            YearMonth ym;
+            try {
+                ym = (statementMonth != null && !statementMonth.isBlank())
+                        ? YearMonth.parse(statementMonth.trim())
+                        : YearMonth.now().minusMonths(1);
+            } catch (Exception parseEx) {
+                log.warn("[Campaign] Unparseable statementMonth '{}' - defaulting to last month", statementMonth);
+                ym = YearMonth.now().minusMonths(1);
+            }
+
+            MerchantInsightsDTO dto = merchantInsightService.getInsights(
+                    merchantId, ym.getYear(), ym.getMonthValue());
+            if (dto == null) {
+                log.warn("[Campaign] No insight data for merchant {} ({})", merchantName, merchantId);
+                return null;
+            }
+
+            // monthYear is the human-readable label printed on the statement.
+            String monthYear = ym.getMonth().getDisplayName(
+                    java.time.format.TextStyle.FULL, Locale.ENGLISH) + " " + ym.getYear();
+            return playwrightPdfService.generatePdf(dto,
+                    merchantName != null ? merchantName : ("Merchant " + merchantId), monthYear);
+        } catch (Exception e) {
+            log.error("[Campaign] Statement PDF generation failed for merchant {} ({}): {}",
+                    merchantName, merchantId, e.getMessage());
+            return null;
+        }
     }
 
     private void logSend(EmailCampaign campaign, Long tenantId, Long merchantId,

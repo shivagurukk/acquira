@@ -484,41 +484,34 @@ public class PdfController {
     // ─── Email helper ──────────────────────────────────────────────────
 
     private void sendReportEmail(String toEmail, String merchantName, String monthYear, Path pdfFile) {
+        // Enqueue into email_queue rather than sending inline. EmailQueueProcessor
+        // (polls every 60s) picks the row up, builds the sender from the tenant's
+        // active email_smtp_config (AES-decrypted password) and delivers it with
+        // retry handling. This keeps ALL outbound mail on one encryption-aware,
+        // per-tenant path and means a slow SMTP server can't stall PDF batches.
+        //
+        // tenant_id is tagged from TenantContext so the processor resolves THIS
+        // tenant's SMTP config (not just "any active config"). is_html=false
+        // because the body below is plain text.
+        Long tenantId = null;
         try {
-            if (javaMailSender == null) {
-                try {
-                    jdbcTemplate.update(
-                        "INSERT INTO email_queue (recipient, subject, body, attachment_path, status, created_at) " +
-                        "VALUES (?, ?, ?, ?, 'PENDING', NOW())",
-                        toEmail,
-                        "Your Business Insight Report — " + monthYear,
-                        "Dear " + merchantName + ",\n\nPlease find your monthly business insight report attached.\n\nBest regards,\nAFS NEXUS",
-                        pdfFile.toString());
-                    log.info("[EMAIL] Queued email for {} to {}", merchantName, toEmail);
-                } catch (Exception e) {
-                    log.info("[EMAIL] Would send to {} ({}): Report for {} — PDF: {}",
-                        merchantName, toEmail, monthYear, pdfFile.getFileName());
-                }
-                return;
-            }
+            tenantId = TenantContext.getCurrentTenant();
+        } catch (Exception ignored) { /* no tenant context - leave null */ }
 
-            var message = javaMailSender.createMimeMessage();
-            var helper  = new org.springframework.mail.javamail.MimeMessageHelper(message, true, "UTF-8");
-            helper.setTo(toEmail);
-            helper.setSubject("Your Business Insight Report — " + monthYear);
-            helper.setText(
-                "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto'>"
-                + "<h2 style='color:#0F2042'>AFS NEXUS — Monthly Business Insight</h2>"
-                + "<p>Dear " + merchantName + ",</p>"
-                + "<p>Please find your <strong>" + monthYear + "</strong> business insight report attached.</p>"
-                + "<p>This report includes your sales performance, customer analytics, payment insights, and actionable recommendations.</p>"
-                + "<p style='color:#6B7280;font-size:12px;margin-top:30px'>This is an automated report from AFS NEXUS. Do not reply to this email.</p>"
-                + "</div>", true);
-            helper.addAttachment(pdfFile.getFileName().toString(),
-                new org.springframework.core.io.FileSystemResource(pdfFile.toFile()));
-            javaMailSender.send(message);
+        String subject = "Your Business Insight Report — " + monthYear;
+        String body = "Dear " + merchantName + ",\n\n"
+                + "Please find your monthly business insight report attached.\n\n"
+                + "Best regards,\nAFS NEXUS";
+        try {
+            jdbcTemplate.update(
+                "INSERT INTO email_queue " +
+                "(tenant_id, recipient, subject, body, is_html, attachment_path, status, retry_count, created_at) " +
+                "VALUES (?, ?, ?, ?, FALSE, ?, 'PENDING', 0, NOW())",
+                tenantId, toEmail, subject, body, pdfFile.toString());
+            log.info("[EMAIL] Queued report for {} to {} (tenant={})", merchantName, toEmail, tenantId);
         } catch (Exception e) {
-            throw new RuntimeException("Email failed for " + merchantName + ": " + e.getMessage(), e);
+            // Re-thrown so the post-batch loop records this merchant as failed.
+            throw new RuntimeException("Failed to queue email for " + merchantName + ": " + e.getMessage(), e);
         }
     }
 
@@ -700,9 +693,19 @@ public class PdfController {
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month) {
         if (merchantId == null) merchantId = 1L;
+        // SECURITY: scope to the caller's tenant and require the merchant to
+        // belong to it. Previously any authenticated user could pass an
+        // arbitrary merchantId and read another tenant's insight data (IDOR).
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
         YearMonth targetMonth = resolveTargetMonth(year, month);
-        return ResponseEntity.ok(
-                coreClient.fetchInsights(merchantId, targetMonth.getYear(), targetMonth.getMonthValue()));
+        try {
+            return ResponseEntity.ok(
+                    coreClient.fetchInsights(merchantId, targetMonth.getYear(),
+                            targetMonth.getMonthValue(), tenantId));
+        } catch (SecurityException se) {
+            return ResponseEntity.status(403).build();
+        }
     }
 
     // ─── Generate single merchant report to disk ───────────────────────

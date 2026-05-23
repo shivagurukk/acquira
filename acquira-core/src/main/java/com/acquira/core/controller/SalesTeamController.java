@@ -56,11 +56,25 @@ public class SalesTeamController {
     }
 
     @PostMapping("/assign")
-    public ResponseEntity<Void> assignSalesUser(@RequestBody Map<String, Object> payload) {
+    public ResponseEntity<?> assignSalesUser(@RequestBody Map<String, Object> payload) {
         String salesUserId = (String) payload.get("salesUserId");
-        Number teamLeadIdNum = (Number) payload.get("teamLeadId");
-        salesTeamService.assignSalesUser(getTenantId(), salesUserId, teamLeadIdNum.longValue());
-        return ResponseEntity.ok().build();
+        Object teamLeadIdRaw = payload.get("teamLeadId");
+        // teamLeadId can arrive null (e.g. the "Select Lead" placeholder, or a
+        // bulk call before a lead is picked). Casting null to Number and calling
+        // .longValue() would throw an unhandled NPE -> HTTP 500. Validate first
+        // and return a clean 400 instead.
+        if (!(teamLeadIdRaw instanceof Number)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "teamLeadId is required and must be numeric"));
+        }
+        if (salesUserId == null || salesUserId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "salesUserId is required"));
+        }
+        try {
+            salesTeamService.assignSalesUser(getTenantId(), salesUserId, ((Number) teamLeadIdRaw).longValue());
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @PostMapping("/auto-assign")

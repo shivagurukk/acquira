@@ -1405,7 +1405,9 @@ public class TransactionJobConfig {
     }
 
     @Bean @StepScope
-    public Tasklet calculateBusinessMetricsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+    public Tasklet calculateBusinessMetricsTasklet(
+            @Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("${acquira.retention.snapshot-days:90}") int snapshotRetentionDays) {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long start = System.currentTimeMillis();
@@ -1460,6 +1462,41 @@ public class TransactionJobConfig {
                 "FROM merchant_activity_summary WHERE tenant_id = ? AND calc_date IN " + dateScope + " " +
                 "ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET score=EXCLUDED.score, reason_tags=EXCLUDED.reason_tags",
                 tenantId);
+
+            // ── Retention prune ──────────────────────────────────────────────
+            // merchant_activity_summary and merchant_opportunity_score gain one
+            // snapshot row per merchant per distinct calc_date on every upload.
+            // The ON CONFLICT clauses above only refresh rows for dates being
+            // re-uploaded — brand-new dates always INSERT — so without pruning
+            // these two tables grow without bound (production was already at
+            // ~470k rows each). The Opportunity Intelligence page reads only the
+            // LATEST snapshot per merchant, so old calc_date rows have no reader.
+            //
+            // Delete rows older than the configured window. Runs AFTER the
+            // inserts so the current upload's snapshot is never pruned, even if
+            // the upload covers an old date. snapshotRetentionDays <= 0 disables
+            // pruning entirely (escape hatch). The step runs under noTxn() so
+            // each DELETE commits on its own boundary.
+            if (snapshotRetentionDays > 0) {
+                long tPrune = System.currentTimeMillis();
+                // date - integer subtracts that many days in PostgreSQL, so a
+                // plain int bind is the simplest, unambiguous form here.
+                int prunedActivity = jdbcTemplate.update(
+                    "DELETE FROM merchant_activity_summary " +
+                    "WHERE tenant_id = ? AND calc_date < CURRENT_DATE - ?",
+                    tenantId, snapshotRetentionDays);
+                int prunedScore = jdbcTemplate.update(
+                    "DELETE FROM merchant_opportunity_score " +
+                    "WHERE tenant_id = ? AND calc_date < CURRENT_DATE - ?",
+                    tenantId, snapshotRetentionDays);
+                if (prunedActivity > 0 || prunedScore > 0) {
+                    log.info(String.format(
+                        "snapshot retention: pruned %d activity + %d opportunity-score rows " +
+                        "older than %d days in %.1fs",
+                        prunedActivity, prunedScore, snapshotRetentionDays,
+                        (System.currentTimeMillis() - tPrune) / 1000.0));
+                }
+            }
 
             log.info(String.format("businessMetrics completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;

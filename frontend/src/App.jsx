@@ -2,18 +2,17 @@ import React, { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
-import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import { RoleGuard } from './components/ProtectedRoute';
 
-// #11: Shared loading spinner for lazy-loaded routes
+// #11: Shared loading spinner for lazy-loaded routes (theme-aware)
 const PageLoader = () => (
   <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:'60vh' }}>
     <div style={{ textAlign:'center' }}>
-      <div style={{ width:40, height:40, border:'3px solid #E5E7EB', borderTopColor:'#1E3A8A', borderRadius:'50%', animation:'spin 0.8s linear infinite', margin:'0 auto 12px' }} />
-      <div style={{ fontSize:13, color:'#6B7280', fontFamily:'Inter, sans-serif' }}>Loading...</div>
+      <div style={{ width:40, height:40, border:'3px solid var(--border, #E5E7EB)', borderTopColor:'var(--accent, #1E3A8A)', borderRadius:'50%', animation:'spin 0.8s linear infinite', margin:'0 auto 12px' }} />
+      <div style={{ fontSize:13, color:'var(--text-secondary, #6B7280)', fontFamily:'Inter, sans-serif' }}>Loading...</div>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   </div>
@@ -71,9 +70,8 @@ const S3Settings = lazy(() => import('./pages/admin/S3Settings'));
 
 function App() {
   return (
-    // #10: ErrorBoundary wraps entire app — catches unhandled errors
-    <ErrorBoundary>
-      <ThemeProvider>
+    // ErrorBoundary is provided as the outermost wrapper in main.jsx.
+    <ThemeProvider>
       <AuthProvider>
         <Suspense fallback={<PageLoader />}>
           <Routes>
@@ -193,8 +191,7 @@ function App() {
           </Routes>
         </Suspense>
       </AuthProvider>
-      </ThemeProvider>
-    </ErrorBoundary>
+    </ThemeProvider>
   );
 }
 

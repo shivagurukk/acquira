@@ -370,10 +370,67 @@ public class MerchantMasterJobConfig {
         return "Y".equals(val) || "YES".equals(val) || "TRUE".equals(val) || "1".equals(val);
     }
 
+    // Formats accepted for date columns in merchant master files. LocalDate.parse
+    // with no formatter ONLY accepts strict ISO yyyy-MM-dd; Excel almost never
+    // produces that as text, so the old single-format parser silently returned
+    // null for nearly every real-world file -> dim_store.created_date came out
+    // NULL -> the Executive Dashboard's store-based KPIs all showed zero.
+    private static final java.time.format.DateTimeFormatter[] DATE_FORMATS = {
+        java.time.format.DateTimeFormatter.ISO_LOCAL_DATE,            // 2026-01-15
+        java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+        java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+        java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+        java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+        java.time.format.DateTimeFormatter.ofPattern("dd-MMM-yyyy"),  // 15-Jan-2026
+        java.time.format.DateTimeFormatter.ofPattern("d-MMM-yyyy"),
+        java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy"),
+        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+        java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm:ss"),
+    };
+
+    /**
+     * Parse a date cell value tolerant of the formats Excel/CSV exports actually
+     * produce. Tries, in order:
+     *   1. An Excel numeric date serial (e.g. "46037" = days since 1899-12-30).
+     *   2. ISO date-time (yyyy-MM-ddTHH:mm) — what an Excel date-typed cell often
+     *      becomes once read.
+     *   3. Each of the explicit DATE_FORMATS above.
+     * Returns null only when nothing matches (genuinely empty/garbage cell).
+     */
     private java.time.LocalDateTime parseDate(String val) {
         if (val == null || val.trim().isEmpty()) return null;
-        try { return java.time.LocalDate.parse(val.trim()).atStartOfDay(); }
-        catch (Exception e) { return null; }
+        String s = val.trim();
+
+        // (1) Excel numeric date serial. A General-format date cell is handed back
+        // as a plain number string. Excel's epoch is 1899-12-30 (the well-known
+        // 1900 leap-year bug is absorbed by using that epoch).
+        if (s.matches("\\d+(?:\\.\\d+)?")) {
+            try {
+                double serial = Double.parseDouble(s);
+                // Only treat plausible date serials as such (~1900-01-01 .. ~2150).
+                if (serial > 1 && serial < 92000) {
+                    return java.time.LocalDate.of(1899, 12, 30)
+                            .plusDays((long) serial).atStartOfDay();
+                }
+            } catch (Exception ignored) { /* fall through to text parsing */ }
+        }
+
+        // (2) ISO date-time, e.g. "2026-01-15T00:00".
+        try { return java.time.LocalDateTime.parse(s); } catch (Exception ignored) {}
+
+        // (3) Explicit formats — date-only patterns parsed to start-of-day.
+        for (java.time.format.DateTimeFormatter f : DATE_FORMATS) {
+            try {
+                return java.time.LocalDate.parse(s, f).atStartOfDay();
+            } catch (Exception ignored) {
+                try { return java.time.LocalDateTime.parse(s, f); } catch (Exception ignored2) {}
+            }
+        }
+
+        // Nothing matched — log once so a bad column is visible instead of
+        // silently becoming a NULL date that zeroes out dashboard KPIs.
+        log.warn("parseDate: could not parse date value '{}' — storing NULL", s);
+        return null;
     }
 
     /**

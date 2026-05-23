@@ -177,18 +177,18 @@ const VolumeRevenueSummary = () => {
         {
             field: 'monthParams', headerName: 'Month', flex: 1.2, minWidth: 150,
             sortComparator: (v1, v2) => v1.raw.localeCompare(v2.raw),
-            renderCell: (params) => <Typography variant="body2" fontWeight="700" color="#1e293b">{params.value.str}</Typography>
+            renderCell: (params) => <Typography variant="body2" fontWeight="700" color="var(--text, #1e293b)">{params.value.str}</Typography>
         },
         {
             field: 'count', headerName: 'Count', type: 'number', flex: 0.8, align: 'center', headerAlign: 'center',
-            renderCell: (params) => <Chip label={formatNumber(params.value)} size="small" variant="outlined" sx={{ fontWeight: 600, borderColor: '#e2e8f0', bgcolor: '#f8fafc' }} />
+            renderCell: (params) => <Chip label={formatNumber(params.value)} size="small" variant="outlined" sx={{ fontWeight: 600, borderColor: 'var(--border, #e2e8f0)', bgcolor: 'var(--bg-subtle, #f8fafc)', color: 'var(--text, inherit)' }} />
         },
         {
             field: 'volume', headerName: 'Volume', flex: 1.5, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
                 <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
-                    <Typography variant="body2" fontWeight="700" color="#0f172a">{formatCurrency(params.value)}</Typography>
-                    <Box sx={{ width: '80%', height: 4, bgcolor: '#f1f5f9', borderRadius: 2, mt: 0.5, overflow: 'hidden' }}>
+                    <Typography variant="body2" fontWeight="700" color="var(--text, #0f172a)">{formatCurrency(params.value)}</Typography>
+                    <Box sx={{ width: '80%', height: 4, bgcolor: 'var(--bg-subtle, #f1f5f9)', borderRadius: 2, mt: 0.5, overflow: 'hidden' }}>
                         <Box sx={{ width: `${(params.value / params.row.maxVol) * 100}%`, height: '100%', bgcolor: '#6366f1', borderRadius: 2 }} />
                     </Box>
                 </Box>
@@ -197,11 +197,11 @@ const VolumeRevenueSummary = () => {
         { field: 'momVol', headerName: 'Trend', flex: 0.8, align: 'center', headerAlign: 'center', renderCell: (params) => <TrendPill val={params.value} /> },
         {
             field: 'msf', headerName: 'MSF', flex: 1.2, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" fontWeight="600" color="#334155">{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" fontWeight="600" color="var(--text, #334155)">{formatCurrency(params.value)}</Typography>
         },
         {
             field: 'opt_in_volume', headerName: 'Opt-in volume', flex: 1.2, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" fontWeight="500" color="#64748b">{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" fontWeight="500" color="var(--text-secondary, #64748b)">{formatCurrency(params.value)}</Typography>
         }
     ];
 

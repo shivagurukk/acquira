@@ -27,17 +27,38 @@ public class CoreServiceClient {
 
     private final RestTemplate restTemplate = new RestTemplate();
 
+    /**
+     * @deprecated Unscoped — does not verify the merchant belongs to the caller's
+     * tenant. Use {@link #fetchInsights(Long, int, int, Long)}.
+     */
+    @Deprecated
     public MerchantInsightsDTO fetchInsights(Long merchantId, int year, int month) {
+        return fetchInsights(merchantId, year, month, null);
+    }
+
+    /**
+     * Tenant-scoped insight fetch. When {@code tenantId} is non-null the requested
+     * merchant must belong to that tenant or a SecurityException is thrown
+     * (closes the cross-tenant IDOR on the PDF module's /overview endpoint).
+     */
+    public MerchantInsightsDTO fetchInsights(Long merchantId, int year, int month, Long tenantId) {
         // Direct call if MerchantInsightService is available (same JVM)
         if (insightService != null) {
             log.debug("Fetching insights directly via MerchantInsightService (same JVM)");
-            return insightService.getInsights(merchantId, year, month);
+            return insightService.getInsights(merchantId, year, month, tenantId);
         }
 
-        // Fallback: HTTP call to core service (standalone mode)
+        // Fallback: HTTP call to core service (standalone mode). The X-Tenant-Id
+        // header lets core's JwtRequestFilter / TenantContext re-establish scope
+        // on the remote side.
         log.debug("Fetching insights via HTTP from Core service: {}", coreServiceUrl);
-        return restTemplate.getForObject(
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        if (tenantId != null) headers.set("X-Tenant-Id", String.valueOf(tenantId));
+        org.springframework.http.HttpEntity<Void> entity =
+                new org.springframework.http.HttpEntity<>(headers);
+        return restTemplate.exchange(
                 coreServiceUrl + "/api/business/insights/overview?merchantId={id}&year={y}&month={m}",
-                MerchantInsightsDTO.class, merchantId, year, month);
+                org.springframework.http.HttpMethod.GET, entity,
+                MerchantInsightsDTO.class, merchantId, year, month).getBody();
     }
 }

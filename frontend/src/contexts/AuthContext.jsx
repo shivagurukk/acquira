@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import api from '../api/axios';
+import { clearAuthStorage } from '../utils/authStorage';
 
 const AuthContext = createContext(null);
 
@@ -106,7 +107,7 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const logout = useCallback(() => {
-        localStorage.clear();
+        clearAuthStorage();
         setAuth({
             token: null, refreshToken: null, username: '', userRole: '', roles: [],
             tenants: [], activeTenantId: null, menus: [], isAuthenticated: false,

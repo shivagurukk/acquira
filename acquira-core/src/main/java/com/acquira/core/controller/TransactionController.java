@@ -1,5 +1,6 @@
 package com.acquira.core.controller;
 
+import com.acquira.common.config.TenantContext;
 import com.acquira.common.model.Transaction;
 import com.acquira.common.model.Merchant;
 import com.acquira.common.model.Store;
@@ -52,7 +53,11 @@ public class TransactionController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate transactionDateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate transactionDateTo) {
 
-        Specification<Transaction> spec = createSpecification(mid, sid, tid, paymentDateFrom, paymentDateTo,
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.status(403).build();
+
+        Specification<Transaction> spec = createSpecification(tenantId, mid, sid, tid, paymentDateFrom, paymentDateTo,
                 transactionDateFrom, transactionDateTo);
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "paymentDate"));
@@ -72,9 +77,14 @@ public class TransactionController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate transactionDateTo,
             jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
 
-        Specification<Transaction> spec = createSpecification(mid, sid, tid, paymentDateFrom, paymentDateTo,
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            response.sendError(jakarta.servlet.http.HttpServletResponse.SC_FORBIDDEN, "Tenant context missing");
+            return;
+        }
+
+        Specification<Transaction> spec = createSpecification(tenantId, mid, sid, tid, paymentDateFrom, paymentDateTo,
                 transactionDateFrom, transactionDateTo);
-        // Cap export at 100,000 rows to prevent OOM on large datasets
         org.springframework.data.domain.Pageable exportLimit = PageRequest.of(0, 100_000, Sort.by(Sort.Direction.DESC, "paymentDate"));
         List<Transaction> transactions = transactionRepository.findAll(spec, exportLimit).getContent();
 
@@ -103,10 +113,13 @@ public class TransactionController {
         }
     }
 
-    private Specification<Transaction> createSpecification(String mid, String sid, String tid,
+    private Specification<Transaction> createSpecification(Long tenantId, String mid, String sid, String tid,
             LocalDate paymentDateFrom, LocalDate paymentDateTo,
             LocalDate transactionDateFrom, LocalDate transactionDateTo) {
-        Specification<Transaction> spec = Specification.where(null);
+        // SECURITY: every transaction query is scoped to the caller's tenant.
+        // Without this base predicate the endpoint returned fact_transaction
+        // rows across ALL tenants.
+        Specification<Transaction> spec = (root, query, cb) -> cb.equal(root.get("tenantId"), tenantId);
 
         // Date Filters
         if (paymentDateFrom != null) {
@@ -129,21 +142,21 @@ public class TransactionController {
 
         // ID Filters (MID, SID, TID)
         if (mid != null && !mid.isBlank()) {
-            List<Long> merchantIds = resolveMerchantIds(mid);
+            List<Long> merchantIds = resolveMerchantIds(tenantId, mid);
             if (merchantIds.isEmpty())
                 return (root, query, cb) -> cb.disjunction(); // Return empty if no match
             spec = spec.and((root, query, cb) -> root.get("merchantId").in(merchantIds));
         }
 
         if (sid != null && !sid.isBlank()) {
-            List<Long> storeIds = resolveStoreIds(sid);
+            List<Long> storeIds = resolveStoreIds(tenantId, sid);
             if (storeIds.isEmpty())
                 return (root, query, cb) -> cb.disjunction();
             spec = spec.and((root, query, cb) -> root.get("storeId").in(storeIds));
         }
 
         if (tid != null && !tid.isBlank()) {
-            List<Long> terminalIds = resolveTerminalIds(tid);
+            List<Long> terminalIds = resolveTerminalIds(tenantId, tid);
             if (terminalIds.isEmpty())
                 return (root, query, cb) -> cb.disjunction();
             spec = spec.and((root, query, cb) -> root.get("terminalId").in(terminalIds));
@@ -152,16 +165,20 @@ public class TransactionController {
         return spec;
     }
 
-    private List<Long> resolveMerchantIds(String mid) {
-        // Find merchants where MID contains the search string
-        Specification<Merchant> spec = (root, query, cb) -> cb.like(root.get("mid"), "%" + mid + "%");
+    private List<Long> resolveMerchantIds(Long tenantId, String mid) {
+        // Find merchants where MID contains the search string — scoped to tenant.
+        Specification<Merchant> spec = (root, query, cb) -> cb.and(
+                cb.equal(root.get("tenantId"), tenantId),
+                cb.like(root.get("mid"), "%" + mid + "%"));
         List<Merchant> merchants = merchantRepository.findAll(spec);
         return merchants.stream().map(Merchant::getMerchantId).collect(Collectors.toList());
     }
 
-    private List<Long> resolveStoreIds(String sid) {
-        // Find stores where SID contains search string
-        Specification<Store> spec = (root, query, cb) -> cb.like(root.get("sid"), "%" + sid + "%");
+    private List<Long> resolveStoreIds(Long tenantId, String sid) {
+        // Find stores where SID contains search string — scoped to tenant.
+        Specification<Store> spec = (root, query, cb) -> cb.and(
+                cb.equal(root.get("tenantId"), tenantId),
+                cb.like(root.get("sid"), "%" + sid + "%"));
         List<Store> stores = storeRepository.findAll(spec);
         return stores.stream().map(Store::getStoreId).collect(Collectors.toList());
     }
@@ -174,9 +191,11 @@ public class TransactionController {
         return "****" + cardNumber.substring(cardNumber.length() - 4);
     }
 
-    private List<Long> resolveTerminalIds(String tid) {
-        // Find terminals where TID contains search string
-        Specification<Terminal> spec = (root, query, cb) -> cb.like(root.get("tid"), "%" + tid + "%");
+    private List<Long> resolveTerminalIds(Long tenantId, String tid) {
+        // Find terminals where TID contains search string — scoped to tenant.
+        Specification<Terminal> spec = (root, query, cb) -> cb.and(
+                cb.equal(root.get("tenantId"), tenantId),
+                cb.like(root.get("tid"), "%" + tid + "%"));
         List<Terminal> terminals = terminalRepository.findAll(spec);
         return terminals.stream().map(Terminal::getTerminalId).collect(Collectors.toList());
     }

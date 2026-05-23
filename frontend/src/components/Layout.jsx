@@ -419,19 +419,19 @@ const Layout = () => {
             )}
 
             <Box component="main" sx={{
-                flexGrow: 1, bgcolor: '#f1f5f9', color: '#0f172a',
+                flexGrow: 1, bgcolor: 'var(--bg)', color: 'var(--text)',
                 minHeight: '100vh', width: `calc(100% - ${effectiveW}px)`,
                 transition: 'width 0.22s cubic-bezier(0.4,0,0.2,1)',
             }}>
                 {isMobile && (
                     <Box sx={{
                         display: 'flex', alignItems: 'center', gap: 1.5, px: 2, py: 1.3,
-                        borderBottom: '1px solid #e2e8f0', bgcolor: '#fff',
+                        borderBottom: '1px solid var(--border)', bgcolor: 'var(--bg-card)',
                     }}>
-                        <IconButton onClick={() => setMobileOpen(true)} sx={{ color: '#0f172a' }}>
+                        <IconButton onClick={() => setMobileOpen(true)} sx={{ color: 'var(--text)' }}>
                             <LucideIcons.Menu size={20} />
                         </IconButton>
-                        <Typography fontWeight={700} sx={{ fontSize: '0.95rem', color: '#0f172a' }}>Acquira</Typography>
+                        <Typography fontWeight={700} sx={{ fontSize: '0.95rem', color: 'var(--text)' }}>Acquira</Typography>
                     </Box>
                 )}
                 <div key={`tenant-${activeTenantId}-${tenantVersion}`} className="page-transition">

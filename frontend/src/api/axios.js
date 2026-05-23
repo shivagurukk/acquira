@@ -1,11 +1,15 @@
 import axios from 'axios';
+import { clearAuthStorage } from '../utils/authStorage';
 
 const api = axios.create({
     baseURL: '/api',
     withCredentials: true, // #12: Send HttpOnly cookies with requests (for refresh token)
 });
 
-// In-memory refresh token (NOT localStorage) — survives tab lifetime only, not XSS-exfiltrable
+// Refresh token cache. The primary mechanism is the HttpOnly cookie set
+// by the backend; this localStorage copy is a backward-compat fallback
+// used when the cookie is unavailable (e.g. plain-HTTP dev, where the
+// Secure cookie is not sent). It is therefore NOT XSS-safe — the cookie is.
 let _memRefreshToken = localStorage.getItem('refreshToken') || null;
 
 // Request interceptor — attach JWT and tenant header
@@ -50,7 +54,7 @@ api.interceptors.response.use(
 
             // If no refresh token or this IS the refresh request, logout
             if (!refreshToken || originalRequest.url === '/auth/refresh') {
-                localStorage.clear();
+                clearAuthStorage();
                 window.location.href = '/login';
                 return Promise.reject(error);
             }
@@ -74,9 +78,9 @@ api.interceptors.response.use(
                 const { jwt, refreshToken: newRefresh } = res.data;
 
                 localStorage.setItem('token', jwt);
-                // Store refresh token in memory only (HttpOnly cookie is primary)
+                // Fallback copy; HttpOnly cookie remains the primary store.
                 _memRefreshToken = newRefresh;
-                localStorage.setItem('refreshToken', newRefresh); // backward compat — remove after full migration
+                localStorage.setItem('refreshToken', newRefresh);
 
                 api.defaults.headers.common.Authorization = `Bearer ${jwt}`;
                 originalRequest.headers.Authorization = `Bearer ${jwt}`;
@@ -85,7 +89,7 @@ api.interceptors.response.use(
                 return api(originalRequest);
             } catch (refreshError) {
                 processQueue(refreshError, null);
-                localStorage.clear();
+                clearAuthStorage();
                 window.location.href = '/login';
                 return Promise.reject(refreshError);
             } finally {

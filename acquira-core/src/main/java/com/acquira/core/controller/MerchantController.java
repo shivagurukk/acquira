@@ -146,7 +146,7 @@ public class MerchantController {
 
         // Aggregate KPIs per merchant
         String kpiSql = """
-            SELECT m.merchant_id, m.name, m.mid, m.status,
+            SELECT m.merchant_id, m.name, m.mid, m.status, m.city,
                    COALESCE(SUM(s.total_volume), 0) as total_volume,
                    COALESCE(SUM(s.total_txns), 0) as total_txns,
                    COALESCE(SUM(s.total_msf), 0) as total_margin,
@@ -157,7 +157,7 @@ public class MerchantController {
             LEFT JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
                 AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
             WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
-            GROUP BY m.merchant_id, m.name, m.mid, m.status
+            GROUP BY m.merchant_id, m.name, m.mid, m.status, m.city
             """.formatted(inClause);
 
         // Monthly trend per merchant
@@ -229,7 +229,9 @@ public class MerchantController {
             m.put("name", row.get("name"));
             m.put("mid", row.get("mid"));
             m.put("status", row.get("status"));
-            m.put("city", "");
+            // city now comes from dim_merchant.city (previously hard-coded blank,
+            // which rendered as an empty chip on the comparison card).
+            m.put("city", row.get("city") != null ? row.get("city") : "");
             m.put("totalVolume", vol);
             m.put("totalTxns", (long) txns);
             m.put("avgTxnValue", avg);

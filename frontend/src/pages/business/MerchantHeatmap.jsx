@@ -100,7 +100,7 @@ const MerchantHeatmap = () => {
     };
 
     const getHeatmapColor = (value) => {
-        if (!value || maxVolume === 0) return { bg: '#ffffff', color: '#9ca3af' };
+        if (!value || maxVolume === 0) return { bg: 'transparent', color: 'var(--text-muted, #9ca3af)' };
         const pct = value / maxVolume;
         if (pct > 0.75) return { bg: '#14532d', color: '#ffffff' };
         if (pct > 0.50) return { bg: '#16a34a', color: '#ffffff' };
@@ -124,16 +124,16 @@ const MerchantHeatmap = () => {
     const columns = [
         {
             field: 'merchantId', headerName: 'MID', width: 120,
-            renderCell: (params) => <Typography variant="body2" color="#64748b" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{params.value}</Typography>
+            renderCell: (params) => <Typography variant="body2" color="var(--text-secondary, #64748b)" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{params.value}</Typography>
         },
         {
             field: 'merchantName', headerName: 'MERCHANT NAME', width: 220,
             renderCell: (params) => (
                 <Stack direction="row" spacing={1.5} alignItems="center" sx={{ height: '100%' }}>
-                    <Avatar sx={{ bgcolor: '#f1f5f9', color: '#475569', fontWeight: 'bold', width: 28, height: 28, fontSize: '0.7rem' }}>
+                    <Avatar sx={{ bgcolor: 'var(--bg-subtle, #f1f5f9)', color: 'var(--text-secondary, #475569)', fontWeight: 'bold', width: 28, height: 28, fontSize: '0.7rem' }}>
                         {params.value ? params.value.charAt(0) : '?'}
                     </Avatar>
-                    <Typography variant="body2" fontWeight="700" color="#0f172a" noWrap title={params.value}>{params.value}</Typography>
+                    <Typography variant="body2" fontWeight="700" color="var(--text, #0f172a)" noWrap title={params.value}>{params.value}</Typography>
                 </Stack>
             )
         },
@@ -156,7 +156,7 @@ const MerchantHeatmap = () => {
         })),
         {
             field: 'total', headerName: 'TOTAL', width: 140, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography color="#0f172a" fontWeight="800" variant="body2">{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography color="var(--text, #0f172a)" fontWeight="800" variant="body2">{formatCurrency(params.value)}</Typography>
         }
     ];
 
@@ -200,8 +200,8 @@ const MerchantHeatmap = () => {
 
             <KpiCards cards={kpis} />
 
-            <Paper elevation={0} sx={{ p: 1.5, mb: 2, borderRadius: '10px', display: 'flex', alignItems: 'center', gap: 3, bgcolor: 'white', border: '1px solid #e2e8f0' }}>
-                <Typography variant="caption" fontWeight="bold" color="#64748b">LEGEND:</Typography>
+            <Paper elevation={0} sx={{ p: 1.5, mb: 2, borderRadius: '10px', display: 'flex', alignItems: 'center', gap: 3, bgcolor: 'var(--bg-card, white)', border: '1px solid var(--border, #e2e8f0)' }}>
+                <Typography variant="caption" fontWeight="bold" color="var(--text-secondary, #64748b)">LEGEND:</Typography>
                 {[
                     { color: '#14532d', label: 'High' }, { color: '#16a34a', label: 'Good' },
                     { color: '#22c55e', label: 'Med' }, { color: '#86efac', label: 'Low' },
@@ -209,19 +209,19 @@ const MerchantHeatmap = () => {
                 ].map(type => (
                     <Stack key={type.label} direction="row" spacing={0.75} alignItems="center">
                         <Box sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: type.color }} />
-                        <Typography variant="caption" fontWeight="600" color="#64748b">{type.label}</Typography>
+                        <Typography variant="caption" fontWeight="600" color="var(--text-secondary, #64748b)">{type.label}</Typography>
                     </Stack>
                 ))}
             </Paper>
 
-            <Paper elevation={0} sx={{ ...premiumTableWrapper, border: '1px solid #e2e8f0' }}>
+            <Paper elevation={0} sx={{ ...premiumTableWrapper, border: '1px solid var(--border, #e2e8f0)' }}>
                 <DataGrid
                     rows={data} columns={columns} loading={loading} disableRowSelectionOnClick
                     rowHeight={50}
                     slots={{ toolbar: GridToolbar }}
                     slotProps={{ toolbar: { showQuickFilter: true, quickFilterProps: { debounceMs: 500 } } }}
                     sx={{ ...premiumDataGridStyles,
-                        '& .MuiDataGrid-cell': { borderBottom: '1px solid #f1f5f9', padding: 0 },
+                        '& .MuiDataGrid-cell': { borderBottom: '1px solid var(--border-light, #f1f5f9)', padding: 0 },
                         '& .MuiDataGrid-row:hover': { bgcolor: 'transparent' },
                     }}
                 />

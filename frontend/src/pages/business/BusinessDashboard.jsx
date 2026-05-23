@@ -87,10 +87,10 @@ const BusinessDashboard = () => {
     }, [kpis]);
 
     return (
-        <div style={{ background: '#f1f5f9', minHeight: '100vh' }}>
+        <div style={{ background: 'var(--bg)', minHeight: '100vh' }}>
             {/* ═══ Header ═══ */}
             <div style={{
-                padding: '20px 28px', background: '#fff', borderBottom: '1px solid #e2e8f0',
+                padding: '20px 28px', background: 'var(--bg-card)', borderBottom: '1px solid var(--border)',
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 position: 'sticky', top: 0, zIndex: 10,
             }}>
@@ -104,10 +104,10 @@ const BusinessDashboard = () => {
                         <LayoutGrid size={20} color="#fff" />
                     </div>
                     <div>
-                        <h1 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.03em' }}>
+                        <h1 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.03em' }}>
                             Business Dashboard
                         </h1>
-                        <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: '#94a3b8' }}>
+                        <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                             {kpis?.effectiveDate ? `Data as of ${kpis.effectiveDate}` : 'Merchant portfolio overview'}
                         </p>
                     </div>
@@ -115,16 +115,16 @@ const BusinessDashboard = () => {
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <button onClick={() => setFilterOpen(true)} style={{
                         display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
-                        background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, cursor: 'pointer',
-                        color: '#64748b', fontSize: 13, fontWeight: 600,
+                        background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer',
+                        color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600,
                     }}>
                         <Filter size={15} /> Filters
                     </button>
                     <button onClick={fetchKpis} style={{
-                        padding: 9, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10,
+                        padding: 9, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10,
                         cursor: 'pointer', display: 'flex', alignItems: 'center',
                     }}>
-                        <RefreshCw size={15} color="#64748b" className={loading ? 'spin' : ''} />
+                        <RefreshCw size={15} color="var(--text-secondary)" className={loading ? 'spin' : ''} />
                     </button>
                     <button onClick={() => navigate('/business/executive-dashboard-v2')} style={{
                         display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px',
@@ -162,12 +162,12 @@ const BusinessDashboard = () => {
                                 }}>
                                     <h2 style={{
                                         margin: 0, fontSize: '0.78rem', fontWeight: 700,
-                                        color: '#64748b', textTransform: 'uppercase',
+                                        color: 'var(--text-secondary)', textTransform: 'uppercase',
                                         letterSpacing: '0.06em',
                                     }}>
                                         {section.title}
                                     </h2>
-                                    <div style={{ flex: 1, height: 1, background: '#e2e8f0' }} />
+                                    <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                                 </div>
 
                                 {/* Cards grid */}
@@ -236,10 +236,10 @@ const BusinessDashboard = () => {
 
                         {/* Quick Links */}
                         <div style={{
-                            background: '#fff', borderRadius: 14, border: '1px solid #e2e8f0',
-                            padding: '22px 24px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                            background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)',
+                            padding: '22px 24px', boxShadow: 'var(--shadow-card)',
                         }}>
-                            <h3 style={{ margin: '0 0 16px', fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>
+                            <h3 style={{ margin: '0 0 16px', fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)' }}>
                                 Quick Actions
                             </h3>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
@@ -251,14 +251,14 @@ const BusinessDashboard = () => {
                                 ].map(link => (
                                     <button key={link.path} onClick={() => navigate(link.path)} style={{
                                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                        padding: '14px 16px', background: '#f8fafc', border: '1px solid #e2e8f0',
+                                        padding: '14px 16px', background: 'var(--bg-subtle)', border: '1px solid var(--border)',
                                         borderRadius: 10, cursor: 'pointer', width: '100%', textAlign: 'left',
                                         fontFamily: 'inherit', transition: 'all 0.15s',
                                     }}
-                                    onMouseEnter={e => { e.currentTarget.style.borderColor = link.color; e.currentTarget.style.background = '#fff'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}
+                                    onMouseEnter={e => { e.currentTarget.style.borderColor = link.color; e.currentTarget.style.background = 'var(--bg-card)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--bg-subtle)'; }}
                                     >
-                                        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>{link.label}</span>
+                                        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text)' }}>{link.label}</span>
                                         <ArrowUpRight size={14} color={link.color} />
                                     </button>
                                 ))}

@@ -219,6 +219,33 @@ public class MerchantInsightService {
     }
 
     public MerchantInsightsDTO getInsights(Long merchantId, int year, int month) {
+        return getInsights(merchantId, year, month, null);
+    }
+
+    /**
+     * Tenant-scoped insight fetch. When {@code expectedTenantId} is non-null, the
+     * requested merchant MUST belong to that tenant or a SecurityException is
+     * thrown. This closes the IDOR where any authenticated user could pass an
+     * arbitrary (guessable, global BIGSERIAL) merchantId and pull another
+     * tenant's full sales / card / loyalty data.
+     *
+     * Passing null preserves the old unscoped behaviour for trusted internal
+     * batch callers (e.g. bulk PDF generation that has already constrained the
+     * merchant list to one tenant).
+     */
+    public MerchantInsightsDTO getInsights(Long merchantId, int year, int month, Long expectedTenantId) {
+        if (expectedTenantId != null) {
+            com.acquira.common.model.Merchant m = merchantRepository.findById(merchantId).orElse(null);
+            if (m == null || m.getTenantId() == null
+                    || !expectedTenantId.equals(m.getTenantId())) {
+                throw new SecurityException(
+                    "Merchant " + merchantId + " is not accessible for tenant " + expectedTenantId);
+            }
+        }
+        return getInsightsInternal(merchantId, year, month);
+    }
+
+    private MerchantInsightsDTO getInsightsInternal(Long merchantId, int year, int month) {
         LocalDate startOfMonth = LocalDate.of(year, month, 1);
         LocalDate endOfMonth = startOfMonth.plusMonths(1).minusDays(1);
         LocalDate startOfLastMonth = startOfMonth.minusMonths(1);

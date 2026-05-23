@@ -173,40 +173,41 @@ html.dark ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
    DARK MODE
    ══════════════════════════════════════════════════════════════ */
 html.dark {
-  --bg:           #0a0a0a;
-  --bg-card:      #141414;
-  --bg-subtle:    #1a1a1a;
-  --bg-muted:     #0a0a0a;
-  --bg-hover:     #1a1a1a;
+  /* Slate dark palette — kept in sync with ThemeContext (the live source). */
+  --bg:           #0f172a;
+  --bg-card:      #1e293b;
+  --bg-subtle:    #0f172a;
+  --bg-muted:     #0f172a;
+  --bg-hover:     #243049;
 
-  --text:           #f5f5f5;
-  --text-secondary: #a3a3a3;
-  --text-muted:     #737373;
-  --text-disabled:  #525252;
+  --text:           #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted:     #64748b;
+  --text-disabled:  #475569;
 
-  --border:       #262626;
-  --border-light: #1a1a1a;
+  --border:       #334155;
+  --border-light: #1e293b;
 
-  --shadow-card:  0 1px 3px rgb(0 0 0 / 0.3);
-  --shadow-hover: 0 8px 24px -4px rgb(0 0 0 / 0.4);
+  --shadow-card:  0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-hover: 0 8px 24px -4px rgb(0 0 0 / 0.5);
 
-  --success-bg:  rgba(5,150,105,0.1);
-  --warning-bg:  rgba(217,119,6,0.1);
-  --danger-bg:   rgba(220,38,38,0.1);
-  --info-bg:     rgba(37,99,235,0.1);
+  --success-bg:  rgba(5,150,105,0.12);
+  --warning-bg:  rgba(217,119,6,0.12);
+  --danger-bg:   rgba(220,38,38,0.12);
+  --info-bg:     rgba(37,99,235,0.12);
 
-  --bg-panel:    #141414;
-  --bg-dark:     #0a0a0a;
-  --text-main:   #f5f5f5;
-  --border-light-alt: #262626;
-  --glass-border: 1px solid #262626;
+  --bg-panel:    #1e293b;
+  --bg-dark:     #0f172a;
+  --text-main:   #f1f5f9;
+  --border-light-alt: #334155;
+  --glass-border: 1px solid #334155;
 
-  --sidebar-bg:     #0a0a0a;
-  --sidebar-border: #1a1a1a;
-  --sidebar-text:   #e5e5e5;
-  --sidebar-text-secondary: #737373;
-  --sidebar-hover:  #141414;
-  --sidebar-active-bg: rgba(37,99,235,0.1);
+  --sidebar-bg:     #020617;
+  --sidebar-border: #1e293b;
+  --sidebar-text:   #f1f5f9;
+  --sidebar-text-secondary: #94a3b8;
+  --sidebar-hover:  #1e293b;
+  --sidebar-active-bg: rgba(59,130,246,0.12);
   --sidebar-active-text: #60a5fa;
 }
 

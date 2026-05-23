@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Box, Paper, Typography, Stack, Tabs, Tab, Chip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
-import { Layers, AlertCircle, Users, Hash, DollarSign, TrendingUp } from 'lucide-react';
+import { Layers, AlertCircle, Users, Hash, DollarSign, TrendingUp, Inbox } from 'lucide-react';
 import api from '../api/axios';
 import PremiumReportHeader from '../components/PremiumReportHeader';
 import BusinessFilters from '../components/BusinessFilters';
@@ -9,6 +9,7 @@ import KpiCards from '../components/KpiCards';
 import { exportToCSV } from '../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../theme/dataGridStyles';
 import { useAuth } from '../contexts/AuthContext';
+import { useDataBounds } from '../hooks/useDataBounds';
 
 /**
  * Group Management Reports — restructured to match the rest of the business
@@ -67,7 +68,6 @@ const GroupReports = () => {
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
     const [errorMsg, setErrorMsg] = useState(null);
-    const [boundsLoaded, setBoundsLoaded] = useState(false);
 
     const [filters, setFilters] = useState({
         datePreset: 'MONTH', startDate: '', endDate: '',
@@ -76,36 +76,23 @@ const GroupReports = () => {
         merchantName: '', midList: [], sidList: [],
     });
 
-    /* ── Resolve sensible default date range from /api/business/data-bounds ── */
+    /* ── Default date range ─────────────────────────────────────── */
+    // useDataBounds resolves the FULL window of data that actually exists
+    // (earliest -> latest) from /api/business/data-bounds, with a wide fallback.
+    // Shared across all business report pages so the logic can't drift.
+    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds();
+
+    // Push the resolved window into the filter state once it arrives. Marked
+    // CUSTOM because we're supplying an explicit range, not a preset.
     useEffect(() => {
-        const fmtLocal = (d) => {
-            const yr = d.getFullYear();
-            const mo = String(d.getMonth() + 1).padStart(2, '0');
-            const dy = String(d.getDate()).padStart(2, '0');
-            return `${yr}-${mo}-${dy}`;
-        };
-        const loadBounds = async () => {
-            try {
-                const res = await api.get('/business/data-bounds');
-                const b = res.data;
-                if (b?.latest) {
-                    const latest = new Date(b.latest);
-                    const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
-                    setFilters(prev => ({
-                        ...prev,
-                        startDate: fmtLocal(first),
-                        endDate:   fmtLocal(latest),
-                    }));
-                    setBoundsLoaded(true);
-                    return;
-                }
-            } catch (e) { /* fall through */ }
-            const range = computeDateRange('MONTH');
-            setFilters(prev => ({ ...prev, ...range }));
-            setBoundsLoaded(true);
-        };
-        loadBounds();
-    }, []);
+        if (!boundsLoaded) return;
+        setFilters(prev => ({
+            ...prev,
+            datePreset: 'CUSTOM',
+            startDate: boundsStart,
+            endDate:   boundsEnd,
+        }));
+    }, [boundsLoaded, boundsStart, boundsEnd]);
 
     /* ── Fetch report data ──────────────────────────────────────────── */
     const fetchData = useCallback(async (overrideFilters) => {
@@ -114,10 +101,19 @@ const GroupReports = () => {
         try {
             const payload = overrideFilters || filters;
             const body = { ...payload };
-            if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
+            // Date resolution. A non-CUSTOM datePreset must ALWAYS win - when the
+            // user clicks Today / Month / Year / Previous Month they expect that
+            // range applied, even though loadBounds() pre-populated startDate/
+            // endDate on mount. The old guard `(!startDate || !endDate)` meant the
+            // preset was silently ignored whenever bounds had already filled the
+            // dates in (i.e. almost always) - the period chips did nothing.
+            // CUSTOM means "use the explicit startDate/endDate as-is".
+            if (body.datePreset && body.datePreset !== 'CUSTOM') {
                 const range = computeDateRange(body.datePreset);
-                body.startDate = range.startDate;
-                body.endDate = range.endDate;
+                if (range.startDate && range.endDate) {
+                    body.startDate = range.startDate;
+                    body.endDate = range.endDate;
+                }
             }
             delete body.datePreset;
 
@@ -291,6 +287,28 @@ const GroupReports = () => {
                         <Box>
                             <Typography variant="body2" fontWeight="600" color="#991b1b">Failed to load report</Typography>
                             <Typography variant="caption" color="#7f1d1d">{errorMsg}</Typography>
+                        </Box>
+                    </Stack>
+                </Paper>
+            )}
+
+            {/* Empty-state notice: the request SUCCEEDED but returned no rows.
+                Distinct from errorMsg (request failed). All four tabs read from
+                sum_daily_merchant, which is populated only by the transaction
+                ingestion pipeline - so the overwhelmingly common cause of an
+                empty result is that no transaction file has been uploaded yet
+                (a merchant-master upload alone does not populate it). */}
+            {!loading && !errorMsg && data.length === 0 && (
+                <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, bgcolor: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                        <Inbox size={18} color="var(--text-muted)" />
+                        <Box>
+                            <Typography variant="body2" fontWeight="600" color="var(--text)">No data for the selected period</Typography>
+                            <Typography variant="caption" color="var(--text-secondary)">
+                                Group reports are built from transaction summaries. If you have
+                                only uploaded merchant master data, upload a transaction file to
+                                populate these tabs. Otherwise, try a wider date range.
+                            </Typography>
                         </Box>
                     </Stack>
                 </Paper>

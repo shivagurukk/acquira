@@ -271,10 +271,10 @@ const UserManagement = () => {
             <div style={{ position: 'relative', flex: 1, minWidth: 220 }}>
               <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
               <input placeholder="Search users..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                style={{ width: '100%', padding: '9px 12px 9px 34px', borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
+                style={{ width: '100%', padding: '9px 12px 9px 34px', borderRadius: 10, border: '1px solid var(--border, #e2e8f0)', fontSize: 13, outline: 'none', boxSizing: 'border-box', background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)' }} />
             </div>
             <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-              style={{ padding: '9px 12px', borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 13, background: '#fff', minWidth: 130 }}>
+              style={{ padding: '9px 12px', borderRadius: 10, border: '1px solid var(--border, #e2e8f0)', fontSize: 13, background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)', minWidth: 130 }}>
               <option value="ALL">All Users</option>
               <option value="ACTIVE">Active</option>
               <option value="INACTIVE">Inactive</option>
@@ -354,8 +354,8 @@ const UserManagement = () => {
 
                   {/* Expanded Tenant Access Panel */}
                   {isExpanded && (
-                    <div style={{ background: '#f8fafc', borderTop: '1px solid #e5e7eb', padding: '16px 20px 16px 68px' }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    <div style={{ background: 'var(--bg-subtle, #f8fafc)', borderTop: '1px solid var(--border, #e5e7eb)', padding: '16px 20px 16px 68px' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary, #374151)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                         Tenant Assignments — {user.username}
                       </div>
 
@@ -471,7 +471,7 @@ const UserManagement = () => {
         {isModalOpen && (
           <div style={overlayStyle}>
             <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              style={{ background: '#fff', padding: 28, borderRadius: 16, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto' }}>
+              style={{ background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)', padding: 28, borderRadius: 16, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{modalUser ? 'Edit User' : 'Create User'}</h2>
                 <button onClick={() => setIsModalOpen(false)} style={closeBtnStyle}><X size={18} /></button>
@@ -579,7 +579,7 @@ const UserManagement = () => {
         {resetModal && (
           <div style={overlayStyle}>
             <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              style={{ background: '#fff', padding: 28, borderRadius: 16, width: '100%', maxWidth: 420 }}>
+              style={{ background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)', padding: 28, borderRadius: 16, width: '100%', maxWidth: 420 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <KeyRound size={18} color="#f59e0b" /> Reset Password
@@ -612,7 +612,7 @@ const UserManagement = () => {
         {approveModal && (
           <div style={overlayStyle}>
             <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              style={{ background: '#fff', padding: 28, borderRadius: 16, width: '100%', maxWidth: 480 }}>
+              style={{ background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)', padding: 28, borderRadius: 16, width: '100%', maxWidth: 480 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Approve Access Request</h2>
                 <button onClick={() => setApproveModal(null)} style={closeBtnStyle}><X size={18} /></button>
@@ -674,15 +674,15 @@ const Field = ({ label, icon: Icon, value, onChange, error, type = 'text', disab
 
 // ─── Styles ──────────────────────────────────────────────
 const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 50 };
-const labelStyle = { display: 'block', marginBottom: 5, fontSize: 12, fontWeight: 600, color: '#374151' };
-const inputStyle = { width: '100%', padding: '10px 12px 10px 38px', borderRadius: 10, border: '1px solid #e2e8f0', boxSizing: 'border-box', fontSize: 13, outline: 'none' };
+const labelStyle = { display: 'block', marginBottom: 5, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary, #374151)' };
+const inputStyle = { width: '100%', padding: '10px 12px 10px 38px', borderRadius: 10, border: '1px solid var(--border, #e2e8f0)', boxSizing: 'border-box', fontSize: 13, outline: 'none', background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)' };
 const errorBoxStyle = { background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 8, fontSize: 13, border: '1px solid #fecaca', marginBottom: 12 };
-const closeBtnStyle = { background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: 4 };
-const cancelBtnStyle = { padding: '10px 20px', borderRadius: 10, background: '#f1f5f9', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500 };
-const primaryBtnStyle = { padding: '10px 20px', borderRadius: 10, background: '#0f172a', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 };
+const closeBtnStyle = { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary, #64748b)', padding: 4 };
+const cancelBtnStyle = { padding: '10px 20px', borderRadius: 10, background: 'var(--bg-subtle, #f1f5f9)', color: 'var(--text, inherit)', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500 };
+const primaryBtnStyle = { padding: '10px 20px', borderRadius: 10, background: 'var(--brand, #0f172a)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 };
 const actionBtnStyle = (color) => ({ background: 'transparent', border: 'none', cursor: 'pointer', color, padding: 6, borderRadius: 6 });
-const thSm = { padding: '6px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: '#64748b', textTransform: 'uppercase' };
-const tdSm = { padding: '8px 10px', fontSize: 13 };
-const selectSm = { padding: '7px 10px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12, background: '#fff', minWidth: 140 };
+const thSm = { padding: '6px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary, #64748b)', textTransform: 'uppercase' };
+const tdSm = { padding: '8px 10px', fontSize: 13, color: 'var(--text, inherit)' };
+const selectSm = { padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border, #e2e8f0)', fontSize: 12, background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)', minWidth: 140 };
 
 export default UserManagement;

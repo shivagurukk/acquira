@@ -76,46 +76,50 @@ const Dashboard = () => {
             };
             const body = JSON.stringify({ startDate: fmtLocal(start), endDate: fmtLocal(end) });
 
-            const metricsRes = await fetch('/api/business/executive-metrics', { method: 'POST', headers, body });
-            if (metricsRes.ok) setMetrics(await metricsRes.json());
+            // PERF: these four dashboard queries are independent of each other.
+            // Fire them concurrently instead of awaiting each in series — dashboard
+            // load time drops to roughly the slowest single call instead of the sum.
+            const metricsP = fetch('/api/business/executive-metrics', { method: 'POST', headers, body })
+                .then(r => r.ok ? r.json() : null)
+                .then(d => { if (d) setMetrics(d); })
+                .catch(e => console.warn('Metrics fetch failed', e));
 
-            try {
-                const dailyTrendRes = await fetch('/api/business/performance-dashboard?groupBy=DAY', { method: 'POST', headers, body });
-                if (dailyTrendRes.ok) {
-                    const trendData = await dailyTrendRes.json();
+            const dailyP = fetch('/api/business/performance-dashboard?groupBy=DAY', { method: 'POST', headers, body })
+                .then(r => r.ok ? r.json() : null)
+                .then(trendData => {
                     if (trendData?.length > 0) {
                         setDailyData(trendData.filter(r => r.row_label).sort((a, b) => a.row_label.localeCompare(b.row_label)).slice(-30).map(r => ({
                             date: fmt.date(r.row_label), volume: Number(r.total_vol || 0),
                             txns: Number((r.dom_debit_cnt || 0) + (r.dom_credit_cnt || 0) + (r.int_cnt || 0)), msf: Number(r.total_msf || 0),
                         })));
                     }
-                }
-            } catch (e) { console.warn('Daily trend fetch failed', e); }
+                })
+                .catch(e => console.warn('Daily trend fetch failed', e));
 
-            try {
-                const merchantRes = await fetch('/api/business/performance-dashboard?groupBy=MERCHANT', { method: 'POST', headers, body });
-                if (merchantRes.ok) {
-                    const merchData = await merchantRes.json();
+            const merchantP = fetch('/api/business/performance-dashboard?groupBy=MERCHANT', { method: 'POST', headers, body })
+                .then(r => r.ok ? r.json() : null)
+                .then(merchData => {
                     if (merchData?.length > 0) {
                         setTopMerchants(merchData.map(r => ({
                             name: r.merchant_name || r.row_label || 'Unknown', volume: Number(r.total_vol || 0),
                             txns: Number((r.dom_debit_cnt || 0) + (r.dom_credit_cnt || 0) + (r.int_cnt || 0)), msf: Number(r.total_msf || 0),
                         })).sort((a, b) => b.volume - a.volume).slice(0, 8));
                     }
-                }
-            } catch (e) { console.warn('Top merchants fetch failed', e); }
+                })
+                .catch(e => console.warn('Top merchants fetch failed', e));
 
-            try {
-                const schemeRes = await fetch('/api/analytics/scheme-breakdown', { method: 'POST', headers, body });
-                if (schemeRes.ok) {
-                    const schData = await schemeRes.json();
+            const schemeP = fetch('/api/analytics/scheme-breakdown', { method: 'POST', headers, body })
+                .then(r => r.ok ? r.json() : null)
+                .then(schData => {
                     if (schData?.length > 0) {
                         setSchemeData(schData.filter(r => r.card_scheme && Number(r.total_volume || 0) > 0).map(r => ({
                             name: r.card_scheme, value: Number(r.total_volume || 0), count: Number(r.total_txns || 0),
                         })).sort((a, b) => b.value - a.value).slice(0, 6));
                     }
-                }
-            } catch (e) { console.warn('Scheme breakdown fetch failed', e); }
+                })
+                .catch(e => console.warn('Scheme breakdown fetch failed', e));
+
+            await Promise.all([metricsP, dailyP, merchantP, schemeP]);
 
             setLastRefresh(new Date());
         } catch (error) { console.error("Failed to fetch dashboard data", error); }
@@ -142,16 +146,16 @@ const Dashboard = () => {
     const totalSchemeVol = useMemo(() => schemeData.reduce((s, d) => s + d.value, 0), [schemeData]);
 
     const tooltipStyle = {
-        background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12,
-        boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12, padding: '12px 16px',
+        background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12,
+        boxShadow: 'var(--shadow-hover)', fontSize: 12, padding: '12px 16px', color: 'var(--text)',
     };
 
     return (
-        <div style={{ flex: 1, overflowY: 'auto', background: '#f1f5f9', minHeight: '100vh', fontFamily: "'Inter', -apple-system, sans-serif" }}>
+        <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', minHeight: '100vh', fontFamily: "'Inter', -apple-system, sans-serif" }}>
             {/* ═══ Header ═══ */}
             <div style={{
-                padding: '20px 28px', background: '#fff',
-                borderBottom: '1px solid #e2e8f0',
+                padding: '20px 28px', background: 'var(--bg-card)',
+                borderBottom: '1px solid var(--border)',
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 position: 'sticky', top: 0, zIndex: 10,
             }}>
@@ -165,33 +169,33 @@ const Dashboard = () => {
                         <BarChart3 size={20} color="#fff" strokeWidth={2} />
                     </div>
                     <div>
-                        <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.03em' }}>
+                        <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.03em' }}>
                             Executive Dashboard
                         </h1>
-                        <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: '#94a3b8' }}>
+                        <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                             Real-time financial performance and merchant health
                         </p>
                     </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <div style={{
-                        display: 'flex', background: '#f1f5f9', borderRadius: 10, padding: 3,
-                        border: '1px solid #e2e8f0',
+                        display: 'flex', background: 'var(--bg-subtle)', borderRadius: 10, padding: 3,
+                        border: '1px solid var(--border)',
                     }}>
                         {[{ label: '7D', val: '7' }, { label: '30D', val: '30' }, { label: '90D', val: '90' }, { label: 'YTD', val: '365' }].map(p => (
                             <button key={p.val} onClick={() => setPeriod(p.val)} style={{
                                 padding: '7px 16px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                                 borderRadius: 8,
-                                background: period === p.val ? '#fff' : 'transparent',
-                                color: period === p.val ? '#0f172a' : '#64748b',
+                                background: period === p.val ? 'var(--bg-card)' : 'transparent',
+                                color: period === p.val ? 'var(--text)' : 'var(--text-secondary)',
                                 boxShadow: period === p.val ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
                                 transition: 'all 0.15s',
                             }}>{p.label}</button>
                         ))}
                     </div>
                     <button onClick={fetchAllData} style={{
-                        padding: 9, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10,
-                        cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center',
+                        padding: 9, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10,
+                        cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center',
                         boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
                     }}>
                         <RefreshCw size={15} className={loading ? 'spin' : ''} />
@@ -206,15 +210,15 @@ const Dashboard = () => {
                     {loading && !metrics ? (
                         Array.from({ length: 5 }).map((_, i) => (
                             <div key={i} style={{
-                                background: '#fff', borderRadius: 16, padding: 22,
-                                border: '1px solid #e2e8f0', height: 140,
+                                background: 'var(--bg-card)', borderRadius: 16, padding: 22,
+                                border: '1px solid var(--border)', height: 140,
                             }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
-                                    <div style={{ width: 42, height: 42, borderRadius: 12, background: '#f1f5f9' }} />
-                                    <div style={{ width: 52, height: 24, borderRadius: 8, background: '#f1f5f9' }} />
+                                    <div style={{ width: 42, height: 42, borderRadius: 12, background: 'var(--bg-subtle)' }} />
+                                    <div style={{ width: 52, height: 24, borderRadius: 8, background: 'var(--bg-subtle)' }} />
                                 </div>
-                                <div style={{ width: '60%', height: 26, borderRadius: 6, background: '#f1f5f9', marginBottom: 8 }} />
-                                <div style={{ width: '40%', height: 14, borderRadius: 4, background: '#f1f5f9' }} />
+                                <div style={{ width: '60%', height: 26, borderRadius: 6, background: 'var(--bg-subtle)', marginBottom: 8 }} />
+                                <div style={{ width: '40%', height: 14, borderRadius: 4, background: 'var(--bg-subtle)' }} />
                             </div>
                         ))
                     ) : (
@@ -287,15 +291,15 @@ const Dashboard = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 5fr) minmax(0, 2fr)', gap: 16, marginBottom: 20 }}>
                     {/* Area Chart */}
                     <div style={{
-                        background: '#fff', borderRadius: 16, border: '1px solid #e2e8f0', padding: '22px 24px',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                        background: 'var(--bg-card)', borderRadius: 16, border: '1px solid var(--border)', padding: '22px 24px',
+                        boxShadow: 'var(--shadow-card)',
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                             <div>
-                                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em' }}>
+                                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' }}>
                                     Transaction Volume Trend
                                 </h3>
-                                <p style={{ margin: '3px 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>
+                                <p style={{ margin: '3px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                                     Daily volume over selected period
                                 </p>
                             </div>
@@ -303,7 +307,7 @@ const Dashboard = () => {
                                 {[{ label: 'Volume', color: '#3b82f6' }, { label: 'MSF', color: '#8b5cf6' }].map(l => (
                                     <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.color }} />
-                                        <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: 500 }}>{l.label}</span>
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500 }}>{l.label}</span>
                                     </div>
                                 ))}
                             </div>
@@ -322,7 +326,7 @@ const Dashboard = () => {
                                                 <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.01} />
                                             </linearGradient>
                                         </defs>
-                                        <CartesianGrid strokeDasharray="3 6" stroke="#f1f5f9" vertical={false} />
+                                        <CartesianGrid strokeDasharray="3 6" stroke="var(--border-light)" vertical={false} />
                                         <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
                                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={compactAxisFormatter} />
                                         <ReTooltip contentStyle={tooltipStyle} formatter={(val) => [fmt.currency(val)]} />
@@ -339,13 +343,13 @@ const Dashboard = () => {
 
                     {/* Pie Chart */}
                     <div style={{
-                        background: '#fff', borderRadius: 16, border: '1px solid #e2e8f0', padding: '22px 24px',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                        background: 'var(--bg-card)', borderRadius: 16, border: '1px solid var(--border)', padding: '22px 24px',
+                        boxShadow: 'var(--shadow-card)',
                     }}>
-                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em' }}>
+                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' }}>
                             Volume by Scheme
                         </h3>
-                        <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: '#94a3b8', marginBottom: 8 }}>
+                        <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 8 }}>
                             Card scheme distribution
                         </p>
                         {schemeData.length > 0 ? (
@@ -370,9 +374,9 @@ const Dashboard = () => {
                                                     background: PALETTE[i % PALETTE.length], flexShrink: 0,
                                                     boxShadow: `0 2px 4px ${PALETTE[i % PALETTE.length]}30`,
                                                 }} />
-                                                <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: 500 }}>{s.name}</span>
+                                                <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{s.name}</span>
                                             </div>
-                                            <span style={{ fontSize: '0.85rem', color: '#0f172a', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                                            <span style={{ fontSize: '0.85rem', color: 'var(--text)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                                                 {totalSchemeVol > 0 ? ((s.value / totalSchemeVol) * 100).toFixed(1) : 0}%
                                             </span>
                                         </div>
@@ -388,15 +392,15 @@ const Dashboard = () => {
 
                 {/* ═══ Top Merchants ═══ */}
                 <div style={{
-                    background: '#fff', borderRadius: 16, border: '1px solid #e2e8f0', padding: '22px 24px',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                    background: 'var(--bg-card)', borderRadius: 16, border: '1px solid var(--border)', padding: '22px 24px',
+                    boxShadow: 'var(--shadow-card)',
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                         <div>
-                            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em' }}>
+                            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' }}>
                                 Top Merchants by Volume
                             </h3>
-                            <p style={{ margin: '3px 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>
+                            <p style={{ margin: '3px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                                 Highest performing merchants this period
                             </p>
                         </div>
@@ -418,10 +422,10 @@ const Dashboard = () => {
                         {topMerchants.length > 0 ? (
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={topMerchants} layout="vertical" margin={{ left: 10, right: 30 }}>
-                                    <CartesianGrid strokeDasharray="3 6" stroke="#f1f5f9" horizontal={false} vertical={true} />
+                                    <CartesianGrid strokeDasharray="3 6" stroke="var(--border-light)" horizontal={false} vertical={true} />
                                     <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={compactAxisFormatter} />
                                     <YAxis dataKey="name" type="category" width={140}
-                                        tick={{ fontSize: 12, fill: '#475569', fontWeight: 500 }}
+                                        tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontWeight: 500 }}
                                         axisLine={false} tickLine={false} />
                                     <ReTooltip contentStyle={tooltipStyle} formatter={(val) => [fmt.currency(val), 'Volume']} />
                                     <Bar dataKey="volume" radius={[0, 8, 8, 0]} barSize={24}>
@@ -441,7 +445,7 @@ const Dashboard = () => {
                 {/* Footer */}
                 <div style={{
                     display: 'flex', alignItems: 'center', gap: 6,
-                    fontSize: 12, color: '#94a3b8',
+                    fontSize: 12, color: 'var(--text-muted)',
                     marginTop: 20, justifyContent: 'flex-end',
                 }}>
                     <Clock size={12} /> Last updated: {lastRefresh.toLocaleTimeString()}

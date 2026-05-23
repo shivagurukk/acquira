@@ -11,6 +11,7 @@ import com.acquira.common.repository.ReportQueryConfigRepository;
 import com.acquira.common.repository.ReportRunLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,12 +36,27 @@ public class ScheduledDbPullJob {
     private final UniversalDatabaseClient dbClient;
     private final MetricCalculatorService calculator;
 
+    // Master on/off switch for the nightly 2 AM ingestion job. Defaults to
+    // FALSE (disabled). To re-enable, set in application.properties:
+    //   acquira.scheduler.daily-ingestion.enabled=true
+    // The @Scheduled method still fires on the cron tick, but returns
+    // immediately when the flag is off — this is simpler and safer than
+    // @ConditionalOnProperty (which would remove the bean and could break
+    // injection elsewhere).
+    @Value("${acquira.scheduler.daily-ingestion.enabled:false}")
+    private boolean dailyIngestionEnabled;
+
     /**
-     * Runs daily at 02:00 AM.
+     * Runs daily at 02:00 AM — but only when
+     * acquira.scheduler.daily-ingestion.enabled=true. Disabled by default.
      */
     @Scheduled(cron = "0 0 2 * * ?") // 2 AM Daily
     @Transactional
     public void runDailyIngestion() {
+        if (!dailyIngestionEnabled) {
+            log.debug("Daily Ingestion Job skipped — acquira.scheduler.daily-ingestion.enabled=false");
+            return;
+        }
         log.info("Starting Daily Ingestion Job...");
 
         List<ReportQueryConfig> queries = queryRepo.findByIsActiveTrue();

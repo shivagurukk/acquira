@@ -96,7 +96,23 @@ public class SalesTeamService {
         return result;
     }
 
+    @Transactional
     public void assignSalesUser(Long tenantId, String salesUserId, Long teamLeadId) {
+        if (teamLeadId == null) {
+            throw new IllegalArgumentException("teamLeadId is required");
+        }
+        if (salesUserId == null || salesUserId.isBlank()) {
+            throw new IllegalArgumentException("salesUserId is required");
+        }
+        // Verify the team lead exists AND belongs to this tenant. Without this
+        // check a caller could assign a sales user to another tenant's team
+        // lead simply by guessing an id (IDOR).
+        SalesTeamMapping lead = salesTeamMappingRepository.findById(teamLeadId)
+                .orElseThrow(() -> new IllegalArgumentException("Team Lead not found: " + teamLeadId));
+        if (!Objects.equals(lead.getTenantId(), tenantId)) {
+            throw new IllegalArgumentException("Team Lead " + teamLeadId + " does not belong to this tenant");
+        }
+
         SalesUserAssignment assignment = salesUserAssignmentRepository
                 .findByTenantIdAndSalesUserId(tenantId, salesUserId)
                 .orElse(new SalesUserAssignment());

@@ -8,6 +8,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import { useDataBounds } from '../../hooks/useDataBounds';
 
 /* ── Date Preset Resolver ──────────────────────────────────────── */
 const computeDateRange = (preset) => {
@@ -43,49 +44,28 @@ const MerchantFinancialSummary = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showFilters, setShowFilters] = useState(false);
-    const [boundsLoaded, setBoundsLoaded] = useState(false);
     const [filters, setFilters] = useState(() => {
-        // Empty defaults; data-bounds effect below populates these with the latest
-        // month that actually has data. Falls back to current month on error.
+        // Empty defaults; useDataBounds populates these with the full data window.
         return { datePreset: 'MONTH', startDate: '', endDate: '' };
     });
 
+    /* ── Default date range ─────────────────────────────────────── */
+    // Shared useDataBounds hook: resolves the FULL data window (earliest ->
+    // latest) from /api/business/data-bounds, with a wide fallback. One
+    // implementation shared across every business report page.
+    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds();
+
+    // Push the resolved window into filter state once it arrives. CUSTOM
+    // because we're supplying an explicit range, not a preset.
     useEffect(() => {
-        // Local-date formatter — see PremiumReportHeader.jsx for the timezone bug.
-        const fmtLocal = (d) => {
-            const yr = d.getFullYear();
-            const mo = String(d.getMonth() + 1).padStart(2, '0');
-            const dy = String(d.getDate()).padStart(2, '0');
-            return `${yr}-${mo}-${dy}`;
-        };
-        const loadBounds = async () => {
-            try {
-                const token = localStorage.getItem('token');
-                const tenantId = localStorage.getItem('defaultTenantId');
-                const res = await fetch('/api/business/data-bounds', {
-                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-                });
-                if (res.ok) {
-                    const b = await res.json();
-                    if (b?.latest) {
-                        const latest = new Date(b.latest);
-                        const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
-                        setFilters(prev => ({
-                            ...prev,
-                            startDate: fmtLocal(first),
-                            endDate:   fmtLocal(latest),
-                        }));
-                        setBoundsLoaded(true);
-                        return;
-                    }
-                }
-            } catch (e) { /* fall through */ }
-            const range = computeDateRange('MONTH');
-            setFilters(prev => ({ ...prev, ...range }));
-            setBoundsLoaded(true);
-        };
-        loadBounds();
-    }, []);
+        if (!boundsLoaded) return;
+        setFilters(prev => ({
+            ...prev,
+            datePreset: 'CUSTOM',
+            startDate: boundsStart,
+            endDate:   boundsEnd,
+        }));
+    }, [boundsLoaded, boundsStart, boundsEnd]);
 
     useEffect(() => {
         if (boundsLoaded) fetchReport();
@@ -97,10 +77,15 @@ const MerchantFinancialSummary = () => {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
             const body = { ...filters };
-            if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
+            // A non-CUSTOM preset must ALWAYS win when the user picks one. The old
+            // `(!startDate || !endDate)` guard meant the preset was ignored once
+            // the dates were pre-filled. CUSTOM => use explicit dates as-is.
+            if (body.datePreset && body.datePreset !== 'CUSTOM') {
                 const range = computeDateRange(body.datePreset);
-                body.startDate = range.startDate;
-                body.endDate = range.endDate;
+                if (range.startDate && range.endDate) {
+                    body.startDate = range.startDate;
+                    body.endDate = range.endDate;
+                }
             }
             delete body.datePreset;
             const res = await fetch('/api/business/merchant-financial-summary', {

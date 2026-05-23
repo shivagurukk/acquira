@@ -177,10 +177,15 @@ const MerchantComparison = () => {
                             <Paper sx={{ p: 3, height: '100%', borderRadius: '16px', borderTop: `4px solid ${COLORS[idx]}`, position: 'relative', overflow: 'hidden' }} elevation={0}>
                                 <Box sx={{ mb: 3 }}>
                                     <Typography variant="h6" fontWeight="bold">{m.name}</Typography>
-                                    <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-                                        <Chip label={m.status} size="small" color={m.status === 'ACTIVE' ? 'success' : 'error'} variant="outlined" />
-                                        <Chip label={m.mid} size="small" variant="outlined" />
-                                        <Chip label={m.city} size="small" variant="outlined" />
+                                    <Stack direction="row" spacing={1} sx={{ mt: 0.5 }} flexWrap="wrap" useFlexGap>
+                                        <Chip label={m.status || 'UNKNOWN'} size="small" color={m.status === 'ACTIVE' ? 'success' : 'error'} variant="outlined" />
+                                        {/* MID can be null for auto-created merchants — show an
+                                            explicit fallback instead of an empty (blank) chip. */}
+                                        <Chip label={`MID: ${m.mid || 'N/A'}`} size="small" variant="outlined" />
+                                        {/* city is only rendered when present — the /compare
+                                            endpoint may return it blank, and an empty Chip shows
+                                            as a meaningless blank pill. */}
+                                        {m.city ? <Chip label={m.city} size="small" variant="outlined" /> : null}
                                     </Stack>
                                 </Box>
 

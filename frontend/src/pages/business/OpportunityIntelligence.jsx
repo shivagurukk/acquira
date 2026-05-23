@@ -10,11 +10,13 @@ import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../..
 const OpportunityIntelligence = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [errorMsg, setErrorMsg] = useState(null);
 
     useEffect(() => { fetchData(); }, []);
 
     const fetchData = async () => {
         setLoading(true);
+        setErrorMsg(null);
         try {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('tenantId') || localStorage.getItem('defaultTenantId');
@@ -24,8 +26,18 @@ const OpportunityIntelligence = () => {
             if (res.ok) {
                 const result = await res.json();
                 setData(result.map((r, i) => ({ id: r.scoreId || r.id || i, ...r })));
+            } else {
+                // Previously this branch did nothing - a failed request just left
+                // the screen blank, indistinguishable from "no opportunities".
+                const text = await res.text().catch(() => '');
+                setErrorMsg(`Failed to load opportunities (HTTP ${res.status}). ${text}`.trim());
+                setData([]);
             }
-        } catch (error) { console.error('Failed to load opportunities', error); }
+        } catch (error) {
+            console.error('Failed to load opportunities', error);
+            setErrorMsg(`Failed to load opportunities: ${error.message}`);
+            setData([]);
+        }
         finally { setLoading(false); }
     };
 
@@ -106,6 +118,12 @@ const OpportunityIntelligence = () => {
                 hideDatePresets
             />
             <KpiCards cards={kpis} />
+            {errorMsg && (
+                <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, bgcolor: '#fef2f2', border: '1px solid #fecaca' }}>
+                    <Typography variant="body2" fontWeight="600" color="#991b1b">Could not load opportunity scores</Typography>
+                    <Typography variant="caption" color="#7f1d1d">{errorMsg}</Typography>
+                </Paper>
+            )}
             <Paper sx={premiumTableWrapper}>
                 <DataGrid rows={data} columns={columns} loading={loading} rowHeight={55}
                     disableRowSelectionOnClick

@@ -148,6 +148,12 @@ public class LeaderboardController {
         Long tenantId = getTenantId();
         String dateFilter = buildDateFilter(period, dateFrom, dateTo);
 
+        // NOTE: sales_user_assignment.sales_user_id holds dim_merchant.SALES_USER_ID
+        // (the sales rep code), NOT the email. dim_merchant has BOTH sales_user_id
+        // and sales_email as separate columns. The team CTEs below therefore join
+        // on m.sales_user_id = ta.sales_user_id. (A previous version joined on
+        // m.sales_email = ta.sales_user_id — comparing an email to an id — which
+        // matched nothing, so every team showed zero volume/merchants.)
         String sql = "WITH team_agents AS ("
             + " SELECT stm.team_lead_name, stm.team_lead_email, sua.sales_user_id"
             + " FROM sales_team_mapping stm"
@@ -159,7 +165,7 @@ public class LeaderboardController {
             + "   COUNT(DISTINCT ta.sales_user_id) AS agent_count"
             + " FROM team_agents ta"
             + " LEFT JOIN dim_merchant m"
-            + "   ON m.sales_email = ta.sales_user_id"
+            + "   ON m.sales_user_id = ta.sales_user_id"
             + "   AND m.tenant_id = ?"
             + "   AND m.created_date IS NOT NULL"
             + (dateFilter.isEmpty() ? "" : "   AND m.created_date " + dateFilter)
@@ -171,7 +177,7 @@ public class LeaderboardController {
             + "   COALESCE(SUM(ft.store_base_currency_amount), 0) AS total_volume,"
             + "   COALESCE(SUM(ft.msf), 0) AS total_msf"
             + " FROM team_agents ta"
-            + " JOIN dim_merchant m ON m.sales_email = ta.sales_user_id AND m.tenant_id = ?"
+            + " JOIN dim_merchant m ON m.sales_user_id = ta.sales_user_id AND m.tenant_id = ?"
             + " JOIN fact_transaction ft ON ft.merchant_id = m.merchant_id AND ft.tenant_id = m.tenant_id"
             + (dateFilter.isEmpty() ? "" : "   AND ft.payment_date " + dateFilter)
             + " GROUP BY ta.team_lead_name"
@@ -179,7 +185,7 @@ public class LeaderboardController {
             + " SELECT ta.team_lead_name,"
             + "   COUNT(DISTINCT m.merchant_id) AS total_merchants"
             + " FROM team_agents ta"
-            + " JOIN dim_merchant m ON m.sales_email = ta.sales_user_id AND m.tenant_id = ?"
+            + " JOIN dim_merchant m ON m.sales_user_id = ta.sales_user_id AND m.tenant_id = ?"
             + " GROUP BY ta.team_lead_name"
             + ")"
             + " SELECT COALESCE(tob.team_lead_name, tv.team_lead_name, tt.team_lead_name) AS team_lead,"

@@ -13,6 +13,9 @@ const SmtpSettings = () => {
     });
     const [testPool, setTestPool] = useState({}); // id -> status
     const [loading, setLoading] = useState(false);
+    // Tracks whether the admin typed into the password field this session.
+    // Used so an untouched field on edit does NOT overwrite the stored password.
+    const [pwTouched, setPwTouched] = useState(false);
 
     useEffect(() => {
         fetchConfigs();
@@ -28,14 +31,26 @@ const SmtpSettings = () => {
     const handleSave = async (e) => {
         e.preventDefault();
         try {
+            // Password handling: the backend never sends the stored password
+            // back (it returns a "__UNCHANGED__" sentinel). So on edit, only
+            // include a password if the admin actually typed a new one in this
+            // session. An empty field on edit => omit it => backend keeps the
+            // stored (encrypted) password untouched.
+            const payload = { ...currentConfig };
+            if (currentConfig.id && (!pwTouched || !payload.password)) {
+                payload.password = '__UNCHANGED__';
+            }
             if (currentConfig.id) {
-                await api.put(`/email/smtp-configs/${currentConfig.id}`, currentConfig);
+                await api.put(`/email/smtp-configs/${currentConfig.id}`, payload);
             } else {
-                await api.post('/email/smtp-configs', currentConfig);
+                await api.post('/email/smtp-configs', payload);
             }
             fetchConfigs();
             setIsModalOpen(false);
-        } catch (error) { console.error(error); }
+        } catch (error) {
+            console.error(error);
+            alert('Failed to save SMTP config: ' + (error?.response?.data?.error || error.message));
+        }
     };
 
     const handleDelete = async (id) => {
@@ -65,8 +80,11 @@ const SmtpSettings = () => {
     };
 
     const openModal = (config = null) => {
+        setPwTouched(false);
         if (config) {
-            setCurrentConfig(config);
+            // Never carry the password sentinel into the editable form field.
+            // Blank it; an empty field on edit means "keep the stored password".
+            setCurrentConfig({ ...config, password: '' });
         } else {
             setCurrentConfig({
                 configName: '', host: '', port: 587, username: '', password: '',
@@ -172,7 +190,16 @@ const SmtpSettings = () => {
                                 </div>
                                 <div>
                                     <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Password</label>
-                                    <input type="password" value={currentConfig.password} onChange={e => setCurrentConfig({ ...currentConfig, password: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                                    <input type="password" value={currentConfig.password}
+                                        onChange={e => { setCurrentConfig({ ...currentConfig, password: e.target.value }); setPwTouched(true); }}
+                                        autoComplete="new-password"
+                                        placeholder={currentConfig.id ? 'Leave blank to keep current password' : ''}
+                                        style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                                    {currentConfig.id && (
+                                        <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                                            Stored encrypted. Only enter a value to change it.
+                                        </span>
+                                    )}
                                 </div>
 
                                 <div style={{ gridColumn: 'span 2', display: 'flex', gap: '20px', padding: '10px 0' }}>

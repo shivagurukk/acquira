@@ -14,14 +14,14 @@ const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 // ─── Premium Chart Card ──────────────────────────────────────────────
 const ChartCard = ({ title, children }) => (
     <Paper sx={{
-        p: 3, height: 380, borderRadius: '14px', border: '1px solid #e2e8f0',
-        bgcolor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        p: 3, height: 380, borderRadius: '14px', border: '1px solid var(--border)',
+        bgcolor: 'var(--bg-card)', boxShadow: 'var(--shadow-card)',
         transition: 'all 0.2s ease',
-        '&:hover': { boxShadow: '0 4px 16px rgba(0,0,0,0.06)', borderColor: '#cbd5e1' },
+        '&:hover': { boxShadow: 'var(--shadow-hover)', borderColor: 'var(--text-muted)' },
         display: 'flex', flexDirection: 'column',
     }}>
-        <Typography variant="subtitle2" fontWeight={800} color="#0f172a"
-            sx={{ mb: 2, pb: 1.5, borderBottom: '1px solid #f1f5f9', letterSpacing: '-0.01em' }}>
+        <Typography variant="subtitle2" fontWeight={800} color="var(--text)"
+            sx={{ mb: 2, pb: 1.5, borderBottom: '1px solid var(--border-light)', letterSpacing: '-0.01em' }}>
             {title}
         </Typography>
         <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -122,21 +122,21 @@ const FinanceDashboard = () => {
             <BusinessFilters filters={filters} onChange={setFilters} onApply={fetchData} isOpen={showFilters} onClose={() => setShowFilters(false)} />
 
             {/* Revenue KPIs */}
-            <Typography variant="caption" fontWeight={700} color="#94a3b8"
+            <Typography variant="caption" fontWeight={700} color="var(--text-muted)"
                 sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1.5, display: 'block' }}>
                 Net Revenue Performance
             </Typography>
             <KpiCards cards={revenueKpis} />
 
             {/* Volume KPIs */}
-            <Typography variant="caption" fontWeight={700} color="#94a3b8"
+            <Typography variant="caption" fontWeight={700} color="var(--text-muted)"
                 sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1.5, display: 'block' }}>
                 Volume Performance
             </Typography>
             <KpiCards cards={volumeKpis} />
 
             {/* Cost KPIs */}
-            <Typography variant="caption" fontWeight={700} color="#94a3b8"
+            <Typography variant="caption" fontWeight={700} color="var(--text-muted)"
                 sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1.5, display: 'block' }}>
                 Cost Analysis (MTD)
             </Typography>
@@ -148,9 +148,9 @@ const FinanceDashboard = () => {
                     <ChartCard title="Revenue Trends (MTD)">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={trends}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="key" stroke="#94a3b8" tick={{ fontSize: 11 }} tickFormatter={(val) => val?.slice?.(-2) || val} />
-                                <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} />
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-light)" />
+                                <XAxis dataKey="key" stroke="var(--text-muted)" tick={{ fontSize: 11 }} tickFormatter={(val) => val?.slice?.(-2) || val} />
+                                <YAxis stroke="var(--text-muted)" tick={{ fontSize: 11 }} tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} />
                                 <Tooltip content={<CustomTooltip formatter={formatCurrency} />} />
                                 <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
                                 <Line type="monotone" dataKey="netRevenue" stroke="#10b981" strokeWidth={3} dot={{ r: 3 }} name="Net Revenue" />
@@ -165,9 +165,9 @@ const FinanceDashboard = () => {
                     <ChartCard title="Margin % Trend (MTD)">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={trends}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="key" stroke="#94a3b8" tick={{ fontSize: 11 }} tickFormatter={(val) => val?.slice?.(-2) || val} />
-                                <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} domain={[0, 'auto']} tickFormatter={(val) => `${val}%`} />
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-light)" />
+                                <XAxis dataKey="key" stroke="var(--text-muted)" tick={{ fontSize: 11 }} tickFormatter={(val) => val?.slice?.(-2) || val} />
+                                <YAxis stroke="var(--text-muted)" tick={{ fontSize: 11 }} domain={[0, 'auto']} tickFormatter={(val) => `${val}%`} />
                                 <Tooltip content={<CustomTooltip formatter={(v) => `${v}%`} />} />
                                 <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
                                 <Line type="step" dataKey="marginPct" stroke="#8b5cf6" strokeWidth={3} dot={{ r: 3 }} name="Margin %" />

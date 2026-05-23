@@ -16,6 +16,9 @@ import java.util.Map;
 @Repository
 public class ExecutiveDashboardRepository {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(ExecutiveDashboardRepository.class);
+
     @PersistenceContext
     private EntityManager entityManager;
 
@@ -161,6 +164,12 @@ public class ExecutiveDashboardRepository {
             Object res = q.getSingleResult();
             return res != null ? ((Number) res).longValue() : 0;
         } catch (Exception e) {
+            // Previously this swallowed the exception and returned 0, making a
+            // broken query indistinguishable from a genuine zero on the dashboard.
+            // Log it so a real failure (bad column, type mismatch, missing table)
+            // is visible instead of silently showing 0 to the user.
+            log.warn("ExecutiveDashboard count query failed, returning 0. SQL=[{}] error={}",
+                    sql, e.getMessage());
             return 0;
         }
     }
@@ -174,6 +183,8 @@ public class ExecutiveDashboardRepository {
             Object res = q.getSingleResult();
             return res != null ? ((Number) res).doubleValue() : 0.0;
         } catch (Exception e) {
+            log.warn("ExecutiveDashboard sum query failed, returning 0. SQL=[{}] error={}",
+                    sql, e.getMessage());
             return 0.0;
         }
     }
@@ -197,7 +208,8 @@ public class ExecutiveDashboardRepository {
                 list.add(map);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            log.warn("ExecutiveDashboard chart query failed, returning empty list. SQL=[{}] error={}",
+                    sql, e.getMessage());
         }
         return list;
     }

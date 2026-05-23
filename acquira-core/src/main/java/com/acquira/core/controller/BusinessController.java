@@ -308,8 +308,22 @@ public class BusinessController {
         // 4. Opportunities
         @GetMapping("/opportunity")
         public ResponseEntity<List<MerchantOpportunityScore>> getOpportunities(
-                        @RequestHeader("X-Tenant-Id") Long tenantId) {
-                return ResponseEntity.ok(opportunityRepository.findByTenantIdOrderByScoreDesc(tenantId));
+                        @RequestHeader(value = "X-Tenant-Id", required = false) Long tenantId) {
+                // Fall back to the thread-local tenant context if the header is
+                // absent, instead of returning HTTP 400 (which the frontend showed
+                // as a silent empty screen).
+                if (tenantId == null) {
+                        tenantId = com.acquira.common.config.TenantContext.getCurrentTenant();
+                }
+                if (tenantId == null) {
+                        return ResponseEntity.status(403).build();
+                }
+                // Use findLatestByTenant: ONE row per merchant (most recent
+                // calc_date), not every historical dated snapshot. The old
+                // findByTenantIdOrderByScoreDesc returned ~(merchants x dates)
+                // rows — hundreds of thousands — which both duplicated every
+                // merchant and produced a response large enough to hang the grid.
+                return ResponseEntity.ok(opportunityRepository.findLatestByTenant(tenantId));
         }
 
         // Methods removed: getLifecycleSummary, getZeroSales, getSalesTrends (Feature

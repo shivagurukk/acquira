@@ -8,6 +8,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import { useDataBounds } from '../../hooks/useDataBounds';
 
 const computeDateRange = (preset) => {
     const now = new Date();
@@ -49,46 +50,24 @@ const DebitPrepaidMetrics = () => {
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
     const [fetchError, setFetchError] = useState(null);
-    const [boundsLoaded, setBoundsLoaded] = useState(false);
 
-    // Resolve sensible default date range from /api/business/data-bounds.
+    /* ── Default date range ─────────────────────────────────────── */
+    // Shared useDataBounds hook: resolves the FULL data window (earliest ->
+    // latest) from /api/business/data-bounds, with a wide fallback. One
+    // implementation shared across every business report page.
+    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds();
+
+    // Push the resolved window into filter state once it arrives. CUSTOM
+    // because we're supplying an explicit range, not a preset.
     useEffect(() => {
-        // Local-date formatter — toISOString() shifts dates by one day in non-UTC timezones
-        const fmtLocal = (d) => {
-            const yr = d.getFullYear();
-            const mo = String(d.getMonth() + 1).padStart(2, '0');
-            const dy = String(d.getDate()).padStart(2, '0');
-            return `${yr}-${mo}-${dy}`;
-        };
-        const loadBounds = async () => {
-            try {
-                const token = localStorage.getItem('token');
-                const tenantId = localStorage.getItem('defaultTenantId');
-                const res = await fetch('/api/business/data-bounds', {
-                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-                });
-                if (res.ok) {
-                    const b = await res.json();
-                    if (b?.latest) {
-                        const latest = new Date(b.latest);
-                        const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
-                        setFilters(prev => ({
-                            ...prev,
-                            startDate: fmtLocal(first),
-                            endDate:   fmtLocal(latest),
-                        }));
-                        setBoundsLoaded(true);
-                        return;
-                    }
-                }
-            } catch (e) { /* fall through */ }
-            // Fallback to current month if bounds endpoint fails or has no data.
-            const range = computeDateRange('MONTH');
-            setFilters(prev => ({ ...prev, ...range }));
-            setBoundsLoaded(true);
-        };
-        loadBounds();
-    }, []);
+        if (!boundsLoaded) return;
+        setFilters(prev => ({
+            ...prev,
+            datePreset: 'CUSTOM',
+            startDate: boundsStart,
+            endDate:   boundsEnd,
+        }));
+    }, [boundsLoaded, boundsStart, boundsEnd]);
 
     const fetchData = useCallback(async (overrideFilters) => {
         setLoading(true);
@@ -99,12 +78,17 @@ const DebitPrepaidMetrics = () => {
 
             const payload = overrideFilters || filters;
 
-            // Ensure startDate/endDate are resolved from preset
+            // Date resolution: a non-CUSTOM preset must ALWAYS win when the user
+            // picks one. The old `(!startDate || !endDate)` guard meant that once
+            // loadBounds had filled the dates in, clicking a period chip did
+            // nothing. CUSTOM means "use the explicit startDate/endDate as-is".
             const body = { ...payload };
-            if (body.datePreset && body.datePreset !== 'CUSTOM' && (!body.startDate || !body.endDate)) {
+            if (body.datePreset && body.datePreset !== 'CUSTOM') {
                 const range = computeDateRange(body.datePreset);
-                body.startDate = range.startDate;
-                body.endDate = range.endDate;
+                if (range.startDate && range.endDate) {
+                    body.startDate = range.startDate;
+                    body.endDate = range.endDate;
+                }
             }
             // Remove non-DTO fields
             delete body.datePreset;
