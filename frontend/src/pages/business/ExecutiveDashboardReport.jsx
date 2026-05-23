@@ -20,31 +20,64 @@ const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const ChartEmpty = () => (
     <Box sx={{
         height: '100%', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', gap: 1, opacity: 0.7,
+        alignItems: 'center', justifyContent: 'center', gap: 1.2,
     }}>
-        <Inbox size={32} color="var(--text-muted)" />
+        <Box sx={{
+            width: 48, height: 48, borderRadius: '14px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            bgcolor: 'var(--bg-subtle, #f3f4f6)',
+        }}>
+            <Inbox size={22} color="var(--text-muted)" />
+        </Box>
         <Typography variant="caption" color="var(--text-muted)" fontWeight={600}>
             No data for this period
         </Typography>
     </Box>
 );
 
-// ─── Premium Chart Card ──────────────────────────────────────────────
-// `empty` flag lets the caller swap the chart for the empty-state without
-// each chart having to special-case a zero-length array.
-const ChartCard = ({ title, empty, children }) => (
+const BarValueLabel = ({ x, y, width, height, value, vertical }) => {
+    if (value == null) return null;
+    const text = formatNumber(value);
+    if (vertical) {
+        return (
+            <text x={x + width / 2} y={y - 6} textAnchor="middle"
+                fontSize={12} fontWeight={700} fill="var(--text, #334155)">{text}</text>
+        );
+    }
+    return (
+        <text x={x + width + 8} y={y + height / 2} dominantBaseline="middle"
+            fontSize={12} fontWeight={700} fill="var(--text, #334155)">{text}</text>
+    );
+};
+
+const ChartCard = ({ title, subtitle, accent = '#6366f1', empty, children }) => (
     <Paper sx={{
-        p: 3, height: 400, borderRadius: '14px', border: '1px solid var(--border)',
+        position: 'relative', overflow: 'hidden',
+        p: '18px 22px', height: 360, borderRadius: '16px',
+        border: '1px solid var(--border)',
         bgcolor: 'var(--bg-card)', boxShadow: 'var(--shadow-card)',
-        transition: 'all 0.2s ease',
-        '&:hover': { boxShadow: 'var(--shadow-hover)', borderColor: 'var(--text-muted)' },
+        transition: 'transform 0.18s ease, box-shadow 0.18s ease',
+        '&:hover': { boxShadow: 'var(--shadow-hover)', transform: 'translateY(-2px)' },
         display: 'flex', flexDirection: 'column',
     }}>
-        <Typography variant="subtitle2" fontWeight={800} color="var(--text)"
-            sx={{ mb: 2, pb: 1.5, borderBottom: '1px solid var(--border-light)', letterSpacing: '-0.01em' }}>
-            {title}
-        </Typography>
-        <Box sx={{ flex: 1, minHeight: 0 }}>
+        <Box sx={{
+            position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
+            background: `linear-gradient(${accent}, ${accent}55)`,
+        }} />
+        <Box sx={{ mb: 1.5 }}>
+            <Typography sx={{
+                fontSize: '0.92rem', fontWeight: 700, color: 'var(--text)',
+                letterSpacing: '-0.01em', lineHeight: 1.3,
+            }}>
+                {title}
+            </Typography>
+            {subtitle && (
+                <Typography sx={{ fontSize: '0.72rem', color: 'var(--text-muted)', mt: 0.2 }}>
+                    {subtitle}
+                </Typography>
+            )}
+        </Box>
+        <Box sx={{ flex: 1, minHeight: 0, borderTop: '1px solid var(--border-light)', pt: 1.5 }}>
             {empty ? <ChartEmpty /> : children}
         </Box>
     </Paper>
@@ -189,63 +222,93 @@ const ExecutiveDashboardReport = () => {
             {/* Charts Grid (2×2) */}
             <Grid container spacing={2.5} sx={{ mb: 3 }}>
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="Number of SID YTD by Introducing Agent" empty={!data.charts.ytdByAgent?.length}>
+                    <ChartCard title="SID YTD by Introducing Agent"
+                        subtitle="Stores acquired per agent, year to date" accent="#6366f1"
+                        empty={!data.charts.ytdByAgent?.length}>
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart layout="vertical" data={data.charts.ytdByAgent} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                                <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                                <YAxis dataKey="agent" type="category" width={100} tick={{ fontSize: 11, fill: '#64748b' }} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="count" fill="#6366f1" radius={[0, 6, 6, 0]} />
+                            <BarChart layout="vertical" data={data.charts.ytdByAgent} margin={{ top: 8, right: 56, left: 8, bottom: 5 }}>
+                                <defs>
+                                    <linearGradient id="barAgent" x1="0" y1="0" x2="1" y2="0">
+                                        <stop offset="0%" stopColor="#818cf8" />
+                                        <stop offset="100%" stopColor="#6366f1" />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border-light, #f1f5f9)" />
+                                <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                                <YAxis dataKey="agent" type="category" width={110}
+                                    tick={{ fontSize: 11, fill: '#64748b', fontWeight: 600 }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(99,102,241,0.06)' }} />
+                                <Bar dataKey="count" fill="url(#barAgent)" radius={[0, 6, 6, 0]}
+                                    barSize={26} maxBarSize={32} label={<BarValueLabel />} />
                             </BarChart>
                         </ResponsiveContainer>
                     </ChartCard>
                 </Grid>
 
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="Number of SID YTD by Program" empty={!data.charts.ytdByProgram?.length}>
+                    <ChartCard title="SID YTD by Program"
+                        subtitle="Stores acquired per program, year to date" accent="#10b981"
+                        empty={!data.charts.ytdByProgram?.length}>
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={data.charts.ytdByProgram} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="program" tick={{ fontSize: 11, fill: '#64748b' }} />
-                                <YAxis tick={{ fill: '#94a3b8' }} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="count" fill="#10b981" radius={[6, 6, 0, 0]} />
+                            <BarChart data={data.charts.ytdByProgram} margin={{ top: 24, right: 16, left: 4, bottom: 5 }}>
+                                <defs>
+                                    <linearGradient id="barProg" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#34d399" />
+                                        <stop offset="100%" stopColor="#10b981" />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-light, #f1f5f9)" />
+                                <XAxis dataKey="program" tick={{ fontSize: 11, fill: '#64748b', fontWeight: 600 }} axisLine={false} tickLine={false} />
+                                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(16,185,129,0.06)' }} />
+                                <Bar dataKey="count" fill="url(#barProg)" radius={[6, 6, 0, 0]}
+                                    barSize={48} maxBarSize={64} label={<BarValueLabel vertical />} />
                             </BarChart>
                         </ResponsiveContainer>
                     </ChartCard>
                 </Grid>
 
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="MTD Volume USD Split by Program" empty={!data.charts.mtdVolumeSplit?.length}>
+                    <ChartCard title="MTD Volume USD Split by Program"
+                        subtitle="Share of month-to-date processing volume" accent="#f59e0b"
+                        empty={!data.charts.mtdVolumeSplit?.length}>
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                                 <Pie data={data.charts.mtdVolumeSplit} cx="50%" cy="50%"
                                     labelLine={false}
                                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                                    outerRadius={110} innerRadius={50} dataKey="value"
-                                    stroke="none" paddingAngle={2}
+                                    outerRadius={100} innerRadius={56} dataKey="value"
+                                    stroke="var(--bg-card, #fff)" strokeWidth={3} paddingAngle={3}
                                 >
                                     {data.charts.mtdVolumeSplit.map((_, index) => (
                                         <Cell key={index} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
                                 <Tooltip content={<CustomTooltip isCurrency />} />
-                                <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
+                                <Legend wrapperStyle={{ fontSize: 11, fontWeight: 600 }} iconType="circle" />
                             </PieChart>
                         </ResponsiveContainer>
                     </ChartCard>
                 </Grid>
 
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="Number of SID for the Month by Program" empty={!data.charts.mtdSidByProgram?.length}>
+                    <ChartCard title="SID for the Month by Program"
+                        subtitle="Stores acquired this month, per program" accent="#8b5cf6"
+                        empty={!data.charts.mtdSidByProgram?.length}>
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={data.charts.mtdSidByProgram} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="program" tick={{ fontSize: 11, fill: '#64748b' }} />
-                                <YAxis tick={{ fill: '#94a3b8' }} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="count" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+                            <BarChart data={data.charts.mtdSidByProgram} margin={{ top: 24, right: 16, left: 4, bottom: 5 }}>
+                                <defs>
+                                    <linearGradient id="barMtd" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#a78bfa" />
+                                        <stop offset="100%" stopColor="#8b5cf6" />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-light, #f1f5f9)" />
+                                <XAxis dataKey="program" tick={{ fontSize: 11, fill: '#64748b', fontWeight: 600 }} axisLine={false} tickLine={false} />
+                                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(139,92,246,0.06)' }} />
+                                <Bar dataKey="count" fill="url(#barMtd)" radius={[6, 6, 0, 0]}
+                                    barSize={48} maxBarSize={64} label={<BarValueLabel vertical />} />
                             </BarChart>
                         </ResponsiveContainer>
                     </ChartCard>

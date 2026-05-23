@@ -219,8 +219,11 @@ const UploadPage = () => {
                 )}
             </div>
 
-            {showSummary && jobDetails && (
-                <SummaryModal jobDetails={jobDetails} onClose={() => { setShowSummary(false); reset(); }} />
+            {showSummary && (jobDetails || uploadProgress) && (
+                <SummaryModal
+                    jobDetails={uploadProgress || jobDetails}
+                    onClose={() => { setShowSummary(false); reset(); }}
+                />
             )}
         </div>
     );
@@ -307,7 +310,25 @@ const StatusBanner = ({ type, message, onView }) => {
 };
 
 const SummaryModal = ({ jobDetails, onClose }) => {
-    const isSuccess = (jobDetails.status || '').toUpperCase() === 'COMPLETED';
+    const rawStatus = (jobDetails.status || '').toUpperCase();
+    const isSuccess = rawStatus === 'COMPLETED';
+    const isFailed  = rawStatus === 'FAILED' || rawStatus === 'ABANDONED'
+                   || rawStatus === 'STOPPED' || rawStatus === 'POLL_ERROR'
+                   || rawStatus === 'TIMEOUT';
+    const isRunning = !isSuccess && !isFailed;  // STARTED, STARTING, or unknown
+
+    // Three-state theme: running = neutral blue, success = green, failed = red.
+    const theme = isSuccess
+        ? { bg: 'var(--success-bg,#ecfdf5)', border: 'rgba(5,150,105,0.15)', title: '#065f46', sub: '#047857' }
+        : isFailed
+        ? { bg: 'var(--danger-bg,#fef2f2)',  border: 'rgba(220,38,38,0.15)', title: '#991b1b', sub: '#b91c1c' }
+        : { bg: 'var(--brand-50,#eff6ff)',   border: 'rgba(37,99,235,0.15)', title: '#1e40af', sub: '#1d4ed8' };
+
+    const statusLabel = isRunning ? 'Job in progress' : `Job ${jobDetails.status}`;
+    const exitText = isRunning
+        ? 'Still processing — this will update automatically.'
+        : `Exit code: ${jobDetails.exitCode || 'N/A'}`;
+
     const elapsed = jobDetails.endTime && jobDetails.startTime
         ? ((new Date(jobDetails.endTime) - new Date(jobDetails.startTime)) / 1000).toFixed(1) + 's'
         : '—';
@@ -372,17 +393,21 @@ const SummaryModal = ({ jobDetails, onClose }) => {
                 <div style={{
                     display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',
                     borderRadius: '12px',
-                    background: isSuccess ? 'var(--success-bg,#ecfdf5)' : 'var(--danger-bg,#fef2f2)',
-                    border: `1px solid ${isSuccess ? 'rgba(5,150,105,0.15)' : 'rgba(220,38,38,0.15)'}`,
+                    background: theme.bg,
+                    border: `1px solid ${theme.border}`,
                     marginBottom: 22,
                 }}>
-                    {isSuccess ? <CheckCircle size={18} color="#059669" /> : <AlertCircle size={18} color="#dc2626" />}
+                    {isSuccess
+                        ? <CheckCircle size={18} color="#059669" />
+                        : isFailed
+                        ? <AlertCircle size={18} color="#dc2626" />
+                        : <Activity size={18} color="#2563eb" />}
                     <div>
-                        <p style={{ margin: 0, fontWeight: 600, fontSize: '0.88rem', color: isSuccess ? '#065f46' : '#991b1b' }}>
-                            Job {jobDetails.status}
+                        <p style={{ margin: 0, fontWeight: 600, fontSize: '0.88rem', color: theme.title }}>
+                            {statusLabel}
                         </p>
-                        <p style={{ margin: 0, fontSize: '0.75rem', color: isSuccess ? '#047857' : '#b91c1c' }}>
-                            Exit code: {jobDetails.exitCode || 'N/A'}
+                        <p style={{ margin: 0, fontSize: '0.75rem', color: theme.sub }}>
+                            {exitText}
                         </p>
                     </div>
                 </div>

@@ -130,14 +130,19 @@ public class GroupAnalyticsController {
         // Let's refine the SQL for MCC.
 
         if ("MCC".equalsIgnoreCase(type)) {
-            // Join sum_daily_merchant with dim_store to get MCC and accurate merchant count.
+            // Join sum_daily_merchant -> dim_store to get MCC.
+            // NOTE: sum_daily_merchant.store_id is NOT populated by the summary
+            // step (always NULL), so we join on merchant_id instead, which IS
+            // populated. A merchant with multiple stores/MCCs will fan its
+            // volume across those MCCs — acceptable for a merchant-grained
+            // summary table and consistent with the other report types.
             // P1-9: tenant-scope dim_store join.
             finalSql = "SELECT st.mcc, COALESCE(st.mcc, 'Unknown') as label, " +
                     "COUNT(DISTINCT s.merchant_id) as merchant_count, " +
                     "SUM(s.total_txns) as total_txns, " +
                     "SUM(s.total_volume) as total_volume " +
                     "FROM sum_daily_merchant s " +
-                    "JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id " +
+                    "JOIN dim_store st ON st.merchant_id = s.merchant_id AND st.tenant_id = s.tenant_id " +
                     "WHERE s.tenant_id = :tenantId AND s.business_date >= :startDate AND s.business_date <= :endDate " +
                     "GROUP BY st.mcc " +
                     orderBy;
@@ -207,11 +212,11 @@ public class GroupAnalyticsController {
         switch (type.toUpperCase()) {
             case "MCC":
                 // MCC report joins sum_daily_merchant -> dim_store to get the
-                // MCC because sum_daily_mcc doesn't have merchant_id (no
-                // distinct merchant count possible there).
+                // MCC. sum_daily_merchant.store_id is always NULL (not filled
+                // by the summary step), so join on merchant_id instead.
                 selectClause = "st.mcc, COALESCE(st.mcc, 'Unknown') as label, ";
                 fromClause = "FROM sum_daily_merchant s " +
-                             "JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ";
+                             "JOIN dim_store st ON st.merchant_id = s.merchant_id AND st.tenant_id = s.tenant_id ";
                 groupBy = "GROUP BY st.mcc ";
                 needStore = true;
                 break;

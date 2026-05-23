@@ -217,11 +217,22 @@ public class TransactionJobConfig {
             // We only auto-create a merchant when the SID itself isn't in dim_store either,
             // i.e. truly unknown — in practice this branch is now near-empty because
             // dim_store is populated by the merchant master upload.
+            // TID-AWARE GUARD: a row is only "truly unmapped" if NEITHER its SID
+            // resolves to a dim_store NOR its TID resolves to a dim_terminal.
+            // Production transaction feeds frequently carry a constant/garbage SID
+            // (e.g. '400000000000001') but a correct TID. Without the extra TID
+            // check, auto-create manufactures an AUTO_SID_/AUTO_MID_ placeholder;
+            // then the SID-primary join in stagingToFact resolves against that
+            // placeholder and COALESCE short-circuits BEFORE the TID fallback can
+            // link the row to the real merchant. Result: every transaction lands
+            // on a phantom merchant. Checking the TID here lets the real
+            // dim_terminal -> dim_store -> dim_merchant fallback do its job.
             int merchantsAdded = 0;
             Boolean hasUnmappedMerchants = jdbcTemplate.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
                 "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
                 "AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
                 "LIMIT 1)", Boolean.class, tenantId);
 
             if (Boolean.TRUE.equals(hasUnmappedMerchants)) {
@@ -244,6 +255,8 @@ public class TransactionJobConfig {
                     "FROM stg_trnx_raw s " +
                     "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                    // TID-AWARE GUARD (see hasUnmappedMerchants comment above).
+                    "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
                     "GROUP BY s.tenant_id, TRIM(s.sid) " +
                     "ON CONFLICT (tenant_id, internal_id) DO NOTHING",
                     tenantId);
@@ -257,6 +270,8 @@ public class TransactionJobConfig {
                 "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
                 "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
                 "AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                // TID-AWARE GUARD (see hasUnmappedMerchants comment above).
+                "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
                 "LIMIT 1)", Boolean.class, tenantId);
 
             if (Boolean.TRUE.equals(hasUnmappedStores)) {
@@ -280,6 +295,9 @@ public class TransactionJobConfig {
                     "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_store ds " +
                     "    WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
+                    // TID-AWARE GUARD (see hasUnmappedMerchants comment above).
+                    "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt " +
+                    "    WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
                     "GROUP BY s.tenant_id, m.merchant_id, TRIM(s.sid) " +
                     "ON CONFLICT (tenant_id, internal_id) DO NOTHING",
                     tenantId);

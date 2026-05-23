@@ -265,12 +265,17 @@ public class FinanceController {
                 listNonEmpty(filter.getMccList()) ||
                 listNonEmpty(filter.getSidList());
 
+        // NOTE: sum_daily_insight only carries total_volume, total_msf, total_txns.
+        // It has NO total_interchange / total_scheme_fee columns. Those are
+        // selected as literal 0 so the response shape stays stable; the
+        // interchange/scheme breakdown is only available on sum_daily_bank,
+        // which the non-filtered GET /dashboard/kpis endpoint uses.
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT ");
         sql.append("  COALESCE(SUM(s.total_volume), 0)        AS vol, ");
         sql.append("  COALESCE(SUM(s.total_msf), 0)           AS msf, ");
-        sql.append("  COALESCE(SUM(s.total_interchange), 0)   AS interchange, ");
-        sql.append("  COALESCE(SUM(s.total_scheme_fee), 0)    AS scheme_fee ");
+        sql.append("  0                                      AS interchange, ");
+        sql.append("  0                                      AS scheme_fee ");
         sql.append("FROM sum_daily_insight s ");
         if (needMerchant) sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
         if (needStore)    sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id ");
@@ -363,12 +368,14 @@ public class FinanceController {
                 ? "TO_CHAR(s.business_date, 'YYYY-MM')"
                 : "TO_CHAR(s.business_date, 'YYYY-MM-DD')";
 
+        // sum_daily_insight has no total_interchange / total_scheme_fee columns;
+        // select literal 0 for those (see aggregateInsight note above).
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT ").append(groupKey).append(" AS bucket, ");
         sql.append("  COALESCE(SUM(s.total_volume), 0)      AS vol, ");
         sql.append("  COALESCE(SUM(s.total_msf), 0)         AS msf, ");
-        sql.append("  COALESCE(SUM(s.total_interchange), 0) AS interchange, ");
-        sql.append("  COALESCE(SUM(s.total_scheme_fee), 0)  AS scheme_fee ");
+        sql.append("  0                                    AS interchange, ");
+        sql.append("  0                                    AS scheme_fee ");
         sql.append("FROM sum_daily_insight s ");
         if (needMerchant) sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
         if (needStore)    sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id ");
