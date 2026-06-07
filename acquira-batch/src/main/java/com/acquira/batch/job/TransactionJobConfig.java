@@ -582,6 +582,45 @@ public class TransactionJobConfig {
     private static final java.util.Set<String> WARNED_MISSING_CURRENCIES = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
+     * Resolve a currency code from a numeric ISO code ("784", "840"), a zero-paddable
+     * short numeric ("48" -> "048"), or an already-alphabetic code ("AED"/"USD").
+     * Returns null if nothing matches.
+     */
+    private static String resolveCurrencyCode(String raw,
+            java.util.Map<String, String> isoNumericToCode,
+            java.util.Map<String, Integer> codeToDecimal) {
+        if (raw == null || raw.isBlank()) return null;
+        String c = raw.trim();
+        String code = isoNumericToCode.get(c);
+        if (code == null && c.matches("\\d{1,2}")) {
+            code = isoNumericToCode.get(String.format("%03d", Integer.parseInt(c)));
+        }
+        if (code == null && codeToDecimal.containsKey(c.toUpperCase())) {
+            code = c.toUpperCase();
+        }
+        return code;
+    }
+
+    /**
+     * Resolve the decimal_notation_value for a settlement currency. Falls back to 100
+     * (2-decimal, e.g. AED/USD) when the currency can't be resolved, so the store-base
+     * division is NEVER skipped. NOTE: the 100 fallback is correct only for 2-dp
+     * settlement currencies; a 3-dp settlement currency (BHD/KWD) MUST be present in
+     * ref_country or it will be off by 10x. We warn once per unresolved currency.
+     */
+    private static int resolveDecimal(String raw,
+            java.util.Map<String, String> isoNumericToCode,
+            java.util.Map<String, Integer> codeToDecimal) {
+        String code = resolveCurrencyCode(raw, isoNumericToCode, codeToDecimal);
+        Integer dec = (code != null) ? codeToDecimal.get(code) : null;
+        if (dec == null && WARNED_MISSING_CURRENCIES.add("STLDEC:" + (raw == null ? "" : raw.trim()))) {
+            log.warn("Store base currency '{}' not resolved to a decimal value — defaulting to 100 (2dp). "
+                    + "Verify ref_country contains this currency if it is NOT 2-decimal.", raw);
+        }
+        return dec != null ? dec : 100;
+    }
+
+    /**
      * Processor: sets tenantId AND resolves raw TGEN509 codes:
      *   - Card Type: CRD_TYP_CDE (e.g. 'VIDB') → 'DEBIT'/'CREDIT'/'PREPAID' via ref_card_scheme
      *   - Currency: ISO numeric (e.g. '048') → alphabetic code (e.g. 'BHD') via ref_country
@@ -639,36 +678,33 @@ public class TransactionJobConfig {
                 // If not numeric (already 'BHD'/'USD'), skip conversion
             }
 
-            // Settlement currency
-            String rawSltCcy = item.getStoreBaseCurrency();
-            if (rawSltCcy != null && !rawSltCcy.isBlank()) {
-                String stlTrimmed = rawSltCcy.trim();
-                String resolved = isoNumericToCurrencyCode.get(stlTrimmed);
-                if (resolved == null && stlTrimmed.matches("\\d{1,2}")) {
-                    resolved = isoNumericToCurrencyCode.get(String.format("%03d", Integer.parseInt(stlTrimmed)));
-                }
-                if (resolved != null) {
-                    item.setStoreBaseCurrency(resolved);
-                    Integer decVal = currencyCodeToDecimal.get(resolved);
-                    if (decVal != null && item.getStoreBaseCurrencyAmount() != null) {
-                        item.setStoreBaseCurrencyAmount(
-                            item.getStoreBaseCurrencyAmount().divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
-                    }
-                    // Also divide Total Amount Settled (same currency)
-                    if (decVal != null && item.getTotalAmountSettled() != null) {
-                        item.setTotalAmountSettled(
-                            item.getTotalAmountSettled().divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
-                    }
-                }
+            // ── Settlement currency ──
+            // Store base amount MUST always be divided by the currency's decimal value
+            // (AED/USD = 100, BHD = 1000). The previous version skipped division whenever
+            // the currency code didn't resolve as a numeric ISO code (alpha "AED"/"USD", or
+            // a code missing from ref_country), silently storing a 100x-inflated amount.
+            int stlDecVal = resolveDecimal(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal);
+            String stlCode = resolveCurrencyCode(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal);
+            if (stlCode != null) item.setStoreBaseCurrency(stlCode);
+            if (item.getStoreBaseCurrencyAmount() != null) {
+                item.setStoreBaseCurrencyAmount(
+                    item.getStoreBaseCurrencyAmount().divide(new java.math.BigDecimal(stlDecVal), 2, java.math.RoundingMode.HALF_UP));
             }
+            // total_amount_settled is intentionally NOT processed. The upstream feed exports
+            // it inconsistently (same txn as 54989.03 and 539.03), so it is unreliable. All
+            // settlement/volume math derives from store_base_currency_amount instead. Null it
+            // so no downstream consumer can read a garbage value.
+            item.setTotalAmountSettled(null);
 
-            // ── Fee division (raw 10000ths → actual decimals) ──
-            if (item.getMsf() != null) {
-                item.setMsf(item.getMsf().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
-            }
-            if (item.getVat() != null) {
-                item.setVat(item.getVat().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
-            }
+            // ── Fee scaling ──
+            // MSF and VAT arrive from THIS feed ALREADY in major units (e.g. MSF -10.45),
+            // so they must NOT be divided. The raw-10000ths MSF (e.g. -297000) is a
+            // DIFFERENT upstream column this feed does not carry. Dividing MSF by 10000
+            // here stored -0.001045 and made the Transaction Detail screen (which reads
+            // fact_transaction.msf directly) show ~0.00 instead of -10.45.
+            // Interchange Fee, by contrast, IS still raw 10000ths in this feed
+            // (e.g. -62894 -> -6.2894), so it keeps the /10000 conversion.
+            // MSF / VAT are stored exactly as received (already 2dp major units).
             if (item.getInterchangeFee() != null) {
                 item.setInterchangeFee(item.getInterchangeFee().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
             }
