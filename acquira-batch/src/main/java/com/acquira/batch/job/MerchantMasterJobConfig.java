@@ -534,82 +534,82 @@ public class MerchantMasterJobConfig {
             jdbcTemplate.update(sql.toString(), ps -> {
                 int p = 1;
                 for (StagingMerchant m : items) {
-                    ps.setString(p++, m.getInstitutionCode());
-                    ps.setString(p++, m.getInstitutionName());
-                    ps.setString(p++, m.getEntityInternalId());
-                    ps.setString(p++, m.getEntityName());
-                    ps.setString(p++, m.getEntityCode());
-                    ps.setString(p++, m.getAggregatorInternalId());
-                    ps.setString(p++, m.getAggregatorName());
-                    ps.setString(p++, m.getAggregatorCode());
-                    ps.setString(p++, m.getMerchantInternalId());
-                    ps.setString(p++, m.getMid());
-                    ps.setString(p++, m.getMerchantName());
-                    ps.setString(p++, m.getMerchantStatus());
-                    ps.setString(p++, m.getMerchantStoreInternalId());
-                    ps.setString(p++, m.getSid());
-                    ps.setString(p++, m.getStoreLegalName());
-                    ps.setString(p++, m.getStoreName());
-                    ps.setString(p++, m.getStoreStatus());
-                    ps.setString(p++, m.getBusinessType());
-                    ps.setString(p++, m.getBusinessMcc());
-                    ps.setString(p++, m.getVatNumber());
-                    ps.setString(p++, m.getPrimaryContactPerson());
-                    ps.setString(p++, m.getPrimaryContactNumber());
-                    ps.setString(p++, m.getPrimaryContactEmail());
-                    ps.setString(p++, m.getPrimaryContactDesignation());
-                    ps.setString(p++, m.getSecondaryContactPerson());
-                    ps.setString(p++, m.getSecondaryContactEmail());
-                    ps.setString(p++, m.getSecondaryContactNumber());
-                    ps.setString(p++, m.getSecondaryContactDesignation());
-                    ps.setString(p++, m.getAddress());
-                    ps.setString(p++, m.getCity());
-                    ps.setString(p++, m.getState());
-                    ps.setString(p++, m.getPostalCode());
-                    ps.setString(p++, m.getStoreDesc());
-                    ps.setString(p++, m.getIndustryType());
-                    ps.setString(p++, m.getCustomerType());
-                    ps.setString(p++, m.getSourceOfFund());
+                    setStr(ps, p++, m.getInstitutionCode(), 50);
+                    setStr(ps, p++, m.getInstitutionName(), 100);
+                    setStr(ps, p++, m.getEntityInternalId(), 50);
+                    setStr(ps, p++, m.getEntityName(), 100);
+                    setStr(ps, p++, m.getEntityCode(), 50);
+                    setStr(ps, p++, m.getAggregatorInternalId(), 50);
+                    setStr(ps, p++, m.getAggregatorName(), 100);
+                    setStr(ps, p++, m.getAggregatorCode(), 50);
+                    setStr(ps, p++, m.getMerchantInternalId(), 50);
+                    setStr(ps, p++, m.getMid(), 50);
+                    setStr(ps, p++, m.getMerchantName(), 150);
+                    setStr(ps, p++, m.getMerchantStatus(), 50);
+                    setStr(ps, p++, m.getMerchantStoreInternalId(), 50);
+                    setStr(ps, p++, m.getSid(), 50);
+                    setStr(ps, p++, m.getStoreLegalName(), 150);
+                    setStr(ps, p++, m.getStoreName(), 150);
+                    setStr(ps, p++, m.getStoreStatus(), 50);
+                    setStr(ps, p++, m.getBusinessType(), 100);
+                    setStr(ps, p++, m.getBusinessMcc(), 10);
+                    setStr(ps, p++, m.getVatNumber(), 50);
+                    setStr(ps, p++, m.getPrimaryContactPerson(), 100);
+                    setStr(ps, p++, m.getPrimaryContactNumber(), 50);
+                    setStr(ps, p++, m.getPrimaryContactEmail(), 100);
+                    setStr(ps, p++, m.getPrimaryContactDesignation(), 100);
+                    setStr(ps, p++, m.getSecondaryContactPerson(), 100);
+                    setStr(ps, p++, m.getSecondaryContactEmail(), 100);
+                    setStr(ps, p++, m.getSecondaryContactNumber(), 50);
+                    setStr(ps, p++, m.getSecondaryContactDesignation(), 100);
+                    ps.setString(p++, m.getAddress());                  // TEXT (unbounded)
+                    setStr(ps, p++, m.getCity(), 100);
+                    setStr(ps, p++, m.getState(), 100);
+                    setStr(ps, p++, m.getPostalCode(), 20);
+                    ps.setString(p++, m.getStoreDesc());                // TEXT (unbounded)
+                    setStr(ps, p++, m.getIndustryType(), 100);
+                    setStr(ps, p++, m.getCustomerType(), 100);
+                    setStr(ps, p++, m.getSourceOfFund(), 100);
                     if (m.getExpectedVolume() != null) ps.setBigDecimal(p++, m.getExpectedVolume());
                     else ps.setNull(p++, java.sql.Types.NUMERIC);
                     if (m.getRegulatedActivity() != null) ps.setBoolean(p++, m.getRegulatedActivity());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
-                    ps.setString(p++, m.getRegulatedActivityDesc());
-                    ps.setString(p++, m.getAuditorName());
+                    ps.setString(p++, m.getRegulatedActivityDesc()); // TEXT (unbounded)
+                    setStr(ps, p++, m.getAuditorName(), 100);
                     if (m.getIsPep() != null) ps.setBoolean(p++, m.getIsPep());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
-                    ps.setString(p++, m.getPepReason());
+                    ps.setString(p++, m.getPepReason());            // TEXT (unbounded)
                     if (m.getHighRiskAdverseMedia() != null) ps.setBoolean(p++, m.getHighRiskAdverseMedia());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
                     if (m.getHighRiskSourceOfWealth() != null) ps.setBoolean(p++, m.getHighRiskSourceOfWealth());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
-                    ps.setString(p++, m.getRiskLevel());
+                    setStr(ps, p++, m.getRiskLevel(), 20);
                     if (m.getRiskLevelHigh() != null) ps.setBoolean(p++, m.getRiskLevelHigh());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
                     if (m.getRiskLevelProhibited() != null) ps.setBoolean(p++, m.getRiskLevelProhibited());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
                     if (m.getRiskLevelRestricted() != null) ps.setBoolean(p++, m.getRiskLevelRestricted());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
-                    ps.setString(p++, m.getProduct());
+                    setStr(ps, p++, m.getProduct(), 100);
                     setTs(ps, p++, m.getDateOfOnboarding());
                     setTs(ps, p++, m.getReviewedDate());
                     setTs(ps, p++, m.getNextReviewedDate());
-                    ps.setString(p++, m.getSalesUserEmail());
-                    ps.setString(p++, m.getSalesUserId());
-                    ps.setString(p++, m.getReferralPartner());
+                    setStr(ps, p++, m.getSalesUserEmail(), 100);
+                    setStr(ps, p++, m.getSalesUserId(), 50);
+                    setStr(ps, p++, m.getReferralPartner(), 100);
                     setTs(ps, p++, m.getCreatedDate());
-                    ps.setString(p++, m.getTerminalInternalId());
-                    ps.setString(p++, m.getTid());
-                    ps.setString(p++, m.getTerminalName());
-                    ps.setString(p++, m.getTerminalStatus());
-                    ps.setString(p++, m.getTerminalDeviceNumber());
-                    ps.setString(p++, m.getTerminalType());
-                    ps.setString(p++, m.getTerminalDescription());
-                    ps.setString(p++, m.getBankName());
-                    ps.setString(p++, m.getBankAccountName());
-                    ps.setString(p++, m.getBankAccountNumber());
-                    ps.setString(p++, m.getSwiftCode());
-                    ps.setString(p++, m.getIbanNumber());
+                    setStr(ps, p++, m.getTerminalInternalId(), 50);
+                    setStr(ps, p++, m.getTid(), 50);
+                    setStr(ps, p++, m.getTerminalName(), 100);
+                    setStr(ps, p++, m.getTerminalStatus(), 50);
+                    setStr(ps, p++, m.getTerminalDeviceNumber(), 50);
+                    setStr(ps, p++, m.getTerminalType(), 50);
+                    ps.setString(p++, m.getTerminalDescription()); // TEXT (unbounded)
+                    setStr(ps, p++, m.getBankName(), 100);
+                    setStr(ps, p++, m.getBankAccountName(), 100);
+                    setStr(ps, p++, m.getBankAccountNumber(), 50);
+                    setStr(ps, p++, m.getSwiftCode(), 50);
+                    setStr(ps, p++, m.getIbanNumber(), 50);
                     setTs(ps, p++, m.getMerchantCreatedDate());
                     setTs(ps, p++, m.getMerchantStoreCreatedDate());
                     setTs(ps, p++, m.getTerminalCreatedDate());
@@ -627,6 +627,17 @@ public class MerchantMasterJobConfig {
     private static void setTs(java.sql.PreparedStatement ps, int idx, java.time.LocalDateTime v) throws java.sql.SQLException {
         if (v == null) ps.setNull(idx, java.sql.Types.TIMESTAMP);
         else ps.setTimestamp(idx, java.sql.Timestamp.valueOf(v));
+    }
+
+    /** Helper: set a String as VARCHAR, clipped to the staging column's max width (NULL-safe).
+     *  Guards against "value too long for type character varying(N)", which previously failed
+     *  the entire partition when a single source cell exceeded the column width. We clip and keep
+     *  the row rather than aborting the whole merchant-master ingest. varchar(N) limits are by
+     *  character count, so substring(0, maxLen) is the correct truncation. */
+    private static void setStr(java.sql.PreparedStatement ps, int idx, String v, int maxLen) throws java.sql.SQLException {
+        if (v == null) { ps.setNull(idx, java.sql.Types.VARCHAR); return; }
+        if (v.length() > maxLen) v = v.substring(0, maxLen);
+        ps.setString(idx, v);
     }
 
     // PERF FIX: removed orphaned `upsertDimensionsStep` bean — it's no longer referenced

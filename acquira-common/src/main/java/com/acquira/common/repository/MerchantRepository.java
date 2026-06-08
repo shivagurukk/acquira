@@ -13,6 +13,10 @@ public interface MerchantRepository extends JpaRepository<Merchant, Long>,
 
         Optional<Merchant> findByMid(String mid);
 
+        // Tenant-scoped batch lookup by bank MID — used by the "generate PDF by MID / file"
+        // option so a tenant can only ever resolve its OWN merchants from a supplied MID list.
+        java.util.List<Merchant> findByTenantIdAndMidIn(Long tenantId, java.util.List<String> mids);
+
         java.util.List<Merchant> findAllByTenantId(Long tenantId);
 
         org.springframework.data.domain.Page<Merchant> findAllByTenantId(Long tenantId,

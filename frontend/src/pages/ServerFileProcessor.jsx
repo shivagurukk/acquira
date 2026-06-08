@@ -178,15 +178,22 @@ const ServerFileProcessor = () => {
                 addLog(`❌ ${data.errorSummary}`);
             }
 
-            // Log each file result
+            // Log each file result.
+            // FIX: the backend marks a successfully-queued file as status "SUBMITTED"
+            // (an earlier audit renamed it from "SUCCESS") and sets a jobId ONLY on the
+            // submit path — a FAILED file has no jobId. The old check `fr.status === 'SUCCESS'`
+            // therefore matched NOTHING: every submitted file fell into the else branch, was
+            // logged as ❌ "… — undefined", and its jobId was never collected — so polling never
+            // started and the rows sat looking failed while the batch actually ran in the
+            // background. Key off jobId presence instead (matches the per-file table render).
             const jobIds = [];
             if (data.fileResults) {
                 data.fileResults.forEach(fr => {
-                    if (fr.status === 'SUCCESS') {
+                    if (fr.jobId) {
                         addLog(`🚀 ${fr.type}: ${fr.file} — Job #${fr.jobId} started (${fr.sizeMB} MB, Tenant: ${fr.entity})`);
-                        if (fr.jobId) jobIds.push(fr.jobId);
+                        jobIds.push(fr.jobId);
                     } else {
-                        addLog(`❌ ${fr.type}: ${fr.file} — ${fr.error}`);
+                        addLog(`❌ ${fr.type}: ${fr.file} — ${fr.error || 'failed to submit'}`);
                     }
                 });
             }

@@ -581,6 +581,11 @@ public class TransactionJobConfig {
      */
     private static final java.util.Set<String> WARNED_MISSING_CURRENCIES = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /** Divisor for raw-10000ths fee columns (interchange fee). Hoisted to a static
+     *  constant so the per-row processor doesn't allocate + string-parse a new
+     *  BigDecimal on every transaction row (hot path: millions of rows x 8 workers). */
+    private static final java.math.BigDecimal BD_10000 = new java.math.BigDecimal("10000");
+
     /**
      * Resolve a currency code from a numeric ISO code ("784", "840"), a zero-paddable
      * short numeric ("48" -> "048"), or an already-alphabetic code ("AED"/"USD").
@@ -602,20 +607,23 @@ public class TransactionJobConfig {
     }
 
     /**
-     * Resolve the decimal_notation_value for a settlement currency. Falls back to 100
-     * (2-decimal, e.g. AED/USD) when the currency can't be resolved, so the store-base
-     * division is NEVER skipped. NOTE: the 100 fallback is correct only for 2-dp
-     * settlement currencies; a 3-dp settlement currency (BHD/KWD) MUST be present in
-     * ref_country or it will be off by 10x. We warn once per unresolved currency.
+     * Resolve the decimal_notation_value for a currency (settlement OR transaction).
+     * Falls back to 100 (2-decimal, e.g. AED/USD) when the currency can't be resolved,
+     * so amount division is NEVER skipped. NOTE: the 100 fallback is correct only for
+     * 2-dp currencies; a 3-dp currency (BHD/KWD) MUST be present in ref_country or it
+     * will be off by 10x. We warn once per (label, unresolved currency). The {@code
+     * ccyLabel} ("Store base" / "Txn") keeps the warning text and the once-per-JVM dedup
+     * key distinct between the two call sites.
      */
     private static int resolveDecimal(String raw,
             java.util.Map<String, String> isoNumericToCode,
-            java.util.Map<String, Integer> codeToDecimal) {
+            java.util.Map<String, Integer> codeToDecimal,
+            String ccyLabel) {
         String code = resolveCurrencyCode(raw, isoNumericToCode, codeToDecimal);
         Integer dec = (code != null) ? codeToDecimal.get(code) : null;
-        if (dec == null && WARNED_MISSING_CURRENCIES.add("STLDEC:" + (raw == null ? "" : raw.trim()))) {
-            log.warn("Store base currency '{}' not resolved to a decimal value — defaulting to 100 (2dp). "
-                    + "Verify ref_country contains this currency if it is NOT 2-decimal.", raw);
+        if (dec == null && WARNED_MISSING_CURRENCIES.add("DEC:" + ccyLabel + ":" + (raw == null ? "" : raw.trim()))) {
+            log.warn("{} currency '{}' not resolved to a decimal value — defaulting to 100 (2dp). "
+                    + "Verify ref_country contains this currency if it is NOT 2-decimal.", ccyLabel, raw);
         }
         return dec != null ? dec : 100;
     }
@@ -652,30 +660,26 @@ public class TransactionJobConfig {
             }
 
             // ── Currency resolution + amount division ──
-            java.math.BigDecimal BD_10000 = new java.math.BigDecimal("10000");
+            // (BD_10000 divisor is a static constant — see field — so we don't allocate
+            //  and string-parse a BigDecimal on every transaction row.)
 
-            // Transaction currency
+            // Transaction currency.
+            // CONSISTENCY FIX: mirror the settlement-currency handling below — resolve via
+            // the same helpers and ALWAYS divide. Previously an unresolved txn currency
+            // (a numeric ISO code missing from ref_country, e.g. '051'/AMD) skipped division
+            // entirely and stored a raw 100x/1000x-inflated amount in
+            // sum_daily_merchant.total_volume. resolveDecimal() now falls back to 100 (2dp)
+            // for unknown codes, so the worst case is a 10x error on an (unseen) 3-dp
+            // currency rather than 100x.
             String rawTxnCcy = item.getTxnCurrency();
             if (rawTxnCcy != null && !rawTxnCcy.isBlank()) {
-                String trimmed = rawTxnCcy.trim();
-                // Try exact match first, then zero-padded to 3 digits (e.g. "48" -> "048")
-                String resolved = isoNumericToCurrencyCode.get(trimmed);
-                if (resolved == null && trimmed.matches("\\d{1,2}")) {
-                    resolved = isoNumericToCurrencyCode.get(String.format("%03d", Integer.parseInt(trimmed)));
+                int txnDecVal = resolveDecimal(rawTxnCcy, isoNumericToCurrencyCode, currencyCodeToDecimal, "Txn");
+                String txnCode = resolveCurrencyCode(rawTxnCcy, isoNumericToCurrencyCode, currencyCodeToDecimal);
+                if (txnCode != null) item.setTxnCurrency(txnCode);
+                if (item.getTxnCurrencyAmount() != null) {
+                    item.setTxnCurrencyAmount(
+                        item.getTxnCurrencyAmount().divide(new java.math.BigDecimal(txnDecVal), 2, java.math.RoundingMode.HALF_UP));
                 }
-                if (resolved != null) {
-                    item.setTxnCurrency(resolved);
-                    Integer decVal = currencyCodeToDecimal.get(resolved);
-                    if (decVal != null && item.getTxnCurrencyAmount() != null) {
-                        java.math.BigDecimal before = item.getTxnCurrencyAmount();
-                        item.setTxnCurrencyAmount(
-                            before.divide(new java.math.BigDecimal(decVal), 2, java.math.RoundingMode.HALF_UP));
-                    }
-                } else if (WARNED_MISSING_CURRENCIES.add(trimmed)) {
-                    // PERF FIX: warn ONCE per distinct currency, not per row.
-                    log.warn("Txn currency '{}' not found in ref_country — no amount division applied (warning suppressed for further rows)", trimmed);
-                }
-                // If not numeric (already 'BHD'/'USD'), skip conversion
             }
 
             // ── Settlement currency ──
@@ -683,7 +687,7 @@ public class TransactionJobConfig {
             // (AED/USD = 100, BHD = 1000). The previous version skipped division whenever
             // the currency code didn't resolve as a numeric ISO code (alpha "AED"/"USD", or
             // a code missing from ref_country), silently storing a 100x-inflated amount.
-            int stlDecVal = resolveDecimal(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal);
+            int stlDecVal = resolveDecimal(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal, "Store base");
             String stlCode = resolveCurrencyCode(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal);
             if (stlCode != null) item.setStoreBaseCurrency(stlCode);
             if (item.getStoreBaseCurrencyAmount() != null) {

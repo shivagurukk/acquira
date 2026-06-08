@@ -204,11 +204,17 @@ public class FileUploadService {
 
         Long sessionTenantId = TenantContext.getCurrentTenant();
 
-        if (fileEntityId == null || fileEntityId.trim().isEmpty()) {
+        // Strip NUL (0x00), the BOM, and other control characters that can sneak in
+        // from mis-encoded uploads (e.g. a UTF-16 cell read as bytes). A raw 0x00 left
+        // in the value makes Postgres reject the tenant lookup with
+        // "invalid byte sequence for encoding UTF8: 0x00" and fails the whole upload.
+        if (fileEntityId != null) {
+            fileEntityId = fileEntityId.replace("\uFEFF", "").replaceAll("\\p{Cntrl}", "").trim();
+        }
+        if (fileEntityId == null || fileEntityId.isEmpty()) {
             if (sessionTenantId != null) return sessionTenantId;
             throw new RuntimeException("Could not identify Entity/Tenant from file content (Row 2, Cell 1 missing).");
         }
-        fileEntityId = fileEntityId.trim();
 
         if (isSuperAdmin) {
             String finalFileEntityId = fileEntityId;

@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.acquira.common.model.Merchant;
 import com.acquira.common.model.Tenant;
@@ -211,6 +212,13 @@ public class PdfController {
 
                 merchants = merchantRepository.findAllById(uniqueRequested);
 
+                // Tenant guard: a caller must never resolve another tenant's merchant by ID.
+                if (currentTenant != null) {
+                    merchants = merchants.stream()
+                            .filter(m -> currentTenant.equals(m.getTenantId()))
+                            .collect(Collectors.toList());
+                }
+
                 Set<Long> foundIds = merchants.stream()
                         .map(Merchant::getMerchantId)
                         .collect(Collectors.toSet());
@@ -234,8 +242,11 @@ public class PdfController {
                 log.info("[BATCH] Selective mode — {} of {} requested merchants resolved",
                         merchants.size(), uniqueRequested.size());
             } else {
-                merchants = merchantRepository.findAll();
-                log.info("[BATCH] Full mode — running for ALL {} merchants", merchants.size());
+                // Tenant-scoped ALL: only THIS tenant's merchants (was findAll() across all tenants).
+                merchants = (currentTenant != null)
+                        ? merchantRepository.findAllByTenantId(currentTenant)
+                        : merchantRepository.findAll();
+                log.info("[BATCH] Full mode — running for ALL {} merchants (tenant={})", merchants.size(), currentTenant);
             }
 
             List<long[]>   batchMerchantIds = new ArrayList<>(merchants.size());
@@ -513,6 +524,175 @@ public class PdfController {
             // Re-thrown so the post-batch loop records this merchant as failed.
             throw new RuntimeException("Failed to queue email for " + merchantName + ": " + e.getMessage(), e);
         }
+    }
+
+    // ─── Generate by MID — one / all / file (tenant-scoped) ──────────────
+    //
+    // One entry point for the three ways a user picks WHO to generate for, always
+    // scoped to the caller's tenant:
+    //   • ALL  → omit mid/mids/file (or scope=ALL): every merchant in the tenant
+    //   • ONE  → mid=<bank MID>
+    //   • LIST → mids=<MID>,<MID>,...        (repeatable or comma-separated)
+    //   • FILE → multipart 'file' (CSV/TXT: one MID per line, or a column headed "MID")
+    //
+    // MIDs are the bank-assigned codes (dim_merchant.mid), NOT internal IDs. Unmatched
+    // MIDs are reported back; matched ones go through the same batch pipeline as
+    // /generate-all (identical email/S3 behaviour).
+    //
+    //   POST /generate-by-mid   (multipart/form-data)
+    //   params: year, month, sendEmail, sendS3, scope, mid, mids, file
+    // ─────────────────────────────────────────────
+    @PostMapping(value = "/generate-by-mid", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> generateByMid(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month,
+            @RequestParam(defaultValue = "false") boolean sendEmail,
+            @RequestParam(defaultValue = "false") boolean sendS3,
+            @RequestParam(required = false) String scope,
+            @RequestParam(required = false) String mid,
+            @RequestParam(required = false) List<String> mids,
+            @RequestParam(required = false) MultipartFile file) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            return ResponseEntity.status(403).body(Map.of(
+                "status", "NO_TENANT", "message", "Tenant context is required."));
+        }
+
+        boolean wantsAll = "ALL".equalsIgnoreCase(scope)
+                || ((scope == null || scope.isBlank())
+                    && (mid == null || mid.isBlank())
+                    && (mids == null || mids.isEmpty())
+                    && (file == null || file.isEmpty()));
+
+        if (wantsAll) {
+            // Delegate to the batch path; its ALL branch is tenant-scoped.
+            return generateAllReports(year, month, sendEmail, sendS3, null);
+        }
+
+        // Gather requested MID strings from single + list + file
+        LinkedHashSet<String> midSet = new LinkedHashSet<>();
+        if (mid != null && !mid.isBlank()) midSet.add(mid.trim());
+        if (mids != null) {
+            for (String s : mids) if (s != null && !s.isBlank()) midSet.add(s.trim());
+        }
+        if (file != null && !file.isEmpty()) {
+            try {
+                midSet.addAll(parseMidsFromFile(file));
+            } catch (IllegalArgumentException ex) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "status", "BAD_FILE", "message", ex.getMessage()));
+            } catch (Exception ex) {
+                log.warn("[BATCH][by-mid] Failed to parse MID file: {}", ex.getMessage());
+                return ResponseEntity.badRequest().body(Map.of(
+                    "status", "BAD_FILE", "message", "Could not read the uploaded MID file."));
+            }
+        }
+
+        if (midSet.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "NO_MIDS",
+                "message", "No MIDs supplied. Provide 'mid', 'mids', a 'file', or scope=ALL."));
+        }
+
+        // Resolve MID -> merchant WITHIN this tenant
+        List<String> requestedMids = new ArrayList<>(midSet);
+        List<Merchant> matched = merchantRepository.findByTenantIdAndMidIn(tenantId, requestedMids);
+
+        Set<String> foundMids = matched.stream()
+                .map(Merchant::getMid)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        List<String> unmatchedMids = requestedMids.stream()
+                .filter(x -> !foundMids.contains(x))
+                .collect(Collectors.toList());
+
+        if (matched.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "NO_VALID_MIDS",
+                "message", "None of the supplied MIDs were found for this tenant.",
+                "requestedMids", requestedMids,
+                "unmatchedMids", unmatchedMids));
+        }
+        if (!unmatchedMids.isEmpty()) {
+            log.warn("[BATCH][by-mid] {} of {} MIDs matched for tenant {}; unmatched: {}",
+                matched.size(), requestedMids.size(), tenantId, unmatchedMids);
+        }
+
+        List<Long> resolvedIds = matched.stream()
+                .map(Merchant::getMerchantId)
+                .collect(Collectors.toList());
+
+        // Hand resolved internal IDs to the existing batch pipeline (selective mode,
+        // also tenant-guarded), then enrich the response with MID resolution info.
+        ResponseEntity<Map<String, Object>> resp =
+                generateAllReports(year, month, sendEmail, sendS3, resolvedIds);
+
+        Map<String, Object> body = (resp.getBody() != null)
+                ? new HashMap<>(resp.getBody()) : new HashMap<>();
+        body.put("requestedMidCount", requestedMids.size());
+        body.put("matchedMidCount", matched.size());
+        body.put("unmatchedMids", unmatchedMids);
+        return ResponseEntity.status(resp.getStatusCode()).body(body);
+    }
+
+    /**
+     * Parse bank MIDs from an uploaded CSV/TSV/TXT file. Accepts a single MID per
+     * line, or a delimited file with a column headed "MID" (case-insensitive).
+     * Quotes/whitespace are stripped. Excel (.xlsx/.xls) is rejected — export to CSV.
+     */
+    private List<String> parseMidsFromFile(MultipartFile file) {
+        String name = (file.getOriginalFilename() == null) ? "" : file.getOriginalFilename().toLowerCase();
+        if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+            throw new IllegalArgumentException(
+                "Excel files are not supported for MID upload — please save as CSV or TXT (one MID per line).");
+        }
+
+        List<String> lines = new ArrayList<>();
+        try (java.io.BufferedReader br = new java.io.BufferedReader(
+                new java.io.InputStreamReader(file.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = br.readLine()) != null) lines.add(line);
+        } catch (Exception e) {
+            throw new RuntimeException("read failed: " + e.getMessage(), e);
+        }
+        if (lines.isEmpty()) return Collections.emptyList();
+        lines.set(0, lines.get(0).replace("\uFEFF", "")); // strip UTF-8 BOM
+
+        // Detect a header row with a MID column
+        String[] header = lines.get(0).split("[,;\\t]");
+        int midCol = -1;
+        for (int i = 0; i < header.length; i++) {
+            String h = cleanCell(header[i]).toLowerCase();
+            if (h.equals("mid") || h.equals("merchant id") || h.equals("merchant_id") || h.equals("merchantid")) {
+                midCol = i; break;
+            }
+        }
+
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        int startRow = (midCol >= 0) ? 1 : 0;
+        for (int r = startRow; r < lines.size(); r++) {
+            String[] cells = lines.get(r).split("[,;\\t]");
+            if (midCol >= 0) {
+                if (midCol < cells.length) {
+                    String v = cleanCell(cells[midCol]);
+                    if (!v.isEmpty()) out.add(v);
+                }
+            } else {
+                // No header: take every non-empty token (single-column lists and pasted
+                // CSVs both work). Non-MID tokens simply end up reported as unmatched.
+                for (String c : cells) {
+                    String v = cleanCell(c);
+                    if (!v.isEmpty() && !v.equalsIgnoreCase("mid")) out.add(v);
+                }
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
+    private static String cleanCell(String s) {
+        if (s == null) return "";
+        return s.trim().replaceAll("^\"|\"$", "").trim();
     }
 
     // ─── Batch Monitoring ──────────────────────────────────────────────

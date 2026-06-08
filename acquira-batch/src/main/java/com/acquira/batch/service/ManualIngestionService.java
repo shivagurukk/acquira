@@ -71,13 +71,26 @@ public class ManualIngestionService {
             return;
         }
 
-        log.info("Found {} distinct dates to process: {}", reportDates.size(), reportDates);
+        log.info("Found {} distinct date(s): {}", reportDates.size(), reportDates);
 
-        for (LocalDate reportDate : reportDates) {
-            processSingleDate(tenantId, reportDate);
+        // PERF: processSingleDate operates at MONTH granularity — it derives the month
+        // containing reportDate, queries findDailyVolumesByDateRange for the WHOLE month,
+        // and writes monthly metrics keyed by the 1st of that month. reportDate is used
+        // ONLY to compute that month, so iterating per distinct DATE recomputed the same
+        // month once per active day (e.g. 30x for a month with 30 active days). Collapse to
+        // one call per distinct month so a multi-month bulk upload runs O(months) heavy
+        // aggregations instead of O(dates). Output is identical — the monthly upsert is
+        // idempotent and already (re)aggregates the whole month from fact_transaction.
+        java.util.LinkedHashSet<LocalDate> monthStarts = new java.util.LinkedHashSet<>();
+        for (LocalDate d : reportDates) monthStarts.add(d.withDayOfMonth(1));
+
+        log.info("Collapsed {} date(s) to {} distinct month(s): {}",
+                reportDates.size(), monthStarts.size(), monthStarts);
+        for (LocalDate monthStart : monthStarts) {
+            processSingleDate(tenantId, monthStart);
         }
 
-        log.info("Manual Ingestion Completed for all dates.");
+        log.info("Manual Ingestion Completed for {} month(s).", monthStarts.size());
     }
 
     private void processSingleDate(Long tenantId, LocalDate reportDate) {
@@ -98,7 +111,11 @@ public class ManualIngestionService {
             String mid = String.valueOf(row[1]);
             String name = String.valueOf(row[2]);
             int day = ((Number) row[3]).intValue();
-            double vol = ((Number) row[4]).doubleValue();
+            // row[4] is SUM(store_base_currency_amount); SQL SUM() returns NULL when
+            // every summed value in the group is NULL, which previously caused a
+            // NullPointerException here and killed the whole async reporting step.
+            // Treat a NULL sum as zero volume for that merchant/day.
+            double vol = (row[4] == null) ? 0.0 : ((Number) row[4]).doubleValue();
 
             merchantData.putIfAbsent(merchId, new HashMap<>());
             merchantData.get(merchId).put(day, vol);

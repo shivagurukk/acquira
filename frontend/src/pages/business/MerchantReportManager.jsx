@@ -57,7 +57,7 @@ const PremiumButton = ({ children, onClick, color = 'primary', startIcon, ...pro
         }} {...props}>{children}</Button>
 );
 
-const TenantConfirmDialog = ({ open, onClose, onConfirm, activeTenant, tenants, merchantCount }) => {
+const TenantConfirmDialog = ({ open, onClose, onConfirm, activeTenant, tenants, merchantCount, scopeText }) => {
     const theme = useTheme();
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
@@ -106,7 +106,7 @@ const TenantConfirmDialog = ({ open, onClose, onConfirm, activeTenant, tenants, 
                 <Box sx={{ mt: 2.5, p: 2, borderRadius: 2.5, bgcolor: '#f0fdf4', border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#22c55e', flexShrink: 0 }} />
                     <Typography variant="body2" fontWeight="600" color="#166534">
-                        {merchantCount} merchants found · PDFs will be generated under "{activeTenant?.bankName || 'tenant'}"
+                        {scopeText || `${merchantCount} merchants found`} · PDFs will be generated under "{activeTenant?.bankName || 'tenant'}"
                     </Typography>
                 </Box>
             </DialogContent>
@@ -134,6 +134,11 @@ const MerchantReportManager = () => {
     const [sendEmail, setSendEmail] = useState(false);
     const [sendS3, setSendS3] = useState(false);
     const [generatedReports, setGeneratedReports] = useState([]);
+    // Generation scope: ALL (whole tenant) | ONE (single MID) | FILE (CSV/TXT of MIDs)
+    const [scope, setScope] = useState('ALL');
+    const [midInput, setMidInput] = useState('');
+    const [midFile, setMidFile] = useState(null);
+    const fileInputRef = useRef(null);
     const logsEndRef = useRef(null);
     const pollRef = useRef(null);
     const jobIdRef = useRef(null);
@@ -219,7 +224,12 @@ const MerchantReportManager = () => {
         } catch (e) { console.error('Download failed:', e); }
     };
 
-    const handleStartClick = () => setShowTenantConfirm(true);
+    const handleStartClick = () => {
+        // Validate scope-specific input before opening the tenant confirm dialog.
+        if (scope === 'ONE' && !midInput.trim()) return;
+        if (scope === 'FILE' && !midFile) return;
+        setShowTenantConfirm(true);
+    };
 
     const handleTenantConfirmed = async () => {
         setShowTenantConfirm(false); setStatus('checking');
@@ -234,8 +244,22 @@ const MerchantReportManager = () => {
         setStatus('running'); setLogs([]);
         setProgress({ current: 0, total: merchants.length, success: 0, failed: 0 });
         try {
-            // ── KEY: both sendEmail and sendS3 are passed ──────────────────
-            const res = await api.post(`/business/insights/generate-all?sendEmail=${sendEmail}&sendS3=${sendS3}`);
+            // Unified multipart call to /generate-by-mid:
+            //   ALL  → scope=ALL (every merchant in the tenant)
+            //   ONE  → mid=<bank MID>
+            //   FILE → file=<CSV/TXT of MIDs>
+            const form = new FormData();
+            form.append('sendEmail', String(sendEmail));
+            form.append('sendS3', String(sendS3));
+            if (scope === 'ALL') {
+                form.append('scope', 'ALL');
+            } else if (scope === 'ONE') {
+                form.append('mid', midInput.trim());
+            } else if (scope === 'FILE') {
+                form.append('file', midFile);
+            }
+
+            const res = await api.post('/business/insights/generate-by-mid', form);
             const result = res.data;
             const jobId = result.jobId;
             if (!jobId) {
@@ -249,16 +273,24 @@ const MerchantReportManager = () => {
                 setProgress({ current: generated + failed, total: merchants.length, success: generated, failed });
                 setLogs([`✅ Generated ${generated} reports`]); setStatus('completed'); return;
             }
-            setLogs([
+            const startLogs = [
                 `🏛️ Tenant: ${activeTenant?.bankName || 'Unknown'}`,
                 `🚀 Batch started — Job: ${jobId}`,
                 `📊 Processing ${result.totalMerchants} merchants...`,
                 `📦 Mode: ${!sendEmail && !sendS3 ? 'Local Only' : !sendEmail && sendS3 ? 'S3 Upload Only' : sendEmail && !sendS3 ? 'Email Only' : 'Email + S3 Upload'}`,
-            ]);
+            ];
+            if (typeof result.matchedMidCount === 'number') {
+                startLogs.push(`🎯 Matched ${result.matchedMidCount}/${result.requestedMidCount} MID(s)`);
+            }
+            if (result.unmatchedMids?.length > 0) {
+                startLogs.push(`⚠️ Unmatched MIDs (skipped): ${result.unmatchedMids.join(', ')}`);
+            }
+            setLogs(startLogs);
             startPolling(jobId);
         } catch (err) {
-            setLogs([`❌ Critical error: ${err.message}`]);
-            setProgress(prev => ({ ...prev, failed: merchants.length })); setStatus('completed');
+            const msg = err?.response?.data?.message || err.message;
+            setLogs([`❌ ${msg}`]);
+            setStatus('completed');
         }
     };
 
@@ -285,7 +317,7 @@ const MerchantReportManager = () => {
 
             <KpiCards cards={kpis} />
 
-            <TenantConfirmDialog open={showTenantConfirm} onClose={() => setShowTenantConfirm(false)} onConfirm={handleTenantConfirmed} activeTenant={activeTenant} tenants={tenants} merchantCount={merchants.length} />
+            <TenantConfirmDialog open={showTenantConfirm} onClose={() => setShowTenantConfirm(false)} onConfirm={handleTenantConfirmed} activeTenant={activeTenant} tenants={tenants} merchantCount={merchants.length} scopeText={scope === 'ALL' ? `${merchants.length} merchants found` : scope === 'ONE' ? `MID ${midInput.trim()}` : midFile ? `MIDs from ${midFile.name}` : 'selected MIDs'} />
 
             <Container maxWidth="lg" disableGutters sx={{ flex: 1 }}>
                 <GlassCard>
@@ -317,6 +349,57 @@ const MerchantReportManager = () => {
                                         </Grid>
 
                                         <Box textAlign="center" py={3}>
+                                            {/* ── Generation scope ── */}
+                                            <Typography variant="subtitle2" fontWeight="700" color="text.secondary" mb={2}
+                                                sx={{ textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }}>
+                                                Who to generate for
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mb: 2.5, flexWrap: 'wrap' }}>
+                                                {[
+                                                    { key: 'ALL', title: 'All Merchants', desc: `Every merchant in ${activeTenant?.bankShortCode || 'tenant'}` },
+                                                    { key: 'ONE', title: 'Single MID', desc: 'One merchant by MID' },
+                                                    { key: 'FILE', title: 'Upload MID File', desc: 'CSV/TXT list of MIDs' },
+                                                ].map(opt => (
+                                                    <Box key={opt.key} onClick={() => setScope(opt.key)} sx={{
+                                                        px: 2.5, py: 1.5, borderRadius: 3, cursor: 'pointer', minWidth: 180, userSelect: 'none', textAlign: 'left', transition: 'all 0.2s',
+                                                        border: `2px solid ${scope === opt.key ? '#6366f1' : '#e2e8f0'}`,
+                                                        background: scope === opt.key ? '#eef2ff' : '#f8fafc',
+                                                        '&:hover': { borderColor: '#818cf8', background: '#eef2ff' },
+                                                    }}>
+                                                        <Typography fontWeight="700" fontSize={13} color={scope === opt.key ? '#312e81' : 'text.secondary'}>{opt.title}</Typography>
+                                                        <Typography fontSize={11} color="text.secondary">{opt.desc}</Typography>
+                                                    </Box>
+                                                ))}
+                                            </Box>
+
+                                            {scope === 'ONE' && (
+                                                <Box sx={{ maxWidth: 360, mx: 'auto', mb: 2.5 }}>
+                                                    <input
+                                                        value={midInput}
+                                                        onChange={(e) => setMidInput(e.target.value)}
+                                                        placeholder="Enter merchant MID (e.g. 400000287650000)"
+                                                        style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '1px solid #cbd5e1', fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
+                                                    />
+                                                </Box>
+                                            )}
+
+                                            {scope === 'FILE' && (
+                                                <Box sx={{ maxWidth: 460, mx: 'auto', mb: 2.5 }}>
+                                                    <input ref={fileInputRef} type="file" accept=".csv,.txt,.tsv" hidden
+                                                        onChange={(e) => setMidFile(e.target.files?.[0] || null)} />
+                                                    <Button variant="outlined" onClick={() => fileInputRef.current?.click()}
+                                                        sx={{ borderRadius: 3, textTransform: 'none', fontWeight: 600 }}>
+                                                        {midFile ? 'Change file' : 'Choose CSV / TXT file'}
+                                                    </Button>
+                                                    {midFile && (
+                                                        <Chip label={midFile.name} onDelete={() => { setMidFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }} sx={{ ml: 1.5, fontWeight: 600 }} />
+                                                    )}
+                                                    <Typography fontSize={11} color="text.secondary" mt={1}>
+                                                        One MID per line, or a column headed “MID”. Excel not supported — export to CSV.
+                                                    </Typography>
+                                                </Box>
+                                            )}
+
                                             {/* ── Delivery Options label ── */}
                                             <Typography variant="subtitle2" fontWeight="700" color="text.secondary" mb={2}
                                                 sx={{ textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }}>
@@ -397,15 +480,20 @@ const MerchantReportManager = () => {
 
                                             {/* ── Generate button ── */}
                                             <Box>
-                                                <PremiumButton onClick={handleStartClick} startIcon={<PlayArrow />} size="large">
-                                                    {!sendEmail && !sendS3 ? 'Generate PDFs (Local)'
+                                                <PremiumButton onClick={handleStartClick} startIcon={<PlayArrow />} size="large"
+                                                    disabled={(scope === 'ONE' && !midInput.trim()) || (scope === 'FILE' && !midFile)}>
+                                                    {scope === 'ONE' ? 'Generate Report (1 MID)'
+                                                        : scope === 'FILE' ? 'Generate Reports (from file)'
+                                                        : !sendEmail && !sendS3 ? 'Generate PDFs (Local)'
                                                         : !sendEmail && sendS3 ? 'Generate & Upload to S3'
                                                         : sendEmail && !sendS3 ? 'Generate & Send Emails'
                                                         : 'Generate, Email & Upload to S3'}
                                                 </PremiumButton>
                                             </Box>
                                             <Typography variant="body2" color="text.secondary" mt={2}>
-                                                Generates individual reports for {merchants.length} active merchants
+                                                {scope === 'ALL' ? `Generates individual reports for ${merchants.length} active merchants`
+                                                    : scope === 'ONE' ? 'Generates a report for the entered MID (this tenant only)'
+                                                    : 'Generates reports for the MIDs in the uploaded file (this tenant only)'}
                                             </Typography>
                                         </Box>
                                     </motion.div>
