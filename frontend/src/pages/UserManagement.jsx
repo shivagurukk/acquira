@@ -471,7 +471,7 @@ const UserManagement = () => {
         {isModalOpen && (
           <div style={overlayStyle}>
             <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              style={{ background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)', padding: 28, borderRadius: 16, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto' }}>
+              style={{ background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)', padding: 28, borderRadius: 16, width: '100%', maxWidth: 480 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{modalUser ? 'Edit User' : 'Create User'}</h2>
                 <button onClick={() => setIsModalOpen(false)} style={closeBtnStyle}><X size={18} /></button>
@@ -673,7 +673,12 @@ const Field = ({ label, icon: Icon, value, onChange, error, type = 'text', disab
 );
 
 // ─── Styles ──────────────────────────────────────────────
-const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 50 };
+// Overlay scrolls and top-aligns the modal. Centering tall modals with
+// align-items:center splits the overflow above/below the viewport, clipping
+// the modal's top (title + first field) with no way to scroll to it. flex-start
+// + overflowY:auto + vertical padding keeps the whole modal reachable; short
+// modals just sit a little below the top, which is normal modal behaviour.
+const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflowY: 'auto', padding: '5vh 16px', boxSizing: 'border-box', zIndex: 50 };
 const labelStyle = { display: 'block', marginBottom: 5, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary, #374151)' };
 const inputStyle = { width: '100%', padding: '10px 12px 10px 38px', borderRadius: 10, border: '1px solid var(--border, #e2e8f0)', boxSizing: 'border-box', fontSize: 13, outline: 'none', background: 'var(--bg-card, #fff)', color: 'var(--text, #1e293b)' };
 const errorBoxStyle = { background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 8, fontSize: 13, border: '1px solid #fecaca', marginBottom: 12 };

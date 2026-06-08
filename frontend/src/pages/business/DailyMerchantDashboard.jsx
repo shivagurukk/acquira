@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Box, Paper, Typography, Avatar, Stack, Tooltip, MenuItem, Select, FormControl, Chip, Card, CardContent, Autocomplete, TextField } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, Activity } from 'lucide-react';
@@ -83,6 +83,14 @@ const DailyMerchantDashboard = () => {
     });
     const [showFilters, setShowFilters] = useState(false);
     const [boundsLoaded, setBoundsLoaded] = useState(false);
+    // Auto-seek: the dashboard seeds its month from /data-bounds (the latest
+    // fact_transaction date). But merchant_daily_metrics is filled by the async
+    // reporting step, which can lag the raw data by a month (or fail to run for
+    // the newest upload). When the seeded month has no metrics rows, walk back
+    // month-by-month to the most recent month that DOES have data so the screen
+    // never opens blank. Disabled once data is found or the user picks a month.
+    const [autoSeek, setAutoSeek] = useState(true);
+    const seekCountRef = useRef(0);
 
     // Discover the latest month that actually has data, then default the filter
     // to that month. Without this, the screen loads with "May 2026" but data
@@ -188,6 +196,20 @@ const DailyMerchantDashboard = () => {
                     id: r.merchantId || i, ...r,
                     sparklineData: r.sparklineData || []
                 })));
+                // Auto-seek the latest month that actually has metrics (see the
+                // note at the autoSeek declaration). Bounded so a genuinely empty
+                // tenant can't loop forever.
+                if (result.length === 0 && autoSeek && seekCountRef.current < 14) {
+                    seekCountRef.current += 1;
+                    setFilters(prev => {
+                        let y = prev.year, m = (prev.month || 1) - 1;
+                        if (m < 1) { m = 12; y -= 1; }
+                        return { ...prev, year: y, month: m };
+                    });
+                } else if (result.length > 0) {
+                    setAutoSeek(false);
+                    seekCountRef.current = 0;
+                }
             } else {
                 console.error('daily-merchant-dashboard-filtered failed', res.status, await res.text());
                 setData([]);
@@ -215,13 +237,13 @@ const DailyMerchantDashboard = () => {
     const extraControls = (
         <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
             <FormControl size="small" variant="outlined">
-                <Select value={filters.month} onChange={(e) => setFilters(prev => ({ ...prev, month: Number(e.target.value) }))}
+                <Select value={filters.month} onChange={(e) => { setAutoSeek(false); setFilters(prev => ({ ...prev, month: Number(e.target.value) })); }}
                     sx={{ borderRadius: 2, height: 40, bgcolor: 'white', fontWeight: 600, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' }, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                     {Array.from({ length: 12 }, (_, i) => <MenuItem key={i + 1} value={i + 1}>{new Date(0, i).toLocaleString('default', { month: 'long' })}</MenuItem>)}
                 </Select>
             </FormControl>
             <FormControl size="small" variant="outlined">
-                <Select value={filters.year} onChange={(e) => setFilters(prev => ({ ...prev, year: Number(e.target.value) }))}
+                <Select value={filters.year} onChange={(e) => { setAutoSeek(false); setFilters(prev => ({ ...prev, year: Number(e.target.value) })); }}
                     sx={{ borderRadius: 2, height: 40, bgcolor: 'white', fontWeight: 600, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' }, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                     {[2024, 2025, 2026].map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
                 </Select>

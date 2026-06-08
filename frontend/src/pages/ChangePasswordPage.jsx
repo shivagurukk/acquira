@@ -49,7 +49,11 @@ const ChangePasswordPage = () => {
     const isDark = theme.mode === 'dark';
 
     const s = {
-        pageBg: isDark ? '#0f172a' : '#f1f5f9',
+        // Branded gradient instead of a flat fill so the full-screen force-change
+        // page doesn't read as a blank background. Mirrors the login aesthetic.
+        pageBg: isDark
+            ? 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)'
+            : 'linear-gradient(135deg, #eef2ff 0%, #f8fafc 45%, #eff6ff 100%)',
         cardBg: isDark ? '#1e293b' : '#ffffff',
         cardBorder: isDark ? '1px solid #334155' : '1px solid #e2e8f0',
         cardShadow: isDark ? '0 20px 60px rgba(0,0,0,0.4)' : '0 20px 60px rgba(0,0,0,0.06)',
