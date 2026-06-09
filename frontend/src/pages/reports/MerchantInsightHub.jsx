@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Download, Filter, Search, Calendar, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
 import { SmartEmptyState } from '../../components/CockpitControls';
 import api from '../../api/axios';
+import { formatCurrency as fmt } from '../../utils/formatters';
 
 // --- Preset Values ---
 const PRESETS = [
@@ -113,7 +114,6 @@ const MerchantInsightHub = () => {
     };
 
     // Helper for formatting
-    const fmt = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
     const fmtInt = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 
     return (

@@ -128,7 +128,26 @@ public class MerchantInsightService {
         Map<Long, List<com.acquira.common.model.SumMonthlyCard>> cardMap =
             allCards.stream().collect(Collectors.groupingBy(com.acquira.common.model.SumMonthlyCard::getMerchantId));
 
-        // ===== Build DTOs per merchant (pure in-memory, zero DB) =====
+        // ===== Bulk-resolve currency (1 merchant query + 1 tenant query) =====
+        // Previously buildDtoFromPrefetched did merchantRepository.findById +
+        // tenantRepository.findById PER merchant (a 2× N PK-lookup N+1). Resolve it
+        // once here for the whole chunk and pass the result into the DTO builder.
+        Map<Long, com.acquira.common.model.Merchant> merchantsById = new HashMap<>();
+        for (com.acquira.common.model.Merchant m : merchantRepository.findAllById(merchantIds)) {
+            merchantsById.put(m.getMerchantId(), m);
+        }
+        Set<Long> tenantIdSet = merchantsById.values().stream()
+            .map(com.acquira.common.model.Merchant::getTenantId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+        Map<Long, com.acquira.common.model.Tenant> tenantsById = new HashMap<>();
+        if (!tenantIdSet.isEmpty()) {
+            for (com.acquira.common.model.Tenant t : tenantRepository.findAllById(tenantIdSet)) {
+                tenantsById.put(t.getTenantId(), t);
+            }
+        }
+
+        // ===== Build DTOs per merchant (pure in-memory) =====
         Map<Long, MerchantInsightsDTO> result = new HashMap<>();
         for (Long mid : merchantIds) {
             try {
@@ -150,10 +169,22 @@ public class MerchantInsightService {
                     .filter(c -> c.getMonthKey() >= startKey && c.getMonthKey() <= endKey)
                     .collect(Collectors.toList());
 
+                // Resolve this merchant's currency from the bulk-loaded maps (no DB here).
+                String ccyCode = "AED", ccySymbol = "AED";
+                com.acquira.common.model.Merchant mObj = merchantsById.get(mid);
+                if (mObj != null && mObj.getTenantId() != null) {
+                    com.acquira.common.model.Tenant t = tenantsById.get(mObj.getTenantId());
+                    if (t != null) {
+                        if (t.getCurrencySymbol() != null) ccySymbol = t.getCurrencySymbol();
+                        if (t.getBaseCurrency() != null && !t.getBaseCurrency().isBlank()) ccyCode = t.getBaseCurrency();
+                    }
+                }
+
                 // Build DTO using existing logic
                 MerchantInsightsDTO dto = buildDtoFromPrefetched(
                     mid, currentDaily, prevDaily, currentAttrs2, prevAttrs2,
-                    trends, currentCards, cards, startOfMonth, endOfMonth);
+                    trends, currentCards, cards, startOfMonth, endOfMonth,
+                    ccyCode, ccySymbol);
                 result.put(mid, dto);
             } catch (Exception e) {
                 log.warn("[BULK] Failed to build DTO for merchant {}: {}", mid, e.getMessage());
@@ -175,7 +206,8 @@ public class MerchantInsightService {
             List<Map<String, Object>> monthlyTrends,
             List<com.acquira.common.model.SumMonthlyCard> cardRows,
             List<com.acquira.common.model.SumMonthlyCard> trendCardRows,
-            LocalDate startOfMonth, LocalDate endOfMonth) {
+            LocalDate startOfMonth, LocalDate endOfMonth,
+            String currencyCode, String currencySymbol) {
 
         Map<String, BigDecimal> currentAgg = aggregateDaily(currentDailyRows);
         Map<String, BigDecimal> prevAgg = aggregateDaily(prevDailyRows);
@@ -198,23 +230,15 @@ public class MerchantInsightService {
         // the cover page, executive summary and scorecard agree with page 9.
         overrideCustomersFromLoyalty(dto);
 
-        // Currency from tenant
-        String currencySymbol = "AED";
-        String currencyCode = "AED";
-        try {
-            com.acquira.common.model.Merchant merchant = merchantRepository.findById(merchantId).orElse(null);
-            if (merchant != null && merchant.getTenantId() != null) {
-                com.acquira.common.model.Tenant tenant = tenantRepository.findById(merchant.getTenantId()).orElse(null);
-                if (tenant != null) {
-                    if (tenant.getCurrencySymbol() != null) currencySymbol = tenant.getCurrencySymbol();
-                    if (tenant.getBaseCurrency() != null && !tenant.getBaseCurrency().isBlank()) currencyCode = tenant.getBaseCurrency();
-                }
-            }
-        } catch (Exception e) { /* fallback */ }
-        dto.setCurrencySymbol(currencySymbol);
-        dto.setCurrencyCode(currencyCode);
-        dto.setInsights(buildInsights(dto, currentDailyRows, currentAttributes, currencyCode));
-        dto.setHealthScore(buildHealthScore(dto, currentDailyRows, currencyCode));
+        // Currency was resolved in BULK by the caller (getBulkInsights) and passed
+        // in — no per-merchant merchantRepository.findById / tenantRepository.findById
+        // here (that was a 2× N PK-lookup N+1). Fall back to AED if unresolved.
+        String ccySymbol = (currencySymbol != null && !currencySymbol.isBlank()) ? currencySymbol : "AED";
+        String ccyCode = (currencyCode != null && !currencyCode.isBlank()) ? currencyCode : "AED";
+        dto.setCurrencySymbol(ccySymbol);
+        dto.setCurrencyCode(ccyCode);
+        dto.setInsights(buildInsights(dto, currentDailyRows, currentAttributes, ccyCode));
+        dto.setHealthScore(buildHealthScore(dto, currentDailyRows, ccyCode));
         return dto;
     }
 

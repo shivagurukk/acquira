@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import api from '../api/axios';
 import { clearAuthStorage } from '../utils/authStorage';
+import { setDefaultCurrency } from '../utils/formatters';
 
 const AuthContext = createContext(null);
 
@@ -123,6 +124,10 @@ export const AuthProvider = ({ children }) => {
     // #16: Dynamic currency from active tenant
     const currencyCode = activeTenant?.baseCurrency || 'BHD';
     const currencySymbol = activeTenant?.currencySymbol || currencyCode;
+
+    // Keep the shared formatters (utils/formatters.js) in sync with the active
+    // tenant so formatCurrency()/createFmt() render in the right currency app-wide.
+    useEffect(() => { setDefaultCurrency(currencyCode); }, [currencyCode]);
 
     // #16: Currency formatter — use instead of hardcoded currency symbols
     const formatCurrency = useCallback((value, opts = {}) => {

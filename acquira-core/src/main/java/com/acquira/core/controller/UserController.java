@@ -68,7 +68,7 @@ public class UserController {
         if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Password is required"));
         }
-        String strengthError = passwordService.validatePasswordStrength(user.getPassword());
+        String strengthError = passwordService.validatePasswordStrength(user.getPassword(), user);
         if (strengthError != null) {
             return ResponseEntity.badRequest().body(Map.of("error", strengthError));
         }

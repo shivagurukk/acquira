@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from '../../api/axios';
 import { AlertCircle, TrendingDown, ArrowRight, Download, Loader } from 'lucide-react';
 import useExcelExport from '../../hooks/useExcelExport';
+import { formatCurrency } from '../../utils/formatters';
 
 const FinanceLists = () => {
     const [activeTab, setActiveTab] = useState('loss-making');
@@ -29,8 +30,6 @@ const FinanceLists = () => {
             setLoading(false);
         }
     };
-
-    const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
 
     return (
         <div className="p-8 bg-gray-50 min-h-screen font-sans">

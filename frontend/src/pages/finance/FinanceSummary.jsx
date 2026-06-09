@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, Download, Calendar, ArrowRight, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
+import { formatCurrency } from '../../utils/formatters';
 
 const FinanceSummary = () => {
     const [data, setData] = useState([]);
@@ -110,7 +111,6 @@ const FinanceSummary = () => {
         setShowCustomPicker(false);
     };
 
-    const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(val || 0);
     const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
     // NEW CALCULATION: Volume Share % (Vol / Total Month Vol)
     const formatPct = (vol, totalVol) => {

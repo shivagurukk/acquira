@@ -12,6 +12,7 @@ import {
 } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { Download, LayoutGrid, RotateCcw, Calendar } from 'lucide-react';
+import { formatCurrency } from '../utils/formatters';
 
 const MerchantSummary = () => {
     const [summaries, setSummaries] = useState([]);
@@ -67,8 +68,6 @@ const MerchantSummary = () => {
         } catch (error) { console.error("Failed to fetch merchant summaries", error); }
         finally { setLoading(false); }
     };
-
-    const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
 
     const handleExport = async () => {
         try {

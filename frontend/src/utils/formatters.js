@@ -1,12 +1,20 @@
 // ─── Shared Formatting Utilities ─────────────────────────────────────
 // Usage: import { formatCurrency, formatNumber, formatCompact, formatPercent, createFmt } from '../../utils/formatters';
 
+// Module-level default currency, kept in sync with the active tenant by
+// AuthContext (see setDefaultCurrency). This makes formatCurrency(val) and
+// createFmt() render in the tenant's currency app-wide without each caller
+// having to pass it. Falls back to AED.
+let DEFAULT_CCY = 'AED';
+export const setDefaultCurrency = (code) => { if (code) DEFAULT_CCY = code; };
+export const getDefaultCurrency = () => DEFAULT_CCY;
+
 /**
- * Format a number as currency (default: AED).
+ * Format a number as currency (defaults to the active tenant's currency).
  * @param {number} val
- * @param {string} currency - ISO 4217 currency code
+ * @param {string} currency - ISO 4217 currency code (defaults to tenant currency)
  */
-export const formatCurrency = (val, currency = 'AED') =>
+export const formatCurrency = (val, currency = DEFAULT_CCY) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(val || 0);
 
 /**
@@ -39,7 +47,7 @@ export const formatPercent = (val, decimals = 1) =>
  *   fmt.growth(-3.2)      → "-3.2%"
  *   fmt.date('2025-09-15') → "Sep 15"
  */
-export const createFmt = (sym = 'AED') => ({
+export const createFmt = (sym = DEFAULT_CCY) => ({
     currency: (val) => {
         if (val === 0 || val == null) return sym + ' 0';
         if (Math.abs(val) >= 1_000_000) return sym + ' ' + (val / 1_000_000).toFixed(2) + 'M';

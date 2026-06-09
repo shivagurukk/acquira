@@ -8,10 +8,10 @@ import { Grid, Box, Paper, Typography, Stack, FormControl, InputLabel, Select, M
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { pageContainer } from '../../theme/dataGridStyles';
+import { formatCurrency } from '../../utils/formatters';
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#3b82f6', '#14b8a6', '#f97316'];
 
-const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val || 0);
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 
 // ─── Empty-state shown inside a chart card when a query returns no rows ──
@@ -138,7 +138,7 @@ const ExecutiveDashboardReport = () => {
         { title: 'YTD MID', value: formatNumber(data.kpis.ytdMid), subtitle: 'Merchants Created', icon: CreditCard, color: '#3b82f6' },
         { title: 'MTD SID', value: formatNumber(data.kpis.mtdSid), subtitle: 'This Month', icon: TrendingUp, color: '#10b981' },
         { title: 'WTD SID', value: formatNumber(data.kpis.wtdSid), subtitle: 'This Week', icon: BarChart3, color: '#f59e0b' },
-        { title: 'MTD MSF Revenue', value: formatCurrency(data.kpis.mtdMsfUsd), subtitle: 'USD Revenue', icon: DollarSign, color: '#8b5cf6' },
+        { title: 'MTD MSF Revenue', value: formatCurrency(data.kpis.mtdMsfUsd), subtitle: 'Net Revenue', icon: DollarSign, color: '#8b5cf6' },
     ], [data.kpis]);
 
     // Diagnostic: every KPI is zero AND every chart is empty. This almost always

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { DollarSign, TrendingUp, Percent, CreditCard, Activity } from 'lucide-react';
 import { Box, Paper, Typography, Grid, Stack } from '@mui/material';
@@ -8,7 +9,6 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { pageContainer } from '../../theme/dataGridStyles';
 
-const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val || 0);
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 
 // ─── Premium Chart Card ──────────────────────────────────────────────
@@ -49,6 +49,12 @@ const CustomTooltip = ({ active, payload, label, formatter }) => {
 };
 
 const FinanceDashboard = () => {
+    const { currencyCode = 'AED', formatCurrency: fmtCurr } = useAuth() || {};
+    // Tenant-aware currency formatter (was hardcoded to USD).
+    const formatCurrency = useCallback((val) => {
+        if (fmtCurr) return fmtCurr(val);
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode, maximumFractionDigits: 0 }).format(val || 0);
+    }, [fmtCurr, currencyCode]);
     const [kpis, setKpis] = useState(null);
     const [trends, setTrends] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -150,7 +156,7 @@ const FinanceDashboard = () => {
                             <LineChart data={trends}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-light)" />
                                 <XAxis dataKey="key" stroke="var(--text-muted)" tick={{ fontSize: 11 }} tickFormatter={(val) => val?.slice?.(-2) || val} />
-                                <YAxis stroke="var(--text-muted)" tick={{ fontSize: 11 }} tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} />
+                                <YAxis stroke="var(--text-muted)" tick={{ fontSize: 11 }} tickFormatter={(val) => `${currencyCode} ${(val / 1000).toFixed(0)}k`} />
                                 <Tooltip content={<CustomTooltip formatter={formatCurrency} />} />
                                 <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
                                 <Line type="monotone" dataKey="netRevenue" stroke="#10b981" strokeWidth={3} dot={{ r: 3 }} name="Net Revenue" />

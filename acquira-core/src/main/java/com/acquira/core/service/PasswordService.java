@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -21,6 +22,27 @@ public class PasswordService {
     // Defaults — can be overridden from tenant_setting
     private int historyCount = 5;
     private int minLength = 8;
+
+    /**
+     * Base words attackers try first (plus brand/app terms). Compared by exact
+     * match against the password's letters / alphanumerics / leading letters, so
+     * "password", "Password1!", "Welcome@123", "Acquira2024" are all rejected,
+     * while genuine passphrases that merely contain a short word are not.
+     * For production, back this with a breach corpus (e.g. the HaveIBeenPwned
+     * k-anonymity range API, or a bundled top-100k common-password list).
+     */
+    private static final java.util.Set<String> WEAK_BASES = java.util.Set.of(
+        "password","passwords","passw0rd","pass","admin","administrator","root","welcome",
+        "login","qwerty","qwertyuiop","asdf","asdfgh","zxcvbn","letmein","changeme","secret",
+        "iloveyou","monkey","dragon","master","superman","sunshine","football","baseball",
+        "abc","abcd","abc123","123","1234","12345","123456","1234567","12345678","123456789",
+        "111111","000000","654321","trustno1","whatever","access","shadow","ninja","hello",
+        "acquira","bank","banking","merchant","finance","test","demo","user","guest","temp","welcome123"
+    );
+
+    private static final java.util.List<String> KEYBOARD_RUNS = java.util.List.of(
+        "qwertyuiop","asdfghjkl","zxcvbnm","1234567890"
+    );
 
     public PasswordService(PasswordHistoryRepository historyRepository,
                            PasswordEncoder passwordEncoder,
@@ -49,7 +71,75 @@ public class PasswordService {
         if (!rawPassword.matches(".*[!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>/?].*")) {
             return "Password must contain at least one special character (!@#$%^&*...)";
         }
+        // Reject the passwords attackers try first: common words, keyboard runs,
+        // repeats, all-digit. Stops "Password1!", "Welcome@123", "Acquira@2024".
+        String pattern = patternWeakness(rawPassword);
+        if (pattern != null) return pattern;
         return null; // Valid
+    }
+
+    /**
+     * Strength check that ALSO rejects passwords derived from the user's own
+     * identity (username, email, display name). Prefer this overload wherever
+     * the target user is known.
+     */
+    public String validatePasswordStrength(String rawPassword, User user) {
+        String base = validatePasswordStrength(rawPassword);
+        if (base != null) return base;
+        if (user != null) {
+            String idReason = identifierWeakness(rawPassword, user);
+            if (idReason != null) return idReason;
+        }
+        return null;
+    }
+
+    /** Common-password / weak-pattern detection. Returns a reason, or null if OK. */
+    private String patternWeakness(String rawPassword) {
+        String norm = rawPassword.toLowerCase();
+        String core = norm.replaceAll("[^a-z0-9]", "");       // letters + digits
+        String letters = norm.replaceAll("[^a-z]", "");        // letters only
+        String leadLetters = norm.replaceAll("[^a-z]+$", "");  // strip trailing digits/symbols
+
+        for (String w : WEAK_BASES) {
+            if (core.equals(w) || letters.equals(w) || leadLetters.equals(w)) {
+                return "That password is too common or easily guessed — pick something more unique";
+            }
+        }
+        for (String run : KEYBOARD_RUNS) {
+            for (int i = 0; i + 4 <= run.length(); i++) {
+                String seq = run.substring(i, i + 4);
+                String rev = new StringBuilder(seq).reverse().toString();
+                if (norm.contains(seq) || norm.contains(rev)) {
+                    return "Avoid keyboard sequences like '" + seq + "'";
+                }
+            }
+        }
+        if (rawPassword.matches(".*(.)\\1{3,}.*")) {
+            return "Avoid repeating the same character 4 or more times";
+        }
+        if (norm.matches("[0-9]+")) {
+            return "Password cannot be all numbers";
+        }
+        return null;
+    }
+
+    /** Reject passwords that embed the user's username, email local-part, or name. */
+    private String identifierWeakness(String rawPassword, User user) {
+        String norm = rawPassword.toLowerCase().replaceAll("[^a-z0-9]", "");
+        if (norm.isEmpty()) return null;
+        List<String> ids = new ArrayList<>();
+        if (user.getUsername() != null) ids.add(user.getUsername());
+        if (user.getEmail() != null && user.getEmail().contains("@")) ids.add(user.getEmail().split("@")[0]);
+        if (user.getDisplayName() != null) {
+            for (String part : user.getDisplayName().split("\\s+")) ids.add(part);
+        }
+        for (String id : ids) {
+            String c = id.toLowerCase().replaceAll("[^a-z0-9]", "");
+            if (c.length() >= 3 && (norm.contains(c) || c.contains(norm))) {
+                return "Password must not contain your username, name, or email";
+            }
+        }
+        return null;
     }
 
     /**
@@ -95,8 +185,8 @@ public class PasswordService {
             return "Current password is incorrect";
         }
 
-        // 2. Validate strength
-        String strengthError = validatePasswordStrength(newPassword);
+        // 2. Validate strength (also rejects identity-based passwords)
+        String strengthError = validatePasswordStrength(newPassword, user);
         if (strengthError != null) return strengthError;
 
         // 3. Check not same as current
@@ -131,8 +221,8 @@ public class PasswordService {
      */
     @Transactional
     public String adminResetPassword(User user, String newPassword) {
-        // 1. Validate strength
-        String strengthError = validatePasswordStrength(newPassword);
+        // 1. Validate strength (also rejects identity-based passwords)
+        String strengthError = validatePasswordStrength(newPassword, user);
         if (strengthError != null) return strengthError;
 
         // 2. Check history
