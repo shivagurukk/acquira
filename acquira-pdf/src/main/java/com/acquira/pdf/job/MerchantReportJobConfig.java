@@ -31,12 +31,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.YearMonth;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -91,27 +89,11 @@ public class MerchantReportJobConfig {
     private String reportsBaseDir;
 
     /**
-     * Only merchants whose dim_merchant.status matches one of these values get a
-     * PDF. Comma-separated, case-insensitive. dim_merchant has no dedicated "flag"
-     * column, so status is the flag — the merchant upsert sets it to ACTIVE, and
-     * the lifecycle moves it to DORMANT/CHURNED, so the default skips inactive
-     * merchants. To accept a different value (e.g. a literal "OK"), set:
-     *   pdf.report.allowed-merchant-statuses=OK
-     * Set it to "*" to disable the filter and generate for every merchant.
+     * PDF generate flag check. dim_merchant.generate_report_flag = 1 -> generate,
+     * anything else (0 / null) -> skip. Set a merchant's flag to 0 to exclude it.
      */
-    @org.springframework.beans.factory.annotation.Value("${pdf.report.allowed-merchant-statuses:ACTIVE}")
-    private String allowedMerchantStatuses;
-
-    /** Returns true if this merchant's status flag permits report generation. */
     private boolean isFlagOk(Merchant m) {
-        String allowed = allowedMerchantStatuses == null ? "" : allowedMerchantStatuses.trim();
-        if (allowed.isEmpty() || "*".equals(allowed)) return true; // filter disabled
-        Set<String> ok = Arrays.stream(allowed.split(","))
-                .map(s -> s.trim().toUpperCase())
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toSet());
-        String status = m.getStatus() == null ? "" : m.getStatus().trim().toUpperCase();
-        return ok.contains(status);
+        return m.getGenerateReportFlag() != null && m.getGenerateReportFlag() == 1;
     }
 
     @Bean
@@ -164,15 +146,15 @@ public class MerchantReportJobConfig {
                 Long tenantId = entry.getKey();
                 List<Merchant> allInTenant = entry.getValue();
 
-                // Flag check: only generate for merchants whose status flag is OK.
+                // Flag check: only generate for merchants whose generate_report_flag = 1.
                 // Filtered out merchants are never fetched or rendered.
                 List<Merchant> merchants = allInTenant.stream()
                         .filter(this::isFlagOk)
                         .collect(Collectors.toList());
                 int skipped = allInTenant.size() - merchants.size();
                 if (skipped > 0) {
-                    log.info("[JOB] Skipped {} merchant(s) in tenant {} whose status is not in {}",
-                            skipped, tenantId, allowedMerchantStatuses);
+                    log.info("[JOB] Skipped {} merchant(s) in tenant {} with generate_report_flag != 1",
+                            skipped, tenantId);
                 }
                 if (merchants.isEmpty()) {
                     continue; // nothing flagged-OK in this tenant's slice of the chunk

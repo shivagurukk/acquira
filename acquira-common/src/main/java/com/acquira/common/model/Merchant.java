@@ -45,6 +45,22 @@ public class Merchant {
     @Column(name = "contact_email")
     private String contactEmail;
 
+    /**
+     * PDF generate flag. 1 = generate this merchant's report, 0 = skip.
+     * Defaults to 1 (set in DB via DatabaseFixer and on upload); set to 0 to
+     * exclude a merchant from PDF generation.
+     */
+    @Column(name = "generate_report_flag")
+    private Integer generateReportFlag = 1;
+
+    public Integer getGenerateReportFlag() {
+        return generateReportFlag;
+    }
+
+    public void setGenerateReportFlag(Integer generateReportFlag) {
+        this.generateReportFlag = generateReportFlag;
+    }
+
     public Long getMerchantId() {
         return merchantId;
     }

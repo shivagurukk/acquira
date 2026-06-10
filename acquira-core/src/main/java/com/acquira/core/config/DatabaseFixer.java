@@ -20,6 +20,32 @@ public class DatabaseFixer implements CommandLineRunner {
     public void run(String... args) throws Exception {
         fixUserTenantAccessAndSalesTeamMapping();
         fixUsersTable();
+        fixDimMerchantTable();
+    }
+
+    /**
+     * Ensure dim_merchant has the PDF generate-flag column.
+     * generate_report_flag = 1 -> include in PDF generation, 0 -> skip.
+     * Defaults to 1 so every merchant (existing rows + new uploads) generates by
+     * default; set to 0 manually when a merchant should be excluded.
+     */
+    private void fixDimMerchantTable() {
+        try {
+            logger.info("Checking dim_merchant columns...");
+            jdbcTemplate.execute(
+                    "ALTER TABLE dim_merchant ADD COLUMN IF NOT EXISTS generate_report_flag INTEGER DEFAULT 1");
+            logger.info("\u2713 Ensured column generate_report_flag exists in dim_merchant");
+
+            // Backfill any existing rows that predate the column (NULL -> 1).
+            int updated = jdbcTemplate.update(
+                    "UPDATE dim_merchant SET generate_report_flag = 1 WHERE generate_report_flag IS NULL");
+            if (updated > 0) {
+                logger.info("\u2713 Defaulted {} dim_merchant rows to generate_report_flag = 1", updated);
+            }
+            logger.info("dim_merchant table check completed.");
+        } catch (Exception e) {
+            logger.error("fixDimMerchantTable failed", e);
+        }
     }
 
     private void fixUserTenantAccessAndSalesTeamMapping() {

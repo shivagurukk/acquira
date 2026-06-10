@@ -19,12 +19,10 @@ public interface MerchantRepository extends JpaRepository<Merchant, Long>,
 
         java.util.List<Merchant> findAllByTenantId(Long tenantId);
 
-        // Tenant-scoped + status-flag filtered. Used by the PDF batch so only merchants
-        // whose status is "OK" (e.g. ACTIVE) are loaded — the filter runs in the DB,
-        // so inactive merchants are never pulled into memory. Case-sensitive: pass the
-        // exact stored values (the caller upper-cases config but status is stored as-is,
-        // so supply the statuses as they appear in dim_merchant.status).
-        java.util.List<Merchant> findByTenantIdAndStatusIn(Long tenantId, java.util.Collection<String> statuses);
+        // Tenant-scoped + PDF generate-flag filtered. Used by the PDF batch so only
+        // merchants whose generate_report_flag = 1 are loaded — the filter runs in the
+        // DB, so flagged-off merchants are never pulled into memory.
+        java.util.List<Merchant> findByTenantIdAndGenerateReportFlag(Long tenantId, Integer generateReportFlag);
 
         org.springframework.data.domain.Page<Merchant> findAllByTenantId(Long tenantId,
                         org.springframework.data.domain.Pageable pageable);
