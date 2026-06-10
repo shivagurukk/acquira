@@ -47,33 +47,18 @@ public class UniversalDatabaseClient {
     }
 
     /**
-     * Prepares Statement with Parameter injection (Basic implementation).
-     * Ideally, use NamedParameterJdbcTemplate, but raw JDBC allows dynamic URLs
-     * easily.
+     * Prepares a statement binding ":name" placeholders SAFELY.
+     *
+     * SECURITY: the previous version did sql.replace(":"+key, "?") while iterating
+     * a HashMap, which has no word boundaries (":date" clobbers ":dateFrom") and
+     * binds in undefined order, so values could land in the wrong "?" slot.
+     * NamedParamBinder uses Spring's NamedParameterUtils to parse the SQL once and
+     * bind by name in correct positional order. Values are always bound as JDBC
+     * parameters (never concatenated), so they can't break out of their slot.
      */
     private PreparedStatement prepareStatement(Connection conn, String sql, Map<String, Object> params)
             throws SQLException {
-        // NOTE: For simplicity, assuming SQL uses '?' and params are passed in order,
-        // OR using a simple regex to replace :paramName with ?.
-        // Real-world: Use Spring's NamedParameterUtils.
-
-        // Simple Named Param Parser
-        List<Object> values = new ArrayList<>();
-        String parsedSql = sql;
-
-        for (Map.Entry<String, Object> entry : params.entrySet()) {
-            String placeholder = ":" + entry.getKey();
-            if (parsedSql.contains(placeholder)) {
-                parsedSql = parsedSql.replace(placeholder, "?");
-                values.add(entry.getValue());
-            }
-        }
-
-        PreparedStatement ps = conn.prepareStatement(parsedSql);
-        for (int i = 0; i < values.size(); i++) {
-            ps.setObject(i + 1, values.get(i));
-        }
-        return ps;
+        return NamedParamBinder.prepare(conn, sql, params);
     }
 
     private List<Map<String, Object>> mapResultSet(ResultSet rs) throws SQLException {

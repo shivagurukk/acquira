@@ -126,6 +126,11 @@ public class IntegrationPullService {
         }
     }
 
+    /** Hard ceiling so a runaway report query can't materialise unbounded rows in
+     *  memory and OOM the app. High enough not to truncate legitimate pulls; if a
+     *  pull ever hits it we log a warning rather than failing silently. */
+    private static final int MAX_PULL_ROWS = 2_000_000;
+
     /**
      * Execute query against external database.
      */
@@ -134,6 +139,11 @@ public class IntegrationPullService {
         int timeout = config.getTimeoutSeconds() != null ? config.getTimeoutSeconds() : 30;
 
         log.info("[Integration] Connecting to {} ({}) at {}:{}", config.getName(), config.getDbType(), config.getHost(), config.getPort());
+
+        // Defense-in-depth: reject stacked (';'-separated) statements before the SQL
+        // reaches the driver. The durable control is still a read-only,
+        // least-privilege DB account on this connection.
+        assertSingleStatement(sql);
 
         Properties props = new Properties();
         props.setProperty("user", config.getUsername());
@@ -144,33 +154,55 @@ public class IntegrationPullService {
         props.setProperty("password", cryptoService.decrypt(config.getEncryptedPassword()));
         props.setProperty("loginTimeout", String.valueOf(timeout));
 
+        // The executor backing setNetworkTimeout MUST be shut down or it leaks a
+        // thread (and the executor) on every single pull. Scope it here, close it
+        // in finally.
+        java.util.concurrent.ExecutorService netTimeoutExec =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
         try (Connection conn = DriverManager.getConnection(url, props)) {
             conn.setReadOnly(true); // Safety: prevent accidental writes to external DB
-            conn.setNetworkTimeout(java.util.concurrent.Executors.newSingleThreadExecutor(), timeout * 1000);
-
-            // Named param replacement
-            List<Object> values = new ArrayList<>();
-            String parsedSql = sql;
-            for (Map.Entry<String, Object> entry : params.entrySet()) {
-                String placeholder = ":" + entry.getKey();
-                if (parsedSql.contains(placeholder)) {
-                    parsedSql = parsedSql.replace(placeholder, "?");
-                    values.add(entry.getValue());
-                }
+            try {
+                conn.setNetworkTimeout(netTimeoutExec, timeout * 1000);
+            } catch (SQLException | RuntimeException ignored) {
+                // Not all drivers implement setNetworkTimeout; queryTimeout below still applies.
             }
 
-            try (PreparedStatement ps = conn.prepareStatement(parsedSql)) {
+            // SECURITY: bind ":name" params via NamedParamBinder (parses once, binds by
+            // name in correct order). The old inline sql.replace(":"+key,"?") over a
+            // HashMap had no word boundaries and undefined order → values could bind
+            // to the wrong "?" slot.
+            try (PreparedStatement ps = NamedParamBinder.prepare(conn, sql, params)) {
                 ps.setQueryTimeout(timeout);
-                for (int i = 0; i < values.size(); i++) {
-                    ps.setObject(i + 1, values.get(i));
-                }
-
+                ps.setMaxRows(MAX_PULL_ROWS);
                 try (ResultSet rs = ps.executeQuery()) {
-                    return mapResultSet(rs);
+                    List<Map<String, Object>> rows = mapResultSet(rs);
+                    if (rows.size() >= MAX_PULL_ROWS) {
+                        log.warn("[Integration] Pull for '{}' hit the {}-row safety ceiling — result may be truncated.",
+                                config.getName(), MAX_PULL_ROWS);
+                    }
+                    return rows;
                 }
             }
         } catch (SQLException e) {
             throw new RuntimeException("External DB query failed for '" + config.getName() + "': " + e.getMessage(), e);
+        } finally {
+            netTimeoutExec.shutdownNow();
+        }
+    }
+
+    /**
+     * Reject multi-statement (stacked) SQL. Strips one optional trailing semicolon,
+     * then fails if any ';' remains. This is a pragmatic guard, not a full SQL
+     * parser (a ';' inside a string literal would be a false positive — rare for a
+     * read query) — defense-in-depth on top of the read-only least-privilege account.
+     */
+    private void assertSingleStatement(String sql) {
+        if (sql == null) return;
+        String trimmed = sql.strip();
+        if (trimmed.endsWith(";")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+        if (trimmed.contains(";")) {
+            throw new IllegalArgumentException(
+                "Report SQL must be a single statement (stacked ';'-separated statements are not allowed).");
         }
     }
 
@@ -329,37 +361,40 @@ public class IntegrationPullService {
      * Uses same SQL as MerchantMasterJobConfig but runs via JdbcTemplate directly.
      */
     private void executeMerchantPostProcessing(Long tenantId) {
-        String tId = String.valueOf(tenantId);
+        // SECURITY: parameterize the tenant id instead of String.formatted(...) into
+        // the SQL. tenantId is a Long today (not request-derived), but building DDL/DML
+        // by string interpolation is a latent injection landmine if that ever changes.
+        // Bind it as a JDBC parameter via jdbcTemplate.update(...).
 
         // Upsert Merchants
-        jdbcTemplate.execute("""
+        jdbcTemplate.update("""
             INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date, sales_user_id, sales_email, referral_partner, risk_level)
-            SELECT CAST(%s AS INTEGER), COALESCE(merchant_internal_id, mid), mid,
+            SELECT CAST(? AS INTEGER), COALESCE(merchant_internal_id, mid), mid,
                 MAX(merchant_name), COALESCE(MAX(merchant_status), 'ACTIVE'), MAX(created_date),
                 MAX(sales_user_id), MAX(sales_user_email), MAX(referral_partner), MAX(risk_level)
-            FROM stg_merchant_master_raw WHERE tenant_id = %s
+            FROM stg_merchant_master_raw WHERE tenant_id = ?
             GROUP BY tenant_id, COALESCE(merchant_internal_id, mid), mid
             ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
                 name = EXCLUDED.name, status = EXCLUDED.status,
                 sales_user_id = EXCLUDED.sales_user_id, sales_email = EXCLUDED.sales_email,
                 referral_partner = EXCLUDED.referral_partner, risk_level = EXCLUDED.risk_level
-        """.formatted(tId, tId));
+        """, tenantId, tenantId);
 
         // Upsert Stores
-        jdbcTemplate.execute("""
+        jdbcTemplate.update("""
             INSERT INTO dim_store (tenant_id, internal_id, merchant_id, sid, name, legal_name, address, city, state, postal_code, mcc, status, created_date)
-            SELECT CAST(%s AS INTEGER), COALESCE(merchant_store_internal_id, sid, CONCAT('STORE_', s.mid)),
+            SELECT CAST(? AS INTEGER), COALESCE(merchant_store_internal_id, sid, CONCAT('STORE_', s.mid)),
                 MAX(m.merchant_id), sid,
                 MAX(COALESCE(store_name, merchant_name)), MAX(store_legal_name),
                 MAX(s.address), MAX(s.city), MAX(s.state), MAX(s.postal_code),
                 MAX(s.business_mcc), COALESCE(MAX(store_status), 'ACTIVE'), MAX(merchant_store_created_date)
             FROM stg_merchant_master_raw s
-            JOIN dim_merchant m ON s.mid = m.mid AND m.tenant_id = %s
-            WHERE s.tenant_id = %s
+            JOIN dim_merchant m ON s.mid = m.mid AND m.tenant_id = ?
+            WHERE s.tenant_id = ?
             GROUP BY s.tenant_id, COALESCE(merchant_store_internal_id, sid, CONCAT('STORE_', s.mid)), sid
             ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
                 name = EXCLUDED.name, address = EXCLUDED.address, city = EXCLUDED.city, state = EXCLUDED.state, status = EXCLUDED.status
-        """.formatted(tId, tId, tId));
+        """, tenantId, tenantId, tenantId);
 
         log.info("[Integration] Merchant dimensions upserted for tenant {}", tenantId);
     }

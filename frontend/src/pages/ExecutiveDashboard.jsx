@@ -57,6 +57,32 @@ const shortDate = (iso) => {
   return isNaN(d) ? String(iso).slice(5) : `${d.getMonth() + 1}/${d.getDate()}`;
 };
 
+/* Merchant label cleanup.
+   A real merchant name contains letters. When dim_merchant.name is blank or
+   purely numeric (placeholder merchants auto-created from a transaction-first
+   upload) or Excel scientific notation like "4.00E+14", we fall back to the MID
+   and de-scientific-notation it so the chart shows a clean identifier instead
+   of an ugly "4.0000000E+14". */
+const sciToPlain = (s) => {
+  if (s == null) return '';
+  const t = String(s).trim();
+  if (/^[+-]?\d+(\.\d+)?[eE][+-]?\d+$/.test(t)) {
+    const num = Number(t);
+    if (Number.isFinite(num)) {
+      try { return BigInt(Math.round(num)).toString(); } catch { return num.toFixed(0); }
+    }
+  }
+  return t;
+};
+const merchantLabel = (m) => {
+  const name = (m.merchantName || '').trim();
+  if (/[a-zA-Z]/.test(name)) return name;        // a real, human-readable name
+  const mid = sciToPlain(m.mid);
+  if (mid) return `MID ${mid}`;                   // numeric/blank name -> show the MID
+  const cleaned = sciToPlain(name);
+  return cleaned || '—';
+};
+
 /* ── Animated count-up ───────────────────────────────────── */
 const useCountUp = (target, dur = 900) => {
   const [val, setVal] = useState(0);
@@ -113,7 +139,7 @@ const ExecutiveDashboard = () => {
     if (mer.status === 'fulfilled') {
       const content = mer.value.data?.content || [];
       setTopMerchants(content
-        .map(m => ({ name: m.merchantName || m.mid || '—', value: n(m.mtdVolume), txns: n(m.mtdCount) }))
+        .map(m => ({ name: merchantLabel(m), value: n(m.mtdVolume), txns: n(m.mtdCount) }))
         .filter(m => m.value > 0)
         .sort((a, b) => b.value - a.value)
         .slice(0, 7));
