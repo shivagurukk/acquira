@@ -60,6 +60,27 @@ public class PdfController {
     @org.springframework.beans.factory.annotation.Value("${pdf.reports.dir:reports}")
     private String reportsBaseDir;
 
+    /**
+     * Which merchant statuses get a PDF in "ALL" mode. Comma-separated, e.g.
+     * "ACTIVE" or "ACTIVE,APPROVED". Set to "*" (or blank) to disable the filter
+     * and generate for every merchant. dim_merchant has no dedicated "flag" column,
+     * so status IS the flag (the merchant upsert sets it to ACTIVE).
+     * NOTE: matched case-sensitively against dim_merchant.status, so use the exact
+     * stored casing (the upsert stores ACTIVE upper-case).
+     */
+    @org.springframework.beans.factory.annotation.Value("${pdf.report.allowed-merchant-statuses:ACTIVE}")
+    private String allowedMerchantStatuses;
+
+    /** Parse allowed statuses; empty list = filter disabled ("*"/blank). */
+    private List<String> parseAllowedStatuses() {
+        String raw = allowedMerchantStatuses == null ? "" : allowedMerchantStatuses.trim();
+        if (raw.isEmpty() || "*".equals(raw)) return Collections.emptyList();
+        return Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
     private Path reportsRoot;
 
     @PostConstruct
@@ -242,11 +263,22 @@ public class PdfController {
                 log.info("[BATCH] Selective mode — {} of {} requested merchants resolved",
                         merchants.size(), uniqueRequested.size());
             } else {
-                // Tenant-scoped ALL: only THIS tenant's merchants (was findAll() across all tenants).
-                merchants = (currentTenant != null)
-                        ? merchantRepository.findAllByTenantId(currentTenant)
-                        : merchantRepository.findAll();
-                log.info("[BATCH] Full mode — running for ALL {} merchants (tenant={})", merchants.size(), currentTenant);
+                // Tenant-scoped ALL + status flag filter. Filtering in the DB means
+                // inactive merchants are never loaded into memory (important when a
+                // tenant has 10k+ merchants — loading them all is what stresses the JVM).
+                List<String> allowedStatuses = parseAllowedStatuses();
+                if (currentTenant == null) {
+                    merchants = merchantRepository.findAll();
+                    log.info("[BATCH] Full mode (no tenant context) — ALL {} merchants", merchants.size());
+                } else if (allowedStatuses.isEmpty()) {
+                    merchants = merchantRepository.findAllByTenantId(currentTenant);
+                    log.info("[BATCH] Full mode — running for ALL {} merchants (tenant={}, status filter DISABLED)",
+                            merchants.size(), currentTenant);
+                } else {
+                    merchants = merchantRepository.findByTenantIdAndStatusIn(currentTenant, allowedStatuses);
+                    log.info("[BATCH] Full mode — running for {} merchants with status in {} (tenant={})",
+                            merchants.size(), allowedStatuses, currentTenant);
+                }
             }
 
             List<long[]>   batchMerchantIds = new ArrayList<>(merchants.size());
