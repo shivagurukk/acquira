@@ -522,7 +522,18 @@ CREATE TABLE IF NOT EXISTS revenue_leakage_flags (
     severity VARCHAR(20),
     details TEXT,
     detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_resolved BOOLEAN DEFAULT FALSE
+    is_resolved BOOLEAN DEFAULT FALSE,
+    -- Revenue-leakage detector enrichment (RevenueLeakageDetectionService)
+    merchant_name VARCHAR(200),
+    business_date DATE,
+    metric_value NUMERIC(19,2),
+    baseline_value NUMERIC(19,2),
+    delta_pct NUMERIC(9,2),
+    est_monthly_impact NUMERIC(19,2),
+    status VARCHAR(20) DEFAULT 'OPEN',   -- OPEN | RESOLVED | IGNORED
+    resolved_at TIMESTAMP,
+    resolved_by VARCHAR(100),
+    CONSTRAINT uq_revenue_leakage_flag UNIQUE (tenant_id, merchant_id, check_type, business_date)
 );
 -- ==========================================
 -- 5. Comprehensive Merchant Management Tables
@@ -1904,6 +1915,31 @@ FROM sys_user_group g, sys_menu m
 WHERE g.group_name IN ('Super Admin', 'SUPER_ADMIN', 'ADMIN')
   AND m.path IN ('/admin/security-settings', '/admin/alerts', '/admin/api-management')
 ON CONFLICT DO NOTHING;
+-- ═══════════════════════════════════════════════════════════
+-- Revenue Leakage / Anomaly Detection
+-- ═══════════════════════════════════════════════════════════
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Revenue Leakage', '/business/revenue-leakage', 'ShieldAlert', 'BUSINESS', 16)
+ON CONFLICT (path) DO NOTHING;
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
+  AND m.path = '/business/revenue-leakage'
+ON CONFLICT DO NOTHING;
+-- Detector thresholds per tenant (detector falls back to these if a key is absent).
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'leakage.min_daily_volume', '100', 'NUMBER' FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'leakage.volume_drop_pct', '0.40', 'NUMBER' FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'leakage.msf_rate_drop_pct', '0.30', 'NUMBER' FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
+INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
+SELECT t.tenant_id, 'leakage.default_msf_rate', '0.02', 'NUMBER' FROM tenant t
+ON CONFLICT (tenant_id, setting_key) DO NOTHING;
 -- ==================================================================================
 -- 4. DEFAULT DATA (Tenant, Users, Access)
 -- ==================================================================================

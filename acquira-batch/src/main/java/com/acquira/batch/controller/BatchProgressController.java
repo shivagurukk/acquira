@@ -19,6 +19,11 @@ public class BatchProgressController {
 
     private final JobExplorer jobExplorer;
 
+    // Known step counts per job, for a friendly "step N of M" display in the UI.
+    private static final Map<String, Integer> TOTAL_STEPS = Map.of(
+        "transactionLoadJob", 9,
+        "merchantMasterJob", 5);
+
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
     public BatchProgressController(JobExplorer jobExplorer) {
@@ -201,6 +206,48 @@ public class BatchProgressController {
         payload.put("readCount", readCount);
         payload.put("writeCount", writeCount);
         payload.put("skipCount", skipCount);
+
+        // Current / latest step, so the UI can show exactly what's running
+        // (e.g. "Building summaries") instead of inferring it from a percentage.
+        StepExecution current = null;
+        for (StepExecution step : jobExec.getStepExecutions()) {
+            if (current == null) { current = step; continue; }
+            boolean stepStarted = "STARTED".equals(step.getStatus().toString());
+            boolean curStarted = "STARTED".equals(current.getStatus().toString());
+            if (stepStarted != curStarted) {
+                if (stepStarted) current = step;          // prefer the running step
+            } else {
+                LocalDateTime a = step.getStartTime(), b = current.getStartTime();
+                if (a != null && (b == null || a.isAfter(b))) current = step;  // else latest
+            }
+        }
+        if (current != null) {
+            payload.put("currentStep", current.getStepName());
+            payload.put("currentStepStatus", current.getStatus().toString());
+        }
+        payload.put("stepNumber", jobExec.getStepExecutions().size());
+        Integer totalSteps = TOTAL_STEPS.get(jobExec.getJobInstance().getJobName());
+        if (totalSteps != null) payload.put("totalSteps", totalSteps);
+
+        // Data-quality summary (written by stagingToFactTasklet into the job context).
+        // Surfaced so the upload UI can show a post-upload banner.
+        try {
+            org.springframework.batch.item.ExecutionContext ctx = jobExec.getExecutionContext();
+            if (ctx.containsKey("dq.total")) {
+                Map<String, Object> dq = new HashMap<>();
+                int dqTotal = ctx.getInt("dq.total", 0);
+                int dqUnresolved = ctx.getInt("dq.unresolvedMerchant", 0);
+                dq.put("total", dqTotal);
+                dq.put("unresolvedMerchant", dqUnresolved);
+                dq.put("dates", ctx.getInt("dq.dates", 0));
+                String schemes = ctx.getString("dq.schemes", "");
+                dq.put("schemes", schemes.isEmpty()
+                    ? java.util.Collections.emptyList()
+                    : java.util.Arrays.asList(schemes.split(",")));
+                dq.put("loadMode", ctx.getString("dq.loadMode", "REPLACE"));
+                payload.put("dataQuality", dq);
+            }
+        } catch (Exception ignored) { /* context not populated yet — fine */ }
 
         // Total rows from execution context
         long totalRows = 0;

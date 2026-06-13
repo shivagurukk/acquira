@@ -11,6 +11,8 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.http.MediaType;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -71,6 +73,35 @@ public class SecurityConfig {
                 )
 
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+                // ===== Auth/Access Exception Handling =====
+                // By default (Spring Security 6, no formLogin/httpBasic) an
+                // unauthenticated request to a protected endpoint falls through
+                // to Http403ForbiddenEntryPoint and returns 403. That made an
+                // expired/idle JWT look like a permission error, and the frontend
+                // axios interceptor (which only reacts to 401) silently swallowed
+                // it — the page "moved" but every call failed with 403.
+                //
+                // We now distinguish the two cases explicitly:
+                //   * Not authenticated (missing/expired/invalid token) -> 401
+                //     so the frontend refreshes the token or redirects to /login.
+                //   * Authenticated but lacking the role               -> 403
+                //     a genuine permission denial (RBAC), left as-is.
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED); // 401
+                            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                            response.getWriter().write(
+                                    "{\"error\":\"Session expired. Please log in again.\",\"code\":\"AUTH_REQUIRED\"}");
+                        })
+                        .accessDeniedHandler((request, response, accessDeniedException) -> {
+                            response.setStatus(HttpServletResponse.SC_FORBIDDEN); // 403
+                            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                            response.getWriter().write(
+                                    "{\"error\":\"You do not have permission to access this resource.\",\"code\":\"FORBIDDEN\"}");
+                        })
+                )
+
                 .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

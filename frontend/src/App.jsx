@@ -26,6 +26,7 @@ const TransactionList = lazy(() => import('./components/TransactionList'));
 const MerchantSummary = lazy(() => import('./components/MerchantSummary'));
 const BusinessDashboard = lazy(() => import('./pages/business/BusinessDashboard'));
 const OpportunityIntelligence = lazy(() => import('./pages/business/OpportunityIntelligence'));
+const RevenueLeakage = lazy(() => import('./pages/business/RevenueLeakage'));
 const FinanceDashboard = lazy(() => import('./pages/finance/FinanceDashboard'));
 const FinanceLists = lazy(() => import('./pages/finance/FinanceLists'));
 const VolumeRevenueSummary = lazy(() => import('./pages/business/VolumeRevenueSummary'));
@@ -110,6 +111,7 @@ function App() {
               <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
               <Route path="/business/comparison" element={<MerchantComparison />} />
               <Route path="/business/opportunity" element={<OpportunityIntelligence />} />
+              <Route path="/business/revenue-leakage" element={<RevenueLeakage />} />
               <Route path="/business/groups" element={<GroupReports />} />
               <Route path="/explorer" element={<DataExplorer />} />
               <Route path="/ai-assistant" element={<AiAssistant />} />

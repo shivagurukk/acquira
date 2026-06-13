@@ -30,11 +30,15 @@ const Sparkline = ({ data = [], color = '#2563eb' }) => {
 };
 
 /* ─── Trend Pill ──────────────────────────────────────────────── */
-const TrendPill = ({ value, isPositive, isNeutral }) => {
+const TrendPill = ({ value, isPositive, isNeutral, rose }) => {
     if (isNeutral || value === null || value === undefined) return null;
     const bg    = isPositive ? 'var(--success-bg, #ecfdf5)' : 'var(--danger-bg, #fef2f2)';
     const color = isPositive ? '#059669' : '#dc2626';
-    const Icon  = isPositive ? TrendingUp : TrendingDown;
+    // `rose` (did the value go up) drives the ARROW direction; `isPositive`
+    // drives the good/bad COLOR. They diverge for inverted metrics — e.g.
+    // fewer leakage alerts is good even though the number went down.
+    const roseDir = rose === undefined ? isPositive : rose;
+    const Icon  = roseDir ? TrendingUp : TrendingDown;
     return (
         <span style={{
             display: 'inline-flex', alignItems: 'center', gap: 3,
@@ -59,11 +63,12 @@ const Pulse = ({ w = '100%', h = 16, r = 6 }) => (
 
 /* ─── Single KPI Card ─────────────────────────────────────────── */
 export const KpiCard = ({
-    title, value, subtitle, trend, trendLabel,
+    title, value, subtitle, trend, trendLabel, invertTrend = false,
     icon: Icon, color = '#2563eb', sparkData,
     loading, onClick,
 }) => {
-    const isPositive = Number(trend) > 0;
+    const rose       = Number(trend) > 0;          // did the value move up?
+    const isPositive = invertTrend ? !rose : rose; // is that movement good?
     const isNeutral  = !trend || Number(trend) === 0;
     const clickable  = typeof onClick === 'function';
 
@@ -134,7 +139,7 @@ export const KpiCard = ({
                             <Icon size={18} color={color} strokeWidth={1.8} />
                         </div>
                     ) : <div />}
-                    <TrendPill value={trend} isPositive={isPositive} isNeutral={isNeutral} />
+                    <TrendPill value={trend} isPositive={isPositive} isNeutral={isNeutral} rose={rose} />
                 </div>
 
                 {/* Value */}

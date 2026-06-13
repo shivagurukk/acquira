@@ -22,6 +22,7 @@ export const AuthProvider = ({ children }) => {
         const username = localStorage.getItem('username') || '';
         const userRole = localStorage.getItem('userRole') || 'ROLE_USER';
         const activeTenantId = localStorage.getItem('defaultTenantId') || null;
+        const sessionTimeoutMinutes = Number(localStorage.getItem('sessionTimeoutMinutes')) || 30;
         let menus = [];
         let tenants = [];
         let roles = [];
@@ -32,6 +33,7 @@ export const AuthProvider = ({ children }) => {
 
         return {
             token, refreshToken, username, userRole, roles, tenants, activeTenantId, menus,
+            sessionTimeoutMinutes,
             isAuthenticated: !!token,
             tenantVersion: 0, // Incremented on switch to trigger data re-fetches
         };
@@ -47,6 +49,7 @@ export const AuthProvider = ({ children }) => {
             localStorage.setItem('menus', JSON.stringify(auth.menus || []));
             localStorage.setItem('allowedTenants', JSON.stringify(auth.tenants || []));
             localStorage.setItem('roles', JSON.stringify(auth.roles || []));
+            localStorage.setItem('sessionTimeoutMinutes', String(auth.sessionTimeoutMinutes || 30));
         }
     }, [auth]);
 
@@ -60,6 +63,7 @@ export const AuthProvider = ({ children }) => {
             tenants: data.allowedTenants || [],
             activeTenantId: data.defaultTenantId,
             menus: data.menus || [],
+            sessionTimeoutMinutes: Number(data.sessionTimeoutMinutes) || 30,
             isAuthenticated: true,
             mustChangePassword: data.mustChangePassword || false,
             tenantVersion: 0,
@@ -82,7 +86,7 @@ export const AuthProvider = ({ children }) => {
             }
 
             const res = await api.post('/auth/switch-context', { tenantId: numericTenantId });
-            const { menus, activeTenantId: confirmedId, groupName, roleInTenant } = res.data;
+            const { menus, activeTenantId: confirmedId, groupName, roleInTenant, sessionTimeoutMinutes } = res.data;
 
             const newTenantId = confirmedId || numericTenantId;
 
@@ -96,6 +100,7 @@ export const AuthProvider = ({ children }) => {
                 ...prev,
                 activeTenantId: String(newTenantId),
                 menus: menus || prev.menus,
+                sessionTimeoutMinutes: Number(sessionTimeoutMinutes) || prev.sessionTimeoutMinutes || 30,
                 tenantVersion: (prev.tenantVersion || 0) + 1,
             }));
 
@@ -115,6 +120,42 @@ export const AuthProvider = ({ children }) => {
             tenantVersion: 0,
         });
     }, []);
+
+    // ===== Inactivity auto-logout =====
+    // Enforces the admin-configured "Session Timeout (minutes)" from
+    // Admin > Security Settings (security.session_timeout_minutes). After N
+    // minutes with no user activity, clear auth and hard-redirect to /login.
+    // A short-lived access token alone wouldn't force re-login because the
+    // 7-day refresh cookie would silently renew it — this timer is the actual
+    // enforcement of the timeout. We track a last-activity timestamp and poll
+    // every 15s (cheap; no work on each mouse move) rather than resetting a
+    // timer on every event.
+    useEffect(() => {
+        if (!auth.isAuthenticated) return;
+        const minutes = Number(auth.sessionTimeoutMinutes) || 30;
+        if (minutes <= 0) return; // 0 / unset = disabled
+        const timeoutMs = minutes * 60 * 1000;
+
+        let lastActivity = Date.now();
+        const markActivity = () => { lastActivity = Date.now(); };
+        const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+        events.forEach(e => window.addEventListener(e, markActivity, { passive: true }));
+
+        const intervalId = setInterval(() => {
+            if (Date.now() - lastActivity >= timeoutMs) {
+                clearInterval(intervalId);
+                events.forEach(e => window.removeEventListener(e, markActivity));
+                clearAuthStorage();
+                // Hard redirect so all in-flight requests/state are dropped.
+                window.location.href = '/login?expired=1';
+            }
+        }, 15000);
+
+        return () => {
+            clearInterval(intervalId);
+            events.forEach(e => window.removeEventListener(e, markActivity));
+        };
+    }, [auth.isAuthenticated, auth.sessionTimeoutMinutes]);
 
     // ===== HELPERS =====
     const isSuperAdmin = auth.userRole === 'ROLE_SUPER_ADMIN';

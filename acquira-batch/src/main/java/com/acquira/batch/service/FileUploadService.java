@@ -90,6 +90,32 @@ public class FileUploadService {
         return formatter.formatCellValue(cell);
     }
 
+    /**
+     * APPEND-mode detection: a transaction file whose (original) name starts with
+     * "JCB" is loaded in append mode — it layers JCB/UPI onto the VISA/MC data
+     * already present for the same dates instead of blanket-deleting the date.
+     * See stagingToFactTasklet in TransactionJobConfig.
+     *
+     * Temp uploads are saved as "<epochMillis>_<originalName>" (see saveFile), so
+     * we strip an optional leading "<digits>_" before testing the prefix. That makes
+     * the check work for single-file uploads, multi-file uploads (both timestamped)
+     * AND server-folder files (real names) uniformly.
+     */
+    static boolean isAppendModeFileName(String name) {
+        if (name == null) return false;
+        String n = name.trim();
+        // Strip any directory portion.
+        int slash = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
+        if (slash >= 0 && slash < n.length() - 1) n = n.substring(slash + 1);
+        // Strip the saveFile() "<epochMillis>_" prefix if present.
+        n = n.replaceFirst("^\\d{10,}_", "");
+        return n.toUpperCase().startsWith("JCB");
+    }
+
+    private static String loadModeFor(String fileName) {
+        return isAppendModeFileName(fileName) ? "APPEND" : "REPLACE";
+    }
+
     /** Holder for the result of a single-pass file scan. */
     private static class FileScanResult {
         String detectedType;  // MERCHANT, TRANSACTION, LEGACY_EXCEL, UNKNOWN
@@ -303,6 +329,7 @@ public class FileUploadService {
                 JobParameters jobParameters = new JobParametersBuilder()
                         .addLong("tenantId", targetTenantId)
                         .addString("fullPath", filePath)
+                        .addString("loadMode", loadModeFor(file.getOriginalFilename()))
                         .addLong("startedAt", System.currentTimeMillis())
                         .toJobParameters();
                 org.springframework.batch.core.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
@@ -680,6 +707,7 @@ public class FileUploadService {
             JobParameters jobParameters = new JobParametersBuilder()
                     .addLong("tenantId", targetTenantId)
                     .addString("fullPath", filePath)
+                    .addString("loadMode", loadModeFor(file.getName()))
                     .addLong("startedAt", System.currentTimeMillis())
                     .toJobParameters();
 

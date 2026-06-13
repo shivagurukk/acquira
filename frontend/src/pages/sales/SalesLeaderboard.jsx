@@ -364,6 +364,7 @@ const SalesLeaderboard = () => {
   useEffect(() => { load(); }, [load]);
 
   const data = activeTab === 'agents' ? agents : teams;
+  const isTeamTab = activeTab === 'teams';
 
   const handleExportCSV = () => {
     const isTeam = activeTab === 'teams';

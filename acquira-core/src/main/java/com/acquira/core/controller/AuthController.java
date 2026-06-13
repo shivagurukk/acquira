@@ -40,6 +40,7 @@ public class AuthController {
     private final EmailService emailService;
     private final RefreshTokenService refreshTokenService;
     private final com.acquira.common.service.AuditService auditService;
+    private final com.acquira.common.repository.TenantSettingRepository tenantSettingRepository;
 
     // ===== IP-based rate limiter (defense-in-depth, kept alongside per-user lockout) =====
     // P2-7 fix: bucket key is now (ip|username), not just ip. Previously a single
@@ -68,7 +69,8 @@ public class AuthController {
             PasswordResetTokenRepository resetTokenRepository,
             EmailService emailService,
             RefreshTokenService refreshTokenService,
-            com.acquira.common.service.AuditService auditService) {
+            com.acquira.common.service.AuditService auditService,
+            com.acquira.common.repository.TenantSettingRepository tenantSettingRepository) {
         this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
         this.tenantService = tenantService;
@@ -81,6 +83,29 @@ public class AuthController {
         this.emailService = emailService;
         this.refreshTokenService = refreshTokenService;
         this.auditService = auditService;
+        this.tenantSettingRepository = tenantSettingRepository;
+    }
+
+    // ===== Session timeout (inactivity auto-logout) =====
+    // Read the admin-configured value from tenant_setting
+    // (key: security.session_timeout_minutes, set in Admin > Security Settings).
+    // Falls back to 30 minutes when unset or unparseable. The frontend uses
+    // this to drive an inactivity timer that logs the user out to /login.
+    private static final int DEFAULT_SESSION_TIMEOUT_MIN = 30;
+
+    private int getSessionTimeoutMinutes(Long tenantId) {
+        if (tenantId == null) return DEFAULT_SESSION_TIMEOUT_MIN;
+        return tenantSettingRepository
+                .findByTenant_TenantIdAndKey(tenantId, "security.session_timeout_minutes")
+                .map(s -> {
+                    try {
+                        int v = Integer.parseInt(s.getValue().trim());
+                        return v > 0 ? v : DEFAULT_SESSION_TIMEOUT_MIN;
+                    } catch (Exception e) {
+                        return DEFAULT_SESSION_TIMEOUT_MIN;
+                    }
+                })
+                .orElse(DEFAULT_SESSION_TIMEOUT_MIN);
     }
 
     @PostMapping("/login")
@@ -236,6 +261,8 @@ public class AuthController {
         response.put("menus", menus);
         response.put("username", authenticationRequest.getUsername());
         response.put("userRole", user != null ? user.getRole() : "ROLE_USER");
+        // Inactivity timeout (minutes) for the frontend idle-logout timer.
+        response.put("sessionTimeoutMinutes", getSessionTimeoutMinutes(effectiveTenantId));
         // GAP-12: Include displayName and ssoProvider in login response
         if (user != null) {
             response.put("displayName", user.getDisplayName());
@@ -394,6 +421,8 @@ public class AuthController {
         Map<String, Object> result = new HashMap<>();
         result.put("menus", menus);
         result.put("activeTenantId", tenantId);
+        // Timeout may differ per tenant — refresh it on context switch.
+        result.put("sessionTimeoutMinutes", getSessionTimeoutMinutes(tenantId));
 
         if (tenantId != null) {
             Optional<com.acquira.common.model.UserTenantAccess> access = userTenantAccessRepository
@@ -426,6 +455,7 @@ public class AuthController {
         response.put("defaultTenantId", defaultTenantId);
         response.put("username", username);
         response.put("roles", auth.getAuthorities());
+        response.put("sessionTimeoutMinutes", getSessionTimeoutMinutes(defaultTenantId));
 
         return ResponseEntity.ok(response);
     }

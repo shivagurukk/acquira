@@ -44,6 +44,16 @@ const LoginPage = () => {
         }
     }, []);
 
+    // Show a notice when the user was redirected here by the inactivity
+    // auto-logout (AuthContext sets ?expired=1 on session timeout).
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('expired') === '1') {
+            setError('Your session timed out due to inactivity. Please sign in again.');
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+    }, []);
+
     const handleChange = (e) => {
         setCredentials({ ...credentials, [e.target.name]: e.target.value });
     };

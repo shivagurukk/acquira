@@ -26,6 +26,7 @@ public class ManualIngestionService {
     private final MetricCalculatorService calculator;
     private final MerchantDailyMetricsRepository metricsRepo;
     private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private final com.acquira.common.service.RevenueLeakageDetectionService revenueLeakageDetectionService;
 
     /**
      * Triggered after a file upload or manually.
@@ -91,6 +92,16 @@ public class ManualIngestionService {
         }
 
         log.info("Manual Ingestion Completed for {} month(s).", monthStarts.size());
+
+        // Revenue-leakage / anomaly detection. Best-effort: a failure here must
+        // never affect the upload result. Runs off the freshly-populated
+        // sum_daily_merchant summaries, so it sees the data this upload produced.
+        try {
+            int flags = revenueLeakageDetectionService.detectForTenant(tenantId);
+            log.info("Revenue leakage detection produced {} flag(s) for tenant {}", flags, tenantId);
+        } catch (Exception e) {
+            log.warn("Revenue leakage detection failed (non-fatal) for tenant {}: {}", tenantId, e.getMessage());
+        }
     }
 
     private void processSingleDate(Long tenantId, LocalDate reportDate) {

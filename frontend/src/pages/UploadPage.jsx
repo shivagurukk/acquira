@@ -6,6 +6,26 @@ import { Upload, CheckCircle, AlertCircle, FileText, X, Zap, BarChart2, Activity
 import api from '../api/axios';
 import useNotifications from '../hooks/useNotifications';
 
+// Friendly labels for the batch step bean names returned by
+// /api/batch/jobs/{id}/status (currentStep). Falls back to the raw name.
+const STEP_LABELS = {
+    ensurePartitionsStep: 'Preparing partitions',
+    ensureMerchantPartitionsStep: 'Preparing',
+    splitExcelStep: 'Splitting file',
+    merchantSplitStep: 'Splitting file',
+    cleanTargetDayStep: 'Clearing staging',
+    cleanMerchantStagingStep: 'Clearing staging',
+    masterIngestStep: 'Ingesting rows',
+    merchantIngestStep: 'Ingesting merchants',
+    autoCreateDimensionsStep: 'Resolving merchants',
+    stagingToFactStep: 'Writing transactions',
+    upsertAndSummarizeStep: 'Updating master data',
+    populateSummaryStep: 'Building summaries',
+    calculateBusinessMetricsStep: 'Computing metrics',
+    calculateDailyDashboardMetricsStep: 'Finalizing dashboards',
+};
+const stepLabel = (name) => STEP_LABELS[name] || name || 'Processing';
+
 const UploadPage = () => {
     const [file, setFile] = useState(null);
     const [status, setStatus] = useState(null);
@@ -145,6 +165,19 @@ const UploadPage = () => {
                                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
                                     <FinancialLoader />
                                 </div>
+                                {jobDetails.currentStep && (
+                                    <div style={{
+                                        textAlign: 'center', marginBottom: 14,
+                                        fontSize: '0.9rem', fontWeight: 600, color: 'var(--text,#111827)',
+                                    }}>
+                                        {stepLabel(jobDetails.currentStep)}
+                                        {jobDetails.stepNumber && jobDetails.totalSteps
+                                            ? <span style={{ color: 'var(--text-muted,#9ca3af)', fontWeight: 500 }}>
+                                                {' '}· step {jobDetails.stepNumber} of {jobDetails.totalSteps}
+                                              </span>
+                                            : null}
+                                    </div>
+                                )}
                                 <StageTracker stages={stages} progress={jobDetails.progress || 0} />
                                 <div style={{ marginTop: 16 }}>
                                     <ProgressBar
@@ -333,6 +366,11 @@ const SummaryModal = ({ jobDetails, onClose }) => {
         ? ((new Date(jobDetails.endTime) - new Date(jobDetails.startTime)) / 1000).toFixed(1) + 's'
         : '—';
 
+    const dq = jobDetails.dataQuality;
+    const dqUnresolvedPct = dq && dq.total > 0
+        ? Math.round((dq.unresolvedMerchant / dq.total) * 100)
+        : 0;
+
     const stats = [
         { label: 'Rows read',   value: (jobDetails.readCount  || 0).toLocaleString(), color: '#2563eb' },
         { label: 'Rows written',value: (jobDetails.writeCount || 0).toLocaleString(), color: '#059669' },
@@ -389,6 +427,59 @@ const SummaryModal = ({ jobDetails, onClose }) => {
                         </div>
                     ))}
                 </div>
+
+                {dq && (
+                    <div style={{
+                        padding: '14px 16px', borderRadius: '12px', marginBottom: 16,
+                        background: 'var(--bg-subtle,#f9fafb)',
+                        border: '1px solid var(--border,#e5e7eb)',
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text,#111827)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                Data quality
+                            </span>
+                            <span style={{
+                                fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                                background: dq.loadMode === 'APPEND' ? '#eff6ff' : '#f3f4f6',
+                                color: dq.loadMode === 'APPEND' ? '#1d4ed8' : '#6b7280',
+                            }}>
+                                {dq.loadMode === 'APPEND' ? 'APPEND (scheme-scoped)' : 'REPLACE'}
+                            </span>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: '0.8rem', color: 'var(--text-secondary,#6b7280)' }}>
+                            <span><strong style={{ color: 'var(--text,#111827)' }}>{(dq.total || 0).toLocaleString()}</strong> rows loaded</span>
+                            <span><strong style={{ color: 'var(--text,#111827)' }}>{dq.dates || 0}</strong> date{dq.dates === 1 ? '' : 's'}</span>
+                            <span>
+                                <strong style={{ color: dq.unresolvedMerchant > 0 ? '#b45309' : '#059669' }}>
+                                    {(dq.unresolvedMerchant || 0).toLocaleString()}
+                                </strong> unresolved{dq.unresolvedMerchant > 0 ? ` (${dqUnresolvedPct}%)` : ''}
+                            </span>
+                        </div>
+
+                        {Array.isArray(dq.schemes) && dq.schemes.length > 0 && (
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+                                {dq.schemes.map(s => (
+                                    <span key={s} style={{
+                                        fontSize: '0.7rem', fontWeight: 600, padding: '2px 8px', borderRadius: 6,
+                                        background: 'var(--bg-card,#fff)', border: '1px solid var(--border,#e5e7eb)',
+                                        color: 'var(--text-secondary,#6b7280)',
+                                    }}>{s}</span>
+                                ))}
+                            </div>
+                        )}
+
+                        {dq.unresolvedMerchant > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, padding: '10px 12px', borderRadius: 8, background: '#fffbeb', border: '1px solid rgba(180,83,9,0.15)' }}>
+                                <AlertCircle size={15} color="#b45309" style={{ flexShrink: 0, marginTop: 1 }} />
+                                <span style={{ fontSize: '0.76rem', color: '#92400e', lineHeight: 1.45 }}>
+                                    {dqUnresolvedPct}% of rows couldn't be matched to a merchant (SID not in the master data).
+                                    Upload the merchant master file for these stores, then re-run, or check for an SID format mismatch.
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 <div style={{
                     display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',

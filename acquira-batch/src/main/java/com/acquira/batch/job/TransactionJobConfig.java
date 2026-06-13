@@ -778,9 +778,18 @@ public class TransactionJobConfig {
     }
 
     @Bean @StepScope
-    public Tasklet stagingToFactTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+    public Tasklet stagingToFactTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("#{jobParameters['loadMode']}") String loadMode) {
         return (contribution, chunkContext) -> {
             long start = System.currentTimeMillis();
+            // APPEND mode (filename starts with 'JCB', see FileUploadService): the
+            // file carries only one or a few card schemes (JCB/UPI) and must be
+            // layered on top of the VISA/MC data already loaded for the same dates.
+            // In that mode we DO NOT blanket-delete the date — we only replace the
+            // schemes present in THIS file, so VISA/MC rows survive while re-uploading
+            // the same JCB file stays idempotent. REPLACE (the default / absent param)
+            // keeps the original blanket delete-by-date behaviour unchanged.
+            final boolean appendMode = "APPEND".equalsIgnoreCase(loadMode);
 
             Integer nullDateCount = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NULL", Integer.class, tenantId);
@@ -867,12 +876,41 @@ public class TransactionJobConfig {
                 }
             }
 
-            // Delete existing fact rows for the dates we're about to load
+            // Distinct card schemes present in THIS upload. Used by the APPEND
+            // scheme-scoped delete below AND by the post-upload data-quality banner.
+            java.util.List<String> uploadSchemes = jdbcTemplate.queryForList(
+                "SELECT DISTINCT UPPER(TRIM(card_scheme)) FROM stg_trnx_raw " +
+                "WHERE tenant_id = ? AND NULLIF(TRIM(card_scheme), '') IS NOT NULL",
+                String.class, tenantId);
+
+            // Delete existing fact rows for the dates we're about to load.
             long tDel = System.currentTimeMillis();
-            jdbcTemplate.update(
-                "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope,
-                tenantId);
-            log.info(String.format("Deleted existing fact rows in %.1fs", (System.currentTimeMillis() - tDel) / 1000.0));
+            if (appendMode) {
+                // Scheme-scoped delete: only clear the card schemes present in THIS
+                // upload (e.g. JCB/UPI), preserving every other scheme (VISA/MC) for
+                // the same dates.
+                if (uploadSchemes.isEmpty()) {
+                    log.warn("APPEND mode: no card_scheme values in staging — skipping fact delete " +
+                        "(nothing to scope to). Existing rows for these dates are left untouched.");
+                } else {
+                    String placeholders = uploadSchemes.stream().map(x -> "?")
+                        .collect(java.util.stream.Collectors.joining(","));
+                    Object[] args = new Object[uploadSchemes.size() + 1];
+                    args[0] = tenantId;
+                    for (int i = 0; i < uploadSchemes.size(); i++) args[i + 1] = uploadSchemes.get(i);
+                    int deleted = jdbcTemplate.update(
+                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
+                        " AND UPPER(TRIM(card_scheme)) IN (" + placeholders + ")",
+                        args);
+                    log.info(String.format("APPEND mode: deleted %d existing fact rows for scheme(s) %s in %.1fs " +
+                        "(other schemes preserved)", deleted, uploadSchemes, (System.currentTimeMillis() - tDel) / 1000.0));
+                }
+            } else {
+                jdbcTemplate.update(
+                    "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope,
+                    tenantId);
+                log.info(String.format("Deleted existing fact rows in %.1fs", (System.currentTimeMillis() - tDel) / 1000.0));
+            }
 
             // ── Step A: bulk insert with SID-PRIMARY join strategy ──
             //
@@ -960,6 +998,24 @@ public class TransactionJobConfig {
                 } else {
                     log.info("All {} fact rows resolved to a merchant via SID", total);
                 }
+            }
+
+            // Data-quality summary for the upload UI banner. Stashed in the JOB
+            // execution context (persisted by Spring Batch at the step boundary) and
+            // read back by BatchProgressController.buildProgressPayload. Best-effort:
+            // a failure here must never fail the upload.
+            try {
+                org.springframework.batch.item.ExecutionContext jobCtx =
+                    chunkContext.getStepContext().getStepExecution().getJobExecution().getExecutionContext();
+                int dqTotal = total != null ? total : 0;
+                int dqUnresolved = Math.max(0, dqTotal - (matched != null ? matched : 0));
+                jobCtx.putInt("dq.total", dqTotal);
+                jobCtx.putInt("dq.unresolvedMerchant", dqUnresolved);
+                jobCtx.putInt("dq.dates", distinctDates.size());
+                jobCtx.putString("dq.schemes", String.join(",", uploadSchemes));
+                jobCtx.putString("dq.loadMode", appendMode ? "APPEND" : "REPLACE");
+            } catch (Exception dqe) {
+                log.warn("Could not record data-quality summary (non-fatal): {}", dqe.getMessage());
             }
 
             // ── Step B: fix-up pass for rows where store/terminal couldn't be resolved ──

@@ -1,21 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Activity, Users, CreditCard, DollarSign, TrendingUp, TrendingDown,
-    AlertTriangle, Store, Target, RefreshCw, ArrowUpRight, ArrowDownRight,
-    BarChart3, ArrowRight, Clock, ExternalLink
+    Activity, DollarSign, AlertTriangle, Store, Target,
+    RefreshCw, BarChart3, ArrowRight, Clock
 } from 'lucide-react';
 import {
     AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip as ReTooltip, ResponsiveContainer, PieChart as RePieChart,
     Pie, Cell
 } from 'recharts';
-import PageHeader from '../components/PageHeader';
+import KpiCards from '../components/KpiCards';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { createFmt } from '../utils/formatters';
-import { chartGridProps, chartAxisProps, compactAxisFormatter } from '../utils/chartConfig';
+import { compactAxisFormatter } from '../utils/chartConfig';
 
 const PALETTE = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#06b6d4', '#ef4444'];
 
@@ -132,18 +131,26 @@ const Dashboard = () => {
         if (boundsLoaded) fetchAllData();
     }, [period, boundsLoaded]);
 
+    // KPI cards now use the shared <KpiCards> component for visual consistency
+    // with the rest of the app. `trend` is the raw growth %; `invertTrend` flips
+    // the good/bad colour for metrics where "down is good" (leakage). `drillDown`
+    // is a navigation handler. Sparklines reuse the daily series we already fetch.
     const kpis = useMemo(() => {
         if (!metrics) return [];
+        const volSpark = dailyData.length ? dailyData.map(d => d.volume) : undefined;
+        const txnSpark = dailyData.length ? dailyData.map(d => d.txns) : undefined;
         return [
-            { label: 'Total Volume', value: fmt.currency(metrics.totalVolume), change: fmt.growth(metrics.volumeGrowth), up: metrics.volumeGrowth >= 0, icon: DollarSign, bg: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', iconBg: '#10b981', borderClr: '#a7f3d0', drillDown: '/business/volume-revenue' },
-            { label: 'Active Merchants', value: fmt.number(metrics.activeMerchants), change: fmt.growth(metrics.merchantsGrowth), up: metrics.merchantsGrowth >= 0, icon: Store, bg: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', iconBg: '#3b82f6', borderClr: '#93c5fd', drillDown: '/merchants' },
-            { label: 'Transactions', value: fmt.number(metrics.totalTxns), change: fmt.growth(metrics.txnsGrowth), up: metrics.txnsGrowth >= 0, icon: Activity, bg: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)', iconBg: '#8b5cf6', borderClr: '#c4b5fd', drillDown: '/business/performance' },
-            { label: 'Avg Txn Value', value: metrics.totalTxns > 0 ? fmt.currency(metrics.totalVolume / metrics.totalTxns) : fmt.currency(0), change: '', up: true, icon: Target, bg: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)', iconBg: '#06b6d4', borderClr: '#67e8f9', drillDown: '/business/daily-dashboard' },
-            { label: 'Leakage Alerts', value: fmt.number(metrics.leakageCount), change: fmt.growth(metrics.leakageGrowth), up: metrics.leakageGrowth <= 0, icon: AlertTriangle, bg: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)', iconBg: '#f97316', borderClr: '#fdba74', drillDown: '/business/zero-transaction' },
+            { title: 'Total Volume', value: fmt.currency(metrics.totalVolume), trend: metrics.volumeGrowth, icon: DollarSign, color: '#10b981', sparkData: volSpark, drillDown: () => navigate('/business/volume-revenue') },
+            { title: 'Active Merchants', value: fmt.number(metrics.activeMerchants), trend: metrics.merchantsGrowth, icon: Store, color: '#3b82f6', drillDown: () => navigate('/merchants') },
+            { title: 'Transactions', value: fmt.number(metrics.totalTxns), trend: metrics.txnsGrowth, icon: Activity, color: '#8b5cf6', sparkData: txnSpark, drillDown: () => navigate('/business/performance') },
+            { title: 'Avg Txn Value', value: metrics.totalTxns > 0 ? fmt.currency(metrics.totalVolume / metrics.totalTxns) : fmt.currency(0), icon: Target, color: '#06b6d4', drillDown: () => navigate('/business/daily-dashboard') },
+            { title: 'Leakage Alerts', value: fmt.number(metrics.leakageCount), trend: metrics.leakageGrowth, invertTrend: true, icon: AlertTriangle, color: '#f97316', drillDown: () => navigate('/business/zero-transaction') },
         ];
-    }, [metrics]);
+    }, [metrics, dailyData, navigate, fmt]);
 
     const totalSchemeVol = useMemo(() => schemeData.reduce((s, d) => s + d.value, 0), [schemeData]);
+
+    const periods = [{ label: '7D', val: '7' }, { label: '30D', val: '30' }, { label: '90D', val: '90' }, { label: 'YTD', val: '365' }];
 
     const tooltipStyle = {
         background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12,
@@ -157,7 +164,7 @@ const Dashboard = () => {
                 padding: '20px 28px', background: 'var(--bg-card)',
                 borderBottom: '1px solid var(--border)',
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                position: 'sticky', top: 0, zIndex: 10,
+                position: 'sticky', top: 0, zIndex: 10, flexWrap: 'wrap', gap: 12,
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                     <div style={{
@@ -178,22 +185,27 @@ const Dashboard = () => {
                     </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <div style={{
+                    <div role="group" aria-label="Time period" style={{
                         display: 'flex', background: 'var(--bg-subtle)', borderRadius: 10, padding: 3,
                         border: '1px solid var(--border)',
                     }}>
-                        {[{ label: '7D', val: '7' }, { label: '30D', val: '30' }, { label: '90D', val: '90' }, { label: 'YTD', val: '365' }].map(p => (
-                            <button key={p.val} onClick={() => setPeriod(p.val)} style={{
-                                padding: '7px 16px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                                borderRadius: 8,
-                                background: period === p.val ? 'var(--bg-card)' : 'transparent',
-                                color: period === p.val ? 'var(--text)' : 'var(--text-secondary)',
-                                boxShadow: period === p.val ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                                transition: 'all 0.15s',
-                            }}>{p.label}</button>
-                        ))}
+                        {periods.map(p => {
+                            const active = period === p.val;
+                            return (
+                                <button key={p.val} onClick={() => setPeriod(p.val)}
+                                    aria-pressed={active}
+                                    style={{
+                                        padding: '7px 16px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                                        borderRadius: 8,
+                                        background: active ? 'var(--bg-card)' : 'transparent',
+                                        color: active ? 'var(--text)' : 'var(--text-secondary)',
+                                        boxShadow: active ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                                        transition: 'all 0.15s',
+                                    }}>{p.label}</button>
+                            );
+                        })}
                     </div>
-                    <button onClick={fetchAllData} style={{
+                    <button onClick={fetchAllData} aria-label="Refresh dashboard" title="Refresh" style={{
                         padding: 9, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10,
                         cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center',
                         boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
@@ -205,90 +217,11 @@ const Dashboard = () => {
 
             <div style={{ padding: '24px 28px 40px' }}>
 
-                {/* ═══ KPI Cards — Gradient Backgrounds ═══ */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16, marginBottom: 24 }}>
-                    {loading && !metrics ? (
-                        Array.from({ length: 5 }).map((_, i) => (
-                            <div key={i} style={{
-                                background: 'var(--bg-card)', borderRadius: 16, padding: 22,
-                                border: '1px solid var(--border)', height: 140,
-                            }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
-                                    <div style={{ width: 42, height: 42, borderRadius: 12, background: 'var(--bg-subtle)' }} />
-                                    <div style={{ width: 52, height: 24, borderRadius: 8, background: 'var(--bg-subtle)' }} />
-                                </div>
-                                <div style={{ width: '60%', height: 26, borderRadius: 6, background: 'var(--bg-subtle)', marginBottom: 8 }} />
-                                <div style={{ width: '40%', height: 14, borderRadius: 4, background: 'var(--bg-subtle)' }} />
-                            </div>
-                        ))
-                    ) : (
-                        kpis.map((kpi, i) => (
-                            <div key={kpi.label} onClick={() => kpi.drillDown && navigate(kpi.drillDown)}
-                                style={{
-                                    background: kpi.bg,
-                                    borderRadius: 16, padding: 22,
-                                    border: `1px solid ${kpi.borderClr}`,
-                                    cursor: kpi.drillDown ? 'pointer' : 'default',
-                                    transition: 'all 0.25s ease',
-                                    position: 'relative', overflow: 'hidden',
-                                }}
-                                onMouseEnter={e => {
-                                    if (kpi.drillDown) {
-                                        e.currentTarget.style.transform = 'translateY(-4px)';
-                                        e.currentTarget.style.boxShadow = `0 12px 32px ${kpi.iconBg}20`;
-                                    }
-                                }}
-                                onMouseLeave={e => {
-                                    e.currentTarget.style.transform = 'none';
-                                    e.currentTarget.style.boxShadow = 'none';
-                                }}
-                            >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-                                    <div style={{
-                                        width: 42, height: 42, borderRadius: 12,
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                        background: kpi.iconBg,
-                                        boxShadow: `0 4px 12px ${kpi.iconBg}40`,
-                                    }}>
-                                        <kpi.icon size={20} color="#fff" strokeWidth={2} />
-                                    </div>
-                                    {kpi.change && (
-                                        <div style={{
-                                            display: 'flex', alignItems: 'center', gap: 3,
-                                            color: kpi.up ? '#059669' : '#dc2626',
-                                            fontSize: 12, fontWeight: 700,
-                                            background: kpi.up ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.8)',
-                                            padding: '4px 10px', borderRadius: 20,
-                                            backdropFilter: 'blur(4px)',
-                                        }}>
-                                            {kpi.up ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-                                            {kpi.change}
-                                        </div>
-                                    )}
-                                </div>
-                                <div style={{
-                                    fontSize: '1.65rem', fontWeight: 800,
-                                    color: '#0f172a',
-                                    letterSpacing: '-0.04em', lineHeight: 1,
-                                    marginBottom: 6,
-                                }}>
-                                    {kpi.value}
-                                </div>
-                                <div style={{
-                                    fontSize: '0.82rem', fontWeight: 500,
-                                    color: '#475569',
-                                    display: 'flex', alignItems: 'center', gap: 5,
-                                }}>
-                                    {kpi.label}
-                                    {kpi.drillDown && <ArrowRight size={13} color={kpi.iconBg} />}
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
+                {/* ═══ KPI Cards (shared component) ═══ */}
+                <KpiCards cards={kpis} loading={loading && !metrics} />
 
                 {/* ═══ Charts Row ═══ */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 5fr) minmax(0, 2fr)', gap: 16, marginBottom: 20 }}>
+                <div className="dash-charts-grid" style={{ display: 'grid', gap: 16, marginBottom: 20 }}>
                     {/* Area Chart */}
                     <div style={{
                         background: 'var(--bg-card)', borderRadius: 16, border: '1px solid var(--border)', padding: '22px 24px',
@@ -327,8 +260,8 @@ const Dashboard = () => {
                                             </linearGradient>
                                         </defs>
                                         <CartesianGrid strokeDasharray="3 6" stroke="var(--border-light)" vertical={false} />
-                                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={compactAxisFormatter} />
+                                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+                                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickFormatter={compactAxisFormatter} />
                                         <ReTooltip contentStyle={tooltipStyle} formatter={(val) => [fmt.currency(val)]} />
                                         <Area type="monotone" dataKey="volume" stroke="#3b82f6" strokeWidth={2.5} fill="url(#volGrad)" dot={false} activeDot={{ r: 5, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} />
                                         <Area type="monotone" dataKey="msf" stroke="#8b5cf6" strokeWidth={1.5} fill="url(#msfGrad)" dot={false} activeDot={{ r: 4, fill: '#8b5cf6', stroke: '#fff', strokeWidth: 2 }} />
@@ -423,7 +356,7 @@ const Dashboard = () => {
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={topMerchants} layout="vertical" margin={{ left: 10, right: 30 }}>
                                     <CartesianGrid strokeDasharray="3 6" stroke="var(--border-light)" horizontal={false} vertical={true} />
-                                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={compactAxisFormatter} />
+                                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickFormatter={compactAxisFormatter} />
                                     <YAxis dataKey="name" type="category" width={140}
                                         tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontWeight: 500 }}
                                         axisLine={false} tickLine={false} />
@@ -455,8 +388,9 @@ const Dashboard = () => {
             <style>{`
                 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
                 .spin { animation: spin 1s linear infinite; }
+                .dash-charts-grid { grid-template-columns: minmax(0, 5fr) minmax(0, 2fr); }
                 @media (max-width: 1024px) {
-                    div[style*="5fr"] { grid-template-columns: 1fr !important; }
+                    .dash-charts-grid { grid-template-columns: 1fr; }
                 }
             `}</style>
         </div>
