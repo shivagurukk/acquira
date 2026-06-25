@@ -39,12 +39,12 @@ public class VolumeRevenueRepository {
         sql.append("  SUM(s.total_msf) as total_msf, ");
         sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as opt_in_volume ");
         sql.append("FROM sum_daily_insight s ");
-        sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
+        sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
         // sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id "); // Use if
         // Store filters needed
 
         if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
-            sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
+            sql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
         }
 
         sql.append("WHERE 1=1 ");
@@ -168,8 +168,8 @@ public class VolumeRevenueRepository {
         sql.append("  SUM(s.total_msf) as total_msf, ");
         sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as opt_in_volume ");
         sql.append("FROM sum_daily_insight s ");
-        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
-        sql.append("JOIN dim_store st ON s.store_id = st.store_id "); // Need store for SID
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        sql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id "); // Need store for SID
 
         sql.append("WHERE 1=1 ");
         if (tenantId != null)
@@ -350,9 +350,9 @@ public class VolumeRevenueRepository {
                 (filter.getMccList() != null && !filter.getMccList().isEmpty());
 
         if (needMerchant)
-            sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
+            sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
         if (needStore)
-            sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
+            sql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
 
         sql.append("WHERE 1=1 ");
 
@@ -650,8 +650,8 @@ public class VolumeRevenueRepository {
         sql.append("  SUM(s.total_txns) as count, ");
         sql.append("  SUM(s.total_volume) as volume ");
         sql.append("FROM sum_daily_insight s ");
-        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
-        sql.append("LEFT JOIN dim_store st2 ON s.store_id = st2.store_id ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        sql.append("LEFT JOIN dim_store st2 ON s.store_id = st2.store_id AND st2.tenant_id = s.tenant_id ");
 
         // P1-7 FIX: when the user explicitly picks card types from the drawer,
         // honor THAT instead of forcing the hardcoded DEBIT/PREPAID matcher.
@@ -812,180 +812,196 @@ public class VolumeRevenueRepository {
      * comparisons never include other tenants' merchants.
      */
     public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter, Long tenantId) {
-        StringBuilder sql = new StringBuilder();
-
-        // Logic:
-        // We need Current Year MTD (e.g. Jan 1 - Jan 26 2026)
-        // And Previous Year MTD (e.g. Jan 1 - Jan 26 2025)
-        // And Current YTD (Jan 1 - Jan 26 2026) - (Actually MTD is usually just month,
-        // YTD is year start to now)
-        // Let's assume input date determines "Current Month".
-        // If filter has startDate/endDate, we use that as "Current Period" (MTD range)
-        // And we calculate "Previous Period" as same dates - 1 Year.
-        // YTD is Start of Year to End Date.
-
-        // It is complex to do in one query without CTEs or complex joins.
-        // Simplified approach: Group by Merchant, and use conditional SUM based on
-        // dates.
-
-        sql.append("SELECT ");
-        sql.append("  m.mid as mid, ");
-        sql.append("  m.name as merchant_name, ");
-
-        // MTD Current (Volume in selected range)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :startDate AND s.business_date <= :endDate THEN s.total_volume ELSE 0 END) as mtd_current, ");
-        // MTD Previous (Volume in selected range - 1 Year)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :prevStartDate AND s.business_date <= :prevEndDate THEN s.total_volume ELSE 0 END) as mtd_prev, ");
-
-        // YTD Current (Jan 1 of EndDate Year -> EndDate)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :ytdStartDate AND s.business_date <= :endDate THEN s.total_volume ELSE 0 END) as ytd_current, ");
-        // YTD Previous (Jan 1 of PrevYear -> PrevEndDate)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :prevYtdStartDate AND s.business_date <= :prevEndDate THEN s.total_volume ELSE 0 END) as ytd_prev, ");
-
-        // MoM: Previous Month (full month before start date)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :momStartDate AND s.business_date <= :momEndDate THEN s.total_volume ELSE 0 END) as mom_prev ");
-
-        sql.append("FROM sum_daily_insight s ");
-        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
-            sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
-        }
-
-        // Filter scope: Must include data from both years.
-        // We broadly filter for "relevant" data to speed up, or just filter in HAVING?
-        // Let's filter WHERE business_date >= prevYtdStartDate (Oldest date we care
-        // about)
-        sql.append("WHERE s.business_date >= :prevYtdStartDate ");
-
-        if (tenantId != null)
-            sql.append("AND s.tenant_id = :tenantId ");
-
-        if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
-            sql.append("AND m.referral_partner IN (:partners) ");
-        if (filter.getRmList() != null && !filter.getRmList().isEmpty())
-            sql.append("AND m.sales_email IN (:rms) ");
-        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
-            sql.append("AND m.name ILIKE :merchName ");
-
-        // Correct approach: We already joined dim_merchant. Let's join dim_store if
-        // needed.
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
-            sql.append("AND st.mcc IN (:mccs) ");
-        }
-        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty()) {
-            sql.append("AND m.sales_user_id IN (:teamLeaders) ");
-        }
-        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty()) {
-            sql.append("AND s.channel IN (:channels) ");
-        }
-
-        sql.append("GROUP BY m.mid, m.name ");
-        sql.append("ORDER BY m.mid ASC");
-
-        Query query = entityManager.createNativeQuery(sql.toString());
-
-        // Date Logic
-        // Default to current month if null? Assuming UI provides dates.
-        java.time.LocalDate end = filter.getEndDate() != null ? filter.getEndDate() : java.time.LocalDate.now();
+        // ── Window definitions (all equal-length so comparisons are apples-to-apples) ──
+        // Current period  : [start, end]              (the selected range)
+        // YoY prev period : [start-1y, end-1y]        (same range, one year earlier)
+        // YTD current     : [Jan 1 of endYear, end]
+        // YTD prev        : [Jan 1 of prevYear, end-1y]
+        // MoM prev        : [start-1mo, end-1mo]      (same-length window one month earlier;
+        //                                              the OLD code compared the partial current
+        //                                              month to a FULL previous calendar month,
+        //                                              which biased every merchant negative early
+        //                                              in the month — fixed here.)
+        java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
         java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
 
-        java.time.LocalDate prevEnd = end.minusYears(1);
+        java.time.LocalDate prevEnd   = end.minusYears(1);
         java.time.LocalDate prevStart = start.minusYears(1);
-
-        java.time.LocalDate ytdStart = end.withDayOfYear(1);
+        java.time.LocalDate ytdStart  = end.withDayOfYear(1);
         java.time.LocalDate prevYtdStart = prevEnd.withDayOfYear(1);
+        java.time.LocalDate momStart  = start.minusMonths(1);
+        java.time.LocalDate momEnd    = end.minusMonths(1);
 
-        // MoM: Previous full month (month before the start date's month)
-        java.time.LocalDate momEndDate = start.minusDays(1); // last day of previous month
-        java.time.LocalDate momStartDate = momEndDate.withDayOfMonth(1); // first day of previous month
+        // Earliest date any window reads — used as the WHERE lower bound for partition pruning.
+        java.time.LocalDate globalLowerBound = prevYtdStart.isBefore(momStart) ? prevYtdStart : momStart;
 
-        // Use the earliest date across all ranges as global lower bound
-        java.time.LocalDate globalLowerBound = prevYtdStart.isBefore(momStartDate) ? prevYtdStart : momStartDate;
+        boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
 
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT m.mid AS mid, m.name AS merchant_name, ");
+        // For each window emit volume / txns / msf so the UI can toggle metric without re-querying.
+        appendWindowMeasures(sql, "mtdcur", ":startDate",       ":endDate");
+        appendWindowMeasures(sql, "mtdprev", ":prevStartDate",  ":prevEndDate");
+        appendWindowMeasures(sql, "ytdcur", ":ytdStartDate",    ":endDate");
+        appendWindowMeasures(sql, "ytdprev", ":prevYtdStartDate", ":prevEndDate");
+        appendWindowMeasures(sql, "momprev", ":momStartDate",   ":momEndDate");
+        // strip trailing comma
+        sql.setLength(sql.length() - 2);
+        sql.append(" FROM sum_daily_insight s ");
+        // [TENANCY] Join is tenant-scoped (s.tenant_id = m.tenant_id) — the old version
+        // joined on merchant_id alone, the [P2-1] cross-tenant time-bomb pattern.
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        if (needStore) {
+            sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        }
+
+        sql.append("WHERE s.business_date >= :globalLowerBound AND s.business_date <= :endDate ");
+        if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
+
+        // Merchant-dimension filters
+        if (listNonEmpty(filter.getPartnerList()))  sql.append("AND m.referral_partner IN (:partners) ");
+        if (listNonEmpty(filter.getRmList()))       sql.append("AND m.sales_email IN (:rms) ");
+        if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
+        if (listNonEmpty(filter.getMidList()))      sql.append("AND m.mid IN (:mids) ");
+        if (listNonEmpty(filter.getIndustryList())) sql.append("AND m.industry IN (:industries) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            sql.append("AND m.name ILIKE :merchName ");
+        // Store-dimension filters
+        if (listNonEmpty(filter.getMccList()))      sql.append("AND st.mcc IN (:mccs) ");
+        if (listNonEmpty(filter.getSidList()))      sql.append("AND st.sid IN (:sids) ");
+        // Insight-dimension filters (previously ignored by this report)
+        if (listNonEmpty(filter.getChannelList()))      sql.append("AND s.channel IN (:channels) ");
+        if (listNonEmpty(filter.getSchemeList()))       sql.append("AND s.card_scheme IN (:schemes) ");
+        if (listNonEmpty(filter.getCardTypeList()))     sql.append("AND s.card_type IN (:cardTypes) ");
+        if (listNonEmpty(filter.getDestinationList()))  sql.append("AND s.destination IN (:destinations) ");
+
+        sql.append("GROUP BY m.mid, m.name ORDER BY m.mid ASC");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
         query.setParameter("startDate", start);
         query.setParameter("endDate", end);
         query.setParameter("prevStartDate", prevStart);
         query.setParameter("prevEndDate", prevEnd);
         query.setParameter("ytdStartDate", ytdStart);
-        query.setParameter("prevYtdStartDate", globalLowerBound); // Global lower bound for WHERE
-        query.setParameter("momStartDate", momStartDate);
-        query.setParameter("momEndDate", momEndDate);
+        query.setParameter("prevYtdStartDate", prevYtdStart);
+        query.setParameter("momStartDate", momStart);
+        query.setParameter("momEndDate", momEnd);
+        query.setParameter("globalLowerBound", globalLowerBound);
+        if (tenantId != null) query.setParameter("tenantId", tenantId);
 
-        if (tenantId != null)
-            query.setParameter("tenantId", tenantId);
-
-        if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
-            query.setParameter("partners", filter.getPartnerList());
-        if (filter.getRmList() != null && !filter.getRmList().isEmpty())
-            query.setParameter("rms", filter.getRmList());
+        if (listNonEmpty(filter.getPartnerList()))    query.setParameter("partners", filter.getPartnerList());
+        if (listNonEmpty(filter.getRmList()))         query.setParameter("rms", filter.getRmList());
+        if (listNonEmpty(filter.getTeamLeaderList())) query.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (listNonEmpty(filter.getMidList()))        query.setParameter("mids", filter.getMidList());
+        if (listNonEmpty(filter.getIndustryList()))   query.setParameter("industries", filter.getIndustryList());
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
             query.setParameter("merchName", "%" + filter.getMerchantName() + "%");
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
-            query.setParameter("mccs", filter.getMccList());
-        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
-            query.setParameter("teamLeaders", filter.getTeamLeaderList());
-        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
-            query.setParameter("channels", filter.getChannelList());
+        if (listNonEmpty(filter.getMccList()))        query.setParameter("mccs", filter.getMccList());
+        if (listNonEmpty(filter.getSidList()))        query.setParameter("sids", filter.getSidList());
+        if (listNonEmpty(filter.getChannelList()))    query.setParameter("channels", filter.getChannelList());
+        if (listNonEmpty(filter.getSchemeList()))     query.setParameter("schemes", filter.getSchemeList());
+        if (listNonEmpty(filter.getCardTypeList()))   query.setParameter("cardTypes", filter.getCardTypeList());
+        if (listNonEmpty(filter.getDestinationList())) query.setParameter("destinations", filter.getDestinationList());
 
+        @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
         List<Map<String, Object>> result = new ArrayList<>();
 
         for (Object[] row : rows) {
+            // Column order: mid, name, then 5 windows x (vol, txn, msf)
+            java.math.BigDecimal mtdVol  = bd(row[2]),  ytdVol  = bd(row[8]),  momVol  = bd(row[14]);
+            java.math.BigDecimal mtdVolP = bd(row[5]),  ytdVolP = bd(row[11]);
+            long mtdTxn  = lng(row[3]),  ytdTxn  = lng(row[9]),  momTxn  = lng(row[15]);
+            long mtdTxnP = lng(row[6]),  ytdTxnP = lng(row[12]);
+            java.math.BigDecimal mtdMsf  = bd(row[4]),  ytdMsf  = bd(row[10]), momMsf  = bd(row[16]);
+            java.math.BigDecimal mtdMsfP = bd(row[7]),  ytdMsfP = bd(row[13]);
+
+            // Drop merchants with no activity in ANY window — pure noise, never attrition.
+            if (isZero(mtdVol) && isZero(mtdVolP) && isZero(ytdVol) && isZero(ytdVolP) && isZero(momVol))
+                continue;
+
             Map<String, Object> map = new HashMap<>();
             map.put("mid", row[0]);
             map.put("name", row[1]);
 
-            // Calc percentages in Java to avoid divide by zero SQL errors easily
-            java.math.BigDecimal mtdCur = (java.math.BigDecimal) row[2];
-            java.math.BigDecimal mtdPrev = (java.math.BigDecimal) row[3];
-            java.math.BigDecimal ytdCur = (java.math.BigDecimal) row[4];
-            java.math.BigDecimal ytdPrev = (java.math.BigDecimal) row[5];
-            java.math.BigDecimal momPrev = (java.math.BigDecimal) row[6];
+            // ── Volume (kept under the original key names for backward compatibility) ──
+            map.put("mtd_current", mtdVol);
+            map.put("mtd_prev", mtdVolP);
+            map.put("mtd_pct", calculateGrowth(mtdVol.doubleValue(), mtdVolP.doubleValue()));
+            map.put("ytd_current", ytdVol);
+            map.put("ytd_prev", ytdVolP);
+            double ytdPctVol = calculateGrowth(ytdVol.doubleValue(), ytdVolP.doubleValue());
+            map.put("ytd_pct", ytdPctVol);
+            map.put("mom_prev", momVol);
+            map.put("mom_current", mtdVol); // equal-length current window, for the MoM column group
+            map.put("mom_pct", calculateGrowth(mtdVol.doubleValue(), momVol.doubleValue()));
 
-            map.put("mtd_current", mtdCur);
-            map.put("mtd_prev", mtdPrev);
+            // ── Transaction count ──
+            map.put("mtd_current_txns", mtdTxn);
+            map.put("mtd_prev_txns", mtdTxnP);
+            map.put("mtd_pct_txns", calculateGrowth(mtdTxn, mtdTxnP));
+            map.put("ytd_current_txns", ytdTxn);
+            map.put("ytd_prev_txns", ytdTxnP);
+            map.put("ytd_pct_txns", calculateGrowth(ytdTxn, ytdTxnP));
+            map.put("mom_prev_txns", momTxn);
+            map.put("mom_current_txns", mtdTxn);
+            map.put("mom_pct_txns", calculateGrowth(mtdTxn, momTxn));
 
-            double mtdPct = 0;
-            if (mtdPrev != null && mtdPrev.doubleValue() != 0) {
-                mtdPct = ((mtdCur != null ? mtdCur.doubleValue() : 0) - mtdPrev.doubleValue()) / mtdPrev.doubleValue()
-                        * 100;
-            } else if (mtdCur != null && mtdCur.doubleValue() > 0) {
-                mtdPct = 100; // New growth
-            }
-            map.put("mtd_pct", mtdPct);
+            // ── MSF revenue ──
+            map.put("mtd_current_msf", mtdMsf);
+            map.put("mtd_prev_msf", mtdMsfP);
+            map.put("mtd_pct_msf", calculateGrowth(mtdMsf.doubleValue(), mtdMsfP.doubleValue()));
+            map.put("ytd_current_msf", ytdMsf);
+            map.put("ytd_prev_msf", ytdMsfP);
+            map.put("ytd_pct_msf", calculateGrowth(ytdMsf.doubleValue(), ytdMsfP.doubleValue()));
+            map.put("mom_prev_msf", momMsf);
+            map.put("mom_current_msf", mtdMsf);
+            map.put("mom_pct_msf", calculateGrowth(mtdMsf.doubleValue(), momMsf.doubleValue()));
 
-            map.put("ytd_current", ytdCur);
-            map.put("ytd_prev", ytdPrev);
-
-            double ytdPct = 0;
-            if (ytdPrev != null && ytdPrev.doubleValue() != 0) {
-                ytdPct = ((ytdCur != null ? ytdCur.doubleValue() : 0) - ytdPrev.doubleValue()) / ytdPrev.doubleValue()
-                        * 100;
-            } else if (ytdCur != null && ytdCur.doubleValue() > 0) {
-                ytdPct = 100;
-            }
-            map.put("ytd_pct", ytdPct);
-
-            // MoM: Previous month volume and % change vs current MTD
-            map.put("mom_prev", momPrev);
-            double momPct = 0;
-            if (momPrev != null && momPrev.doubleValue() != 0) {
-                momPct = ((mtdCur != null ? mtdCur.doubleValue() : 0) - momPrev.doubleValue()) / momPrev.doubleValue()
-                        * 100;
-            } else if (mtdCur != null && mtdCur.doubleValue() > 0) {
-                momPct = 100;
-            }
-            map.put("mom_pct", momPct);
+            // ── Attrition status (classified on YTD volume, the most stable signal) ──
+            map.put("status", classifyAttrition(ytdVol, ytdVolP, ytdPctVol));
 
             result.add(map);
         }
 
+        // Worst decliners (and churned, at ~ -100%) first — the point of an attrition report.
+        result.sort((a, b) -> Double.compare(
+                ((Number) a.getOrDefault("ytd_pct", 0d)).doubleValue(),
+                ((Number) b.getOrDefault("ytd_pct", 0d)).doubleValue()));
+
         return result;
+    }
+
+    /** Emits "SUM(CASE WHEN business_date in window THEN <col> ELSE 0 END) AS <alias>_x, " for vol/txn/msf. */
+    private void appendWindowMeasures(StringBuilder sql, String alias, String from, String to) {
+        String when = "CASE WHEN s.business_date >= " + from + " AND s.business_date <= " + to + " THEN ";
+        sql.append("SUM(").append(when).append("s.total_volume ELSE 0 END) AS ").append(alias).append("_vol, ");
+        sql.append("SUM(").append(when).append("s.total_txns   ELSE 0 END) AS ").append(alias).append("_txn, ");
+        sql.append("SUM(").append(when).append("s.total_msf    ELSE 0 END) AS ").append(alias).append("_msf, ");
+    }
+
+    /** CHURNED / AT_RISK / DECLINING / STABLE / GROWING based on YTD volume trend. */
+    private String classifyAttrition(java.math.BigDecimal cur, java.math.BigDecimal prev, double pct) {
+        boolean hadHistory = prev != null && prev.signum() > 0;
+        boolean activeNow  = cur  != null && cur.signum()  > 0;
+        if (hadHistory && !activeNow) return "CHURNED";   // was trading last year, nothing this year
+        if (pct <= -50.0) return "AT_RISK";
+        if (pct <= -10.0) return "DECLINING";
+        if (pct <=  10.0) return "STABLE";
+        return "GROWING";
+    }
+
+    private static boolean listNonEmpty(List<?> l) { return l != null && !l.isEmpty(); }
+    private static boolean isZero(java.math.BigDecimal b) { return b == null || b.signum() == 0; }
+    private static java.math.BigDecimal bd(Object o) {
+        if (o == null) return java.math.BigDecimal.ZERO;
+        if (o instanceof java.math.BigDecimal) return (java.math.BigDecimal) o;
+        return new java.math.BigDecimal(o.toString());
+    }
+    private static long lng(Object o) {
+        if (o == null) return 0L;
+        if (o instanceof Number) return ((Number) o).longValue();
+        return Long.parseLong(o.toString());
     }
 
     public Map<String, Object> getExecutiveMetrics(VolumeRevenueFilterDTO filter) {
@@ -1149,10 +1165,10 @@ public class VolumeRevenueRepository {
         sql.append("  MAX(t.type) as terminal_type ");
 
         sql.append("FROM sum_daily_insight s ");
-        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
-        sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        sql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
         // Join dim_terminal to get Type
-        sql.append("LEFT JOIN dim_terminal t ON s.terminal_id = t.terminal_id "); // Use LEFT JOIN in case terminal_id
+        sql.append("LEFT JOIN dim_terminal t ON s.terminal_id = t.terminal_id AND t.tenant_id = s.tenant_id "); // Use LEFT JOIN in case terminal_id
                                                                                   // is null or missing
 
         sql.append("WHERE 1=1 ");
