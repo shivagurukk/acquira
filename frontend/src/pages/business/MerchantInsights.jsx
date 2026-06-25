@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
+import api from '../../api/axios';
 import { Download, ChevronRight, ChevronLeft, CreditCard, LayoutGrid, Users, Award, PieChart } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Box, Typography, Stack, Paper, IconButton, Tabs, Tab } from '@mui/material';
@@ -84,6 +86,7 @@ const DarkChartCard = ({ title, children, height = 300 }) => (
 );
 
 const MerchantInsights = () => {
+    const { currencyCode } = useAuth();
     const [activeTab, setActiveTab] = useState(0);
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -94,43 +97,31 @@ const MerchantInsights = () => {
     const fetchInsights = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
             const date = new Date();
             date.setMonth(date.getMonth() - monthOffset);
             const year = date.getFullYear();
             const month = date.getMonth() + 1;
-
-            const res = await fetch(`/api/business/insights/overview?year=${year}&month=${month}`, {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-            });
-            if (res.ok) setData(await res.json());
+            const res = await api.get(`/business/insights/overview?year=${year}&month=${month}`);
+            setData(res.data);
         } catch (error) { console.error('Failed to fetch insights', error); }
         finally { setLoading(false); }
     };
 
     const downloadPdf = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
             const date = new Date();
             date.setMonth(date.getMonth() - monthOffset);
             const year = date.getFullYear();
             const month = date.getMonth() + 1;
-
-            const response = await fetch(`/api/business/insights/pdf?year=${year}&month=${month}`, {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-            });
-            if (response.ok) {
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `Merchant_Insight_${year}_${month}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-            }
+            const response = await api.get(`/business/insights/pdf?year=${year}&month=${month}`, { responseType: 'blob' });
+            const url = window.URL.createObjectURL(response.data);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Merchant_Insight_${year}_${month}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
         } catch (error) { console.error('Download failed', error); }
     };
 
@@ -227,16 +218,16 @@ const MerchantInsights = () => {
                     <Stack spacing={3}>
                         {/* KPI Row 1 */}
                         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                            <DarkKpiCard title="SALES (AED)" value={data.overview.sales?.formattedValue} growth={data.overview.sales?.momGrowth} trend={data.overview.sales?.trend} icon={CreditCard} />
+                            <DarkKpiCard title={`SALES (${currencyCode})`} value={data.overview.sales?.formattedValue} growth={data.overview.sales?.momGrowth} trend={data.overview.sales?.trend} icon={CreditCard} />
                             <DarkKpiCard title="TRANSACTIONS" value={data.overview.transactions?.formattedValue} growth={data.overview.transactions?.momGrowth} trend={data.overview.transactions?.trend} icon={LayoutGrid} />
                             <DarkKpiCard title="CUSTOMERS" value={data.overview.customers?.formattedValue} growth={data.overview.customers?.momGrowth} trend={data.overview.customers?.trend} icon={Users} />
                         </Box>
 
                         {/* KPI Row 2 */}
                         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                            <DarkKpiCard title="MAX DAILY SALES (AED)" value={data.overview.peakStats?.maxDailySales?.formattedValue} growth={data.overview.peakStats?.maxDailySales?.momGrowth} trend={data.overview.peakStats?.maxDailySales?.trend} />
+                            <DarkKpiCard title={`MAX DAILY SALES (${currencyCode})`} value={data.overview.peakStats?.maxDailySales?.formattedValue} growth={data.overview.peakStats?.maxDailySales?.momGrowth} trend={data.overview.peakStats?.maxDailySales?.trend} />
                             <DarkKpiCard title="MAX NO. OF TXNS IN A DAY" value={data.overview.peakStats?.maxTxnsInDay?.formattedValue} growth={data.overview.peakStats?.maxTxnsInDay?.momGrowth} trend={data.overview.peakStats?.maxTxnsInDay?.trend} />
-                            <DarkKpiCard title="HIGHEST TXN VALUE (AED)" value={data.overview.peakStats?.highestTxnValue?.formattedValue} growth={data.overview.peakStats?.highestTxnValue?.momGrowth} trend={data.overview.peakStats?.highestTxnValue?.trend} />
+                            <DarkKpiCard title={`HIGHEST TXN VALUE (${currencyCode})`} value={data.overview.peakStats?.highestTxnValue?.formattedValue} growth={data.overview.peakStats?.highestTxnValue?.momGrowth} trend={data.overview.peakStats?.highestTxnValue?.trend} />
                         </Box>
 
                         {/* Charts */}

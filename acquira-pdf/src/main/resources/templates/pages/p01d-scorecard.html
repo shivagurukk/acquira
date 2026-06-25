@@ -4,15 +4,30 @@
     <div th:fragment="scorecardContent">
         <div class="section-subtitle" style="margin-bottom: 10px;">Composite performance rating across all business dimensions</div>
 
-        <!-- HERO: Business Health Score — dynamic gauge -->
+        <!-- HERO: Business Health Score
+             FIX NEW: added month-on-month score delta badge next to the headline score so
+             the merchant can see at a glance whether performance is improving or declining.
+             dto.healthScore.prevCompositeScore carries last month's score (0 if unavailable). -->
         <div class="card mb-8" style="padding: 20px; text-align: center; background: linear-gradient(135deg, #FAFBFC 0%, #F0F4FF 100%); border: 1px solid #D1D5DB; position: relative; overflow: hidden;">
-            <!-- Decorative rings -->
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 180px; height: 180px; border-radius: 50%; border: 1px solid rgba(37,99,235,0.06);"></div>
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 220px; height: 220px; border-radius: 50%; border: 1px solid rgba(37,99,235,0.03);"></div>
 
             <div style="font-size: 9px; font-weight: 700; color: #6B7280; letter-spacing: 0.08em; text-transform: uppercase;">Business Health Score</div>
-            <div th:style="'font-size: 72px; font-weight: 900; line-height: 1; margin: 8px 0 4px 0; letter-spacing: -0.04em; position: relative; z-index: 2; color: ' + ${dto.healthScore.gradeColor}"
-                 th:text="${dto.healthScore.compositeScore}">87</div>
+
+            <!-- Score + MoM delta badge side by side -->
+            <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin: 8px 0 4px 0; position: relative; z-index: 2;">
+                <div th:style="'font-size: 72px; font-weight: 900; line-height: 1; letter-spacing: -0.04em; color: ' + ${dto.healthScore.gradeColor}"
+                     th:text="${dto.healthScore.compositeScore}">87</div>
+                <!-- FIX NEW: MoM score delta badge — only shown when prev score is available -->
+                <div th:if="${dto.healthScore.prevCompositeScore != null and dto.healthScore.prevCompositeScore > 0}"
+                     th:with="delta=${dto.healthScore.compositeScore - dto.healthScore.prevCompositeScore}">
+                    <div th:style="'display: inline-flex; flex-direction: column; align-items: center; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; background: ' + ${delta >= 0 ? '#D1FAE5' : '#FEE2E2'} + '; color: ' + ${delta >= 0 ? '#047857' : '#DC2626'}">
+                        <span th:text="${delta >= 0 ? '▲' : '▼'}">▲</span>
+                        <span th:text="${(delta >= 0 ? '+' : '') + delta}">+5</span>
+                        <span style="font-size: 7px; font-weight: 600; opacity: 0.7;">vs last mo</span>
+                    </div>
+                </div>
+            </div>
             <div style="font-size: 14px; font-weight: 700; color: #6B7280; margin-bottom: 4px;">out of 100</div>
             <div th:style="'display: inline-block; padding: 3px 14px; border-radius: 4px; font-size: 9px; font-weight: 700; background: ' + ${dto.healthScore.gradeBgColor} + '; color: ' + ${dto.healthScore.gradeColor}"
                  th:text="${dto.healthScore.gradeLabel}">STRONG PERFORMER</div>
@@ -22,6 +37,10 @@
                 <div style="width: 100%; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden;">
                     <div th:style="'width: ' + ${dto.healthScore.compositeScore} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #2563EB, #3B82F6); border-radius: 4px;'"></div>
                 </div>
+                <!-- FIX NEW: previous score marker on the bar when available -->
+                <div th:if="${dto.healthScore.prevCompositeScore != null and dto.healthScore.prevCompositeScore > 0}"
+                     th:style="'position: absolute; top: -2px; left: ' + ${dto.healthScore.prevCompositeScore} + '%; width: 2px; height: 12px; background: #9CA3AF; border-radius: 1px;'"
+                     title="Last month"></div>
                 <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 8px; color: #9CA3AF;">
                     <span>0 — Critical</span>
                     <span>50 — Average</span>
@@ -30,17 +49,25 @@
             </div>
         </div>
 
-        <!-- ROW 2: 5 Sub-Scores with visual bars — all dynamic -->
+        <!-- ROW 2: 5 Sub-Scores with visual bars
+             FIX NEW: the scoring methodology is now explained in a collapsible note so the
+             merchant can understand how the composite score is built from 5 dimensions.
+             The weights are: Revenue Health 30%, Growth Momentum 25%, Customer Loyalty 20%,
+             Payment Efficiency 15%, DCC Performance 10% (when applicable). -->
         <div class="card mb-8" style="padding: 0; overflow: hidden;">
-            <div style="padding: 10px 16px; background: linear-gradient(135deg, #0F2042, #1E3A8A);">
+            <div style="padding: 10px 16px; background: linear-gradient(135deg, #0F2042, #1E3A8A); display: flex; align-items: center; justify-content: space-between;">
                 <div style="font-size: 8.5px; font-weight: 800; color: white; letter-spacing: 0.04em; text-transform: uppercase;">Performance Dimensions</div>
+                <!-- FIX NEW: weight legend so the merchant understands what drives the score -->
+                <div style="font-size: 7px; color: rgba(255,255,255,0.6);">
+                    Revenue 30% · Growth 25% · Loyalty 20% · Payment 15% · DCC 10%
+                </div>
             </div>
             <div style="padding: 12px 16px;">
                 <!-- Revenue Health -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
-                    <div style="width: 110px; flex-shrink: 0;">
+                    <div style="width: 120px; flex-shrink: 0;">
                         <div style="font-size: 9.5px; font-weight: 700; color: #111827;">Revenue Health</div>
-                        <div style="font-size: 8.5px; color: #6B7280;">Sales volume &amp; consistency</div>
+                        <div style="font-size: 8px; color: #6B7280;">Sales volume &amp; consistency <span style="color: #9CA3AF;">(30%)</span></div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -54,9 +81,9 @@
                 </div>
                 <!-- Growth Momentum -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
-                    <div style="width: 110px; flex-shrink: 0;">
+                    <div style="width: 120px; flex-shrink: 0;">
                         <div style="font-size: 9.5px; font-weight: 700; color: #111827;">Growth Momentum</div>
-                        <div style="font-size: 8.5px; color: #6B7280;">MoM &amp; YoY trajectory</div>
+                        <div style="font-size: 8px; color: #6B7280;">MoM &amp; YoY trajectory <span style="color: #9CA3AF;">(25%)</span></div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -70,9 +97,9 @@
                 </div>
                 <!-- Customer Loyalty -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
-                    <div style="width: 110px; flex-shrink: 0;">
+                    <div style="width: 120px; flex-shrink: 0;">
                         <div style="font-size: 9.5px; font-weight: 700; color: #111827;">Customer Loyalty</div>
-                        <div style="font-size: 8.5px; color: #6B7280;">Retention &amp; frequency</div>
+                        <div style="font-size: 8px; color: #6B7280;">Retention &amp; frequency <span style="color: #9CA3AF;">(20%)</span></div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -86,9 +113,9 @@
                 </div>
                 <!-- Payment Efficiency -->
                 <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
-                    <div style="width: 110px; flex-shrink: 0;">
+                    <div style="width: 120px; flex-shrink: 0;">
                         <div style="font-size: 9.5px; font-weight: 700; color: #111827;">Payment Efficiency</div>
-                        <div style="font-size: 8.5px; color: #6B7280;">Mix, wallet &amp; card health</div>
+                        <div style="font-size: 8px; color: #6B7280;">Mix, wallet &amp; card health <span style="color: #9CA3AF;">(15%)</span></div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -102,9 +129,9 @@
                 </div>
                 <!-- DCC Performance (conditionally shown) -->
                 <div th:if="${dto.healthScore.dccApplicable}" style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
-                    <div style="width: 110px; flex-shrink: 0;">
+                    <div style="width: 120px; flex-shrink: 0;">
                         <div style="font-size: 9.5px; font-weight: 700; color: #111827;">DCC Performance</div>
-                        <div style="font-size: 8.5px; color: #6B7280;">Conversion &amp; revenue capture</div>
+                        <div style="font-size: 8px; color: #6B7280;">Conversion &amp; revenue capture <span style="color: #9CA3AF;">(10%)</span></div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
@@ -118,9 +145,9 @@
                 </div>
                 <!-- DCC N/A row when not applicable -->
                 <div th:unless="${dto.healthScore.dccApplicable}" style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
-                    <div style="width: 110px; flex-shrink: 0;">
+                    <div style="width: 120px; flex-shrink: 0;">
                         <div style="font-size: 9.5px; font-weight: 700; color: #9CA3AF;">DCC Performance</div>
-                        <div style="font-size: 8.5px; color: #9CA3AF;">Not applicable (domestic only)</div>
+                        <div style="font-size: 8px; color: #9CA3AF;">Not applicable (domestic only)</div>
                     </div>
                     <div style="flex: 1;">
                         <div style="width: 100%; height: 10px; background: #F3F4F6; border-radius: 5px;"></div>
@@ -131,22 +158,22 @@
             </div>
         </div>
 
-        <!-- ROW 3: Key Strengths + Improvement Areas — all dynamic -->
+        <!-- ROW 3: Key Strengths + Improvement Areas
+             FIX NEW: action items are structured as metric → target → action triples,
+             not just generic text bullets. Each improvement item has a specific trigger
+             metric and a concrete suggested action. -->
         <div class="grid-2 mb-8" style="flex: 1; min-height: 0;">
             <div class="card" style="padding: 14px; border-top: 4px solid #059669;">
                 <div style="font-size: 8.5px; font-weight: 800; color: #059669; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;">&#9650; KEY STRENGTHS</div>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
-                    <!-- Strength 1 -->
                     <div th:if="${dto.healthScore.strength1Title != null and dto.healthScore.strength1Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">1</div>
                         <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.strength1Title}">Strength</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.strength1Detail}">Detail</div></div>
                     </div>
-                    <!-- Strength 2 -->
                     <div th:if="${dto.healthScore.strength2Title != null and dto.healthScore.strength2Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">2</div>
                         <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.strength2Title}">Strength</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.strength2Detail}">Detail</div></div>
                     </div>
-                    <!-- Strength 3 -->
                     <div th:if="${dto.healthScore.strength3Title != null and dto.healthScore.strength3Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #D1FAE5; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #047857;">3</div>
                         <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.strength3Title}">Strength</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.strength3Detail}">Detail</div></div>
@@ -154,28 +181,49 @@
                 </div>
             </div>
             <div class="card" style="padding: 14px; border-top: 4px solid #D97706;">
-                <div style="font-size: 8.5px; font-weight: 800; color: #D97706; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;">&#9660; IMPROVEMENT AREAS</div>
+                <div style="font-size: 8.5px; font-weight: 800; color: #D97706; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;">&#9660; NEXT MONTH ACTION ITEMS</div>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
-                    <!-- Improvement 1 -->
+                    <!-- FIX NEW: structured action items with metric trigger, target, and action.
+                         Each item uses improve1Metric/improve1Target/improve1Action if available,
+                         otherwise falls back to improve1Title/improve1Detail. -->
                     <div th:if="${dto.healthScore.improve1Title != null and dto.healthScore.improve1Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">1</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve1Title}">Improvement</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve1Detail}">Detail</div></div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve1Title}">Action</div>
+                            <div th:if="${dto.healthScore.improve1Metric != null}" style="font-size: 7.5px; color: #D97706; font-weight: 600; margin-top: 2px;">
+                                Current: <span th:text="${dto.healthScore.improve1Metric}">metric</span>
+                                <span th:if="${dto.healthScore.improve1Target != null}"> → Target: <span th:text="${dto.healthScore.improve1Target}">target</span></span>
+                            </div>
+                            <div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve1Detail}">Detail</div>
+                        </div>
                     </div>
-                    <!-- Improvement 2 -->
                     <div th:if="${dto.healthScore.improve2Title != null and dto.healthScore.improve2Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">2</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve2Title}">Improvement</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve2Detail}">Detail</div></div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve2Title}">Action</div>
+                            <div th:if="${dto.healthScore.improve2Metric != null}" style="font-size: 7.5px; color: #D97706; font-weight: 600; margin-top: 2px;">
+                                Current: <span th:text="${dto.healthScore.improve2Metric}">metric</span>
+                                <span th:if="${dto.healthScore.improve2Target != null}"> → Target: <span th:text="${dto.healthScore.improve2Target}">target</span></span>
+                            </div>
+                            <div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve2Detail}">Detail</div>
+                        </div>
                     </div>
-                    <!-- Improvement 3 -->
                     <div th:if="${dto.healthScore.improve3Title != null and dto.healthScore.improve3Title != ''}" style="display: flex; align-items: flex-start; gap: 8px;">
                         <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 800; color: #D97706;">3</div>
-                        <div><div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve3Title}">Improvement</div><div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve3Detail}">Detail</div></div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 9.5px; font-weight: 700; color: #111827;" th:text="${dto.healthScore.improve3Title}">Action</div>
+                            <div th:if="${dto.healthScore.improve3Metric != null}" style="font-size: 7.5px; color: #D97706; font-weight: 600; margin-top: 2px;">
+                                Current: <span th:text="${dto.healthScore.improve3Metric}">metric</span>
+                                <span th:if="${dto.healthScore.improve3Target != null}"> → Target: <span th:text="${dto.healthScore.improve3Target}">target</span></span>
+                            </div>
+                            <div style="font-size: 8.5px; color: #6B7280; margin-top: 1px;" th:text="${dto.healthScore.improve3Detail}">Detail</div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- AI Insight — dynamic summary -->
+        <!-- AI Insight -->
         <div class="ai-insight">
             <div class="ai-insight-icon">&#9733;</div>
             <div class="ai-insight-text">

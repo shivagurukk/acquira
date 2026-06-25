@@ -40,8 +40,11 @@
 
         <!-- ROW 2: DAILY SALES VOLUME — primary chart, matches the MAX/AVG DAILY SALES KPIs above -->
         <!-- Uses achievements.dailySalesAndCount which is sales-volume-per-day; the peak bar will
-             match MAX DAILY SALES box and the average line height will match AVG DAILY SALES box. -->
-        <div class="card mb-8" style="flex: 1; min-height: 0;">
+             match MAX DAILY SALES box and the average line height will match AVG DAILY SALES box.
+             FIX (overflow): capped max-height so the two stacked charts can't grow tall enough to
+             push the bottom Achievement/Watch strip behind the footer. Page height is fixed at
+             1123px; with header+footer+KPIs+insight the two charts must share a bounded budget. -->
+        <div class="card mb-6" style="flex: 1 1 0; min-height: 0; max-height: 235px;">
             <div class="card-title"><span>DAILY SALES VOLUME (<span th:text="${dto.currencyCode}">AED</span>) — Day of Month</span></div>
             <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailySalesAndCount" data-color="#1E3A8A"></canvas></div>
         </div>
@@ -49,13 +52,15 @@
         <!-- ROW 3: DAILY TRANSACTION COUNT — promoted up into the slot previously held by the
              ATV chart (which was moved to page 8 / Customer Intelligence so each chart has more
              vertical space). Pairs naturally with MAX TXNS / DAY KPI in row 1. -->
-        <div class="card mb-8" style="flex: 1; min-height: 0;">
+        <div class="card mb-6" style="flex: 1 1 0; min-height: 0; max-height: 235px;">
             <div class="card-title">DAILY TRANSACTION COUNT — Day of Month</div>
             <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailyTxnCount" data-color="#7C3AED"></canvas></div>
         </div>
 
-        <!-- ROW 4: Achievement + Watch summary strip -->
-        <div class="grid-2 mb-8">
+        <!-- ROW 4: Achievement + Watch summary strip
+             FIX (overflow): flex-shrink:0 + margin-top:auto pins this strip to the bottom of the
+             content area and guarantees it is never compressed or clipped by the footer. -->
+        <div class="grid-2" style="flex-shrink: 0; margin-top: auto;">
             <div class="action-strip-item opportunity" style="border-left-color: #059669;">
                 <div class="strip-label">&#9650; KEY ACHIEVEMENT</div>
                 <div class="strip-text" th:text="${dto.insights != null and dto.insights.peakAchievement != null ? dto.insights.peakAchievement : 'Peak daily sales hit a record high.'}">

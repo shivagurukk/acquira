@@ -17,8 +17,10 @@ const BatchMonitoring = () => {
     const [liveJobs, setLiveJobs] = useState({});
     const [loading, setLoading] = useState(true);
     const [sseConnected, setSseConnected] = useState(false);
+    const [sseFailed, setSseFailed] = useState(false);
     const eventSourceRef = useRef(null);
     const retryTimeoutRef = useRef(null);
+    const sseFailTimerRef = useRef(null);
 
     const fetchJobs = async () => {
         setLoading(true);
@@ -55,6 +57,9 @@ const BatchMonitoring = () => {
         es.onerror = () => {
             setSseConnected(false);
             es.close();
+            // Show a banner after 10s of failed SSE — polling is the fallback
+            if (sseFailTimerRef.current) clearTimeout(sseFailTimerRef.current);
+            sseFailTimerRef.current = setTimeout(() => setSseFailed(true), 10000);
             retryTimeoutRef.current = setTimeout(connectSSE, 5000);
         };
 
@@ -71,6 +76,7 @@ const BatchMonitoring = () => {
             clearInterval(interval);
             if (eventSourceRef.current) eventSourceRef.current.close();
             if (retryTimeoutRef.current)  clearTimeout(retryTimeoutRef.current);
+            if (sseFailTimerRef.current)  clearTimeout(sseFailTimerRef.current);
         };
     }, []);
 
@@ -160,6 +166,22 @@ const BatchMonitoring = () => {
             />
 
             {/* ── Content wrapper ── */}
+            {/* SSE fallback banner */}
+            {sseFailed && !sseConnected && (
+                <div style={{
+                    margin: '0 0 16px',
+                    padding: '10px 16px', borderRadius: 8,
+                    background: '#fef9ec', border: '0.5px solid #fcd34d',
+                    display: 'flex', alignItems: 'center', gap: 10, fontSize: 12,
+                }}>
+                    <WifiOff size={14} color="#b45309" />
+                    <span style={{ color: '#92400e', fontWeight: 500 }}>
+                        Live updates unavailable (SSE blocked or timed out) — falling back to 30s polling.
+                        <button onClick={connectSSE} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#1d4ed8', fontWeight: 600, fontSize: 12, padding: 0 }}>Retry live</button>
+                    </span>
+                </div>
+            )}
+
             <div style={{ padding: 'var(--space-page, 24px)' }}>
                 <div style={{
                     background: 'var(--bg-card, #fff)',

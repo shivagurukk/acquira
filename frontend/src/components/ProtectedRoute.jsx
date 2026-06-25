@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../api/axios';
 
 // ==========================================
 // ProtectedRoute — Guards routes with:
@@ -25,10 +26,8 @@ const ProtectedRoute = ({ children }) => {
                 return;
             }
             try {
-                const res = await fetch('/api/auth/session', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                setIsValid(res.ok);
+                await api.get('/auth/session');
+                setIsValid(true);
             } catch (e) {
                 setIsValid(false);
             }

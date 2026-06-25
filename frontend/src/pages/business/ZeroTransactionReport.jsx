@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Paper, Typography, Chip, Stack, TextField, Collapse } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { AlertTriangle, Clock, Users, TrendingDown, XCircle } from 'lucide-react';
+import api from '../../api/axios';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
@@ -31,8 +32,6 @@ const ZeroTransactionReport = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
             const payload = {
                 merchantName,
                 partnerList: aggregatorInput ? aggregatorInput.split(',').map(s => s.trim()) : [],
@@ -40,19 +39,8 @@ const ZeroTransactionReport = () => {
                 sidList: sidInput ? sidInput.split(',').map(s => s.trim()) : [],
                 tidList: tidInput ? tidInput.split(',').map(s => s.trim()) : [],
             };
-            const res = await fetch(`/api/reports/zero-txn/list?rangeType=${rangeType}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                const result = await res.json();
-                setData(result.map((r, i) => ({ id: `${r.mid}-${r.sid}-${r.terminalId}-${i}`, ...r })));
-            }
+            const res = await api.post(`/reports/zero-txn/list?rangeType=${rangeType}`, payload);
+            setData(res.data.map((r, i) => ({ id: `${r.mid}-${r.sid}-${r.terminalId}-${i}`, ...r })));
         } catch (error) { console.error(error); }
         finally { setLoading(false); }
     };

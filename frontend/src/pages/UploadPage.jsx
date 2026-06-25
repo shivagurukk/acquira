@@ -48,7 +48,14 @@ const UploadPage = () => {
             setShowSummary(true);
         } else {
             setStatus('processing');
-            setMsg(`Processing... ${uploadProgress.progress >= 0 ? uploadProgress.progress : 0}%`);
+            // FIX: derive real progress from stepNumber/totalSteps when available,
+            // falling back to the progress field, then 0. Previously this showed
+            // a time-based fake percentage unrelated to actual batch progress.
+            const realPct = uploadProgress.stepNumber && uploadProgress.totalSteps
+                ? Math.round((uploadProgress.stepNumber / uploadProgress.totalSteps) * 100)
+                : (uploadProgress.progress >= 0 ? uploadProgress.progress : 0);
+            setMsg(`Processing... ${realPct}%`);
+            setUploadPercent(realPct);
         }
     }, [uploadProgress]);
 
@@ -79,11 +86,11 @@ const UploadPage = () => {
     const reset = () => { setFile(null); setStatus(null); setMsg(''); setJobDetails(null); setShowSummary(false); setUploadPercent(0); };
 
     const stages = [
-        { label: 'Splitting',   icon: FileText,  range: [0, 10],  desc: 'Splitting file into chunks' },
-        { label: 'Reading',     icon: Activity,  range: [10, 40], desc: 'Validating rows' },
-        { label: 'Processing',  icon: Zap,       range: [40, 70], desc: 'Resolving merchants' },
-        { label: 'Loading',     icon: BarChart2, range: [70, 90], desc: 'Writing to database' },
-        { label: 'Summarizing', icon: BarChart2, range: [90, 100],desc: 'Building summaries' },
+        { label: 'Splitting',   icon: FileText,  range: [0, 10],  stepKeys: ['split', 'partition', 'ensure'] },
+        { label: 'Reading',     icon: Activity,  range: [10, 40], stepKeys: ['ingest', 'read', 'clean', 'staging'] },
+        { label: 'Processing',  icon: Zap,       range: [40, 70], stepKeys: ['dimension', 'resolve', 'auto'] },
+        { label: 'Loading',     icon: BarChart2, range: [70, 90], stepKeys: ['fact', 'upsert', 'write'] },
+        { label: 'Summarizing', icon: BarChart2, range: [90, 100],stepKeys: ['summary', 'metric', 'dashboard', 'finalize'] },
     ];
 
     return (
@@ -161,41 +168,41 @@ const UploadPage = () => {
                         )}
 
                         {status === 'processing' && jobDetails && (
-                            <div>
-                                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
-                                    <FinancialLoader />
-                                </div>
-                                {jobDetails.currentStep && (
-                                    <div style={{
-                                        textAlign: 'center', marginBottom: 14,
-                                        fontSize: '0.9rem', fontWeight: 600, color: 'var(--text,#111827)',
-                                    }}>
-                                        {stepLabel(jobDetails.currentStep)}
-                                        {jobDetails.stepNumber && jobDetails.totalSteps
-                                            ? <span style={{ color: 'var(--text-muted,#9ca3af)', fontWeight: 500 }}>
-                                                {' '}· step {jobDetails.stepNumber} of {jobDetails.totalSteps}
-                                              </span>
-                                            : null}
-                                    </div>
-                                )}
-                                <StageTracker stages={stages} progress={jobDetails.progress || 0} />
-                                <div style={{ marginTop: 16 }}>
-                                    <ProgressBar
-                                        value={Math.max(0, jobDetails.progress || 0)}
-                                        label="Overall progress"
-                                        color="#2563eb"
-                                    />
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: '0.78rem', color: 'var(--text-secondary,#6b7280)' }}>
-                                        <span>Job: {jobDetails.jobId || jobDetails.executionId || '—'}</span>
-                                        <span>{(jobDetails.readCount || 0).toLocaleString()} / {jobDetails.totalRows > 0 ? jobDetails.totalRows.toLocaleString() : '...'} rows</span>
-                                    </div>
-                                    {jobDetails.readCount > 0 && jobDetails.startTime && (
-                                        <div style={{ marginTop: 4, fontSize: '0.72rem', color: 'var(--text-muted,#9ca3af)' }}>
-                                            ⚡ {Math.round(jobDetails.readCount / Math.max(1, (Date.now() - new Date(jobDetails.startTime).getTime()) / 1000))} rows/sec
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+                        <div>
+                        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+                        <FinancialLoader />
+                        </div>
+                        {jobDetails.currentStep && (
+                        <div style={{
+                        textAlign: 'center', marginBottom: 14,
+                        fontSize: '0.9rem', fontWeight: 600, color: 'var(--text,#111827)',
+                        }}>
+                        {stepLabel(jobDetails.currentStep)}
+                        {jobDetails.stepNumber && jobDetails.totalSteps
+                        ? <span style={{ color: 'var(--text-muted,#9ca3af)', fontWeight: 500 }}>
+                        {' '}· step {jobDetails.stepNumber} of {jobDetails.totalSteps}
+                        </span>
+                        : null}
+                        </div>
+                        )}
+                        <StageTracker stages={stages} currentStepName={jobDetails.currentStep} stepNumber={jobDetails.stepNumber} totalSteps={jobDetails.totalSteps} progress={uploadPercent} />
+                        <div style={{ marginTop: 16 }}>
+                        <ProgressBar
+                        value={uploadPercent}
+                        label={jobDetails.currentStep ? stepLabel(jobDetails.currentStep) : 'Overall progress'}
+                        color="#2563eb"
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: '0.78rem', color: 'var(--text-secondary,#6b7280)' }}>
+                        <span>Job: {jobDetails.jobId || jobDetails.executionId || '—'}</span>
+                        <span>{(jobDetails.readCount || 0).toLocaleString()} / {jobDetails.totalRows > 0 ? jobDetails.totalRows.toLocaleString() : '...'} rows</span>
+                        </div>
+                        {jobDetails.readCount > 0 && jobDetails.startTime && (
+                        <div style={{ marginTop: 4, fontSize: '0.72rem', color: 'var(--text-muted,#9ca3af)' }}>
+                        ⚡ {Math.round(jobDetails.readCount / Math.max(1, (Date.now() - new Date(jobDetails.startTime).getTime()) / 1000))} rows/sec
+                        </div>
+                        )}
+                        </div>
+                        </div>
                         )}
 
                         {status === 'success' && !showSummary && (
@@ -280,12 +287,16 @@ const ProgressBar = ({ value, label, color = '#2563eb' }) => (
     </div>
 );
 
-const StageTracker = ({ stages, progress }) => {
-    const activeIdx = stages.findIndex(s => progress >= s.range[0] && progress < s.range[1]);
+const StageTracker = ({ stages, currentStepName, stepNumber, totalSteps, progress }) => {
+    // FIX: determine the active stage from the real currentStepName when available,
+    // falling back to the progress-based range detection.
+    const activeIdx = currentStepName
+        ? stages.findIndex(s => s.stepKeys && s.stepKeys.some(k => currentStepName.toLowerCase().includes(k)))
+        : stages.findIndex(s => progress >= s.range[0] && progress < s.range[1]);
     return (
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, marginBottom: 16 }}>
             {stages.map((s, i) => {
-                const done   = progress >= s.range[1];
+                const done   = stepNumber ? i < activeIdx : progress >= s.range[1];
                 const active = i === activeIdx;
                 const StageIcon = s.icon;
                 return (

@@ -2,7 +2,7 @@ package com.acquira.core.controller;
 
 import com.acquira.common.model.EmailSmtpConfig;
 import com.acquira.core.service.SmtpConfigService;
-import com.acquira.core.service.TenantService;
+import com.acquira.common.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -37,10 +37,14 @@ import java.util.Map;
 public class EmailSmtpController {
 
     private final SmtpConfigService smtpConfigService;
-    private final TenantService tenantService;
 
     private Long tenantId() {
-        Long t = tenantService.getCurrentTenantId();
+        // Tenant-isolation fix: use the header-aware TenantContext (set by
+        // JwtRequestFilter from X-Tenant-Id) instead of TenantService
+        // .getCurrentTenantId(), which always returned the user's DEFAULT
+        // tenant and ignored tenant switching — a multi-tenant admin would
+        // otherwise edit the wrong tenant's SMTP config after switching.
+        Long t = TenantContext.getCurrentTenant();
         if (t == null) {
             throw new IllegalStateException("No tenant context for the current user");
         }

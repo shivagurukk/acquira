@@ -1,9 +1,9 @@
 /**
  * #25: Frontend tests — ErrorBoundary
  */
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import ErrorBoundary from '../../components/ErrorBoundary';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 // Suppress console.error for boundary tests
 const originalError = console.error;

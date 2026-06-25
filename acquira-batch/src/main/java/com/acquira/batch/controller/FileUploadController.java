@@ -4,11 +4,26 @@ import com.acquira.batch.service.FileUploadService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+/**
+ * File upload / ingestion API ({@code /api/upload}).
+ *
+ * AUTHORIZATION: uploading a file launches a batch job that mutates the
+ * warehouse (dim/fact/summary tables) for a tenant. That is an operator action,
+ * NOT something a read-only Business/Finance user should be able to trigger.
+ * These routes fall under SecurityConfig's `.anyRequest().authenticated()` rule
+ * (only /api/admin/** and /api/batch/** carry a role requirement there), so
+ * WITHOUT the method-level @PreAuthorize below ANY authenticated user could POST
+ * a file and kick off ingestion. Restrict every mutating endpoint to ADMIN /
+ * SUPER_ADMIN. (Tenant matching of the file's entity id is still enforced in
+ * FileUploadService for non-super-admins.)
+ */
 @RestController
 @RequestMapping("/api/upload")
+@PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
 public class FileUploadController {
 
     private static final Logger log = LoggerFactory.getLogger(FileUploadController.class);

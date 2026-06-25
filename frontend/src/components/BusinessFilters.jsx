@@ -7,6 +7,7 @@ import {
 import {
     Filter, X, RefreshCw, Search, Briefcase, Layers, Monitor, Hash
 } from 'lucide-react';
+import api from '../api/axios';
 
 const DEFAULT_OPTIONS = {
     partners: [], mccs: [], industries: ['Retail', 'F&B', 'Services', 'Travel', 'Education', 'Healthcare'],
@@ -69,25 +70,20 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose }) => {
     useEffect(() => {
         const fetchOptions = async () => {
             try {
-                const token = localStorage.getItem('token');
-                const res = await fetch('/api/business/filter-options', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    setOptions(prev => ({
-                        ...prev, ...data,
-                        schemes: Array.from(new Set([...DEFAULT_OPTIONS.schemes, ...(data.schemes || [])])),
-                        cardTypes: Array.from(new Set([...DEFAULT_OPTIONS.cardTypes, ...(data.cardTypes || [])])),
-                        destinations: Array.from(new Set([...DEFAULT_OPTIONS.destinations, ...(data.destinations || [])])),
-                        channels: Array.from(new Set([...DEFAULT_OPTIONS.channels, ...(data.channels || [])])),
-                        teamLeaders: Array.from(new Set([...DEFAULT_OPTIONS.teamLeaders, ...(data.teamLeaders || [])])),
-                        rms: Array.from(new Set([...DEFAULT_OPTIONS.rms, ...(data.rms || [])])),
-                        mccs: (data.mccs || []).map(m => String(m)),
-                        mids: (data.mids || []).map(m => String(m)),
-                        sids: (data.sids || []).map(m => String(m)),
-                    }));
-                }
+                const res = await api.get('/business/filter-options');
+                const data = res.data;
+                setOptions(prev => ({
+                    ...prev, ...data,
+                    schemes: Array.from(new Set([...DEFAULT_OPTIONS.schemes, ...(data.schemes || [])])),
+                    cardTypes: Array.from(new Set([...DEFAULT_OPTIONS.cardTypes, ...(data.cardTypes || [])])),
+                    destinations: Array.from(new Set([...DEFAULT_OPTIONS.destinations, ...(data.destinations || [])])),
+                    channels: Array.from(new Set([...DEFAULT_OPTIONS.channels, ...(data.channels || [])])),
+                    teamLeaders: Array.from(new Set([...DEFAULT_OPTIONS.teamLeaders, ...(data.teamLeaders || [])])),
+                    rms: Array.from(new Set([...DEFAULT_OPTIONS.rms, ...(data.rms || [])])),
+                    mccs: (data.mccs || []).map(m => String(m)),
+                    mids: (data.mids || []).map(m => String(m)),
+                    sids: (data.sids || []).map(m => String(m)),
+                }));
             } catch (error) { console.error("Failed to fetch filter options", error); }
         };
         if (isOpen) fetchOptions();

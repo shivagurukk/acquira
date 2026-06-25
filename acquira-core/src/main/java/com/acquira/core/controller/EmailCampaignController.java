@@ -134,7 +134,15 @@ public class EmailCampaignController {
         c.setCreatedAt(LocalDateTime.now());
 
         Long templateId = Long.valueOf(body.get("templateId").toString());
-        c.setTemplate(templateRepo.findById(templateId).orElseThrow());
+        // Tenant-isolation fix: ensure the referenced template belongs to the
+        // same tenant before attaching it to the campaign.
+        EmailTemplateConfig template = templateRepo.findById(templateId)
+            .filter(t -> t.getTenantId().equals(tenantId))
+            .orElse(null);
+        if (template == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Template not found for this tenant"));
+        }
+        c.setTemplate(template);
 
         return ResponseEntity.ok(campaignRepo.save(c));
     }
@@ -185,12 +193,25 @@ public class EmailCampaignController {
             @PathVariable Long id,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
+        // Tenant-isolation fix: verify the campaign belongs to the active tenant
+        // before returning its logs. Previously any campaign id returned logs,
+        // allowing a cross-tenant read by guessing ids.
+        Long tenantId = TenantContext.getCurrentTenant();
+        boolean owned = campaignRepo.findById(id)
+            .map(c -> c.getTenantId().equals(tenantId))
+            .orElse(false);
+        if (!owned) {
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(campaignLogRepo.findByCampaignIdOrderBySentAtDesc(id, PageRequest.of(page, size)));
     }
 
     @GetMapping("/campaigns/{id}/stats")
     public ResponseEntity<?> getCampaignStats(@PathVariable Long id) {
+        // Tenant-isolation fix: ownership-check before returning stats.
+        Long tenantId = TenantContext.getCurrentTenant();
         return campaignRepo.findById(id)
+            .filter(c -> c.getTenantId().equals(tenantId))
             .map(c -> ResponseEntity.ok(Map.of(
                 "total", c.getTotalRecipients(),
                 "sent", c.getSentCount(),

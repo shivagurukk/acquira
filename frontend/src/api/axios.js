@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { clearAuthStorage } from '../utils/authStorage';
+import { showToast } from '../contexts/ToastContext';
 
 const api = axios.create({
     baseURL: '/api',
@@ -55,7 +56,8 @@ api.interceptors.response.use(
             // If no refresh token or this IS the refresh request, logout
             if (!refreshToken || originalRequest.url === '/auth/refresh') {
                 clearAuthStorage();
-                window.location.href = '/login';
+                showToast('Your session has expired. Please log in again.', 'warning', 5000);
+                setTimeout(() => { window.location.href = '/login'; }, 1200);
                 return Promise.reject(error);
             }
 
@@ -90,7 +92,8 @@ api.interceptors.response.use(
             } catch (refreshError) {
                 processQueue(refreshError, null);
                 clearAuthStorage();
-                window.location.href = '/login';
+                showToast('Your session has expired. Please log in again.', 'warning', 5000);
+                setTimeout(() => { window.location.href = '/login'; }, 1200);
                 return Promise.reject(refreshError);
             } finally {
                 isRefreshing = false;

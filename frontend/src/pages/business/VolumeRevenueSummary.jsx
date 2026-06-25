@@ -8,6 +8,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import api from '../../api/axios';
 
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
@@ -78,19 +79,9 @@ const VolumeRevenueSummary = () => {
     const fetchReport = useCallback(async (filtersToSend) => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
-            const res = await fetch('/api/business/volume-revenue-summary', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
-                },
-                body: JSON.stringify(filtersToSend)
-            });
-            if (res.ok) setData(await res.json());
-        } catch (error) { console.error("Failed to load report", error); }
+            const res = await api.post('/business/volume-revenue-summary', filtersToSend);
+            setData(res.data);
+        } catch (error) { console.error('Failed to load report', error); }
         finally { setLoading(false); }
     }, []);
 

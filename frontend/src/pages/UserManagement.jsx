@@ -137,7 +137,10 @@ const UserManagement = () => {
   // ─── User CRUD ─────────────────────────────────────────
   const openCreateModal = () => {
     setModalUser(null);
-    setFormData({ username: '', email: '', displayName: '', password: '', active: true, tenantAssignments: [{ tenantId: '', groupId: '', isDefault: true }] });
+    // If the admin only has one tenant available (typical for a bank admin now
+    // that /banks is tenant-scoped), pre-select it so they don't have to.
+    const onlyTenantId = banks.length === 1 ? String(banks[0].tenantId) : '';
+    setFormData({ username: '', email: '', displayName: '', password: '', active: true, tenantAssignments: [{ tenantId: onlyTenantId, groupId: '', isDefault: true }] });
     setFormErrors({});
     setIsModalOpen(true);
   };
@@ -166,11 +169,13 @@ const UserManagement = () => {
         await api.put(`/users/${modalUser.id}`, { ...formData, id: modalUser.id });
         notify('User updated');
       } else {
-        // Create user then assign all selected tenants
+        // Create user then assign all selected tenants.
         const res = await api.post('/users', formData);
         const newUserId = res.data?.id;
-        if (newUserId && formData.tenantAssignments) {
-          const validAssignments = formData.tenantAssignments.filter(a => a.tenantId && a.groupId);
+        const validAssignments = (formData.tenantAssignments || []).filter(a => a.tenantId && a.groupId);
+        let assignedOk = 0;
+        const failed = [];
+        if (newUserId) {
           for (const assignment of validAssignments) {
             try {
               await api.post(`/users/${newUserId}/tenant-access`, {
@@ -178,10 +183,27 @@ const UserManagement = () => {
                 groupId: assignment.groupId,
                 isDefault: assignment.isDefault || false
               });
-            } catch (te) { console.warn('Tenant assignment failed:', te); }
+              assignedOk++;
+            } catch (te) {
+              // Tenant-isolation: the server rejects assigning a tenant the
+              // caller doesn't administer. Surface it instead of silently
+              // leaving an orphaned (tenant-less, invisible) user.
+              const bank = banks.find(b => String(b.tenantId) === String(assignment.tenantId));
+              failed.push(bank?.bankName || `tenant ${assignment.tenantId}`);
+            }
           }
         }
-        notify('User created');
+
+        if (validAssignments.length > 0 && assignedOk === 0) {
+          // Every assignment failed → the user exists but has no tenant access
+          // and won't appear in a bank admin's scoped list. Tell the truth.
+          notify(`User created, but tenant assignment failed: ${failed.join(', ')}. ` +
+                 `You may not have permission to assign those tenants.`, 'error');
+        } else if (failed.length > 0) {
+          notify(`User created. Some tenant assignments failed: ${failed.join(', ')}.`, 'error');
+        } else {
+          notify('User created');
+        }
       }
       setIsModalOpen(false);
       fetchAll();

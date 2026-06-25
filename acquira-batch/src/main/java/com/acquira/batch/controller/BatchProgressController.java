@@ -4,8 +4,12 @@ import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.StepExecution;
 import org.springframework.batch.core.explore.JobExplorer;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import com.acquira.common.config.TenantContext;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -30,6 +34,46 @@ public class BatchProgressController {
         this.jobExplorer = jobExplorer;
     }
 
+    // ── Tenant-isolation helpers ────────────────────────────────────────────
+    // Mirror BatchJobController: batch jobs carry their tenant in JobParameters
+    // ("tenantId"). /api/batch/** is gated to ADMIN/SUPER_ADMIN, but without the
+    // filter below a bank admin sees (and live-streams) every tenant's job
+    // progress and data-quality details. Super-admins keep the cross-tenant view.
+    //
+    // NOTE: SSE streams capture the caller's tenant ONCE at subscribe time (the
+    // scheduled callback runs on a pool thread with no SecurityContext /
+    // TenantContext of its own), so resolve and close over the values before
+    // scheduling — see streamJobProgress / streamAllJobs.
+    private boolean isSuperAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
+    }
+
+    private static Long tenantOf(JobExecution exec) {
+        try {
+            return exec.getJobParameters().getLong("tenantId");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Request-thread check (SecurityContext available). */
+    private boolean canView(JobExecution exec) {
+        if (isSuperAdmin()) return true;
+        return canView(exec, TenantContext.getCurrentTenant(), false);
+    }
+
+    /**
+     * Pool-thread-safe check: pass the tenant + super-admin flag captured on the
+     * request thread, since the SSE callback has no SecurityContext of its own.
+     */
+    private static boolean canView(JobExecution exec, Long viewerTenant, boolean viewerIsSuperAdmin) {
+        if (viewerIsSuperAdmin) return true;
+        Long jobTenant = tenantOf(exec);
+        return viewerTenant != null && viewerTenant.equals(jobTenant);
+    }
+
     /**
      * REST: Get progress snapshot for a job (used by frontend polling).
      * GET /api/batch/jobs/{id}/status
@@ -38,6 +82,11 @@ public class BatchProgressController {
     public Map<String, Object> getJobStatus(@PathVariable Long executionId) {
         JobExecution jobExec = jobExplorer.getJobExecution(executionId);
         if (jobExec == null) {
+            return Map.of("error", "Job not found", "executionId", executionId);
+        }
+        // TENANT ISOLATION: don't reveal another tenant's job. Same "not found"
+        // shape so the endpoint doesn't confirm cross-tenant existence.
+        if (!canView(jobExec)) {
             return Map.of("error", "Job not found", "executionId", executionId);
         }
         return buildProgressPayload(jobExec);
@@ -64,6 +113,13 @@ public class BatchProgressController {
         // Holder so the lambda can self-cancel cleanly.
         final ScheduledFuture<?>[] futureHolder = new ScheduledFuture<?>[1];
 
+        // TENANT ISOLATION: capture the viewer's identity on the REQUEST thread.
+        // The scheduled callback runs on a pool thread that has no SecurityContext
+        // or TenantContext, so resolving it inside the lambda would always come
+        // back null/anonymous and either over- or under-restrict.
+        final boolean viewerIsSuperAdmin = isSuperAdmin();
+        final Long viewerTenant = TenantContext.getCurrentTenant();
+
         futureHolder[0] = scheduler.scheduleAtFixedRate(() -> {
             try {
                 if (System.currentTimeMillis() - startedAt > maxStreamMs) {
@@ -78,6 +134,17 @@ public class BatchProgressController {
 
                 JobExecution jobExec = jobExplorer.getJobExecution(executionId);
                 if (jobExec == null) {
+                    emitter.send(SseEmitter.event().name("error")
+                            .data("{\"error\":\"Job not found\"}"));
+                    emitter.complete();
+                    if (futureHolder[0] != null) futureHolder[0].cancel(false);
+                    return;
+                }
+
+                // TENANT ISOLATION: terminate the stream if this job isn't the
+                // viewer's. Same "Job not found" shape so it doesn't confirm
+                // cross-tenant existence.
+                if (!canView(jobExec, viewerTenant, viewerIsSuperAdmin)) {
                     emitter.send(SseEmitter.event().name("error")
                             .data("{\"error\":\"Job not found\"}"));
                     emitter.complete();
@@ -126,6 +193,12 @@ public class BatchProgressController {
         SseEmitter emitter = new SseEmitter(600_000L); // 10 min timeout
         final ScheduledFuture<?>[] futureHolder = new ScheduledFuture<?>[1];
 
+        // TENANT ISOLATION: capture viewer identity on the REQUEST thread (the
+        // scheduled callback has no SecurityContext/TenantContext). Non-super-
+        // admins only see their own tenant's jobs in the live dashboard.
+        final boolean viewerIsSuperAdmin = isSuperAdmin();
+        final Long viewerTenant = TenantContext.getCurrentTenant();
+
         futureHolder[0] = scheduler.scheduleAtFixedRate(() -> {
             try {
                 List<Map<String, Object>> allJobs = new ArrayList<>();
@@ -137,6 +210,7 @@ public class BatchProgressController {
                     try {
                         Set<JobExecution> running = jobExplorer.findRunningJobExecutions(jobName);
                         for (JobExecution exec : running) {
+                            if (!canView(exec, viewerTenant, viewerIsSuperAdmin)) continue;
                             allJobs.add(buildProgressPayload(exec));
                         }
                     } catch (Exception e) {
@@ -152,6 +226,7 @@ public class BatchProgressController {
                             for (var instance : instances) {
                                 var executions = jobExplorer.getJobExecutions(instance);
                                 for (var exec : executions) {
+                                    if (!canView(exec, viewerTenant, viewerIsSuperAdmin)) continue;
                                     if (exec.getEndTime() != null) {
                                         Duration sinceEnd = Duration.between(exec.getEndTime(), LocalDateTime.now());
                                         if (sinceEnd.toMinutes() <= 5) {

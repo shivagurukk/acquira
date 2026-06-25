@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
+import { createFmt } from '../../utils/formatters';
+import api from '../../api/axios';
 import { Box, Paper, Typography, Avatar, Stack, Tooltip, MenuItem, Select, FormControl, Chip, Card, CardContent, Autocomplete, TextField } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, Activity } from 'lucide-react';
@@ -7,7 +10,7 @@ import BusinessFilters from '../../components/BusinessFilters';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 
-const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', maximumFractionDigits: 0 }).format(val || 0);
+// formatCurrency is now built from the tenant's currency via useAuth + createFmt (see inside component)
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
 const SmoothSparkline = ({ data, color }) => {
@@ -59,6 +62,8 @@ const StatCard = ({ title, value, icon: Icon, color, subtitle }) => (
 );
 
 const DailyMerchantDashboard = () => {
+    const { currencySymbol } = useAuth();
+    const formatCurrency = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filterOptions, setFilterOptions] = useState({ sids: [], mids: [] });
@@ -100,24 +105,14 @@ const DailyMerchantDashboard = () => {
         let cancelled = false;
         const loadBounds = async () => {
             try {
-                const token = localStorage.getItem('token');
-                const tenantId = localStorage.getItem('defaultTenantId');
-                const res = await fetch('/api/business/data-bounds', {
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
-                    }
-                });
+                const res = await api.get('/business/data-bounds');
                 let year = new Date().getFullYear();
                 let month = new Date().getMonth() + 1;
-                if (res.ok) {
-                    const b = await res.json();
-                    if (b.latest) {
-                        // latest is e.g. "2026-04-30"
-                        const [y, m] = b.latest.split('-');
-                        year = Number(y);
-                        month = Number(m);
-                    }
+                const b = res.data;
+                if (b.latest) {
+                    const [y, m] = b.latest.split('-');
+                    year = Number(y);
+                    month = Number(m);
                 }
                 if (!cancelled) {
                     setFilters(prev => ({ ...prev, year, month }));
@@ -149,70 +144,49 @@ const DailyMerchantDashboard = () => {
 
     const fetchFilterOptions = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('/api/business/filter-options', { headers: { 'Authorization': `Bearer ${token}` } });
-            if (res.ok) {
-                const data = await res.json();
-                setFilterOptions({
-                    sids: (data.sids || []).map(s => String(s)),
-                    mids: (data.mids || []).map(s => String(s)),
-                });
-            }
+            const res = await api.get('/business/filter-options');
+            setFilterOptions({
+                sids: (res.data.sids || []).map(s => String(s)),
+                mids: (res.data.mids || []).map(s => String(s)),
+            });
         } catch (e) { console.error(e); }
     };
 
     const fetchDashboardData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
             // POST to the filtered endpoint so we can send the full drawer filter
             // shape. Year/month stay as query params; everything else goes in body.
             const body = {
                 ...filters,
-                // Don't send year/month in body — they're query params
                 year: undefined, month: undefined,
-                // Date fields are not used by this endpoint (it's month-scoped)
                 startDate: null, endDate: null,
             };
-            const res = await fetch(
-                `/api/business/daily-merchant-dashboard-filtered?year=${filters.year}&month=${filters.month}`,
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`,
-                        ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
-                    },
-                    body: JSON.stringify(body),
-                }
+            const res = await api.post(
+                `/business/daily-merchant-dashboard-filtered?year=${filters.year}&month=${filters.month}`,
+                body
             );
-            if (res.ok) {
-                const result = await res.json();
-                // FIX: removed Math.random fake sparkline fallback. If backend doesn't
-                // provide sparklineData, leave it undefined and let the chart render
-                // empty rather than show meaningless random numbers.
-                setData(result.map((r, i) => ({
-                    id: r.merchantId || i, ...r,
-                    sparklineData: r.sparklineData || []
-                })));
-                // Auto-seek the latest month that actually has metrics (see the
-                // note at the autoSeek declaration). Bounded so a genuinely empty
-                // tenant can't loop forever.
-                if (result.length === 0 && autoSeek && seekCountRef.current < 14) {
-                    seekCountRef.current += 1;
-                    setFilters(prev => {
-                        let y = prev.year, m = (prev.month || 1) - 1;
-                        if (m < 1) { m = 12; y -= 1; }
-                        return { ...prev, year: y, month: m };
-                    });
-                } else if (result.length > 0) {
-                    setAutoSeek(false);
-                    seekCountRef.current = 0;
-                }
-            } else {
-                console.error('daily-merchant-dashboard-filtered failed', res.status, await res.text());
-                setData([]);
+            const result = res.data;
+            // FIX: removed Math.random fake sparkline fallback. If backend doesn't
+            // provide sparklineData, leave it undefined and let the chart render
+            // empty rather than show meaningless random numbers.
+            setData(result.map((r, i) => ({
+                id: r.merchantId || i, ...r,
+                sparklineData: r.sparklineData || []
+            })));
+            // Auto-seek the latest month that actually has metrics (see the
+            // note at the autoSeek declaration). Bounded so a genuinely empty
+            // tenant can't loop forever.
+            if (result.length === 0 && autoSeek && seekCountRef.current < 14) {
+                seekCountRef.current += 1;
+                setFilters(prev => {
+                    let y = prev.year, m = (prev.month || 1) - 1;
+                    if (m < 1) { m = 12; y -= 1; }
+                    return { ...prev, year: y, month: m };
+                });
+            } else if (result.length > 0) {
+                setAutoSeek(false);
+                seekCountRef.current = 0;
             }
         } catch (error) { console.error("Failed to fetch data", error); }
         finally { setLoading(false); }

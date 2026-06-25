@@ -225,6 +225,13 @@ public class FileUploadService {
     private Long resolveTargetTenantFromEntityId(String fileEntityId) {
         org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder
                 .getContext().getAuthentication();
+        // Guard: a null/anonymous security context (e.g. a future non-HTTP caller
+        // such as the scheduler, or a misconfigured filter chain) must fail with a
+        // clear message rather than throwing an opaque NullPointerException on
+        // auth.getAuthorities().
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new SecurityException("No authenticated user in context for file upload.");
+        }
         boolean isSuperAdmin = auth.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("ROLE_SUPER_ADMIN"));
 

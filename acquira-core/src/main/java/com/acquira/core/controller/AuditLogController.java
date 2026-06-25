@@ -2,6 +2,7 @@ package com.acquira.core.controller;
 
 import com.acquira.common.model.AuditLog;
 import com.acquira.common.repository.AuditLogRepository;
+import com.acquira.common.config.TenantContext;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -10,6 +11,8 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -94,8 +97,22 @@ public class AuditLogController {
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats() {
         LocalDateTime startOfDay = LocalDateTime.now().withHour(0).withMinute(0).withSecond(0);
-        Specification<AuditLog> todaySpec = (root, query, cb) ->
-                cb.greaterThanOrEqualTo(root.get("eventTime"), startOfDay);
+        // Tenant-isolation fix: scope the "today" count to the active tenant for
+        // bank admins; super-admins get the platform-wide count.
+        final boolean superAdmin = isSuperAdmin();
+        final Long tenantId = TenantContext.getCurrentTenant();
+        Specification<AuditLog> todaySpec = (root, query, cb) -> {
+            List<Predicate> preds = new ArrayList<>();
+            preds.add(cb.greaterThanOrEqualTo(root.get("eventTime"), startOfDay));
+            if (!superAdmin) {
+                if (tenantId == null) {
+                    preds.add(cb.disjunction());
+                } else {
+                    preds.add(cb.equal(root.get("tenantId"), tenantId));
+                }
+            }
+            return cb.and(preds.toArray(new Predicate[0]));
+        };
 
         long totalToday = auditLogRepository.count(todaySpec);
 
@@ -108,6 +125,21 @@ public class AuditLogController {
             String startDate, String endDate) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
+
+            // Tenant-isolation fix: a bank admin only sees their active tenant's
+            // audit trail. A super-admin sees everything (no tenant predicate).
+            // Previously the audit log was unscoped, exposing every tenant's
+            // activity (and CSV export) to any bank admin.
+            if (!isSuperAdmin()) {
+                Long tenantId = TenantContext.getCurrentTenant();
+                if (tenantId == null) {
+                    // No resolvable tenant for a non-super-admin → return nothing
+                    // rather than everything.
+                    predicates.add(cb.disjunction());
+                } else {
+                    predicates.add(cb.equal(root.get("tenantId"), tenantId));
+                }
+            }
 
             if (StringUtils.hasText(search)) {
                 String pattern = "%" + search.toLowerCase() + "%";
@@ -141,5 +173,12 @@ public class AuditLogController {
     private String escape(String s) {
         if (s == null) return "";
         return s.replace("\"", "\"\"");
+    }
+
+    private boolean isSuperAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
     }
 }

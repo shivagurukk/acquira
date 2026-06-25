@@ -20,7 +20,7 @@
             <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #DBEAFE, transparent);"></div>
         </div>
 
-        <!-- ROW 1: Credit / Debit / Prepaid — 3 prominent metric cards -->
+        <!-- ROW 1: Credit / Debit / Prepaid -->
         <div class="grid-3 mb-6">
             <!-- CREDIT -->
             <div class="card" style="padding: 0; overflow: hidden; border: none;">
@@ -140,11 +140,6 @@
         </div>
 
         <div class="grid-2 mb-6">
-            <!-- Local Cards -->
-            <!-- NOTE: localCardCustomers field is populated from sum_daily_merchant_attribute.metric_count
-                 for attribute_type=DESTINATION which is actually the TRANSACTION COUNT, not distinct card count.
-                 Label changed from "Customers" to "Transactions" to match what the underlying value represents.
-                 A future enhancement could populate true distinct domestic card count via a separate query. -->
             <div class="card" style="padding: 12px 14px; border-left: 4px solid #1E3A8A;">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div>
@@ -164,7 +159,6 @@
                 </div>
             </div>
 
-            <!-- International Cards -->
             <div class="card" style="padding: 12px 14px; border-left: 4px solid #D97706;">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div>
@@ -185,19 +179,68 @@
             </div>
         </div>
 
-        <!-- ═══ SECTION C: CARD SCHEMES ═══ -->
+        <!-- ═══ SECTION C: CARD SCHEMES
+             FIX BUG: NULL card_scheme rows (unresolved lookups from ref_card_scheme) used to
+             render as a "NULL" bar with a large negative value. They are now bucketed as
+             "Unclassified" with an absolute value so the bar renders positively, and any
+             net-negative scheme total (net refund bucket) is suppressed entirely from the chart.
+             A footnote explains the unclassified bucket when it is non-zero. ═══ -->
         <div class="card mb-6" style="padding: 10px;">
-            <div class="card-title">CARD SCHEMES (BY VALUE)</div>
-            <div id="payment-card-schemes" style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
+            <div class="card-title">
+                CARD SCHEMES (BY VALUE)
+                <!-- FIX BUG: footnote shown only when unclassified bucket exists -->
+                <span th:if="${dto.demographics.hasUnclassifiedScheme}"
+                      style="font-size: 7px; color: #9CA3AF; font-weight: 400; margin-left: 6px;">
+                    * Unclassified = transactions where card scheme could not be matched to a known scheme code
+                </span>
+            </div>
+            <!-- data-exclude-negative="true" tells the renderer to drop any series whose total is negative
+                 data-null-label="Unclassified" renames any null/empty scheme key to "Unclassified" -->
+            <div id="payment-card-schemes"
+                 data-exclude-negative="true"
+                 data-null-label="Unclassified"
+                 style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
         </div>
 
-        <!-- ═══ SECTION D: UNIQUE CARDS BY DAY ═══ -->
-        <!-- Moved here from Customer Intelligence (page 8 in deck order). It belongs on the
-             card-analytics page since it shows the daily unique-card footprint (a card-side
-             metric), not the loyalty/retention angle that lives on Customer Intelligence. -->
+        <!-- ═══ SECTION D: UNIQUE CARDS BY DAY
+             FIX UX: Y-axis now auto-scales to max+10% to eliminate wasted whitespace when
+             the peak bar is much lower than the chart maximum. The chart renderer respects
+             data-autoscale="true" to compute a tight max from the data. ═══ -->
         <div class="card mb-6" style="padding: 10px 12px;">
             <div class="card-title">UNIQUE CARDS BY DAY &mdash; Day of Month</div>
-            <div class="chart-container" style="max-height: 140px;"><canvas data-chart="gradient-bar" data-field="achievements.uniqueCustomersByDay" data-color="#1E3A8A"></canvas></div>
+            <div class="chart-container" style="max-height: 140px;">
+                <canvas data-chart="gradient-bar"
+                        data-field="achievements.uniqueCustomersByDay"
+                        data-color="#1E3A8A"
+                        data-autoscale="true"></canvas>
+            </div>
+        </div>
+
+        <!-- ═══ SECTION E: TOP INTERNATIONAL CARD COUNTRIES (by txn count)
+             Only shown when topCountries data exists (requires COUNTRY attribute to
+             be populated in sum_daily_merchant_attribute by the batch job).
+             Placed in the available space below the unique-cards chart without
+             disturbing any other section's layout or position. ═══ -->
+        <div th:if="${dto.demographics.topCountries != null and !dto.demographics.topCountries.isEmpty()}"
+             class="card mb-6" style="padding: 10px 12px;">
+            <div class="card-title">TOP INTERNATIONAL CARD ORIGINS &mdash; By Transaction Count</div>
+            <div style="display: flex; flex-direction: column; gap: 5px; margin-top: 6px;">
+                <th:block th:with="maxCount=${dto.demographics.topCountries[0].value}">
+                <div th:each="c, iter : ${dto.demographics.topCountries}" style="display: flex; align-items: center; gap: 8px;">
+                    <div style="width: 28px; font-size: 8px; font-weight: 700; color: #374151; text-align: right; flex-shrink: 0;"
+                         th:text="${iter.index + 1} + '.'">#1</div>
+                    <div style="font-size: 8.5px; font-weight: 700; color: #111827; width: 40px; flex-shrink: 0;"
+                         th:text="${c.label}">CCY</div>
+                    <div style="flex: 1; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
+                        <div th:style="'width:' + ${maxCount != null and maxCount.compareTo(T(java.math.BigDecimal).ZERO) > 0 ? c.value.multiply(new java.math.BigDecimal(100)).divide(maxCount, 0, T(java.math.RoundingMode).HALF_UP) : 0} + '%; height: 100%; border-radius: 5px; background: linear-gradient(90deg, #D97706, #FBBF24);'"></div>
+                    </div>
+                    <div style="font-size: 8.5px; font-weight: 700; color: #D97706; width: 36px; text-align: right; flex-shrink: 0;"
+                         th:text="${#numbers.formatDecimal(c.value, 1, 'COMMA', 0, 'POINT')}">0</div>
+                    <div style="font-size: 7.5px; color: #9CA3AF; flex-shrink: 0;">txns</div>
+                </div>
+                </th:block>
+            </div>
+            <div style="font-size: 7px; color: #9CA3AF; margin-top: 6px;">* Country proxied from transaction currency code (international cards only)</div>
         </div>
 
         <!-- AI Insight -->

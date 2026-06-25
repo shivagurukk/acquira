@@ -63,27 +63,17 @@ const FinanceDashboard = () => {
     // lags real time. The user can still pick MONTH/CUSTOM/etc. via the header.
     const [filters, setFilters] = useState({ datePreset: 'YEAR' });
 
-    // Tenant lookup. Reads `defaultTenantId` (the canonical key) first; falls back
-    // to legacy `tenantId` for backward compat. We do NOT fall back to literal `1`
-    // — that hides real auth/tenancy bugs and would silently leak across tenants
-    // in a multi-tenant deployment. The axios instance handles the missing-tenant
-    // case via its interceptor.
-    const tenantId = localStorage.getItem('defaultTenantId') || localStorage.getItem('tenantId');
+    // tenantId is now injected automatically by the axios interceptor.
+    // The manual localStorage lookup + per-call header override is removed.
 
     useEffect(() => { fetchData(); }, []);
 
     const fetchData = async () => {
         setLoading(true);
         try {
-            // Use the filtered POST endpoints. The old GET endpoints silently
-            // dropped every drawer field except startDate/endDate.
             const [kpiRes, trendRes] = await Promise.all([
-                axios.post(`/finance/dashboard/kpis-filtered`,
-                    filters,
-                    { headers: { 'X-Tenant-Id': tenantId } }),
-                axios.post(`/finance/dashboard/trends-filtered?mode=MTD`,
-                    filters,
-                    { headers: { 'X-Tenant-Id': tenantId } }),
+                axios.post('/finance/dashboard/kpis-filtered', filters),
+                axios.post('/finance/dashboard/trends-filtered?mode=MTD', filters),
             ]);
             setKpis(kpiRes.data);
             setTrends(trendRes.data);

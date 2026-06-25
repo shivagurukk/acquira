@@ -1,9 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, Download, Calendar, ArrowRight, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
-import { formatCurrency } from '../../utils/formatters';
+import { useAuth } from '../../contexts/AuthContext';
+import { createFmt } from '../../utils/formatters';
+import api from '../../api/axios';
 
 const FinanceSummary = () => {
+    const { currencySymbol } = useAuth();
+    const formatCurrency = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     // Default to YEAR rather than MONTH — the current month is often empty when
@@ -29,20 +33,15 @@ const FinanceSummary = () => {
     const fetchData = async () => {
         if (period === 'CUSTOM' && (!customRange.start || !customRange.end)) return;
         setLoading(true);
-        setExpandedMonth(null); // Reset drill-down
+        setExpandedMonth(null);
         setExpandedDate(null);
         try {
-            const token = localStorage.getItem('token');
             let query = `period=${period}`;
             if (period === 'CUSTOM') {
                 query += `&startDate=${customRange.start}&endDate=${customRange.end}`;
             }
-            const tenantId = localStorage.getItem('defaultTenantId');
-            const hdrs = { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) };
-            const res = await fetch(`/api/finance/summary?${query}`, { headers: hdrs });
-            if (res.ok) {
-                setData(await res.json());
-            }
+            const res = await api.get(`/finance/summary?${query}`);
+            setData(res.data);
         } catch (error) { console.error(error); }
         finally { setLoading(false); }
     };
@@ -53,15 +52,8 @@ const FinanceSummary = () => {
             const dateObj = new Date(avgDate);
             const startStr = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1).toISOString().split('T')[0];
             const endStr = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).toISOString().split('T')[0];
-
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
-            const hdrs = { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) };
-            const res = await fetch(`/api/finance/summary?period=CUSTOM&groupBy=DAY&startDate=${startStr}&endDate=${endStr}`, { headers: hdrs });
-            if (res.ok) {
-                const list = await res.json();
-                setDailyData(prev => ({ ...prev, [monthLabel]: list }));
-            }
+            const res = await api.get(`/finance/summary?period=CUSTOM&groupBy=DAY&startDate=${startStr}&endDate=${endStr}`);
+            setDailyData(prev => ({ ...prev, [monthLabel]: res.data }));
         } catch (e) { console.error(e); }
         finally { setLoadingDaily(false); }
     };
@@ -69,14 +61,8 @@ const FinanceSummary = () => {
     const fetchMerchantData = async (dateStr) => {
         setLoadingMerchants(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
-            const hdrs = { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) };
-            const res = await fetch(`/api/finance/summary?period=CUSTOM&groupBy=MERCHANT&startDate=${dateStr}&endDate=${dateStr}`, { headers: hdrs });
-            if (res.ok) {
-                const list = await res.json();
-                setMerchantData(prev => ({ ...prev, [dateStr]: list }));
-            }
+            const res = await api.get(`/finance/summary?period=CUSTOM&groupBy=MERCHANT&startDate=${dateStr}&endDate=${dateStr}`);
+            setMerchantData(prev => ({ ...prev, [dateStr]: res.data }));
         } catch (e) { console.error(e); }
         finally { setLoadingMerchants(false); }
     };

@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { ToastProvider } from './contexts/ToastContext';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -18,7 +19,7 @@ const PageLoader = () => (
   </div>
 );
 
-// #24: Lazy-loaded route components — only loaded when user navigates to them
+// Lazy-loaded route components — only loaded when user navigates to them
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const UploadPage = lazy(() => import('./pages/UploadPage'));
 const MerchantHierarchy = lazy(() => import('./components/MerchantHierarchy'));
@@ -73,6 +74,7 @@ function App() {
   return (
     // ErrorBoundary is provided as the outermost wrapper in main.jsx.
     <ThemeProvider>
+      <ToastProvider>
       <AuthProvider>
         <Suspense fallback={<PageLoader />}>
           <Routes>
@@ -111,7 +113,6 @@ function App() {
               <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
               <Route path="/business/comparison" element={<MerchantComparison />} />
               <Route path="/business/opportunity" element={<OpportunityIntelligence />} />
-              <Route path="/business/revenue-leakage" element={<RevenueLeakage />} />
               <Route path="/business/groups" element={<GroupReports />} />
               <Route path="/explorer" element={<DataExplorer />} />
               <Route path="/ai-assistant" element={<AiAssistant />} />
@@ -126,20 +127,30 @@ function App() {
               <Route path="/finance/lists" element={<FinanceLists />} />
 
               {/* Operations */}
-              <Route path="/business/report-manager" element={<MerchantReportManager />} />
-              <Route path="/upload" element={<UploadPage />} />
+              <Route path="/business/report-manager" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><MerchantReportManager /></RoleGuard>
+              } />
+              <Route path="/upload" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><UploadPage /></RoleGuard>
+              } />
               <Route path="/ops/server-file" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><ServerFileProcessor /></RoleGuard>
               } />
-              <Route path="/ops/batch-logs" element={<BatchMonitoring />} />
-              <Route path="/business/emails" element={<StatementEmails />} />
-
+              <Route path="/ops/batch-logs" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><BatchMonitoring /></RoleGuard>
+              } />
+              <Route path="/business/emails" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><StatementEmails /></RoleGuard>
+              } />
+              <Route path="/business/revenue-leakage" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><RevenueLeakage /></RoleGuard>
+              } />
               {/* Administration */}
               <Route path="/users" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><UserManagement /></RoleGuard>
               } />
               <Route path="/tenants" element={
-                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><TenantManagement /></RoleGuard>
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><TenantManagement /></RoleGuard>
               } />
               <Route path="/admin/groups" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><RbacGroups /></RoleGuard>
@@ -193,6 +204,7 @@ function App() {
           </Routes>
         </Suspense>
       </AuthProvider>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

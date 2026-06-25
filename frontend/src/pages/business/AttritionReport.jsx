@@ -2,6 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Paper, Typography } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
 import { Activity, TrendingDown, TrendingUp, Users, DollarSign, CalendarDays } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { createFmt } from '../../utils/formatters';
+import api from '../../api/axios';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
@@ -12,6 +15,8 @@ import { useDataBounds } from '../../hooks/useDataBounds';
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
 const AttritionReport = () => {
+    const { currencySymbol } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
@@ -55,17 +60,8 @@ const AttritionReport = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
-            const res = await fetch('/api/business/attrition-report', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) },
-                body: JSON.stringify(filters)
-            });
-            if (res.ok) {
-                const result = await res.json();
-                setData(result.map((r, i) => ({ id: r.mid || i, ...r })));
-            }
+            const res = await api.post('/business/attrition-report', filters);
+            setData(res.data.map((r, i) => ({ id: r.mid || i, ...r })));
         } catch (error) { console.error(error); }
         finally { setLoading(false); }
     };
@@ -95,7 +91,7 @@ const AttritionReport = () => {
         ];
     }, [data, selectedYear, prevYear]);
 
-    const currencyFormatter = (value) => value == null ? '-' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', notation: 'compact' }).format(value);
+    const currencyFormatter = (value) => value == null ? '-' : fmt.currency(value);
     const pctFormatter = (value) => value == null ? '-' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
 
     const pctCell = (params) => (

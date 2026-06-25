@@ -4,8 +4,10 @@ import com.acquira.common.model.User;
 import com.acquira.common.repository.UserRepository;
 import com.acquira.core.service.PasswordService;
 import com.acquira.core.service.TenantService;
+import com.acquira.common.config.TenantContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -13,6 +15,8 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/users")
@@ -40,6 +44,55 @@ public class UserController {
         this.tenantRepository = tenantRepository;
         this.passwordEncoder = passwordEncoder;
         this.passwordService = passwordService;
+    }
+
+    // ============================================================
+    //  Tenant-isolation helpers (audit fix)
+    //
+    //  A SUPER_ADMIN may see/manage every user across all tenants.
+    //  A bank ADMIN may only see/manage users that belong to the
+    //  tenant currently active in their session (X-Tenant-Id, resolved
+    //  into TenantContext by JwtRequestFilter). Previously every admin
+    //  endpoint operated on userRepository.findAll() with no tenant
+    //  filter, leaking the full cross-tenant user list.
+    // ============================================================
+
+    private boolean isSuperAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
+    }
+
+    /** The set of user-ids that belong to the active tenant. */
+    private Set<Long> userIdsInCurrentTenant() {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return java.util.Collections.emptySet();
+        return accessRepository.findByTenant_TenantId(tenantId).stream()
+                .map(a -> a.getUser().getId())
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * Guard for by-id operations. Returns true if the caller is allowed to
+     * act on the given user. Super-admins always pass; bank admins only pass
+     * if the target user belongs to the active tenant.
+     */
+    private boolean canActOnUser(Long targetUserId) {
+        if (isSuperAdmin()) return true;
+        return userIdsInCurrentTenant().contains(targetUserId);
+    }
+
+    /**
+     * Whether the caller may grant/modify access to the given tenant. Super
+     * admins may target any tenant; a bank admin may only target the tenant
+     * currently active in their session. Prevents a bank admin from granting
+     * a user access to a tenant they don't themselves administer.
+     */
+    private boolean canAssignTenant(Long targetTenantId) {
+        if (isSuperAdmin()) return true;
+        Long current = TenantContext.getCurrentTenant();
+        return current != null && current.equals(targetTenantId);
     }
 
     // ===== CREATE USER (with username + email duplicate check) =====
@@ -90,13 +143,24 @@ public class UserController {
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<List<User>> getAllUsers() {
-        return ResponseEntity.ok(userRepository.findAll());
+        // Tenant-isolation fix: super-admins see all users; bank admins only
+        // see users belonging to their active tenant.
+        if (isSuperAdmin()) {
+            return ResponseEntity.ok(userRepository.findAll());
+        }
+        Set<Long> allowedIds = userIdsInCurrentTenant();
+        List<User> scoped = userRepository.findAllById(allowedIds);
+        return ResponseEntity.ok(scoped);
     }
 
     // ===== UPDATE USER (email, active status, role) =====
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> updateUser(@PathVariable Long id, @RequestBody User userDetails) {
+        // Tenant-isolation fix: a bank admin may only modify users in their tenant.
+        if (!canActOnUser(id)) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
+        }
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
@@ -138,6 +202,10 @@ public class UserController {
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> adminResetPassword(@PathVariable Long userId,
             @RequestBody Map<String, String> payload) {
+        // Tenant-isolation fix: a bank admin may only reset passwords for users in their tenant.
+        if (!canActOnUser(userId)) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
+        }
         String newPassword = payload.get("newPassword");
         if (newPassword == null || newPassword.trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "New password is required"));
@@ -160,6 +228,10 @@ public class UserController {
     @PostMapping("/{userId}/unlock")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> unlockAccount(@PathVariable Long userId) {
+        // Tenant-isolation fix: a bank admin may only unlock users in their tenant.
+        if (!canActOnUser(userId)) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
+        }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
@@ -225,6 +297,12 @@ public class UserController {
             return ResponseEntity.badRequest().body(Map.of("error", "TenantId and GroupId are required"));
         }
 
+        // Tenant-isolation fix: bank admins may only assign within their own tenant
+        // and only to users in their tenant.
+        if (!canActOnUser(userId) || !canAssignTenant(tenantId)) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user or tenant"));
+        }
+
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
         com.acquira.common.model.Tenant tenant = tenantRepository.findById(tenantId)
@@ -250,6 +328,10 @@ public class UserController {
     @GetMapping("/{userId}/tenant-access")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> getUserTenantAccess(@PathVariable Long userId) {
+        // Tenant-isolation fix: bank admins may only view access for users in their tenant.
+        if (!canActOnUser(userId)) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
+        }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
@@ -273,11 +355,18 @@ public class UserController {
     @PostMapping("/{userId}/tenant-access")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> addTenantAccess(@PathVariable Long userId, @RequestBody Map<String, Object> payload) {
+        Long tenantId = Long.valueOf(payload.get("tenantId").toString());
+        Long groupId = Long.valueOf(payload.get("groupId").toString());
+
+        // Tenant-isolation fix: bank admins may only add access within their own
+        // tenant and only to users in their tenant.
+        if (!canActOnUser(userId) || !canAssignTenant(tenantId)) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user or tenant"));
+        }
+
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        Long tenantId = Long.valueOf(payload.get("tenantId").toString());
-        Long groupId = Long.valueOf(payload.get("groupId").toString());
         String roleInTenant = (String) payload.get("roleInTenant");
         Boolean isDefault = Boolean.TRUE.equals(payload.get("isDefault"));
 
@@ -315,6 +404,10 @@ public class UserController {
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> updateTenantAccess(@PathVariable Long userId, @PathVariable Integer accessId,
             @RequestBody Map<String, Object> payload) {
+        // Tenant-isolation fix: bank admins may only modify access for users in their tenant.
+        if (!canActOnUser(userId)) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
+        }
 
         com.acquira.common.model.UserTenantAccess access = accessRepository.findById(accessId)
                 .orElseThrow(() -> new RuntimeException("Access not found"));
@@ -345,6 +438,10 @@ public class UserController {
     @DeleteMapping("/{userId}/tenant-access/{accessId}")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> removeTenantAccess(@PathVariable Long userId, @PathVariable Integer accessId) {
+        // Tenant-isolation fix: bank admins may only remove access for users in their tenant.
+        if (!canActOnUser(userId)) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
+        }
         accessRepository.deleteById(accessId);
         return ResponseEntity.ok(Map.of("message", "Tenant access removed"));
     }
@@ -353,7 +450,11 @@ public class UserController {
     @GetMapping("/enriched")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> getAllUsersEnriched() {
-        List<User> users = userRepository.findAll();
+        // Tenant-isolation fix: super-admins see all users; bank admins only
+        // see users belonging to their active tenant.
+        List<User> users = isSuperAdmin()
+                ? userRepository.findAll()
+                : userRepository.findAllById(userIdsInCurrentTenant());
         List<Map<String, Object>> result = new java.util.ArrayList<>();
 
         for (User u : users) {

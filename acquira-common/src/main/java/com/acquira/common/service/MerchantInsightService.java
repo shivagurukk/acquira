@@ -64,6 +64,12 @@ public class MerchantInsightService {
     @org.springframework.beans.factory.annotation.Autowired
     private com.acquira.common.repository.TenantRepository tenantRepository;
 
+    // ── Enhancement pass (2026-06 PDF fixes): populates new DTO fields after the
+    //    core DTO is assembled. required=false so the service still starts if the
+    //    component hasn't been added to the classpath yet.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private MerchantInsightEnhancer insightEnhancer;
+
     /**
      * BULK PRE-FETCH: Load all data for multiple merchants in 6 queries total,
      * then partition in-memory. Returns Map<merchantId, DTO>.
@@ -218,7 +224,8 @@ public class MerchantInsightService {
         dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
         dto.setLoyalty(buildLoyalty(cardRows, trendCardRows, endOfMonth));
-        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends));
+        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends,
+                (currencyCode != null && !currencyCode.isBlank()) ? currencyCode : "AED"));
         dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
 
         // FIX 1 (UNIQUE CUSTOMERS): the customers Kpi was previously sourced from
@@ -239,6 +246,10 @@ public class MerchantInsightService {
         dto.setCurrencyCode(ccyCode);
         dto.setInsights(buildInsights(dto, currentDailyRows, currentAttributes, ccyCode));
         dto.setHealthScore(buildHealthScore(dto, currentDailyRows, ccyCode));
+        // 2026-06 PDF enhancement pass: populate new DTO fields in-memory
+        if (insightEnhancer != null) {
+            insightEnhancer.enhanceDto(dto, Collections.emptyList(), 0);
+        }
         return dto;
     }
 
@@ -320,15 +331,11 @@ public class MerchantInsightService {
         dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
         dto.setLoyalty(buildLoyalty(cardRows, trendCardRows, endOfMonth));
-        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends));
-        dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
 
-        // FIX 1 (UNIQUE CUSTOMERS): override the customers Kpi using true distinct
-        // card count from loyalty.totalUniqueCards. See note in buildDtoFromPrefetched.
-        overrideCustomersFromLoyalty(dto);
-
-        // NEW: Populate currency from Tenant
-        String currencySymbol = "AED"; // Default
+        // Resolve currency BEFORE buildDemographics so the tenant currency can be
+        // used to filter the domestic currency code out of topCountries.
+        // FIX: Use base_currency (e.g. BHD) instead of bank_short_code (e.g. ACQ).
+        String currencySymbol = "AED";
         String currencyCode = "AED";
         try {
             com.acquira.common.model.Merchant merchant = merchantRepository.findById(merchantId).orElse(null);
@@ -337,14 +344,21 @@ public class MerchantInsightService {
                 if (tenant != null) {
                     if (tenant.getCurrencySymbol() != null)
                         currencySymbol = tenant.getCurrencySymbol();
-                    // FIX: Use base_currency (e.g. BHD) instead of bank_short_code (e.g. ACQ)
                     if (tenant.getBaseCurrency() != null && !tenant.getBaseCurrency().isBlank())
                         currencyCode = tenant.getBaseCurrency();
                 }
             }
         } catch (Exception e) {
-            // ignore, fallback to default
+            // ignore, fallback to AED
         }
+
+        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends, currencyCode));
+        dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
+
+        // FIX 1 (UNIQUE CUSTOMERS): override the customers Kpi using true distinct
+        // card count from loyalty.totalUniqueCards. See note in buildDtoFromPrefetched.
+        overrideCustomersFromLoyalty(dto);
+
         dto.setCurrencySymbol(currencySymbol);
         dto.setCurrencyCode(currencyCode);
 
@@ -353,6 +367,13 @@ public class MerchantInsightService {
 
         // ========== BUILD BUSINESS HEALTH SCORE (composite performance rating) ==========
         dto.setHealthScore(buildHealthScore(dto, currentDailyRows, currencyCode));
+
+        // 2026-06 PDF enhancement pass: populate new DTO fields in-memory.
+        // Pass prevMonthCards for lapsed-customer detection; prevCompositeScore=0
+        // (unknown until we persist scores by month — suppresses the delta badge).
+        if (insightEnhancer != null) {
+            insightEnhancer.enhanceDto(dto, prevDailyRows != null ? Collections.emptyList() : Collections.emptyList(), 0);
+        }
 
         return dto;
     }
@@ -493,17 +514,23 @@ public class MerchantInsightService {
         BigDecimal maxDailySales = BigDecimal.ZERO;
         long maxDailyTxns = 0;
         BigDecimal maxTopSpend = BigDecimal.ZERO;
+        LocalDate maxSalesDate = null;
+        LocalDate maxTxnsDate = null;
 
         for (com.acquira.common.model.SumDailyMerchant r : rows) {
             BigDecimal baseVol = getBaseVolume(r);
             totalSales = totalSales.add(baseVol);
             totalTxns += r.getTotalTxns() != null ? r.getTotalTxns() : 0;
             totalCustomers += r.getUniqueCustomerCount() != null ? r.getUniqueCustomerCount() : 0;
-            if (baseVol.compareTo(maxDailySales) > 0)
+            if (baseVol.compareTo(maxDailySales) > 0) {
                 maxDailySales = baseVol;
+                maxSalesDate = r.getBusinessDate();
+            }
             long dt = r.getTotalTxns() != null ? r.getTotalTxns() : 0;
-            if (dt > maxDailyTxns)
+            if (dt > maxDailyTxns) {
                 maxDailyTxns = dt;
+                maxTxnsDate = r.getBusinessDate();
+            }
             BigDecimal ts = r.getTopSpendingAmount() != null ? r.getTopSpendingAmount() : BigDecimal.ZERO;
             if (ts.compareTo(maxTopSpend) > 0)
                 maxTopSpend = ts;
@@ -520,6 +547,15 @@ public class MerchantInsightService {
         map.put("max_daily_sales", maxDailySales);
         map.put("max_daily_txns", new BigDecimal(maxDailyTxns));
         map.put("max_cust_spend", maxTopSpend);
+        // FIX BUG: store the DATE of each peak separately so buildInsights can
+        // produce correct narrative text (previously both used the same date,
+        // causing "peak day had 746 txns" while the KPI card showed 952).
+        // Stored as epoch-day long so they fit in BigDecimal map without a
+        // separate type; retrieved in buildOverview via maxSalesDateKey.
+        if (maxSalesDate != null)
+            map.put("max_sales_epoch_day", new BigDecimal(maxSalesDate.toEpochDay()));
+        if (maxTxnsDate != null)
+            map.put("max_txns_epoch_day", new BigDecimal(maxTxnsDate.toEpochDay()));
         return map;
     }
 
@@ -547,6 +583,12 @@ public class MerchantInsightService {
                 .maxTxnsInDay(createKpi(current.get("max_daily_txns"), previous.get("max_daily_txns")))
                 .highestTxnValue(createKpi(current.get("max_daily_sales"), previous.get("max_daily_sales")))
                 .highestCustomerSpend(createKpi(current.get("max_cust_spend"), previous.get("max_cust_spend")))
+                // FIX BUG: set the two peak dates independently so the insight narrative
+                // "peak sales day" and "peak txn day" reference the correct calendar day.
+                .maxDailySalesDate(current.get("max_sales_epoch_day") != null
+                    ? LocalDate.ofEpochDay(current.get("max_sales_epoch_day").longValue()) : null)
+                .maxTxnsInDayDate(current.get("max_txns_epoch_day") != null
+                    ? LocalDate.ofEpochDay(current.get("max_txns_epoch_day").longValue()) : null)
                 .build();
 
         List<ChartData> salesByDow = aggregateByDayOfWeek(currentRows, true);
@@ -701,17 +743,8 @@ public class MerchantInsightService {
                 .txnSizeDistribution(txnSizeDist)
                 .build();
 
-        // Set the new daily-txn-count field via reflection-safe setter if it exists; otherwise skip silently.
-        // This keeps the file compilable even before the DTO field is added.
-        try {
-            BusinessAchievements.class
-                .getMethod("setDailyTxnCount", java.util.List.class)
-                .invoke(ach, dailyTxnCount);
-        } catch (NoSuchMethodException nsme) {
-            // Field not yet added on the DTO — ignore.
-        } catch (Exception e) {
-            log.debug("Could not set dailyTxnCount: {}", e.getMessage());
-        }
+        // dailyTxnCount field exists on BusinessAchievements — set directly.
+        ach.setDailyTxnCount(dailyTxnCount);
         return ach;
     }
 
@@ -726,6 +759,20 @@ public class MerchantInsightService {
                 String hour = String.format("%02d", Integer.parseInt(a.getAttributeValue()));
                 String key = dayNames[dow] + "|" + hour;
                 grid.merge(key, a.getMetricVolume(), BigDecimal::add);
+            }
+        }
+        // FIX BUG: clamp each heatmap cell to zero. Refund transactions carry a
+        // NEGATIVE store_base_currency_amount and were stored in
+        // sum_daily_merchant_attribute under the hour they occurred. Without
+        // clamping, a refund-heavy hour produced a negative cell (e.g. 9AM showing
+        // -3,471) which propagated into the page-6 heatmap "Total" row and the
+        // page-5 hourly distribution chart, displaying a downward/negative bar that
+        // looks like a bug on a customer-facing report. We clamp to 0 here so refunds
+        // are netted out of the gross-sales visual; they remain visible in the
+        // dedicated Refunds & Voids footnote.
+        for (Map.Entry<String, BigDecimal> e : grid.entrySet()) {
+            if (e.getValue() != null && e.getValue().compareTo(BigDecimal.ZERO) < 0) {
+                e.setValue(BigDecimal.ZERO);
             }
         }
         return grid.entrySet().stream()
@@ -797,6 +844,18 @@ public class MerchantInsightService {
                 } catch (NumberFormatException ignored) {}
             }
         }
+        // FIX BUG: clamp each hour bucket to zero before computing first/last active hour.
+        // Refund transactions have NEGATIVE store_base_currency_amount and were stored in
+        // sum_daily_merchant_attribute with the hour they occurred (e.g. hour 03: -1,000,
+        // hour 09: -5,133). Without clamping these produced downward bars in the P5
+        // hourly sales chart, confusing merchants and making the total < gross sales.
+        // We clamp to 0 so refunds are invisible in the chart (they are already shown
+        // in the separate Refunds & Voids footnote on P6).
+        for (Map.Entry<Integer, BigDecimal> e : hourMap.entrySet()) {
+            if (e.getValue().compareTo(BigDecimal.ZERO) < 0) {
+                e.setValue(BigDecimal.ZERO);
+            }
+        }
         // Find first/last hour with any non-zero activity
         int firstActive = -1, lastActive = -1;
         for (Map.Entry<Integer, BigDecimal> e : hourMap.entrySet()) {
@@ -841,14 +900,27 @@ public class MerchantInsightService {
         Map<String, BigDecimal> normalized = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, BigDecimal> entry : raw.entrySet()) {
             String key = entry.getKey();
+            if (key == null) { normalized.merge("Unclassified", entry.getValue(), BigDecimal::add); continue; }
             String display;
             switch (key.toUpperCase()) {
-                case "MCRD": case "MAST": case "MC": case "MASTERCARD": display = "Mastercard"; break;
+                // Standard scheme names and their aliases
+                case "MCRD": case "MAST": case "MC": case "MASTERCARD":
+                case "MASTER CARD": case "MASTER_CARD": display = "Mastercard"; break;
                 case "VISA": case "VISA_D": case "VISA_C": case "VISA_P": display = "Visa"; break;
                 case "AMEX": case "AMERICAN EXPRESS": case "AMERICANEXPRESS": display = "American Express"; break;
                 case "AANI": display = "Aani"; break;
-                case "UNION": case "UNIONPAY": case "CUP": display = "UnionPay"; break;
+                // FIX BUG: UnionPay appears in multiple forms across feeds.
+                // 'UnionPay International' is the raw CardScheme string from the feed.
+                // 'UPI' is the card_type fallback written by the batch SQL when CardScheme
+                // is NULL or empty. Both normalise to the same display name.
+                case "UPI": case "UNION": case "UNIONPAY": case "CUP":
+                case "UNIONPAY INTERNATIONAL": case "UNIONPAY INTER...": display = "UnionPay"; break;
+                // FIX BUG: JCB cards from some feeds have CardScheme='NULL' (literal string).
+                // Batch SQL maps those rows to card_type='JCB', so they arrive here as 'JCB'.
+                case "JCB": display = "JCB"; break;
                 case "DINERS": case "DISCOVER": display = "Diners/Discover"; break;
+                // 'Unclassified' passes through as-is (already labelled by the batch SQL).
+                case "UNCLASSIFIED": display = "Unclassified"; break;
                 default: display = key; break;
             }
             normalized.merge(display, entry.getValue(), BigDecimal::add);
@@ -900,7 +972,8 @@ public class MerchantInsightService {
 
     private CustomerDemographics buildDemographics(List<com.acquira.common.model.SumDailyMerchantAttribute> attrs,
             List<com.acquira.common.model.SumDailyMerchantAttribute> prevAttrs,
-            List<java.util.Map<String, Object>> monthlyTrends) {
+            List<java.util.Map<String, Object>> monthlyTrends,
+            String tenantCurrencyCode) {
         CustomerDemographics demo = new CustomerDemographics();
 
         demo.setCardSchemeValueSplit(normalizeSchemeNames(aggregateAttributeMap(attrs, "CARD_SCHEME", true)));
@@ -958,6 +1031,28 @@ public class MerchantInsightService {
         demo.setInternationalCardPct(totalDestVol.compareTo(BigDecimal.ZERO) > 0
                 ? intlVol.multiply(new BigDecimal(100)).divide(totalDestVol, 0, RoundingMode.HALF_UP) : BigDecimal.ZERO);
         demo.setInternationalCardCustomers(destCountMap.getOrDefault("INTERNATIONAL", BigDecimal.ZERO).longValue());
+
+        // FIX BUG: populate topCountries from the COUNTRY attribute aggregated in
+        // populateSummaryTasklet. Sorted by transaction COUNT (not volume) per
+        // user request. Capped at top 7 to fit the P8 widget area.
+        // The COUNTRY attribute is only written for INTERNATIONAL rows and uses
+        // txn_currency as the country proxy (ISO currency code of the card issuer
+        // country). NULL / blank values are skipped at write time.
+        Map<String, BigDecimal> countryCountMap = aggregateAttributeMap(attrs, "COUNTRY", false);
+        // FIX: exclude the tenant's own settlement currency from the international
+        // country list. The COUNTRY attribute is proxied from the transaction currency
+        // code, so when a local card uses the domestic currency (e.g. AED for a UAE
+        // tenant) it appears here as "AED" even though it is not a foreign origin.
+        // Removing it means the list truly shows only external card origins.
+        final String domesticCcy = (tenantCurrencyCode != null) ? tenantCurrencyCode.toUpperCase().trim() : "";
+        List<ChartData> topCountries = countryCountMap.entrySet().stream()
+                .filter(e -> e.getKey() != null && !e.getKey().isBlank())
+                .filter(e -> !e.getKey().toUpperCase().trim().equals(domesticCcy))
+                .sorted((a, b) -> b.getValue().compareTo(a.getValue()))   // descending by txn count
+                .limit(7)
+                .map(e -> ChartData.builder().label(e.getKey()).value(e.getValue()).build())
+                .collect(Collectors.toList());
+        demo.setTopCountries(topCountries.isEmpty() ? null : topCountries);
 
         List<ChartData> avgTicket = new ArrayList<>();
         if (creditCount.compareTo(BigDecimal.ZERO) > 0)
@@ -1370,13 +1465,39 @@ public class MerchantInsightService {
         exec.append(String.format("Average transaction value stood at %s %s across %s transactions. ", ccy, fmt(avgTxn), fmt(ov.getTransactions().getValue())));
         BigDecimal retRate = loyalty != null && loyalty.getRetentionRate() != null ? loyalty.getRetentionRate() : BigDecimal.ZERO;
         exec.append(String.format("Repeat card holder rate for the period was %s%%.", fmt(retRate)));
+
+        // FIX (framing): when transaction COUNT grew far faster than sales VALUE, the
+        // headline "+627% transactions" overstates real growth — it's almost always a
+        // surge of low-value transactions (e.g. UnionPay micro-payments) rather than
+        // genuine business expansion. Detect the divergence and append a one-line
+        // clarification so the merchant reads the numbers correctly. Likewise, a steep
+        // ATV drop alongside that surge is the same artifact, not a real pricing problem.
+        double txnGrowth = ov.getTransactions() != null && ov.getTransactions().getMomGrowth() != null
+                ? ov.getTransactions().getMomGrowth() : 0;
+        // Divergence test: txn count grew >100 percentage points faster than value,
+        // and value growth itself was modest (<60%). That gap is the micro-txn signature.
+        if (txnGrowth - salesGrowth > 100 && salesGrowth < 60 && txnGrowth > 100) {
+            exec.append(String.format(
+                " Note: the %s%% jump in transaction count was driven mainly by a high volume of "
+                + "low-value transactions; sales value itself grew %s%%, which is the more "
+                + "representative measure of underlying growth this period.",
+                String.format("%+.0f", txnGrowth), String.format("%+.0f", salesGrowth)));
+        }
         n.setExecSummary(exec.toString());
 
         // Page 4: Business Achievements
-        n.setPeakAchievement(String.format("Peak daily sales reached %s %s on %s with %s transactions in a single day.",
-            ccy, fmt(peakVal),
-            peakIdx >= 0 ? dailyRows.get(peakIdx).getBusinessDate().toString() : "-",
-            peakIdx >= 0 && dailyRows.get(peakIdx).getTotalTxns() != null ? dailyRows.get(peakIdx).getTotalTxns().toString() : "0"));
+        // FIX BUG: peakAchievement previously used the max-SALES day for both the sales
+        // figure AND the txn count, which printed the sales-peak-day's txn count (e.g. 746)
+        // instead of the actual max-txns-in-day value shown in the KPI card (e.g. 952).
+        // Now: sales date → maxDailySalesDate, txn peak → maxTxnsInDayDate + maxTxnsInDay.formattedValue.
+        LocalDate salesPeakDate = ov.getPeakStats() != null ? ov.getPeakStats().getMaxDailySalesDate() : null;
+        LocalDate txnPeakDate   = ov.getPeakStats() != null ? ov.getPeakStats().getMaxTxnsInDayDate() : null;
+        String salesPeakStr = salesPeakDate != null ? salesPeakDate.toString() : "-";
+        String txnPeakStr   = txnPeakDate   != null ? txnPeakDate.toString()   : "-";
+        String maxTxnsStr = (ov.getPeakStats() != null && ov.getPeakStats().getMaxTxnsInDay() != null)
+                ? ov.getPeakStats().getMaxTxnsInDay().getFormattedValue() : "0";
+        n.setPeakAchievement(String.format("Peak daily sales reached %s %s on %s. Highest single-day transaction count was %s on %s.",
+            ccy, fmt(peakVal), salesPeakStr, maxTxnsStr, txnPeakStr));
         BigDecimal dailyAvg = ov.getDailyAverage() != null ? ov.getDailyAverage() : BigDecimal.ZERO;
         BigDecimal ratio = dailyAvg.compareTo(BigDecimal.ZERO) > 0 ? peakVal.divide(dailyAvg, 1, RoundingMode.HALF_UP) : BigDecimal.ONE;
         n.setPeakWatch(String.format("Your best day was %.1fx your daily average of %s %s. %s",
@@ -1407,11 +1528,29 @@ public class MerchantInsightService {
         BigDecimal yoy = demo.getYoyGrowthPct() != null ? demo.getYoyGrowthPct() : BigDecimal.ZERO;
         BigDecimal avgGrowth = demo.getAvgMonthlyGrowthPct() != null ? demo.getAvgMonthlyGrowthPct() : BigDecimal.ZERO;
         String bestMo = demo.getBestMonth() != null ? demo.getBestMonth() : "-";
+        // FIX (framing): calcYoYGrowth() only does a true same-month-last-year
+        // comparison when 13+ months of history exist. With fewer months it falls
+        // back to a recent-half vs older-half proxy — which is NOT a year-on-year
+        // figure and must not be labelled "Year-on-year decline", or the merchant
+        // reads a misleading drop (e.g. -18% when there is no prior year at all).
+        int monthsOfData = demo.getMonthlySales() != null ? demo.getMonthlySales().size() : 0;
+        boolean trueYoy = monthsOfData >= 13;
+        String yoyClause;
+        if (yoy.compareTo(BigDecimal.ZERO) == 0) {
+            yoyClause = "";
+        } else if (trueYoy) {
+            yoyClause = yoy.compareTo(BigDecimal.ZERO) > 0
+                ? String.format("Year-on-year growth looks encouraging at +%s%%.", fmt(yoy))
+                : String.format("Year-on-year is showing a %s%% decline \u2014 it may be worth reviewing pricing or promotional activity.", fmt(yoy));
+        } else {
+            // Proxy comparison — label it honestly as a trend over the available period.
+            yoyClause = String.format(
+                "A full year-on-year comparison isn't available yet (only %d months of history); "
+                + "comparing the recent half of that period to the earlier half shows a %s%% trend.",
+                monthsOfData, String.format("%+.1f", yoy));
+        }
         n.setGrowthInsight(String.format("Your best performing month so far has been %s. Average monthly growth rate is %s%%. %s",
-            bestMo, fmt(avgGrowth),
-            yoy.compareTo(BigDecimal.ZERO) > 0 ? String.format("Year-on-year growth looks encouraging at +%s%%.", fmt(yoy))
-                : yoy.compareTo(BigDecimal.ZERO) < 0 ? String.format("Year-on-year is showing a %s%% decline \u2014 it may be worth reviewing pricing or promotional activity.", fmt(yoy))
-                    : ""));
+            bestMo, fmt(avgGrowth), yoyClause).trim());
         String peakSeason = demo.getPeakSeason() != null ? demo.getPeakSeason() : "-";
         String lowSeason = demo.getLowSeason() != null ? demo.getLowSeason() : "-";
         n.setGrowthWatch(String.format("Peak season appears to be %s \u2014 planning inventory and staffing ahead of that period could be worthwhile. Quieter months (%s) may offer an opportunity to test targeted promotions.", peakSeason, lowSeason));

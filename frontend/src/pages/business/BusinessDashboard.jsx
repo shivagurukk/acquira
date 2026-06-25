@@ -9,6 +9,7 @@ import PageHeader from '../../components/PageHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
+import api from '../../api/axios';
 
 const BusinessDashboard = () => {
     const navigate = useNavigate();
@@ -29,26 +30,10 @@ const BusinessDashboard = () => {
     const fetchKpis = async () => {
         setLoading(true);
         try {
-            const token    = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
-            // Use the filtered POST endpoint so the BusinessFilters drawer fields
-            // (partner / RM / MCC / scheme / card-type / destination / channel /
-            // team-leader / MID / SID / merchant-name) actually scope the result.
-            // The previous GET endpoint silently dropped everything except
-            // startDate/endDate, leaving the drawer cosmetic.
-            const res = await fetch('/api/business/dashboard/kpis-filtered', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                    'X-Tenant-Id': tenantId,
-                },
-                body: JSON.stringify(filters),
-            });
-            if (res.ok) setKpis(await res.json());
-            else console.error('kpis-filtered failed', res.status, await res.text());
+            const res = await api.post('/business/dashboard/kpis-filtered', filters);
+            setKpis(res.data);
         } catch (error) {
-            console.error(error);
+            console.error('kpis-filtered failed', error);
         } finally {
             setLoading(false);
         }

@@ -10,6 +10,7 @@ import {
     Plus, Edit2, Trash2, Users, UserPlus, Star, Search, ShieldCheck, Mail,
     ChevronDown, ChevronUp, Hash, Download, Filter, Building2
 } from 'lucide-react';
+import api from '../../api/axios';
 
 const SalesTeamManagement = () => {
     const [teamLeads, setTeamLeads] = useState([]);
@@ -33,17 +34,13 @@ const SalesTeamManagement = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const headers = { 'Authorization': `Bearer ${token}` };
             const [leadsRes, usersRes] = await Promise.all([
-                fetch('/api/sales-team/team-leads', { headers }),
-                fetch('/api/sales-team/sales-users', { headers })
+                api.get('/sales-team/team-leads'),
+                api.get('/sales-team/sales-users'),
             ]);
-            if (leadsRes.ok && usersRes.ok) {
-                setTeamLeads(await leadsRes.json());
-                setSalesUsers(await usersRes.json());
-            }
-        } catch (error) { console.error("Failed to fetch data", error); }
+            setTeamLeads(leadsRes.data);
+            setSalesUsers(usersRes.data);
+        } catch (error) { console.error('Failed to fetch data', error); }
         finally { setLoading(false); }
     };
 
@@ -59,29 +56,30 @@ const SalesTeamManagement = () => {
     const handleSaveLead = async () => {
         if (!validateForm()) return;
         try {
-            const token = localStorage.getItem('token');
-            const url = dialogMode === 'add' ? '/api/sales-team/team-leads' : `/api/sales-team/team-leads/${selectedLead.id}`;
-            const method = dialogMode === 'add' ? 'POST' : 'PUT';
-            const res = await fetch(url, { method, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(formData) });
-            if (res.ok) { fetchData(); setOpenDialog(false); setNotification({ open: true, message: `Team Lead ${dialogMode === 'add' ? 'created' : 'updated'} successfully`, severity: 'success' }); }
-        } catch (error) { console.error("Error saving lead", error); setNotification({ open: true, message: 'Failed to save', severity: 'error' }); }
+            if (dialogMode === 'add') {
+                await api.post('/sales-team/team-leads', formData);
+            } else {
+                await api.put(`/sales-team/team-leads/${selectedLead.id}`, formData);
+            }
+            fetchData();
+            setOpenDialog(false);
+            setNotification({ open: true, message: `Team Lead ${dialogMode === 'add' ? 'created' : 'updated'} successfully`, severity: 'success' });
+        } catch (error) { console.error('Error saving lead', error); setNotification({ open: true, message: 'Failed to save', severity: 'error' }); }
     };
 
     const handleDeleteLead = async (id) => {
-        if (!window.confirm("Are you sure? This will unassign all their users.")) return;
+        if (!window.confirm('Are you sure? This will unassign all their users.')) return;
         try {
-            const token = localStorage.getItem('token');
-            await fetch(`/api/sales-team/team-leads/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+            await api.delete(`/sales-team/team-leads/${id}`);
             fetchData();
             setNotification({ open: true, message: 'Team Lead deleted', severity: 'info' });
-        } catch (error) { console.error("Error deleting lead", error); }
+        } catch (error) { console.error('Error deleting lead', error); }
     };
 
     const handleAssign = async (salesUserId, teamLeadId) => {
         setAssigning(true);
         try {
-            const token = localStorage.getItem('token');
-            await fetch('/api/sales-team/assign', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ salesUserId, teamLeadId }) });
+            await api.post('/sales-team/assign', { salesUserId, teamLeadId });
             setSalesUsers(prev => prev.map(u => u.salesUserId === salesUserId ? { ...u, teamLeadId, status: 'MAPPED' } : u));
             setNotification({ open: true, message: 'User assigned', severity: 'success' });
         } catch (error) { setNotification({ open: true, message: 'Assignment failed', severity: 'error' }); }
@@ -92,10 +90,11 @@ const SalesTeamManagement = () => {
         if (!bulkLeadId || selectedUsers.size === 0) return;
         setAssigning(true);
         try {
-            const token = localStorage.getItem('token');
-            for (const userId of selectedUsers) {
-                await fetch('/api/sales-team/assign', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ salesUserId: userId, teamLeadId: bulkLeadId }) });
-            }
+            await Promise.all(
+                [...selectedUsers].map(userId =>
+                    api.post('/sales-team/assign', { salesUserId: userId, teamLeadId: bulkLeadId })
+                )
+            );
             setSelectedUsers(new Set());
             setBulkLeadId('');
             fetchData();
@@ -105,13 +104,12 @@ const SalesTeamManagement = () => {
     };
 
     const handleAutoAssign = async () => {
-        if (!window.confirm("Auto-assign all unmapped users to the default team lead?")) return;
+        if (!window.confirm('Auto-assign all unmapped users to the default team lead?')) return;
         try {
-            const token = localStorage.getItem('token');
-            await fetch('/api/sales-team/auto-assign', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+            await api.post('/sales-team/auto-assign');
             fetchData();
             setNotification({ open: true, message: 'Auto-assignment complete', severity: 'success' });
-        } catch (error) { console.error("Error auto-assigning", error); }
+        } catch (error) { console.error('Error auto-assigning', error); }
     };
 
     const handleExportCSV = () => {

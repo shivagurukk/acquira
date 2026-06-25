@@ -3,10 +3,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { AuthProvider, useAuth } from '../../contexts/AuthContext';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
 // Mock axios
-vi.mock('../../api/axios', () => ({
+vi.mock('../api/axios', () => ({
   default: {
     post: vi.fn(),
     get: vi.fn(),

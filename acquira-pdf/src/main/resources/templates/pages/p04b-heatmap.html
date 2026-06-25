@@ -5,7 +5,7 @@
         <div class="section-title" style="margin-bottom: 2px;">Operational Intelligence</div>
         <div class="section-subtitle" style="margin-bottom: 5px;">Sales intensity by day-of-week and hour — showing where volume is concentrated</div>
 
-        <!-- Peak Hours Summary Cards — compact row -->
+        <!-- Peak Hours Summary Cards -->
         <div class="grid-3" style="margin-bottom: 6px; gap: 6px;">
             <div class="card" style="padding: 7px 12px; text-align: center; background: linear-gradient(135deg, #EFF6FF, #DBEAFE); border: 1px solid #93C5FD;">
                 <div style="font-size: 8px; font-weight: 700; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">🕐 PEAK HOUR</div>
@@ -24,7 +24,14 @@
             </div>
         </div>
 
-        <!-- Heatmap Grid — dominant section, max height -->
+        <!-- Heatmap Grid
+             FIX BUG: heatmap cells now clamp to 0 before colour-intensity calculation.
+             Negative values (refund postings after midnight) were previously rendered as
+             dark blue "peak" cells — a red/inverse cell made them look like peak sales.
+             Clamping: the JS renderer is passed data-clamp-negative="true" so any cell
+             value < 0 is treated as 0 for colour intensity. The raw refund figure is
+             still passed in the cell tooltip so the merchant can see it on hover.
+             A separate "Refunds & Voids" footnote below the heatmap shows the total. -->
         <div class="card" style="padding: 10px 12px; margin-bottom: 6px; border: 1px solid #E2E8F0; flex: 1;">
             <div class="card-title" style="margin-bottom: 8px;">
                 <span style="font-size: 8px; font-weight: 800; letter-spacing: 0.05em;">SALES HEATMAP — DAY × HOUR</span>
@@ -33,18 +40,88 @@
                     <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 12px; height: 8px; background: linear-gradient(90deg, #60A5FA, #3B82F6); border-radius: 2px;"></span> MEDIUM</span>
                     <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 12px; height: 8px; background: linear-gradient(90deg, #1D4ED8, #1E3A8A); border-radius: 2px;"></span> HIGH</span>
                     <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 12px; height: 8px; background: linear-gradient(90deg, #E11D48, #BE123C); border-radius: 2px;"></span> PEAK</span>
+                    <!-- FIX BUG: explicit note that negatives are clamped for intensity -->
+                    <span style="color: #9CA3AF; font-size: 7px; margin-left: 4px;">Negative cells (refunds) shown as zero intensity</span>
                 </div>
             </div>
-            <div id="revenue-heatmap-grid" style="width: 100%;"></div>
+            <!-- data-clamp-negative="true" instructs the heatmap JS renderer to max(0, value)
+                 before computing cell colour intensity. Raw values are still shown in tooltips. -->
+            <div id="revenue-heatmap-grid" data-clamp-negative="true" style="width: 100%;"></div>
         </div>
 
-        <!-- Txn Size Distribution -->
+        <!-- Refunds footnote — reconciled single source of truth
+             FIX BUG: previously "Refunds & voids" showed a different number than the
+             negatives visible in the heatmap cells. Both now come from the same query:
+             SUM(store_base_currency_amount) WHERE transaction_type IN ('REFUND','VOID').
+             The heatmap cells also show refunds in their raw tooltips but clamp for colour. -->
+        <div th:if="${dto.overview.refundVoidCount != null and dto.overview.refundVoidCount > 0}"
+             style="background: #FEF2F2; border: 1px solid #FECACA; border-radius: 6px; padding: 5px 10px; margin-bottom: 6px; display: flex; gap: 6px; align-items: center;">
+            <span style="font-size: 10px; color: #DC2626;">&#9888;</span>
+            <p style="font-size: 8px; color: #7F1D1D; line-height: 1.5; margin: 0;">
+                <strong>Refunds &amp; voids:</strong>
+                <span th:text="${dto.overview.refundVoidCount}">0</span> transactions
+                (<span th:text="${dto.currencyCode}">AED</span>
+                <span th:text="${dto.overview.refundVoidVolume != null ? #numbers.formatDecimal(dto.overview.refundVoidVolume, 1, 'COMMA', 0, 'POINT') : '0'}">0</span> offset).
+                These are subtracted from daily totals but shown as zero-intensity in the heatmap above.
+            </p>
+        </div>
+
+        <!-- Transaction Size Distribution
+             FIX UX: split the "1K+" bucket into "1K–5K" and "5K+" sub-buckets so the merchant
+             can see whether high-value transactions are moderate (1–5K) or very large (5K+).
+             FIX BUG: the < 50 bucket was silently missing from the PDF because the JS chart
+             renderer's data-field-extended lookup wasn't picking it up. We now render the
+             distribution as explicit Thymeleaf HTML bars so every bucket — including < 50 —
+             always appears when it has data, regardless of JS renderer support. -->
         <div class="card" style="padding: 10px 12px; margin-bottom: 6px;">
             <div class="card-title" style="margin-bottom: 5px;"><span>TRANSACTION SIZE DISTRIBUTION</span></div>
-            <div id="txn-size-dist-chart" style="width: 100%;"></div>
+
+            <!-- Thymeleaf-rendered bars (always correct, no JS dependency) -->
+            <div th:if="${dto.achievements.txnSizeDistributionExtended != null and !dto.achievements.txnSizeDistributionExtended.isEmpty()}"
+                 style="display: flex; flex-direction: column; gap: 5px;">
+                <div th:each="bucket : ${dto.achievements.txnSizeDistributionExtended}"
+                     style="display: flex; align-items: center; gap: 8px;">
+                    <div style="width: 52px; font-size: 8px; font-weight: 700; color: #374151; flex-shrink: 0; text-align: right;"
+                         th:text="${bucket.label}">-</div>
+                    <div style="flex: 1; height: 16px; background: #E5E7EB; border-radius: 3px; overflow: hidden; position: relative;">
+                        <div th:style="'width:' + ${bucket.value2 != null ? bucket.value2 : 0} + '%; height: 100%; background: linear-gradient(90deg, #3B82F6, #1E3A8A); border-radius: 3px;'"></div>
+                    </div>
+                    <div style="font-size: 8px; font-weight: 700; color: #1E3A8A; width: 30px; text-align: right; flex-shrink: 0;"
+                         th:text="${bucket.value2 != null ? #numbers.formatDecimal(bucket.value2, 1, 1, 'POINT') + '%' : '-'}">-</div>
+                    <div style="font-size: 8px; color: #6B7280; width: 50px; text-align: right; flex-shrink: 0;"
+                         th:text="${bucket.value != null ? #numbers.formatDecimal(bucket.value, 1, 'COMMA', 0, 'POINT') + ' txns' : '-'}">-</div>
+                    <div style="font-size: 8px; font-weight: 600; color: #374151; width: 70px; text-align: right; flex-shrink: 0;"
+                         th:text="${bucket.value3 != null ? 'AED ' + #numbers.formatDecimal(bucket.value3, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                </div>
+            </div>
+
+            <!-- Fallback to base 5-bucket list when extended is not available -->
+            <div th:if="${(dto.achievements.txnSizeDistributionExtended == null or dto.achievements.txnSizeDistributionExtended.isEmpty()) and dto.achievements.txnSizeDistribution != null and !dto.achievements.txnSizeDistribution.isEmpty()}"
+                 style="display: flex; flex-direction: column; gap: 5px;">
+                <div th:each="bucket : ${dto.achievements.txnSizeDistribution}"
+                     style="display: flex; align-items: center; gap: 8px;">
+                    <div style="width: 52px; font-size: 8px; font-weight: 700; color: #374151; flex-shrink: 0; text-align: right;"
+                         th:text="${bucket.label}">-</div>
+                    <div style="flex: 1; height: 16px; background: #E5E7EB; border-radius: 3px; overflow: hidden;">
+                        <div th:style="'width:' + ${bucket.value2 != null ? bucket.value2 : 0} + '%; height: 100%; background: linear-gradient(90deg, #3B82F6, #1E3A8A); border-radius: 3px;'"></div>
+                    </div>
+                    <div style="font-size: 8px; font-weight: 700; color: #1E3A8A; width: 30px; text-align: right; flex-shrink: 0;"
+                         th:text="${bucket.value2 != null ? #numbers.formatDecimal(bucket.value2, 1, 1, 'POINT') + '%' : '-'}">-</div>
+                    <div style="font-size: 8px; color: #6B7280; width: 50px; text-align: right; flex-shrink: 0;"
+                         th:text="${bucket.value != null ? #numbers.formatDecimal(bucket.value, 1, 'COMMA', 0, 'POINT') + ' txns' : '-'}">-</div>
+                    <div style="font-size: 8px; font-weight: 600; color: #374151; width: 70px; text-align: right; flex-shrink: 0;"
+                         th:text="${bucket.value3 != null ? 'AED ' + #numbers.formatDecimal(bucket.value3, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                </div>
+            </div>
+
+            <!-- JS chart as a hidden progressive enhancement (ignored by PDF renderer if unsupported) -->
+            <div id="txn-size-dist-chart"
+                 data-field-extended="achievements.txnSizeDistributionExtended"
+                 data-field-fallback="achievements.txnSizeDistribution"
+                 style="display: none;"></div>
         </div>
 
-        <!-- Insight strip — replaces the bulky ai-insight box -->
+        <!-- Insight strip -->
         <div th:if="${dto.insights != null and dto.insights.heatmapInsight != null}"
              style="background: #F0FDF4; border: 1px solid #86EFAC; border-radius: 6px; padding: 5px 10px; display: flex; gap: 6px; align-items: flex-start;">
             <span style="font-size: 10px; flex-shrink: 0; margin-top: 1px;">⭐</span>

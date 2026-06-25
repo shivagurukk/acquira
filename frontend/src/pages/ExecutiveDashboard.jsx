@@ -103,11 +103,6 @@ const useCountUp = (target, dur = 900) => {
   return val;
 };
 
-const tenantHeader = () => {
-  const t = localStorage.getItem('defaultTenantId');
-  return t ? { 'X-Tenant-Id': t } : {};
-};
-
 const ExecutiveDashboard = () => {
   const { currencyCode } = useAuth();
   CCY = currencyCode || CCY; // use the active tenant's currency everywhere on this page
@@ -124,11 +119,10 @@ const ExecutiveDashboard = () => {
     const today = new Date();
     const start = new Date(today); start.setDate(start.getDate() - 30);
     const iso = (d) => d.toISOString().slice(0, 10);
-    const h = { headers: tenantHeader() };
     const [exec, sch, mer] = await Promise.allSettled([
-      api.get('/analytics/executive', h),
-      api.post('/analytics/scheme-breakdown', { startDate: iso(start), endDate: iso(today) }, h),
-      api.get('/analytics/merchant-summaries', { ...h, params: { size: 50, page: 0 } }),
+      api.get('/analytics/executive'),
+      api.post('/analytics/scheme-breakdown', { startDate: iso(start), endDate: iso(today) }),
+      api.get('/analytics/merchant-summaries', { params: { size: 50, page: 0 } }),
     ]);
     if (exec.status === 'fulfilled') setData(exec.value.data);
     if (sch.status === 'fulfilled') {

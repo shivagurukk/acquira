@@ -33,7 +33,12 @@ public class RbacController {
 
     @PostMapping("/groups")
     @Transactional
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<SysUserGroup> createOrUpdateGroup(@RequestBody GroupDto groupDto) {
+        // Tenant-isolation fix: RBAC groups + their menu grants are system-wide
+        // (shared across all tenants). Allowing a bank ADMIN to edit them lets
+        // one tenant's admin change permissions seen by every tenant. Restrict
+        // mutation to SUPER_ADMIN; bank admins retain read access via the GETs.
         SysUserGroup group;
         if (groupDto.getId() != null) {
             group = groupRepository.findById(groupDto.getId())

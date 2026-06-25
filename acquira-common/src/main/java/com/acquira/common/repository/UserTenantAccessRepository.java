@@ -12,6 +12,11 @@ public interface UserTenantAccessRepository extends JpaRepository<UserTenantAcce
 
     java.util.Optional<UserTenantAccess> findByUserAndTenant_TenantId(User user, Long tenantId);
 
+    // Tenant-isolation audit fix: list all access rows for a tenant so the
+    // User Management screen can be scoped to the active tenant for non-
+    // super-admins (previously it returned every user across all tenants).
+    List<UserTenantAccess> findByTenant_TenantId(Long tenantId);
+
     default List<UserTenantAccess> findAllByUser(User user) {
         return findByUser(user);
     }

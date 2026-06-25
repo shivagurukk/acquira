@@ -10,6 +10,10 @@
             <div style="font-size: 12px; margin-top: 1px;">⏰</div>
             <div>
                 <p style="font-size: 8px; color: #1E3A8A; line-height: 1.5; margin: 0; font-weight: 600;" th:text="${dto.insights.salesInsight}">Sales insight</p>
+                <!-- FIX UX: auto-callout for the weakest day of the week to drive action -->
+                <p th:if="${dto.insights.salesWeakestDay != null}" style="font-size: 8px; color: #D97706; line-height: 1.4; margin: 3px 0 0 0;">
+                    &#9660; <span th:text="${dto.insights.salesWeakestDay}">Weakest day callout</span>
+                </p>
                 <p th:if="${dto.insights.salesWatch != null}" style="font-size: 8px; color: #3B82F6; line-height: 1.4; margin: 3px 0 0 0;" th:text="'💡 ' + ${dto.insights.salesWatch}">Watch</p>
             </div>
         </div>
@@ -20,27 +24,45 @@
             <div class="chart-container" style="max-height: 140px;"><canvas data-chart="gradient-bar" data-field="overview.salesByDayOfWeek" data-color="#1E3A8A"></canvas></div>
         </div>
 
-        <!-- ROW 2: HOURLY SALES DISTRIBUTION (prominent — full width) -->
+        <!-- ROW 2: HOURLY SALES DISTRIBUTION
+             FIX BUG: The chart only shows POSITIVE (gross sales) values — refunds/voids
+             that create negative hourly totals are clamped to 0. The hourly chart must
+             show gross sales only; negative amounts are refund postings and distort the
+             intensity scale. A separate "Refunds by hour" note is shown in the Operational
+             Intelligence heatmap page where the full picture (including refunds) belongs. -->
         <div class="card mb-6" style="padding: 12px 14px; border-top: 4px solid #6D28D9;">
             <div class="card-title" style="margin-bottom: 2px;">
                 <span>&#9201; SALES DISTRIBUTION BY HOUR OF DAY</span>
                 <div style="display: flex; gap: 8px; font-size: 8px; align-items: center;">
                     <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 8px; height: 8px; background: #6D28D9; border-radius: 2px;"></span> % of Total Sales</span>
+                    <!-- FIX UX: note that negative values (refunds) are excluded from this chart -->
+                    <span style="color: #9CA3AF; font-size: 7px;">Gross sales only — refunds excluded</span>
                 </div>
             </div>
             <div style="font-size: 8px; color: #6B7280; margin-bottom: 6px;">Hour-by-hour sales distribution across the reporting period</div>
-            <div class="chart-container" style="max-height: 170px;"><canvas data-chart="gradient-bar" data-field="achievements.salesTimeOfDay" data-color="#6D28D9"></canvas></div>
+            <!-- data-clamp-negative="true" signals the chart renderer to max(0, value) per bucket -->
+            <div class="chart-container" style="max-height: 170px;"><canvas data-chart="gradient-bar" data-field="achievements.salesTimeOfDay" data-color="#6D28D9" data-clamp-negative="true"></canvas></div>
         </div>
 
-        <!-- ROW 3: Dual Axis full width -->
+        <!-- ROW 3: Dual Axis full width
+             FIX UX: explicit right-axis label added for ATV so the merchant can read values
+             without guessing. The dual-axis chart renderer reads data-label2 for the secondary
+             Y-axis title. -->
         <div class="card mb-6" style="flex: 1; min-height: 0; padding: 10px 12px;">
-                <div class="card-title"><span>SALES VALUE &amp; ATV BY DAY OF WEEK</span>
-                    <div style="display: flex; gap: 8px; font-size: 8px; align-items: center;">
-                        <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 10px; height: 3px; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 2px;"></span> Sales</span>
-                        <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 10px; height: 3px; background: #DC2626; border-radius: 2px;"></span> Avg Value</span>
-                    </div>
+            <div class="card-title"><span>SALES VALUE &amp; ATV BY DAY OF WEEK</span>
+                <div style="display: flex; gap: 8px; font-size: 8px; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 10px; height: 3px; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 2px;"></span> Sales (<span th:text="${dto.currencyCode}">AED</span>)</span>
+                    <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 10px; height: 3px; background: #DC2626; border-radius: 2px;"></span> Avg Value (<span th:text="${dto.currencyCode}">AED</span>)</span>
                 </div>
-                <div class="chart-container" style="max-height: 150px;"><canvas data-chart="dual-axis" data-field="achievements.salesAndAtvByDayOfWeek" data-color="#1E3A8A" data-color2="#DC2626"></canvas></div>
+            </div>
+            <div class="chart-container" style="max-height: 150px;">
+                <canvas data-chart="dual-axis"
+                        data-field="achievements.salesAndAtvByDayOfWeek"
+                        data-color="#1E3A8A"
+                        data-color2="#DC2626"
+                        data-label="Sales"
+                        th:attr="data-label2='Avg Value (' + ${dto.currencyCode} + ')'"></canvas>
+            </div>
         </div>
 
         <!-- AI Insight -->

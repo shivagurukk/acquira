@@ -151,14 +151,23 @@ public class AlertController {
     @PostMapping("/history/{id}/acknowledge")
     @Transactional
     public ResponseEntity<?> acknowledgeAlert(@PathVariable Long id) {
+        // Tenant-isolation fix: scope the acknowledge to the active tenant so a
+        // bank admin can't acknowledge another tenant's alert by guessing its id.
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
+
         String username = org.springframework.security.core.context.SecurityContextHolder
             .getContext().getAuthentication().getName();
 
-        em.createNativeQuery(
+        int updated = em.createNativeQuery(
             "UPDATE alert_history SET acknowledged=true, acknowledged_by=:user, " +
-            "acknowledged_at=CURRENT_TIMESTAMP WHERE alert_id=:id")
-            .setParameter("id", id).setParameter("user", username).executeUpdate();
+            "acknowledged_at=CURRENT_TIMESTAMP WHERE alert_id=:id AND tenant_id=:tid")
+            .setParameter("id", id).setParameter("user", username).setParameter("tid", tenantId)
+            .executeUpdate();
 
+        if (updated == 0) {
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(Map.of("message", "Alert acknowledged"));
     }
 }

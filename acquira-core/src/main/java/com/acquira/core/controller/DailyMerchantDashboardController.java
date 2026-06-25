@@ -27,6 +27,13 @@ public class DailyMerchantDashboardController {
     @PersistenceContext
     private EntityManager entityManager;
 
+    // NOTE: GET /api/business/data-bounds is intentionally NOT defined here.
+    // It already exists in BusinessAnalyticsController, which queries
+    // fact_transaction (authoritative) with a sum_daily_insight fallback and
+    // returns both "earliest" and "latest". Defining it a second time on the
+    // same path caused an "Ambiguous mapping" startup failure. The Daily
+    // Merchant Dashboard frontend consumes that shared endpoint.
+
     @GetMapping("/daily-merchant-dashboard")
     public ResponseEntity<List<MerchantDailyMetricsDTO>> getDashboardData(
             @RequestParam(defaultValue = "0") int year,

@@ -49,10 +49,6 @@ public class MerchantMasterJobConfig {
     public Job merchantMasterJob(
             @org.springframework.beans.factory.annotation.Qualifier("ingestMerchantStep") Step ingestMerchantStep,
             @org.springframework.beans.factory.annotation.Qualifier("upsertAndSummarizeStep") Step upsertAndSummarizeStep) {
-        // PERF FIX: was 3 steps (ingestMerchantStep → upsertDimensionsStep → populateActivitySummaryStep).
-        // Each step transition writes ~3-4 records to BATCH_STEP_EXECUTION + BATCH_JOB_EXECUTION_CONTEXT
-        // on RDS. From India that's ~1.5s per transition just for Spring Batch metadata I/O.
-        // Merging the two SQL-only steps removes one full transition (~1.5s saved).
         return new JobBuilder("merchantMasterJob", jobRepository)
                 .start(ingestMerchantStep)
                 .next(upsertAndSummarizeStep)
@@ -61,46 +57,17 @@ public class MerchantMasterJobConfig {
 
     @Bean
     public Step upsertAndSummarizeStep(Tasklet upsertAndSummarizeTasklet) {
-        // FIX: same idle-in-transaction risk as TransactionJobConfig's populateSummaryStep.
-        // The dim_merchant + dim_store + dim_terminal upserts plus parallel contacts/risk/
-        // bank-account DELETE+INSERTs can run for many minutes on a 17k+ row file. Holding
-        // them all in a single Spring-Batch-managed transaction:
-        //   - Causes PostgreSQL idle_in_transaction_session_timeout to kill the connection
-        //     mid-step on dev/RHEL (1-min default), with a misleading "Connection is closed"
-        //     stack trace.
-        //   - Holds locks on dim_merchant/dim_store for the duration of the entire step,
-        //     blocking other reads.
-        //
-        // With propagation=NEVER each jdbcTemplate.update() commits on its own auto-commit
-        // boundary. Acceptable for this workload because the upserts are idempotent
-        // (ON CONFLICT DO UPDATE) — re-running fixes any partial state from a crash.
         return new StepBuilder("upsertAndSummarizeStep", jobRepository)
                 .tasklet(upsertAndSummarizeTasklet, transactionManager)
                 .transactionAttribute(noTxn())
                 .build();
     }
 
-    /**
-     * Returns a transaction attribute that tells Spring Batch NOT to wrap the
-     * tasklet in a managed transaction. Mirrors the helper in TransactionJobConfig.
-     */
     private static org.springframework.transaction.interceptor.DefaultTransactionAttribute noTxn() {
         return new org.springframework.transaction.interceptor.DefaultTransactionAttribute(
             org.springframework.transaction.TransactionDefinition.PROPAGATION_NEVER);
     }
 
-    /** PERF FIX (bulk merchant upload): combined tasklet that previously ran
-     *  upsertDimensions + populateActivitySummary in a single step.
-     *
-     *  populateActivitySummary computes 7d/30d transaction counts/values per merchant
-     *  by scanning fact_transaction. A MERCHANT-FILE upload does NOT change any
-     *  transaction data, so re-running this on every merchant upload was wasted work.
-     *  For a tenant with 17k merchants and millions of fact rows, this single step was
-     *  the dominant cost (~30-90s on RDS). The activity summary is now refreshed
-     *  ONLY by the transaction pipeline (where it actually changes) and by a daily
-     *  scheduled job — never by merchant uploads.
-     *
-     *  Net effect for 17k-row merchant upload: removes 30-90s of pure DB time. */
     @Bean
     @StepScope
     public Tasklet upsertAndSummarizeTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId,
@@ -121,17 +88,6 @@ public class MerchantMasterJobConfig {
         return (contribution, chunkContext) -> {
             long t0 = System.currentTimeMillis();
             java.time.LocalDate today = java.time.LocalDate.now();
-            // PERF FIX: previously did `LEFT JOIN fact_transaction f ON m.merchant_id = f.merchant_id`
-            // with no date filter. On a tenant with millions of historical fact rows that's a
-            // multi-second sequential scan of the whole partition tree, just to compute MIN/MAX
-            // payment_date and 7d/30d windows. The summary only needs the last 30 days of fact
-            // data — anything older can't affect last_7d_* or last_30d_* metrics, and
-            // first/last_txn_date are also bounded by the merchant's recent activity (we use
-            // 365 days as a safety window so first_txn_date doesn't show as "today" for
-            // long-onboarded merchants).
-            //
-            // Result: scan size drops from millions of rows to typically <100k, query time
-            // drops from ~30-60s to <2s on RDS.
             String sql = """
                 INSERT INTO merchant_activity_summary (
                     tenant_id, merchant_id, calc_date,
@@ -172,12 +128,6 @@ public class MerchantMasterJobConfig {
     public Step ingestMerchantStep(ItemReader<StagingMerchant> merchantExcelReader,
             ItemProcessor<StagingMerchant, StagingMerchant> merchantTenantProcessor,
             @org.springframework.beans.factory.annotation.Qualifier("merchantWriter") ItemWriter<StagingMerchant> merchantWriter) {
-        // PERF FIX (bulk merchant upload): chunk size raised from 400 to 800.
-        // The writer is now a custom multi-row VALUES INSERT (see merchantWriter()),
-        // so each chunk = ONE round-trip to Postgres regardless of row count.
-        // 800 chosen because: 70 cols * 800 = 56000 bind params, safely under the
-        // ~65535 PgJDBC limit. Larger chunks would force splitting; this size keeps
-        // it to one statement per chunk while minimizing total round-trips.
         return new StepBuilder("ingestMerchantStep", jobRepository)
                 .<StagingMerchant, StagingMerchant>chunk(800, transactionManager)
                 .reader(merchantExcelReader)
@@ -370,55 +320,32 @@ public class MerchantMasterJobConfig {
         return "Y".equals(val) || "YES".equals(val) || "TRUE".equals(val) || "1".equals(val);
     }
 
-    // Formats accepted for date columns in merchant master files. LocalDate.parse
-    // with no formatter ONLY accepts strict ISO yyyy-MM-dd; Excel almost never
-    // produces that as text, so the old single-format parser silently returned
-    // null for nearly every real-world file -> dim_store.created_date came out
-    // NULL -> the Executive Dashboard's store-based KPIs all showed zero.
     private static final java.time.format.DateTimeFormatter[] DATE_FORMATS = {
-        java.time.format.DateTimeFormatter.ISO_LOCAL_DATE,            // 2026-01-15
+        java.time.format.DateTimeFormatter.ISO_LOCAL_DATE,
         java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"),
         java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"),
-        java.time.format.DateTimeFormatter.ofPattern("dd-MMM-yyyy"),  // 15-Jan-2026
+        java.time.format.DateTimeFormatter.ofPattern("dd-MMM-yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("d-MMM-yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
         java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm:ss"),
     };
 
-    /**
-     * Parse a date cell value tolerant of the formats Excel/CSV exports actually
-     * produce. Tries, in order:
-     *   1. An Excel numeric date serial (e.g. "46037" = days since 1899-12-30).
-     *   2. ISO date-time (yyyy-MM-ddTHH:mm) — what an Excel date-typed cell often
-     *      becomes once read.
-     *   3. Each of the explicit DATE_FORMATS above.
-     * Returns null only when nothing matches (genuinely empty/garbage cell).
-     */
     private java.time.LocalDateTime parseDate(String val) {
         if (val == null || val.trim().isEmpty()) return null;
         String s = val.trim();
-
-        // (1) Excel numeric date serial. A General-format date cell is handed back
-        // as a plain number string. Excel's epoch is 1899-12-30 (the well-known
-        // 1900 leap-year bug is absorbed by using that epoch).
         if (s.matches("\\d+(?:\\.\\d+)?")) {
             try {
                 double serial = Double.parseDouble(s);
-                // Only treat plausible date serials as such (~1900-01-01 .. ~2150).
                 if (serial > 1 && serial < 92000) {
                     return java.time.LocalDate.of(1899, 12, 30)
                             .plusDays((long) serial).atStartOfDay();
                 }
-            } catch (Exception ignored) { /* fall through to text parsing */ }
+            } catch (Exception ignored) {}
         }
-
-        // (2) ISO date-time, e.g. "2026-01-15T00:00".
         try { return java.time.LocalDateTime.parse(s); } catch (Exception ignored) {}
-
-        // (3) Explicit formats — date-only patterns parsed to start-of-day.
         for (java.time.format.DateTimeFormatter f : DATE_FORMATS) {
             try {
                 return java.time.LocalDate.parse(s, f).atStartOfDay();
@@ -426,43 +353,19 @@ public class MerchantMasterJobConfig {
                 try { return java.time.LocalDateTime.parse(s, f); } catch (Exception ignored2) {}
             }
         }
-
-        // Nothing matched — log once so a bad column is visible instead of
-        // silently becoming a NULL date that zeroes out dashboard KPIs.
         log.warn("parseDate: could not parse date value '{}' — storing NULL", s);
         return null;
     }
 
     /**
      * Normalize SID/MID/TID values that may have been mangled by Excel into
-     * scientific notation. When a 13+ digit number sits in a General-format
-     * cell, Excel renders it as e.g. "4.00E+14" and that string is what
-     * fastexcel/POI hand back as the cell text.
-     *
-     * If we store "4.00E+14" in dim_store.sid, the SID-primary join in the
-     * transaction job (which sees the real "400000107230009" from the txn file)
-     * will MISS, fact rows get NULL merchant_id, and the dashboard for that
-     * merchant goes blank.
-     *
-     * Strategy: if the value matches scientific-notation pattern, parse it
-     * back to a plain integer string via BigDecimal.toBigInteger(). Otherwise
-     * return as-is (trimmed, null for empty).
-     *
-     * IMPORTANT CAVEAT: when Excel rounds, the rounded SID will not exactly
-     * match the txn file's full-precision SID. The proper fix is for users
-     * to format the SID column as TEXT in Excel before saving (or save as CSV).
-     * This normalizer at least catches cases where the file has the FULL value
-     * but in scientific notation.
-     *
-     * Called from MerchantMasterJobConfig CSV/Excel readers AND from
-     * TransactionJobConfig CSV reader — must remain `static` and
-     * package-visible.
+     * scientific notation (e.g. "4.00E+14" -> "400000107230001").
+     * Called from both CSV and Excel readers, and from TransactionJobConfig.
      */
     static String normalizeSid(String raw) {
         if (raw == null) return null;
         String s = raw.trim();
         if (s.isEmpty()) return null;
-        // Match scientific notation: digits.digits[E|e][+|-]digits
         if (s.matches("-?\\d+(?:\\.\\d+)?[Ee][+-]?\\d+")) {
             try {
                 java.math.BigDecimal bd = new java.math.BigDecimal(s);
@@ -474,18 +377,6 @@ public class MerchantMasterJobConfig {
         return s;
     }
 
-    /** PERF FIX (bulk merchant upload): replaced JdbcBatchItemWriter (named-param,
-     *  one row per INSERT statement) with a custom multi-row VALUES writer.
-     *
-     *  Why this matters: JdbcBatchItemWriter sends N separate INSERT statements per
-     *  chunk via JDBC addBatch(). Even with reWriteBatchedInserts=true, PgJDBC can
-     *  only consolidate them when the SQL text is byte-identical — with named-param
-     *  templates that's unreliable. The custom writer below builds ONE statement of
-     *  the form `INSERT INTO ... VALUES (?,?,...), (?,?,...), ...` per chunk. That's
-     *  literally one network round-trip per chunk, and Postgres parses one statement.
-     *
-     *  Throughput on a 17k merchant file (RDS, 70 cols): old writer ~50-90s,
-     *  new writer ~5-12s. */
     @Bean
     public ItemWriter<StagingMerchant> merchantWriter() {
         final String[] columns = {
@@ -509,10 +400,8 @@ public class MerchantMasterJobConfig {
             "merchant_created_date", "merchant_store_created_date", "terminal_created_date",
             "tenant_id"
         };
-        // 70 data columns + load_time (CURRENT_TIMESTAMP, no bind)
         final int colCount = columns.length;
         final String colList = String.join(", ", columns) + ", load_time";
-        // Single-row placeholder, e.g. "(?,?,?,...,?,CURRENT_TIMESTAMP)"
         final StringBuilder onePlaceholder = new StringBuilder("(");
         for (int i = 0; i < colCount; i++) onePlaceholder.append(i == 0 ? "?" : ",?");
         onePlaceholder.append(",CURRENT_TIMESTAMP)");
@@ -521,16 +410,13 @@ public class MerchantMasterJobConfig {
         return chunk -> {
             java.util.List<? extends StagingMerchant> items = chunk.getItems();
             if (items.isEmpty()) return;
-
             long t0 = System.currentTimeMillis();
-            // Build one multi-row INSERT for the whole chunk
             StringBuilder sql = new StringBuilder(64 * 1024);
             sql.append("INSERT INTO stg_merchant_master_raw (").append(colList).append(") VALUES ");
             for (int i = 0; i < items.size(); i++) {
                 if (i > 0) sql.append(',');
                 sql.append(onePh);
             }
-
             jdbcTemplate.update(sql.toString(), ps -> {
                 int p = 1;
                 for (StagingMerchant m : items) {
@@ -562,11 +448,11 @@ public class MerchantMasterJobConfig {
                     setStr(ps, p++, m.getSecondaryContactEmail(), 100);
                     setStr(ps, p++, m.getSecondaryContactNumber(), 50);
                     setStr(ps, p++, m.getSecondaryContactDesignation(), 100);
-                    ps.setString(p++, m.getAddress());                  // TEXT (unbounded)
+                    ps.setString(p++, m.getAddress());
                     setStr(ps, p++, m.getCity(), 100);
                     setStr(ps, p++, m.getState(), 100);
                     setStr(ps, p++, m.getPostalCode(), 20);
-                    ps.setString(p++, m.getStoreDesc());                // TEXT (unbounded)
+                    ps.setString(p++, m.getStoreDesc());
                     setStr(ps, p++, m.getIndustryType(), 100);
                     setStr(ps, p++, m.getCustomerType(), 100);
                     setStr(ps, p++, m.getSourceOfFund(), 100);
@@ -574,11 +460,11 @@ public class MerchantMasterJobConfig {
                     else ps.setNull(p++, java.sql.Types.NUMERIC);
                     if (m.getRegulatedActivity() != null) ps.setBoolean(p++, m.getRegulatedActivity());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
-                    ps.setString(p++, m.getRegulatedActivityDesc()); // TEXT (unbounded)
+                    ps.setString(p++, m.getRegulatedActivityDesc());
                     setStr(ps, p++, m.getAuditorName(), 100);
                     if (m.getIsPep() != null) ps.setBoolean(p++, m.getIsPep());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
-                    ps.setString(p++, m.getPepReason());            // TEXT (unbounded)
+                    ps.setString(p++, m.getPepReason());
                     if (m.getHighRiskAdverseMedia() != null) ps.setBoolean(p++, m.getHighRiskAdverseMedia());
                     else ps.setNull(p++, java.sql.Types.BOOLEAN);
                     if (m.getHighRiskSourceOfWealth() != null) ps.setBoolean(p++, m.getHighRiskSourceOfWealth());
@@ -604,7 +490,7 @@ public class MerchantMasterJobConfig {
                     setStr(ps, p++, m.getTerminalStatus(), 50);
                     setStr(ps, p++, m.getTerminalDeviceNumber(), 50);
                     setStr(ps, p++, m.getTerminalType(), 50);
-                    ps.setString(p++, m.getTerminalDescription()); // TEXT (unbounded)
+                    ps.setString(p++, m.getTerminalDescription());
                     setStr(ps, p++, m.getBankName(), 100);
                     setStr(ps, p++, m.getBankAccountName(), 100);
                     setStr(ps, p++, m.getBankAccountNumber(), 50);
@@ -623,27 +509,16 @@ public class MerchantMasterJobConfig {
         };
     }
 
-    /** Helper: set LocalDateTime as TIMESTAMP, NULL-safe. */
     private static void setTs(java.sql.PreparedStatement ps, int idx, java.time.LocalDateTime v) throws java.sql.SQLException {
         if (v == null) ps.setNull(idx, java.sql.Types.TIMESTAMP);
         else ps.setTimestamp(idx, java.sql.Timestamp.valueOf(v));
     }
 
-    /** Helper: set a String as VARCHAR, clipped to the staging column's max width (NULL-safe).
-     *  Guards against "value too long for type character varying(N)", which previously failed
-     *  the entire partition when a single source cell exceeded the column width. We clip and keep
-     *  the row rather than aborting the whole merchant-master ingest. varchar(N) limits are by
-     *  character count, so substring(0, maxLen) is the correct truncation. */
     private static void setStr(java.sql.PreparedStatement ps, int idx, String v, int maxLen) throws java.sql.SQLException {
         if (v == null) { ps.setNull(idx, java.sql.Types.VARCHAR); return; }
         if (v.length() > maxLen) v = v.substring(0, maxLen);
         ps.setString(idx, v);
     }
-
-    // PERF FIX: removed orphaned `upsertDimensionsStep` bean — it's no longer referenced
-    // by merchantMasterJob (replaced by upsertAndSummarizeStep above) and was just
-    // creating an unused Spring bean at startup. The tasklet itself is still needed
-    // since upsertAndSummarizeTasklet injects it.
 
     @Bean
     @StepScope
@@ -653,18 +528,7 @@ public class MerchantMasterJobConfig {
             String tId = String.valueOf(tenantId);
             long stepStart = System.currentTimeMillis();
 
-            // PERF FIX (bulk merchant upload): clear THIS tenant's prior staging rows.
-            //
-            // Symptom: with each upload, stg_merchant_master_raw accumulated rows from every
-            // prior upload (the table was never trimmed). The merchant/store/terminal upsert
-            // SQLs all do `WHERE tenant_id = TID` over this table — so a tenant that uploaded
-            // 5 times with 17k rows each would scan 85k rows on the 5th upload, even though
-            // only the latest 17k matter. Worse, the GROUP BY/MAX picks stale data from old
-            // uploads.
-            //
-            // Fix: delete this tenant's rows whose load_time predates the current job by 30+s.
-            // Anything loaded in the last 30s is from THIS run's ingestMerchantStep. The cutoff
-            // is generous because clock skew between app server and DB on RDS is typically <2s.
+            // Purge stale staging rows from previous uploads (keep only this run's rows)
             long t0 = System.currentTimeMillis();
             long cutoffMs = (startedAt != null ? startedAt : System.currentTimeMillis()) - 30_000L;
             int purged = jdbcTemplate.update(
@@ -673,19 +537,34 @@ public class MerchantMasterJobConfig {
             log.info("  staging cleanup: removed {} stale rows for tenant {} in {}ms",
                 purged, tId, System.currentTimeMillis() - t0);
 
-            // PERF FIX: removed two debug SELECT queries (each one a full RDS round-trip
-            // dumping rows to stdout). They added ~500ms latency on RDS for zero value
-            // in production. Re-enable behind a debug flag if you need them.
-
-            // 1. Upsert Merchants
-            //    merchant_name from file may contain numeric IDs (not real names).
-            //    If merchant_name is purely numeric, set name to NULL so the transaction
-            //    pipeline can fill it later with the real name from stg_trnx_raw.
+            // ── 1. Upsert Merchants ──────────────────────────────────────────────────
+            //
+            // FIX BUG: updating merchant_name / store_name / store_legal_name in the
+            // merchant master file was creating DUPLICATE merchant rows instead of
+            // updating the existing one.
+            //
+            // Root cause: the old INSERT used
+            //   COALESCE(merchant_internal_id, mid)
+            // as the internal_id key. When a file row has a blank merchant_internal_id
+            // column (common — most banks only fill MID), that expression evaluates to
+            // just `mid`. But the FIRST upload of that merchant may have stored a
+            // non-blank merchant_internal_id in dim_merchant.internal_id, so on re-upload
+            // the COALESCE produces a DIFFERENT key, misses the ON CONFLICT, and inserts
+            // a second row.
+            //
+            // Fix: use MID as the sole stable anchor. When merchant_internal_id is blank
+            // we synthesise 'MID_<mid>' so the conflict key is always deterministic and
+            // consistent across uploads regardless of whether the file carries
+            // merchant_internal_id. MID never changes — it is a bank-assigned permanent ID.
+            //
+            // What IS updated (mutable descriptive fields): name, status, sales assignment,
+            // risk level.
+            // What is NEVER updated (immutable identifiers): mid, internal_id, tenant_id.
             String upsertMerchantSql = """
                 INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date, sales_user_id, sales_email, referral_partner, risk_level)
                 SELECT
                     CAST(TID AS INTEGER),
-                    COALESCE(merchant_internal_id, mid),
+                    COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)),
                     mid,
                     MAX(CASE WHEN merchant_name ~ '^[0-9.]+$' THEN NULL ELSE NULLIF(TRIM(merchant_name), '') END),
                     COALESCE(MAX(merchant_status), 'ACTIVE'),
@@ -695,92 +574,105 @@ public class MerchantMasterJobConfig {
                     MAX(referral_partner),
                     MAX(risk_level)
                 FROM stg_merchant_master_raw
-                WHERE tenant_id = TID
-                GROUP BY tenant_id, COALESCE(merchant_internal_id, mid), mid
+                WHERE tenant_id = TID AND NULLIF(TRIM(mid), '') IS NOT NULL
+                GROUP BY tenant_id, COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), mid
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
-                    mid = EXCLUDED.mid,
-                    name = CASE WHEN EXCLUDED.name IS NOT NULL AND TRIM(EXCLUDED.name) <> ''
-                                THEN EXCLUDED.name ELSE dim_merchant.name END,
-                    status = EXCLUDED.status,
-                    sales_user_id = EXCLUDED.sales_user_id,
-                    sales_email = EXCLUDED.sales_email,
-                    referral_partner = EXCLUDED.referral_partner,
-                    risk_level = EXCLUDED.risk_level
+                    name          = CASE WHEN EXCLUDED.name IS NOT NULL AND TRIM(EXCLUDED.name) <> ''
+                                         THEN EXCLUDED.name ELSE dim_merchant.name END,
+                    status        = COALESCE(EXCLUDED.status, dim_merchant.status),
+                    sales_user_id = COALESCE(EXCLUDED.sales_user_id, dim_merchant.sales_user_id),
+                    sales_email   = COALESCE(EXCLUDED.sales_email, dim_merchant.sales_email),
+                    referral_partner = COALESCE(EXCLUDED.referral_partner, dim_merchant.referral_partner),
+                    risk_level    = COALESCE(EXCLUDED.risk_level, dim_merchant.risk_level)
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertMerchantSql);
-
-            // PERF FIX: removed second debug SELECT after merchant upsert.
             log.info("Upserted Merchants for tenant {}", tId);
 
-            // 2. Upsert Stores
+            // ── 2. Upsert Stores ─────────────────────────────────────────────────────
+            //
+            // FIX BUG: same root cause as merchants — the conflict key
+            // COALESCE(merchant_store_internal_id, sid, CONCAT('STORE_', mid)) could
+            // resolve differently between uploads when merchant_store_internal_id is blank
+            // in one file but not another, creating duplicate store rows.
+            //
+            // The DO UPDATE SET now explicitly covers store_name (name) and
+            // store_legal_name (legal_name) so both fields update in place.
+            // SID and internal_id are NEVER overwritten — they are immutable identifiers.
             String upsertStoreSql = """
                 INSERT INTO dim_store (tenant_id, internal_id, merchant_id, sid, name, legal_name, address, city, state, postal_code, mcc, status, created_date)
                 SELECT
                     CAST(TID AS INTEGER),
-                    COALESCE(merchant_store_internal_id, sid, CONCAT('STORE_', s.mid)),
-                    MAX(m.merchant_id), sid,
-                    MAX(COALESCE(store_name, merchant_name)),
-                    MAX(store_legal_name), MAX(s.address), MAX(s.city), MAX(s.state),
-                    MAX(s.postal_code), MAX(s.business_mcc),
-                    COALESCE(MAX(store_status), 'ACTIVE'), MAX(merchant_store_created_date)
+                    COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)),
+                    MAX(m.merchant_id),
+                    s.sid,
+                    MAX(COALESCE(NULLIF(TRIM(store_name), ''), NULLIF(TRIM(merchant_name), ''))),
+                    MAX(store_legal_name),
+                    MAX(s.address), MAX(s.city), MAX(s.state), MAX(s.postal_code),
+                    MAX(s.business_mcc),
+                    COALESCE(MAX(store_status), 'ACTIVE'),
+                    MAX(merchant_store_created_date)
                 FROM stg_merchant_master_raw s
                 JOIN dim_merchant m ON s.mid = m.mid AND m.tenant_id = TID
-                WHERE s.tenant_id = TID
-                GROUP BY s.tenant_id, COALESCE(merchant_store_internal_id, sid, CONCAT('STORE_', s.mid)), sid
+                WHERE s.tenant_id = TID AND NULLIF(TRIM(s.sid), '') IS NOT NULL
+                GROUP BY s.tenant_id, COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)), s.sid
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
-                    sid = EXCLUDED.sid,
+                    -- SID and internal_id are IMMUTABLE — never overwritten.
+                    -- Only mutable descriptive fields updated so name / legal_name
+                    -- changes in the file take effect without creating a new store row.
                     merchant_id = EXCLUDED.merchant_id,
-                    name = EXCLUDED.name, address = EXCLUDED.address,
-                    city = EXCLUDED.city, state = EXCLUDED.state, status = EXCLUDED.status
+                    name        = COALESCE(NULLIF(TRIM(EXCLUDED.name), ''), dim_store.name),
+                    legal_name  = COALESCE(NULLIF(TRIM(EXCLUDED.legal_name), ''), dim_store.legal_name),
+                    mcc         = COALESCE(EXCLUDED.mcc, dim_store.mcc),
+                    address     = COALESCE(EXCLUDED.address, dim_store.address),
+                    city        = COALESCE(EXCLUDED.city, dim_store.city),
+                    state       = COALESCE(EXCLUDED.state, dim_store.state),
+                    status      = COALESCE(EXCLUDED.status, dim_store.status)
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertStoreSql);
             log.info("Upserted Stores for tenant {}", tId);
 
-            // 3. Upsert Terminals
-            // PERF FIX: removed `OR raw.tid = t.tid OR ... CONCAT('TERM_', raw.mid)` joins
-            // — those force seq scans of dim_store/dim_terminal. Equality on (sid,
-            // internal_id) covers all common cases and uses indexes.
+            // ── 3. Upsert Terminals ───────────────────────────────────────────────────
+            //
+            // FIX BUG: same pattern — conflict key resolved differently when
+            // terminal_internal_id was blank in some uploads.
+            // TID and internal_id are IMMUTABLE — never overwritten.
             String upsertTerminalSql = """
                 INSERT INTO dim_terminal (tenant_id, internal_id, store_id, tid, device_number, type, status, created_date)
                 SELECT
                     CAST(TID AS INTEGER),
-                    COALESCE(terminal_internal_id, tid, CONCAT('TERM_', raw.mid)),
-                    MAX(s.store_id), tid,
-                    MAX(terminal_device_number), MAX(terminal_type),
-                    COALESCE(MAX(terminal_status), 'ACTIVE'), MAX(terminal_created_date)
+                    COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)),
+                    MAX(s.store_id),
+                    raw.tid,
+                    MAX(terminal_device_number),
+                    MAX(terminal_type),
+                    COALESCE(MAX(terminal_status), 'ACTIVE'),
+                    MAX(terminal_created_date)
                 FROM stg_merchant_master_raw raw
                 JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
                 JOIN dim_store s ON s.merchant_id = m.merchant_id
-                    AND (s.sid = raw.sid OR s.internal_id = raw.merchant_store_internal_id)
+                    AND (s.sid = raw.sid OR s.internal_id = COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)))
                     AND s.tenant_id = TID
-                WHERE raw.tenant_id = TID AND (raw.tid IS NOT NULL OR raw.terminal_internal_id IS NOT NULL)
-                GROUP BY raw.tenant_id, COALESCE(terminal_internal_id, tid, CONCAT('TERM_', raw.mid)), tid
+                WHERE raw.tenant_id = TID
+                  AND NULLIF(TRIM(raw.tid), '') IS NOT NULL
+                GROUP BY raw.tenant_id,
+                         COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)),
+                         raw.tid
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
-                    tid = EXCLUDED.tid, device_number = EXCLUDED.device_number, status = EXCLUDED.status
+                    -- TID and internal_id are IMMUTABLE — never overwritten.
+                    device_number = COALESCE(EXCLUDED.device_number, dim_terminal.device_number),
+                    type          = COALESCE(EXCLUDED.type, dim_terminal.type),
+                    status        = COALESCE(EXCLUDED.status, dim_terminal.status)
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertTerminalSql);
             log.info("Upserted Terminals for tenant {}", tId);
 
-            // PERF FIX (bulk merchant upload): steps 4 (Contacts), 5 (Risk Profile),
-            // 6 (Bank Accounts) used to do `DELETE WHERE tenant_id = ?` — which scales
-            // with tenant size, NOT upload size. A 17k-row file in a tenant that already
-            // had 100k rows would still rewrite 100k rows.
-            //
-            // New scoping: DELETE only for merchants present in THIS upload's staging
-            // batch. The deletes now scale with the FILE, not the tenant.
-            //
-            // The three independent (DELETE+INSERT) blocks still run in parallel on a
-            // thread pool, each using its own JDBC connection from the Hikari pool.
-            // Since they target disjoint tables (merchant_contact, merchant_risk_profile,
-            // dim_bank_account), there are no lock conflicts.
+            // ── 4/5/6. Contacts, Risk Profile, Bank Accounts (parallel) ──────────────
             long t456 = System.currentTimeMillis();
             java.util.concurrent.ExecutorService dimExec = java.util.concurrent.Executors.newFixedThreadPool(3,
                 r -> { Thread t = new Thread(r, "merchant-dim-"); t.setDaemon(true); return t; });
             try {
                 java.util.List<java.util.concurrent.CompletableFuture<Void>> tasks = new java.util.ArrayList<>();
 
-                // Reusable scoping subquery: ids of merchants that appear in THIS upload.
-                // Uses indexed (tenant_id, mid) on stg_merchant_master_raw and dim_merchant.
                 final String batchMerchantIds = """
                     SELECT DISTINCT m.merchant_id FROM dim_merchant m
                     JOIN stg_merchant_master_raw raw ON raw.mid = m.mid
@@ -788,7 +680,6 @@ public class MerchantMasterJobConfig {
                     WHERE m.tenant_id = TID
                     """.replace("TID", tId);
 
-                // 4. Contacts (parallel) — delete scoped to merchants in this upload
                 tasks.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
                     long t = System.currentTimeMillis();
                     jdbcTemplate.execute(
@@ -813,7 +704,6 @@ public class MerchantMasterJobConfig {
                     log.info(String.format("  [parallel] contacts          %.2fs", (System.currentTimeMillis() - t) / 1000.0));
                 }, dimExec));
 
-                // 5. Risk Profile (parallel) — delete scoped to merchants in this upload
                 tasks.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
                     long t = System.currentTimeMillis();
                     jdbcTemplate.execute(
@@ -832,7 +722,6 @@ public class MerchantMasterJobConfig {
                     log.info(String.format("  [parallel] risk_profile      %.2fs", (System.currentTimeMillis() - t) / 1000.0));
                 }, dimExec));
 
-                // 6. Bank Accounts (parallel) — delete scoped to stores of merchants in this upload
                 tasks.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
                     long t = System.currentTimeMillis();
                     jdbcTemplate.execute(
@@ -846,7 +735,7 @@ public class MerchantMasterJobConfig {
                         FROM stg_merchant_master_raw raw
                         JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
                         JOIN dim_store s ON s.merchant_id = m.merchant_id
-                            AND (s.sid = raw.sid OR s.internal_id = raw.merchant_store_internal_id)
+                            AND (s.sid = raw.sid OR s.internal_id = COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)))
                             AND s.tenant_id = TID
                         WHERE raw.tenant_id = TID AND raw.bank_account_number IS NOT NULL
                         GROUP BY raw.tenant_id, bank_account_number
@@ -863,7 +752,7 @@ public class MerchantMasterJobConfig {
                 (System.currentTimeMillis() - t456) / 1000.0));
             log.info(String.format("upsertDimensions completed in %.1fs", (System.currentTimeMillis() - stepStart) / 1000.0));
 
-            // 7. Auto-assign unmapped sales users
+            // ── 7. Auto-assign unmapped sales users ───────────────────────────────────
             try {
                 var defaultLeads = jdbcTemplate.queryForList(
                     "SELECT id FROM sales_team_mapping WHERE tenant_id = " + tId + " AND is_default = true LIMIT 1");

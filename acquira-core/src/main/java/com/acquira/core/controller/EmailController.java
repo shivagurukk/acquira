@@ -5,7 +5,6 @@ import com.acquira.common.dto.MerchantInsightsDTO;
 import com.acquira.common.model.Merchant;
 import com.acquira.common.repository.MerchantRepository;
 import com.acquira.common.service.MerchantInsightService;
-import com.acquira.core.service.TenantService;
 import com.acquira.pdf.service.PlaywrightPdfService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,13 +43,23 @@ import java.util.*;
 public class EmailController {
 
     private final JdbcTemplate jdbc;
-    private final TenantService tenantService;
     private final MerchantRepository merchantRepository;
     private final MerchantInsightService merchantInsightService;
     private final PlaywrightPdfService playwrightPdfService;
 
+    /**
+     * Resolve the ACTIVE tenant for the current request.
+     *
+     * FIX: previously used {@code tenantService.getCurrentTenantId()}, which
+     * always returns the user's DEFAULT tenant and ignores the {@code X-Tenant-Id}
+     * header. For a SUPER_ADMIN (or any multi-tenant user) who switched tenants in
+     * the UI, every Email Manager action silently operated on the wrong tenant.
+     * TenantContext.getCurrentTenant() is the header-aware value set by
+     * JwtRequestFilter, so the Email Manager now follows the tenant switcher like
+     * the rest of the app.
+     */
     private Long tenantId() {
-        Long t = tenantService.getCurrentTenantId();
+        Long t = TenantContext.getCurrentTenant();
         if (t == null) throw new IllegalStateException("No tenant context for the current user");
         return t;
     }
@@ -187,7 +196,11 @@ public class EmailController {
     public ResponseEntity<?> sendBulk(@RequestParam(required = false) String month) {
         Long tid = tenantId();
         YearMonth ym = parseMonth(month);
-        List<Merchant> merchants = merchantRepository.findAll();
+        // FIX: was merchantRepository.findAll() — that pulled EVERY tenant's
+        // merchants, then enqueueForMerchant() threw on each foreign one
+        // (wasteful, and it leaked cross-tenant merchant existence into the logs).
+        // Scope to the active tenant at the source.
+        List<Merchant> merchants = merchantRepository.findAllByTenantId(tid);
         log.info("[EMAIL] Bulk enqueue starting — tenant={} month={} merchants={}",
                 tid, ym, merchants.size());
         // Hand off to a background thread; the snapshot of ids is taken now.

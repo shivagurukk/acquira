@@ -177,7 +177,11 @@ public class IntegrationController {
         report.setCreatedAt(LocalDateTime.now());
 
         Long connectionId = Long.valueOf(body.get("connectionId").toString());
+        // Tenant-isolation fix: ensure the referenced connection belongs to the
+        // same tenant before linking it. Previously a crafted connectionId could
+        // link a report to another tenant's DB connection.
         IntegrationConnection conn = connectionRepo.findById(connectionId)
+                .filter(c -> c.getTenantId().equals(tenantId))
                 .orElseThrow(() -> new RuntimeException("Connection not found"));
         report.setConnection(conn);
 
@@ -199,7 +203,12 @@ public class IntegrationController {
                     if (body.containsKey("isActive")) existing.setIsActive((Boolean) body.get("isActive"));
                     if (body.containsKey("connectionId")) {
                         Long connectionId = Long.valueOf(body.get("connectionId").toString());
-                        existing.setConnection(connectionRepo.findById(connectionId).orElseThrow());
+                        // Tenant-isolation fix: re-verify the swapped-in connection
+                        // belongs to the same tenant.
+                        IntegrationConnection conn = connectionRepo.findById(connectionId)
+                                .filter(c -> c.getTenantId().equals(tenantId))
+                                .orElseThrow(() -> new RuntimeException("Connection not found"));
+                        existing.setConnection(conn);
                     }
                     existing.setUpdatedAt(LocalDateTime.now());
                     return ResponseEntity.ok(reportRepo.save(existing));
@@ -269,7 +278,10 @@ public class IntegrationController {
         schedule.setCreatedAt(LocalDateTime.now());
 
         Long reportId = Long.valueOf(body.get("reportId").toString());
+        // Tenant-isolation fix: ensure the referenced report belongs to the same
+        // tenant before scheduling it.
         IntegrationReport report = reportRepo.findById(reportId)
+                .filter(r -> r.getTenantId().equals(tenantId))
                 .orElseThrow(() -> new RuntimeException("Report not found"));
         schedule.setReport(report);
 

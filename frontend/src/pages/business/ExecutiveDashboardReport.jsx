@@ -9,6 +9,7 @@ import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { pageContainer } from '../../theme/dataGridStyles';
 import { formatCurrency } from '../../utils/formatters';
+import api from '../../api/axios';
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#3b82f6', '#14b8a6', '#f97316'];
 
@@ -111,10 +112,9 @@ const ExecutiveDashboardReport = () => {
     });
 
     useEffect(() => {
-        fetch('/api/dashboard/v2/datasets')
-            .then(res => res.json())
-            .then(sets => { setAvailableDatasets(sets); if (sets.length > 0 && !dataset) setDataset(sets[0]); })
-            .catch(err => console.error(err));
+        api.get('/dashboard/v2/datasets')
+            .then(res => { const sets = res.data; setAvailableDatasets(sets); if (sets.length > 0 && !dataset) setDataset(sets[0]); })
+            .catch(err => console.error('Failed to load datasets', err));
     }, []);
 
     useEffect(() => { fetchDashboardData(); }, [asOfDate, dataset]);
@@ -123,12 +123,8 @@ const ExecutiveDashboardReport = () => {
         if (!dataset) return;
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId') || localStorage.getItem('defaultTenantId');
-            const res = await fetch(`/api/dashboard/v2/data?dataset=${dataset}&asOfDate=${asOfDate}`, {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-            });
-            if (res.ok) setData(await res.json());
+            const res = await api.get(`/dashboard/v2/data?dataset=${dataset}&asOfDate=${asOfDate}`);
+            setData(res.data);
         } catch (error) { console.error('Failed to fetch dashboard data', error); }
         finally { setLoading(false); }
     };

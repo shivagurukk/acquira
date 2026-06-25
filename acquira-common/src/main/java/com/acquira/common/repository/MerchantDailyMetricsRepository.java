@@ -13,6 +13,15 @@ import java.util.Optional;
 
 public interface MerchantDailyMetricsRepository extends JpaRepository<MerchantDailyMetrics, Long> {
 
+    /**
+     * Returns the most recent report_date that has rows for the given tenant.
+     * Used by the /api/business/data-bounds endpoint so the Daily Merchant
+     * Dashboard can open on the latest month that actually has data, instead
+     * of defaulting to the current calendar month and showing "No rows".
+     */
+    @Query("SELECT MAX(m.reportDate) FROM MerchantDailyMetrics m WHERE m.tenantId = :tenantId")
+    java.time.LocalDate findLatestReportDateByTenantId(@Param("tenantId") Long tenantId);
+
     // Legacy un-scoped fetch — retained only for backward compat with any
     // pre-existing callers. New callers should use findByReportDateAndTenant.
     List<MerchantDailyMetrics> findByReportDate(LocalDate reportDate);

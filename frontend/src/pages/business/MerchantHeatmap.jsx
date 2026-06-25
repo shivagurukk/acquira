@@ -7,6 +7,7 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import api from '../../api/axios';
 
 const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', maximumFractionDigits: 0 }).format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
@@ -48,30 +49,14 @@ const MerchantHeatmap = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
             const body = {
                 ...appliedFilters,
-                // The heatmap is year-scoped; the date range is implied by `year`.
-                // Sending null start/end avoids a redundant WHERE business_date BETWEEN.
                 startDate: null,
                 endDate: null,
             };
-            const response = await fetch(`/api/analytics/heatmap-filtered?year=${year}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
-                },
-                body: JSON.stringify(body),
-            });
-            if (response.ok) processData(await response.json());
-            else {
-                console.error('heatmap-filtered failed', response.status, await response.text());
-                processData([]);
-            }
-        } catch (error) { console.error("Failed to fetch heatmap data", error); }
+            const res = await api.post(`/analytics/heatmap-filtered?year=${year}`, body);
+            processData(res.data);
+        } catch (error) { console.error('Failed to fetch heatmap data', error); }
         finally { setLoading(false); }
     };
 

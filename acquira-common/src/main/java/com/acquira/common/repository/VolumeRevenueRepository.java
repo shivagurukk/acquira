@@ -1101,23 +1101,45 @@ public class VolumeRevenueRepository {
         StringBuilder sql = new StringBuilder();
 
         // Select columns matching frontend expectation:
-        // sid, mid, merchantName, volume, count, msf, interchange, mcc, industry,
-        // legalName, dccOptin
+        // merchantId, sid, mid, merchantName, volume, count, msf, interchange, mcc,
+        // industry, legalName, dccOptin, totalCount, terminalType
         sql.append("SELECT ");
+        // FIX: include merchant_id so the frontend DataGrid can use it as a stable row key
+        sql.append("  m.merchant_id as merchant_id, ");
         sql.append("  st.sid as sid, ");
         sql.append("  m.mid as mid, ");
         sql.append("  m.name as merchant_name, ");
         sql.append("  SUM(s.total_volume) as volume, ");
         sql.append("  SUM(s.total_txns) as count, ");
         sql.append("  SUM(s.total_msf) as msf, ");
-        // Interchange - assuming it's part of MSF or separate? Let's assume 0 if not
-        // tracked, or calculated.
-        // For now returning 0 or derived to fix broken UI.
-        sql.append("  0 as interchange, ");
+        // sum_daily_insight does not carry total_interchange — interchange lives in
+        // fact_transaction and sum_daily_bank only. Return 0 so the column is still
+        // present in the result set (the frontend reads row[7] for the interchange
+        // DataGrid column) without causing a SQL grammar error.
+        sql.append("  CAST(0 AS NUMERIC) as interchange, ");
         sql.append("  st.mcc as mcc, ");
-        // industry? typically derived from MCC or a column. Using MCC description or
-        // category if available, or 'Retail' placeholder
-        sql.append("  'Retail' as industry, ");
+        // FIX: derive industry from MCC using ISO 18245 range bands instead of hardcoded 'Retail'
+        sql.append("  CASE ");
+        sql.append("    WHEN st.mcc IS NULL THEN 'Other' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 1    AND 1499 THEN 'Agriculture' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 1500 AND 2999 THEN 'Construction' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 3000 AND 3299 THEN 'Airlines & Travel' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 3300 AND 3499 THEN 'Car Rental' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 3500 AND 3999 THEN 'Lodging & Hotels' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 4000 AND 4799 THEN 'Transportation' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 4800 AND 4999 THEN 'Utilities & Telecom' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 5000 AND 5199 THEN 'Wholesale' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 5200 AND 5999 THEN 'Retail' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 5800 AND 5814 THEN 'Food & Beverage' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 6000 AND 6599 THEN 'Financial Services' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 7000 AND 7299 THEN 'Business Services' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 7300 AND 7999 THEN 'Entertainment' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 8000 AND 8099 THEN 'Healthcare' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 8100 AND 8299 THEN 'Professional Services' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 8300 AND 8999 THEN 'Education' ");
+        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 9000 AND 9999 THEN 'Government' ");
+        sql.append("    ELSE 'Other' ");
+        sql.append("  END as industry, ");
         sql.append("  m.name as legal_name, "); // Fallback to name
         sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dcc_optin, ");
         sql.append("  count(*) OVER() as total_count, "); // Window function
@@ -1169,7 +1191,7 @@ public class VolumeRevenueRepository {
         }
 
         // Grouping (FIX: dropped t.type — see SELECT above for why)
-        sql.append("GROUP BY st.sid, m.mid, m.name, st.mcc ");
+        sql.append("GROUP BY m.merchant_id, st.sid, m.mid, m.name, st.mcc ");
 
         // Sorting and Pagination
         sql.append("ORDER BY m.name ASC, st.sid ASC ");
@@ -1216,21 +1238,24 @@ public class VolumeRevenueRepository {
 
         for (Object[] row : rows) {
             Map<String, Object> map = new HashMap<>();
-            map.put("sid", row[0]);
-            map.put("mid", row[1]);
-            map.put("merchantName", row[2]);
-            map.put("volume", row[3]);
-            map.put("count", row[4]);
-            map.put("msf", row[5]);
-            map.put("interchange", row[6]);
-            map.put("mcc", row[7]);
-            map.put("industry", row[8]);
-            map.put("legalName", row[9]);
-            map.put("dccOptin", row[10]);
-            map.put("terminalType", row[12]); // New Column
+            // NOTE: column indices shifted by 1 after merchant_id was added at position 0
+            map.put("merchantId",  row[0]);   // m.merchant_id  — stable DataGrid row key
+            map.put("sid",         row[1]);   // st.sid
+            map.put("mid",         row[2]);   // m.mid
+            map.put("merchantName",row[3]);   // m.name
+            map.put("volume",      row[4]);   // SUM(s.total_volume)
+            map.put("count",       row[5]);   // SUM(s.total_txns)
+            map.put("msf",         row[6]);   // SUM(s.total_msf)
+            map.put("interchange", row[7]);   // CAST(0 AS NUMERIC) — sum_daily_insight has no interchange column
+            map.put("mcc",         row[8]);   // st.mcc
+            map.put("industry",    row[9]);   // MCC-derived CASE label — was hardcoded 'Retail'
+            map.put("legalName",   row[10]);  // m.name
+            map.put("dccOptin",    row[11]);  // SUM(is_opt_in volumes)
+            // row[12] = count(*) OVER() — window total, used for pagination
+            map.put("terminalType",row[13]);  // MAX(t.type)
 
-            if (totalElements == 0 && row.length > 11) {
-                totalElements = ((Number) row[11]).longValue();
+            if (totalElements == 0 && row.length > 12) {
+                totalElements = ((Number) row[12]).longValue();
             }
             content.add(map);
         }

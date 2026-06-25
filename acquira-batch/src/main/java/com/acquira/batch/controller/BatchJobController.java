@@ -4,7 +4,11 @@ import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.JobInstance;
 import org.springframework.batch.core.explore.JobExplorer;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+
+import com.acquira.common.config.TenantContext;
 
 import java.util.HashMap;
 import java.util.List;
@@ -18,6 +22,37 @@ public class BatchJobController {
 
     public BatchJobController(JobExplorer jobExplorer) {
         this.jobExplorer = jobExplorer;
+    }
+
+    // ── Tenant-isolation helpers ────────────────────────────────────────────
+    // Batch jobs carry their tenant in JobParameters ("tenantId", set by
+    // FileUploadService). /api/batch/** is already gated to ADMIN/SUPER_ADMIN by
+    // SecurityConfig, but WITHOUT the filter below a bank admin in Tenant A sees
+    // every other tenant's upload history (job names, execution ids, row counts,
+    // data-quality details). Super-admins are allowed the cross-tenant view.
+    private boolean isSuperAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
+    }
+
+    /** The tenantId stored in a JobExecution's parameters, or null if absent. */
+    private static Long tenantOf(JobExecution exec) {
+        try {
+            return exec.getJobParameters().getLong("tenantId");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Whether the current caller may see jobs for the given execution. */
+    private boolean canView(JobExecution exec) {
+        if (isSuperAdmin()) return true;
+        Long current = TenantContext.getCurrentTenant();
+        Long jobTenant = tenantOf(exec);
+        // Only show jobs whose tenant matches the active session tenant. Jobs with
+        // no tenant parameter are hidden from non-super-admins (defensive).
+        return current != null && current.equals(jobTenant);
     }
 
     @GetMapping
@@ -51,6 +86,9 @@ public class BatchJobController {
                     JobExecution lastExec = jobExplorer.getJobExecutions(instance).stream()
                             .reduce((first, second) -> second).orElse(null);
                     if (lastExec == null) continue;
+                    // TENANT ISOLATION: skip jobs that don't belong to the
+                    // caller's tenant (super-admins see everything).
+                    if (!canView(lastExec)) continue;
 
                     Map<String, Object> map = new HashMap<>();
                     map.put("jobName", instance.getJobName());
@@ -85,6 +123,13 @@ public class BatchJobController {
         JobExecution jobExecution = jobExplorer.getJobExecution(id);
 
         if (jobExecution == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // TENANT ISOLATION: a bank admin must not be able to read another
+        // tenant's job status by guessing/iterating execution ids. Return 404
+        // (not 403) so the endpoint doesn't even confirm the job exists.
+        if (!canView(jobExecution)) {
             return ResponseEntity.notFound().build();
         }
 

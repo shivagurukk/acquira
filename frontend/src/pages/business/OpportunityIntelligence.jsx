@@ -6,6 +6,7 @@ import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import api from '../../api/axios';
 
 const OpportunityIntelligence = () => {
     const [data, setData] = useState([]);
@@ -18,24 +19,13 @@ const OpportunityIntelligence = () => {
         setLoading(true);
         setErrorMsg(null);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId') || localStorage.getItem('defaultTenantId');
-            const res = await fetch('/api/business/opportunity', {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-            });
-            if (res.ok) {
-                const result = await res.json();
-                setData(result.map((r, i) => ({ id: r.scoreId || r.id || i, ...r })));
-            } else {
-                // Previously this branch did nothing - a failed request just left
-                // the screen blank, indistinguishable from "no opportunities".
-                const text = await res.text().catch(() => '');
-                setErrorMsg(`Failed to load opportunities (HTTP ${res.status}). ${text}`.trim());
-                setData([]);
-            }
+            const res = await api.get('/business/opportunity');
+            setData(res.data.map((r, i) => ({ id: r.scoreId || r.id || i, ...r })));
         } catch (error) {
             console.error('Failed to load opportunities', error);
-            setErrorMsg(`Failed to load opportunities: ${error.message}`);
+            const status = error.response?.status;
+            const msg = error.response?.data?.error || error.message;
+            setErrorMsg(status ? `Failed to load opportunities (HTTP ${status}). ${msg}`.trim() : `Failed to load opportunities: ${msg}`);
             setData([]);
         }
         finally { setLoading(false); }

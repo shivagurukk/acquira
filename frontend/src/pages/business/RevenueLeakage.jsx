@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Box, Paper, Typography, Chip, Stack, Button, Tooltip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { ShieldAlert, TrendingDown, DollarSign, AlertTriangle, Users, Check, X, RotateCcw, Download } from 'lucide-react';
+import api from '../../api/axios';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
@@ -29,12 +30,6 @@ const fmtMoney = (v) => {
     return n.toFixed(0);
 };
 
-const authHeaders = () => {
-    const token = localStorage.getItem('token');
-    const tenantId = localStorage.getItem('tenantId') || localStorage.getItem('defaultTenantId');
-    return { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) };
-};
-
 const RevenueLeakage = () => {
     const [rows, setRows] = useState([]);
     const [summary, setSummary] = useState(null);
@@ -47,18 +42,11 @@ const RevenueLeakage = () => {
         setErrorMsg(null);
         try {
             const [flagsRes, sumRes] = await Promise.all([
-                fetch(`/api/leakage/flags?status=${status}&limit=1000`, { headers: authHeaders() }),
-                fetch('/api/leakage/summary', { headers: authHeaders() }),
+                api.get(`/leakage/flags?status=${status}&limit=1000`),
+                api.get('/leakage/summary'),
             ]);
-            if (flagsRes.ok) {
-                const data = await flagsRes.json();
-                setRows(data.map((r) => ({ id: r.id, ...r })));
-            } else {
-                const text = await flagsRes.text().catch(() => '');
-                setErrorMsg(`Failed to load flags (HTTP ${flagsRes.status}). ${text}`.trim());
-                setRows([]);
-            }
-            if (sumRes.ok) setSummary(await sumRes.json());
+            setRows(flagsRes.data.map((r) => ({ id: r.id, ...r })));
+            setSummary(sumRes.data);
         } catch (e) {
             setErrorMsg(`Failed to load revenue-leakage data: ${e.message}`);
             setRows([]);
@@ -73,7 +61,7 @@ const RevenueLeakage = () => {
     const runDetection = async () => {
         setLoading(true);
         try {
-            await fetch('/api/leakage/run', { method: 'POST', headers: authHeaders() });
+            await api.post('/leakage/run');
         } catch (e) {
             console.error('Detection run failed', e);
         }
@@ -82,12 +70,10 @@ const RevenueLeakage = () => {
 
     const act = async (id, action) => {
         try {
-            const res = await fetch(`/api/leakage/flags/${id}/${action}`, { method: 'POST', headers: authHeaders() });
-            if (res.ok) {
-                // Optimistic: drop the row if the current tab no longer matches it.
-                setRows((prev) => prev.filter((r) => r.id !== id || status === 'ALL'));
-                fetchAll();
-            }
+            await api.post(`/leakage/flags/${id}/${action}`);
+            // Optimistic: drop the row if the current tab no longer matches it.
+            setRows((prev) => prev.filter((r) => r.id !== id || status === 'ALL'));
+            fetchAll();
         } catch (e) { console.error(`Action ${action} failed`, e); }
     };
 

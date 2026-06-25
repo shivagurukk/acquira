@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../api/axios';
 import {
     Activity, DollarSign, AlertTriangle, Store, Target,
     RefreshCw, BarChart3, ArrowRight, Clock
@@ -38,16 +39,9 @@ const Dashboard = () => {
     useEffect(() => {
         const loadBounds = async () => {
             try {
-                const token = localStorage.getItem('token');
-                const tenantId = localStorage.getItem('defaultTenantId');
-                const res = await fetch('/api/business/data-bounds', {
-                    headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
-                });
-                if (res.ok) {
-                    const b = await res.json();
-                    if (b?.latest) {
-                        setLatestDataDate(new Date(b.latest));
-                    }
+                const res = await api.get('/business/data-bounds');
+                if (res.data?.latest) {
+                    setLatestDataDate(new Date(res.data.latest));
                 }
             } catch (e) { console.warn('data-bounds fetch failed; falling back to today', e); }
             setBoundsLoaded(true);

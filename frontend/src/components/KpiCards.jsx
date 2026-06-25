@@ -121,7 +121,7 @@ export const KpiCard = ({
         >
             {/* Sparkline backdrop */}
             {sparkData?.length > 1 && (
-                <div style={{ position: 'absolute', bottom: 6, right: 8, opacity: 0.4 }}>
+                <div style={{ position: 'absolute', bottom: 6, right: 8, opacity: 0.35 }}>
                     <Sparkline data={sparkData} color={color} />
                 </div>
             )}

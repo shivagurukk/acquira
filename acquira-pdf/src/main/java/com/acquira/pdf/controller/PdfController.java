@@ -130,8 +130,20 @@ public class PdfController {
         if (merchantId == null) merchantId = 1L;
         YearMonth targetMonth = resolveTargetMonth(year, month);
 
-        MerchantInsightsDTO data = coreClient.fetchInsights(merchantId,
-                targetMonth.getYear(), targetMonth.getMonthValue());
+        // SECURITY FIX: scope the insight fetch to the caller's tenant so an
+        // authenticated user cannot pull another tenant's merchant data by guessing
+        // a sequential merchantId. PdfController.downloadPdf previously called
+        // coreClient.fetchInsights(id, year, month) with no tenant guard (null
+        // expectedTenantId), which is an IDOR on a globally-sequential BIGSERIAL key.
+        Long tenantId = TenantContext.getCurrentTenant();
+        MerchantInsightsDTO data;
+        try {
+            data = coreClient.fetchInsights(merchantId, targetMonth.getYear(),
+                    targetMonth.getMonthValue(), tenantId);
+        } catch (SecurityException se) {
+            response.sendError(403, "Merchant not accessible for this tenant");
+            return;
+        }
         String merchantName = resolvemerchantName(merchantId);
 
         byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName,
@@ -926,8 +938,17 @@ public class PdfController {
                 ));
             }
 
-            MerchantInsightsDTO data = coreClient.fetchInsights(merchantId,
-                    targetMonth.getYear(), targetMonth.getMonthValue());
+            // SECURITY FIX: pass the caller's tenantId so MerchantInsightService
+            // validates the merchant belongs to this tenant (IDOR guard).
+            Long tenantId = TenantContext.getCurrentTenant();
+            MerchantInsightsDTO data;
+            try {
+                data = coreClient.fetchInsights(merchantId, targetMonth.getYear(),
+                        targetMonth.getMonthValue(), tenantId);
+            } catch (SecurityException se) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "error", "Merchant not accessible for this tenant"));
+            }
 
             byte[] pdfBytes = playwrightPdfService.generatePdf(data, merchantName,
                     targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy")));
