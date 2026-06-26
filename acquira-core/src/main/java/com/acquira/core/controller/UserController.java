@@ -412,6 +412,14 @@ public class UserController {
         com.acquira.common.model.UserTenantAccess access = accessRepository.findById(accessId)
                 .orElseThrow(() -> new RuntimeException("Access not found"));
 
+        // Tenant-isolation fix: the access row must belong to the user named in the
+        // path (prevents acting on another user's access by guessing accessId), and
+        // a bank admin may only touch an access row for a tenant they administer.
+        if (!access.getUser().getId().equals(userId)
+                || !canAssignTenant(access.getTenant().getTenantId())) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this access record"));
+        }
+
         Long groupId = Long.valueOf(payload.get("groupId").toString());
         String roleInTenant = (String) payload.get("roleInTenant");
         Boolean isDefault = Boolean.TRUE.equals(payload.get("isDefault"));
@@ -442,7 +450,16 @@ public class UserController {
         if (!canActOnUser(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
         }
-        accessRepository.deleteById(accessId);
+        com.acquira.common.model.UserTenantAccess access = accessRepository.findById(accessId)
+                .orElseThrow(() -> new RuntimeException("Access not found"));
+        // The access row must belong to the path user, and a bank admin may only
+        // remove an access row for a tenant they administer (prevents cross-tenant
+        // deletes by guessing accessId).
+        if (!access.getUser().getId().equals(userId)
+                || !canAssignTenant(access.getTenant().getTenantId())) {
+            return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this access record"));
+        }
+        accessRepository.delete(access);
         return ResponseEntity.ok(Map.of("message", "Tenant access removed"));
     }
 

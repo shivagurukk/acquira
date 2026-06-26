@@ -58,7 +58,7 @@ public class ReportFilterController {
                 "SELECT s.sid as value, s.name || ' (' || s.sid || ')' as label FROM dim_store s ");
         List<Object> params = new ArrayList<>();
 
-        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id WHERE s.tenant_id = ? ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id WHERE s.tenant_id = ? ");
         params.add(tenantId);
 
         if (mid != null && !mid.isEmpty()) {
@@ -76,7 +76,7 @@ public class ReportFilterController {
         StringBuilder sql = new StringBuilder("SELECT t.tid as value, t.tid as label FROM dim_terminal t ");
         List<Object> params = new ArrayList<>();
 
-        sql.append("JOIN dim_store s ON t.store_id = s.store_id WHERE t.tenant_id = ? ");
+        sql.append("JOIN dim_store s ON t.store_id = s.store_id AND s.tenant_id = t.tenant_id WHERE t.tenant_id = ? ");
         params.add(tenantId);
 
         if (sid != null && !sid.isEmpty()) {

@@ -68,6 +68,18 @@ public class AdminController {
     @Transactional
     public ResponseEntity createUser(@RequestBody User user,
             @RequestParam(required = false) Long tenantId) {
+        // Tenant-isolation fix: a non-super-admin (bank admin) may only create+assign
+        // a user within the tenant currently active in their session. tenantId here is
+        // a request PARAM, so it is NOT validated by JwtRequestFilter (which only checks
+        // the X-Tenant-Id header) — without this guard a bank admin could assign a new
+        // user to any tenant by passing an arbitrary tenantId.
+        if (tenantId != null && !isSuperAdmin()) {
+            Long activeTenant = com.acquira.common.config.TenantContext.getCurrentTenant();
+            if (activeTenant == null || !activeTenant.equals(tenantId)) {
+                return ResponseEntity.status(403).body(java.util.Map.of(
+                        "error", "You may only create users within your active tenant"));
+            }
+        }
         // Validate password strength before encoding
         if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
             return ResponseEntity.badRequest().body(java.util.Map.of("error", "Password is required"));
@@ -142,6 +154,14 @@ public class AdminController {
             setting.setType("STRING");
         }
         return ResponseEntity.ok(tenantSettingRepository.save(setting));
+    }
+
+    private boolean isSuperAdmin() {
+        org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
     }
 
     private Long extractTenantId(jakarta.servlet.http.HttpServletRequest request) {

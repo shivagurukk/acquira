@@ -273,7 +273,7 @@ public class AnalyticsController {
             sql.append("       SUM(s.total_volume) AS totalVolume ");
             sql.append("FROM sum_daily_insight s ");
             sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
-            sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id ");
+            sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = :tid ");
             sql.append("WHERE EXTRACT(YEAR FROM s.business_date) = :yr ");
             sql.append("  AND s.tenant_id = :tid AND m.tenant_id = :tid ");
         } else {

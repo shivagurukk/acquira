@@ -413,43 +413,37 @@ public class PdfController {
                                     continue;
                                 }
 
-                                // Send email first
-                                boolean emailOk = false;
+                                // Queue the email (delivery is async via email_queue, with retries).
                                 try {
-                                    sendReportEmail(email, mName, batchMonthYear, pdfFile);
+                                    sendReportEmail(email, mid, mName, batchMonthYear, capturedYearMonth, pdfFile);
                                     emailSent++;
-                                    emailOk = true;
-                                    log.info("[EMAIL] Sent to {} ({})", mName, email);
+                                    log.info("[EMAIL] Queued for {} ({})", mName, email);
                                 } catch (Exception e) {
-                                    log.error("[EMAIL] Failed to send to {} ({}): {}", mName, email, e.getMessage());
+                                    log.error("[EMAIL] Failed to queue for {} ({}): {}", mName, email, e.getMessage());
                                     emailFailed++;
                                 }
 
-                                // Upload to S3 only if email was sent AND s3 is enabled (Case 2)
-                                // If email failed, skip S3 for this merchant (Case 3 n/a, Case 2 guard)
+                                // S3 archival is INDEPENDENT of email delivery: the PDF was
+                                // generated (existence checked above), so archive it. Delivery is
+                                // async through email_queue and retried on its own; gating archival
+                                // on it would either drop the archive on a transient SMTP failure
+                                // or — as the previous code did — run "after email" when the email
+                                // had only been QUEUED, not actually sent.
                                 if (s3Requested) {
-                                    if (emailOk) {
-                                        // Case 2: email=true, s3=true → upload after successful email
-                                        try {
-                                            boolean uploaded = reportS3UploadService.uploadIfEnabled(
-                                                threadTenantId, pdfFile, capturedBankCode, capturedYearMonth);
-                                            if (uploaded) {
-                                                s3Ok++;
-                                                log.info("[S3] Uploaded after email: {}", pdfFile.getFileName());
-                                            } else {
-                                                s3Skipped++;
-                                            }
-                                        } catch (Exception e) {
-                                            s3Fail++;
-                                            log.error("[S3] Upload failed for {}: {}", pdfFile.getFileName(), e.getMessage());
+                                    try {
+                                        boolean uploaded = reportS3UploadService.uploadIfEnabled(
+                                            threadTenantId, pdfFile, capturedBankCode, capturedYearMonth);
+                                        if (uploaded) {
+                                            s3Ok++;
+                                            log.info("[S3] Archived: {}", pdfFile.getFileName());
+                                        } else {
+                                            s3Skipped++;
                                         }
-                                    } else {
-                                        // Email failed → skip S3 for this merchant
-                                        s3Skipped++;
-                                        log.debug("[S3] Skipping S3 for {} — email failed", mName);
+                                    } catch (Exception e) {
+                                        s3Fail++;
+                                        log.error("[S3] Upload failed for {}: {}", pdfFile.getFileName(), e.getMessage());
                                     }
                                 }
-                                // Case 3: email=true, s3=false → nothing more to do after email
                             }
 
                             log.info("[POST-BATCH] Done — email sent:{} failed:{} | S3 ok:{} skipped:{} failed:{}",
@@ -509,7 +503,8 @@ public class PdfController {
 
     // ─── Email helper ──────────────────────────────────────────────────
 
-    private void sendReportEmail(String toEmail, String merchantName, String monthYear, Path pdfFile) {
+    private void sendReportEmail(String toEmail, Long merchantId, String merchantName,
+                                 String monthYear, String statementMonth, Path pdfFile) {
         // Enqueue into email_queue rather than sending inline. EmailQueueProcessor
         // (polls every 60s) picks the row up, builds the sender from the tenant's
         // active email_smtp_config (AES-decrypted password) and delivers it with
@@ -517,8 +512,10 @@ public class PdfController {
         // per-tenant path and means a slow SMTP server can't stall PDF batches.
         //
         // tenant_id is tagged from TenantContext so the processor resolves THIS
-        // tenant's SMTP config (not just "any active config"). is_html=false
-        // because the body below is plain text.
+        // tenant's SMTP config (not just "any active config"). merchant_id /
+        // merchant_name / statement_month are populated so the Email Manager
+        // stats & logs page (which filters by statement_month) shows these rows.
+        // is_html=false because the body below is plain text.
         Long tenantId = null;
         try {
             tenantId = TenantContext.getCurrentTenant();
@@ -531,9 +528,11 @@ public class PdfController {
         try {
             jdbcTemplate.update(
                 "INSERT INTO email_queue " +
-                "(tenant_id, recipient, subject, body, is_html, attachment_path, status, retry_count, created_at) " +
-                "VALUES (?, ?, ?, ?, FALSE, ?, 'PENDING', 0, NOW())",
-                tenantId, toEmail, subject, body, pdfFile.toString());
+                "(tenant_id, merchant_id, merchant_name, recipient, subject, body, is_html, " +
+                " attachment_path, statement_month, status, retry_count, created_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, FALSE, ?, ?, 'PENDING', 0, NOW())",
+                tenantId, merchantId, merchantName, toEmail, subject, body,
+                pdfFile.toString(), statementMonth);
             log.info("[EMAIL] Queued report for {} to {} (tenant={})", merchantName, toEmail, tenantId);
         } catch (Exception e) {
             // Re-thrown so the post-batch loop records this merchant as failed.
@@ -1009,11 +1008,19 @@ public class PdfController {
     }
 
     private String resolvemerchantName(Long merchantId) {
+        Long tenantId = null;
+        try { tenantId = TenantContext.getCurrentTenant(); } catch (Exception ignored) { /* leave null */ }
+
         String mid = null;
         try {
             var mOpt = merchantRepository.findById(merchantId);
             if (mOpt.isPresent()) {
                 var m = mOpt.get();
+                // Tenant guard: never resolve a name for a merchant outside the caller's tenant.
+                if (tenantId != null && m.getTenantId() != null && !tenantId.equals(m.getTenantId())) {
+                    log.warn("Merchant {} not in tenant {} — name resolution skipped", merchantId, tenantId);
+                    return "Merchant " + merchantId;
+                }
                 mid = m.getMid();
                 if (m.getName() != null && !m.getName().isBlank()) return m.getName();
             }
@@ -1021,49 +1028,61 @@ public class PdfController {
             log.warn("Failed to lookup merchant {}: {}", merchantId, e.getMessage());
         }
 
+        // mid is bank-assigned and NOT unique across tenants, so every staging lookup
+        // below is tenant-scoped to avoid bleeding another tenant's merchant name.
+        String tenantClause = (tenantId != null) ? "AND tenant_id = ? " : "";
         String resolved;
         if (mid != null) {
-            resolved = tryQueryMerchantName(
-                "SELECT merchant_name FROM stg_trnx_raw WHERE mid = ? AND merchant_name IS NOT NULL AND TRIM(merchant_name) <> '' LIMIT 1",
-                mid, "stg_trnx_raw (direct)");
-            if (resolved != null) { persistMerchantName(merchantId, resolved); return resolved; }
+            String sql = "SELECT merchant_name FROM stg_trnx_raw WHERE mid = ? " + tenantClause
+                + "AND merchant_name IS NOT NULL AND TRIM(merchant_name) <> '' LIMIT 1";
+            resolved = (tenantId != null)
+                ? tryQueryMerchantName(sql, "stg_trnx_raw (direct)", mid, tenantId)
+                : tryQueryMerchantName(sql, "stg_trnx_raw (direct)", mid);
+            if (resolved != null) { persistMerchantName(merchantId, tenantId, resolved); return resolved; }
         }
 
+        // Join path: pin the staging row to the SAME tenant as the dim_merchant row
+        // (s.tenant_id = m.tenant_id), so a same-mid row from another tenant can't match.
         resolved = tryQueryMerchantName(
-            "SELECT s.merchant_name FROM stg_trnx_raw s JOIN dim_merchant m ON s.mid = m.mid " +
+            "SELECT s.merchant_name FROM stg_trnx_raw s JOIN dim_merchant m ON s.mid = m.mid AND s.tenant_id = m.tenant_id " +
             "WHERE m.merchant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' LIMIT 1",
-            merchantId, "stg_trnx_raw (join)");
-        if (resolved != null) { persistMerchantName(merchantId, resolved); return resolved; }
+            "stg_trnx_raw (join)", merchantId);
+        if (resolved != null) { persistMerchantName(merchantId, tenantId, resolved); return resolved; }
 
         if (mid != null) {
-            resolved = tryQueryMerchantName(
-                "SELECT merchant_name FROM stg_merchant_master_raw WHERE mid = ? AND merchant_name IS NOT NULL AND TRIM(merchant_name) <> '' LIMIT 1",
-                mid, "stg_merchant_master_raw");
-            if (resolved != null) { persistMerchantName(merchantId, resolved); return resolved; }
+            String sql = "SELECT merchant_name FROM stg_merchant_master_raw WHERE mid = ? " + tenantClause
+                + "AND merchant_name IS NOT NULL AND TRIM(merchant_name) <> '' LIMIT 1";
+            resolved = (tenantId != null)
+                ? tryQueryMerchantName(sql, "stg_merchant_master_raw", mid, tenantId)
+                : tryQueryMerchantName(sql, "stg_merchant_master_raw", mid);
+            if (resolved != null) { persistMerchantName(merchantId, tenantId, resolved); return resolved; }
         }
 
         if (mid != null && !mid.isBlank()) return mid;
         return "Merchant " + merchantId;
     }
 
-    private String tryQueryMerchantName(String sql, Object param, String source) {
+    private String tryQueryMerchantName(String sql, String source, Object... params) {
         try {
-            String name = jdbcTemplate.queryForObject(sql, String.class, param);
+            String name = jdbcTemplate.queryForObject(sql, String.class, params);
             if (name != null && !name.isBlank()) {
                 log.info("Resolved merchant name from {}: '{}'", source, name.trim());
                 return name.trim();
             }
         } catch (Exception e) {
-            log.debug("No merchant_name from {} for param {}: {}", source, param, e.getMessage());
+            log.debug("No merchant_name from {}: {}", source, e.getMessage());
         }
         return null;
     }
 
-    private void persistMerchantName(Long merchantId, String name) {
+    private void persistMerchantName(Long merchantId, Long tenantId, String name) {
         try {
-            int updated = jdbcTemplate.update(
-                "UPDATE dim_merchant SET name = ? WHERE merchant_id = ? AND (name IS NULL OR TRIM(name) = '')",
-                name, merchantId);
+            String sql = "UPDATE dim_merchant SET name = ? WHERE merchant_id = ? "
+                + (tenantId != null ? "AND tenant_id = ? " : "")
+                + "AND (name IS NULL OR TRIM(name) = '')";
+            int updated = (tenantId != null)
+                ? jdbcTemplate.update(sql, name, merchantId, tenantId)
+                : jdbcTemplate.update(sql, name, merchantId);
             if (updated > 0) log.info("Persisted merchant name '{}' for id={}", name, merchantId);
         } catch (Exception e) {
             log.debug("Could not persist merchant name: {}", e.getMessage());

@@ -108,14 +108,14 @@ public class ExecutiveDashboardRepository {
         // Group by m.sales_user_id (Agent)
         // Join store -> merchant
         String chart1Sql = "SELECT m.sales_user_id, COUNT(st.store_id) as cnt " +
-                "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id " +
+                "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id AND m.tenant_id = st.tenant_id " +
                 "WHERE st.created_date BETWEEN :yearStart AND :asOfDate" + tStoreSt + " " +
                 "GROUP BY m.sales_user_id ORDER BY cnt DESC LIMIT 10";
         charts.put("ytdByAgent", queryList(chart1Sql, yearStart, asOfDate, "agent", "count", tenantId));
 
         // Chart 2: YTD by Program (Referral Partner)
         String chart2Sql = "SELECT m.referral_partner, COUNT(st.store_id) as cnt " +
-                "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id " +
+                "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id AND m.tenant_id = st.tenant_id " +
                 "WHERE st.created_date BETWEEN :yearStart AND :asOfDate" + tStoreSt + " " +
                 "GROUP BY m.referral_partner ORDER BY cnt DESC";
         charts.put("ytdByProgram", queryList(chart2Sql, yearStart, asOfDate, "program", "count", tenantId));
@@ -123,14 +123,14 @@ public class ExecutiveDashboardRepository {
         // Chart 3: MTD Volume Split by Program
         // Join sum_daily -> merchant
         String chart3Sql = "SELECT m.referral_partner, SUM(sdi.total_volume) as vol " +
-                "FROM sum_daily_insight sdi JOIN dim_merchant m ON sdi.merchant_id = m.merchant_id " +
+                "FROM sum_daily_insight sdi JOIN dim_merchant m ON sdi.merchant_id = m.merchant_id AND m.tenant_id = sdi.tenant_id " +
                 "WHERE sdi.business_date BETWEEN :monthStart AND :asOfDate" + tSdi + " " +
                 "GROUP BY m.referral_partner ORDER BY vol DESC";
         charts.put("mtdVolumeSplit", queryList(chart3Sql, monthStart, asOfDate, "program", "value", tenantId));
 
         // Chart 4: MTD SID by Program
         String chart4Sql = "SELECT m.referral_partner, COUNT(st.store_id) as cnt " +
-                "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id " +
+                "FROM dim_store st JOIN dim_merchant m ON st.merchant_id = m.merchant_id AND m.tenant_id = st.tenant_id " +
                 "WHERE st.created_date BETWEEN :monthStart AND :asOfDate" + tStoreSt + " " +
                 "GROUP BY m.referral_partner ORDER BY cnt DESC";
         charts.put("mtdSidByProgram", queryList(chart4Sql, monthStart, asOfDate, "program", "count", tenantId));

@@ -99,11 +99,16 @@ public class EmailQueueProcessor {
 
                 if (attachmentPath != null) {
                     File file = new File(attachmentPath);
-                    if (file.exists()) {
-                        helper.addAttachment(file.getName(), file);
-                    } else {
-                        log.warn("[EMAIL-QUEUE] Attachment not found for email #{}: {}", id, attachmentPath);
+                    if (!file.exists()) {
+                        // The body promises an attached PDF — never deliver it without one.
+                        // Treat a missing attachment as a retryable failure rather than send an
+                        // empty "please find attached" email and (worse) mark it SENT.
+                        log.warn("[EMAIL-QUEUE] Attachment missing for email #{} ({}) — not sending, will retry",
+                                id, attachmentPath);
+                        markFailedOrRetry(id, retryCount, "Attachment file not found: " + attachmentPath);
+                        continue;
                     }
+                    helper.addAttachment(file.getName(), file);
                 }
 
                 smtp.sender.send(message);
@@ -144,14 +149,19 @@ public class EmailQueueProcessor {
      * AES-256-GCM encrypted and is decrypted here.
      */
     private SmtpContext buildSmtpContext(Long tenantId) {
+        if (tenantId == null) {
+            // No tenant on the row → do NOT fall back to "any active config": that would
+            // let a queued email be delivered through an arbitrary tenant's SMTP server.
+            // Every enqueue path tags tenant_id, so a null here is a bug to surface, not
+            // paper over. The row is failed/retried with a clear reason by the caller.
+            log.warn("[EMAIL-QUEUE] Queue row has no tenant_id — refusing to pick an arbitrary SMTP config");
+            return null;
+        }
         try {
             String sql = "SELECT host, port, username, password, auth_enabled, starttls_enabled, " +
                     "ssl_enabled, from_address, connection_timeout, read_timeout, write_timeout " +
-                    "FROM email_smtp_config WHERE is_active = true" +
-                    (tenantId != null ? " AND tenant_id = ?" : "") + " LIMIT 1";
-            Map<String, Object> cfg = (tenantId != null)
-                    ? jdbc.queryForMap(sql, tenantId)
-                    : jdbc.queryForMap(sql);
+                    "FROM email_smtp_config WHERE is_active = true AND tenant_id = ? LIMIT 1";
+            Map<String, Object> cfg = jdbc.queryForMap(sql, tenantId);
 
             JavaMailSenderImpl sender = new JavaMailSenderImpl();
             sender.setHost((String) cfg.get("host"));

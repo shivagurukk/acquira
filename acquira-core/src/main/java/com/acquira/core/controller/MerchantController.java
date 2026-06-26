@@ -154,7 +154,7 @@ public class MerchantController {
                    COALESCE(SUM(CASE WHEN s.is_opt_in THEN s.total_volume ELSE 0 END), 0) as dcc_optin_vol,
                    COALESCE(SUM(s.total_volume), 0) as total_vol_for_rate
             FROM dim_merchant m
-            LEFT JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
+            LEFT JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id
                 AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
             WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
             GROUP BY m.merchant_id, m.name, m.mid, m.status, m.city
@@ -167,7 +167,7 @@ public class MerchantController {
                    COALESCE(SUM(s.total_volume), 0) as volume,
                    COALESCE(SUM(s.total_txns), 0) as txns
             FROM dim_merchant m
-            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
+            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id
                 AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
             WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
             GROUP BY m.merchant_id, TO_CHAR(s.business_date, 'YYYY-MM')
@@ -179,7 +179,7 @@ public class MerchantController {
             SELECT m.merchant_id, COALESCE(s.card_scheme, 'OTHER') as name,
                    COALESCE(SUM(s.total_volume), 0) as volume
             FROM dim_merchant m
-            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
+            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id
                 AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
             WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
             GROUP BY m.merchant_id, s.card_scheme
@@ -190,7 +190,7 @@ public class MerchantController {
             SELECT m.merchant_id, COALESCE(s.card_type, 'OTHER') as name,
                    COALESCE(SUM(s.total_volume), 0) as volume
             FROM dim_merchant m
-            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id
+            JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id
                 AND s.business_date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
             WHERE m.merchant_id IN (%s) AND m.tenant_id = ?
             GROUP BY m.merchant_id, s.card_type

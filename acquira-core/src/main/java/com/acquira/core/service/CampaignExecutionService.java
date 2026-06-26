@@ -45,11 +45,12 @@ public class CampaignExecutionService {
     /**
      * Build a JavaMailSender from the active SMTP config in the database.
      */
-    private JavaMailSenderImpl buildMailSender() {
+    private JavaMailSenderImpl buildMailSender(Long tenantId) {
         try {
             Map<String, Object> cfg = jdbcTemplate.queryForMap(
                 "SELECT host, port, username, password, auth_enabled, starttls_enabled, ssl_enabled, " +
-                "connection_timeout, read_timeout, write_timeout FROM email_smtp_config WHERE is_active = true LIMIT 1");
+                "connection_timeout, read_timeout, write_timeout FROM email_smtp_config " +
+                "WHERE is_active = true AND tenant_id = ? LIMIT 1", tenantId);
 
             JavaMailSenderImpl sender = new JavaMailSenderImpl();
             sender.setHost((String) cfg.get("host"));
@@ -85,21 +86,21 @@ public class CampaignExecutionService {
         }
     }
 
-    private String getFromAddress() {
+    private String getFromAddress(Long tenantId) {
         try {
             return jdbcTemplate.queryForObject(
-                "SELECT from_address FROM email_smtp_config WHERE is_active = true LIMIT 1",
-                String.class);
+                "SELECT from_address FROM email_smtp_config WHERE is_active = true AND tenant_id = ? LIMIT 1",
+                String.class, tenantId);
         } catch (Exception e) {
             return "noreply@acquira.com";
         }
     }
 
-    private int getRateLimitMs() {
+    private int getRateLimitMs(Long tenantId) {
         try {
             Integer rate = jdbcTemplate.queryForObject(
-                "SELECT rate_limit_ms FROM email_smtp_config WHERE is_active = true LIMIT 1",
-                Integer.class);
+                "SELECT rate_limit_ms FROM email_smtp_config WHERE is_active = true AND tenant_id = ? LIMIT 1",
+                Integer.class, tenantId);
             return rate != null ? rate : 200;
         } catch (Exception e) {
             return 200;
@@ -129,10 +130,11 @@ public class CampaignExecutionService {
 
             log.info("[Campaign] '{}' — sending to {} recipients", campaign.getName(), recipients.size());
 
-            // 2. Build mail sender from DB config
-            JavaMailSenderImpl mailSender = buildMailSender();
-            String fromAddress = getFromAddress();
-            int rateLimitMs = getRateLimitMs();
+            // 2. Build mail sender from THIS tenant's active SMTP config (tenant-scoped
+            //    so a campaign can never send through another tenant's mail server / from-address).
+            JavaMailSenderImpl mailSender = buildMailSender(tenantId);
+            String fromAddress = getFromAddress(tenantId);
+            int rateLimitMs = getRateLimitMs(tenantId);
             int sent = 0, failed = 0;
 
             // 3. Send to each recipient

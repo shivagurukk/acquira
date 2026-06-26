@@ -80,9 +80,9 @@ public class InsightController {
             FROM (
                 SELECT 1
                 FROM sum_daily_insight s
-                JOIN dim_merchant m ON s.merchant_id = m.merchant_id
-                JOIN dim_store st ON s.store_id = st.store_id
-                JOIN dim_terminal t ON s.terminal_id = t.terminal_id
+                JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id
+                JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id
+                JOIN dim_terminal t ON s.terminal_id = t.terminal_id AND t.tenant_id = s.tenant_id
                 REQ_WHERE
                 GROUP BY m.mid, m.name, st.sid, t.tid, st.mcc, s.destination, s.card_type, s.channel, m.sales_email, s.is_opt_in, s.business_date
             ) as cnt
@@ -108,9 +108,9 @@ public class InsightController {
                 SUM(s.total_volume) as total_volume,
                 SUM(s.total_msf) as total_msf
             FROM sum_daily_insight s
-            JOIN dim_merchant m ON s.merchant_id = m.merchant_id
-            JOIN dim_store st ON s.store_id = st.store_id
-            JOIN dim_terminal t ON s.terminal_id = t.terminal_id
+            JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id
+            JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id
+            JOIN dim_terminal t ON s.terminal_id = t.terminal_id AND t.tenant_id = s.tenant_id
             REQ_WHERE
             GROUP BY
                 m.mid, m.name, st.sid, t.tid, st.mcc,

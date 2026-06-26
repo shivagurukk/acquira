@@ -222,8 +222,8 @@ public class BusinessController {
                 // accept that approximation and document it in the response.
                 String activeSql =
                                 "SELECT COUNT(DISTINCT s.merchant_id) FROM sum_daily_insight s " +
-                                (needMerchant ? "JOIN dim_merchant m ON s.merchant_id = m.merchant_id " : "") +
-                                (needStore    ? "LEFT JOIN dim_store st ON s.store_id = st.store_id " : "") +
+                                (needMerchant ? "JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id " : "") +
+                                (needStore    ? "LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id " : "") +
                                 "WHERE s.tenant_id = :tid " +
                                 "  AND s.business_date BETWEEN :dailyStart AND :endDate " +
                                 "  AND s.total_volume > 0 " +
