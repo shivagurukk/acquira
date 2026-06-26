@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   DatabaseZap, Play, Eye, Loader2, CheckCircle, XCircle, AlertTriangle,
   ArrowRightLeft, Clock, ChevronDown, ChevronUp, RefreshCw, Table2,
-  Columns, Calendar, Hash, Zap, FileText, Pause, Info
+  Columns, Calendar, Hash, Zap, FileText, Pause, Info, Trash2
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext'; // #12: Dynamic tenantId
@@ -340,6 +340,100 @@ const ProgressMonitor = ({ progress, onRefresh }) => {
 // ═══════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════
+const DeleteDayPanel = ({ activeTenantId }) => {
+  const [date, setDate] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const reset = () => { setConfirm(false); setResult(null); };
+
+  const handleDelete = async () => {
+    setLoading(true);
+    setResult(null);
+    if (!activeTenantId) {
+      setResult({ error: 'No active tenant. Please re-login or pick a tenant.' });
+      setLoading(false); setConfirm(false);
+      return;
+    }
+    try {
+      const res = await api.post('/admin/migration/delete-day', {
+        tenantId: activeTenantId,
+        date,
+        confirm: true
+      });
+      setResult(res.data);
+    } catch (e) {
+      setResult({ error: e.response?.data?.error || e.message || 'Delete failed' });
+    } finally { setLoading(false); setConfirm(false); }
+  };
+
+  return (
+    <div style={{ ...card, marginTop: 20, border: '1px solid #fecaca' }}>
+      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8, color: '#b91c1c' }}>
+        <Trash2 size={18} color="#dc2626" /> Delete a Day
+      </h3>
+      <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 16px' }}>
+        Super-admin only. Permanently removes <strong>all</strong> transactions (AMS and CMM) for the
+        selected date in the current tenant, and clears every summary so dashboards show the day as empty.
+        The monthly totals are rebuilt from the remaining days. Re-upload that day's file to restore it.
+      </p>
+
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <label style={labelStyle}>Date to delete <span style={{ color: '#dc2626' }}>*</span></label>
+          <input style={{ ...inputStyle, width: 200 }} type="date" value={date}
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={e => { setDate(e.target.value); reset(); }} />
+        </div>
+
+        {!confirm ? (
+          <button
+            style={{ ...btn(date ? '#dc2626' : '#d1d5db', '#fff'), opacity: date ? 1 : 0.5 }}
+            disabled={!date} onClick={() => setConfirm(true)}>
+            <Trash2 size={15} /> Delete This Day
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: '#dc2626', fontWeight: 600 }}>
+              Permanently delete {date}?
+            </span>
+            <button style={btn('#dc2626', '#fff')} onClick={handleDelete} disabled={loading}>
+              {loading ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+              Yes, delete
+            </button>
+            <button style={btn('#f3f4f6', '#374151')} onClick={() => setConfirm(false)}>Cancel</button>
+          </div>
+        )}
+      </div>
+
+      {result && (
+        <div style={{ marginTop: 16 }}>
+          {result.error ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#dc2626', fontSize: 13 }}>
+              <XCircle size={18} /> <span style={{ fontWeight: 600 }}>{result.error}</span>
+            </div>
+          ) : (
+            <div style={{ padding: 14, background: '#f0fdf4', borderRadius: 8, border: '1px solid #86efac' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, color: '#16a34a' }}>
+                <CheckCircle size={18} />
+                <span style={{ fontWeight: 600 }}>Deleted {result.date} — dashboards now show this day as empty.</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {Object.entries(result.removed || {}).map(([tbl, count]) => (
+                  <span key={tbl} style={{ padding: '2px 8px', background: '#fff', borderRadius: 6, fontSize: 11, fontFamily: 'monospace', color: '#374151', border: '1px solid #e5e7eb' }}>
+                    {tbl}: {String(count)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const DataMigration = () => {
   const { activeTenantId } = useAuth(); // #12: Dynamic tenantId from auth context
 
@@ -511,6 +605,9 @@ const DataMigration = () => {
           )}
         </div>
       </div>
+
+      {/* Delete a day (super-admin correction tool) */}
+      <DeleteDayPanel activeTenantId={activeTenantId} />
 
       {/* Spin animation */}
       <style>{`.spin { animation: spin 1s linear infinite; } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>

@@ -232,6 +232,17 @@ const PremiumReportHeader = ({
                 </Box>
             )}
 
+            {/* ── Row 2b: custom controls when the date-preset bar is hidden ──
+                Pages like the Daily Merchant Dashboard pass hideDatePresets (they
+                use a month/year model, not a start/end range) but STILL supply
+                custom controls via children (month picker, quick buttons, etc.).
+                Without this block those controls would never render. ── */}
+            {hideDatePresets && children && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5, flexWrap: 'wrap' }}>
+                    {children}
+                </Box>
+            )}
+
             {/* ── Row 3: Active Filter Chips ── */}
             {filters && !loading && (
                 <ActiveFilterChips filters={filters} onRemove={handleRemoveFilter} />

@@ -61,6 +61,14 @@ public class FileUploadService {
     @org.springframework.beans.factory.annotation.Value("${app.upload.allowed-paths:/opt/acquira/data,data/uploads,data/imports}")
     private String allowedPathsCsv;
 
+    /**
+     * Global transaction load mode: REPLACE (default) or APPEND. Applies to ALL transaction
+     * uploads (AMS and CMM alike). JCB* files always force APPEND regardless of this flag.
+     * Merchant files ignore this entirely (always UPSERT).
+     */
+    @org.springframework.beans.factory.annotation.Value("${acquira.load.mode:REPLACE}")
+    private String globalLoadMode;
+
     public FileUploadService(JobLauncher jobLauncher,
             @Qualifier("merchantMasterJob") Job merchantMasterJob,
             @Qualifier("transactionLoadJob") Job transactionLoadJob,
@@ -112,8 +120,31 @@ public class FileUploadService {
         return n.toUpperCase().startsWith("JCB");
     }
 
-    private static String loadModeFor(String fileName) {
-        return isAppendModeFileName(fileName) ? "APPEND" : "REPLACE";
+    /**
+     * AMS detection: a transaction file whose (original) name starts with "AMS_" carries
+     * FINAL decimal amounts already (no decimal_notation_value division needed). CMM files
+     * (any other name) keep the existing dividing behaviour. Same temp-prefix stripping as
+     * isAppendModeFileName so it works for single, multi, and server-folder uploads alike.
+     * Returns "AMS" or "CMM" — passed as the inputType job parameter to transactionLoadJob.
+     */
+    static String inputTypeFor(String name) {
+        if (name == null) return "CMM";
+        String n = name.trim();
+        int slash = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
+        if (slash >= 0 && slash < n.length() - 1) n = n.substring(slash + 1);
+        n = n.replaceFirst("^\\d{10,}_", "");
+        return n.toUpperCase().startsWith("AMS_") ? "AMS" : "CMM";
+    }
+
+    /**
+     * Load mode for a TRANSACTION file:
+     *   - JCB* files are ALWAYS APPEND (preserves existing behaviour, independent of config).
+     *   - every other file follows the global acquira.load.mode flag (REPLACE by default).
+     * Merchant files never call this — they are always UPSERT.
+     */
+    private String loadModeFor(String fileName) {
+        if (isAppendModeFileName(fileName)) return "APPEND";
+        return "APPEND".equalsIgnoreCase(globalLoadMode) ? "APPEND" : "REPLACE";
     }
 
     /** Holder for the result of a single-pass file scan. */
@@ -337,6 +368,7 @@ public class FileUploadService {
                         .addLong("tenantId", targetTenantId)
                         .addString("fullPath", filePath)
                         .addString("loadMode", loadModeFor(file.getOriginalFilename()))
+                        .addString("inputType", inputTypeFor(file.getOriginalFilename()))
                         .addLong("startedAt", System.currentTimeMillis())
                         .toJobParameters();
                 org.springframework.batch.core.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
@@ -715,6 +747,7 @@ public class FileUploadService {
                     .addLong("tenantId", targetTenantId)
                     .addString("fullPath", filePath)
                     .addString("loadMode", loadModeFor(file.getName()))
+                    .addString("inputType", inputTypeFor(file.getName()))
                     .addLong("startedAt", System.currentTimeMillis())
                     .toJobParameters();
 

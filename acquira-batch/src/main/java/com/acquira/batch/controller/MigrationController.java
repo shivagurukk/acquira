@@ -27,6 +27,7 @@ public class MigrationController {
     // #8: Validation pattern for table names
     private static final java.util.regex.Pattern SAFE_TABLE = java.util.regex.Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_]{0,63}$");
     private static final java.util.regex.Pattern MONTH_PATTERN = java.util.regex.Pattern.compile("^\\d{4}-(0[1-9]|1[0-2])$");
+    private static final java.util.regex.Pattern DATE_PATTERN = java.util.regex.Pattern.compile("^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$");
 
     @PostMapping("/start")
     public ResponseEntity<Map<String, Object>> startMigration(@RequestBody Map<String, Object> request) {
@@ -93,6 +94,56 @@ public class MigrationController {
     @GetMapping("/progress")
     public ResponseEntity<Map<String, Object>> getProgress() {
         return ResponseEntity.ok(migrationService.getProgress());
+    }
+
+    /**
+     * SUPER-ADMIN ONLY: full-day delete (correction tool).
+     *
+     * Wipes ALL transactions (both AMS and CMM) for one tenant + one date, and cleans up
+     * every summary table (rebuilding the monthly rollups from the remaining days) so the
+     * dashboards show the day as empty. Requires an explicit confirm flag so it can't fire
+     * by accident. The day is left empty — re-upload a file for that date to repopulate.
+     *
+     * Body: { "tenantId": <id>, "date": "YYYY-MM-DD", "confirm": true }
+     */
+    @PostMapping("/delete-day")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<Map<String, Object>> deleteDay(@RequestBody Map<String, Object> request) {
+        if (request.get("tenantId") == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "tenantId is required"));
+        }
+        String date = request.get("date") == null ? null : request.get("date").toString().trim();
+        if (date == null || !DATE_PATTERN.matcher(date).matches()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "date must be in YYYY-MM-DD format"));
+        }
+        // Require explicit confirmation — this is a destructive, irreversible operation.
+        Object confirm = request.get("confirm");
+        boolean confirmed = Boolean.TRUE.equals(confirm) || "true".equalsIgnoreCase(String.valueOf(confirm));
+        if (!confirmed) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "This permanently deletes all transactions for the day. Resend with \"confirm\": true."));
+        }
+
+        Long tenantId = Long.valueOf(request.get("tenantId").toString());
+        java.time.LocalDate parsedDate = java.time.LocalDate.parse(date);
+
+        if (auditService != null) {
+            auditService.log("DELETE_DAY",
+                "Super-admin full-day delete: tenant=" + tenantId + " date=" + date);
+        }
+
+        try {
+            Map<String, Object> removed = migrationService.deleteDay(tenantId, parsedDate);
+            Map<String, Object> resp = new java.util.LinkedHashMap<>();
+            resp.put("status", "DELETED");
+            resp.put("tenantId", tenantId);
+            resp.put("date", date);
+            resp.put("removed", removed);
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of(
+                "status", "FAILED", "error", String.valueOf(e.getMessage())));
+        }
     }
 
     @PostMapping("/dry-run")

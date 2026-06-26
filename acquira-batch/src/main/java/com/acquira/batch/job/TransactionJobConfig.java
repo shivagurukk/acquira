@@ -496,11 +496,20 @@ public class TransactionJobConfig {
     }
 
     @Bean @StepScope public ItemProcessor<StagingTransaction, StagingTransaction> transactionTenantProcessor(
-            @Value("#{jobParameters['tenantId']}") Long tenantId) {
+            @Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("#{jobParameters['inputType']}") String inputType) {
         final RefTableCache refs = loadOrGetRefTables();
         final java.util.Map<String, String> cardSchemeToType = refs.cardSchemeToType;
         final java.util.Map<String, String> isoNumericToCurrencyCode = refs.isoNumericToCurrencyCode;
         final java.util.Map<String, Integer> currencyCodeToDecimal = refs.currencyCodeToDecimal;
+
+        // AMS input files already carry FINAL decimal amounts (txn, store-base, interchange),
+        // so the decimal-scaling divisions must be skipped for them. CMM (default / null)
+        // keeps the existing behaviour unchanged. Computed ONCE per processor build, not per row.
+        final boolean rawAmounts = "AMS".equalsIgnoreCase(inputType);
+        if (rawAmounts) {
+            log.info("transactionTenantProcessor: AMS input - skipping amount divisions (txn, store-base, interchange).");
+        }
 
         return item -> {
             item.setTenantId(tenantId);
@@ -521,12 +530,15 @@ public class TransactionJobConfig {
             }
 
             // PERF FIX: decimalDivisor() - cached BigDecimal, no per-row allocation.
+            // NOTE: currency-CODE resolution (ISO-numeric -> 'AED' etc.) still runs for BOTH
+            // CMM and AMS so the stored currency label is correct. Only the numeric DIVISION
+            // is conditional: CMM divides by the currency's decimal_notation_value; AMS does not.
             String rawTxnCcy = item.getTxnCurrency();
             if (rawTxnCcy != null && !rawTxnCcy.isBlank()) {
                 int txnDecVal = resolveDecimal(rawTxnCcy, isoNumericToCurrencyCode, currencyCodeToDecimal, "Txn");
                 String txnCode = resolveCurrencyCode(rawTxnCcy, isoNumericToCurrencyCode, currencyCodeToDecimal);
                 if (txnCode != null) item.setTxnCurrency(txnCode);
-                if (item.getTxnCurrencyAmount() != null) {
+                if (!rawAmounts && item.getTxnCurrencyAmount() != null) {
                     item.setTxnCurrencyAmount(
                         item.getTxnCurrencyAmount().divide(decimalDivisor(txnDecVal), 2, java.math.RoundingMode.HALF_UP));
                 }
@@ -535,13 +547,13 @@ public class TransactionJobConfig {
             int stlDecVal = resolveDecimal(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal, "Store base");
             String stlCode = resolveCurrencyCode(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal);
             if (stlCode != null) item.setStoreBaseCurrency(stlCode);
-            if (item.getStoreBaseCurrencyAmount() != null) {
+            if (!rawAmounts && item.getStoreBaseCurrencyAmount() != null) {
                 item.setStoreBaseCurrencyAmount(
                     item.getStoreBaseCurrencyAmount().divide(decimalDivisor(stlDecVal), 2, java.math.RoundingMode.HALF_UP));
             }
             item.setTotalAmountSettled(null);
 
-            if (item.getInterchangeFee() != null) {
+            if (!rawAmounts && item.getInterchangeFee() != null) {
                 item.setInterchangeFee(item.getInterchangeFee().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
             }
 

@@ -24,6 +24,15 @@ const PALETTE_BG = ['#eef1ff', '#e6f8f2', '#fef9ec', '#fff0f0'];
 const fmtCompact = (v) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(v || 0);
 const fmtNum = (v) => new Intl.NumberFormat('en-US').format(v || 0);
 const pct = (v) => `${(v || 0).toFixed(1)}%`;
+// Local YYYY-MM-DD formatter (avoids toISOString() UTC shift). Module-scoped so
+// computeRange() below can use it — it must NOT live inside the component, or
+// computeRange (called in a useState initializer) throws "fmtLocal is not defined".
+const fmtLocal = (d) => {
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const dy = String(d.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${dy}`;
+};
 
 // ── Date preset helpers ─────────────────────────────────────────────
 const PRESETS = [
@@ -51,7 +60,7 @@ const Pill = ({ label, color, bg }) => (
     </Box>
 );
 
-const KpiRow = ({ label, icon: Icon, values, colors, leader, delta, formatter = fmt }) => (
+const KpiRow = ({ label, icon: Icon, values, colors, leader, delta, formatter }) => (
     <Box sx={{ display:'grid', gridTemplateColumns:`160px repeat(${values.length}, 1fr)`, alignItems:'center', gap:1, py:1.5, borderBottom:'0.5px solid var(--color-border-tertiary)' }}>
         <Stack direction="row" spacing={0.75} alignItems="center">
             {Icon && <Icon size={13} color="var(--color-text-secondary)" />}
@@ -104,12 +113,6 @@ const EmptyState = () => (
 const MerchantComparison = () => {
     const { currencySymbol } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
-    const fmtLocal = (d) => {
-        const yr = d.getFullYear();
-        const mo = String(d.getMonth() + 1).padStart(2, '0');
-        const dy = String(d.getDate()).padStart(2, '0');
-        return `${yr}-${mo}-${dy}`;
-    };
     const [options, setOptions] = useState([]);
     const [loadingOptions, setLoadingOptions] = useState(false);
     const [selected, setSelected] = useState([]);
@@ -422,17 +425,17 @@ const MerchantComparison = () => {
 
                         <KpiRow label="Total Volume" icon={DollarSign}
                             values={merchants.map(m => m.totalVolume)}
-                            colors={PALETTE} leader={leaderIdx('totalVolume')} delta={deltas.totalVolume} />
+                            colors={PALETTE} leader={leaderIdx('totalVolume')} delta={deltas.totalVolume} formatter={fmt} />
                         <KpiRow label="Transactions" icon={Hash}
                             values={merchants.map(m => m.totalTxns)}
                             colors={PALETTE} leader={leaderIdx('totalTxns')} delta={deltas.totalTxns}
                             formatter={fmtNum} />
                         <KpiRow label="Avg Ticket Size" icon={TrendingUp}
                             values={merchants.map(m => m.avgTxnValue)}
-                            colors={PALETTE} leader={leaderIdx('avgTxnValue')} delta={deltas.avgTxnValue} />
+                            colors={PALETTE} leader={leaderIdx('avgTxnValue')} delta={deltas.avgTxnValue} formatter={fmt} />
                         <KpiRow label="Total Margin" icon={Target}
                             values={merchants.map(m => m.totalMargin)}
-                            colors={PALETTE} leader={leaderIdx('totalMargin')} delta={deltas.totalMargin} />
+                            colors={PALETTE} leader={leaderIdx('totalMargin')} delta={deltas.totalMargin} formatter={fmt} />
                         <KpiRow label="DCC Opt-in Rate" icon={Zap}
                             values={merchants.map(m => m.dccOptinRate)}
                             colors={PALETTE} leader={-1} delta={0} formatter={pct} />

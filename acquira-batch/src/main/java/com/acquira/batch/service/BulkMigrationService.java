@@ -207,6 +207,112 @@ public class BulkMigrationService {
     }
 
     /**
+     * SUPER-ADMIN FULL-DAY DELETE (correction tool).
+     *
+     * Removes ALL transactions (both AMS and CMM — there is no source discriminator)
+     * for one tenant + one calendar date, and cleans up every summary table so the
+     * dashboards reflect the deletion immediately. The day is left EMPTY (no repopulate);
+     * re-upload a file for that date to bring it back.
+     *
+     * Why this is more than a single DELETE:
+     *   - Daily summary tables (sum_daily_*) hold that date's aggregates → deleted by date.
+     *   - Monthly rollups (sum_monthly_bank) span the whole month → we cannot just drop the
+     *     day; we delete the month row and REBUILD it from the REMAINING sum_daily_bank rows,
+     *     so the rest of the month survives intact.
+     *   - sum_monthly_card aggregates the month per card → same treatment (delete month, rebuild
+     *     from remaining fact rows for that month).
+     *
+     * Everything runs in ONE transaction so a failure leaves the data untouched.
+     *
+     * @return a summary map of how many rows were removed from each table.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public Map<String, Object> deleteDay(Long tenantId, LocalDate date) {
+        if (tenantId == null) throw new IllegalArgumentException("tenantId is required");
+        if (date == null) throw new IllegalArgumentException("date is required");
+
+        YearMonth ym = YearMonth.from(date);
+        LocalDate monthStart = ym.atDay(1);
+        LocalDate monthEnd = ym.atEndOfMonth();
+        int monthKey = ym.getYear() * 100 + ym.getMonthValue();
+
+        Map<String, Object> deleted = new LinkedHashMap<>();
+
+        // 1. Fact table — the source of truth. Both AMS and CMM rows for this date.
+        deleted.put("fact_transaction", jdbcTemplate.update(
+            "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) = ?",
+            tenantId, date));
+
+        // 2. Daily summary tables — all keyed by (tenant_id, business_date).
+        String[] dailyTables = {
+            "sum_daily_bank", "sum_daily_merchant", "sum_daily_merchant_attribute",
+            "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
+            "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc"
+        };
+        for (String tbl : dailyTables) {
+            deleted.put(tbl, jdbcTemplate.update(
+                "DELETE FROM " + tbl + " WHERE tenant_id = ? AND business_date = ?",
+                tenantId, date));
+        }
+
+        // 3. merchant_activity_summary / merchant_opportunity_score are keyed by calc_date.
+        deleted.put("merchant_activity_summary", jdbcTemplate.update(
+            "DELETE FROM merchant_activity_summary WHERE tenant_id = ? AND calc_date = ?",
+            tenantId, date));
+        deleted.put("merchant_opportunity_score", jdbcTemplate.update(
+            "DELETE FROM merchant_opportunity_score WHERE tenant_id = ? AND calc_date = ?",
+            tenantId, date));
+
+        // 4. sum_monthly_card — month-grained. Delete the month, rebuild from REMAINING fact rows.
+        jdbcTemplate.update("DELETE FROM sum_monthly_card WHERE tenant_id = ? AND month_key = ?",
+            tenantId, monthKey);
+        int cardRebuilt = jdbcTemplate.update(
+            "INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend) " +
+            "SELECT tenant_id, merchant_id, ?, card_number, COUNT(*), SUM(store_base_currency_amount) " +
+            "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL " +
+            "AND DATE(payment_date) BETWEEN ? AND ? " +
+            "GROUP BY tenant_id, merchant_id, card_number",
+            monthKey, tenantId, monthStart, monthEnd);
+        deleted.put("sum_monthly_card_rebuilt", cardRebuilt);
+
+        // 5. sum_monthly_bank — month rollup. Delete the month row, rebuild from the REMAINING
+        //    sum_daily_bank rows (which no longer include the deleted day).
+        jdbcTemplate.update("DELETE FROM sum_monthly_bank WHERE tenant_id = ? AND month_key = ?",
+            tenantId, monthKey);
+        int bankRebuilt = jdbcTemplate.update(
+            "INSERT INTO sum_monthly_bank (tenant_id, month_key, total_txns, total_volume, total_msf, " +
+            "total_interchange, total_scheme_fee, total_vat, total_net_revenue) " +
+            "SELECT tenant_id, ?, SUM(total_txns), SUM(total_volume), SUM(total_msf), " +
+            "SUM(total_interchange), SUM(total_scheme_fee), SUM(total_vat), SUM(total_net_revenue) " +
+            "FROM sum_daily_bank WHERE tenant_id=? AND business_date BETWEEN ? AND ? " +
+            "GROUP BY tenant_id",
+            monthKey, tenantId, monthStart, monthEnd);
+        deleted.put("sum_monthly_bank_rebuilt", bankRebuilt);
+
+        // 6. sum_monthly_merchant_metrics — month-grained dashboard metrics. If no daily rows
+        //    remain for the month, the metrics for it are stale → delete them. If days remain,
+        //    leave them; they recompute on the next upload for the month.
+        Integer remainingDays = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM sum_daily_merchant WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
+            Integer.class, tenantId, monthStart, monthEnd);
+        if (remainingDays == null || remainingDays == 0) {
+            deleted.put("sum_monthly_merchant_metrics", jdbcTemplate.update(
+                "DELETE FROM sum_monthly_merchant_metrics WHERE tenant_id = ? AND month_year = ?",
+                tenantId, ym.toString()));
+        } else {
+            deleted.put("sum_monthly_merchant_metrics", "kept (" + remainingDays + " days remain in month)");
+        }
+
+        // 7. merchant_daily_metrics (reporting) — keyed by report_date.
+        deleted.put("merchant_daily_metrics", jdbcTemplate.update(
+            "DELETE FROM merchant_daily_metrics WHERE tenant_id = ? AND report_date = ?",
+            tenantId, date));
+
+        log.warn("[DELETE-DAY] tenant={} date={} removed: {}", tenantId, date, deleted);
+        return deleted;
+    }
+
+    /**
      * Migrate one month of data: source_table → fact_transaction
      */
     private long migrateMonth(Long tenantId, String sourceTable, YearMonth ym,

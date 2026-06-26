@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
-import { Box, Paper, Typography, Avatar, Stack, Tooltip, MenuItem, Select, FormControl, Chip, Card, CardContent, Autocomplete, TextField } from '@mui/material';
+import { Box, Paper, Typography, Avatar, Stack, Tooltip, MenuItem, Select, FormControl, Chip, Card, CardContent, Autocomplete, TextField, Button } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, Activity } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
@@ -67,12 +67,14 @@ const DailyMerchantDashboard = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filterOptions, setFilterOptions] = useState({ sids: [], mids: [] });
-    // FIX (was defaulting to current calendar month, e.g. May 2026): start with
-    // null so we don't fire a load with no-data dates. We populate from
-    // /api/business/data-bounds first, then trigger fetchDashboardData.
+    // Default to the CURRENT calendar month. The user can switch to last month
+    // via a quick button, or pick any month/year. If the chosen month has no
+    // data we surface a "jump to latest available" button instead of silently
+    // walking backwards (which used to land on a random old month like Apr 2025).
+    const _now = new Date();
     const [filters, setFilters] = useState({
-        year: null,
-        month: null,
+        year: _now.getFullYear(),
+        month: _now.getMonth() + 1,
         // BusinessFilters drawer fields. Inline midList/sidList still take
         // precedence; the drawer's are merged in the request body.
         sidList: [],
@@ -87,58 +89,33 @@ const DailyMerchantDashboard = () => {
         startDate: '', endDate: '',
     });
     const [showFilters, setShowFilters] = useState(false);
-    const [boundsLoaded, setBoundsLoaded] = useState(false);
-    // Auto-seek: the dashboard seeds its month from /data-bounds (the latest
-    // fact_transaction date). But merchant_daily_metrics is filled by the async
-    // reporting step, which can lag the raw data by a month (or fail to run for
-    // the newest upload). When the seeded month has no metrics rows, walk back
-    // month-by-month to the most recent month that DOES have data so the screen
-    // never opens blank. Disabled once data is found or the user picks a month.
-    const [autoSeek, setAutoSeek] = useState(true);
-    const seekCountRef = useRef(0);
+    // The latest month that actually has data (from /data-bounds), held as
+    // { year, month } so we can offer a "jump to latest" button when the
+    // selected month is empty. Null until the bounds call returns.
+    const [latestAvailable, setLatestAvailable] = useState(null);
 
-    // Discover the latest month that actually has data, then default the filter
-    // to that month. Without this, the screen loads with "May 2026" but data
-    // only goes through April 2026, so users see "0 merchants" and assume the
-    // app is broken.
+    // Discover the latest month that has data — used ONLY to offer a jump button
+    // when the current selection is empty. It no longer changes the default month.
     useEffect(() => {
         let cancelled = false;
-        const loadBounds = async () => {
+        (async () => {
             try {
                 const res = await api.get('/business/data-bounds');
-                let year = new Date().getFullYear();
-                let month = new Date().getMonth() + 1;
-                const b = res.data;
-                if (b.latest) {
-                    const [y, m] = b.latest.split('-');
-                    year = Number(y);
-                    month = Number(m);
-                }
-                if (!cancelled) {
-                    setFilters(prev => ({ ...prev, year, month }));
-                    setBoundsLoaded(true);
+                if (!cancelled && res.data?.latest) {
+                    const [y, m] = res.data.latest.split('-');
+                    setLatestAvailable({ year: Number(y), month: Number(m) });
                 }
             } catch (e) {
-                console.error('data-bounds fetch failed, falling back to calendar month', e);
-                if (!cancelled) {
-                    setFilters(prev => ({
-                        ...prev,
-                        year: new Date().getFullYear(),
-                        month: new Date().getMonth() + 1,
-                    }));
-                    setBoundsLoaded(true);
-                }
+                console.error('data-bounds fetch failed (non-fatal)', e);
             }
-        };
-        loadBounds();
+        })();
         return () => { cancelled = true; };
     }, []);
 
     useEffect(() => { fetchFilterOptions(); }, []);
     useEffect(() => {
-        if (!boundsLoaded) return; // don't fire until we know the right month
         fetchDashboardData();
-    }, [boundsLoaded, filters.year, filters.month, filters.sidList, filters.midList,
+    }, [filters.year, filters.month, filters.sidList, filters.midList,
         filters.partnerList, filters.rmList, filters.teamLeaderList, filters.mccList,
         filters.merchantName]);
 
@@ -174,20 +151,6 @@ const DailyMerchantDashboard = () => {
                 id: r.merchantId || i, ...r,
                 sparklineData: r.sparklineData || []
             })));
-            // Auto-seek the latest month that actually has metrics (see the
-            // note at the autoSeek declaration). Bounded so a genuinely empty
-            // tenant can't loop forever.
-            if (result.length === 0 && autoSeek && seekCountRef.current < 14) {
-                seekCountRef.current += 1;
-                setFilters(prev => {
-                    let y = prev.year, m = (prev.month || 1) - 1;
-                    if (m < 1) { m = 12; y -= 1; }
-                    return { ...prev, year: y, month: m };
-                });
-            } else if (result.length > 0) {
-                setAutoSeek(false);
-                seekCountRef.current = 0;
-            }
         } catch (error) { console.error("Failed to fetch data", error); }
         finally { setLoading(false); }
     };
@@ -208,16 +171,39 @@ const DailyMerchantDashboard = () => {
         ];
     }, [data]);
 
+    // Quick-select helpers for the month bar.
+    const _today = new Date();
+    const thisMonth = { year: _today.getFullYear(), month: _today.getMonth() + 1 };
+    const _lm = new Date(_today.getFullYear(), _today.getMonth() - 1, 1);
+    const lastMonth = { year: _lm.getFullYear(), month: _lm.getMonth() + 1 };
+    const isSelected = (sel) => filters.year === sel.year && filters.month === sel.month;
+    const selectMonth = (sel) => setFilters(prev => ({ ...prev, year: sel.year, month: sel.month }));
+
+    const quickBtnSx = (active) => ({
+        height: 40, px: 2, borderRadius: 2, textTransform: 'none', fontWeight: 700,
+        fontSize: '0.8rem', boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+        bgcolor: active ? '#6366f1' : 'white',
+        color: active ? 'white' : '#475569',
+        border: '1px solid', borderColor: active ? '#6366f1' : '#e2e8f0',
+        '&:hover': { bgcolor: active ? '#4f46e5' : '#f8fafc' },
+    });
+
     const extraControls = (
         <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+            <Stack direction="row" spacing={1} alignItems="center">
+                <Button disableElevation variant="contained" sx={quickBtnSx(isSelected(thisMonth))}
+                    onClick={() => selectMonth(thisMonth)}>This Month</Button>
+                <Button disableElevation variant="contained" sx={quickBtnSx(isSelected(lastMonth))}
+                    onClick={() => selectMonth(lastMonth)}>Last Month</Button>
+            </Stack>
             <FormControl size="small" variant="outlined">
-                <Select value={filters.month} onChange={(e) => { setAutoSeek(false); setFilters(prev => ({ ...prev, month: Number(e.target.value) })); }}
+                <Select value={filters.month} onChange={(e) => setFilters(prev => ({ ...prev, month: Number(e.target.value) }))}
                     sx={{ borderRadius: 2, height: 40, bgcolor: 'white', fontWeight: 600, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' }, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                     {Array.from({ length: 12 }, (_, i) => <MenuItem key={i + 1} value={i + 1}>{new Date(0, i).toLocaleString('default', { month: 'long' })}</MenuItem>)}
                 </Select>
             </FormControl>
             <FormControl size="small" variant="outlined">
-                <Select value={filters.year} onChange={(e) => { setAutoSeek(false); setFilters(prev => ({ ...prev, year: Number(e.target.value) })); }}
+                <Select value={filters.year} onChange={(e) => setFilters(prev => ({ ...prev, year: Number(e.target.value) }))}
                     sx={{ borderRadius: 2, height: 40, bgcolor: 'white', fontWeight: 600, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' }, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                     {[2024, 2025, 2026].map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
                 </Select>
@@ -364,6 +350,26 @@ const DailyMerchantDashboard = () => {
             <Stack direction="row" spacing={3} mb={4}>
                 {kpis.map((kpi, idx) => <StatCard key={idx} {...kpi} />)}
             </Stack>
+
+            {!loading && data.length === 0 && (
+                <Paper sx={{ p: 3, mb: 3, borderRadius: 3, border: '1px solid #fde68a', bgcolor: '#fffbeb',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                        <Calendar size={20} color="#d97706" />
+                        <Typography variant="body2" fontWeight={600} color="#92400e">
+                            No data for {monthName} {filters.year}.
+                            {latestAvailable && ` Latest available data is ${new Date(0, latestAvailable.month - 1).toLocaleString('default', { month: 'long' })} ${latestAvailable.year}.`}
+                        </Typography>
+                    </Stack>
+                    {latestAvailable && !(latestAvailable.year === filters.year && latestAvailable.month === filters.month) && (
+                        <Button disableElevation variant="contained"
+                            sx={{ textTransform: 'none', fontWeight: 700, borderRadius: 2, bgcolor: '#d97706', '&:hover': { bgcolor: '#b45309' } }}
+                            onClick={() => selectMonth(latestAvailable)}>
+                            Jump to {new Date(0, latestAvailable.month - 1).toLocaleString('default', { month: 'short' })} {latestAvailable.year}
+                        </Button>
+                    )}
+                </Paper>
+            )}
 
             <Paper sx={{ ...premiumTableWrapper, borderRadius: 3, border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05)' }}>
                 <DataGrid

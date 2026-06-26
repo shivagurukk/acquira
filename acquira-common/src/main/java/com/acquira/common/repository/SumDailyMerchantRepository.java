@@ -217,6 +217,37 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
 
+        /**
+         * FAST month grid for the Daily Merchant Dashboard. Returns one row per
+         * (merchant, day-of-month) with that day's base volume + txns, joined to
+         * dim_merchant for identity. Reads from the pre-aggregated, year-partitioned
+         * sum_daily_merchant via idx_sum_merch_tenant_date — a single-month query for
+         * one tenant prunes to one partition and does an index range scan, so it stays
+         * sub-second even with 5 years / many tenants of data.
+         *
+         * The controller aggregates these rows in-memory into the dashboard DTO
+         * (per-day map, month total, today, 7-day average, trend %, status). This
+         * replaces the old async merchant_daily_metrics path, which silently emptied
+         * recent months when the async reporting step failed or lagged.
+         *
+         * Columns: [0]=internal_id (String, used as merchantId for filter compat),
+         *          [1]=mid, [2]=name, [3]=day-of-month (int), [4]=SUM(base volume),
+         *          [5]=SUM(txns)
+         */
+        @Query("SELECT dm.internalId, dm.mid, dm.name, " +
+                        "EXTRACT(DAY FROM s.businessDate), " +
+                        "SUM(COALESCE(s.totalBaseVolume, s.totalVolume)), " +
+                        "SUM(s.totalTxns) " +
+                        "FROM SumDailyMerchant s " +
+                        "JOIN com.acquira.common.model.Merchant dm ON dm.merchantId = s.merchantId " +
+                        "WHERE s.tenantId = :tenantId AND dm.tenantId = :tenantId " +
+                        "  AND s.businessDate BETWEEN :startDate AND :endDate " +
+                        "GROUP BY dm.internalId, dm.mid, dm.name, EXTRACT(DAY FROM s.businessDate)")
+        java.util.List<Object[]> findDailyMerchantGrid(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
+                        @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
+                        @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
+
         // ── BULK QUERIES for batch PDF pre-fetch ──
 
         @Query("SELECT m FROM SumDailyMerchant m WHERE m.merchantId IN :merchantIds AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.merchantId, m.businessDate")
