@@ -64,6 +64,7 @@ const EmailCampaignHub = lazy(() => import('./pages/admin/EmailCampaignHub'));
 const SsoSettings = lazy(() => import('./pages/admin/SsoSettings'));
 const DataMigration = lazy(() => import('./pages/admin/DataMigration'));
 const SecuritySettings = lazy(() => import('./pages/admin/SecuritySettings'));
+const DatabaseMaintenance = lazy(() => import('./pages/admin/DatabaseMaintenance'));
 const AlertsNotifications = lazy(() => import('./pages/admin/AlertsNotifications'));
 const ApiManagement = lazy(() => import('./pages/admin/ApiManagement'));
 const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
@@ -193,6 +194,9 @@ function App() {
               } />
               <Route path="/admin/security-settings" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SecuritySettings /></RoleGuard>
+              } />
+              <Route path="/admin/maintenance" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><DatabaseMaintenance /></RoleGuard>
               } />
               <Route path="/admin/alerts" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><AlertsNotifications /></RoleGuard>

@@ -7,6 +7,7 @@ import com.acquira.common.repository.UserRepository;
 import com.acquira.common.security.JwtUtil;
 import com.acquira.core.service.PasswordService;
 import com.acquira.core.service.RefreshTokenService;
+import com.acquira.core.service.SecurityPolicyService;
 import com.acquira.core.service.TenantService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -41,6 +42,7 @@ public class AuthController {
     private final RefreshTokenService refreshTokenService;
     private final com.acquira.common.service.AuditService auditService;
     private final com.acquira.common.repository.TenantSettingRepository tenantSettingRepository;
+    private final SecurityPolicyService securityPolicyService;
 
     // ===== IP-based rate limiter (defense-in-depth, kept alongside per-user lockout) =====
     // P2-7 fix: bucket key is now (ip|username), not just ip. Previously a single
@@ -56,7 +58,8 @@ public class AuthController {
     // (bad creds vs inactive vs pending) is captured in the audit log only.
     private static final String GENERIC_AUTH_FAILURE = "Invalid username or password";
 
-    // Per-user lockout settings (could load from tenant_setting)
+    // Default fallbacks — live values now come from SecurityPolicyService
+    // (Admin > Security Settings). Kept as documented defaults.
     private static final int MAX_USER_ATTEMPTS = 5;
     private static final int LOCKOUT_MINUTES = 15;
 
@@ -70,7 +73,8 @@ public class AuthController {
             EmailService emailService,
             RefreshTokenService refreshTokenService,
             com.acquira.common.service.AuditService auditService,
-            com.acquira.common.repository.TenantSettingRepository tenantSettingRepository) {
+            com.acquira.common.repository.TenantSettingRepository tenantSettingRepository,
+            SecurityPolicyService securityPolicyService) {
         this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
         this.tenantService = tenantService;
@@ -84,6 +88,7 @@ public class AuthController {
         this.refreshTokenService = refreshTokenService;
         this.auditService = auditService;
         this.tenantSettingRepository = tenantSettingRepository;
+        this.securityPolicyService = securityPolicyService;
     }
 
     // ===== Session timeout (inactivity auto-logout) =====
@@ -124,13 +129,19 @@ public class AuthController {
         String clientIp = getClientIp(httpRequest);
         String rateKey = clientIp + "|" + (authenticationRequest.getUsername() == null ? ""
                 : authenticationRequest.getUsername().trim().toLowerCase());
-        if (isRateLimited(rateKey)) {
+        if (isRateLimited(rateKey, securityPolicyService.rateLimitPerMinute(
+                userRepository.findByUsername(authenticationRequest.getUsername())
+                        .map(u -> tenantService.getDefaultTenantIdForUser(u.getUsername())).orElse(null)))) {
             return ResponseEntity.status(429).body(Map.of(
                     "error", "Too many login attempts. Please try again later."));
         }
 
         // ===== Per-user lockout check =====
         Optional<User> userOpt = userRepository.findByUsername(authenticationRequest.getUsername());
+        // Lockout thresholds come from the active policy (Admin > Security Settings).
+        Long lockoutTenantId = userOpt.map(u -> tenantService.getDefaultTenantIdForUser(u.getUsername())).orElse(null);
+        int maxUserAttempts = securityPolicyService.maxFailedAttempts(lockoutTenantId);
+        int lockoutMinutes = securityPolicyService.lockoutDurationMinutes(lockoutTenantId);
         if (userOpt.isPresent()) {
             User dbUser = userOpt.get();
 
@@ -183,8 +194,8 @@ public class AuthController {
                 dbUser.setFailedLoginAttempts(dbUser.getFailedLoginAttempts() + 1);
                 dbUser.setLastFailedLogin(LocalDateTime.now());
 
-                if (dbUser.getFailedLoginAttempts() >= MAX_USER_ATTEMPTS) {
-                    dbUser.setLockedUntil(LocalDateTime.now().plusMinutes(LOCKOUT_MINUTES));
+                if (dbUser.getFailedLoginAttempts() >= maxUserAttempts) {
+                    dbUser.setLockedUntil(LocalDateTime.now().plusMinutes(lockoutMinutes));
                     userRepository.save(dbUser);
                     return ResponseEntity.status(423).body(Map.of(
                             "error", "Account locked due to too many failed attempts. Try again later.",
@@ -212,13 +223,26 @@ public class AuthController {
         }
 
         final UserDetails userDetails = userDetailsService.loadUserByUsername(authenticationRequest.getUsername());
-        final String accessToken = jwtUtil.generateToken(userDetails);
-        final String refreshToken = jwtUtil.generateRefreshToken(userDetails.getUsername());
 
-        // #14: Store refresh token in DB for rotation tracking
+        // Token lifetimes + concurrency come from the active security policy
+        // (Admin > Security Settings: access_token_minutes, refresh_token_days,
+        // max_concurrent_sessions). Falls back to 30min / 7d / unlimited.
+        Long policyTenantId = tenantService.getDefaultTenantIdForUser(userDetails.getUsername());
+        long accessTtlMs = securityPolicyService.accessTokenMillis(policyTenantId);
+        long refreshTtlMs = securityPolicyService.refreshTokenMillis(policyTenantId);
+
+        final String accessToken = jwtUtil.generateToken(userDetails, accessTtlMs);
+        final String refreshToken = jwtUtil.generateRefreshToken(userDetails.getUsername(), refreshTtlMs);
+
+        // #14: Store refresh token in DB for rotation tracking (expiry = configured refresh TTL)
         refreshTokenService.storeToken(userDetails.getUsername(), refreshToken,
-            java.time.LocalDateTime.now().plusDays(7),
+            java.time.LocalDateTime.now().plusSeconds(refreshTtlMs / 1000),
             httpRequest.getHeader("User-Agent"), getClientIp(httpRequest));
+
+        // Enforce the per-user concurrent-session cap (0 = unlimited). The token we
+        // just stored is the newest, so older sessions beyond the cap are revoked.
+        refreshTokenService.enforceSessionLimit(userDetails.getUsername(),
+            securityPolicyService.maxConcurrentSessions(policyTenantId));
 
         // #13: Audit successful login
         auditService.log("LOGIN", "User '" + userDetails.getUsername() + "' logged in from " + getClientIp(httpRequest));
@@ -274,8 +298,8 @@ public class AuthController {
             response.put("mustChangePassword", true);
         }
 
-        // #12: Set refresh token as HttpOnly cookie (XSS-safe)
-        ResponseCookie cookie = buildRefreshCookie(refreshToken, 7 * 24 * 60 * 60);
+        // #12: Set refresh token as HttpOnly cookie (XSS-safe); maxAge = configured refresh TTL
+        ResponseCookie cookie = buildRefreshCookie(refreshToken, refreshTtlMs / 1000);
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookie.toString())
                 .body(response);
@@ -326,12 +350,16 @@ public class AuthController {
                 return ResponseEntity.status(401).body(Map.of("error", "User account is disabled"));
             }
 
-            String newAccessToken = jwtUtil.generateToken(userDetails);
-            String newRefreshToken = jwtUtil.generateRefreshToken(username);
+            Long policyTenantId = tenantService.getDefaultTenantIdForUser(username);
+            long accessTtlMs = securityPolicyService.accessTokenMillis(policyTenantId);
+            long refreshTtlMs = securityPolicyService.refreshTokenMillis(policyTenantId);
 
-            // #14: Rotate — revoke old, store new
+            String newAccessToken = jwtUtil.generateToken(userDetails, accessTtlMs);
+            String newRefreshToken = jwtUtil.generateRefreshToken(username, refreshTtlMs);
+
+            // #14: Rotate — revoke old, store new (expiry = configured refresh TTL)
             boolean rotated = refreshTokenService.rotateToken(username, refreshToken, newRefreshToken,
-                java.time.LocalDateTime.now().plusDays(7),
+                java.time.LocalDateTime.now().plusSeconds(refreshTtlMs / 1000),
                 httpRequest.getHeader("User-Agent"), getClientIp(httpRequest));
 
             if (!rotated) {
@@ -340,8 +368,8 @@ public class AuthController {
                     "error", "Security alert: refresh token reuse detected. All sessions have been revoked. Please log in again."));
             }
 
-            // #12: Set new refresh token as HttpOnly cookie
-            ResponseCookie newCookie = buildRefreshCookie(newRefreshToken, 7 * 24 * 60 * 60);
+            // #12: Set new refresh token as HttpOnly cookie; maxAge = configured refresh TTL
+            ResponseCookie newCookie = buildRefreshCookie(newRefreshToken, refreshTtlMs / 1000);
             return ResponseEntity.ok()
                     .header(HttpHeaders.SET_COOKIE, newCookie.toString())
                     .body(Map.of(
@@ -532,7 +560,7 @@ public class AuthController {
     }
 
     // ===== Rate Limiting Helpers =====
-    private boolean isRateLimited(String clientIp) {
+    private boolean isRateLimited(String clientIp, int maxAttempts) {
         long now = System.currentTimeMillis();
         long[] data = loginAttempts.get(clientIp);
         if (data == null) return false;
@@ -540,7 +568,7 @@ public class AuthController {
             loginAttempts.remove(clientIp);
             return false;
         }
-        return data[0] >= MAX_IP_ATTEMPTS;
+        return data[0] >= maxAttempts;
     }
 
     private void recordFailedAttempt(String clientIp) {

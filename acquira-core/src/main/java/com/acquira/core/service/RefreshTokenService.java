@@ -87,6 +87,39 @@ public class RefreshTokenService {
         }
     }
 
+    /** Revoke every active refresh token across all users (admin "revoke all sessions"). */
+    public int revokeAll() {
+        try {
+            int n = jdbc.update("UPDATE refresh_token SET revoked = TRUE WHERE revoked = FALSE");
+            log.warn("[SECURITY] Admin revoked ALL active sessions ({} tokens).", n);
+            return n;
+        } catch (Exception e) {
+            log.warn("Failed to revoke all sessions: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Enforce a per-user concurrent-session cap. Keeps the {@code maxSessions}
+     * most recently issued active tokens and revokes any older ones. A value of
+     * 0 (or less) means unlimited and is a no-op. Call right after storing a new
+     * token on login so the freshest session always survives.
+     */
+    public void enforceSessionLimit(String username, int maxSessions) {
+        if (maxSessions <= 0) return; // unlimited
+        try {
+            jdbc.update(
+                "UPDATE refresh_token SET revoked = TRUE " +
+                "WHERE username = ? AND revoked = FALSE AND token_hash NOT IN (" +
+                "  SELECT token_hash FROM refresh_token " +
+                "  WHERE username = ? AND revoked = FALSE AND expires_at > NOW() " +
+                "  ORDER BY expires_at DESC LIMIT ?)",
+                username, username, maxSessions);
+        } catch (Exception e) {
+            log.warn("Failed to enforce session limit for {}: {}", username, e.getMessage());
+        }
+    }
+
     /** Check if a token is valid (exists, not revoked, not expired) */
     public boolean isTokenValid(String rawToken) {
         String hash = hashToken(rawToken);

@@ -114,12 +114,74 @@ public class PartitionMaintenanceService {
                         "CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM ('%s') TO ('%s')",
                         partitionName, table, start.toString(), end.toString());
                 jdbcTemplate.execute(sql);
+                applyAutovacuumTuning(partitionName, table);
             }
         } catch (Exception e) {
             log.warn("Partition {} skipped (table '{}' may not be partitioned): {}",
                     partitionName, table, e.getMessage());
             // Exception propagates to roll back THIS transaction only (REQUIRES_NEW)
             // Other partition creations continue in their own transactions
+        }
+    }
+
+    /**
+     * Apply per-partition autovacuum / storage settings right after a partition
+     * is created. Parent-table reloptions do NOT cascade to partitions in
+     * PostgreSQL, so each new partition would otherwise inherit the lazy global
+     * defaults (vacuum only after 20% of the table is dead) — far too slow once
+     * a partition holds hundreds of millions of rows.
+     *
+     * <ul>
+     *   <li><b>fact_transaction</b> (monthly, insert-heavy): tight scale factors +
+     *       absolute thresholds, a real vacuum cost budget, and the PG13+
+     *       insert-vacuum knobs so a mostly-INSERT partition still gets vacuumed
+     *       (keeps the visibility map fresh for index-only scans + freezing).</li>
+     *   <li><b>sum_daily_*</b> (yearly, ON CONFLICT upsert churn): aggressive
+     *       vacuum + fillfactor 90 to leave room for HOT updates.</li>
+     * </ul>
+     *
+     * Each ALTER auto-commits (Hikari auto-commit=true) and is wrapped so a
+     * failure (e.g. insert knobs on PostgreSQL &lt; 13) never undoes partition
+     * creation or the base tuning. Pre-existing partitions created before this
+     * code was deployed need a one-time backfill (see ops notes).
+     */
+    private void applyAutovacuumTuning(String partitionName, String parentTable) {
+        boolean heavyFact = MONTHLY_PARTITIONED_TABLES.contains(parentTable);
+        try {
+            if (heavyFact) {
+                jdbcTemplate.execute(String.format(
+                        "ALTER TABLE %s SET (" +
+                        "autovacuum_vacuum_scale_factor = 0.01, " +
+                        "autovacuum_vacuum_threshold = 50000, " +
+                        "autovacuum_analyze_scale_factor = 0.005, " +
+                        "autovacuum_analyze_threshold = 50000, " +
+                        "autovacuum_vacuum_cost_limit = 3000)", partitionName));
+            } else {
+                jdbcTemplate.execute(String.format(
+                        "ALTER TABLE %s SET (" +
+                        "autovacuum_vacuum_scale_factor = 0.02, " +
+                        "autovacuum_vacuum_threshold = 20000, " +
+                        "autovacuum_analyze_scale_factor = 0.01, " +
+                        "autovacuum_analyze_threshold = 20000, " +
+                        "fillfactor = 90)", partitionName));
+            }
+            log.info("Applied autovacuum tuning to partition {}", partitionName);
+        } catch (Exception e) {
+            log.warn("Autovacuum tuning skipped for {}: {}", partitionName, e.getMessage());
+        }
+
+        // Insert-vacuum knobs require PostgreSQL 13+. Applied separately so a
+        // failure on older servers doesn't undo the base tuning above.
+        if (heavyFact) {
+            try {
+                jdbcTemplate.execute(String.format(
+                        "ALTER TABLE %s SET (" +
+                        "autovacuum_vacuum_insert_scale_factor = 0.01, " +
+                        "autovacuum_vacuum_insert_threshold = 50000)", partitionName));
+            } catch (Exception e) {
+                log.warn("Insert-autovacuum knobs skipped for {} (needs PostgreSQL 13+): {}",
+                        partitionName, e.getMessage());
+            }
         }
     }
 }

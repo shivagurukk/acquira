@@ -31,6 +31,7 @@ public class AdminController {
     private final com.acquira.common.repository.DashboardConfigRepository dashboardConfigRepository;
     private final RefCountryRepository refCountryRepository;
     private final com.acquira.core.service.PasswordService passwordService;
+    private final com.acquira.core.service.RefreshTokenService refreshTokenService;
 
     public AdminController(TenantRepository tenantRepository, UserRepository userRepository,
             UserTenantAccessRepository userTenantAccessRepository, RoleRepository roleRepository,
@@ -38,7 +39,8 @@ public class AdminController {
             com.acquira.common.repository.TenantSettingRepository tenantSettingRepository,
             com.acquira.common.repository.DashboardConfigRepository dashboardConfigRepository,
             RefCountryRepository refCountryRepository,
-            com.acquira.core.service.PasswordService passwordService) {
+            com.acquira.core.service.PasswordService passwordService,
+            com.acquira.core.service.RefreshTokenService refreshTokenService) {
         this.tenantRepository = tenantRepository;
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
@@ -49,6 +51,7 @@ public class AdminController {
         this.dashboardConfigRepository = dashboardConfigRepository;
         this.refCountryRepository = refCountryRepository;
         this.passwordService = passwordService;
+        this.refreshTokenService = refreshTokenService;
     }
 
     @GetMapping("/countries")
@@ -242,6 +245,18 @@ public class AdminController {
         userRepository.save(user);
         auditService.log("UNLOCK_USER", "Admin unlocked user: " + user.getUsername());
         return ResponseEntity.ok(java.util.Map.of("message", "User unlocked successfully"));
+    }
+
+    // Revoke every active refresh token across all users. Forces everyone
+    // (including the calling admin) to sign in again. Backs the "Revoke all
+    // sessions" action in Admin > Security Settings > Sessions & Tokens.
+    @PostMapping("/security/revoke-all-sessions")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<?> revokeAllSessions() {
+        int revoked = refreshTokenService.revokeAll();
+        auditService.log("REVOKE_ALL_SESSIONS", "Admin revoked all active sessions (" + revoked + " tokens)");
+        return ResponseEntity.ok(java.util.Map.of(
+                "message", "All sessions revoked", "revokedCount", revoked));
     }
 
     // ==========================================

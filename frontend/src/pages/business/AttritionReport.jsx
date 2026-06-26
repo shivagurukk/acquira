@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
-import { Activity, TrendingDown, TrendingUp, Users, DollarSign, AlertTriangle, UserMinus } from 'lucide-react';
+import { Activity, TrendingDown, TrendingUp, Users, DollarSign, AlertTriangle, UserMinus, ShieldAlert } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
@@ -97,6 +98,8 @@ const AttritionReport = () => {
         const totalPrev = data.reduce((s, d) => s + (Number(val(d, 'ytd_prev')) || 0), 0);
         const ytdChange = totalPrev > 0 ? ((totalCur - totalPrev) / totalPrev) * 100 : 0;
         const atRisk = statusCounts.CHURNED + statusCounts.AT_RISK;
+        const atRiskValue = data.reduce((s, d) =>
+            (d.status === 'CHURNED' || d.status === 'AT_RISK') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
         return [
             { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: '#6366f1' },
             { title: 'Churned', value: statusCounts.CHURNED.toString(), icon: UserMinus, color: '#7c3aed',
@@ -107,6 +110,8 @@ const AttritionReport = () => {
             { title: `YTD ${METRICS[metric].label} Change`, value: `${ytdChange >= 0 ? '+' : ''}${ytdChange.toFixed(1)}%`,
               icon: DollarSign, color: ytdChange >= 0 ? '#10b981' : '#ef4444', trend: ytdChange,
               trendLabel: `${prevYear} vs ${selectedYear}` },
+            { title: `${METRICS[metric].label} at Risk`, value: fmtMeasure(atRiskValue), icon: ShieldAlert, color: '#dc2626',
+              subtitle: `${atRisk} churned + at-risk` },
         ];
     }, [data, metric, statusCounts, selectedYear, prevYear]);
 
@@ -114,6 +119,33 @@ const AttritionReport = () => {
         () => statusFilter === 'ALL' ? data : data.filter(d => d.status === statusFilter),
         [data, statusFilter]
     );
+
+    // ── Churn analytics (all from the rows already returned) ──
+    const STATUS_BARS = ['CHURNED', 'AT_RISK', 'DECLINING', 'STABLE', 'GROWING'];
+    const analytics = useMemo(() => {
+        const total = data.length || 1;
+        const breakdown = STATUS_BARS.map(s => ({
+            key: s, ...STATUS_META[s], count: statusCounts[s] || 0,
+            pct: ((statusCounts[s] || 0) / total) * 100,
+        }));
+        const buckets = [
+            { label: '≤-50%', test: p => p <= -50, color: '#b91c1c' },
+            { label: '-50..-20%', test: p => p > -50 && p <= -20, color: '#ef4444' },
+            { label: '-20..0%', test: p => p > -20 && p < 0, color: '#f59e0b' },
+            { label: '0..+20%', test: p => p >= 0 && p <= 20, color: '#34d399' },
+            { label: '>+20%', test: p => p > 20, color: '#059669' },
+        ];
+        const dist = buckets.map(b => ({
+            label: b.label, color: b.color,
+            count: data.filter(d => { const p = Number(val(d, 'ytd_pct')); return !isNaN(p) && val(d, 'ytd_pct') != null && b.test(p); }).length,
+        }));
+        const topDeclining = data
+            .filter(d => { const p = Number(val(d, 'ytd_pct')); return val(d, 'ytd_pct') != null && !isNaN(p) && p < 0; })
+            .sort((a, b) => Number(val(a, 'ytd_pct')) - Number(val(b, 'ytd_pct')))
+            .slice(0, 6);
+        return { breakdown, dist, topDeclining };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data, metric, statusCounts]);
 
     const measureCell = (params) => (
         <Typography variant="body2" sx={{ color: '#475569' }}>{fmtMeasure(params.value)}</Typography>
@@ -171,6 +203,11 @@ const AttritionReport = () => {
             children: [{ field: 'ytd_prev_col' }, { field: 'ytd_curr_col' }, { field: 'ytd_pct_col' }] },
     ];
 
+    const panelSx = { p: 2.5, borderRadius: '14px', border: '1px solid #e2e8f0', bgcolor: '#fff', height: '100%' };
+    const panelTitle = (t) => (
+        <Typography variant="caption" fontWeight={700} color="#94a3b8" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1.5, display: 'block' }}>{t}</Typography>
+    );
+
     return (
         <Box sx={pageContainer}>
             <PremiumReportHeader
@@ -183,6 +220,77 @@ const AttritionReport = () => {
             />
             <BusinessFilters filters={filters} onChange={setFilters} onApply={fetchData} isOpen={showFilters} onClose={() => setShowFilters(false)} />
             <KpiCards cards={kpis} />
+
+            {/* ═══ Churn analytics band ═══ */}
+            {data.length > 0 && (
+                <Box sx={{ display: 'grid', gap: 2, mb: 2, gridTemplateColumns: { xs: '1fr', md: '1.1fr 1fr', lg: '1.2fr 1fr 1fr' } }}>
+                    {/* Portfolio health */}
+                    <Paper sx={panelSx}>
+                        {panelTitle('Portfolio Health')}
+                        <Box sx={{ display: 'flex', height: 14, borderRadius: 999, overflow: 'hidden', mb: 2, bgcolor: '#f1f5f9' }}>
+                            {analytics.breakdown.map(s => s.count > 0 && (
+                                <Box key={s.key} title={`${s.label}: ${s.count}`} sx={{ width: `${s.pct}%`, bgcolor: s.color, transition: 'width .5s ease' }} />
+                            ))}
+                        </Box>
+                        <Stack spacing={0.75}>
+                            {analytics.breakdown.map(s => (
+                                <Box key={s.key} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Box sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: s.color }} />
+                                        <Typography variant="body2" color="#475569">{s.label}</Typography>
+                                    </Box>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                        <Typography variant="body2" fontWeight={700} color="#1e293b">{s.count.toLocaleString()}</Typography>
+                                        <Typography variant="caption" color="#94a3b8" sx={{ width: 42, textAlign: 'right' }}>{s.pct.toFixed(1)}%</Typography>
+                                    </Box>
+                                </Box>
+                            ))}
+                        </Stack>
+                    </Paper>
+
+                    {/* YTD % change distribution */}
+                    <Paper sx={panelSx}>
+                        {panelTitle(`YTD ${METRICS[metric].label} % Change`)}
+                        <Box sx={{ height: 170 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={analytics.dist} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 6" stroke="#eef2f7" vertical={false} />
+                                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} width={32} />
+                                    <ReTooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} formatter={(v) => [v, 'Merchants']} />
+                                    <Bar dataKey="count" radius={[5, 5, 0, 0]}>
+                                        {analytics.dist.map((d, i) => <Cell key={i} fill={d.color} />)}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </Box>
+                    </Paper>
+
+                    {/* Steepest decline — call list */}
+                    <Paper sx={panelSx}>
+                        {panelTitle('Steepest YTD Decline')}
+                        <Stack spacing={1}>
+                            {analytics.topDeclining.length === 0 && (
+                                <Typography variant="body2" color="#94a3b8">No declining merchants in range.</Typography>
+                            )}
+                            {analytics.topDeclining.map((d, i) => {
+                                const meta = STATUS_META[d.status] || { color: '#475569', bg: '#f1f5f9' };
+                                const pct = Number(val(d, 'ytd_pct'));
+                                return (
+                                    <Box key={d.mid || i} onClick={() => setStatusFilter(d.status)}
+                                        sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, cursor: 'pointer', '&:hover .mn': { color: meta.color } }}>
+                                        <Box sx={{ minWidth: 0 }}>
+                                            <Typography className="mn" variant="body2" fontWeight={600} color="#334155" noWrap sx={{ maxWidth: 150, transition: 'color .15s' }}>{d.name || d.mid}</Typography>
+                                            <Typography variant="caption" color="#94a3b8">{fmtMeasure(val(d, 'ytd_current'))} now</Typography>
+                                        </Box>
+                                        <Chip label={pctFormatter(pct)} size="small" sx={{ bgcolor: meta.bg, color: meta.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }} />
+                                    </Box>
+                                );
+                            })}
+                        </Stack>
+                    </Paper>
+                </Box>
+            )}
 
             {/* Metric toggle + status quick-filters */}
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} justifyContent="space-between" sx={{ mb: 2 }}>

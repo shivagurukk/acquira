@@ -31,14 +31,29 @@ public class ZeroTransactionController {
 
     // Endpoint for KPI cards if we want summary counts
     @PostMapping("/kpi")
-    public Map<String, Object> getKpi(@RequestBody VolumeRevenueFilterDTO filters) {
-        // Reuse list logic or optimized count queries
-        // For simplicity, we can fetch lists and count in backend, or implement
-        // specific count queries later.
-        // User asked for: Total Merchants, Zero Txn Last 7, Zero Txn Last 30, Never
-        // Transacted.
-        // I'll implement a simple mock or quick count logic here if needed,
-        // but for now I'll focus on the List which is the main table.
-        return Map.of("message", "KPIs not yet implemented on backend");
+    public Map<String, Object> getKpi(@RequestBody VolumeRevenueFilterDTO filters,
+            @RequestParam(defaultValue = "LAST_30") String rangeType) {
+        Long tenantId = tenantService.getCurrentTenantId();
+        return repository.getZeroTransactionSummary(filters, rangeType, tenantId);
+    }
+
+    // Accurate counts + days-inactive distribution + top aggregators over the
+    // FULL filtered set (independent of pagination / the old 500 cap).
+    @PostMapping("/summary")
+    public Map<String, Object> getSummary(@RequestBody VolumeRevenueFilterDTO filters,
+            @RequestParam(defaultValue = "LAST_30") String rangeType) {
+        Long tenantId = tenantService.getCurrentTenantId();
+        return repository.getZeroTransactionSummary(filters, rangeType, tenantId);
+    }
+
+    // Server-side paginated rows + total. status = ALL | IN30 | NEVER | IN7.
+    @PostMapping("/page")
+    public Map<String, Object> getPage(@RequestBody VolumeRevenueFilterDTO filters,
+            @RequestParam(defaultValue = "LAST_30") String rangeType,
+            @RequestParam(defaultValue = "ALL") String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        Long tenantId = tenantService.getCurrentTenantId();
+        return repository.getZeroTransactionPage(filters, rangeType, status, page, size, tenantId);
     }
 }

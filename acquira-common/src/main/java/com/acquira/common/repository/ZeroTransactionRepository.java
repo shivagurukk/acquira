@@ -233,6 +233,152 @@ public class ZeroTransactionRepository {
         return processResults(rows);
     }
 
+    // ============================================================
+    // Accurate, cap-free summary + server-side pagination.
+    // A CTE computes each terminal's last_txn once, then counts /
+    // buckets / aggregators / page rows all read from it. No LIMIT 500.
+    // ============================================================
+
+    private String baseCte(VolumeRevenueFilterDTO f, Long tenantId) {
+        String innerTenant = (tenantId != null) ? " AND s.tenant_id = :tenantId" : "";
+        StringBuilder b = new StringBuilder();
+        b.append("WITH base AS (SELECT m.name AS merchant_name, COALESCE(st.legal_name, m.name) AS entity_name, ");
+        b.append("m.referral_partner AS aggregator_name, m.mid AS mid, st.sid AS sid, st.name AS store_name, t.tid AS tid, ");
+        b.append("(SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id")
+         .append(innerTenant).append(") AS last_txn ");
+        b.append("FROM dim_terminal t JOIN dim_store st ON t.store_id = st.store_id ");
+        b.append("JOIN dim_merchant m ON st.merchant_id = m.merchant_id WHERE 1=1 ");
+        if (tenantId != null) b.append("AND m.tenant_id = :tenantId AND st.tenant_id = :tenantId AND t.tenant_id = :tenantId ");
+        if (f.getPartnerList() != null && !f.getPartnerList().isEmpty()) b.append("AND m.referral_partner IN (:partners) ");
+        if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) b.append("AND (m.name ILIKE :merchName OR st.legal_name ILIKE :merchName) ");
+        if (f.getMidList() != null && !f.getMidList().isEmpty()) b.append("AND m.mid IN (:mids) ");
+        if (f.getSidList() != null && !f.getSidList().isEmpty()) b.append("AND st.sid IN (:sids) ");
+        if (f.getTidList() != null && !f.getTidList().isEmpty()) b.append("AND t.tid IN (:tids) ");
+        b.append(") ");
+        return b.toString();
+    }
+
+    private String rangePredicate(String rangeType) {
+        if ("NEVER".equals(rangeType)) return " AND last_txn IS NULL ";
+        if ("LAST_7".equals(rangeType)) return " AND (last_txn < :cutoff7 OR last_txn IS NULL) ";
+        return " AND (last_txn < :cutoff30 OR last_txn IS NULL) "; // LAST_30 (default)
+    }
+
+    private String statusPredicate(String status) {
+        if (status == null) return "";
+        switch (status) {
+            case "NEVER": return " AND last_txn IS NULL ";
+            case "IN30":  return " AND last_txn < :cutoff30 ";
+            case "IN7":   return " AND last_txn >= :cutoff30 AND last_txn < :cutoff7 ";
+            default:      return ""; // ALL
+        }
+    }
+
+    /** Bind only the params actually present in the SQL (avoids "parameter not found"). */
+    private void bindCommon(Query q, String sql, VolumeRevenueFilterDTO f, Long tenantId) {
+        if (sql.contains(":tenantId")) q.setParameter("tenantId", tenantId);
+        if (sql.contains(":partners")) q.setParameter("partners", f.getPartnerList());
+        if (sql.contains(":merchName")) q.setParameter("merchName", "%" + f.getMerchantName() + "%");
+        if (sql.contains(":mids")) q.setParameter("mids", f.getMidList());
+        if (sql.contains(":sids")) q.setParameter("sids", f.getSidList());
+        if (sql.contains(":tids")) q.setParameter("tids", f.getTidList());
+        if (sql.contains(":cutoff7")) q.setParameter("cutoff7", LocalDate.now().minusDays(7));
+        if (sql.contains(":cutoff30")) q.setParameter("cutoff30", LocalDate.now().minusDays(30));
+    }
+
+    private long num(Object o) { return (o instanceof Number) ? ((Number) o).longValue() : 0L; }
+
+    private Map<String, Object> bucket(String label, long count) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("label", label); m.put("count", count);
+        return m;
+    }
+
+    /** Accurate counts + days-inactive distribution + top aggregators over the FULL filtered set. */
+    public Map<String, Object> getZeroTransactionSummary(VolumeRevenueFilterDTO f, String rangeType, Long tenantId) {
+        String cte = baseCte(f, tenantId);
+        String range = rangePredicate(rangeType);
+
+        String countSql = cte +
+            "SELECT COUNT(*) AS total, " +
+            "COUNT(*) FILTER (WHERE last_txn IS NULL) AS never_c, " +
+            "COUNT(*) FILTER (WHERE last_txn < :cutoff30) AS in30_c, " +
+            "COUNT(*) FILTER (WHERE last_txn >= :cutoff30 AND last_txn < :cutoff7) AS in7_c, " +
+            "COUNT(*) FILTER (WHERE last_txn IS NOT NULL AND (CURRENT_DATE - last_txn) <= 14) AS b14, " +
+            "COUNT(*) FILTER (WHERE (CURRENT_DATE - last_txn) BETWEEN 15 AND 30) AS b30, " +
+            "COUNT(*) FILTER (WHERE (CURRENT_DATE - last_txn) BETWEEN 31 AND 60) AS b60, " +
+            "COUNT(*) FILTER (WHERE (CURRENT_DATE - last_txn) BETWEEN 61 AND 90) AS b90, " +
+            "COUNT(*) FILTER (WHERE (CURRENT_DATE - last_txn) > 90) AS b90p " +
+            "FROM base WHERE 1=1 " + range;
+        Query cq = entityManager.createNativeQuery(countSql);
+        bindCommon(cq, countSql, f, tenantId);
+        Object[] c = (Object[]) cq.getSingleResult();
+
+        String aggSql = cte +
+            "SELECT COALESCE(aggregator_name, '— Unassigned —') AS agg, COUNT(*) AS c " +
+            "FROM base WHERE 1=1 " + range +
+            " GROUP BY COALESCE(aggregator_name, '— Unassigned —') ORDER BY c DESC LIMIT 6";
+        Query aq = entityManager.createNativeQuery(aggSql);
+        bindCommon(aq, aggSql, f, tenantId);
+        @SuppressWarnings("unchecked")
+        List<Object[]> aggRows = aq.getResultList();
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("total", num(c[0]));
+        out.put("never", num(c[1]));
+        out.put("in30", num(c[2]));
+        out.put("in7", num(c[3]));
+        List<Map<String, Object>> dist = new ArrayList<>();
+        dist.add(bucket("≤14d", num(c[4])));
+        dist.add(bucket("15–30d", num(c[5])));
+        dist.add(bucket("31–60d", num(c[6])));
+        dist.add(bucket("61–90d", num(c[7])));
+        dist.add(bucket("90d+", num(c[8])));
+        dist.add(bucket("Never", num(c[1])));
+        out.put("distribution", dist);
+        List<Map<String, Object>> aggs = new ArrayList<>();
+        for (Object[] r : aggRows) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("name", r[0]); m.put("count", num(r[1]));
+            aggs.add(m);
+        }
+        out.put("topAggregators", aggs);
+        return out;
+    }
+
+    /** Server-side paginated rows (risk-ordered: Inactive 30+ first, then Never, then 7–30) + total. */
+    public Map<String, Object> getZeroTransactionPage(VolumeRevenueFilterDTO f, String rangeType, String status,
+                                                      int page, int size, Long tenantId) {
+        String cte = baseCte(f, tenantId);
+        String pred = rangePredicate(rangeType) + statusPredicate(status);
+        int safeSize = Math.min(Math.max(size, 1), 1000);
+        int offset = Math.max(page, 0) * safeSize;
+
+        String rowSql = cte +
+            "SELECT merchant_name, entity_name, aggregator_name, mid, sid, store_name, tid, last_txn " +
+            "FROM base WHERE 1=1 " + pred +
+            " ORDER BY (CASE WHEN last_txn < :cutoff30 THEN 3 WHEN last_txn IS NULL THEN 2 ELSE 1 END) DESC, " +
+            " last_txn ASC NULLS LAST LIMIT :size OFFSET :offset";
+        Query rq = entityManager.createNativeQuery(rowSql);
+        bindCommon(rq, rowSql, f, tenantId);
+        rq.setParameter("size", safeSize);
+        rq.setParameter("offset", offset);
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = rq.getResultList();
+
+        String countSql = cte + "SELECT COUNT(*) FROM base WHERE 1=1 " + pred;
+        Query cq = entityManager.createNativeQuery(countSql);
+        bindCommon(cq, countSql, f, tenantId);
+        long total = num(cq.getSingleResult());
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("content", processResults(rows));
+        out.put("total", total);
+        out.put("page", Math.max(page, 0));
+        out.put("size", safeSize);
+        return out;
+    }
+
     private List<Map<String, Object>> processResults(List<Object[]> rows) {
         List<Map<String, Object>> result = new ArrayList<>();
         LocalDate now = LocalDate.now();

@@ -18,8 +18,10 @@ public class PasswordService {
     private final PasswordHistoryRepository historyRepository;
     private final PasswordEncoder passwordEncoder;
     private final UserRepository userRepository;
+    private final SecurityPolicyService policyService;
 
-    // Defaults — can be overridden from tenant_setting
+    // Legacy defaults — retained only as a fallback for getters. Live rules now
+    // come from SecurityPolicyService (Admin > Security Settings).
     private int historyCount = 5;
     private int minLength = 8;
 
@@ -30,6 +32,8 @@ public class PasswordService {
      * while genuine passphrases that merely contain a short word are not.
      * For production, back this with a breach corpus (e.g. the HaveIBeenPwned
      * k-anonymity range API, or a bundled top-100k common-password list).
+     * This list is consulted only when the "block breached/common passwords"
+     * policy toggle is enabled (default on).
      */
     private static final java.util.Set<String> WEAK_BASES = java.util.Set.of(
         "password","passwords","passw0rd","pass","admin","administrator","root","welcome",
@@ -46,51 +50,62 @@ public class PasswordService {
 
     public PasswordService(PasswordHistoryRepository historyRepository,
                            PasswordEncoder passwordEncoder,
-                           UserRepository userRepository) {
+                           UserRepository userRepository,
+                           SecurityPolicyService policyService) {
         this.historyRepository = historyRepository;
         this.passwordEncoder = passwordEncoder;
         this.userRepository = userRepository;
+        this.policyService = policyService;
     }
 
     /**
-     * Validate password strength. Returns null if valid, error message otherwise.
+     * Validate password strength against the active policy.
+     * Returns null if valid, error message otherwise.
      */
     public String validatePasswordStrength(String rawPassword) {
-        if (rawPassword == null || rawPassword.length() < minLength) {
-            return "Password must be at least " + minLength + " characters";
-        }
-        if (!rawPassword.matches(".*[A-Z].*")) {
-            return "Password must contain at least one uppercase letter";
-        }
-        if (!rawPassword.matches(".*[a-z].*")) {
-            return "Password must contain at least one lowercase letter";
-        }
-        if (!rawPassword.matches(".*[0-9].*")) {
-            return "Password must contain at least one digit";
-        }
-        if (!rawPassword.matches(".*[!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>/?].*")) {
-            return "Password must contain at least one special character (!@#$%^&*...)";
-        }
-        // Reject the passwords attackers try first: common words, keyboard runs,
-        // repeats, all-digit. Stops "Password1!", "Welcome@123", "Acquira@2024".
-        String pattern = patternWeakness(rawPassword);
-        if (pattern != null) return pattern;
-        return null; // Valid
+        return validateComposition(rawPassword, policyService.passwordPolicy(null));
     }
 
     /**
      * Strength check that ALSO rejects passwords derived from the user's own
-     * identity (username, email, display name). Prefer this overload wherever
-     * the target user is known.
+     * identity (username, email, display name) when the policy requires it.
+     * Prefer this overload wherever the target user is known.
      */
     public String validatePasswordStrength(String rawPassword, User user) {
-        String base = validatePasswordStrength(rawPassword);
+        SecurityPolicyService.PasswordPolicy p = policyService.passwordPolicy(null);
+        String base = validateComposition(rawPassword, p);
         if (base != null) return base;
-        if (user != null) {
+        if (user != null && p.blockUserInfo) {
             String idReason = identifierWeakness(rawPassword, user);
             if (idReason != null) return idReason;
         }
         return null;
+    }
+
+    /** Apply composition + (optional) common-password rules from the resolved policy. */
+    private String validateComposition(String rawPassword, SecurityPolicyService.PasswordPolicy p) {
+        if (rawPassword == null || rawPassword.length() < p.minLength) {
+            return "Password must be at least " + p.minLength + " characters";
+        }
+        if (p.requireUppercase && !rawPassword.matches(".*[A-Z].*")) {
+            return "Password must contain at least one uppercase letter";
+        }
+        if (p.requireLowercase && !rawPassword.matches(".*[a-z].*")) {
+            return "Password must contain at least one lowercase letter";
+        }
+        if (p.requireDigit && !rawPassword.matches(".*[0-9].*")) {
+            return "Password must contain at least one digit";
+        }
+        if (p.requireSpecialChar && !rawPassword.matches(".*[!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>/?].*")) {
+            return "Password must contain at least one special character (!@#$%^&*...)";
+        }
+        // Reject the passwords attackers try first: common words, keyboard runs,
+        // repeats, all-digit — only when the policy enables it (default on).
+        if (p.blockBreached) {
+            String pattern = patternWeakness(rawPassword);
+            if (pattern != null) return pattern;
+        }
+        return null; // Valid
     }
 
     /** Common-password / weak-pattern detection. Returns a reason, or null if OK. */
@@ -142,13 +157,21 @@ public class PasswordService {
         return null;
     }
 
+    /** Effective password-history depth from the active policy (fallback to legacy field). */
+    private int effectiveHistoryCount() {
+        try { return policyService.passwordPolicy(null).historyCount; }
+        catch (Exception e) { return historyCount; }
+    }
+
     /**
      * Check if password was used in the last N passwords.
      * Returns true if REUSED (bad), false if new (good).
      */
     public boolean isPasswordReused(User user, String rawPassword) {
+        int depth = effectiveHistoryCount();
+        if (depth <= 0) return false;
         List<PasswordHistory> history = historyRepository.findByUserOrderByCreatedAtDesc(user);
-        int limit = Math.min(historyCount, history.size());
+        int limit = Math.min(depth, history.size());
         for (int i = 0; i < limit; i++) {
             if (passwordEncoder.matches(rawPassword, history.get(i).getPasswordHash())) {
                 return true;
@@ -164,10 +187,11 @@ public class PasswordService {
     public void recordPasswordInHistory(User user, String encodedPassword) {
         historyRepository.save(new PasswordHistory(user, encodedPassword));
 
-        // Cleanup: keep only last N entries
+        // Cleanup: keep only last N entries (per active policy)
+        int depth = effectiveHistoryCount();
         List<PasswordHistory> history = historyRepository.findByUserOrderByCreatedAtDesc(user);
-        if (history.size() > historyCount) {
-            List<Long> keepIds = history.subList(0, historyCount)
+        if (depth > 0 && history.size() > depth) {
+            List<Long> keepIds = history.subList(0, depth)
                     .stream().map(PasswordHistory::getId).toList();
             historyRepository.deleteByUserAndIdNotIn(user, keepIds);
         }
@@ -175,7 +199,7 @@ public class PasswordService {
 
     /**
      * User self-service: change own password.
-     * Validates current password, strength, and history.
+     * Validates current password, minimum age, strength, and history.
      * Returns null on success, error message on failure.
      */
     @Transactional
@@ -183,6 +207,15 @@ public class PasswordService {
         // 1. Verify current password
         if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
             return "Current password is incorrect";
+        }
+
+        // 1b. Minimum password age — stops rapid cycling to defeat history rules.
+        //     Skipped when never set, age=0, or no recorded change timestamp.
+        int minAgeHours = policyService.passwordPolicy(null).minPasswordAgeHours;
+        if (minAgeHours > 0 && user.getPasswordChangedAt() != null
+                && LocalDateTime.now().isBefore(user.getPasswordChangedAt().plusHours(minAgeHours))) {
+            return "Password was changed too recently. Please wait at least "
+                    + minAgeHours + " hour(s) between changes.";
         }
 
         // 2. Validate strength (also rejects identity-based passwords)
@@ -196,7 +229,7 @@ public class PasswordService {
 
         // 4. Check history
         if (isPasswordReused(user, newPassword)) {
-            return "Cannot reuse any of your last " + historyCount + " passwords";
+            return "Cannot reuse any of your last " + effectiveHistoryCount() + " passwords";
         }
 
         // 5. Encode and save
@@ -214,7 +247,8 @@ public class PasswordService {
 
     /**
      * Admin reset: set password for another user.
-     * NO current-password check required (admin privilege).
+     * NO current-password check required (admin privilege), and minimum-age is
+     * intentionally NOT enforced — an admin must always be able to reset.
      * Validates strength and history.
      * Sets must_change_password = true so user changes on next login.
      * Returns null on success, error message on failure.
@@ -227,7 +261,7 @@ public class PasswordService {
 
         // 2. Check history
         if (isPasswordReused(user, newPassword)) {
-            return "Cannot reuse any of the user's last " + historyCount + " passwords";
+            return "Cannot reuse any of the user's last " + effectiveHistoryCount() + " passwords";
         }
 
         // 3. Encode and save
@@ -262,8 +296,11 @@ public class PasswordService {
         return encoded;
     }
 
-    public int getHistoryCount() { return historyCount; }
+    public int getHistoryCount() { return effectiveHistoryCount(); }
     public void setHistoryCount(int historyCount) { this.historyCount = historyCount; }
-    public int getMinLength() { return minLength; }
+    public int getMinLength() {
+        try { return policyService.passwordPolicy(null).minLength; }
+        catch (Exception e) { return minLength; }
+    }
     public void setMinLength(int minLength) { this.minLength = minLength; }
 }

@@ -55,6 +55,13 @@ public class JwtUtil {
         return createToken(claims, userDetails.getUsername(), ACCESS_TOKEN_EXPIRY);
     }
 
+    /** Access token with a caller-supplied lifetime (from the admin security policy). */
+    public String generateToken(UserDetails userDetails, long ttlMillis) {
+        Map<String, Object> claims = new HashMap<>();
+        return createToken(claims, userDetails.getUsername(),
+                ttlMillis > 0 ? ttlMillis : ACCESS_TOKEN_EXPIRY);
+    }
+
     public String generateToken(UserDetails userDetails, java.util.List<Long> allowedTenantIds, Long defaultTenantId) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("roles", userDetails.getAuthorities());
@@ -67,6 +74,14 @@ public class JwtUtil {
         Map<String, Object> claims = new HashMap<>();
         claims.put("type", "refresh");
         return createToken(claims, username, REFRESH_TOKEN_EXPIRY);
+    }
+
+    /** Refresh token with a caller-supplied lifetime (from the admin security policy). */
+    public String generateRefreshToken(String username, long ttlMillis) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("type", "refresh");
+        return createToken(claims, username,
+                ttlMillis > 0 ? ttlMillis : REFRESH_TOKEN_EXPIRY);
     }
 
     public boolean isRefreshToken(String token) {
