@@ -76,10 +76,6 @@ const DateRangePicker = ({ label, startDate, endDate, onChange }) => {
                 setSelectingStart(false); // Valid switch: Start > End, so force re-pick End
             } else {
                 onChange(dateStr, endDate); // Keep existing end date
-                // Do NOT auto-switch to "To Date" if we just clicked "From Date" explicitly
-                // Let user decide to click "To Date" or just stay here.
-                // Actually, standard behavior is usually to switch, but user feedback says otherwise.
-                // Let's keep focus on Start if that's what they selected.
                 setSelectingStart(true);
             }
         } else {
@@ -113,113 +109,130 @@ const DateRangePicker = ({ label, startDate, endDate, onChange }) => {
     const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
     return (
-        <div className="relative" ref={wrapperRef}>
-            <label className="block text-xs font-bold text-slate-500 mb-1">{label}</label>
-            <div className="flex items-center gap-2">
+        <div className="drp-wrap" ref={wrapperRef}>
+            <label className="drp-label">{label}</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div
                     onClick={() => { setSelectingStart(true); setIsOpen(true); }}
-                    className={`
-                        w-1/2 px-3 py-2 bg-white border rounded-lg cursor-pointer
-                        flex items-center justify-between transition-all duration-200
-                        hover:border-blue-400 hover:shadow-sm
-                        ${isOpen && selectingStart ? 'ring-2 ring-blue-100 border-blue-400' : 'border-slate-200'}
-                    `}
+                    className={`drp-trigger${isOpen && selectingStart ? ' active' : ''}`}
                 >
-                    <span className={`text-sm ${!startDate ? 'text-slate-400' : 'text-slate-700'}`}>
+                    <span style={{ color: startDate ? 'var(--text)' : 'var(--text-muted)' }}>
                         {startDate ? formatDate(startDate) : 'From Date'}
                     </span>
-                    <Calendar size={14} className="text-slate-400" />
+                    <Calendar size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                 </div>
 
                 <div
                     onClick={() => { setSelectingStart(false); setIsOpen(true); }}
-                    className={`
-                        w-1/2 px-3 py-2 bg-white border rounded-lg cursor-pointer
-                        flex items-center justify-between transition-all duration-200
-                        hover:border-blue-400 hover:shadow-sm
-                        ${isOpen && !selectingStart ? 'ring-2 ring-blue-100 border-blue-400' : 'border-slate-200'}
-                    `}
+                    className={`drp-trigger${isOpen && !selectingStart ? ' active' : ''}`}
                 >
-                    <span className={`text-sm ${!endDate ? 'text-slate-400' : 'text-slate-700'}`}>
+                    <span style={{ color: endDate ? 'var(--text)' : 'var(--text-muted)' }}>
                         {endDate ? formatDate(endDate) : 'To Date'}
                     </span>
                     {endDate ? (
-                        <div onClick={clearDates} className="p-0.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-red-500">
-                            <X size={14} />
-                        </div>
+                        <span onClick={clearDates} className="drp-clear"><X size={13} /></span>
                     ) : (
-                        <Calendar size={14} className="text-slate-400" />
+                        <Calendar size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                     )}
                 </div>
             </div>
 
             {isOpen && (
-                <div className="absolute top-full left-0 mt-2 bg-white rounded-lg shadow-2xl border border-slate-200 z-[9999] p-4 w-72">
-                    <div className="flex items-center justify-between mb-4">
-                        <button onClick={prevMonth} className="p-1 hover:bg-slate-100 rounded-full text-slate-600">
-                            <ChevronLeft size={18} />
-                        </button>
-                        <span className="font-semibold text-slate-800">
+                <div className="drp-pop">
+                    <div className="drp-pop-head">
+                        <button onClick={prevMonth} className="drp-nav"><ChevronLeft size={17} /></button>
+                        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text)' }}>
                             {months[currentMonth.getMonth()]} {currentMonth.getFullYear()}
                         </span>
-                        <button onClick={nextMonth} className="p-1 hover:bg-slate-100 rounded-full text-slate-600">
-                            <ChevronRight size={18} />
-                        </button>
+                        <button onClick={nextMonth} className="drp-nav"><ChevronRight size={17} /></button>
                     </div>
 
-                    <div className="grid grid-cols-7 gap-1 mb-2">
+                    <div className="drp-grid" style={{ marginBottom: 4 }}>
                         {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
-                            <div key={d} className="text-center text-xs font-medium text-slate-400 py-1">
-                                {d}
-                            </div>
+                            <div key={d} className="drp-dow">{d}</div>
                         ))}
                     </div>
 
-                    <div className="grid grid-cols-7 gap-1">
+                    <div className="drp-grid">
                         {days.map((date, i) => {
+                            if (!date) return <div key={i} />;
                             const isSelected = isDateSelected(date);
                             const inRange = isDateInRange(date);
-                            const isStart = date && startDate && date.toDateString() === new Date(startDate).toDateString();
-                            const isEnd = date && endDate && date.toDateString() === new Date(endDate).toDateString();
-
-                            let roundedClass = 'rounded-full';
-                            if (inRange) roundedClass = 'rounded-none';
-                            if (isStart && endDate) roundedClass = 'rounded-l-full rounded-r-none';
-                            if (isEnd && startDate) roundedClass = 'rounded-r-full rounded-l-none';
-
+                            let cls = 'drp-day';
+                            if (inRange) cls += ' range';
+                            if (isSelected) cls += ' sel';
                             return (
-                                <button
-                                    key={i}
-                                    onClick={() => handleDateClick(date)}
-                                    disabled={!date}
-                                    className={`
-                                        h-8 w-full flex items-center justify-center text-sm transition-all relative
-                                        ${!date ? 'invisible' : ''}
-                                        ${roundedClass}
-                                        ${isSelected ? 'bg-blue-600 text-white font-bold shadow-sm z-10' : ''}
-                                        ${inRange ? 'bg-blue-50 text-blue-700' : ''}
-                                        ${!isSelected && !inRange && date ? 'text-slate-700 hover:bg-slate-100 rounded-full' : ''}
-                                    `}
-                                >
-                                    {date ? date.getDate() : ''}
+                                <button key={i} onClick={() => handleDateClick(date)} className={cls}>
+                                    {date.getDate()}
                                 </button>
                             );
                         })}
                     </div>
 
-                    <div className="mt-4 flex justify-between items-center text-xs border-t border-slate-100 pt-3">
-                        <span className="text-slate-500 font-medium whitespace-nowrap">
+                    <div className="drp-foot">
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 500, whiteSpace: 'nowrap' }}>
                             {selectingStart ? 'Selecting: From Date' : 'Selecting: To Date'}
                         </span>
-                        <button
-                            onClick={() => setIsOpen(false)}
-                            className="text-blue-600 font-medium hover:text-blue-700 hover:underline px-2"
-                        >
-                            Done
-                        </button>
+                        <button onClick={() => setIsOpen(false)} className="drp-done">Done</button>
                     </div>
                 </div>
             )}
+
+            <style>{`
+                .drp-wrap { position: relative; }
+                .drp-label {
+                    display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+                    letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 6px;
+                }
+                .drp-trigger {
+                    width: 50%; padding: 8px 11px; background: var(--bg-card);
+                    border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer;
+                    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+                    font-size: 0.82rem; transform: none;
+                    transition: border-color 0.15s, box-shadow 0.15s;
+                }
+                .drp-trigger:hover { border-color: var(--brand); }
+                .drp-trigger.active { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-ring); }
+                .drp-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .drp-clear {
+                    display: inline-flex; align-items: center; justify-content: center; padding: 2px;
+                    border-radius: 999px; color: var(--text-muted); flex-shrink: 0; transition: all 0.15s;
+                }
+                .drp-clear:hover { background: var(--danger-bg); color: var(--danger); }
+
+                .drp-pop {
+                    position: absolute; top: 100%; left: 0; margin-top: 8px; z-index: 9999;
+                    background: var(--bg-card); border: 1px solid var(--border);
+                    border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+                    padding: 14px; width: 280px; transform: none;
+                }
+                .drp-pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+                .drp-nav {
+                    display: inline-flex; align-items: center; justify-content: center;
+                    width: 28px; height: 28px; border: none; background: transparent; cursor: pointer;
+                    border-radius: 999px; color: var(--text-secondary); transition: background 0.15s;
+                }
+                .drp-nav:hover { background: var(--bg-hover); color: var(--text); }
+                .drp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+                .drp-dow { text-align: center; font-size: 0.7rem; font-weight: 600; color: var(--text-muted); padding: 4px 0; }
+                .drp-day {
+                    height: 32px; width: 100%; display: flex; align-items: center; justify-content: center;
+                    font-size: 0.82rem; border: none; background: transparent; cursor: pointer;
+                    border-radius: var(--radius-sm); color: var(--text); transition: background 0.12s, color 0.12s;
+                }
+                .drp-day:hover { background: var(--bg-hover); }
+                .drp-day.range { background: var(--brand-light); color: var(--brand-dark); border-radius: 0; }
+                .drp-day.sel { background: var(--brand); color: #fff; font-weight: 700; border-radius: var(--radius-sm); }
+                .drp-foot {
+                    margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border-light);
+                    display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem;
+                }
+                .drp-done {
+                    background: none; border: none; cursor: pointer; color: var(--brand);
+                    font-weight: 600; font-size: 0.78rem; padding: 2px 6px;
+                }
+                .drp-done:hover { text-decoration: underline; }
+            `}</style>
         </div>
     );
 };
