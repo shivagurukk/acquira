@@ -5,6 +5,19 @@ export const explorerApi = {
     getDistinct:    (fieldKey)     => api.get(`/analytics/explorer/distinct/${fieldKey}`),
     query:          (payload)      => api.post('/analytics/explorer/query', payload),
     queryMerchants: (payload)      => api.post('/analytics/explorer/query/merchants', payload),
+    associative:    (payload)      => api.post('/analytics/explorer/associative', payload),
+
+    // Phase 4.x — master items (governed, shareable definitions)
+    listMaster:     ()             => api.get('/analytics/explorer/master-items'),
+    createMaster:   (data)         => api.post('/analytics/explorer/master-items', data),
+    deleteMaster:   (id)           => api.delete(`/analytics/explorer/master-items/${id}`),
+
+    // Phase 4.x — threshold alerts
+    listAlerts:     ()             => api.get('/analytics/explorer/alerts'),
+    createAlert:    (data)         => api.post('/analytics/explorer/alerts', data),
+    updateAlert:    (id, data)     => api.put(`/analytics/explorer/alerts/${id}`, data),
+    deleteAlert:    (id)           => api.delete(`/analytics/explorer/alerts/${id}`),
+    runAlert:       (id)           => api.post(`/analytics/explorer/alerts/${id}/run`),
 };
 
 export const reportApi = {

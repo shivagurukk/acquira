@@ -771,6 +771,27 @@ public class MerchantMasterJobConfig {
                 log.warn("Auto-assign failed (non-fatal): {}", e.getMessage());
             }
 
+            // ── 8. Auto-sync sales agent profiles ────────────────────────────────────
+            // Keep sales_agent_profile in step with the merchants' reps: create a stub
+            // for any new sales_user_id and refresh the auto-populated email. Human-entered
+            // fields (display_name, phone, target, status, notes) are NEVER touched — the
+            // DO UPDATE only sets sales_email + updated_at. Idempotent; mirrors the
+            // auto-assign above. Reads dim_merchant (already upserted in THIS tasklet), so
+            // there is no fact_transaction scan and nothing runs late.
+            try {
+                int synced = jdbcTemplate.update(
+                    "INSERT INTO sales_agent_profile (tenant_id, sales_user_id, sales_email, status, created_at, updated_at) " +
+                    "SELECT m.tenant_id, m.sales_user_id, MAX(m.sales_email), 'ACTIVE', NOW(), NOW() " +
+                    "FROM dim_merchant m WHERE m.tenant_id = " + tId +
+                    " AND m.sales_user_id IS NOT NULL AND m.sales_user_id != '' " +
+                    "GROUP BY m.tenant_id, m.sales_user_id " +
+                    "ON CONFLICT (tenant_id, sales_user_id) DO UPDATE SET " +
+                    "sales_email = COALESCE(EXCLUDED.sales_email, sales_agent_profile.sales_email), updated_at = NOW()");
+                log.info("Synced sales agent profiles ({} rows touched) for tenant {}", synced, tId);
+            } catch (Exception e) {
+                log.warn("Agent profile sync failed (non-fatal): {}", e.getMessage());
+            }
+
             return RepeatStatus.FINISHED;
         };
     }

@@ -7,6 +7,7 @@ import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, Activity } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
+import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 
@@ -347,9 +348,13 @@ const DailyMerchantDashboard = () => {
                 onClose={() => setShowFilters(false)}
             />
 
-            <Stack direction="row" spacing={3} mb={4}>
-                {kpis.map((kpi, idx) => <StatCard key={idx} {...kpi} />)}
-            </Stack>
+            {loading ? (
+                <Box mb={4}><SkeletonLoader variant="kpi-row" count={4} /></Box>
+            ) : (
+                <Stack direction="row" spacing={3} mb={4}>
+                    {kpis.map((kpi, idx) => <StatCard key={idx} {...kpi} />)}
+                </Stack>
+            )}
 
             {!loading && data.length === 0 && (
                 <Paper sx={{ p: 3, mb: 3, borderRadius: 3, border: '1px solid #fde68a', bgcolor: '#fffbeb',

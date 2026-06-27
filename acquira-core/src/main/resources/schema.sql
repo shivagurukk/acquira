@@ -91,6 +91,8 @@ DROP TABLE IF EXISTS ai_chat_history CASCADE;
 DROP TABLE IF EXISTS ref_card_scheme CASCADE;
 DROP TABLE IF EXISTS sales_user_assignment CASCADE;
 DROP TABLE IF EXISTS sales_team_mapping CASCADE;
+DROP TABLE IF EXISTS sales_country_lead CASCADE;
+DROP TABLE IF EXISTS sales_agent_profile CASCADE;
 -- Staging
 DROP TABLE IF EXISTS stg_merchant_master_raw CASCADE;
 DROP TABLE IF EXISTS stg_trnx_raw CASCADE;
@@ -1071,6 +1073,7 @@ CREATE TABLE IF NOT EXISTS sales_team_mapping (
     tenant_id       BIGINT NOT NULL,
     team_lead_name  VARCHAR(100) NOT NULL,
     team_lead_email VARCHAR(150) NOT NULL,
+    country_lead_id BIGINT,            -- nullable: NULL teams roll up to the default country lead
     is_default      BOOLEAN DEFAULT FALSE,
     created_at      TIMESTAMP DEFAULT NOW(),
     CONSTRAINT uq_sales_team_tenant_email UNIQUE (tenant_id, team_lead_email)
@@ -1082,6 +1085,45 @@ CREATE TABLE IF NOT EXISTS sales_user_assignment (
     team_lead_id    BIGINT NOT NULL REFERENCES sales_team_mapping(id),
     assigned_at     TIMESTAMP DEFAULT NOW(),
     CONSTRAINT uq_sales_user_tenant UNIQUE (tenant_id, sales_user_id)
+);
+-- ==========================================
+-- SALES COUNTRY LEAD (tier above Team Lead)
+-- Hierarchy: Country Lead -> Team Lead -> Sales Agent
+-- Integrity enforced in the service layer (matches the no-FK style used
+-- by fact_transaction); country_lead_id on sales_team_mapping links up.
+-- ==========================================
+CREATE TABLE IF NOT EXISTS sales_country_lead (
+    id                 BIGSERIAL PRIMARY KEY,
+    tenant_id          BIGINT NOT NULL,
+    country_lead_name  VARCHAR(100) NOT NULL,
+    country_lead_email VARCHAR(150) NOT NULL,
+    country_code       VARCHAR(2),        -- optional ISO 3166-1 alpha-2 (ref_country)
+    is_default         BOOLEAN DEFAULT FALSE,
+    created_at         TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT uq_sales_country_tenant_email UNIQUE (tenant_id, country_lead_email)
+);
+-- ==========================================
+-- SALES AGENT PROFILE
+-- An agent is a distinct dim_merchant.sales_user_id. This table is the
+-- single reconciliation point between the rep CODE (sales_user_id, used by
+-- assignments) and the EMAIL (sales_email, used by the leaderboard).
+-- sales_email is auto-populated from dim_merchant; the rest is admin-entered.
+-- ==========================================
+CREATE TABLE IF NOT EXISTS sales_agent_profile (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       BIGINT NOT NULL,
+    sales_user_id   VARCHAR(100) NOT NULL,
+    sales_email     VARCHAR(150),          -- auto-populated from dim_merchant
+    display_name    VARCHAR(150),
+    phone           VARCHAR(50),
+    country_code    VARCHAR(2),
+    hire_date       DATE,
+    monthly_target  DECIMAL(19, 2),
+    status          VARCHAR(20) DEFAULT 'ACTIVE',  -- ACTIVE | INACTIVE
+    notes           TEXT,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT uq_sales_agent_tenant_user UNIQUE (tenant_id, sales_user_id)
 );
 -- ==========================================
 -- PASSWORD HISTORY
@@ -1441,6 +1483,15 @@ CREATE INDEX IF NOT EXISTS idx_saved_filter_lookup ON saved_filter(tenant_id, us
 CREATE INDEX IF NOT EXISTS idx_sales_team_tenant ON sales_team_mapping(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_sales_assign_tenant ON sales_user_assignment(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_sales_assign_lead ON sales_user_assignment(team_lead_id);
+CREATE INDEX IF NOT EXISTS idx_sales_country_tenant ON sales_country_lead(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_sales_team_country ON sales_team_mapping(country_lead_id);
+CREATE INDEX IF NOT EXISTS idx_sales_agent_tenant ON sales_agent_profile(tenant_id);
+-- Speeds the agent/team/country rollups that filter dim_merchant by sales rep
+-- (sum_daily_merchant -> dim_merchant on merchant_id, then WHERE sales_user_id = ...).
+CREATE INDEX IF NOT EXISTS idx_dim_merchant_tenant_sales_user ON dim_merchant(tenant_id, sales_user_id) WHERE sales_user_id IS NOT NULL;
+-- Upgrade path for existing/prod DBs where sales_team_mapping already exists
+-- (dev mode drops+recreates, so this is a no-op there).
+ALTER TABLE sales_team_mapping ADD COLUMN IF NOT EXISTS country_lead_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_password_history_user ON password_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_reset_token ON password_reset_token(token);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_tenant ON ai_chat_history(tenant_id, user_id);
@@ -1765,6 +1816,10 @@ ON CONFLICT (user_id, tenant_id) DO NOTHING;
 INSERT INTO sales_team_mapping (tenant_id, team_lead_name, team_lead_email, is_default)
 VALUES (1, 'Default Team Lead', 'default-lead@acquira.com', true)
 ON CONFLICT (tenant_id, team_lead_email) DO UPDATE SET is_default = true;
+-- Default Country Lead (auto-assign unmapped team leads to this lead)
+INSERT INTO sales_country_lead (tenant_id, country_lead_name, country_lead_email, is_default)
+VALUES (1, 'Default Country Lead', 'default-country@acquira.com', true)
+ON CONFLICT (tenant_id, country_lead_email) DO UPDATE SET is_default = true;
 -- SSO Configuration per tenant (admin toggle)
 INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
 SELECT t.tenant_id, 'sso_enabled', 'false', 'BOOLEAN'
@@ -1900,6 +1955,19 @@ SELECT g.group_id, m.menu_id
 FROM sys_user_group g, sys_menu m
 WHERE g.group_name IN ('SUPER_ADMIN', 'ADMIN', 'BUSINESS') AND m.path = '/sales/leaderboard'
 ON CONFLICT DO NOTHING;
+-- Menu entries for Sales Country Leads + Agent Directory (Country Lead -> Team Lead -> Agent)
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Country Leads', '/sales/country-management', 'Globe',      'SALES', 3),
+('Sales Agents',  '/sales/agents',             'UserCircle', 'SALES', 4)
+ON CONFLICT (path) DO NOTHING;
+-- Grant using the actual seeded group names (so it applies on prod too, not just
+-- the dev full-reload). Business User already has the SALES category.
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
+  AND m.path IN ('/sales/country-management', '/sales/agents')
+ON CONFLICT DO NOTHING;
 -- ═══════════════════════════════════════════════════════════
 -- Menu entries for Session 17 new admin screens
 -- ═══════════════════════════════════════════════════════════
@@ -1926,6 +1994,26 @@ SELECT g.group_id, m.menu_id
 FROM sys_user_group g, sys_menu m
 WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
   AND m.path = '/business/revenue-leakage'
+ON CONFLICT DO NOTHING;
+-- Sales Hierarchy Explorer (Country -> Team -> Agent -> Merchant drill-down tree)
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Hierarchy Explorer', '/sales/hierarchy', 'Layers', 'SALES', 5)
+ON CONFLICT (path) DO NOTHING;
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
+  AND m.path = '/sales/hierarchy'
+ON CONFLICT DO NOTHING;
+-- Interactive Explorer (click-to-cross-filter analytics)
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Interactive Explorer', '/analytics/interactive', 'Layers', 'BUSINESS', 17)
+ON CONFLICT (path) DO NOTHING;
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Super Admin', 'Bank Admin', 'Business User')
+  AND m.path = '/analytics/interactive'
 ON CONFLICT DO NOTHING;
 -- Detector thresholds per tenant (detector falls back to these if a key is absent).
 INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
@@ -2247,3 +2335,42 @@ DROP POLICY IF EXISTS tenant_isolation_policy ON stg_trnx_raw;
 DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_daily_metrics;
 -- Ensure existing users are NOT forced to change password
 UPDATE users SET must_change_password = FALSE WHERE must_change_password IS NULL;
+
+-- ============================================================================
+-- Data Explorer governance (Phase 4.x): master items + threshold alerts
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS explorer_master_item (
+    id           BIGSERIAL PRIMARY KEY,
+    tenant_id    BIGINT NOT NULL,
+    item_type    VARCHAR(20) NOT NULL,
+    item_key     VARCHAR(120) NOT NULL,
+    label        VARCHAR(160) NOT NULL,
+    definition   TEXT,
+    description  VARCHAR(255),
+    created_by   VARCHAR(120),
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_master_item UNIQUE (tenant_id, item_type, item_key)
+);
+CREATE INDEX IF NOT EXISTS idx_master_item_tenant ON explorer_master_item (tenant_id);
+
+CREATE TABLE IF NOT EXISTS explorer_alert (
+    id                BIGSERIAL PRIMARY KEY,
+    tenant_id         BIGINT NOT NULL,
+    name              VARCHAR(160) NOT NULL,
+    measure_key       VARCHAR(120) NOT NULL,
+    calc_json         TEXT,
+    filter_json       TEXT,
+    window_days       INTEGER DEFAULT 1,
+    operator          VARCHAR(4) NOT NULL,
+    threshold         DOUBLE PRECISION NOT NULL,
+    severity          VARCHAR(20) DEFAULT 'WARNING',
+    recipients        TEXT,
+    is_enabled        BOOLEAN DEFAULT TRUE,
+    last_value        DOUBLE PRECISION,
+    last_checked_at   TIMESTAMP,
+    last_triggered_at TIMESTAMP,
+    created_by        VARCHAR(120),
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_explorer_alert_enabled ON explorer_alert (is_enabled);
+CREATE INDEX IF NOT EXISTS idx_explorer_alert_tenant ON explorer_alert (tenant_id);

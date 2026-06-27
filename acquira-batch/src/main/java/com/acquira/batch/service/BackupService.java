@@ -5,21 +5,56 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * Database backup / restore via pg_dump / pg_restore.
+ *
+ * WHY THIS WAS REWRITTEN (was "not working as expected"):
+ *  - The pg_dump/pg_restore output was logged at DEBUG, which the prod logback
+ *    profile (WARN) discards — so a failed backup gave NO diagnosable reason,
+ *    just "Backup failed. Exit code: 1". We now CAPTURE the tool output and put
+ *    it in the thrown exception + log it at ERROR, so the real cause (binary not
+ *    found, version mismatch, auth failure, permission denied) is visible.
+ *  - The binary was hard-coded to bare "pg_dump"/"pg_restore", so if the Postgres
+ *    client tools aren't on the service account's PATH (common on RHEL/systemd and
+ *    on Windows) it failed with a cryptic "Cannot run program". The binary path is
+ *    now configurable via app.backup.pg-dump / app.backup.pg-restore.
+ *  - The timeout was a fixed 60s — far too short for any real database, so large
+ *    dumps were reported as failures while pg_dump was still running. Timeout is
+ *    now configurable and the process is destroyed (not orphaned) when it fires.
+ *  - The JDBC URL parser is more robust (host, optional port→5432, db, strips params).
+ *
+ * CONFIG (all optional, sane defaults):
+ *   app.backup.dir                  default ./backups
+ *   app.backup.pg-dump              default pg_dump      (set to full path if not on PATH)
+ *   app.backup.pg-restore           default pg_restore
+ *   app.backup.timeout-seconds      default 1800 (30 min)
+ *   app.backup.restore-timeout-seconds  default 3600 (60 min)
+ *
+ * NOTE: createBackup/restoreBackup are synchronous and can exceed the HTTP
+ * request timeout (server.tomcat.connection-timeout / spring.mvc.async.request-timeout,
+ * 10 min by default) for very large databases. For multi-GB databases consider
+ * making these async with a job-status poll — out of scope for this fix.
+ */
 @Service
 public class BackupService {
 
@@ -34,186 +69,244 @@ public class BackupService {
     @Value("${spring.datasource.password}")
     private String dbPassword;
 
-    private final String BACKUP_DIR = "./backups";
+    @Value("${app.backup.dir:./backups}")
+    private String backupDir;
 
-    public BackupService() {
-        // Ensure backup directory exists
-        File directory = new File(BACKUP_DIR);
-        if (!directory.exists()) {
-            boolean created = directory.mkdirs();
-            if (created) {
-                logger.info("Backup directory created at: {}", BACKUP_DIR);
-            }
-        }
+    @Value("${app.backup.pg-dump:pg_dump}")
+    private String pgDumpBin;
+
+    @Value("${app.backup.pg-restore:pg_restore}")
+    private String pgRestoreBin;
+
+    @Value("${app.backup.timeout-seconds:1800}")
+    private long backupTimeoutSeconds;
+
+    @Value("${app.backup.restore-timeout-seconds:3600}")
+    private long restoreTimeoutSeconds;
+
+    // Only allow simple backup file names (defense-in-depth; the controller also validates).
+    private static final Pattern SAFE_FILENAME = Pattern.compile("^[a-zA-Z0-9_.-]+\\.(sql|dump)$");
+
+    // jdbc:postgresql://host[:port]/dbname[?params]
+    private static final Pattern JDBC_PG = Pattern.compile(
+            "jdbc:postgresql://([^:/?]+)(?::(\\d+))?/([^?/]+).*");
+
+    private Path backupDirPath() throws IOException {
+        Path dir = Paths.get(backupDir);
+        Files.createDirectories(dir); // no-op if it already exists
+        return dir;
     }
 
     public String createBackup() throws IOException, InterruptedException {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
         String fileName = "backup_acquira_" + timestamp + ".sql";
-        Path backupPath = Paths.get(BACKUP_DIR, fileName);
+        Path backupPath = backupDirPath().resolve(fileName);
 
-        // Parse DB config from URL (assuming jdbc:postgresql://host:port/dbname)
-        // jdbc:postgresql://127.0.0.1:5433/postgres?reWriteBatchedInserts=true
-        String cleanUrl = dbUrl.replace("jdbc:", "");
-        String[] parts = cleanUrl.split("\\?");
-        String hostPortDb = parts[0]; // postgresql://127.0.0.1:5433/postgres
+        DbConn db = parseDbUrl(dbUrl);
+        logger.info("Starting backup of DB '{}' on {}:{} → {} (timeout {}s)",
+                db.dbName, db.host, db.port, fileName, backupTimeoutSeconds);
 
-        // Extract host, port, dbname
-        // Expected format: postgresql://host:port/dbname
-        // simplified parsing logic
-        String dbName = "postgres"; // default fallback or parse
-        String host = "localhost";
-        String port = "5432";
-
-        if (hostPortDb.startsWith("postgresql://")) {
-            String temp = hostPortDb.substring("postgresql://".length());
-            String[] split1 = temp.split("/");
-            if (split1.length > 0) {
-                String[] hostPort = split1[0].split(":");
-                host = hostPort[0];
-                if (hostPort.length > 1) {
-                    port = hostPort[1];
-                }
-            }
-            if (split1.length > 1) {
-                dbName = split1[1];
-            }
-        }
-
-        logger.info("Starting backup for DB: {} on {}:{}", dbName, host, port);
-
-        ProcessBuilder pb = new ProcessBuilder(
-                "pg_dump",
-                "-h", host,
-                "-p", port,
+        List<String> cmd = Arrays.asList(
+                pgDumpBin,
+                "-h", db.host,
+                "-p", db.port,
                 "-U", dbUser,
-                "-F", "c", // Custom format (better for restore)
-                "-b", // Include LOBs
-                "-v", // Verbose
+                "-w",            // never prompt for a password (we pass it via PGPASSWORD)
+                "-F", "c",       // custom format (compressed, restorable with pg_restore)
+                "-b",            // include large objects
+                "-v",            // verbose → progress on stderr (captured)
                 "-f", backupPath.toAbsolutePath().toString(),
-                dbName);
+                db.dbName);
 
-        pb.environment().put("PGPASSWORD", dbPassword);
-        pb.redirectErrorStream(true);
+        ProcResult r = runProcess(cmd, backupTimeoutSeconds, "pg_dump");
 
-        Process process = pb.start();
-
-        // Capture output for logging
-        new Thread(() -> {
-            try (java.util.Scanner s = new java.util.Scanner(process.getInputStream())) {
-                while (s.hasNextLine())
-                    logger.debug(s.nextLine());
-            }
-        }).start();
-
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-
-        if (finished && process.exitValue() == 0) {
-            logger.info("Backup created successfully: {}", fileName);
+        if (r.exitCode == 0) {
+            logger.info("Backup created successfully: {} ({} bytes)", fileName,
+                    Files.exists(backupPath) ? Files.size(backupPath) : 0);
             return fileName;
-        } else {
-            throw new IOException("Backup failed. Exit code: " + (finished ? process.exitValue() : "TIMEOUT"));
         }
-    }
-
-    public List<BackupFile> listBackups() {
-        File folder = new File(BACKUP_DIR);
-        File[] files = folder.listFiles((dir, name) -> name.endsWith(".sql") || name.endsWith(".dump"));
-
-        if (files == null)
-            return Collections.emptyList();
-
-        return Arrays.stream(files)
-                .map(file -> new BackupFile(
-                        file.getName(),
-                        file.length(),
-                        file.lastModified()))
-                .sorted(Comparator.comparingLong(BackupFile::lastModified).reversed())
-                .collect(Collectors.toList());
+        // Clean up the partial/empty dump so it doesn't show up as a usable backup.
+        try { Files.deleteIfExists(backupPath); } catch (IOException ignored) {}
+        throw new IOException(failureMessage("Backup", "pg_dump", r));
     }
 
     public void restoreBackup(String fileName) throws IOException, InterruptedException {
-        Path backupPath = Paths.get(BACKUP_DIR, fileName);
+        requireSafeName(fileName);
+        Path backupPath = backupDirPath().resolve(fileName);
         if (!Files.exists(backupPath)) {
             throw new IOException("Backup file not found: " + fileName);
         }
 
-        // Logic similar to backup but using pg_restore
-        String cleanUrl = dbUrl.replace("jdbc:", "");
-        String[] parts = cleanUrl.split("\\?");
-        String hostPortDb = parts[0];
+        DbConn db = parseDbUrl(dbUrl);
+        logger.warn("Restoring backup {} into DB '{}' on {}:{} (timeout {}s)",
+                fileName, db.dbName, db.host, db.port, restoreTimeoutSeconds);
 
-        String dbName = "postgres";
-        String host = "localhost";
-        String port = "5432";
-
-        if (hostPortDb.startsWith("postgresql://")) {
-            String temp = hostPortDb.substring("postgresql://".length());
-            String[] split1 = temp.split("/");
-            if (split1.length > 0) {
-                String[] hostPort = split1[0].split(":");
-                host = hostPort[0];
-                if (hostPort.length > 1) {
-                    port = hostPort[1];
-                }
-            }
-            if (split1.length > 1) {
-                dbName = split1[1];
-            }
-        }
-
-        logger.warn("Restoring backup {} to DB: {}", fileName, dbName);
-
-        // pg_restore -h localhost -p 5432 -U postgres -d dbname -v -c "file"
-        // -c : Clean (drop) database objects before creating them
-        ProcessBuilder pb = new ProcessBuilder(
-                "pg_restore",
-                "-h", host,
-                "-p", port,
+        List<String> cmd = Arrays.asList(
+                pgRestoreBin,
+                "-h", db.host,
+                "-p", db.port,
                 "-U", dbUser,
-                "-d", dbName,
+                "-w",
+                "-d", db.dbName,
                 "-v",
-                "-c",
-                "--if-exists",
+                "-c",            // drop objects before recreating
+                "--if-exists",   // don't error if an object to drop is missing
                 backupPath.toAbsolutePath().toString());
 
-        pb.environment().put("PGPASSWORD", dbPassword);
-        pb.redirectErrorStream(true);
+        ProcResult r = runProcess(cmd, restoreTimeoutSeconds, "pg_restore");
 
-        Process process = pb.start();
-
-        new Thread(() -> {
-            try (java.util.Scanner s = new java.util.Scanner(process.getInputStream())) {
-                while (s.hasNextLine())
-                    logger.debug(s.nextLine());
-            }
-        }).start();
-
-        boolean finished = process.waitFor(120, TimeUnit.SECONDS); // Give more time for restore
-
-        if (finished && process.exitValue() == 0) {
-            logger.info("Restore completed successfully.");
+        // pg_restore returns exit code 1 for non-fatal warnings (very common with -c
+        // on a partially-populated DB). Treat 0 and 1 as success; anything else fails.
+        if (r.exitCode == 0) {
+            logger.info("Restore completed successfully from {}", fileName);
+        } else if (r.exitCode == 1) {
+            logger.warn("Restore completed with warnings (exit 1) from {}. Output tail:\n{}",
+                    fileName, r.outputTail());
         } else {
-            // 1 is often non-fatal warnings with pg_restore, but 0 is strict success.
-            // We'll treat non-zero carefully.
-            if (finished && process.exitValue() <= 1) {
-                logger.info("Restore completed with possible warnings (Exit code 1).");
-            } else {
-                throw new IOException("Restore failed. Exit code: " + (finished ? process.exitValue() : "TIMEOUT"));
-            }
+            throw new IOException(failureMessage("Restore", "pg_restore", r));
         }
+    }
+
+    public List<BackupFile> listBackups() {
+        File folder;
+        try {
+            folder = backupDirPath().toFile();
+        } catch (IOException e) {
+            logger.warn("Could not access backup directory '{}': {}", backupDir, e.getMessage());
+            return Collections.emptyList();
+        }
+        File[] files = folder.listFiles((dir, name) -> name.endsWith(".sql") || name.endsWith(".dump"));
+        if (files == null) return Collections.emptyList();
+
+        return Arrays.stream(files)
+                .map(file -> new BackupFile(file.getName(), file.length(), file.lastModified()))
+                .sorted(Comparator.comparingLong(BackupFile::lastModified).reversed())
+                .collect(Collectors.toList());
     }
 
     public void deleteBackup(String fileName) throws IOException {
-        Path backupPath = Paths.get(BACKUP_DIR, fileName);
-        Files.deleteIfExists(backupPath);
+        requireSafeName(fileName);
+        Files.deleteIfExists(backupDirPath().resolve(fileName));
     }
 
     public File getBackupFile(String fileName) {
-        return Paths.get(BACKUP_DIR, fileName).toFile();
+        requireSafeName(fileName);
+        try {
+            return backupDirPath().resolve(fileName).toFile();
+        } catch (IOException e) {
+            // Fall back to a path under the configured dir even if mkdir failed.
+            return Paths.get(backupDir, fileName).toFile();
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Process runner: captures merged stdout+stderr, enforces a timeout, and
+    // destroys the process (never orphans it) if the timeout fires.
+    // ──────────────────────────────────────────────────────────────────────
+    private ProcResult runProcess(List<String> command, long timeoutSeconds, String tool)
+            throws IOException, InterruptedException {
+
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.environment().put("PGPASSWORD", dbPassword == null ? "" : dbPassword);
+        pb.redirectErrorStream(true); // merge stderr into stdout so we capture everything
+
+        Process process;
+        try {
+            process = pb.start();
+        } catch (IOException e) {
+            // Most common real-world failure: the binary isn't on PATH.
+            throw new IOException(tool + " could not be started. Ensure the PostgreSQL client tools are "
+                    + "installed and on PATH, or set app.backup." + (tool.equals("pg_dump") ? "pg-dump" : "pg-restore")
+                    + " to the full executable path. Cause: " + e.getMessage(), e);
+        }
+
+        // Drain the merged output in a background thread into a bounded buffer so the
+        // child can't block on a full pipe, and so we have the real error text to show.
+        final StringBuilder out = new StringBuilder();
+        final int MAX_CAPTURE = 64 * 1024; // keep memory bounded for very chatty -v output
+        Thread drain = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    synchronized (out) {
+                        if (out.length() < MAX_CAPTURE) out.append(line).append('\n');
+                    }
+                    logger.debug("[{}] {}", tool, line);
+                }
+            } catch (IOException ignored) {
+                // stream closed when the process exits / is destroyed — expected
+            }
+        }, tool + "-output");
+        drain.setDaemon(true);
+        drain.start();
+
+        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+
+        if (!finished) {
+            // Timed out — destroy the process so we don't orphan it, then report.
+            process.destroy();
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+            }
+            drain.join(2000);
+            String captured;
+            synchronized (out) { captured = out.toString(); }
+            throw new IOException(tool + " timed out after " + timeoutSeconds + "s and was terminated. "
+                    + "Increase app.backup." + (tool.equals("pg_dump") ? "timeout-seconds" : "restore-timeout-seconds")
+                    + " for large databases. Output tail:\n" + tail(captured));
+        }
+
+        drain.join(2000); // let the drainer finish reading whatever's left
+        String captured;
+        synchronized (out) { captured = out.toString(); }
+        return new ProcResult(process.exitValue(), captured);
+    }
+
+    private String failureMessage(String action, String tool, ProcResult r) {
+        return action + " failed (" + tool + " exit code " + r.exitCode + "). Output:\n" + tail(r.output);
+    }
+
+    /** Return roughly the last 2KB of output — enough to show the real error line. */
+    private String tail(String s) {
+        if (s == null || s.isEmpty()) return "(no output captured)";
+        int max = 2048;
+        return s.length() <= max ? s.strip() : "…" + s.substring(s.length() - max).strip();
+    }
+
+    private void requireSafeName(String fileName) {
+        if (fileName == null || !SAFE_FILENAME.matcher(fileName).matches()
+                || fileName.contains("..") || fileName.contains("/") || fileName.contains("\\")) {
+            throw new IllegalArgumentException("Invalid backup file name: " + fileName);
+        }
+    }
+
+    private DbConn parseDbUrl(String url) {
+        Matcher m = JDBC_PG.matcher(url == null ? "" : url.trim());
+        if (m.matches()) {
+            String host = m.group(1);
+            String port = m.group(2) != null ? m.group(2) : "5432";
+            String dbName = m.group(3);
+            return new DbConn(host, port, dbName);
+        }
+        // Fallback to sensible localhost defaults rather than failing outright.
+        logger.warn("Could not parse datasource URL '{}' — falling back to localhost:5432/postgres", url);
+        return new DbConn("localhost", "5432", "postgres");
+    }
+
+    private record DbConn(String host, String port, String dbName) {}
+
+    private static final class ProcResult {
+        final int exitCode;
+        final String output;
+        ProcResult(int exitCode, String output) { this.exitCode = exitCode; this.output = output; }
+        String outputTail() {
+            if (output == null || output.isEmpty()) return "(no output)";
+            int max = 2048;
+            return output.length() <= max ? output.strip() : "…" + output.substring(output.length() - max).strip();
+        }
     }
 
     // DTO for UI
-    public record BackupFile(String name, long size, long lastModified) {
-    }
+    public record BackupFile(String name, long size, long lastModified) {}
 }

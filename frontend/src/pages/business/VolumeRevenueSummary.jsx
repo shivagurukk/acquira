@@ -5,6 +5,7 @@ import { TrendingUp, TrendingDown, BarChart3, DollarSign, Hash, Percent } from '
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
+import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
@@ -207,7 +208,7 @@ const VolumeRevenueSummary = () => {
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
             <BusinessFilters filters={filters} onChange={handleAdvancedFilterChange} onApply={handleRunReport} isOpen={showFilters} onClose={() => setShowFilters(false)} />
-            <KpiCards cards={kpis} />
+            {loading ? <SkeletonLoader variant="kpi-row" count={4} /> : <KpiCards cards={kpis} />}
             <Paper sx={premiumTableWrapper}>
                 <DataGrid rows={rows} columns={columns} loading={loading} rowHeight={65}
                     disableRowSelectionOnClick

@@ -3,6 +3,7 @@ import axios from '../../api/axios';
 import { AlertCircle, TrendingDown, ArrowRight, Download, Loader } from 'lucide-react';
 import useExcelExport from '../../hooks/useExcelExport';
 import { formatCurrency } from '../../utils/formatters';
+import SkeletonLoader from '../../components/SkeletonLoader';
 
 const FinanceLists = () => {
     const [activeTab, setActiveTab] = useState('loss-making');
@@ -64,6 +65,9 @@ const FinanceLists = () => {
                 </button>
             </div>
 
+            {loading ? (
+                <SkeletonLoader variant="table" rows={6} cols={5} />
+            ) : (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <table className="w-full text-left">
                     <thead className="bg-gray-50 text-gray-600 text-xs uppercase font-semibold">
@@ -106,6 +110,7 @@ const FinanceLists = () => {
                     </tbody>
                 </table>
             </div>
+            )}
         </div>
     );
 };

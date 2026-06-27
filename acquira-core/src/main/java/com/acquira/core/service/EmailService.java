@@ -188,6 +188,54 @@ public class EmailService {
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    //  Generic email with an arbitrary attachment (scheduled report exports)
+    // ════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Send an email (HTML or plain) with an arbitrary byte attachment, via the
+     * CURRENT tenant's resolved SMTP sender. Used by scheduled report exports to
+     * attach CSV / XLSX / PDF artifacts.
+     *
+     * @return true if handed to the mail server, false if no SMTP / send failed.
+     */
+    public boolean sendEmailWithAttachment(String toEmail, String subject, String htmlBody,
+                                           byte[] bytes, String filename, String contentType) {
+        ResolvedSender rs = resolveSender();
+        if (rs == null) {
+            log.warn("[EMAIL] No SMTP configured. Would send '{}' to {}", subject, toEmail);
+            return false;
+        }
+        try {
+            MimeMessage mime = rs.sender().createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(mime, true, "UTF-8");
+            if (rs.fromName() != null && !rs.fromName().isBlank()) {
+                try {
+                    helper.setFrom(new InternetAddress(rs.fromAddress(), rs.fromName()));
+                } catch (UnsupportedEncodingException ue) {
+                    helper.setFrom(rs.fromAddress());
+                }
+            } else {
+                helper.setFrom(rs.fromAddress());
+            }
+            helper.setTo(toEmail);
+            helper.setSubject(subject);
+            boolean isHtml = htmlBody != null && htmlBody.contains("<");
+            helper.setText(htmlBody != null ? htmlBody : "", isHtml);
+            if (bytes != null && bytes.length > 0) {
+                String fn = (filename != null && !filename.isBlank()) ? filename : "report";
+                String ct = (contentType != null && !contentType.isBlank()) ? contentType : "application/octet-stream";
+                helper.addAttachment(fn, new ByteArrayResource(bytes), ct);
+            }
+            rs.sender().send(mime);
+            log.info("[EMAIL] Sent '{}' to {} ({} bytes attached)", subject, toEmail, bytes != null ? bytes.length : 0);
+            return true;
+        } catch (Exception e) {
+            log.error("[EMAIL] Failed to send '{}' to {}: {}", subject, toEmail, e.getMessage());
+            return false;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     //  Password reset  (runs pre-login → no tenant context → property fallback)
     // ════════════════════════════════════════════════════════════════════════
 

@@ -3,7 +3,7 @@ import {
   Trophy, Medal, Users, TrendingUp, DollarSign, UserPlus, Activity,
   ChevronDown, ChevronUp, Loader2, Crown, Star, Flame, Gem, Target,
   BarChart3, ArrowUpRight, ArrowDownRight, Filter, Calendar, Eye,
-  Download, Percent, Zap, Award
+  Download, Percent, Zap, Award, Globe
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import api from '../../api/axios';
@@ -141,7 +141,7 @@ const Podium = ({ items, isTeam }) => {
 };
 
 // ─── Leaderboard Table ───────────────────────────────────────
-const LeaderTable = ({ items, isTeam, onAgentClick }) => {
+const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
   if (!items || items.length === 0) return <div style={{ ...CARD, textAlign: 'center', padding: 60, color: '#9ca3af' }}>No data available for this period</div>;
 
   return (
@@ -151,7 +151,7 @@ const LeaderTable = ({ items, isTeam, onAgentClick }) => {
           <thead>
             <tr style={{ borderBottom: '2px solid #f3f4f6' }}>
               <th style={{ padding: '10px 8px', textAlign: 'left', color: '#6b7280', fontWeight: 600, width: 50, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Rank</th>
-              <th style={{ padding: '10px 8px', textAlign: 'left', color: '#6b7280', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{isTeam ? 'Team Lead' : 'Sales Agent'}</th>
+              <th style={{ padding: '10px 8px', textAlign: 'left', color: '#6b7280', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{tierLabel || (isTeam ? 'Team Lead' : 'Sales Agent')}</th>
               {isTeam && <th style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280', fontWeight: 600, fontSize: 11, textTransform: 'uppercase' }}>Agents</th>}
               <th style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280', fontWeight: 600, fontSize: 11, textTransform: 'uppercase' }}>Onboarded</th>
               <th style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280', fontWeight: 600, fontSize: 11, textTransform: 'uppercase' }}>Active</th>
@@ -332,6 +332,7 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
 const TABS = [
   { key: 'agents', label: 'Sales Agents', icon: Users },
   { key: 'teams', label: 'Team Leads', icon: Crown },
+  { key: 'countries', label: 'Country Leads', icon: Globe },
 ];
 
 const SalesLeaderboard = () => {
@@ -344,6 +345,7 @@ const SalesLeaderboard = () => {
   const [overview, setOverview] = useState(null);
   const [agents, setAgents] = useState([]);
   const [teams, setTeams] = useState([]);
+  const [countries, setCountries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState(null);
 
@@ -351,23 +353,28 @@ const SalesLeaderboard = () => {
     setLoading(true);
     try {
       const p = `period=${period}`;
-      const [ov, ag, tm] = await Promise.all([
+      const [ov, ag, tm, co] = await Promise.all([
         api.get(`/leaderboard/overview?${p}`),
         api.get(`/leaderboard/agents?${p}`),
-        api.get(`/leaderboard/teams?${p}`)
+        api.get(`/leaderboard/teams?${p}`),
+        api.get(`/leaderboard/countries?${p}`)
       ]);
-      setOverview(ov.data); setAgents(ag.data); setTeams(tm.data);
+      // Country rows expose `country_lead`; alias it to `team_lead` so the shared
+      // Podium/LeaderTable (built around team_lead) render them without a refactor.
+      const countriesData = (co.data || []).map(r => ({ ...r, team_lead: r.country_lead }));
+      setOverview(ov.data); setAgents(ag.data); setTeams(tm.data); setCountries(countriesData);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [period]);
 
   useEffect(() => { load(); }, [load]);
 
-  const data = activeTab === 'agents' ? agents : teams;
-  const isTeamTab = activeTab === 'teams';
+  const data = activeTab === 'agents' ? agents : activeTab === 'teams' ? teams : countries;
+  const isTeamTab = activeTab === 'teams' || activeTab === 'countries';
+  const tierLabel = activeTab === 'agents' ? 'Sales Agent' : activeTab === 'teams' ? 'Team Lead' : 'Country Lead';
 
   const handleExportCSV = () => {
-    const isTeam = activeTab === 'teams';
+    const isTeam = activeTab === 'teams' || activeTab === 'countries';
     const headers = isTeam
       ? ['Rank', 'Team Lead', 'Agents', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'MSF Rate', 'Txns', 'Active %']
       : ['Rank', 'Agent', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'MSF Rate', 'Txns', 'Active %', 'Volume Change %'];
@@ -423,7 +430,7 @@ const SalesLeaderboard = () => {
             {TABS.map(tab => {
               const Icon = tab.icon;
               const active = activeTab === tab.key;
-              const count = tab.key === 'agents' ? agents.length : teams.length;
+              const count = tab.key === 'agents' ? agents.length : tab.key === 'teams' ? teams.length : countries.length;
               return (
                 <button key={tab.key} onClick={() => { setActiveTab(tab.key); setSelectedAgent(null); }} style={{
                   flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -438,7 +445,7 @@ const SalesLeaderboard = () => {
           </div>
 
           {/* Podium */}
-          <Podium items={data} isTeam={activeTab === 'teams'} />
+          <Podium items={data} isTeam={isTeamTab} />
 
           {/* Agent Detail */}
           {selectedAgent && <AgentDetail agentEmail={selectedAgent} period={period} onClose={() => setSelectedAgent(null)} />}
@@ -454,7 +461,7 @@ const SalesLeaderboard = () => {
                   <BarChart data={data.slice(0, 15)} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
                     <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={fmtM} />
-                    <YAxis dataKey={activeTab === 'teams' ? 'team_lead' : 'agent'} type="category" width={120} tick={{ fontSize: 11 }}
+                    <YAxis dataKey={activeTab === 'agents' ? 'agent' : 'team_lead'} type="category" width={120} tick={{ fontSize: 11 }}
                       tickFormatter={v => v?.includes('@') ? v.split('@')[0] : v?.substring(0, 15)} />
                     <Tooltip formatter={v => fmtM(v)} />
                     <Bar dataKey="total_volume" fill="#3b82f6" radius={[0, 6, 6, 0]} name="Volume" />
@@ -466,7 +473,7 @@ const SalesLeaderboard = () => {
           )}
 
           {/* Full Ranking Table */}
-          <LeaderTable items={data} isTeam={activeTab === 'teams'} onAgentClick={(email) => setSelectedAgent(email)} />
+          <LeaderTable items={data} isTeam={isTeamTab} tierLabel={tierLabel} onAgentClick={(email) => setSelectedAgent(email)} />
         </>
       )}
 

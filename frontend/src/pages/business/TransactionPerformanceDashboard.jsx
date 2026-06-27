@@ -5,6 +5,7 @@ import { ChevronRight, ChevronDown, TrendingUp, Layers, DollarSign, Hash, Credit
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
+import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 
@@ -210,7 +211,7 @@ const TransactionPerformanceDashboard = () => {
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
             <BusinessFilters filters={filters} onChange={setFilters} onApply={loadInitialData} isOpen={showFilters} onClose={() => setShowFilters(false)} />
-            <KpiCards cards={kpis} />
+            {loading ? <SkeletonLoader variant="kpi-row" count={4} /> : <KpiCards cards={kpis} />}
             <Paper sx={{
                 ...premiumTableWrapper,
                 '& .super-header-debit': { bgcolor: '#eff6ff', color: '#1e40af', fontWeight: '700' },

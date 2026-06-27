@@ -57,14 +57,14 @@ public class LeaderboardController {
             + " GROUP BY m.sales_email"
             + "), agent_volume AS ("
             + " SELECT m.sales_email AS agent,"
-            + "   COUNT(DISTINCT ft.merchant_id) AS active_merchants,"
-            + "   COUNT(*) AS txn_count,"
-            + "   COALESCE(SUM(ft.store_base_currency_amount), 0) AS total_volume,"
-            + "   COALESCE(SUM(ft.msf), 0) AS total_msf"
-            + " FROM fact_transaction ft"
-            + " JOIN dim_merchant m ON ft.merchant_id = m.merchant_id AND ft.tenant_id = m.tenant_id"
-            + " WHERE ft.tenant_id = ? AND m.sales_email IS NOT NULL"
-            + (dateFilter.isEmpty() ? "" : " AND ft.payment_date " + dateFilter)
+            + "   COUNT(DISTINCT sdm.merchant_id) AS active_merchants,"
+            + "   COALESCE(SUM(sdm.total_txns), 0) AS txn_count,"
+            + "   COALESCE(SUM(sdm.total_base_volume), 0) AS total_volume,"
+            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf"
+            + " FROM sum_daily_merchant sdm"
+            + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
+            + " WHERE sdm.tenant_id = ? AND m.sales_email IS NOT NULL"
+            + (dateFilter.isEmpty() ? "" : " AND sdm.business_date " + dateFilter)
             + " GROUP BY m.sales_email"
             + "), agent_total AS ("
             + " SELECT m.sales_email AS agent, COUNT(DISTINCT m.merchant_id) AS total_merchants"
@@ -100,11 +100,11 @@ public class LeaderboardController {
         Map<String, Double> prevVolumes = new HashMap<>();
         if (!prevDateFilter.isEmpty()) {
             try {
-                String prevSql = "SELECT m.sales_email AS agent, COALESCE(SUM(ft.store_base_currency_amount), 0) AS prev_volume"
-                    + " FROM fact_transaction ft"
-                    + " JOIN dim_merchant m ON ft.merchant_id = m.merchant_id AND ft.tenant_id = m.tenant_id"
-                    + " WHERE ft.tenant_id = ? AND m.sales_email IS NOT NULL"
-                    + " AND ft.payment_date " + prevDateFilter
+                String prevSql = "SELECT m.sales_email AS agent, COALESCE(SUM(sdm.total_base_volume), 0) AS prev_volume"
+                    + " FROM sum_daily_merchant sdm"
+                    + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
+                    + " WHERE sdm.tenant_id = ? AND m.sales_email IS NOT NULL"
+                    + " AND sdm.business_date " + prevDateFilter
                     + " GROUP BY m.sales_email";
                 List<Map<String, Object>> prevResults = jdbcTemplate.queryForList(prevSql, tenantId);
                 for (Map<String, Object> row : prevResults) {
@@ -172,14 +172,14 @@ public class LeaderboardController {
             + " GROUP BY ta.team_lead_name, ta.team_lead_email"
             + "), team_volume AS ("
             + " SELECT ta.team_lead_name,"
-            + "   COUNT(DISTINCT ft.merchant_id) AS active_merchants,"
-            + "   COUNT(*) AS txn_count,"
-            + "   COALESCE(SUM(ft.store_base_currency_amount), 0) AS total_volume,"
-            + "   COALESCE(SUM(ft.msf), 0) AS total_msf"
+            + "   COUNT(DISTINCT sdm.merchant_id) AS active_merchants,"
+            + "   COALESCE(SUM(sdm.total_txns), 0) AS txn_count,"
+            + "   COALESCE(SUM(sdm.total_base_volume), 0) AS total_volume,"
+            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf"
             + " FROM team_agents ta"
             + " JOIN dim_merchant m ON m.sales_user_id = ta.sales_user_id AND m.tenant_id = ?"
-            + " JOIN fact_transaction ft ON ft.merchant_id = m.merchant_id AND ft.tenant_id = m.tenant_id"
-            + (dateFilter.isEmpty() ? "" : "   AND ft.payment_date " + dateFilter)
+            + " JOIN sum_daily_merchant sdm ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
+            + (dateFilter.isEmpty() ? "" : "   AND sdm.business_date " + dateFilter)
             + " GROUP BY ta.team_lead_name"
             + "), team_total AS ("
             + " SELECT ta.team_lead_name,"
@@ -219,6 +219,101 @@ public class LeaderboardController {
             Map<String, Object> row = results.get(i);
             row.put("rank", i + 1);
             row.put("badges", computeTeamBadges(row));
+            double currVol = ((Number) row.get("total_volume")).doubleValue();
+            double currMsf = ((Number) row.get("total_msf")).doubleValue();
+            row.put("msf_rate", currVol > 0 ? Math.round(currMsf / currVol * 10000.0) / 100.0 : 0);
+        }
+
+        return ResponseEntity.ok(results);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  COUNTRY LEAD LEADERBOARD
+    // ═══════════════════════════════════════════════════════════
+
+    @GetMapping("/countries")
+    public ResponseEntity<?> getCountryLeaderboard(
+            @RequestParam(defaultValue = "") String period,
+            @RequestParam(defaultValue = "") String dateFrom,
+            @RequestParam(defaultValue = "") String dateTo) {
+
+        Long tenantId = getTenantId();
+        String dateFilter = buildDateFilter(period, dateFrom, dateTo);
+
+        // Rolls the team chain up one more level via sales_team_mapping.country_lead_id
+        // -> sales_country_lead. Teams with a NULL country_lead_id are LEFT-JOINed and
+        // bucketed under country_lead_id = -1 ('Unassigned') so their volume is never
+        // silently dropped from the rollup.
+        String sql = "WITH country_teams AS ("
+            + " SELECT COALESCE(scl.id, -1) AS country_lead_id,"
+            + "   COALESCE(scl.country_lead_name, 'Unassigned') AS country_lead,"
+            + "   COALESCE(scl.country_lead_email, '') AS country_lead_email,"
+            + "   stm.id AS team_lead_id, sua.sales_user_id"
+            + " FROM sales_team_mapping stm"
+            + " JOIN sales_user_assignment sua ON sua.team_lead_id = stm.id AND sua.tenant_id = stm.tenant_id"
+            + " LEFT JOIN sales_country_lead scl ON scl.id = stm.country_lead_id AND scl.tenant_id = stm.tenant_id"
+            + " WHERE stm.tenant_id = ?"
+            + "), country_onboarding AS ("
+            + " SELECT ct.country_lead_id, ct.country_lead, ct.country_lead_email,"
+            + "   COUNT(DISTINCT ct.team_lead_id) AS team_count,"
+            + "   COUNT(DISTINCT ct.sales_user_id) AS agent_count,"
+            + "   COUNT(DISTINCT m.merchant_id) AS merchants_onboarded"
+            + " FROM country_teams ct"
+            + " LEFT JOIN dim_merchant m"
+            + "   ON m.sales_user_id = ct.sales_user_id"
+            + "   AND m.tenant_id = ?"
+            + "   AND m.created_date IS NOT NULL"
+            + (dateFilter.isEmpty() ? "" : "   AND m.created_date " + dateFilter)
+            + " GROUP BY ct.country_lead_id, ct.country_lead, ct.country_lead_email"
+            + "), country_volume AS ("
+            + " SELECT ct.country_lead_id,"
+            + "   COUNT(DISTINCT sdm.merchant_id) AS active_merchants,"
+            + "   COALESCE(SUM(sdm.total_txns), 0) AS txn_count,"
+            + "   COALESCE(SUM(sdm.total_base_volume), 0) AS total_volume,"
+            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf"
+            + " FROM country_teams ct"
+            + " JOIN dim_merchant m ON m.sales_user_id = ct.sales_user_id AND m.tenant_id = ?"
+            + " JOIN sum_daily_merchant sdm ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
+            + (dateFilter.isEmpty() ? "" : "   AND sdm.business_date " + dateFilter)
+            + " GROUP BY ct.country_lead_id"
+            + "), country_total AS ("
+            + " SELECT ct.country_lead_id, COUNT(DISTINCT m.merchant_id) AS total_merchants"
+            + " FROM country_teams ct"
+            + " JOIN dim_merchant m ON m.sales_user_id = ct.sales_user_id AND m.tenant_id = ?"
+            + " GROUP BY ct.country_lead_id"
+            + ")"
+            + " SELECT COALESCE(co.country_lead, 'Unassigned') AS country_lead,"
+            + "   COALESCE(co.country_lead_email, '') AS country_lead_email,"
+            + "   COALESCE(co.team_count, 0) AS team_count,"
+            + "   COALESCE(co.agent_count, 0) AS agent_count,"
+            + "   COALESCE(co.merchants_onboarded, 0) AS merchants_onboarded,"
+            + "   COALESCE(cv.active_merchants, 0) AS active_merchants,"
+            + "   COALESCE(ctt.total_merchants, 0) AS total_merchants,"
+            + "   COALESCE(cv.txn_count, 0) AS txn_count,"
+            + "   COALESCE(cv.total_volume, 0) AS total_volume,"
+            + "   COALESCE(cv.total_msf, 0) AS total_msf,"
+            + "   CASE WHEN COALESCE(ctt.total_merchants, 0) > 0"
+            + "     THEN ROUND(COALESCE(cv.active_merchants, 0)::NUMERIC / ctt.total_merchants * 100, 1)"
+            + "     ELSE 0 END AS active_rate"
+            + " FROM country_onboarding co"
+            + " FULL OUTER JOIN country_volume cv ON co.country_lead_id = cv.country_lead_id"
+            + " FULL OUTER JOIN country_total ctt ON COALESCE(co.country_lead_id, cv.country_lead_id) = ctt.country_lead_id"
+            + " ORDER BY total_volume DESC";
+
+        List<Object> params = new ArrayList<>();
+        params.add(tenantId);
+        params.add(tenantId);
+        if (!dateFilter.isEmpty()) addDateParams(params, period, dateFrom, dateTo);
+        params.add(tenantId);
+        if (!dateFilter.isEmpty()) addDateParams(params, period, dateFrom, dateTo);
+        params.add(tenantId);
+
+        List<Map<String, Object>> results = jdbcTemplate.queryForList(sql, params.toArray());
+
+        for (int i = 0; i < results.size(); i++) {
+            Map<String, Object> row = results.get(i);
+            row.put("rank", i + 1);
+            row.put("badges", computeCountryBadges(row));
             double currVol = ((Number) row.get("total_volume")).doubleValue();
             double currMsf = ((Number) row.get("total_msf")).doubleValue();
             row.put("msf_rate", currVol > 0 ? Math.round(currMsf / currVol * 10000.0) / 100.0 : 0);
@@ -269,22 +364,22 @@ public class LeaderboardController {
             overview.put("merchantsOnboarded", onboarded != null ? onboarded : 0);
         } catch (Exception e) { overview.put("merchantsOnboarded", 0); }
 
-        String volSql = "SELECT COALESCE(SUM(store_base_currency_amount), 0) FROM fact_transaction WHERE tenant_id = ?";
+        String volSql = "SELECT COALESCE(SUM(total_base_volume), 0) FROM sum_daily_merchant WHERE tenant_id = ?";
         List<Object> volParams = new ArrayList<>();
         volParams.add(tenantId);
         if (!dateFilter.isEmpty()) {
-            volSql += " AND payment_date " + dateFilter;
+            volSql += " AND business_date " + dateFilter;
             addDateParams(volParams, period, dateFrom, dateTo);
         }
         try {
             overview.put("totalVolume", jdbcTemplate.queryForObject(volSql, Double.class, volParams.toArray()));
         } catch (Exception e) { overview.put("totalVolume", 0); }
 
-        String msfSql = "SELECT COALESCE(SUM(msf), 0) FROM fact_transaction WHERE tenant_id = ?";
+        String msfSql = "SELECT COALESCE(SUM(total_msf), 0) FROM sum_daily_merchant WHERE tenant_id = ?";
         List<Object> msfParams = new ArrayList<>();
         msfParams.add(tenantId);
         if (!dateFilter.isEmpty()) {
-            msfSql += " AND payment_date " + dateFilter;
+            msfSql += " AND business_date " + dateFilter;
             addDateParams(msfParams, period, dateFrom, dateTo);
         }
         try {
@@ -317,10 +412,10 @@ public class LeaderboardController {
             + " COALESCE(v.msf_total, 0) AS msf"
             + " FROM dim_merchant m"
             + " LEFT JOIN ("
-            + "   SELECT merchant_id, SUM(store_base_currency_amount) AS total_volume,"
-            + "     COUNT(*) AS txn_count, SUM(msf) AS msf_total"
-            + "   FROM fact_transaction WHERE tenant_id = ?"
-            + (dateFilter.isEmpty() ? "" : " AND payment_date " + dateFilter)
+            + "   SELECT merchant_id, SUM(total_base_volume) AS total_volume,"
+            + "     SUM(total_txns) AS txn_count, SUM(total_msf) AS msf_total"
+            + "   FROM sum_daily_merchant WHERE tenant_id = ?"
+            + (dateFilter.isEmpty() ? "" : " AND business_date " + dateFilter)
             + "   GROUP BY merchant_id"
             + " ) v ON m.merchant_id = v.merchant_id"
             + " WHERE m.tenant_id = ? AND m.sales_email = ?"
@@ -334,14 +429,14 @@ public class LeaderboardController {
 
         detail.put("merchants", jdbcTemplate.queryForList(merchSql, params.toArray()));
 
-        String trendSql = "SELECT TO_CHAR(ft.payment_date, 'YYYY-MM') AS month,"
-            + " SUM(ft.store_base_currency_amount) AS volume,"
-            + " COUNT(*) AS txn_count,"
-            + " SUM(ft.msf) AS msf"
-            + " FROM fact_transaction ft"
-            + " JOIN dim_merchant m ON ft.merchant_id = m.merchant_id AND ft.tenant_id = m.tenant_id"
-            + " WHERE ft.tenant_id = ? AND m.sales_email = ?"
-            + " GROUP BY TO_CHAR(ft.payment_date, 'YYYY-MM')"
+        String trendSql = "SELECT TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
+            + " SUM(sdm.total_base_volume) AS volume,"
+            + " SUM(sdm.total_txns) AS txn_count,"
+            + " SUM(sdm.total_msf) AS msf"
+            + " FROM sum_daily_merchant sdm"
+            + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
+            + " WHERE sdm.tenant_id = ? AND m.sales_email = ?"
+            + " GROUP BY TO_CHAR(sdm.business_date, 'YYYY-MM')"
             + " ORDER BY month DESC LIMIT 12";
         detail.put("monthlyTrend", jdbcTemplate.queryForList(trendSql, tenantId, agentEmail));
 
@@ -416,6 +511,23 @@ public class LeaderboardController {
         if (activeRate >= 85) badges.add("🔥 High Activation");
         if (volume >= 5_000_000) badges.add("💎 5M Club");
         else if (volume >= 1_000_000) badges.add("🏅 Million Team");
+
+        return badges;
+    }
+
+    private List<String> computeCountryBadges(Map<String, Object> country) {
+        List<String> badges = new ArrayList<>();
+        int rank = ((Number) country.get("rank")).intValue();
+        double volume = ((Number) country.get("total_volume")).doubleValue();
+        int teams = ((Number) country.get("team_count")).intValue();
+        double activeRate = ((Number) country.get("active_rate")).doubleValue();
+
+        if (rank == 1) badges.add("👑 #1 Country");
+        else if (rank == 2) badges.add("🥈 Runner Up");
+        if (teams >= 3) badges.add("🌐 Multi-Team");
+        if (activeRate >= 85) badges.add("🔥 High Activation");
+        if (volume >= 10_000_000) badges.add("💎 10M Club");
+        else if (volume >= 5_000_000) badges.add("🏅 5M Country");
 
         return badges;
     }

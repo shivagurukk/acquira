@@ -3,21 +3,13 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
+import { LoadingProvider } from './contexts/LoadingContext';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import { RoleGuard } from './components/ProtectedRoute';
+import { PageLoader } from './components/Loaders';
 
-// #11: Shared loading spinner for lazy-loaded routes (theme-aware)
-const PageLoader = () => (
-  <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:'60vh' }}>
-    <div style={{ textAlign:'center' }}>
-      <div style={{ width:40, height:40, border:'3px solid var(--border, #E5E7EB)', borderTopColor:'var(--accent, #1E3A8A)', borderRadius:'50%', animation:'spin 0.8s linear infinite', margin:'0 auto 12px' }} />
-      <div style={{ fontSize:13, color:'var(--text-secondary, #6B7280)', fontFamily:'Inter, sans-serif' }}>Loading...</div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
-  </div>
-);
 
 // Lazy-loaded route components — only loaded when user navigates to them
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -43,7 +35,10 @@ const DailyMerchantDashboard = lazy(() => import('./pages/business/DailyMerchant
 const MerchantAnalyticsReport = lazy(() => import('./pages/business/MerchantAnalyticsReport'));
 const MerchantComparison = lazy(() => import('./pages/business/MerchantComparison'));
 const SalesTeamManagement = lazy(() => import('./pages/sales/SalesTeamManagement'));
+const SalesCountryLeadManagement = lazy(() => import('./pages/sales/SalesCountryLeadManagement'));
+const SalesAgentDirectory = lazy(() => import('./pages/sales/SalesAgentDirectory'));
 const SalesLeaderboard = lazy(() => import('./pages/sales/SalesLeaderboard'));
+const SalesHierarchyTree = lazy(() => import('./pages/sales/SalesHierarchyTree'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const TenantManagement = lazy(() => import('./pages/TenantManagement'));
 const RbacGroups = lazy(() => import('./pages/RbacGroups'));
@@ -54,6 +49,7 @@ const MerchantInsightHub = lazy(() => import('./pages/reports/MerchantInsightHub
 const TransactionTrendsHub = lazy(() => import('./pages/reports/TransactionTrendsHub'));
 const BackupRestore = lazy(() => import('./pages/BackupRestore'));
 const DataExplorer = lazy(() => import('./pages/analytics/DataExplorer'));
+const InteractiveExplorer = lazy(() => import('./pages/analytics/InteractiveExplorer'));
 const AiAssistant = lazy(() => import('./pages/ai/AiAssistant'));
 const StatementEmails = lazy(() => import('./pages/StatementEmails'));
 const ServerFileProcessor = lazy(() => import('./pages/ServerFileProcessor'));
@@ -75,6 +71,7 @@ function App() {
   return (
     // ErrorBoundary is provided as the outermost wrapper in main.jsx.
     <ThemeProvider>
+      <LoadingProvider>
       <ToastProvider>
       <AuthProvider>
         <Suspense fallback={<PageLoader />}>
@@ -116,11 +113,15 @@ function App() {
               <Route path="/business/opportunity" element={<OpportunityIntelligence />} />
               <Route path="/business/groups" element={<GroupReports />} />
               <Route path="/explorer" element={<DataExplorer />} />
+              <Route path="/analytics/interactive" element={<InteractiveExplorer />} />
               <Route path="/ai-assistant" element={<AiAssistant />} />
 
               {/* Sales */}
               <Route path="/sales/team-management" element={<SalesTeamManagement />} />
+              <Route path="/sales/country-management" element={<SalesCountryLeadManagement />} />
+              <Route path="/sales/agents" element={<SalesAgentDirectory />} />
               <Route path="/sales/leaderboard" element={<SalesLeaderboard />} />
+              <Route path="/sales/hierarchy" element={<SalesHierarchyTree />} />
 
               {/* Finance */}
               <Route path="/finance/dashboard" element={<FinanceDashboard />} />
@@ -209,6 +210,7 @@ function App() {
         </Suspense>
       </AuthProvider>
       </ToastProvider>
+      </LoadingProvider>
     </ThemeProvider>
   );
 }

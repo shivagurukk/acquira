@@ -23,6 +23,11 @@ public class SalesTeamMapping {
     @Column(name = "team_lead_email", nullable = false)
     private String teamLeadEmail;
 
+    // Tier above team lead. Nullable: teams with no country lead roll up to
+    // the tenant's default country lead. Integrity checked in the service.
+    @Column(name = "country_lead_id")
+    private Long countryLeadId;
+
     @Column(name = "is_default")
     private boolean isDefault;
 

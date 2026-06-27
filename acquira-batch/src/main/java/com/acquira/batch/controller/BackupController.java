@@ -40,7 +40,10 @@ public class BackupController {
             String fileName = backupService.createBackup();
             return ResponseEntity.ok(Map.of("message", "Backup created successfully", "fileName", fileName));
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body(Map.of("error", "Backup creation failed"));
+            // Super-admin-only endpoint: surface the real pg_dump reason so failures are diagnosable.
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "error", "Backup creation failed",
+                    "detail", String.valueOf(e.getMessage())));
         }
     }
 
@@ -53,7 +56,9 @@ public class BackupController {
             backupService.restoreBackup(fileName);
             return ResponseEntity.ok(Map.of("message", "Database restored successfully from " + fileName));
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body(Map.of("error", "Restore failed"));
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "error", "Restore failed",
+                    "detail", String.valueOf(e.getMessage())));
         }
     }
 

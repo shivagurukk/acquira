@@ -6,7 +6,7 @@ import {
     RefreshCw, BarChart3, ArrowRight, Clock, Percent, TrendingUp, Layers, Crown
 } from 'lucide-react';
 import {
-    AreaChart, Area, XAxis, YAxis, CartesianGrid,
+    ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Brush,
     Tooltip as ReTooltip, ResponsiveContainer, PieChart as RePieChart,
     Pie, Cell, ReferenceLine
 } from 'recharts';
@@ -161,6 +161,15 @@ const Glance = ({ icon: Icon, label, value, color }) => (
     </div>
 );
 
+/* ─── Compact readout chip for the trend hover scrubber ─── */
+const Readout = ({ dot, label, val }) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot }} />
+        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{label}</span>
+        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{val}</span>
+    </span>
+);
+
 /* ─── Initials + deterministic color for merchant avatars ─── */
 const initials = (name = '') => {
     const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -193,7 +202,10 @@ const Dashboard = () => {
     const [latestDataDate, setLatestDataDate] = useState(null);
     const [boundsLoaded, setBoundsLoaded] = useState(false);
     const [activeScheme, setActiveScheme] = useState(null);   // donut hover index
+    const [pinnedScheme, setPinnedScheme] = useState(null);   // donut click-to-pin index
     const [showAvg, setShowAvg] = useState(true);             // trend avg reference line
+    const [series, setSeries] = useState({ volume: true, msf: true, txns: false }); // trend series toggles
+    const [hoverPoint, setHoverPoint] = useState(null);       // trend hover scrubber point
     const [nowTick, setNowTick] = useState(Date.now());       // drives "Ns ago"
 
     useEffect(() => {
@@ -316,8 +328,9 @@ const Dashboard = () => {
 
     const dataDateLabel = latestDataDate ? fmt.date(latestDataDate.toISOString().slice(0, 10)) : null;
 
-    // donut center reflects the hovered slice, else the total
-    const centerScheme = activeScheme != null ? schemeData[activeScheme] : null;
+    // donut center reflects the hovered slice, else the pinned slice, else the total
+    const effScheme = activeScheme != null ? activeScheme : pinnedScheme;
+    const centerScheme = effScheme != null ? schemeData[effScheme] : null;
 
     return (
         <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', minHeight: '100vh', fontFamily: "'Inter', -apple-system, sans-serif" }}>
@@ -433,7 +446,7 @@ const Dashboard = () => {
                                 <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' }}>Transaction Volume Trend</h3>
                                 <p style={{ margin: '3px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>Daily volume over selected period</p>
                             </div>
-                            <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                                 {/* avg-line toggle */}
                                 <button onClick={() => setShowAvg(v => !v)} aria-pressed={showAvg} title="Toggle average line"
                                     style={{
@@ -444,18 +457,44 @@ const Dashboard = () => {
                                     }}>
                                     <span style={{ width: 14, height: 0, borderTop: `2px dashed ${showAvg ? '#3b82f6' : 'var(--text-muted)'}` }} /> Avg
                                 </button>
-                                {[{ label: 'Volume', color: '#3b82f6' }, { label: 'MSF', color: '#8b5cf6' }].map(l => (
-                                    <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.color }} />
-                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500 }}>{l.label}</span>
-                                    </div>
-                                ))}
+                                {/* series toggles — click to show/hide each line */}
+                                {[{ key: 'volume', label: 'Volume', color: '#3b82f6' }, { key: 'msf', label: 'MSF', color: '#8b5cf6' }, { key: 'txns', label: 'Txns', color: '#06b6d4' }].map(l => {
+                                    const on = series[l.key];
+                                    return (
+                                        <button key={l.key} onClick={() => setSeries(s => ({ ...s, [l.key]: !s[l.key] }))} aria-pressed={on}
+                                            title={`${on ? 'Hide' : 'Show'} ${l.label}`}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 8,
+                                                border: '1px solid var(--border)', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                                                background: on ? `${l.color}14` : 'var(--bg-subtle)',
+                                                color: on ? l.color : 'var(--text-muted)',
+                                                textDecoration: on ? 'none' : 'line-through',
+                                            }}>
+                                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: on ? l.color : 'var(--text-muted)' }} /> {l.label}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
+                        {dailyData.length > 0 && (() => {
+                            const p = hoverPoint || dailyData[dailyData.length - 1];
+                            return p ? (
+                                <div style={{ display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap', margin: '0 0 12px', padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', minWidth: 96 }}>
+                                        {hoverPoint ? p.date : `Latest · ${p.date}`}
+                                    </span>
+                                    {series.volume && <Readout dot="#3b82f6" label="Volume" val={fmt.currency(p.volume)} />}
+                                    {series.msf && <Readout dot="#8b5cf6" label="MSF" val={fmt.currency(p.msf)} />}
+                                    {series.txns && <Readout dot="#06b6d4" label="Txns" val={fmt.number(p.txns)} />}
+                                </div>
+                            ) : null;
+                        })()}
                         <div style={{ height: 300 }}>
                             {dailyData.length > 0 ? (
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={dailyData}>
+                                    <ComposedChart data={dailyData}
+                                        onMouseMove={(s) => { if (s && s.activeTooltipIndex != null) setHoverPoint(dailyData[s.activeTooltipIndex]); }}
+                                        onMouseLeave={() => setHoverPoint(null)}>
                                         <defs>
                                             <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
                                                 <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.22} />
@@ -469,14 +508,17 @@ const Dashboard = () => {
                                         <CartesianGrid strokeDasharray="3 6" stroke="var(--border-light)" vertical={false} />
                                         <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} minTickGap={24} />
                                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickFormatter={compactAxisFormatter} width={56} />
-                                        <ReTooltip contentStyle={tooltipStyle} formatter={(val, key) => [fmt.currency(val), key === 'msf' ? 'MSF' : 'Volume']} />
-                                        {showAvg && avgVolume > 0 && (
+                                        {series.txns && <YAxis yAxisId="txns" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#06b6d4' }} tickFormatter={compactAxisFormatter} width={44} />}
+                                        <ReTooltip contentStyle={tooltipStyle} formatter={(val, key) => key === 'txns' ? [fmt.number(val), 'Txns'] : [fmt.currency(val), key === 'msf' ? 'MSF' : 'Volume']} />
+                                        {showAvg && series.volume && avgVolume > 0 && (
                                             <ReferenceLine y={avgVolume} stroke="#3b82f6" strokeDasharray="4 5" strokeOpacity={0.6}
                                                 label={{ value: `avg ${fmt.currency(avgVolume)}`, position: 'right', fill: 'var(--text-muted)', fontSize: 10 }} />
                                         )}
-                                        <Area type="monotone" dataKey="volume" stroke="#3b82f6" strokeWidth={2.5} fill="url(#volGrad)" dot={false} activeDot={{ r: 5, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} />
-                                        <Area type="monotone" dataKey="msf" stroke="#8b5cf6" strokeWidth={1.5} fill="url(#msfGrad)" dot={false} activeDot={{ r: 4, fill: '#8b5cf6', stroke: '#fff', strokeWidth: 2 }} />
-                                    </AreaChart>
+                                        {series.volume && <Area type="monotone" dataKey="volume" stroke="#3b82f6" strokeWidth={2.5} fill="url(#volGrad)" dot={false} activeDot={{ r: 5, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} />}
+                                        {series.msf && <Area type="monotone" dataKey="msf" stroke="#8b5cf6" strokeWidth={1.5} fill="url(#msfGrad)" dot={false} activeDot={{ r: 4, fill: '#8b5cf6', stroke: '#fff', strokeWidth: 2 }} />}
+                                        {series.txns && <Line yAxisId="txns" type="monotone" dataKey="txns" stroke="#06b6d4" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#06b6d4', stroke: '#fff', strokeWidth: 2 }} />}
+                                        {dailyData.length > 8 && <Brush dataKey="date" height={22} stroke="#3b82f6" travellerWidth={8} fill="var(--bg-subtle)" tickFormatter={() => ''} />}
+                                    </ComposedChart>
                                 </ResponsiveContainer>
                             ) : (
                                 loading ? <SkeletonLoader variant="chart" height={300} />
@@ -488,7 +530,7 @@ const Dashboard = () => {
                     {/* Donut */}
                     <div style={{ background: 'var(--bg-card)', borderRadius: 16, border: '1px solid var(--border)', padding: '22px 24px', boxShadow: 'var(--shadow-card)' }}>
                         <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' }}>Volume by Scheme</h3>
-                        <p style={{ margin: '3px 0 8px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>Card scheme distribution</p>
+                        <p style={{ margin: '3px 0 8px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>Card scheme distribution · tap a slice to focus</p>
                         {schemeData.length > 0 ? (
                             <>
                                 <div style={{ height: 200, position: 'relative' }}>
@@ -497,10 +539,11 @@ const Dashboard = () => {
                                             <Pie data={schemeData} cx="50%" cy="50%" innerRadius={60} outerRadius={88} dataKey="value"
                                                 stroke="var(--bg-card)" strokeWidth={3} paddingAngle={2}
                                                 onMouseEnter={(_, idx) => setActiveScheme(idx)}
-                                                onMouseLeave={() => setActiveScheme(null)}>
+                                                onMouseLeave={() => setActiveScheme(null)}
+                                                onClick={(_, idx) => setPinnedScheme(p => (p === idx ? null : idx))}>
                                                 {schemeData.map((_, i) => (
                                                     <Cell key={i} fill={PALETTE[i % PALETTE.length]}
-                                                        opacity={activeScheme == null || activeScheme === i ? 1 : 0.32}
+                                                        opacity={effScheme == null || effScheme === i ? 1 : 0.32}
                                                         style={{ transition: 'opacity 0.18s ease', cursor: 'pointer' }} />
                                                 ))}
                                             </Pie>
@@ -529,10 +572,13 @@ const Dashboard = () => {
                                     {schemeData.map((s, i) => (
                                         <div key={s.name}
                                             onMouseEnter={() => setActiveScheme(i)} onMouseLeave={() => setActiveScheme(null)}
-                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, cursor: 'default', opacity: activeScheme == null || activeScheme === i ? 1 : 0.5, transition: 'opacity 0.15s' }}>
+                                            onClick={() => setPinnedScheme(p => (p === i ? null : i))}
+                                            title={pinnedScheme === i ? 'Click to unpin' : 'Click to focus'}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, cursor: 'pointer', opacity: effScheme == null || effScheme === i ? 1 : 0.5, transition: 'opacity 0.15s', background: pinnedScheme === i ? 'var(--bg-subtle)' : 'transparent', borderRadius: 8, padding: '3px 6px', margin: '0 -6px' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                                                 <span style={{ width: 10, height: 10, borderRadius: 3, background: PALETTE[i % PALETTE.length], flexShrink: 0, boxShadow: `0 2px 4px ${PALETTE[i % PALETTE.length]}30` }} />
                                                 <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>
+                                                {pinnedScheme === i && <span style={{ fontSize: 8, fontWeight: 800, color: PALETTE[i % PALETTE.length], letterSpacing: '0.06em' }}>● PINNED</span>}
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                                                 <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{fmt.currency(s.value)}</span>

@@ -7,6 +7,7 @@ import { Layers, BarChart3, Store, CreditCard, DollarSign, TrendingUp, Inbox, Al
 import { Grid, Box, Paper, Typography, Stack, FormControl, InputLabel, Select, MenuItem, TextField, Collapse, Alert } from '@mui/material';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
+import SkeletonLoader from '../../components/SkeletonLoader';
 import { pageContainer } from '../../theme/dataGridStyles';
 import { formatCurrency } from '../../utils/formatters';
 import api from '../../api/axios';
@@ -197,7 +198,7 @@ const ExecutiveDashboardReport = () => {
             </Collapse>
 
             {/* KPI Row */}
-            <KpiCards cards={kpis} />
+            {loading ? <SkeletonLoader variant="kpi-row" count={5} /> : <KpiCards cards={kpis} />}
 
             {/* Diagnostic banner — all KPIs zero and all charts empty. */}
             {!loading && allEmpty && (
@@ -216,6 +217,15 @@ const ExecutiveDashboardReport = () => {
             )}
 
             {/* Charts Grid (2×2) */}
+            {loading ? (
+                <Grid container spacing={2.5} sx={{ mb: 3 }}>
+                    {[0, 1, 2, 3].map(i => (
+                        <Grid item xs={12} md={6} key={i}>
+                            <SkeletonLoader variant="chart" height={360} />
+                        </Grid>
+                    ))}
+                </Grid>
+            ) : (
             <Grid container spacing={2.5} sx={{ mb: 3 }}>
                 <Grid item xs={12} md={6}>
                     <ChartCard title="SID YTD by Introducing Agent"
@@ -310,6 +320,7 @@ const ExecutiveDashboardReport = () => {
                     </ChartCard>
                 </Grid>
             </Grid>
+            )}
         </Box>
     );
 };

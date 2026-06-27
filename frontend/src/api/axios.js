@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { clearAuthStorage } from '../utils/authStorage';
 import { showToast } from '../contexts/ToastContext';
+import { startLoading, stopLoading } from '../contexts/LoadingContext';
 
 const api = axios.create({
     baseURL: '/api',
@@ -24,6 +25,8 @@ api.interceptors.request.use((config) => {
     if (tenantId && tenantId !== 'null' && tenantId !== 'undefined') {
         config.headers['X-Tenant-Id'] = tenantId;
     }
+    // Global top progress bar — one tick per outgoing request.
+    startLoading();
     return config;
 }, (error) => {
     return Promise.reject(error);
@@ -45,8 +48,15 @@ const processQueue = (error, token = null) => {
 };
 
 api.interceptors.response.use(
-    (response) => response,
+    (response) => {
+        // Request settled — release one tick of the progress bar.
+        stopLoading();
+        return response;
+    },
     async (error) => {
+        // Release the tick for THIS request up front. Any auto-refresh
+        // retry below re-enters the request interceptor and starts its own.
+        stopLoading();
         const originalRequest = error.config;
 
         // If 401 and not already retrying, attempt refresh
