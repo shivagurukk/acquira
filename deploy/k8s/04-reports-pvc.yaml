@@ -1,0 +1,15 @@
+# =============================================================================
+# Shared reports/uploads volume. Locally this is RWO (single core pod, fine).
+# On AWS this becomes an EFS-backed RWX PVC so multiple pods can share it.
+# The volumeMount in the core Deployment is identical either way.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: acquira-reports-pvc
+  namespace: acquira
+spec:
+  accessModes: ["ReadWriteOnce"]   # AWS/EFS -> ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi

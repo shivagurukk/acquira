@@ -1,0 +1,10 @@
+# keep build context small/fast. Place a copy at repo ROOT named .dockerignore
+**/target/
+**/node_modules/
+**/dist/
+.git/
+*.log
+backups/
+temp/
+/src/              # legacy monolith — not built
+migration/         # leftover split duplicates

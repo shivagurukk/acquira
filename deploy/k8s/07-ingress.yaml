@@ -1,0 +1,34 @@
+# =============================================================================
+# Ingress via ingress-nginx (local stand-in for AWS ALB).
+# On AWS: swap ingressClassName to "alb" and replace the nginx annotations with
+# alb.ingress.kubernetes.io/* ones. The routing rules below stay the same.
+# Browse to http://acquira.localtest.me  (resolves to 127.0.0.1 automatically),
+# or add "127.0.0.1 acquira.local" to C:\Windows\System32\drivers\etc\hosts.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: acquira-ingress
+  namespace: acquira
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "2g"      # 2GB uploads
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"  # long batch/PDF calls
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: acquira.localtest.me
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: acquira-core
+                port: { number: 8081 }
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: acquira-frontend
+                port: { number: 80 }
