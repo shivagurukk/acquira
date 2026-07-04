@@ -7,10 +7,30 @@ import {
 } from 'recharts';
 import { AlertTriangle, Clock, Users, TrendingDown, XCircle, Building2 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
-import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { premiumDataGridStyles, premiumTableWrapper, pageContainer, chartTooltipStyle } from '../../theme/dataGridStyles';
+
+// ─── Local design tokens ─────────────────────────────────────────
+// Every colour routes through a CSS variable with a light-mode fallback so the
+// report adapts cleanly under html.dark + ThemeContext. Status/severity hues
+// keep their meaning across themes; the dark stylesheet can override --ztx-*.
+const T = {
+    card:     'var(--bg-card, #ffffff)',
+    subtle:   'var(--bg-subtle, #f8fafc)',
+    hover:    'var(--bg-hover, #f8fafc)',
+    border:   'var(--border, #e2e8f0)',
+    borderLt: 'var(--border-light, #eef2f7)',
+    text:     'var(--text, #1e293b)',
+    textSec:  'var(--text-secondary, #475569)',
+    textMut:  'var(--text-muted, #94a3b8)',
+    strong:   'var(--text, #334155)',
+    indigo:   'var(--accent-indigo, #6366f1)',
+    axis:     'var(--text-muted, #94a3b8)',
+    grid:     'var(--border-light, #eef2f7)',
+};
 
 const RANGE_TYPES = [
     { key: 'LAST_7', label: 'Last 7 Days' },
@@ -18,20 +38,22 @@ const RANGE_TYPES = [
     { key: 'NEVER', label: 'Since Onboarding' },
 ];
 
+// Severity status → colour + subtle bg + readable fg, all routed through vars.
 const STATUS = {
-    never: { color: '#64748b', bg: '#f1f5f9', fg: '#475569' },
-    in30:  { color: '#ef4444', bg: '#fee2e2', fg: '#991b1b' },
-    in7:   { color: '#f59e0b', bg: '#fef3c7', fg: '#92400e' },
+    never: { color: 'var(--ztx-never, #64748b)',  bg: 'var(--ztx-never-bg, #f1f5f9)', fg: 'var(--ztx-never-fg, #475569)' },
+    in30:  { color: 'var(--danger, #ef4444)',      bg: 'var(--danger-chip, #fee2e2)',  fg: 'var(--danger-text, #991b1b)' },
+    in7:   { color: 'var(--warning, #f59e0b)',     bg: 'var(--warning-chip, #fef3c7)', fg: 'var(--warning-text, #92400e)' },
 };
 const BUCKET_COLORS = {
-    '≤14d': '#3b82f6', '15–30d': '#f59e0b', '31–60d': '#fb923c',
-    '61–90d': '#ef4444', '90d+': '#b91c1c', 'Never': '#64748b',
+    '≤14d': 'var(--ztx-bucket-1, #3b82f6)', '15–30d': 'var(--ztx-bucket-2, #f59e0b)', '31–60d': 'var(--ztx-bucket-3, #fb923c)',
+    '61–90d': 'var(--ztx-bucket-4, #ef4444)', '90d+': 'var(--ztx-bucket-5, #b91c1c)', 'Never': 'var(--ztx-never, #64748b)',
 };
 
 const isNever = (s) => s === 'Never Transacted';
 const isIn30 = (s) => s === 'Inactive 30+';
 
 const ZeroTransactionReport = () => {
+    const { tenantVersion } = useAuth();
     const [rows, setRows] = useState([]);
     const [total, setTotal] = useState(0);
     const [summary, setSummary] = useState(null);
@@ -87,7 +109,7 @@ const ZeroTransactionReport = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fetchSummary, fetchPage, statusFilter, paginationModel.pageSize]);
 
-    useEffect(() => { runReport(); /* eslint-disable-next-line */ }, [rangeType]);
+    useEffect(() => { runReport(); /* eslint-disable-next-line */ }, [rangeType, tenantVersion]);
 
     const onStatusChange = (key) => {
         setStatusFilter(key);
@@ -120,7 +142,7 @@ const ZeroTransactionReport = () => {
     const kpis = useMemo(() => {
         if (!summary) return [];
         return [
-            { title: 'Total Inactive', value: Number(summary.total || 0).toLocaleString(), icon: Users, color: '#6366f1' },
+            { title: 'Total Inactive', value: Number(summary.total || 0).toLocaleString(), icon: Users, color: T.indigo },
             { title: 'Never Transacted', value: Number(summary.never || 0).toLocaleString(), icon: XCircle, color: STATUS.never.color },
             { title: 'Inactive 30+ Days', value: Number(summary.in30 || 0).toLocaleString(), icon: TrendingDown, color: STATUS.in30.color },
             { title: 'Inactive 7–30 Days', value: Number(summary.in7 || 0).toLocaleString(), icon: Clock, color: STATUS.in7.color },
@@ -139,7 +161,7 @@ const ZeroTransactionReport = () => {
 
     const dist = useMemo(() => (summary?.distribution || [])
         .filter(b => Number(b.count) > 0)
-        .map(b => ({ label: b.label, count: Number(b.count), color: BUCKET_COLORS[b.label] || '#6366f1' })), [summary]);
+        .map(b => ({ label: b.label, count: Number(b.count), color: BUCKET_COLORS[b.label] || T.indigo })), [summary]);
 
     const topAggregators = useMemo(() => (summary?.topAggregators || [])
         .map(a => ({ name: a.name, count: Number(a.count) })), [summary]);
@@ -152,30 +174,30 @@ const ZeroTransactionReport = () => {
     };
 
     const columns = [
-        { field: 'entityName', headerName: 'ENTITY NAME', flex: 1, minWidth: 160, renderCell: (p) => <Typography variant="body2" fontWeight={700} color="#1e293b">{p.value || '—'}</Typography> },
-        { field: 'aggregatorName', headerName: 'AGGREGATOR', flex: 1, minWidth: 140, renderCell: (p) => <Typography variant="body2" color="#475569">{p.value || '—'}</Typography> },
-        { field: 'aggregatorCode', headerName: 'AGG CODE', width: 100, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: '#64748b' }}>{p.value || '—'}</Typography> },
-        { field: 'mid', headerName: 'MID', width: 130, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: '#475569', bgcolor: '#f1f5f9', px: 1, py: 0.3, borderRadius: '4px', border: '1px solid #e2e8f0' }}>{p.value}</Typography> },
-        { field: 'merchantName', headerName: 'MERCHANT NAME', flex: 1.2, minWidth: 160, renderCell: (p) => <Typography variant="body2" fontWeight={600} color="#334155">{p.value}</Typography> },
-        { field: 'sid', headerName: 'SID', width: 100, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: '#64748b' }}>{p.value}</Typography> },
-        { field: 'storeName', headerName: 'STORE', flex: 1, minWidth: 130, renderCell: (p) => <Typography variant="body2" color="#475569">{p.value || '—'}</Typography> },
-        { field: 'terminalId', headerName: 'TID', width: 110, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', fontWeight: 700, color: '#334155', bgcolor: '#f1f5f9', px: 1, py: 0.3, borderRadius: '4px' }}>{p.value}</Typography> },
+        { field: 'entityName', headerName: 'ENTITY NAME', flex: 1, minWidth: 160, renderCell: (p) => <Typography variant="body2" fontWeight={700} color={T.text}>{p.value || '—'}</Typography> },
+        { field: 'aggregatorName', headerName: 'AGGREGATOR', flex: 1, minWidth: 140, renderCell: (p) => <Typography variant="body2" color={T.textSec}>{p.value || '—'}</Typography> },
+        { field: 'aggregatorCode', headerName: 'AGG CODE', width: 100, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: T.textMut }}>{p.value || '—'}</Typography> },
+        { field: 'mid', headerName: 'MID', width: 130, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: T.textSec, bgcolor: T.borderLt, px: 1, py: 0.3, borderRadius: '4px', border: `1px solid ${T.border}` }}>{p.value}</Typography> },
+        { field: 'merchantName', headerName: 'MERCHANT NAME', flex: 1.2, minWidth: 160, renderCell: (p) => <Typography variant="body2" fontWeight={600} color={T.strong}>{p.value}</Typography> },
+        { field: 'sid', headerName: 'SID', width: 100, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: T.textMut }}>{p.value}</Typography> },
+        { field: 'storeName', headerName: 'STORE', flex: 1, minWidth: 130, renderCell: (p) => <Typography variant="body2" color={T.textSec}>{p.value || '—'}</Typography> },
+        { field: 'terminalId', headerName: 'TID', width: 110, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', fontWeight: 700, color: T.strong, bgcolor: T.borderLt, px: 1, py: 0.3, borderRadius: '4px' }}>{p.value}</Typography> },
         { field: 'status', headerName: 'STATUS', width: 150, renderCell: (p) => getStatusChip(p.value) },
-        { field: 'lastTransactionDate', headerName: 'LAST TXN', width: 120, align: 'right', headerAlign: 'right', renderCell: (p) => <Typography variant="body2" color="#64748b" sx={{ fontVariantNumeric: 'tabular-nums' }}>{p.value || <em style={{ color: '#cbd5e1' }}>Never</em>}</Typography> },
-        { field: 'daysInactive', headerName: 'INACTIVE DAYS', type: 'number', width: 120, align: 'right', headerAlign: 'right', renderCell: (p) => <Typography variant="body2" fontWeight={600} color={p.value > 30 ? '#ef4444' : '#475569'} sx={{ fontVariantNumeric: 'tabular-nums' }}>{p.value > -1 ? p.value : '—'}</Typography> },
+        { field: 'lastTransactionDate', headerName: 'LAST TXN', width: 120, align: 'right', headerAlign: 'right', renderCell: (p) => <Typography variant="body2" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>{p.value || <em style={{ color: 'var(--text-muted, #cbd5e1)' }}>Never</em>}</Typography> },
+        { field: 'daysInactive', headerName: 'INACTIVE DAYS', type: 'number', width: 120, align: 'right', headerAlign: 'right', renderCell: (p) => <Typography variant="body2" fontWeight={600} color={p.value > 30 ? 'var(--danger, #ef4444)' : T.textSec} sx={{ fontVariantNumeric: 'tabular-nums' }}>{p.value > -1 ? p.value : '—'}</Typography> },
     ];
 
     const filterInputSx = {
-        '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '13px', bgcolor: '#f8fafc' },
+        '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '13px', bgcolor: T.subtle },
         '& .MuiInputLabel-root': { fontSize: '12px', fontWeight: 600 },
     };
-    const panelSx = { p: 2.5, borderRadius: '14px', border: '1px solid #e2e8f0', bgcolor: '#fff', height: '100%' };
+    const panelSx = { p: 2.5, borderRadius: '14px', border: `1px solid ${T.border}`, bgcolor: T.card, height: '100%' };
     const panelTitle = (t) => (
-        <Typography variant="caption" fontWeight={700} color="#94a3b8" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1.5, display: 'block' }}>{t}</Typography>
+        <Typography variant="caption" fontWeight={700} color={T.textMut} sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1.5, display: 'block' }}>{t}</Typography>
     );
 
     const chips = summary ? [
-        { key: 'ALL', label: 'All', count: Number(summary.total || 0), color: '#6366f1' },
+        { key: 'ALL', label: 'All', count: Number(summary.total || 0), color: T.indigo },
         { key: 'IN30', label: 'Inactive 30+', count: Number(summary.in30 || 0), color: STATUS.in30.color },
         { key: 'NEVER', label: 'Never', count: Number(summary.never || 0), color: STATUS.never.color },
         { key: 'IN7', label: 'Inactive 7–30', count: Number(summary.in7 || 0), color: STATUS.in7.color },
@@ -193,15 +215,15 @@ const ZeroTransactionReport = () => {
                 onToggleFilters={() => setShowFilters(!showFilters)}
                 hideDatePresets
             >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: '2px', bgcolor: '#f1f5f9', borderRadius: '10px', p: '3px' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: '2px', bgcolor: T.borderLt, borderRadius: '10px', p: '3px' }}>
                     {RANGE_TYPES.map(r => (
                         <Box key={r.key} onClick={() => setRangeType(r.key)}
                             sx={{
                                 px: 1.5, py: 0.6, borderRadius: '8px', fontSize: '12px', fontWeight: 600,
-                                cursor: 'pointer', transition: 'all 0.15s ease', userSelect: 'none', whiteSpace: 'nowrap',
+                                cursor: 'pointer', transition: 'background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease', userSelect: 'none', whiteSpace: 'nowrap',
                                 ...(rangeType === r.key
-                                    ? { bgcolor: 'white', color: '#0f172a', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }
-                                    : { bgcolor: 'transparent', color: '#64748b', '&:hover': { color: '#334155', bgcolor: 'rgba(255,255,255,0.5)' } }
+                                    ? { bgcolor: T.card, color: T.text, boxShadow: 'var(--shadow-xs, 0 1px 3px rgba(0,0,0,0.08))' }
+                                    : { bgcolor: 'transparent', color: T.textMut, '&:hover': { color: T.strong, bgcolor: T.hover } }
                                 ),
                             }}
                         >
@@ -212,8 +234,8 @@ const ZeroTransactionReport = () => {
             </PremiumReportHeader>
 
             <Collapse in={showFilters} unmountOnExit>
-                <Paper sx={{ p: 3, mb: 3, borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                    <Typography variant="caption" fontWeight={700} color="#94a3b8" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 2, display: 'block' }}>
+                <Paper sx={{ p: 3, mb: 3, borderRadius: '14px', border: `1px solid ${T.border}`, bgcolor: T.card }}>
+                    <Typography variant="caption" fontWeight={700} color={T.textMut} sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 2, display: 'block' }}>
                         Search Filters
                     </Typography>
                     <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
@@ -236,7 +258,7 @@ const ZeroTransactionReport = () => {
                 }}>
                     <Paper sx={panelSx}>
                         {panelTitle('Status Breakdown')}
-                        <Box sx={{ display: 'flex', height: 14, borderRadius: 999, overflow: 'hidden', mb: 2, bgcolor: '#f1f5f9' }}>
+                        <Box sx={{ display: 'flex', height: 14, borderRadius: 999, overflow: 'hidden', mb: 2, bgcolor: T.borderLt }}>
                             {statusBreakdown.map(s => s.count > 0 && (
                                 <Box key={s.label} title={`${s.label}: ${s.count}`} sx={{ width: `${s.pct}%`, bgcolor: s.color, transition: 'width .5s ease' }} />
                             ))}
@@ -246,11 +268,11 @@ const ZeroTransactionReport = () => {
                                 <Box key={s.label} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                         <Box sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: s.color }} />
-                                        <Typography variant="body2" color="#475569">{s.label}</Typography>
+                                        <Typography variant="body2" color={T.textSec}>{s.label}</Typography>
                                     </Box>
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                        <Typography variant="body2" fontWeight={700} color="#1e293b" sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.count.toLocaleString()}</Typography>
-                                        <Typography variant="caption" color="#94a3b8" sx={{ width: 42, textAlign: 'right' }}>{s.pct.toFixed(1)}%</Typography>
+                                        <Typography variant="body2" fontWeight={700} color={T.text} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.count.toLocaleString()}</Typography>
+                                        <Typography variant="caption" color={T.textMut} sx={{ width: 42, textAlign: 'right' }}>{s.pct.toFixed(1)}%</Typography>
                                     </Box>
                                 </Box>
                             ))}
@@ -262,10 +284,10 @@ const ZeroTransactionReport = () => {
                         <Box sx={{ height: 160 }}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={dist} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                                    <CartesianGrid strokeDasharray="3 6" stroke="#eef2f7" vertical={false} />
-                                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} width={36} />
-                                    <ReTooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} formatter={(v) => [v, 'Terminals']} />
+                                    <CartesianGrid strokeDasharray="3 6" stroke={T.grid} vertical={false} />
+                                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.axis }} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.axis }} allowDecimals={false} width={36} />
+                                    <ReTooltip cursor={{ fill: 'var(--bg-hover, #f8fafc)' }} contentStyle={chartTooltipStyle} formatter={(v) => [v, 'Terminals']} />
                                     <Bar dataKey="count" radius={[5, 5, 0, 0]}>
                                         {dist.map((d, i) => <Cell key={i} fill={d.color} />)}
                                     </Bar>
@@ -279,16 +301,16 @@ const ZeroTransactionReport = () => {
                         <Stack spacing={1.25}>
                             {topAggregators.map(a => (
                                 <Box key={a.name} onClick={() => filterByAggregator(a.name)}
-                                    sx={{ cursor: 'pointer', '&:hover .agg-name': { color: '#6366f1' } }}>
+                                    sx={{ cursor: 'pointer', '&:hover .agg-name': { color: T.indigo } }}>
                                     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-                                            <Building2 size={13} color="#94a3b8" />
-                                            <Typography className="agg-name" variant="body2" color="#475569" noWrap sx={{ maxWidth: 160, transition: 'color .15s' }}>{a.name}</Typography>
+                                            <Building2 size={13} color="var(--text-muted, #94a3b8)" />
+                                            <Typography className="agg-name" variant="body2" color={T.textSec} noWrap sx={{ maxWidth: 160, transition: 'color .15s' }}>{a.name}</Typography>
                                         </Box>
-                                        <Typography variant="body2" fontWeight={700} color="#1e293b" sx={{ fontVariantNumeric: 'tabular-nums' }}>{a.count}</Typography>
+                                        <Typography variant="body2" fontWeight={700} color={T.text} sx={{ fontVariantNumeric: 'tabular-nums' }}>{a.count}</Typography>
                                     </Box>
-                                    <Box sx={{ height: 6, borderRadius: 999, bgcolor: '#f1f5f9', overflow: 'hidden' }}>
-                                        <Box sx={{ width: `${Math.max((a.count / maxAgg) * 100, 3)}%`, height: '100%', borderRadius: 999, background: 'linear-gradient(90deg,#6366f1,#818cf8)' }} />
+                                    <Box sx={{ height: 6, borderRadius: 999, bgcolor: T.borderLt, overflow: 'hidden' }}>
+                                        <Box sx={{ width: `${Math.max((a.count / maxAgg) * 100, 3)}%`, height: '100%', borderRadius: 999, background: 'var(--ztx-agg-bar, linear-gradient(90deg,#6366f1,#818cf8))' }} />
                                     </Box>
                                 </Box>
                             ))}
@@ -306,9 +328,9 @@ const ZeroTransactionReport = () => {
                             onClick={() => onStatusChange(c.key)}
                             sx={{
                                 fontWeight: 700, fontSize: '11px', cursor: 'pointer', borderRadius: '8px',
-                                border: `1px solid ${active ? c.color : '#e2e8f0'}`,
-                                bgcolor: active ? `${c.color}1a` : '#fff',
-                                color: active ? c.color : '#64748b',
+                                border: `1px solid ${active ? c.color : T.border}`,
+                                bgcolor: active ? `color-mix(in srgb, ${c.color} 12%, transparent)` : T.card,
+                                color: active ? c.color : T.textMut,
                             }} />
                     );
                 })}

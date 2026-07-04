@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Filter, ChevronLeft, ChevronRight, X, Download } from 'lucide-react';
 import useExcelExport from '../hooks/useExcelExport';
+import { useAuth } from '../contexts/AuthContext';
 import Loader from './Loader';
 
 const EMPTY_FILTERS = {
@@ -10,24 +11,39 @@ const EMPTY_FILTERS = {
 };
 
 const TransactionList = () => {
+    // tenantVersion increments on every super-admin tenant switch. This list is
+    // tenant-scoped (backend filters by the active tenant via the X-Tenant-Id
+    // header), so on a switch we MUST reset to page 1 and re-fetch — otherwise the
+    // grid keeps showing the previous tenant's rows (a cross-tenant data leak to
+    // the viewer). See the tenantVersion effect below.
+    const { tenantVersion } = useAuth();
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(false);
 
-    // Pagination
-    const [page, setPage] = useState(0);
+    // ── Keyset (cursor) pagination ──────────────────────────────────────────
+    // The fact table can hold billions of rows, so the old offset/Page approach
+    // (which forced a COUNT(*) over the whole filtered set on every page) is gone.
+    // We page forward with an opaque cursor (paymentDate + transactionId of the
+    // last row), and keep a stack of previous cursors so "Previous" works without
+    // any total/count. There is intentionally no "Page X of Y" — that requires a
+    // count we no longer pay for.
     const [size, setSize] = useState(20);
-    const [totalPages, setTotalPages] = useState(0);
-    const [totalElements, setTotalElements] = useState(0);
+    const [hasMore, setHasMore] = useState(false);
+    const [nextCursor, setNextCursor] = useState(null);   // {date, id} for the NEXT page
+    const [pageIndex, setPageIndex] = useState(0);          // 0-based, for display only
+    // Stack of cursors that START each page. cursorStack[i] is the cursor that
+    // produced page i (null for page 0). Lets us walk back.
+    const cursorStackRef = useRef([null]);
+
     const { exportExcel, isExporting } = useExcelExport();
 
     // Filters
     const [filters, setFilters] = useState({ ...EMPTY_FILTERS });
-
-    // Use a ref to always have current filters available in fetchTransactions
     const filtersRef = useRef(filters);
     filtersRef.current = filters;
 
-    const fetchTransactions = useCallback(async (overrideFilters) => {
+    // Fetch one page given a starting cursor ({date,id} or null for the first page).
+    const fetchPage = useCallback(async (startCursor, overrideFilters) => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
@@ -35,19 +51,23 @@ const TransactionList = () => {
             const activeFilters = overrideFilters || filtersRef.current;
 
             const params = new URLSearchParams();
-            params.append('page', page);
             params.append('size', size);
 
             if (activeFilters.mid) params.append('mid', activeFilters.mid);
             if (activeFilters.sid) params.append('sid', activeFilters.sid);
             if (activeFilters.tid) params.append('tid', activeFilters.tid);
-
             if (activeFilters.paymentDateFrom) params.append('paymentDateFrom', activeFilters.paymentDateFrom);
             if (activeFilters.paymentDateTo) params.append('paymentDateTo', activeFilters.paymentDateTo);
-            if (activeFilters.transactionDateFrom) params.append('transactionDateFrom', activeFilters.transactionDateFrom);
-            if (activeFilters.transactionDateTo) params.append('transactionDateTo', activeFilters.transactionDateTo);
+            // NOTE: the keyset endpoint paginates on payment_date. Transaction-date
+            // filters are not part of the cursor; they are intentionally omitted here
+            // to keep the cursor monotonic. (Payment-date range is the primary filter.)
 
-            const res = await fetch(`/api/transactions?${params.toString()}`, {
+            if (startCursor && startCursor.date) {
+                params.append('cursorPaymentDate', startCursor.date);
+                if (startCursor.id != null) params.append('cursorTxnId', startCursor.id);
+            }
+
+            const res = await fetch(`/api/transactions/keyset?${params.toString()}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
@@ -57,35 +77,75 @@ const TransactionList = () => {
             if (res.ok) {
                 const data = await res.json();
                 setTransactions(data.content || []);
-                setTotalPages(data.totalPages || 0);
-                setTotalElements(data.totalElements || 0);
+                setHasMore(!!data.hasMore);
+                setNextCursor(
+                    data.nextCursorDate != null
+                        ? { date: data.nextCursorDate, id: data.nextCursorId }
+                        : null
+                );
             }
         } catch (error) {
             console.error("Failed to fetch transactions", error);
         } finally {
             setLoading(false);
         }
-    }, [page, size]);
+    }, [size]);
+
+    // Reset to the first page (used on mount, size change, and filter apply/clear).
+    const resetToFirstPage = useCallback((overrideFilters) => {
+        cursorStackRef.current = [null];
+        setPageIndex(0);
+        fetchPage(null, overrideFilters);
+    }, [fetchPage]);
 
     useEffect(() => {
-        fetchTransactions();
-    }, [page, size]); // eslint-disable-line react-hooks/exhaustive-deps
+        resetToFirstPage();
+    }, [size]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // On tenant switch: clear any filters carried over from the previous tenant
+    // (MID/SID/TID belong to that tenant and won't match here) and reload page 1
+    // for the newly-active tenant. Skips the initial mount (tenantVersion starts
+    // at 0) so we don't double-fetch alongside the [size] effect above.
+    const didMountRef = useRef(false);
+    useEffect(() => {
+        if (!didMountRef.current) {
+            didMountRef.current = true;
+            return;
+        }
+        const cleared = { ...EMPTY_FILTERS };
+        setFilters(cleared);
+        resetToFirstPage(cleared);
+    }, [tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const goNext = () => {
+        if (!hasMore || !nextCursor) return;
+        // Push the cursor that starts the NEXT page, then fetch it.
+        cursorStackRef.current.push(nextCursor);
+        setPageIndex(i => i + 1);
+        fetchPage(nextCursor);
+    };
+
+    const goPrev = () => {
+        if (pageIndex === 0) return;
+        // Pop current page's start cursor; the new top is the previous page's start.
+        cursorStackRef.current.pop();
+        const prevStart = cursorStackRef.current[cursorStackRef.current.length - 1];
+        setPageIndex(i => i - 1);
+        fetchPage(prevStart);
+    };
 
     const handleFilterChange = (key, value) => {
         setFilters(prev => ({ ...prev, [key]: value }));
     };
 
     const applyFilters = () => {
-        setPage(0);
-        fetchTransactions();
+        resetToFirstPage();
     };
 
     const clearFilters = () => {
         const cleared = { ...EMPTY_FILTERS };
         setFilters(cleared);
-        setPage(0);
-        // Pass cleared filters directly to avoid stale closure
-        fetchTransactions(cleared);
+        resetToFirstPage(cleared);
     };
 
     const handleExport = () => {
@@ -208,15 +268,16 @@ const TransactionList = () => {
                             </table>
                         </div>
 
-                        {/* Pagination */}
+                        {/* Pagination — keyset (no total count) */}
                         <div className="tx-pager">
                             <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                                Total: {totalElements} • Page {page + 1} of {totalPages || 1}
+                                Page {pageIndex + 1}
+                                {transactions.length > 0 ? ` • showing ${transactions.length}` : ''}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                                 <select
                                     value={size}
-                                    onChange={(e) => { setSize(Number(e.target.value)); setPage(0); }}
+                                    onChange={(e) => setSize(Number(e.target.value))}
                                     className="tx-select"
                                 >
                                     <option value="10">10 / page</option>
@@ -226,10 +287,10 @@ const TransactionList = () => {
                                 </select>
 
                                 <div style={{ display: 'flex', gap: 6 }}>
-                                    <button disabled={page === 0} onClick={() => setPage(p => p - 1)} className="tx-page-btn">
+                                    <button disabled={pageIndex === 0} onClick={goPrev} className="tx-page-btn">
                                         <ChevronLeft size={16} />
                                     </button>
-                                    <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)} className="tx-page-btn">
+                                    <button disabled={!hasMore} onClick={goNext} className="tx-page-btn">
                                         <ChevronRight size={16} />
                                     </button>
                                 </div>

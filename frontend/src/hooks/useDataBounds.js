@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import api from '../api/axios';
+import { cachedGet } from '../api/apiCache';
 
 /**
  * useDataBounds — shared default-date-range resolver for business report pages.
@@ -22,6 +22,12 @@ import api from '../api/axios';
  * Because the logic was copy-pasted into ~10 pages, every page had to be fixed
  * separately and could silently drift. This hook is the single correct
  * implementation — fix it here, every page benefits.
+ *
+ * PERF: the bounds request is served through cachedGet (api/apiCache). The data
+ * window only changes after a batch ingest (at most daily), so within a session
+ * every page after the first reuses the cached bounds instead of re-fetching —
+ * no extra round-trip, no progress-bar flash on navigation. The cache is
+ * tenant-scoped and TTL-bounded, and is cleared on tenant switch / logout.
  *
  * WHAT IT RETURNS
  * ---------------
@@ -70,7 +76,7 @@ const wideFallbackRange = () => {
     };
 };
 
-export function useDataBounds() {
+export function useDataBounds(reloadKey) {
     const [state, setState] = useState({
         startDate: '',
         endDate: '',
@@ -82,11 +88,15 @@ export function useDataBounds() {
 
     useEffect(() => {
         let cancelled = false;
+        // On tenant switch (reloadKey change), drop back to the unresolved state
+        // so downstream `if (boundsLoaded) fetch()` guards re-fire after re-resolve.
+        setState(prev => prev.boundsLoaded ? { ...prev, boundsLoaded: false } : prev);
 
         const load = async () => {
             try {
-                // api (axios instance) already attaches Authorization + X-Tenant-Id.
-                const res = await api.get('/business/data-bounds');
+                // cachedGet attaches Authorization + X-Tenant-Id via the shared
+                // axios instance, and serves a session-cached copy when fresh.
+                const res = await cachedGet('/business/data-bounds');
                 const b = res?.data || {};
 
                 if (b.latest) {
@@ -140,7 +150,7 @@ export function useDataBounds() {
 
         load();
         return () => { cancelled = true; };
-    }, []);
+    }, [reloadKey]);
 
     return state;
 }

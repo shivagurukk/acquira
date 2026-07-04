@@ -255,6 +255,50 @@ public class IntegrationController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    /**
+     * Ad-hoc validate — dry-run a query against a connection BEFORE the report is
+     * saved. Mirrors validateReport but resolves the connection + SQL from the
+     * request body ({"connectionId":.., "sqlText":".."}) so the composer modal
+     * can test the query without first persisting a possibly-broken config.
+     * Tenant-isolation: the connection must belong to the caller's tenant.
+     */
+    @PostMapping("/reports/validate-adhoc")
+    public ResponseEntity<?> validateAdhoc(@RequestBody Map<String, Object> body) {
+        Long tenantId = TenantContext.getCurrentTenant();
+
+        Object connIdRaw = body.get("connectionId");
+        String sqlText = (String) body.get("sqlText");
+        if (connIdRaw == null || connIdRaw.toString().isBlank()) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Select a connection first"));
+        }
+        if (sqlText == null || sqlText.isBlank()) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Enter a SQL query to validate"));
+        }
+
+        Long connectionId;
+        try { connectionId = Long.valueOf(connIdRaw.toString()); }
+        catch (NumberFormatException e) { return ResponseEntity.ok(Map.of("success", false, "error", "Invalid connection")); }
+
+        IntegrationConnection conn = connectionRepo.findById(connectionId)
+                .filter(c -> c.getTenantId().equals(tenantId))
+                .orElse(null);
+        if (conn == null) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Connection not found"));
+        }
+
+        try {
+            List<Map<String, Object>> preview = pullService.validateQuery(conn, sqlText);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "rowCount", preview.size(),
+                    "columns", preview.isEmpty() ? List.of() : new ArrayList<>(preview.get(0).keySet()),
+                    "preview", preview
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════
     //  SCHEDULES
     // ═══════════════════════════════════════════════════════════
@@ -276,6 +320,13 @@ public class IntegrationController {
         schedule.setTimezone(body.getOrDefault("timezone", "UTC").toString());
         schedule.setIsEnabled(body.get("isEnabled") != null ? (Boolean) body.get("isEnabled") : true);
         schedule.setCreatedAt(LocalDateTime.now());
+
+        // Validate the cron up front so an invalid expression fails the request
+        // instead of silently saving a schedule the scheduler can't register.
+        String cronErr = validateCron(schedule.getCronExpression());
+        if (cronErr != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", cronErr));
+        }
 
         Long reportId = Long.valueOf(body.get("reportId").toString());
         // Tenant-isolation fix: ensure the referenced report belongs to the same
@@ -301,7 +352,14 @@ public class IntegrationController {
         return scheduleRepo.findById(id)
                 .filter(s -> s.getTenantId().equals(tenantId))
                 .map(existing -> {
-                    if (body.containsKey("cronExpression")) existing.setCronExpression((String) body.get("cronExpression"));
+                    if (body.containsKey("cronExpression")) {
+                        String cron = (String) body.get("cronExpression");
+                        String cronErr = validateCron(cron);
+                        if (cronErr != null) {
+                            return ResponseEntity.badRequest().body((Object) Map.of("error", cronErr));
+                        }
+                        existing.setCronExpression(cron);
+                    }
                     if (body.containsKey("frequencyLabel")) existing.setFrequencyLabel((String) body.get("frequencyLabel"));
                     if (body.containsKey("timezone")) existing.setTimezone((String) body.get("timezone"));
                     if (body.containsKey("isEnabled")) existing.setIsEnabled((Boolean) body.get("isEnabled"));
@@ -309,9 +367,27 @@ public class IntegrationController {
 
                     IntegrationSchedule saved = scheduleRepo.save(existing);
                     schedulerService.reloadSchedule(saved);
-                    return ResponseEntity.ok(saved);
+                    return ResponseEntity.ok((Object) saved);
                 })
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Validate a cron expression against Spring's parser (the same
+     * org.springframework.scheduling.support.CronExpression the scheduler uses).
+     * Returns null when valid, or a human-readable error otherwise. Spring uses
+     * 6-field cron and does NOT accept Quartz's '?' token — this stops a schedule
+     * from being saved-but-never-fired.
+     */
+    private String validateCron(String cron) {
+        if (cron == null || cron.isBlank()) return "Cron expression is required";
+        try {
+            org.springframework.scheduling.support.CronExpression.parse(cron.trim());
+            return null;
+        } catch (IllegalArgumentException e) {
+            return "Invalid cron expression: " + e.getMessage()
+                    + " (use 6-field Spring cron, e.g. '0 0 2 * * *'; the '?' token is not supported)";
+        }
     }
 
     @PostMapping("/schedules/{id}/toggle")

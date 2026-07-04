@@ -9,7 +9,9 @@ import {
     UserCircle, X, Eye, Users, Globe
 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 import SalesPortfolioPanel from '../../components/SalesPortfolioPanel';
+import { T, cardSx } from '../../theme/salesTokens';
 
 const fmtM = (v) => {
     const n = Number(v || 0);
@@ -19,6 +21,7 @@ const fmtM = (v) => {
 };
 
 const SalesAgentDirectory = () => {
+    const { tenantVersion } = useAuth();
     const [agents, setAgents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [syncing, setSyncing] = useState(false);
@@ -30,7 +33,7 @@ const SalesAgentDirectory = () => {
     const [saving, setSaving] = useState(false);
     const [selectedAgent, setSelectedAgent] = useState(null);
 
-    useEffect(() => { fetchAgents(); }, []);
+    useEffect(() => { fetchAgents(); }, [tenantVersion]);
 
     const fetchAgents = async () => {
         setLoading(true);
@@ -95,34 +98,34 @@ const SalesAgentDirectory = () => {
     const mappedCount = agents.filter(a => a.assignmentStatus === 'MAPPED').length;
 
     return (
-        <Box sx={{ p: { xs: 2, md: 4 }, minHeight: '100vh', bgcolor: '#f8fafc' }}>
+        <Box sx={{ p: { xs: 2, md: 4 }, minHeight: '100vh', bgcolor: T.bg }}>
             <Stack direction="row" justifyContent="space-between" alignItems="flex-start" mb={3} flexWrap="wrap" gap={2}>
                 <Box>
-                    <Typography variant="h5" fontWeight="800" color="#0f172a">Sales Agent Directory</Typography>
-                    <Typography variant="body2" color="#64748b">Agent profiles &amp; portfolios. Emails are auto-populated from merchant data.</Typography>
+                    <Typography variant="h5" fontWeight="800" color={T.text}>Sales Agent Directory</Typography>
+                    <Typography variant="body2" color={T.textSec}>Agent profiles &amp; portfolios. Emails are auto-populated from merchant data.</Typography>
                 </Box>
                 <Button size="small" variant="contained" startIcon={syncing ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={16} />} onClick={handleSync} disabled={syncing}
-                    sx={{ bgcolor: '#10b981', '&:hover': { bgcolor: '#059669' }, textTransform: 'none', fontWeight: 600 }}>
+                    sx={{ bgcolor: T.success, '&:hover': { bgcolor: T.successDk }, textTransform: 'none', fontWeight: 600 }}>
                     {syncing ? 'Syncing...' : 'Sync from Merchants'}
                 </Button>
             </Stack>
 
             <Grid container spacing={2} mb={3}>
                 {[
-                    { label: 'Total Agents', value: totalAgents, icon: UserCircle, color: '#3b82f6', bg: '#eff6ff' },
-                    { label: 'Active', value: activeCount, icon: Users, color: '#10b981', bg: '#f0fdf4' },
-                    { label: 'With Target', value: withTarget, icon: Target, color: '#8b5cf6', bg: '#f5f3ff' },
-                    { label: 'Mapped to Team', value: mappedCount, icon: Filter, color: '#f59e0b', bg: '#fffbeb' },
+                    { label: 'Total Agents', value: totalAgents, icon: UserCircle, color: T.info, bg: T.infoBg },
+                    { label: 'Active', value: activeCount, icon: Users, color: T.success, bg: T.successBg },
+                    { label: 'With Target', value: withTarget, icon: Target, color: T.purple, bg: T.purpleBg },
+                    { label: 'Mapped to Team', value: mappedCount, icon: Filter, color: T.warning, bg: T.warningBg },
                 ].map((s, i) => (
                     <Grid item xs={6} md={3} key={i}>
-                        <Card sx={{ border: '1px solid #e2e8f0', boxShadow: 'none', borderRadius: 3 }}>
+                        <Card sx={cardSx}>
                             <CardContent sx={{ p: 2, '&:last-child': { pb: 2 }, display: 'flex', alignItems: 'center', gap: 2 }}>
                                 <Box sx={{ width: 40, height: 40, borderRadius: 2, bgcolor: s.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <s.icon size={20} color={s.color} />
                                 </Box>
                                 <Box>
-                                    <Typography variant="h6" fontWeight="800" color="#0f172a" lineHeight={1.2}>{s.value}</Typography>
-                                    <Typography variant="caption" color="#64748b" fontWeight={500}>{s.label}</Typography>
+                                    <Typography variant="h6" fontWeight="800" color={T.text} lineHeight={1.2} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.value}</Typography>
+                                    <Typography variant="caption" color={T.textSec} fontWeight={500}>{s.label}</Typography>
                                 </Box>
                             </CardContent>
                         </Card>
@@ -135,20 +138,20 @@ const SalesAgentDirectory = () => {
                 <SalesPortfolioPanel level="agent" id={selectedAgent} onClose={() => setSelectedAgent(null)} />
             )}
 
-            <Card sx={{ border: '1px solid #e2e8f0', boxShadow: 'none', borderRadius: 3 }}>
+            <Card sx={cardSx}>
                 <CardContent sx={{ p: 2.5 }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1.5}>
                         <Stack direction="row" spacing={1} alignItems="center">
-                            <UserCircle size={18} color="#3b82f6" />
-                            <Typography variant="subtitle1" fontWeight="700" color="#0f172a">Agents</Typography>
-                            <Chip label={`${filteredAgents.length} of ${totalAgents}`} size="small" sx={{ fontSize: 11, fontWeight: 600, height: 22, bgcolor: '#f1f5f9', color: '#475569' }} />
+                            <UserCircle size={18} color={T.info} />
+                            <Typography variant="subtitle1" fontWeight="700" color={T.text}>Agents</Typography>
+                            <Chip label={`${filteredAgents.length} of ${totalAgents}`} size="small" sx={{ fontSize: 11, fontWeight: 600, height: 22, bgcolor: T.borderLt, color: T.textSec }} />
                         </Stack>
                         <Stack direction="row" spacing={1} alignItems="center">
                             <TextField size="small" placeholder="Search agents..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                                InputProps={{ startAdornment: <InputAdornment position="start"><Search size={14} color="#94a3b8" /></InputAdornment> }}
-                                sx={{ width: 220, '& .MuiOutlinedInput-root': { borderRadius: 2, fontSize: 13, bgcolor: '#fff' } }} />
+                                InputProps={{ startAdornment: <InputAdornment position="start"><Search size={14} color="var(--text-muted, #94a3b8)" /></InputAdornment> }}
+                                sx={{ width: 220, '& .MuiOutlinedInput-root': { borderRadius: 2, fontSize: 13, bgcolor: T.card } }} />
                             <Select size="small" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-                                sx={{ minWidth: 120, fontSize: 13, borderRadius: 2, bgcolor: '#fff' }}>
+                                sx={{ minWidth: 120, fontSize: 13, borderRadius: 2, bgcolor: T.card }}>
                                 <MenuItem value="ALL">All Status</MenuItem>
                                 <MenuItem value="ACTIVE">Active</MenuItem>
                                 <MenuItem value="INACTIVE">Inactive</MenuItem>
@@ -163,41 +166,41 @@ const SalesAgentDirectory = () => {
                             No agent profiles yet. Click <strong>Sync from Merchants</strong> to populate the directory from your merchant data.
                         </Alert>
                     ) : (
-                        <Box sx={{ border: '1px solid #e2e8f0', borderRadius: 2, overflow: 'hidden' }}>
-                            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 110px 90px 110px 80px 80px', bgcolor: '#f8fafc', borderBottom: '2px solid #e2e8f0', px: 2, py: 1.25 }}>
+                        <Box sx={{ border: `1px solid ${T.border}`, borderRadius: 2, overflow: 'hidden' }}>
+                            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 110px 90px 110px 80px 80px', bgcolor: T.subtle, borderBottom: `2px solid ${T.border}`, px: 2, py: 1.25 }}>
                                 {['Agent', 'Merchants', 'Status', 'Target', 'Team', ''].map((h, i) => (
-                                    <Typography key={i} variant="caption" fontWeight={700} color="#64748b" textTransform="uppercase" letterSpacing="0.05em" sx={{ textAlign: i === 0 ? 'left' : 'center' }}>{h}</Typography>
+                                    <Typography key={i} variant="caption" fontWeight={700} color={T.textSec} textTransform="uppercase" letterSpacing="0.05em" sx={{ textAlign: i === 0 ? 'left' : 'center' }}>{h}</Typography>
                                 ))}
                             </Box>
                             <Box sx={{ maxHeight: 560, overflowY: 'auto' }}>
-                                {filteredAgents.map((a, idx) => (
-                                    <Box key={a.salesUserId} sx={{ display: 'grid', gridTemplateColumns: '1fr 110px 90px 110px 80px 80px', px: 2, py: 1.25, borderBottom: '1px solid #f1f5f9', alignItems: 'center', bgcolor: idx % 2 === 0 ? '#fff' : '#fafbfc', '&:hover': { bgcolor: '#f0f7ff' } }}>
+                                {filteredAgents.map((a) => (
+                                    <Box key={a.salesUserId} sx={{ display: 'grid', gridTemplateColumns: '1fr 110px 90px 110px 80px 80px', px: 2, py: 1.25, borderBottom: `1px solid ${T.borderLt}`, alignItems: 'center', bgcolor: T.card, '&:hover': { bgcolor: T.hover } }}>
                                         <Stack direction="row" spacing={1} alignItems="center" sx={{ overflow: 'hidden' }}>
-                                            <Avatar sx={{ width: 30, height: 30, fontSize: 12, fontWeight: 700, bgcolor: '#dbeafe', color: '#1e40af' }}>
+                                            <Avatar sx={{ width: 30, height: 30, fontSize: 12, fontWeight: 700, bgcolor: T.infoCh, color: T.infoTx }}>
                                                 {(a.displayName || a.salesUserId)?.charAt(0)?.toUpperCase()}
                                             </Avatar>
                                             <Box sx={{ overflow: 'hidden' }}>
-                                                <Typography variant="body2" fontWeight={600} color="#0f172a" noWrap>{a.displayName || a.salesUserId}</Typography>
-                                                <Typography variant="caption" color="#94a3b8" noWrap sx={{ fontSize: 11, display: 'block' }}>{a.salesEmail || a.salesUserId}</Typography>
+                                                <Typography variant="body2" fontWeight={600} color={T.text} noWrap>{a.displayName || a.salesUserId}</Typography>
+                                                <Typography variant="caption" color={T.textMut} noWrap sx={{ fontSize: 11, display: 'block' }}>{a.salesEmail || a.salesUserId}</Typography>
                                             </Box>
                                         </Stack>
                                         <Box sx={{ textAlign: 'center' }}>
-                                            <Chip icon={<Building2 size={11} />} label={a.merchantCount ?? '—'} size="small" sx={{ fontSize: 11, fontWeight: 600, height: 22, bgcolor: '#f1f5f9', color: '#475569', '& .MuiChip-icon': { color: '#94a3b8' } }} />
+                                            <Chip icon={<Building2 size={11} />} label={a.merchantCount ?? '—'} size="small" sx={{ fontSize: 11, fontWeight: 600, height: 22, bgcolor: T.borderLt, color: T.textSec, '& .MuiChip-icon': { color: T.textMut } }} />
                                         </Box>
                                         <Box sx={{ textAlign: 'center' }}>
-                                            <Chip label={a.status || 'ACTIVE'} size="small" sx={{ fontSize: 10, fontWeight: 700, height: 20, bgcolor: a.status === 'INACTIVE' ? '#fee2e2' : '#dcfce7', color: a.status === 'INACTIVE' ? '#991b1b' : '#166534' }} />
+                                            <Chip label={a.status || 'ACTIVE'} size="small" sx={{ fontSize: 10, fontWeight: 700, height: 20, bgcolor: a.status === 'INACTIVE' ? T.dangerCh : T.successCh, color: a.status === 'INACTIVE' ? T.dangerTx : T.successTx }} />
                                         </Box>
                                         <Box sx={{ textAlign: 'center' }}>
-                                            <Typography variant="caption" fontWeight={700} color={a.monthlyTarget != null ? '#0f172a' : '#cbd5e1'}>
+                                            <Typography variant="caption" fontWeight={700} color={a.monthlyTarget != null ? T.text : T.textMut}>
                                                 {a.monthlyTarget != null ? fmtM(a.monthlyTarget) : '—'}
                                             </Typography>
                                         </Box>
                                         <Box sx={{ textAlign: 'center' }}>
-                                            <Chip label={a.assignmentStatus === 'MAPPED' ? 'Yes' : 'No'} size="small" sx={{ fontSize: 10, fontWeight: 700, height: 20, bgcolor: a.assignmentStatus === 'MAPPED' ? '#dbeafe' : '#fef9c3', color: a.assignmentStatus === 'MAPPED' ? '#1e40af' : '#854d0e' }} />
+                                            <Chip label={a.assignmentStatus === 'MAPPED' ? 'Yes' : 'No'} size="small" sx={{ fontSize: 10, fontWeight: 700, height: 20, bgcolor: a.assignmentStatus === 'MAPPED' ? T.infoCh : T.warningCh, color: a.assignmentStatus === 'MAPPED' ? T.infoTx : T.warningTx }} />
                                         </Box>
                                         <Stack direction="row" justifyContent="center" spacing={0}>
-                                            <Tooltip title="View portfolio"><IconButton size="small" onClick={() => setSelectedAgent(a.salesUserId)} sx={{ color: '#94a3b8', '&:hover': { color: '#3b82f6' } }}><Eye size={15} /></IconButton></Tooltip>
-                                            <Tooltip title="Edit profile"><IconButton size="small" onClick={() => openEdit(a)} sx={{ color: '#94a3b8', '&:hover': { color: '#6366f1' } }}><Edit2 size={15} /></IconButton></Tooltip>
+                                            <Tooltip title="View portfolio"><IconButton size="small" onClick={() => setSelectedAgent(a.salesUserId)} sx={{ color: T.textMut, '&:hover': { color: T.info } }}><Eye size={15} /></IconButton></Tooltip>
+                                            <Tooltip title="Edit profile"><IconButton size="small" onClick={() => openEdit(a)} sx={{ color: T.textMut, '&:hover': { color: T.brand } }}><Edit2 size={15} /></IconButton></Tooltip>
                                         </Stack>
                                     </Box>
                                 ))}
@@ -208,30 +211,30 @@ const SalesAgentDirectory = () => {
             </Card>
 
             {/* Edit drawer */}
-            <Drawer anchor="right" open={!!editAgent} onClose={() => setEditAgent(null)} PaperProps={{ sx: { width: { xs: '100%', sm: 420 }, p: 3 } }}>
+            <Drawer anchor="right" open={!!editAgent} onClose={() => setEditAgent(null)} PaperProps={{ sx: { width: { xs: '100%', sm: 420 }, p: 3, bgcolor: T.card } }}>
                 {editAgent && (
                     <Box>
                         <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
-                            <Typography variant="h6" fontWeight={800}>Edit Agent</Typography>
+                            <Typography variant="h6" fontWeight={800} color={T.text}>Edit Agent</Typography>
                             <IconButton size="small" onClick={() => setEditAgent(null)}><X size={18} /></IconButton>
                         </Stack>
                         <Stack spacing={0.5} mb={2}>
-                            <Typography variant="body2" fontWeight={700} color="#0f172a">{editAgent.salesUserId}</Typography>
-                            <Typography variant="caption" color="#64748b" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <Typography variant="body2" fontWeight={700} color={T.text}>{editAgent.salesUserId}</Typography>
+                            <Typography variant="caption" color={T.textSec} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                 <Mail size={11} /> {editAgent.salesEmail || '— (sync to populate)'}
                             </Typography>
-                            <Typography variant="caption" color="#94a3b8">Email is auto-populated from merchant data and not editable here.</Typography>
+                            <Typography variant="caption" color={T.textMut}>Email is auto-populated from merchant data and not editable here.</Typography>
                         </Stack>
                         <Divider sx={{ mb: 2 }} />
                         <Stack spacing={2}>
                             <TextField label="Display Name" size="small" fullWidth value={editForm.displayName} onChange={e => setEditForm({ ...editForm, displayName: e.target.value })} />
                             <TextField label="Phone" size="small" fullWidth value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })}
-                                InputProps={{ startAdornment: <InputAdornment position="start"><Phone size={13} color="#94a3b8" /></InputAdornment> }} />
+                                InputProps={{ startAdornment: <InputAdornment position="start"><Phone size={13} color="var(--text-muted, #94a3b8)" /></InputAdornment> }} />
                             <TextField label="Country Code (e.g. BH)" size="small" fullWidth value={editForm.countryCode} onChange={e => setEditForm({ ...editForm, countryCode: e.target.value.toUpperCase().slice(0, 2) })}
-                                InputProps={{ startAdornment: <InputAdornment position="start"><Globe size={13} color="#94a3b8" /></InputAdornment> }} />
+                                InputProps={{ startAdornment: <InputAdornment position="start"><Globe size={13} color="var(--text-muted, #94a3b8)" /></InputAdornment> }} />
                             <TextField label="Hire Date" type="date" size="small" fullWidth InputLabelProps={{ shrink: true }} value={editForm.hireDate} onChange={e => setEditForm({ ...editForm, hireDate: e.target.value })} />
                             <TextField label="Monthly Target" type="number" size="small" fullWidth value={editForm.monthlyTarget} onChange={e => setEditForm({ ...editForm, monthlyTarget: e.target.value })}
-                                InputProps={{ startAdornment: <InputAdornment position="start"><Target size={13} color="#94a3b8" /></InputAdornment> }} />
+                                InputProps={{ startAdornment: <InputAdornment position="start"><Target size={13} color="var(--text-muted, #94a3b8)" /></InputAdornment> }} />
                             <Select size="small" fullWidth value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })}>
                                 <MenuItem value="ACTIVE">Active</MenuItem>
                                 <MenuItem value="INACTIVE">Inactive</MenuItem>
@@ -240,7 +243,7 @@ const SalesAgentDirectory = () => {
                         </Stack>
                         <Stack direction="row" spacing={1.5} mt={3}>
                             <Button fullWidth variant="outlined" onClick={() => setEditAgent(null)} sx={{ textTransform: 'none' }}>Cancel</Button>
-                            <Button fullWidth variant="contained" onClick={handleSave} disabled={saving} sx={{ bgcolor: '#3b82f6', textTransform: 'none', fontWeight: 600 }}>
+                            <Button fullWidth variant="contained" onClick={handleSave} disabled={saving} sx={{ bgcolor: T.brandAlt, textTransform: 'none', fontWeight: 600 }}>
                                 {saving ? 'Saving...' : 'Save'}
                             </Button>
                         </Stack>

@@ -156,11 +156,15 @@ public class BackupService {
         ProcResult r = runProcess(cmd, restoreTimeoutSeconds, "pg_restore");
 
         // pg_restore returns exit code 1 for non-fatal warnings (very common with -c
-        // on a partially-populated DB). Treat 0 and 1 as success; anything else fails.
+        // on a partially-populated DB) BUT ALSO for genuine failures (permission
+        // denied on RDS, missing role/extension, corrupt dump). Previously we treated
+        // every exit-1 as success-with-warnings, so a failed restore reported success.
+        // Now: exit 0 = clean; exit 1 = inspect the output and only pass if it contains
+        // no real error lines; anything else = hard fail.
         if (r.exitCode == 0) {
             logger.info("Restore completed successfully from {}", fileName);
-        } else if (r.exitCode == 1) {
-            logger.warn("Restore completed with warnings (exit 1) from {}. Output tail:\n{}",
+        } else if (r.exitCode == 1 && !hasRealErrors(r.output)) {
+            logger.warn("Restore completed with non-fatal warnings (exit 1) from {}. Output tail:\n{}",
                     fileName, r.outputTail());
         } else {
             throw new IOException(failureMessage("Restore", "pg_restore", r));
@@ -265,6 +269,21 @@ public class BackupService {
 
     private String failureMessage(String action, String tool, ProcResult r) {
         return action + " failed (" + tool + " exit code " + r.exitCode + "). Output:\n" + tail(r.output);
+    }
+
+    /**
+     * pg_restore exits 1 for harmless warnings AND for real failures. Distinguish
+     * them by scanning for actual error lines. pg_restore/psql prefix genuine
+     * problems with "pg_restore: error:" or "... error:"; benign noise uses
+     * "warning:". We only treat output with real "error:" lines as a failure.
+     */
+    private boolean hasRealErrors(String output) {
+        if (output == null || output.isEmpty()) return false;
+        for (String line : output.split("\n")) {
+            String l = line.toLowerCase();
+            if (l.contains("error:") || l.contains("fatal:")) return true;
+        }
+        return false;
     }
 
     /** Return roughly the last 2KB of output — enough to show the real error line. */

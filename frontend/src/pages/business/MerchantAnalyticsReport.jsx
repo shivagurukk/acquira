@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Box, Paper, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button } from '@mui/material';
+import { Box, Paper, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button, Chip, Stack, Tooltip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { BarChart2, DollarSign, Hash, Layers, AlertTriangle } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
@@ -36,9 +36,22 @@ const computeDateRange = (preset) => {
     }
 };
 
+// Segment code → label + colour. Routed through CSS vars so dark mode retints.
+// These are the six Phase-1 data-backed segments from MerchantSegmentationService.
+const SEGMENT_META = {
+    STRATEGIC:     { label: 'Strategic',     color: 'var(--seg-strategic, #7c3aed)', bg: 'var(--seg-strategic-bg, #f3e8ff)' },
+    VOLUME_DRIVER: { label: 'Volume Driver', color: 'var(--seg-volume, #2563eb)',    bg: 'var(--seg-volume-bg, #dbeafe)' },
+    PROFIT_DRIVER: { label: 'Profit Driver', color: 'var(--seg-profit, #059669)',    bg: 'var(--seg-profit-bg, #d1fae5)' },
+    AT_RISK:       { label: 'At Risk',       color: 'var(--seg-atrisk, #dc2626)',    bg: 'var(--seg-atrisk-bg, #fee2e2)' },
+    NEW:           { label: 'New',           color: 'var(--seg-new, #ea580c)',       bg: 'var(--seg-new-bg, #ffedd5)' },
+    LONG_TAIL:     { label: 'Long Tail',     color: 'var(--seg-longtail, #475569)',  bg: 'var(--seg-longtail-bg, #f1f5f9)' },
+    UNCLASSIFIED:  { label: 'Unclassified',  color: 'var(--text-muted, #94a3b8)',    bg: 'var(--bg-subtle, #f8fafc)' },
+};
+const SEGMENT_ORDER = ['STRATEGIC', 'VOLUME_DRIVER', 'PROFIT_DRIVER', 'AT_RISK', 'NEW', 'LONG_TAIL', 'UNCLASSIFIED'];
+
 const MerchantAnalyticsReport = () => {
     const { show: toast } = useToast();
-    const { currencyCode } = useAuth();
+    const { currencyCode, tenantVersion } = useAuth();
     const [loading, setLoading] = useState(false);
     const [exportLoading, setExportLoading] = useState(false);
     const [data, setData] = useState([]);
@@ -46,6 +59,12 @@ const MerchantAnalyticsReport = () => {
     const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 25 });
     const [showFilters, setShowFilters] = useState(false);
     const [showExportDialog, setShowExportDialog] = useState(false);
+
+    // Segmentation (precomputed, fetched once per tenant switch — additive overlay).
+    const [segByMid, setSegByMid] = useState({});
+    const [segMix, setSegMix] = useState([]);
+    const [segAvailable, setSegAvailable] = useState(false);
+    const [segFilter, setSegFilter] = useState('ALL');
 
     const [filters, setFilters] = useState(() => ({
         datePreset: 'YEAR',
@@ -82,7 +101,34 @@ const MerchantAnalyticsReport = () => {
 
     useEffect(() => {
         fetchReport(undefined, paginationModel);
-    }, [paginationModel]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [paginationModel, tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Segments are precomputed and independent of the report filters/pagination, so
+    // fetch the whole tenant set once per tenant switch and decorate rows by mid.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const [listRes, mixRes] = await Promise.allSettled([
+                    api.get('/business/segments'),
+                    api.get('/business/segments/mix'),
+                ]);
+                if (cancelled) return;
+                if (listRes.status === 'fulfilled') {
+                    const map = {};
+                    (listRes.value.data || []).forEach(s => { if (s.mid != null) map[s.mid] = s; });
+                    setSegByMid(map);
+                    setSegAvailable(Object.keys(map).length > 0);
+                } else {
+                    setSegByMid({}); setSegAvailable(false);
+                }
+                setSegMix(mixRes.status === 'fulfilled' ? (mixRes.value.data || []) : []);
+            } catch (e) {
+                if (!cancelled) { setSegByMid({}); setSegMix([]); setSegAvailable(false); }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [tenantVersion]);
 
     // ── Full export (all rows, not just current page) ──────────────
     const handleExport = useCallback(() => {
@@ -116,37 +162,87 @@ const MerchantAnalyticsReport = () => {
         if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));
     }, []);
 
+    // Decorate the current page's rows with their segment (by mid).
+    const rows = useMemo(
+        () => data.map(r => {
+            const s = segByMid[r.mid];
+            return s ? { ...r, primarySegment: s.primarySegment, secondaryTags: s.secondaryTags, segmentReason: s.segmentReason } : r;
+        }),
+        [data, segByMid]
+    );
+
+    // Client-side segment quick-filter applies to the visible page.
+    const visibleRows = useMemo(
+        () => segFilter === 'ALL' ? rows : rows.filter(r => r.primarySegment === segFilter),
+        [rows, segFilter]
+    );
+
     // ── KPI cards ─────────────────────────────────────────────────
     const kpis = useMemo(() => {
         if (!data.length) return [];
         const totalVol      = data.reduce((s, d) => s + (Number(d.volume)      || 0), 0);
         const totalMsf      = data.reduce((s, d) => s + (Number(d.msf)         || 0), 0);
         const totalCount    = data.reduce((s, d) => s + (Number(d.count)        || 0), 0);
-        const totalInterchg = data.reduce((s, d) => s + (Number(d.interchange)  || 0), 0);
         return [
             { title: 'Total Records',   value: formatNumber(totalRows),                          icon: Layers,     color: '#6366f1', subtitle: `Page ${paginationModel.page + 1} of ${Math.ceil(totalRows / paginationModel.pageSize)}` },
             { title: 'Page Volume',     value: `${currencyCode} ${formatCompact(totalVol)}`,     icon: DollarSign, color: '#3b82f6' },
             { title: 'Page MSF',        value: `${currencyCode} ${formatCompact(totalMsf)}`,     icon: BarChart2,  color: '#10b981' },
             { title: 'Page Trnx Count', value: formatCompact(totalCount),                         icon: Hash,       color: '#f59e0b' },
         ];
-    }, [data, totalRows, paginationModel]);
+    }, [data, totalRows, paginationModel, currencyCode]);
+
+    // Segment mix as an ordered, coloured summary (portfolio-wide, latest calc).
+    const mixOrdered = useMemo(() => {
+        const byCode = {};
+        segMix.forEach(m => { byCode[m.segment] = Number(m.count) || 0; });
+        const total = Object.values(byCode).reduce((a, b) => a + b, 0) || 1;
+        return SEGMENT_ORDER
+            .filter(code => byCode[code] > 0)
+            .map(code => ({ code, ...SEGMENT_META[code], count: byCode[code], pct: (byCode[code] / total) * 100 }));
+    }, [segMix]);
+
+    // ── Segment cell ──────────────────────────────────────────────
+    const segmentCell = (params) => {
+        const code = params.row.primarySegment;
+        if (!code) return <Typography variant="body2" sx={{ color: 'var(--text-muted, #94a3b8)' }}>—</Typography>;
+        const m = SEGMENT_META[code] || SEGMENT_META.UNCLASSIFIED;
+        const tags = params.row.secondaryTags;
+        const tip = [params.row.segmentReason, tags ? `Also: ${tags.replace(/,/g, ', ')}` : null].filter(Boolean).join(' · ');
+        return (
+            <Tooltip title={tip || m.label} arrow>
+                <Chip label={m.label} size="small" sx={{ bgcolor: m.bg, color: m.color, fontWeight: 700 }} />
+            </Tooltip>
+        );
+    };
 
     // ── Columns ───────────────────────────────────────────────────
-    const columns = [
-        { field: 'sid',          headerName: 'SID',         width: 140 },
-        { field: 'terminalType', headerName: 'Terminal',    width: 120 },
-        { field: 'mid',          headerName: 'MID',         width: 160 },
-        { field: 'merchantName', headerName: 'Name',        flex: 1, minWidth: 180,
-            renderCell: (p) => <Typography variant="body2" fontWeight={600} color="#0f172a">{p.value}</Typography> },
-        { field: 'volume',       headerName: 'Volume',      width: 140, type: 'number', valueFormatter: (v) => formatCurrency(v) },
-        { field: 'count',        headerName: 'Trnx Count',  width: 120, type: 'number', valueFormatter: (v) => formatNumber(v) },
-        { field: 'msf',          headerName: 'MSF',         width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
-        { field: 'interchange',  headerName: 'Interchange', width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
-        { field: 'mcc',          headerName: 'MCC',         width: 90 },
-        { field: 'industry',     headerName: 'Industry',    width: 160 },
-        { field: 'legalName',    headerName: 'Legal Name',  width: 200 },
-        { field: 'dccOptin',     headerName: 'DCC Opt-In',  width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
-    ];
+    const columns = useMemo(() => {
+        const cols = [
+            { field: 'sid',          headerName: 'SID',         width: 140 },
+            { field: 'terminalType', headerName: 'Terminal',    width: 120 },
+            { field: 'mid',          headerName: 'MID',         width: 160 },
+            { field: 'merchantName', headerName: 'Name',        flex: 1, minWidth: 180,
+                renderCell: (p) => <Typography variant="body2" fontWeight={600} color="#0f172a">{p.value}</Typography> },
+        ];
+        if (segAvailable) {
+            cols.push({
+                field: 'segment', headerName: 'Segment', width: 150, sortable: false,
+                valueGetter: (v, row) => row.primarySegment || '',
+                renderCell: segmentCell,
+            });
+        }
+        cols.push(
+            { field: 'volume',       headerName: 'Volume',      width: 140, type: 'number', valueFormatter: (v) => formatCurrency(v) },
+            { field: 'count',        headerName: 'Trnx Count',  width: 120, type: 'number', valueFormatter: (v) => formatNumber(v) },
+            { field: 'msf',          headerName: 'MSF',         width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
+            { field: 'interchange',  headerName: 'Interchange', width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
+            { field: 'mcc',          headerName: 'MCC',         width: 90 },
+            { field: 'industry',     headerName: 'Industry',    width: 160 },
+            { field: 'legalName',    headerName: 'Legal Name',  width: 200 },
+            { field: 'dccOptin',     headerName: 'DCC Opt-In',  width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
+        );
+        return cols;
+    }, [segAvailable]);
 
     return (
         <Box sx={pageContainer}>
@@ -174,9 +270,49 @@ const MerchantAnalyticsReport = () => {
 
             <KpiCards cards={kpis} />
 
+            {/* Segment mix + quick-filter — only when the batch has produced segments. */}
+            {segAvailable && mixOrdered.length > 0 && (
+                <Paper sx={{ ...premiumTableWrapper, p: 2, mb: 2 }}>
+                    <Typography variant="caption" fontWeight={700}
+                        sx={{ color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1.25, display: 'block' }}>
+                        Portfolio Segments
+                    </Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        <Chip
+                            label={`All (${mixOrdered.reduce((a, b) => a + b.count, 0)})`}
+                            size="small" clickable onClick={() => setSegFilter('ALL')}
+                            sx={{
+                                fontWeight: 700,
+                                color: segFilter === 'ALL' ? 'var(--on-accent, #fff)' : 'var(--text, #0f172a)',
+                                bgcolor: segFilter === 'ALL' ? 'var(--brand, #6366f1)' : 'var(--border, #e2e8f0)',
+                            }}
+                        />
+                        {mixOrdered.map(s => {
+                            const active = segFilter === s.code;
+                            return (
+                                <Chip key={s.code}
+                                    label={`${s.label} · ${s.count} (${s.pct.toFixed(0)}%)`}
+                                    size="small" clickable onClick={() => setSegFilter(active ? 'ALL' : s.code)}
+                                    sx={{
+                                        fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                                        color: active ? 'var(--on-accent, #fff)' : s.color,
+                                        bgcolor: active ? s.color : s.bg,
+                                        border: active ? `1px solid ${s.color}` : '1px solid transparent',
+                                    }} />
+                            );
+                        })}
+                    </Stack>
+                    {segFilter !== 'ALL' && (
+                        <Typography variant="caption" sx={{ color: 'var(--text-muted, #94a3b8)', mt: 1, display: 'block' }}>
+                            Filtering the current page to {SEGMENT_META[segFilter]?.label || segFilter}. Segment counts above are portfolio-wide (latest calc).
+                        </Typography>
+                    )}
+                </Paper>
+            )}
+
             <Paper sx={premiumTableWrapper}>
                 <DataGrid
-                    rows={data}
+                    rows={visibleRows}
                     columns={columns}
                     getRowId={(row, i) => row.merchantId ?? `${row.sid ?? 'r'}-${i}`}
                     rowCount={totalRows}

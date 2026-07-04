@@ -8,7 +8,7 @@ import {
     ChevronDown, ChevronUp, Wifi, WifiOff, BrainCircuit, TrendingUp,
     DollarSign, Cpu, Layers, Activity, ArrowUp, Globe, ShieldCheck,
     CreditCard, MapPin, Database, RotateCcw, Terminal, ChevronRight,
-    MessageSquare, Lightbulb
+    MessageSquare, Lightbulb, History, Clock
 } from 'lucide-react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
@@ -85,13 +85,13 @@ if (typeof document!=='undefined' && !document.getElementById(_S)){
    ═══════════════════════════════════════ */
 const SUGGESTIONS = [
     { q:'Total transaction volume by card scheme', icon:BarChart3, color:P.accent, cat:'Volume' },
-    { q:'Top 10 merchants by transaction count', icon:TrendingUp, color:P.green, cat:'Ranking' },
-    { q:'Monthly volume trend',                  icon:Activity, color:P.cyan, cat:'Trends' },
-    { q:'Total MSF revenue this month',          icon:DollarSign, color:P.amber, cat:'Revenue' },
-    { q:'Active merchants by city',              icon:MapPin, color:P.purple, cat:'Geography' },
-    { q:'Card type breakdown Credit vs Debit',   icon:CreditCard, color:P.rose, cat:'Cards' },
-    { q:'Local vs International transactions',   icon:Globe, color:P.teal, cat:'Destination' },
-    { q:'Daily trend last 30 days',              icon:Layers, color:P.accent2, cat:'Daily' },
+    { q:'Top 10 merchants by volume',              icon:TrendingUp, color:P.green, cat:'Ranking' },
+    { q:'Monthly volume trend last 6 months',      icon:Activity, color:P.cyan, cat:'Trends' },
+    { q:'Total volume and revenue this month',     icon:DollarSign, color:P.amber, cat:'Revenue' },
+    { q:'Active merchants by city',                icon:MapPin, color:P.purple, cat:'Geography' },
+    { q:'Card type breakdown',                     icon:CreditCard, color:P.rose, cat:'Cards' },
+    { q:'Local vs international volume',            icon:Globe, color:P.teal, cat:'Destination' },
+    { q:'Daily volume last 30 days',               icon:Layers, color:P.accent2, cat:'Daily' },
 ];
 
 /* ═══════════════════════════════════════
@@ -99,13 +99,13 @@ const SUGGESTIONS = [
    ═══════════════════════════════════════ */
 const getFollowUps = (question) => {
     const q = (question||'').toLowerCase();
-    if (q.includes('card scheme'))   return ['Average transaction by card scheme','Card scheme trend by month','Interchange fee by card scheme'];
-    if (q.includes('merchant'))      return ['Merchants by risk level','Top merchants by MSF revenue','Merchants onboarded this year'];
-    if (q.includes('revenue')||q.includes('msf')) return ['Revenue trend by month','Revenue by card scheme','Revenue by industry type'];
-    if (q.includes('volume'))        return ['Volume by card type','Volume by destination','Top 5 cities by volume'];
-    if (q.includes('city'))          return ['Top cities by MSF revenue','City-wise merchant count','Transaction volume by city'];
-    if (q.includes('month')||q.includes('trend')) return ['Daily trend last 30 days','Volume by card scheme','Revenue this month'];
-    return ['Transaction volume by card scheme','Top 10 merchants','Monthly trend'];
+    if (q.includes('card scheme'))   return ['Net revenue by scheme this year','Card type breakdown','Volume by card scheme'];
+    if (q.includes('merchant'))      return ['High risk merchants','Top sales reps by volume','How many merchants by status'];
+    if (q.includes('revenue')||q.includes('msf')) return ['Net revenue by scheme this year','Monthly volume trend last 6 months','Volume by card scheme'];
+    if (q.includes('volume'))        return ['Card type breakdown','Local vs international volume','Top 10 merchants by volume'];
+    if (q.includes('city'))          return ['Active merchants by city','How many merchants by status','Top 10 merchants by volume'];
+    if (q.includes('month')||q.includes('trend')) return ['Daily volume last 30 days','Volume by card scheme','Total volume and revenue this month'];
+    return ['Total transaction volume by card scheme','Top 10 merchants by volume','Monthly volume trend last 6 months'];
 };
 
 /* ═══════════════════════════════════════════════════════════════
@@ -210,17 +210,23 @@ const ResultTable = ({data,columns}) => {
 };
 
 /* ═══════════════════════════════════════════════════════════════
-   CHART — auto-detect best visualization
+   CHART — backend chartHint drives the choice; column heuristic is
+   the fallback when no hint is present (older responses).
    ═══════════════════════════════════════════════════════════════ */
-const AutoChart = ({data,columns}) => {
+const AutoChart = ({data,columns,hint}) => {
     if(!data?.length||columns?.length<2) return null;
     const numC = columns.filter(c=>data.some(r=>typeof r[c]==='number'));
     const strC = columns.filter(c=>!numC.includes(c));
     if(!numC.length||!strC.length) return null;
     const dim=strC[0], meas=numC.slice(0,3);
     const cd=data.slice(0,20).map(r=>({name:String(r[dim]||'').substring(0,16),...Object.fromEntries(meas.map(c=>[c,Number(r[c])||0]))}));
-    const isPie=data.length<=7&&meas.length===1;
-    const isTrend=dim.includes('month')||dim.includes('date')||dim.includes('day')||dim.includes('week');
+
+    // Prefer the backend's chartHint; fall back to the column-name heuristic.
+    const heuristicTrend = dim.includes('month')||dim.includes('date')||dim.includes('day')||dim.includes('week');
+    const isTrend = hint ? hint==='timeseries' : heuristicTrend;
+    // Pie only makes sense for a single measure across few slices, and only
+    // when the backend didn't explicitly ask for a time series.
+    const isPie = !isTrend && data.length<=7 && meas.length===1 && (!hint || hint==='bar');
     const tip={background:P.card,border:`1px solid ${P.border}`,borderRadius:10,fontSize:12,color:P.t1,boxShadow:'0 12px 40px rgba(0,0,0,.5)'};
 
     return (
@@ -288,6 +294,9 @@ const ChatMessage = ({ msg, onSend, onRetry }) => {
 
     if (msg.loading) return <Thinking/>;
 
+    // A kpi-hinted single-row result has no meaningful chart — hide the chart toggle.
+    const chartable = msg.data?.length>0 && msg.columns?.length>=2 && msg.chartHint!=='kpi' && msg.chartHint!=='table';
+
     return (
         <Box className="lu-msg" sx={{display:'flex',gap:1.5,mb:4,flexDirection:isUser?'row-reverse':'row',alignItems:'flex-start'}}>
             {/* Avatar */}
@@ -340,13 +349,13 @@ const ChatMessage = ({ msg, onSend, onRetry }) => {
                     {(msg.generatedSql||msg.data) && (
                         <Stack direction="row" spacing={.5} sx={{mt:2}}>
                             {msg.generatedSql && <ToggleChip on={showSql} toggle={()=>setShowSql(p=>!p)} icon={Code2} label="SQL" color={P.accent}/>}
-                            {msg.data?.length>0 && msg.columns?.length>=2 && <ToggleChip on={showChart} toggle={()=>setShowChart(p=>!p)} icon={BarChart3} label="Chart" color={P.cyan}/>}
+                            {chartable && <ToggleChip on={showChart} toggle={()=>setShowChart(p=>!p)} icon={BarChart3} label="Chart" color={P.cyan}/>}
                             {msg.data?.length>0 && <ToggleChip on={showTable} toggle={()=>setShowTable(p=>!p)} icon={Table2} label="Table" color={P.green}/>}
                         </Stack>
                     )}
 
                     <Collapse in={showSql} timeout={250}>{msg.generatedSql && <SqlBlock sql={msg.generatedSql}/>}</Collapse>
-                    <Collapse in={showChart} timeout={250}>{msg.data?.length>0 && msg.columns?.length>=2 && <AutoChart data={msg.data} columns={msg.columns}/>}</Collapse>
+                    <Collapse in={showChart} timeout={250}>{chartable && <AutoChart data={msg.data} columns={msg.columns} hint={msg.chartHint}/>}</Collapse>
                     <Collapse in={showTable} timeout={250}>{msg.data?.length>0 && <ResultTable data={msg.data} columns={msg.columns}/>}</Collapse>
 
                     {/* Follow-up suggestions */}
@@ -381,15 +390,32 @@ export default function AiAssistant() {
     const [health,setHealth] = useState(null);
     const [models,setModels] = useState([]);
     const [selModel,setSelModel] = useState('');
+    const [recent,setRecent] = useState([]);
     const chatRef = useRef(null);
     const inputRef = useRef(null);
+
+    const loadRecent = useCallback(async()=>{
+        try {
+            const rows = (await aiApi.history(12)).data || [];
+            // De-duplicate by question text, keep newest, cap at 6.
+            const seen = new Set(); const out = [];
+            for (const r of rows) {
+                const q = r.question?.trim();
+                if (!q || seen.has(q.toLowerCase())) continue;
+                seen.add(q.toLowerCase()); out.push(r);
+                if (out.length >= 6) break;
+            }
+            setRecent(out);
+        } catch { setRecent([]); }
+    },[]);
 
     useEffect(()=>{
         (async()=>{
             try { const h=(await aiApi.health()).data; setHealth(h); setSelModel(h.model||''); } catch { setHealth({status:'disconnected'}); }
             try { setModels((await aiApi.models()).data); } catch {}
         })();
-    },[]);
+        loadRecent();
+    },[loadRecent]);
 
     useEffect(()=>{ chatRef.current?.scrollTo({top:chatRef.current.scrollHeight,behavior:'smooth'}); },[messages]);
 
@@ -406,14 +432,15 @@ export default function AiAssistant() {
                 summary:res.summary||(res.error?null:`Query returned ${res.rowCount||0} results.`),
                 error:res.error||null, generatedSql:res.generatedSql||null,
                 data:res.data||null, columns:res.columns||null,
-                rowCount:res.rowCount, duration:res.duration,
+                rowCount:res.rowCount, duration:res.duration, chartHint:res.chartHint||null,
             }:m));
         } catch(e) {
             setMessages(p=>p.map(m=>m.id===aId?{...m,loading:false,question:q,error:e.response?.data?.error||'Connection failed. Is Ollama running?'}:m));
         }
         setSending(false);
+        loadRecent(); // refresh the recent strip with this new question
         setTimeout(()=>inputRef.current?.querySelector('textarea')?.focus(),100);
-    },[input,sending,selModel]);
+    },[input,sending,selModel,loadRecent]);
 
     const connected = health?.status==='connected';
 
@@ -510,6 +537,23 @@ export default function AiAssistant() {
                                         <Box className="lu-code" sx={{mt:.75,px:1.5,py:.75,borderRadius:'8px',bgcolor:'rgba(0,0,0,.25)',fontSize:11.5,color:P.cyan}}>
                                             $ ollama serve && ollama pull llama3.2
                                         </Box>
+                                    </Box>
+                                )}
+
+                                {/* Recent questions — pulled from ai_chat_history */}
+                                {recent.length>0 && (
+                                    <Box sx={{width:'100%',maxWidth:600,mb:2.5}}>
+                                        <Stack direction="row" spacing={.6} alignItems="center" sx={{mb:1,px:.5}}>
+                                            <History size={11} color={P.t3}/>
+                                            <Typography sx={{fontSize:9.5,fontWeight:700,color:P.t3,textTransform:'uppercase',letterSpacing:1.2}}>Recent</Typography>
+                                        </Stack>
+                                        <Stack direction="row" spacing={.6} flexWrap="wrap" sx={{gap:.5}}>
+                                            {recent.map(r=>(
+                                                <Chip key={r.chatId} label={r.question} size="small" clickable onClick={()=>send(r.question)}
+                                                    icon={r.isError?<RotateCcw size={10}/>:<Clock size={10}/>}
+                                                    sx={{maxWidth:280,height:26,fontSize:11,fontWeight:500,bgcolor:'transparent',color:P.t2,border:`1px solid ${P.border}`,'& .MuiChip-label':{overflow:'hidden',textOverflow:'ellipsis'},'& .MuiChip-icon':{color:r.isError?P.rose:P.t3},transition:'all .2s','&:hover':{bgcolor:`${P.accent}08`,borderColor:`${P.accent}20`,color:P.accent,'& .MuiChip-icon':{color:P.accent}}}}/>
+                                            ))}
+                                        </Stack>
                                     </Box>
                                 )}
 

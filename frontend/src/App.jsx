@@ -12,11 +12,12 @@ import { PageLoader } from './components/Loaders';
 
 
 // Lazy-loaded route components — only loaded when user navigates to them
-const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Dashboard = lazy(() => import('./pages/Dashboard.enhanced'));
 const UploadPage = lazy(() => import('./pages/UploadPage'));
 const MerchantHierarchy = lazy(() => import('./components/MerchantHierarchy'));
 const TransactionList = lazy(() => import('./components/TransactionList'));
 const MerchantSummary = lazy(() => import('./components/MerchantSummary'));
+const MerchantUniverse = lazy(() => import('./pages/MerchantUniverse'));
 const BusinessDashboard = lazy(() => import('./pages/business/BusinessDashboard'));
 const OpportunityIntelligence = lazy(() => import('./pages/business/OpportunityIntelligence'));
 const RevenueLeakage = lazy(() => import('./pages/business/RevenueLeakage'));
@@ -27,6 +28,8 @@ const MerchantFinancialSummary = lazy(() => import('./pages/business/MerchantFin
 const TransactionPerformanceDashboard = lazy(() => import('./pages/business/TransactionPerformanceDashboard'));
 const DebitPrepaidMetrics = lazy(() => import('./pages/business/DebitPrepaidMetrics'));
 const AttritionReport = lazy(() => import('./pages/business/AttritionReport'));
+const RetentionReport = lazy(() => import('./pages/business/RetentionReport'));
+const ForecastingBenchmarking = lazy(() => import('./pages/business/ForecastingBenchmarking'));
 const ZeroTransactionReport = lazy(() => import('./pages/business/ZeroTransactionReport'));
 const ExecutiveDashboardReport = lazy(() => import('./pages/business/ExecutiveDashboardReport'));
 const MerchantReportManager = lazy(() => import('./pages/business/MerchantReportManager'));
@@ -34,6 +37,7 @@ const MerchantHeatmap = lazy(() => import('./pages/business/MerchantHeatmap'));
 const DailyMerchantDashboard = lazy(() => import('./pages/business/DailyMerchantDashboard'));
 const MerchantAnalyticsReport = lazy(() => import('./pages/business/MerchantAnalyticsReport'));
 const MerchantComparison = lazy(() => import('./pages/business/MerchantComparison'));
+const PricingSimulator = lazy(() => import('./pages/business/PricingSimulator'));
 const SalesTeamManagement = lazy(() => import('./pages/sales/SalesTeamManagement'));
 const SalesCountryLeadManagement = lazy(() => import('./pages/sales/SalesCountryLeadManagement'));
 const SalesAgentDirectory = lazy(() => import('./pages/sales/SalesAgentDirectory'));
@@ -66,6 +70,7 @@ const ApiManagement = lazy(() => import('./pages/admin/ApiManagement'));
 const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
 // S3 report storage settings
 const S3Settings = lazy(() => import('./pages/admin/S3Settings'));
+const BudgetTargets = lazy(() => import('./pages/admin/BudgetTargets'));
 
 function App() {
   return (
@@ -95,6 +100,7 @@ function App() {
               <Route path="/merchants" element={<MerchantHierarchy />} />
               <Route path="/transactions" element={<TransactionList />} />
               <Route path="/merchant-summary" element={<MerchantSummary />} />
+              <Route path="/merchant/universe" element={<MerchantUniverse />} />
               <Route path="/merchant/insight-hub" element={<MerchantInsightHub />} />
               <Route path="/trends/hub" element={<TransactionTrendsHub />} />
 
@@ -105,11 +111,14 @@ function App() {
               <Route path="/business/performance" element={<TransactionPerformanceDashboard />} />
               <Route path="/business/debit-prepaid" element={<DebitPrepaidMetrics />} />
               <Route path="/business/attrition" element={<AttritionReport />} />
+              <Route path="/business/retention" element={<RetentionReport />} />
+              <Route path="/business/forecasting" element={<ForecastingBenchmarking />} />
               <Route path="/business/zero-transaction" element={<ZeroTransactionReport />} />
               <Route path="/business/heatmap" element={<MerchantHeatmap />} />
               <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
               <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
               <Route path="/business/comparison" element={<MerchantComparison />} />
+              <Route path="/business/pricing-simulator" element={<PricingSimulator />} />
               <Route path="/business/opportunity" element={<OpportunityIntelligence />} />
               <Route path="/business/groups" element={<GroupReports />} />
               <Route path="/explorer" element={<DataExplorer />} />
@@ -204,6 +213,9 @@ function App() {
               } />
               <Route path="/admin/api-management" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><ApiManagement /></RoleGuard>
+              } />
+              <Route path="/business/budget-targets" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><BudgetTargets /></RoleGuard>
               } />
             </Route>
           </Routes>

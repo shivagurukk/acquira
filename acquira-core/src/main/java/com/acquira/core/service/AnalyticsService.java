@@ -18,13 +18,16 @@ public class AnalyticsService {
     private final SumDailyBankRepository sumDailyBankRepository;
     private final SumDailyMerchantRepository sumDailyMerchantRepository;
     private final com.acquira.common.repository.MerchantRepository merchantRepository;
+    private final com.acquira.common.repository.MerchantActivitySummaryRepository merchantActivitySummaryRepository;
 
     public AnalyticsService(SumDailyBankRepository sumDailyBankRepository,
             SumDailyMerchantRepository sumDailyMerchantRepository,
-            com.acquira.common.repository.MerchantRepository merchantRepository) {
+            com.acquira.common.repository.MerchantRepository merchantRepository,
+            com.acquira.common.repository.MerchantActivitySummaryRepository merchantActivitySummaryRepository) {
         this.sumDailyBankRepository = sumDailyBankRepository;
         this.sumDailyMerchantRepository = sumDailyMerchantRepository;
         this.merchantRepository = merchantRepository;
+        this.merchantActivitySummaryRepository = merchantActivitySummaryRepository;
     }
 
     public Map<String, Object> getExecutiveDashboard(LocalDate date) { // Date is usually "Today" or specific business
@@ -75,6 +78,39 @@ public class AnalyticsService {
         // 4. Active Merchants
         long activeMerchants = merchantRepository.countByTenantIdAndStatus(tenantId, "ACTIVE");
         response.put("activeMerchants", activeMerchants);
+
+        // 5. Year-over-Year MTD volume (same month-to-date window, one year back).
+        // Frontend derives the YoY % from mtdVolume vs this value. Reuses the existing
+        // tenant-scoped range-sum query — no new repository method needed.
+        LocalDate lastYearMonthStart = startOfMonth.minusYears(1);
+        LocalDate lastYearAsOf = date.minusYears(1);
+        BigDecimal mtdVolumeLastYear =
+                sumDailyBankRepository.sumVolumeByTenantAndDateRange(tenantId, lastYearMonthStart, lastYearAsOf);
+        response.put("mtdVolumeLastYear", mtdVolumeLastYear != null ? mtdVolumeLastYear : BigDecimal.ZERO);
+
+        // 6. Active/Dormant merchant counts from merchant_activity_summary at its latest
+        // snapshot date. This is a richer lifecycle signal than dim_merchant.status
+        // (which is a static onboarding flag). Falls back to 0 when no snapshot exists
+        // (e.g. calcBusinessMetricsStep hasn't run yet) rather than throwing.
+        try {
+            LocalDate latestCalc = merchantActivitySummaryRepository.findMaxCalcDate(tenantId);
+            if (latestCalc != null) {
+                long activeSnap = merchantActivitySummaryRepository
+                        .countByTenantIdAndStatusAndCalcDate(tenantId, "ACTIVE", latestCalc);
+                long dormantSnap = merchantActivitySummaryRepository
+                        .countByTenantIdAndStatusAndCalcDate(tenantId, "DORMANT", latestCalc);
+                response.put("activeMerchantsSnapshot", activeSnap);
+                response.put("dormantMerchants", dormantSnap);
+                response.put("activitySnapshotDate", latestCalc);
+            } else {
+                response.put("activeMerchantsSnapshot", 0L);
+                response.put("dormantMerchants", 0L);
+            }
+        } catch (Exception e) {
+            // Defensive: never let a lifecycle-count issue break the whole dashboard.
+            response.put("activeMerchantsSnapshot", 0L);
+            response.put("dormantMerchants", 0L);
+        }
 
         return response;
     }

@@ -10,6 +10,7 @@ import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import { pageContainer } from '../../theme/dataGridStyles';
 import { formatCurrency } from '../../utils/formatters';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#3b82f6', '#14b8a6', '#f97316'];
@@ -101,6 +102,7 @@ const CustomTooltip = ({ active, payload, label, isCurrency }) => {
 };
 
 const ExecutiveDashboardReport = () => {
+    const { tenantVersion } = useAuth();
     const [loading, setLoading] = useState(false);
     const [asOfDate, setAsOfDate] = useState(new Date().toISOString().split('T')[0]);
     const [dataset, setDataset] = useState('SID_Data_2026');
@@ -116,9 +118,9 @@ const ExecutiveDashboardReport = () => {
         api.get('/dashboard/v2/datasets')
             .then(res => { const sets = res.data; setAvailableDatasets(sets); if (sets.length > 0 && !dataset) setDataset(sets[0]); })
             .catch(err => console.error('Failed to load datasets', err));
-    }, []);
+    }, [tenantVersion]);
 
-    useEffect(() => { fetchDashboardData(); }, [asOfDate, dataset]);
+    useEffect(() => { fetchDashboardData(); }, [asOfDate, dataset, tenantVersion]);
 
     const fetchDashboardData = async () => {
         if (!dataset) return;

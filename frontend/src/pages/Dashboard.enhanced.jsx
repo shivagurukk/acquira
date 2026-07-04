@@ -181,7 +181,7 @@ const relTime = (ms) => {
 
 const Dashboard = () => {
     const navigate = useNavigate();
-    const { currencySymbol } = useAuth();
+    const { currencySymbol, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
     const [loading, setLoading] = useState(true);
     const [period, setPeriod] = useState('30');
@@ -198,6 +198,7 @@ const Dashboard = () => {
 
     useEffect(() => {
         const loadBounds = async () => {
+            setBoundsLoaded(false);
             try {
                 const res = await api.get('/business/data-bounds');
                 if (res.data?.latest) setLatestDataDate(new Date(res.data.latest));
@@ -205,7 +206,7 @@ const Dashboard = () => {
             setBoundsLoaded(true);
         };
         loadBounds();
-    }, []);
+    }, [tenantVersion]);
 
     // tick the relative-time label every 15s
     useEffect(() => {
@@ -276,7 +277,7 @@ const Dashboard = () => {
         finally { setLoading(false); }
     };
 
-    useEffect(() => { if (boundsLoaded) fetchAllData(); }, [period, boundsLoaded]);
+    useEffect(() => { if (boundsLoaded) fetchAllData(); }, [period, boundsLoaded, tenantVersion]);
 
     const kpis = useMemo(() => {
         if (!metrics) return [];

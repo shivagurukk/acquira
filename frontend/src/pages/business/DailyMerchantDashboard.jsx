@@ -63,7 +63,7 @@ const StatCard = ({ title, value, icon: Icon, color, subtitle }) => (
 );
 
 const DailyMerchantDashboard = () => {
-    const { currencySymbol } = useAuth();
+    const { currencySymbol, tenantVersion } = useAuth();
     const formatCurrency = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -111,14 +111,14 @@ const DailyMerchantDashboard = () => {
             }
         })();
         return () => { cancelled = true; };
-    }, []);
+    }, [tenantVersion]);
 
-    useEffect(() => { fetchFilterOptions(); }, []);
+    useEffect(() => { fetchFilterOptions(); }, [tenantVersion]);
     useEffect(() => {
         fetchDashboardData();
     }, [filters.year, filters.month, filters.sidList, filters.midList,
         filters.partnerList, filters.rmList, filters.teamLeaderList, filters.mccList,
-        filters.merchantName]);
+        filters.merchantName, tenantVersion]);
 
     const fetchFilterOptions = async () => {
         try {

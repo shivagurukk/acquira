@@ -6,7 +6,7 @@ import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
 
 const FinanceSummary = () => {
-    const { currencySymbol } = useAuth();
+    const { currencySymbol, tenantVersion } = useAuth();
     const formatCurrency = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -28,7 +28,7 @@ const FinanceSummary = () => {
 
     useEffect(() => {
         fetchData();
-    }, [period]);
+    }, [period, tenantVersion]);
 
     const fetchData = async () => {
         if (period === 'CUSTOM' && (!customRange.start || !customRange.end)) return;

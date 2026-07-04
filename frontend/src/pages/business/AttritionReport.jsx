@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack } from '@mui/material';
+import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, Tooltip } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
-import { Activity, TrendingDown, TrendingUp, Users, DollarSign, AlertTriangle, UserMinus, ShieldAlert } from 'lucide-react';
+import { Activity, TrendingDown, TrendingUp, Users, DollarSign, AlertTriangle, UserMinus, ShieldAlert, Brain } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
@@ -10,8 +10,28 @@ import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
-import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { premiumDataGridStyles, premiumTableWrapper, pageContainer, chartTooltipStyle } from '../../theme/dataGridStyles';
 import { useDataBounds } from '../../hooks/useDataBounds';
+import DataBoundsBanner from '../../components/DataBoundsBanner';
+
+// ─── Local design tokens ─────────────────────────────────────────
+// Every colour routes through a CSS variable with a light-mode fallback so the
+// report adapts cleanly under html.dark + ThemeContext. Status hues keep their
+// meaning across themes; the dark stylesheet can override the --attr-* vars.
+const T = {
+    card:     'var(--bg-card, #ffffff)',
+    subtle:   'var(--bg-subtle, #f8fafc)',
+    hover:    'var(--bg-hover, #f8fafc)',
+    border:   'var(--border, #e2e8f0)',
+    borderLt: 'var(--border-light, #eef2f7)',
+    text:     'var(--text, #0f172a)',
+    textSec:  'var(--text-secondary, #475569)',
+    textMut:  'var(--text-muted, #94a3b8)',
+    textStr:  'var(--text, #1e293b)',
+    // chart axis / grid
+    axis:     'var(--text-muted, #94a3b8)',
+    grid:     'var(--border-light, #eef2f7)',
+};
 
 // Metric → key-suffix the backend returns. Volume keeps the original (suffix-less)
 // keys for backward compatibility; txns/revenue use the parallel suffixed keys.
@@ -22,19 +42,30 @@ const METRICS = {
 };
 
 // Attrition status → colour + label. Mirrors classifyAttrition() in the backend.
+// Foreground/background both routed through CSS vars so dark mode can retint.
 const STATUS_META = {
-    CHURNED:   { label: 'Churned',   color: '#7c3aed', bg: '#f3e8ff' },
-    AT_RISK:   { label: 'At Risk',   color: '#dc2626', bg: '#fee2e2' },
-    DECLINING: { label: 'Declining', color: '#ea580c', bg: '#ffedd5' },
-    STABLE:    { label: 'Stable',    color: '#475569', bg: '#f1f5f9' },
-    GROWING:   { label: 'Growing',   color: '#059669', bg: '#d1fae5' },
+    CHURNED:   { label: 'Churned',   color: 'var(--attr-churned, #7c3aed)',   bg: 'var(--attr-churned-bg, #f3e8ff)' },
+    AT_RISK:   { label: 'At Risk',   color: 'var(--attr-atrisk, #dc2626)',    bg: 'var(--attr-atrisk-bg, #fee2e2)' },
+    DECLINING: { label: 'Declining', color: 'var(--attr-declining, #ea580c)', bg: 'var(--attr-declining-bg, #ffedd5)' },
+    STABLE:    { label: 'Stable',    color: 'var(--attr-stable, #475569)',    bg: 'var(--attr-stable-bg, #f1f5f9)' },
+    GROWING:   { label: 'Growing',   color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #d1fae5)' },
 };
 const STATUS_ORDER = ['ALL', 'CHURNED', 'AT_RISK', 'DECLINING', 'STABLE', 'GROWING'];
 
+// Predicted churn-risk band → colour. These are the ML forward-looking scores,
+// distinct from the backward-looking attrition STATUS above.
+const RISK_META = {
+    HIGH:   { label: 'High',   color: 'var(--attr-atrisk, #dc2626)',    bg: 'var(--attr-atrisk-bg, #fee2e2)' },
+    MEDIUM: { label: 'Medium', color: 'var(--attr-declining, #ea580c)', bg: 'var(--attr-declining-bg, #ffedd5)' },
+    LOW:    { label: 'Low',    color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #d1fae5)' },
+};
+
 const AttritionReport = () => {
-    const { currencySymbol } = useAuth();
+    const { currencySymbol, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
     const [data, setData] = useState([]);
+    const [churnByMid, setChurnByMid] = useState({});
+    const [churnAvailable, setChurnAvailable] = useState(false);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
     const [metric, setMetric] = useState('volume');
@@ -50,7 +81,7 @@ const AttritionReport = () => {
         datePreset: 'MONTH'
     });
 
-    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds();
+    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded, latest } = useDataBounds(tenantVersion);
 
     useEffect(() => {
         if (!boundsLoaded) return;
@@ -60,6 +91,26 @@ const AttritionReport = () => {
     useEffect(() => {
         if (boundsLoaded) fetchData();
     }, [boundsLoaded]);
+
+    // Churn-risk scores are precomputed by the batch and independent of the
+    // attrition filters, so fetch once per tenant switch (not per report run).
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await api.get('/business/churn-risk');
+                if (cancelled) return;
+                const map = {};
+                (res.data || []).forEach(c => { if (c.mid != null) map[c.mid] = c; });
+                setChurnByMid(map);
+                setChurnAvailable(Object.keys(map).length > 0);
+            } catch (e) {
+                // Churn is additive — never block the page if it's unavailable.
+                if (!cancelled) { setChurnByMid({}); setChurnAvailable(false); }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [tenantVersion]);
 
     const fetchData = async () => {
         setLoading(true);
@@ -85,12 +136,29 @@ const AttritionReport = () => {
     const fmtMeasure = (v) => v == null ? '-' : (kind === 'count' ? fmtCount(v) : fmt.currency(v));
     const pctFormatter = (v) => v == null ? '-' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`;
 
+    // Merge the predicted churn score onto each attrition row by mid.
+    const rows = useMemo(
+        () => data.map(r => {
+            const c = churnByMid[r.mid];
+            return c
+                ? { ...r, churnProbability: c.churnProbability, churnBand: c.riskBand, churnReason: c.topReason, churnScoredBy: c.scoredBy }
+                : r;
+        }),
+        [data, churnByMid]
+    );
+
     // Status counts come from the whole portfolio (not the status-filtered view).
     const statusCounts = useMemo(() => {
         const c = { CHURNED: 0, AT_RISK: 0, DECLINING: 0, STABLE: 0, GROWING: 0 };
         data.forEach(d => { if (c[d.status] != null) c[d.status]++; });
         return c;
     }, [data]);
+
+    // High predicted-churn count (forward-looking) — only meaningful if scores exist.
+    const highChurnCount = useMemo(
+        () => rows.filter(r => r.churnBand === 'HIGH').length,
+        [rows]
+    );
 
     const kpis = useMemo(() => {
         if (!data.length) return [];
@@ -100,24 +168,31 @@ const AttritionReport = () => {
         const atRisk = statusCounts.CHURNED + statusCounts.AT_RISK;
         const atRiskValue = data.reduce((s, d) =>
             (d.status === 'CHURNED' || d.status === 'AT_RISK') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
-        return [
-            { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: '#6366f1' },
-            { title: 'Churned', value: statusCounts.CHURNED.toString(), icon: UserMinus, color: '#7c3aed',
+        const cards = [
+            { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: 'var(--accent-indigo, #6366f1)' },
+            { title: 'Churned', value: statusCounts.CHURNED.toString(), icon: UserMinus, color: 'var(--attr-churned, #7c3aed)',
               subtitle: `${data.length ? ((statusCounts.CHURNED / data.length) * 100).toFixed(0) : 0}% of portfolio` },
-            { title: 'At Risk', value: atRisk.toString(), icon: AlertTriangle, color: '#dc2626',
+            { title: 'At Risk', value: atRisk.toString(), icon: AlertTriangle, color: 'var(--attr-atrisk, #dc2626)',
               subtitle: 'churned + steep decline' },
-            { title: 'Declining (YTD)', value: statusCounts.DECLINING.toString(), icon: TrendingDown, color: '#ea580c' },
+            { title: 'Declining (YTD)', value: statusCounts.DECLINING.toString(), icon: TrendingDown, color: 'var(--attr-declining, #ea580c)' },
             { title: `YTD ${METRICS[metric].label} Change`, value: `${ytdChange >= 0 ? '+' : ''}${ytdChange.toFixed(1)}%`,
-              icon: DollarSign, color: ytdChange >= 0 ? '#10b981' : '#ef4444', trend: ytdChange,
+              icon: DollarSign, color: ytdChange >= 0 ? 'var(--success, #10b981)' : 'var(--danger, #ef4444)', trend: ytdChange,
               trendLabel: `${prevYear} vs ${selectedYear}` },
-            { title: `${METRICS[metric].label} at Risk`, value: fmtMeasure(atRiskValue), icon: ShieldAlert, color: '#dc2626',
-              subtitle: `${atRisk} churned + at-risk` },
         ];
-    }, [data, metric, statusCounts, selectedYear, prevYear]);
+        // Forward-looking ML tile only when scores are present.
+        if (churnAvailable) {
+            cards.push({ title: 'High Churn Risk', value: highChurnCount.toString(), icon: Brain,
+                color: 'var(--attr-atrisk, #dc2626)', subtitle: 'predicted next 30–60 days' });
+        } else {
+            cards.push({ title: `${METRICS[metric].label} at Risk`, value: fmtMeasure(atRiskValue), icon: ShieldAlert,
+                color: 'var(--attr-atrisk, #dc2626)', subtitle: `${atRisk} churned + at-risk` });
+        }
+        return cards;
+    }, [data, metric, statusCounts, selectedYear, prevYear, churnAvailable, highChurnCount]);
 
     const filteredData = useMemo(
-        () => statusFilter === 'ALL' ? data : data.filter(d => d.status === statusFilter),
-        [data, statusFilter]
+        () => statusFilter === 'ALL' ? rows : rows.filter(d => d.status === statusFilter),
+        [rows, statusFilter]
     );
 
     // ── Churn analytics (all from the rows already returned) ──
@@ -129,11 +204,11 @@ const AttritionReport = () => {
             pct: ((statusCounts[s] || 0) / total) * 100,
         }));
         const buckets = [
-            { label: '≤-50%', test: p => p <= -50, color: '#b91c1c' },
-            { label: '-50..-20%', test: p => p > -50 && p <= -20, color: '#ef4444' },
-            { label: '-20..0%', test: p => p > -20 && p < 0, color: '#f59e0b' },
-            { label: '0..+20%', test: p => p >= 0 && p <= 20, color: '#34d399' },
-            { label: '>+20%', test: p => p > 20, color: '#059669' },
+            { label: '≤-50%', test: p => p <= -50, color: 'var(--attr-dist-1, #b91c1c)' },
+            { label: '-50..-20%', test: p => p > -50 && p <= -20, color: 'var(--attr-dist-2, #ef4444)' },
+            { label: '-20..0%', test: p => p > -20 && p < 0, color: 'var(--attr-dist-3, #f59e0b)' },
+            { label: '0..+20%', test: p => p >= 0 && p <= 20, color: 'var(--attr-dist-4, #34d399)' },
+            { label: '>+20%', test: p => p > 20, color: 'var(--attr-dist-5, #059669)' },
         ];
         const dist = buckets.map(b => ({
             label: b.label, color: b.color,
@@ -148,51 +223,83 @@ const AttritionReport = () => {
     }, [data, metric, statusCounts]);
 
     const measureCell = (params) => (
-        <Typography variant="body2" sx={{ color: '#475569' }}>{fmtMeasure(params.value)}</Typography>
+        <Typography variant="body2" sx={{ color: T.textSec }}>{fmtMeasure(params.value)}</Typography>
     );
     const measureCellBold = (params) => (
-        <Typography variant="body2" fontWeight="600" sx={{ color: '#0f172a' }}>{fmtMeasure(params.value)}</Typography>
+        <Typography variant="body2" fontWeight="600" sx={{ color: T.text }}>{fmtMeasure(params.value)}</Typography>
     );
     const pctCell = (params) => (
-        <Typography variant="body2" sx={{ fontWeight: 'bold', color: params.value < 0 ? '#ef4444' : params.value > 0 ? '#10b981' : '#cbd5e1' }}>
+        <Typography variant="body2" sx={{ fontWeight: 'bold', color: params.value < 0 ? 'var(--danger, #ef4444)' : params.value > 0 ? 'var(--success, #10b981)' : T.textMut }}>
             {pctFormatter(params.value)}
         </Typography>
     );
     const statusCell = (params) => {
-        const m = STATUS_META[params.value] || { label: params.value, color: '#475569', bg: '#f1f5f9' };
+        const m = STATUS_META[params.value] || { label: params.value, color: T.textSec, bg: T.subtle };
         return <Chip label={m.label} size="small" sx={{ bgcolor: m.bg, color: m.color, fontWeight: 700 }} />;
     };
 
-    const columns = useMemo(() => [
-        { field: 'mid', headerName: 'MID', width: 130,
-            renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', color: '#64748b' }}>{p.value}</Typography> },
-        { field: 'merchant_info', headerName: 'MERCHANT NAME', width: 230,
-            valueGetter: (v, row) => row.name,
-            renderCell: (p) => <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>{p.row.name}</Typography> },
-        { field: 'status', headerName: 'STATUS', width: 130,
-            valueGetter: (v, row) => row.status, renderCell: statusCell },
-        // MoM (equal-length window vs one month earlier)
-        { field: 'mom_prev_col', headerName: 'Prev Month', width: 120, type: 'number',
-            valueGetter: (v, row) => val(row, 'mom_prev'), renderCell: measureCell },
-        { field: 'mom_curr_col', headerName: 'Current', width: 120, type: 'number',
-            valueGetter: (v, row) => val(row, 'mom_current'), renderCell: measureCellBold },
-        { field: 'mom_pct_col', headerName: '% Change', width: 110, type: 'number',
-            valueGetter: (v, row) => val(row, 'mom_pct'), renderCell: pctCell },
-        // MTD YoY
-        { field: 'mtd_prev_col', headerName: `${prevYear}`, width: 120, type: 'number',
-            valueGetter: (v, row) => val(row, 'mtd_prev'), renderCell: measureCell },
-        { field: 'mtd_curr_col', headerName: `${selectedYear}`, width: 120, type: 'number',
-            valueGetter: (v, row) => val(row, 'mtd_current'), renderCell: measureCellBold },
-        { field: 'mtd_pct_col', headerName: '% Change', width: 110, type: 'number',
-            valueGetter: (v, row) => val(row, 'mtd_pct'), renderCell: pctCell },
-        // YTD YoY
-        { field: 'ytd_prev_col', headerName: `${prevYear}`, width: 120, type: 'number',
-            valueGetter: (v, row) => val(row, 'ytd_prev'), renderCell: measureCell },
-        { field: 'ytd_curr_col', headerName: `${selectedYear}`, width: 120, type: 'number',
-            valueGetter: (v, row) => val(row, 'ytd_current'), renderCell: measureCellBold },
-        { field: 'ytd_pct_col', headerName: '% Change', width: 110, type: 'number',
-            valueGetter: (v, row) => val(row, 'ytd_pct'), renderCell: pctCell },
-    ], [metric, selectedYear, prevYear]);
+    // Predicted churn-risk cell: a coloured band chip + probability, with the top
+    // driver and model/heuristic source in a tooltip. Sorts by probability.
+    const churnCell = (params) => {
+        const band = params.row.churnBand;
+        if (!band) return <Typography variant="body2" sx={{ color: T.textMut }}>—</Typography>;
+        const m = RISK_META[band] || { label: band, color: T.textSec, bg: T.subtle };
+        const prob = params.row.churnProbability;
+        const pctTxt = prob == null ? '' : `${(Number(prob) * 100).toFixed(0)}%`;
+        const src = params.row.churnScoredBy === 'HEURISTIC' ? ' (heuristic)' : '';
+        const tip = `${params.row.churnReason || 'Predicted churn risk'}${src}`;
+        return (
+            <Tooltip title={tip} arrow>
+                <Chip label={`${m.label}${pctTxt ? ' · ' + pctTxt : ''}`} size="small"
+                    sx={{ bgcolor: m.bg, color: m.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }} />
+            </Tooltip>
+        );
+    };
+
+    const columns = useMemo(() => {
+        const base = [
+            { field: 'mid', headerName: 'MID', width: 130,
+                renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', color: T.textSec }}>{p.value}</Typography> },
+            { field: 'merchant_info', headerName: 'MERCHANT NAME', width: 230,
+                valueGetter: (v, row) => row.name,
+                renderCell: (p) => <Typography variant="body2" sx={{ fontWeight: 600, color: T.text }}>{p.row.name}</Typography> },
+            { field: 'status', headerName: 'STATUS', width: 130,
+                valueGetter: (v, row) => row.status, renderCell: statusCell },
+        ];
+        // Predicted churn-risk column, inserted right after Status — only when the
+        // batch has produced scores for this tenant.
+        if (churnAvailable) {
+            base.push({
+                field: 'churn_risk', headerName: 'CHURN RISK', width: 150, type: 'number',
+                valueGetter: (v, row) => (row.churnProbability == null ? -1 : row.churnProbability),
+                renderCell: churnCell,
+            });
+        }
+        return [
+            ...base,
+            // MoM (equal-length window vs one month earlier)
+            { field: 'mom_prev_col', headerName: 'Prev Month', width: 120, type: 'number',
+                valueGetter: (v, row) => val(row, 'mom_prev'), renderCell: measureCell },
+            { field: 'mom_curr_col', headerName: 'Current', width: 120, type: 'number',
+                valueGetter: (v, row) => val(row, 'mom_current'), renderCell: measureCellBold },
+            { field: 'mom_pct_col', headerName: '% Change', width: 110, type: 'number',
+                valueGetter: (v, row) => val(row, 'mom_pct'), renderCell: pctCell },
+            // MTD YoY
+            { field: 'mtd_prev_col', headerName: `${prevYear}`, width: 120, type: 'number',
+                valueGetter: (v, row) => val(row, 'mtd_prev'), renderCell: measureCell },
+            { field: 'mtd_curr_col', headerName: `${selectedYear}`, width: 120, type: 'number',
+                valueGetter: (v, row) => val(row, 'mtd_current'), renderCell: measureCellBold },
+            { field: 'mtd_pct_col', headerName: '% Change', width: 110, type: 'number',
+                valueGetter: (v, row) => val(row, 'mtd_pct'), renderCell: pctCell },
+            // YTD YoY
+            { field: 'ytd_prev_col', headerName: `${prevYear}`, width: 120, type: 'number',
+                valueGetter: (v, row) => val(row, 'ytd_prev'), renderCell: measureCell },
+            { field: 'ytd_curr_col', headerName: `${selectedYear}`, width: 120, type: 'number',
+                valueGetter: (v, row) => val(row, 'ytd_current'), renderCell: measureCellBold },
+            { field: 'ytd_pct_col', headerName: '% Change', width: 110, type: 'number',
+                valueGetter: (v, row) => val(row, 'ytd_pct'), renderCell: pctCell },
+        ];
+    }, [metric, selectedYear, prevYear, churnAvailable]);
 
     const columnGroupingModel = [
         { groupId: 'mom_group', headerName: 'Month-on-Month', headerClassName: 'mom-header-group',
@@ -203,9 +310,9 @@ const AttritionReport = () => {
             children: [{ field: 'ytd_prev_col' }, { field: 'ytd_curr_col' }, { field: 'ytd_pct_col' }] },
     ];
 
-    const panelSx = { p: 2.5, borderRadius: '14px', border: '1px solid #e2e8f0', bgcolor: '#fff', height: '100%' };
+    const panelSx = { p: 2.5, borderRadius: '14px', border: `1px solid ${T.border}`, bgcolor: T.card, height: '100%' };
     const panelTitle = (t) => (
-        <Typography variant="caption" fontWeight={700} color="#94a3b8" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1.5, display: 'block' }}>{t}</Typography>
+        <Typography variant="caption" fontWeight={700} color={T.textMut} sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1.5, display: 'block' }}>{t}</Typography>
     );
 
     return (
@@ -219,6 +326,12 @@ const AttritionReport = () => {
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
             <BusinessFilters filters={filters} onChange={setFilters} onApply={fetchData} isOpen={showFilters} onClose={() => setShowFilters(false)} />
+            <DataBoundsBanner
+                latest={latest}
+                boundsLoaded={boundsLoaded}
+                currentEnd={filters.endDate}
+                onJumpToLatest={() => { handleFilterChange({ datePreset: 'CUSTOM', startDate: boundsStart, endDate: boundsEnd }); setTimeout(fetchData, 0); }}
+            />
             <KpiCards cards={kpis} />
 
             {/* ═══ Churn analytics band ═══ */}
@@ -227,7 +340,7 @@ const AttritionReport = () => {
                     {/* Portfolio health */}
                     <Paper sx={panelSx}>
                         {panelTitle('Portfolio Health')}
-                        <Box sx={{ display: 'flex', height: 14, borderRadius: 999, overflow: 'hidden', mb: 2, bgcolor: '#f1f5f9' }}>
+                        <Box sx={{ display: 'flex', height: 14, borderRadius: 999, overflow: 'hidden', mb: 2, bgcolor: T.subtle }}>
                             {analytics.breakdown.map(s => s.count > 0 && (
                                 <Box key={s.key} title={`${s.label}: ${s.count}`} sx={{ width: `${s.pct}%`, bgcolor: s.color, transition: 'width .5s ease' }} />
                             ))}
@@ -237,11 +350,11 @@ const AttritionReport = () => {
                                 <Box key={s.key} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                         <Box sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: s.color }} />
-                                        <Typography variant="body2" color="#475569">{s.label}</Typography>
+                                        <Typography variant="body2" color={T.textSec}>{s.label}</Typography>
                                     </Box>
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                        <Typography variant="body2" fontWeight={700} color="#1e293b">{s.count.toLocaleString()}</Typography>
-                                        <Typography variant="caption" color="#94a3b8" sx={{ width: 42, textAlign: 'right' }}>{s.pct.toFixed(1)}%</Typography>
+                                        <Typography variant="body2" fontWeight={700} color={T.textStr} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.count.toLocaleString()}</Typography>
+                                        <Typography variant="caption" color={T.textMut} sx={{ width: 42, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{s.pct.toFixed(1)}%</Typography>
                                     </Box>
                                 </Box>
                             ))}
@@ -254,10 +367,10 @@ const AttritionReport = () => {
                         <Box sx={{ height: 170 }}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={analytics.dist} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                                    <CartesianGrid strokeDasharray="3 6" stroke="#eef2f7" vertical={false} />
-                                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} />
-                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} width={32} />
-                                    <ReTooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} formatter={(v) => [v, 'Merchants']} />
+                                    <CartesianGrid strokeDasharray="3 6" stroke={T.grid} vertical={false} />
+                                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: T.axis }} interval={0} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.axis }} allowDecimals={false} width={32} />
+                                    <ReTooltip cursor={{ fill: 'var(--bg-hover, #f8fafc)' }} contentStyle={chartTooltipStyle} formatter={(v) => [v, 'Merchants']} />
                                     <Bar dataKey="count" radius={[5, 5, 0, 0]}>
                                         {analytics.dist.map((d, i) => <Cell key={i} fill={d.color} />)}
                                     </Bar>
@@ -271,17 +384,17 @@ const AttritionReport = () => {
                         {panelTitle('Steepest YTD Decline')}
                         <Stack spacing={1}>
                             {analytics.topDeclining.length === 0 && (
-                                <Typography variant="body2" color="#94a3b8">No declining merchants in range.</Typography>
+                                <Typography variant="body2" color={T.textMut}>No declining merchants in range.</Typography>
                             )}
                             {analytics.topDeclining.map((d, i) => {
-                                const meta = STATUS_META[d.status] || { color: '#475569', bg: '#f1f5f9' };
+                                const meta = STATUS_META[d.status] || { color: T.textSec, bg: T.subtle };
                                 const pct = Number(val(d, 'ytd_pct'));
                                 return (
                                     <Box key={d.mid || i} onClick={() => setStatusFilter(d.status)}
                                         sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, cursor: 'pointer', '&:hover .mn': { color: meta.color } }}>
                                         <Box sx={{ minWidth: 0 }}>
-                                            <Typography className="mn" variant="body2" fontWeight={600} color="#334155" noWrap sx={{ maxWidth: 150, transition: 'color .15s' }}>{d.name || d.mid}</Typography>
-                                            <Typography variant="caption" color="#94a3b8">{fmtMeasure(val(d, 'ytd_current'))} now</Typography>
+                                            <Typography className="mn" variant="body2" fontWeight={600} color={T.textSec} noWrap sx={{ maxWidth: 150, transition: 'color .15s' }}>{d.name || d.mid}</Typography>
+                                            <Typography variant="caption" color={T.textMut}>{fmtMeasure(val(d, 'ytd_current'))} now</Typography>
                                         </Box>
                                         <Chip label={pctFormatter(pct)} size="small" sx={{ bgcolor: meta.bg, color: meta.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }} />
                                     </Box>
@@ -302,7 +415,7 @@ const AttritionReport = () => {
                 </ToggleButtonGroup>
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                     {STATUS_ORDER.map(s => {
-                        const meta = s === 'ALL' ? { label: 'All', color: '#1e293b', bg: '#e2e8f0' } : STATUS_META[s];
+                        const meta = s === 'ALL' ? { label: 'All', color: T.textStr, bg: T.border } : STATUS_META[s];
                         const count = s === 'ALL' ? data.length : (statusCounts[s] || 0);
                         const active = statusFilter === s;
                         return (
@@ -310,7 +423,7 @@ const AttritionReport = () => {
                                 onClick={() => setStatusFilter(s)}
                                 sx={{
                                     fontWeight: 700,
-                                    color: active ? '#fff' : meta.color,
+                                    color: active ? 'var(--on-accent, #fff)' : meta.color,
                                     bgcolor: active ? meta.color : meta.bg,
                                     border: active ? `1px solid ${meta.color}` : '1px solid transparent',
                                 }} />
@@ -321,9 +434,9 @@ const AttritionReport = () => {
 
             <Paper sx={{
                 ...premiumTableWrapper,
-                '& .mom-header-group': { bgcolor: '#fef3c7', color: '#92400e', fontWeight: 'bold' },
-                '& .mtd-header-group': { bgcolor: '#eff6ff', color: '#1e40af', fontWeight: 'bold' },
-                '& .ytd-header-group': { bgcolor: '#f8fafc', color: '#334155', fontWeight: 'bold' }
+                '& .mom-header-group': { bgcolor: 'var(--attr-hdr-mom-bg, #fef3c7)', color: 'var(--attr-hdr-mom-tx, #92400e)', fontWeight: 'bold' },
+                '& .mtd-header-group': { bgcolor: 'var(--attr-hdr-mtd-bg, #eff6ff)', color: 'var(--attr-hdr-mtd-tx, #1e40af)', fontWeight: 'bold' },
+                '& .ytd-header-group': { bgcolor: 'var(--attr-hdr-ytd-bg, #f8fafc)', color: 'var(--attr-hdr-ytd-tx, #334155)', fontWeight: 'bold' }
             }}>
                 <DataGrid
                     rows={filteredData} columns={columns} columnGroupingModel={columnGroupingModel}

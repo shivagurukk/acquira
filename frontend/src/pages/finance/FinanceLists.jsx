@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import axios from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 import { AlertCircle, TrendingDown, ArrowRight, Download, Loader } from 'lucide-react';
 import useExcelExport from '../../hooks/useExcelExport';
 import { formatCurrency } from '../../utils/formatters';
 import SkeletonLoader from '../../components/SkeletonLoader';
 
 const FinanceLists = () => {
+    const { tenantVersion } = useAuth();
     const [activeTab, setActiveTab] = useState('loss-making');
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -13,7 +15,7 @@ const FinanceLists = () => {
 
     useEffect(() => {
         fetchList();
-    }, [activeTab]);
+    }, [activeTab, tenantVersion]);
 
     const fetchList = async () => {
         setLoading(true);

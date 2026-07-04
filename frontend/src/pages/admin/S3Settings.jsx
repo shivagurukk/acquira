@@ -6,6 +6,7 @@ import {
   ChevronUp, AlertTriangle, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const AWS_REGIONS = [
   'us-east-1','us-east-2','us-west-1','us-west-2',
@@ -24,6 +25,7 @@ const DEFAULT = {
 };
 
 export default function S3Settings() {
+  const { tenantVersion } = useAuth();
   const [form, setForm]             = useState(DEFAULT);
   const [saveDone, setSaveDone]     = useState(false);
   const [testing, setTesting]       = useState(false);
@@ -39,7 +41,7 @@ export default function S3Settings() {
       .then(res => setForm(f => ({ ...f, ...res.data })))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [tenantVersion]);
 
   const set = (key, val) => {
     setForm(f => ({ ...f, [key]: val }));

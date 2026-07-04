@@ -1,8 +1,9 @@
 package com.acquira.pdf.controller;
 
-import com.acquira.common.model.Tenant;
 import com.acquira.common.repository.MerchantRepository;
-import com.acquira.common.repository.TenantRepository;
+import com.acquira.common.security.ApiKeyPrincipal;
+import com.acquira.common.security.ApiScopes;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,22 +17,30 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.YearMonth;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Stream;
 
 /**
  * External API for 3rd-party systems to download merchant PDF reports.
  *
- * Authentication: API Key based (header: X-API-Key)
- * Base path: /api/external/reports
+ * Authentication: X-API-Key, handled centrally by {@code ApiKeyAuthFilter} (acquira-core),
+ * which runs ahead of this controller on {@code /api/external/**}. The filter resolves the
+ * key to a tenant, sets {@code TenantContext}, and stashes an {@link ApiKeyPrincipal} on the
+ * request. This controller no longer authenticates keys itself — it reads the principal and
+ * asserts the {@code read:reports} scope.
+ *
+ * ── Tenant isolation ──────────────────────────────────────────────────────
+ * The key IS the tenant boundary. {@code principal.getTenantCode()} (bankShortCode) is the
+ * effective tenant; a client-supplied {@code tenantCode} may only match it (the filter already
+ * rejects mismatches / widening). Folder layout: reports/{tenantCode}/{YYYY-MM}, fallback
+ * reports/{YYYY-MM}. The static break-glass key path (all-tenant) is also handled by the filter.
  *
  * Endpoints:
- *   GET  /api/external/reports/list?year=2026&month=1&tenantCode=ACQ
- *   GET  /api/external/reports/download?file=Insight_Coffee_Shop_2026-01.pdf&year=2026&month=1&tenantCode=ACQ
- *   GET  /api/external/reports/download-all?year=2026&month=1&tenantCode=ACQ
- *   GET  /api/external/reports/merchant/{mid}?year=2026&month=1&tenantCode=ACQ
- *   GET  /api/external/reports/status?year=2026&month=1&tenantCode=ACQ
+ *   GET  /api/external/reports/list?year=2026&month=1
+ *   GET  /api/external/reports/download?file=...&year=2026&month=1
+ *   GET  /api/external/reports/download-all?year=2026&month=1
+ *   GET  /api/external/reports/merchant/{mid}?year=2026&month=1
+ *   GET  /api/external/reports/status?year=2026&month=1
  */
 @RestController
 @RequestMapping("/api/external/reports")
@@ -39,44 +48,21 @@ public class ExternalReportApiController {
 
     private static final Logger log = LoggerFactory.getLogger(ExternalReportApiController.class);
 
-    private final TenantRepository tenantRepository;
     private final MerchantRepository merchantRepository;
 
     @Value("${pdf.reports.dir:reports}")
     private String reportsBaseDir;
 
-    @Value("${external.api.key:}")
-    private String configuredApiKey;
-
-    public ExternalReportApiController(TenantRepository tenantRepository,
-                                       MerchantRepository merchantRepository) {
-        this.tenantRepository = tenantRepository;
+    public ExternalReportApiController(MerchantRepository merchantRepository) {
         this.merchantRepository = merchantRepository;
     }
 
-    // ─── API Key Validation ────────────────────────────────────────────
+    // ─── Principal + scope resolution ──────────────────────────────────
 
-    private boolean validateApiKey(String apiKey) {
-        if (configuredApiKey == null || configuredApiKey.isBlank()) {
-            log.warn("[EXT-API] No external.api.key configured — rejecting all external requests");
-            return false;
-        }
-        return configuredApiKey.equals(apiKey);
-    }
-
-    /**
-     * Validate that the tenantCode actually exists and is active.
-     * Prevents enumeration of tenant codes by returning same error for invalid/missing.
-     */
-    private boolean validateTenantAccess(String tenantCode) {
-        if (tenantCode == null || tenantCode.isBlank()) return true; // no tenant filter = OK
-        try {
-            return tenantRepository.findAll().stream()
-                .anyMatch(t -> tenantCode.equalsIgnoreCase(t.getBankShortCode()));
-        } catch (Exception e) {
-            log.warn("[EXT-API] Tenant validation failed for code '{}': {}", tenantCode, e.getMessage());
-            return false;
-        }
+    /** Pull the filter-set principal; the filter guarantees it is present on authenticated requests. */
+    private ApiKeyPrincipal principal(HttpServletRequest request) {
+        Object p = request.getAttribute(ApiKeyPrincipal.ATTR);
+        return (p instanceof ApiKeyPrincipal principal) ? principal : null;
     }
 
     private Path getReportsRoot() {
@@ -84,42 +70,32 @@ public class ExternalReportApiController {
     }
 
     /**
-     * Resolve folder: reports/{tenantCode}/{YYYY-MM}, fallback to reports/{YYYY-MM}
+     * Resolve folder: reports/{tenantCode}/{YYYY-MM}, fallback to reports/{YYYY-MM}.
+     * tenantCode comes from the key's own tenant (validated bankShortCode), so it cannot
+     * contain path-traversal sequences.
      */
     private Path resolveFolder(YearMonth ym, String tenantCode) {
         Path root = getReportsRoot();
         if (tenantCode != null && !tenantCode.isBlank()) {
-            Path tenantPath = root.resolve(tenantCode).resolve(ym.toString());
-            if (Files.exists(tenantPath)) return tenantPath;
+            Path tenantPath = root.resolve(tenantCode).resolve(ym.toString()).normalize();
+            if (tenantPath.startsWith(root)) return tenantPath;
         }
-        // Fallback to flat folder
-        Path flatPath = root.resolve(ym.toString());
-        if (Files.exists(flatPath)) return flatPath;
-        // Return tenant path as expected location
-        if (tenantCode != null && !tenantCode.isBlank()) {
-            return root.resolve(tenantCode).resolve(ym.toString());
-        }
-        return flatPath;
+        return root.resolve(ym.toString()).normalize();
     }
 
     // ─── List Available Reports ────────────────────────────────────────
 
     @GetMapping("/list")
     public ResponseEntity<?> listReports(
-            @RequestHeader(value = "X-API-Key", required = false) String apiKey,
+            HttpServletRequest request,
             @RequestParam(required = false) Integer year,
-            @RequestParam(required = false) Integer month,
-            @RequestParam(required = false) String tenantCode) {
+            @RequestParam(required = false) Integer month) {
 
-        if (!validateApiKey(apiKey)) {
-            return ResponseEntity.status(401).body(Map.of("error", "Invalid or missing API key"));
-        }
-        if (!validateTenantAccess(tenantCode)) {
-            return ResponseEntity.status(403).body(Map.of("error", "Invalid tenant code"));
-        }
+        ApiScopes.require(request, ApiScopes.READ_REPORTS);
+        String effectiveTenant = principal(request).getTenantCode();
 
         YearMonth targetMonth = resolveMonth(year, month);
-        Path folder = resolveFolder(targetMonth, tenantCode);
+        Path folder = resolveFolder(targetMonth, effectiveTenant);
 
         List<Map<String, Object>> reports = new ArrayList<>();
         if (Files.exists(folder)) {
@@ -136,18 +112,17 @@ public class ExternalReportApiController {
                          entry.put("downloadUrl", "/api/external/reports/download?file="
                              + p.getFileName().toString()
                              + "&year=" + targetMonth.getYear()
-                             + "&month=" + targetMonth.getMonthValue()
-                             + (tenantCode != null ? "&tenantCode=" + tenantCode : ""));
+                             + "&month=" + targetMonth.getMonthValue());
                          reports.add(entry);
                      });
             } catch (IOException e) {
-                return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+                return ResponseEntity.internalServerError().body(Map.of("error", "Could not list reports"));
             }
         }
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("targetMonth", targetMonth.toString());
-        response.put("tenantCode", tenantCode);
+        response.put("tenantCode", effectiveTenant);
         response.put("count", reports.size());
         response.put("reports", reports);
         return ResponseEntity.ok(response);
@@ -157,21 +132,19 @@ public class ExternalReportApiController {
 
     @GetMapping("/download")
     public void downloadReport(
-            @RequestHeader(value = "X-API-Key", required = false) String apiKey,
+            HttpServletRequest request,
             @RequestParam String file,
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month,
-            @RequestParam(required = false) String tenantCode,
             HttpServletResponse response) throws IOException {
 
-        if (!validateApiKey(apiKey)) {
-            response.sendError(401, "Invalid or missing API key");
+        try {
+            ApiScopes.require(request, ApiScopes.READ_REPORTS);
+        } catch (ApiScopes.InsufficientScopeException e) {
+            response.sendError(403, e.getMessage());
             return;
         }
-        if (!validateTenantAccess(tenantCode)) {
-            response.sendError(403, "Invalid tenant code");
-            return;
-        }
+        String effectiveTenant = principal(request).getTenantCode();
 
         YearMonth targetMonth = resolveMonth(year, month);
 
@@ -182,8 +155,13 @@ public class ExternalReportApiController {
             return;
         }
 
-        Path folder = resolveFolder(targetMonth, tenantCode);
-        Path filePath = folder.resolve(safeName);
+        Path folder = resolveFolder(targetMonth, effectiveTenant);
+        Path filePath = folder.resolve(safeName).normalize();
+        // Defence in depth: the resolved file must stay under the intended folder.
+        if (!filePath.startsWith(folder)) {
+            response.sendError(400, "Invalid filename");
+            return;
+        }
 
         if (!Files.exists(filePath)) {
             log.warn("[EXT-API] Download 404: {} in {}", safeName, folder);
@@ -203,33 +181,31 @@ public class ExternalReportApiController {
 
     @GetMapping("/download-all")
     public void downloadAll(
-            @RequestHeader(value = "X-API-Key", required = false) String apiKey,
+            HttpServletRequest request,
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month,
-            @RequestParam(required = false) String tenantCode,
             HttpServletResponse response) throws IOException {
 
-        if (!validateApiKey(apiKey)) {
-            response.sendError(401, "Invalid or missing API key");
+        try {
+            ApiScopes.require(request, ApiScopes.READ_REPORTS);
+        } catch (ApiScopes.InsufficientScopeException e) {
+            response.sendError(403, e.getMessage());
             return;
         }
-        if (!validateTenantAccess(tenantCode)) {
-            response.sendError(403, "Invalid tenant code");
-            return;
-        }
+        String effectiveTenant = principal(request).getTenantCode();
 
         YearMonth targetMonth = resolveMonth(year, month);
-        Path folder = resolveFolder(targetMonth, tenantCode);
+        Path folder = resolveFolder(targetMonth, effectiveTenant);
 
         if (!Files.exists(folder)) {
             response.sendError(404, "No reports found for " + targetMonth);
             return;
         }
 
-        log.info("[EXT-API] Serving all reports as ZIP for {}", targetMonth);
+        log.info("[EXT-API] Serving all reports as ZIP for {} (tenant {})", targetMonth, effectiveTenant);
         response.setContentType("application/zip");
         response.setHeader("Content-Disposition",
-            "attachment; filename=\"Reports_" + (tenantCode != null ? tenantCode + "_" : "") + targetMonth + ".zip\"");
+            "attachment; filename=\"Reports_" + (effectiveTenant != null ? effectiveTenant + "_" : "") + targetMonth + ".zip\"");
 
         try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(response.getOutputStream());
              Stream<Path> files = Files.list(folder)) {
@@ -249,34 +225,35 @@ public class ExternalReportApiController {
 
     @GetMapping("/merchant/{mid}")
     public void downloadByMid(
-            @RequestHeader(value = "X-API-Key", required = false) String apiKey,
+            HttpServletRequest request,
             @PathVariable String mid,
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month,
-            @RequestParam(required = false) String tenantCode,
             HttpServletResponse response) throws IOException {
 
-        if (!validateApiKey(apiKey)) {
-            response.sendError(401, "Invalid or missing API key");
+        try {
+            ApiScopes.require(request, ApiScopes.READ_REPORTS);
+        } catch (ApiScopes.InsufficientScopeException e) {
+            response.sendError(403, e.getMessage());
             return;
         }
-        if (!validateTenantAccess(tenantCode)) {
-            response.sendError(403, "Invalid tenant code");
-            return;
-        }
+        ApiKeyPrincipal p = principal(request);
+        String effectiveTenant = p.getTenantCode();
+        Long scopeTenantId = p.getTenantId();
 
         YearMonth targetMonth = resolveMonth(year, month);
-        Path folder = resolveFolder(targetMonth, tenantCode);
+        Path folder = resolveFolder(targetMonth, effectiveTenant);
 
         if (!Files.exists(folder)) {
             response.sendError(404, "No reports folder for " + targetMonth);
             return;
         }
 
-        // Look up merchant name from MID to find the PDF
+        // Look up merchant name from MID to find the PDF — scoped to the key's tenant.
         String merchantName = null;
         try {
             var merchant = merchantRepository.findAll().stream()
+                .filter(m -> scopeTenantId == null || scopeTenantId.equals(m.getTenantId()))
                 .filter(m -> mid.equals(m.getMid()) || mid.equals(String.valueOf(m.getMerchantId())))
                 .findFirst().orElse(null);
             if (merchant != null && merchant.getName() != null) {
@@ -294,9 +271,9 @@ public class ExternalReportApiController {
                 ? merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_")
                 : null;
 
-            matchedFile = files.filter(p -> p.toString().endsWith(".pdf"))
-                .filter(p -> {
-                    String fn = p.getFileName().toString();
+            matchedFile = files.filter(pp -> pp.toString().endsWith(".pdf"))
+                .filter(pp -> {
+                    String fn = pp.getFileName().toString();
                     if (searchName != null && fn.contains(searchName)) return true;
                     return fn.contains(searchMid);
                 })
@@ -320,20 +297,15 @@ public class ExternalReportApiController {
 
     @GetMapping("/status")
     public ResponseEntity<?> getStatus(
-            @RequestHeader(value = "X-API-Key", required = false) String apiKey,
+            HttpServletRequest request,
             @RequestParam(required = false) Integer year,
-            @RequestParam(required = false) Integer month,
-            @RequestParam(required = false) String tenantCode) {
+            @RequestParam(required = false) Integer month) {
 
-        if (!validateApiKey(apiKey)) {
-            return ResponseEntity.status(401).body(Map.of("error", "Invalid or missing API key"));
-        }
-        if (!validateTenantAccess(tenantCode)) {
-            return ResponseEntity.status(403).body(Map.of("error", "Invalid tenant code"));
-        }
+        ApiScopes.require(request, ApiScopes.READ_REPORTS);
+        String effectiveTenant = principal(request).getTenantCode();
 
         YearMonth targetMonth = resolveMonth(year, month);
-        Path folder = resolveFolder(targetMonth, tenantCode);
+        Path folder = resolveFolder(targetMonth, effectiveTenant);
 
         int count = 0;
         long totalSizeBytes = 0;
@@ -345,18 +317,25 @@ public class ExternalReportApiController {
                     try { totalSizeBytes += Files.size(p); } catch (IOException ignored) {}
                 }
             } catch (IOException e) {
-                return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+                return ResponseEntity.internalServerError().body(Map.of("error", "Could not read report folder"));
             }
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("targetMonth", targetMonth.toString());
-        result.put("tenantCode", tenantCode);
+        result.put("tenantCode", effectiveTenant);
         result.put("reportCount", count);
         result.put("totalSizeBytes", totalSizeBytes);
         result.put("totalSizeMB", String.format("%.1f", totalSizeBytes / 1024.0 / 1024.0));
         result.put("available", count > 0);
         return ResponseEntity.ok(result);
+    }
+
+    // ─── Scope error mapping (for the ResponseEntity-returning endpoints) ──
+
+    @ExceptionHandler(ApiScopes.InsufficientScopeException.class)
+    public ResponseEntity<?> handleScope(ApiScopes.InsufficientScopeException e) {
+        return ResponseEntity.status(403).body(Map.of("error", e.getMessage(), "status", 403));
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────

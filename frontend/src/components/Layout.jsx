@@ -4,6 +4,7 @@ import { useMediaQuery } from '@mui/material';
 import * as LucideIcons from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { prefetchRoute, prefetchCommonRoutes } from '../routePrefetch';
 import TenantSwitcher from './TenantSwitcher';
 import NotificationBell from './NotificationBell';
 import ShortcutsPanel from './ShortcutsPanel';
@@ -76,6 +77,9 @@ const NavItem = ({ menu, active, color, collapsed, onClick }) => {
     const btn = (
         <button
             onClick={onClick}
+            // Warm the route's lazy chunk on hover so the click navigates instantly.
+            onMouseEnter={e => { prefetchRoute(menu.path); if (!active) e.currentTarget.style.background = S.bgHov; }}
+            onFocus={() => prefetchRoute(menu.path)}
             title={collapsed ? menu.menuName : undefined}
             style={{
                 display: 'flex', alignItems: 'center', gap: 9,
@@ -86,7 +90,6 @@ const NavItem = ({ menu, active, color, collapsed, onClick }) => {
                 position: 'relative', transition: 'background 0.13s',
                 outline: 'none',
             }}
-            onMouseEnter={e => { if (!active) e.currentTarget.style.background = S.bgHov; }}
             onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
         >
             {active && !collapsed && (
@@ -120,6 +123,9 @@ const Layout = () => {
     const searchRef = useRef(null);
 
     const w = isMobile ? DRAWER_W : (collapsed ? COLLAPSE_W : DRAWER_W);
+
+    // ── Idle-prefetch the common landing pages once after first paint ──
+    useEffect(() => { prefetchCommonRoutes(); }, []);
 
     // ── Grouped menus ─────────────────────────────────────────────
     const grouped = useMemo(() => {
@@ -227,15 +233,15 @@ const Layout = () => {
             <div style={{ padding: collapsed ? '14px 0' : '14px', display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', borderBottom: `1px solid ${S.border}`, flexShrink: 0, minHeight: 58 }}>
                 {!collapsed && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flex: 1, minWidth: 0 }} onClick={() => navigate('/dashboard')}>
-                        <div style={{ width: 32, height: 32, borderRadius: 9, background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 800, color: '#fff', flexShrink: 0 }}>A</div>
+                        <div style={{ width: 32, height: 32, borderRadius: 9, background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 800, color: '#fff', flexShrink: 0 }}>N</div>
                         <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em', lineHeight: 1.2 }}>Acquira</div>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em', lineHeight: 1.2 }}>NEXUS</div>
                             <div style={{ fontSize: 10, color: S.textSec, textTransform: 'uppercase', letterSpacing: '0.07em', marginTop: 1 }}>CMS Platform</div>
                         </div>
                     </div>
                 )}
                 {collapsed && (
-                    <div style={{ width: 32, height: 32, borderRadius: 9, background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 800, color: '#fff', cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>A</div>
+                    <div style={{ width: 32, height: 32, borderRadius: 9, background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 800, color: '#fff', cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>N</div>
                 )}
                 <button
                     onClick={() => setCollapsed(v => !v)}
@@ -289,12 +295,12 @@ const Layout = () => {
                             const Icon = LucideIcons[r.iconKey] || LucideIcons.Clock;
                             return (
                                 <button key={r.path} onClick={() => navigate(r.path)}
+                                    onMouseEnter={e => { prefetchRoute(r.path); if (!active) e.currentTarget.style.background = S.bgHov; }}
                                     style={{
                                         display: 'flex', alignItems: 'center', gap: 8, width: '100%',
                                         padding: '6px 10px', background: active ? S.bgActive : 'transparent',
                                         border: 'none', borderRadius: 7, cursor: 'pointer', marginBottom: 1,
                                     }}
-                                    onMouseEnter={e => { if (!active) e.currentTarget.style.background = S.bgHov; }}
                                     onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
                                 >
                                     <LucideIcons.Clock size={12} color={S.textMuted} style={{ flexShrink: 0 }} />
@@ -330,11 +336,12 @@ const Layout = () => {
                                         const MIcon = LucideIcons[m.iconKey] || LucideIcons.Circle;
                                         return (
                                             <div key={m.menuId || m.path} title={m.menuName} style={{ display: 'flex', justifyContent: 'center', marginBottom: 1 }}>
-                                                <button onClick={() => go(m)} style={{
+                                                <button onClick={() => go(m)}
+                                                    onMouseEnter={e => { prefetchRoute(m.path); if (!active) e.currentTarget.style.background = S.bgHov; }}
+                                                    style={{
                                                     width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                     background: active ? S.bgActive : 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer',
                                                 }}
-                                                onMouseEnter={e => { if (!active) e.currentTarget.style.background = S.bgHov; }}
                                                 onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
                                                 >
                                                     <MIcon size={16} color={active ? meta.color : 'rgba(255,255,255,0.35)'} />
@@ -494,7 +501,7 @@ const Layout = () => {
                         </span>
                     </>
                 ) : (
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>Acquira</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>NEXUS</span>
                 )}
             </div>
 

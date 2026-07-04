@@ -9,6 +9,7 @@ import {
     CheckCircle, XCircle, Filter
 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 /* ────────── helpers ────────── */
 
@@ -58,6 +59,7 @@ const categoryColorMap = {
 /* ────────── component ────────── */
 
 const AuditLogViewer = () => {
+    const { tenantVersion } = useAuth();
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
 
@@ -117,6 +119,14 @@ const AuditLogViewer = () => {
     useEffect(() => {
         fetchStats();
     }, []);
+
+    // Refetch logs + stats when the active tenant changes
+    useEffect(() => {
+        setPaginationModel(prev => (prev.page === 0 ? prev : { ...prev, page: 0 }));
+        fetchStats();
+        fetchLogs();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tenantVersion]);
 
     const handleExport = async () => {
         try {

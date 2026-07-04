@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Edit2, Trash, X, Check, Shield, Power, Server, Mail, Save, RefreshCw } from 'lucide-react';
 import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
 
 const SmtpSettings = () => {
+    const { tenantVersion } = useAuth();
     const [configs, setConfigs] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [currentConfig, setCurrentConfig] = useState({
@@ -16,10 +18,12 @@ const SmtpSettings = () => {
     // Tracks whether the admin typed into the password field this session.
     // Used so an untouched field on edit does NOT overwrite the stored password.
     const [pwTouched, setPwTouched] = useState(false);
+    // In-modal (pre-save) test state: { status: 'TESTING'|'SUCCESS'|'FAILED', message }
+    const [modalTest, setModalTest] = useState(null);
 
     useEffect(() => {
         fetchConfigs();
-    }, []);
+    }, [tenantVersion]);
 
     const fetchConfigs = async () => {
         try {
@@ -28,18 +32,21 @@ const SmtpSettings = () => {
         } catch (e) { console.error(e); }
     };
 
+    // Build the payload from the current form, applying the same password rule
+    // used on save: on edit with an untouched/blank field, send the sentinel so
+    // the backend uses the stored password.
+    const buildPayload = () => {
+        const payload = { ...currentConfig };
+        if (currentConfig.id && (!pwTouched || !payload.password)) {
+            payload.password = '__UNCHANGED__';
+        }
+        return payload;
+    };
+
     const handleSave = async (e) => {
         e.preventDefault();
         try {
-            // Password handling: the backend never sends the stored password
-            // back (it returns a "__UNCHANGED__" sentinel). So on edit, only
-            // include a password if the admin actually typed a new one in this
-            // session. An empty field on edit => omit it => backend keeps the
-            // stored (encrypted) password untouched.
-            const payload = { ...currentConfig };
-            if (currentConfig.id && (!pwTouched || !payload.password)) {
-                payload.password = '__UNCHANGED__';
-            }
+            const payload = buildPayload();
             if (currentConfig.id) {
                 await api.put(`/email/smtp-configs/${currentConfig.id}`, payload);
             } else {
@@ -50,6 +57,27 @@ const SmtpSettings = () => {
         } catch (error) {
             console.error(error);
             alert('Failed to save SMTP config: ' + (error?.response?.data?.error || error.message));
+        }
+    };
+
+    // Pre-save test: validate the current form's credentials without persisting.
+    const handleTestCurrent = async () => {
+        if (!currentConfig.host) {
+            setModalTest({ status: 'FAILED', message: 'Enter an SMTP host first.' });
+            return;
+        }
+        setModalTest({ status: 'TESTING', message: '' });
+        try {
+            const res = await api.post('/email/smtp-configs/test-config', buildPayload());
+            setModalTest({
+                status: res.data.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
+                message: res.data.message || ''
+            });
+        } catch (error) {
+            setModalTest({
+                status: 'FAILED',
+                message: error?.response?.data?.message || error?.response?.data?.error || error.message
+            });
         }
     };
 
@@ -81,6 +109,7 @@ const SmtpSettings = () => {
 
     const openModal = (config = null) => {
         setPwTouched(false);
+        setModalTest(null);
         if (config) {
             // Never carry the password sentinel into the editable form field.
             // Blank it; an empty field on edit means "keep the stored password".
@@ -232,11 +261,45 @@ const SmtpSettings = () => {
                                     <input type="number" value={currentConfig.maxRetries || 3} onChange={e => setCurrentConfig({ ...currentConfig, maxRetries: parseInt(e.target.value) })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
                                 </div>
 
-                                <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
-                                    <button type="button" onClick={() => setIsModalOpen(false)} style={{ padding: '10px 20px', borderRadius: '8px', background: '#f1f5f9', border: 'none', cursor: 'pointer' }}>Cancel</button>
-                                    <button type="submit" style={{ padding: '10px 20px', borderRadius: '8px', background: '#0f172a', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <Save size={18} /> Save Config
+                                {/* Pre-save test result banner */}
+                                {modalTest && (
+                                    <div style={{
+                                        gridColumn: 'span 2',
+                                        padding: '10px 14px', borderRadius: '8px', fontSize: '13px',
+                                        display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                        background: modalTest.status === 'SUCCESS' ? '#f0fdf4'
+                                            : modalTest.status === 'FAILED' ? '#fef2f2' : '#f8fafc',
+                                        border: '1px solid ' + (modalTest.status === 'SUCCESS' ? '#bbf7d0'
+                                            : modalTest.status === 'FAILED' ? '#fecaca' : '#e2e8f0'),
+                                        color: modalTest.status === 'SUCCESS' ? '#166534'
+                                            : modalTest.status === 'FAILED' ? '#991b1b' : '#475569'
+                                    }}>
+                                        {modalTest.status === 'TESTING'
+                                            ? <RefreshCw className="spin" size={16} style={{ marginTop: 1, flexShrink: 0 }} />
+                                            : modalTest.status === 'SUCCESS'
+                                                ? <Check size={16} style={{ marginTop: 1, flexShrink: 0 }} />
+                                                : <X size={16} style={{ marginTop: 1, flexShrink: 0 }} />}
+                                        <span>
+                                            {modalTest.status === 'TESTING' ? 'Testing connection…'
+                                                : modalTest.status === 'SUCCESS' ? (modalTest.message || 'Connection successful.')
+                                                    : (modalTest.message || 'Connection failed.')}
+                                        </span>
+                                    </div>
+                                )}
+
+                                <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '20px' }}>
+                                    <button type="button" onClick={handleTestCurrent}
+                                        disabled={modalTest?.status === 'TESTING'}
+                                        style={{ padding: '10px 20px', borderRadius: '8px', background: 'white', border: '1px solid #cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: '#0f172a' }}>
+                                        {modalTest?.status === 'TESTING' ? <RefreshCw className="spin" size={16} /> : <Shield size={16} />}
+                                        Test Connection
                                     </button>
+                                    <div style={{ display: 'flex', gap: '10px' }}>
+                                        <button type="button" onClick={() => setIsModalOpen(false)} style={{ padding: '10px 20px', borderRadius: '8px', background: '#f1f5f9', border: 'none', cursor: 'pointer' }}>Cancel</button>
+                                        <button type="submit" style={{ padding: '10px 20px', borderRadius: '8px', background: '#0f172a', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <Save size={18} /> Save Config
+                                        </button>
+                                    </div>
                                 </div>
                             </form>
                         </motion.div>

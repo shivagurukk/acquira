@@ -8,6 +8,7 @@ import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { useAuth } from '../../contexts/AuthContext';
 
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
@@ -22,6 +23,7 @@ const formatMonth = (dateStr) => {
 };
 
 const TransactionPerformanceDashboard = () => {
+    const { tenantVersion } = useAuth();
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
@@ -76,7 +78,7 @@ const TransactionPerformanceDashboard = () => {
         return [];
     };
 
-    useEffect(() => { loadInitialData(); }, []);
+    useEffect(() => { loadInitialData(); }, [tenantVersion]);
 
     const loadInitialData = async () => {
         setLoading(true);

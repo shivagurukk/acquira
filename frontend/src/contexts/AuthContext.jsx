@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import api from '../api/axios';
+import { invalidateApiCache } from '../api/apiCache';
 import { clearAuthStorage } from '../utils/authStorage';
 import { setDefaultCurrency } from '../utils/formatters';
 
@@ -68,6 +69,8 @@ export const AuthProvider = ({ children }) => {
             mustChangePassword: data.mustChangePassword || false,
             tenantVersion: 0,
         };
+        // Fresh login — drop any cached lists from a previous session/user.
+        invalidateApiCache();
         setAuth(newAuth);
         return newAuth;
     }, []);
@@ -94,6 +97,11 @@ export const AuthProvider = ({ children }) => {
             localStorage.setItem('defaultTenantId', String(newTenantId));
             localStorage.setItem('menus', JSON.stringify(menus || []));
 
+            // Drop cached filter-option/data-bounds lists — they are tenant-scoped
+            // and the cache keys off defaultTenantId, but clearing is explicit and
+            // avoids any window where a stale key could be read mid-switch.
+            invalidateApiCache();
+
             // 2. Update React state — increment tenantVersion to force re-fetches
             //    NO window.location.reload() — that causes race conditions and login redirects
             setAuth(prev => ({
@@ -113,6 +121,7 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const logout = useCallback(() => {
+        invalidateApiCache();
         clearAuthStorage();
         setAuth({
             token: null, refreshToken: null, username: '', userRole: '', roles: [],

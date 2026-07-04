@@ -9,6 +9,7 @@ import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
 import { useDataBounds } from '../../hooks/useDataBounds';
+import DataBoundsBanner from '../../components/DataBoundsBanner';
 
 const computeDateRange = (preset) => {
     const now = new Date();
@@ -30,7 +31,7 @@ const computeDateRange = (preset) => {
 };
 
 const DebitPrepaidMetrics = () => {
-    const { currencyCode = 'AED', formatCurrency: fmtCurr } = useAuth() || {};
+    const { currencyCode = 'AED', formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
 
     const formatCurrency = useCallback((val) => {
         if (fmtCurr) return fmtCurr(val);
@@ -55,7 +56,7 @@ const DebitPrepaidMetrics = () => {
     // Shared useDataBounds hook: resolves the FULL data window (earliest ->
     // latest) from /api/business/data-bounds, with a wide fallback. One
     // implementation shared across every business report page.
-    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds();
+    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded, latest } = useDataBounds(tenantVersion);
 
     // Push the resolved window into filter state once it arrives. CUSTOM
     // because we're supplying an explicit range, not a preset.
@@ -146,10 +147,10 @@ const DebitPrepaidMetrics = () => {
         const totalCount = data.reduce((s, d) => s + (d.count || 0), 0);
         const uniqueMids = new Set(data.map(d => d.mid)).size;
         return [
-            { title: 'Total Merchants',      value: formatNumber(uniqueMids), icon: CreditCard, color: '#6366f1' },
-            { title: 'Total Volume',          value: `${currencyCode} ${formatCompact(totalVol)}`, icon: DollarSign, color: '#3b82f6' },
-            { title: 'Total Transactions',    value: formatCompact(totalCount), icon: Hash,        color: '#10b981' },
-            { title: 'Avg per Merchant',      value: `${currencyCode} ${formatCompact(uniqueMids > 0 ? totalVol / uniqueMids : 0)}`, icon: TrendingUp, color: '#f59e0b' },
+            { title: 'Total Merchants',      value: formatNumber(uniqueMids), icon: CreditCard, color: 'var(--accent-indigo, #6366f1)' },
+            { title: 'Total Volume',          value: `${currencyCode} ${formatCompact(totalVol)}`, icon: DollarSign, color: 'var(--brand-alt, #3b82f6)' },
+            { title: 'Total Transactions',    value: formatCompact(totalCount), icon: Hash,        color: 'var(--success, #10b981)' },
+            { title: 'Avg per Merchant',      value: `${currencyCode} ${formatCompact(uniqueMids > 0 ? totalVol / uniqueMids : 0)}`, icon: TrendingUp, color: 'var(--warning, #f59e0b)' },
         ];
     }, [data, currencyCode]);
 
@@ -157,7 +158,7 @@ const DebitPrepaidMetrics = () => {
         {
             field: 'mid', headerName: 'MID', width: 150,
             renderCell: (params) => (
-                <Typography variant="body2" sx={{ fontFamily: '"Roboto Mono", monospace', fontSize: '13px', color: '#475569', bgcolor: '#f1f5f9', px: 1, py: 0.5, borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                <Typography variant="body2" sx={{ fontFamily: '"Roboto Mono", monospace', fontSize: '13px', color: 'var(--text-secondary, #475569)', bgcolor: 'var(--border-light, #f1f5f9)', px: 1, py: 0.5, borderRadius: '4px', border: '1px solid var(--border, #e2e8f0)' }}>
                     {params.value}
                 </Typography>
             )
@@ -165,22 +166,22 @@ const DebitPrepaidMetrics = () => {
         {
             field: 'sid', headerName: 'SID', width: 150,
             renderCell: (params) => (
-                <Typography variant="body2" sx={{ fontFamily: '"Roboto Mono", monospace', fontSize: '13px', color: '#475569', bgcolor: '#f1f5f9', px: 1, py: 0.5, borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                <Typography variant="body2" sx={{ fontFamily: '"Roboto Mono", monospace', fontSize: '13px', color: 'var(--text-secondary, #475569)', bgcolor: 'var(--border-light, #f1f5f9)', px: 1, py: 0.5, borderRadius: '4px', border: '1px solid var(--border, #e2e8f0)' }}>
                     {params.value || '-'}
                 </Typography>
             )
         },
         {
             field: 'merchantName', headerName: 'MERCHANT NAME', flex: 1, minWidth: 200,
-            renderCell: (params) => <Typography variant="body2" fontWeight="600" color="#1e293b">{params.value}</Typography>
+            renderCell: (params) => <Typography variant="body2" fontWeight="600" color="var(--text, #1e293b)">{params.value}</Typography>
         },
         {
             field: 'count', headerName: 'COUNT', type: 'number', width: 120, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" color="#64748b" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatNumber(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" color="var(--text-secondary, #64748b)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatNumber(params.value)}</Typography>
         },
         {
             field: 'volume', headerName: `VOLUME (${currencyCode})`, type: 'number', flex: 1, minWidth: 180, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" fontWeight="700" color="#0f172a" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" fontWeight="700" color="var(--text, #0f172a)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
         },
     ];
 
@@ -196,12 +197,18 @@ const DebitPrepaidMetrics = () => {
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
             <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchData()} isOpen={showFilters} onClose={() => setShowFilters(false)} />
+            <DataBoundsBanner
+                latest={latest}
+                boundsLoaded={boundsLoaded}
+                currentEnd={filters.endDate}
+                onJumpToLatest={() => { const next = { ...filters, datePreset: 'CUSTOM', startDate: boundsStart, endDate: boundsEnd }; setFilters(next); fetchData(next); }}
+            />
             <KpiCards cards={kpis} />
 
             {fetchError && !loading && data.length === 0 && (
-                <Paper sx={{ p: 3, mb: 2, borderRadius: 2, bgcolor: '#fffbeb', border: '1px solid #fde68a' }}>
-                    <Typography variant="body2" color="#92400e" fontWeight="600">{fetchError}</Typography>
-                    <Typography variant="caption" color="#a16207" sx={{ mt: 1, display: 'block' }}>
+                <Paper sx={{ p: 3, mb: 2, borderRadius: 2, bgcolor: 'var(--warning-bg, #fffbeb)', border: '1px solid var(--warning-border, #fde68a)' }}>
+                    <Typography variant="body2" color="var(--warning-text, #92400e)" fontWeight="600">{fetchError}</Typography>
+                    <Typography variant="caption" color="var(--warning-text, #a16207)" sx={{ mt: 1, display: 'block' }}>
                         This report shows transactions where card_type is DEBIT or PREPAID (any destination unless you've narrowed it via filters).
                         If this is empty, the underlying data may not have card_type populated — check the server log for the
                         "[DebitPrepaid] EMPTY result" diagnostic line which lists the actual card_type values present.

@@ -190,7 +190,7 @@ const relTime = (ms) => {
 
 const Dashboard = () => {
     const navigate = useNavigate();
-    const { currencySymbol } = useAuth();
+    const { currencySymbol, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
     const [loading, setLoading] = useState(true);
     const [period, setPeriod] = useState('30');
@@ -216,8 +216,9 @@ const Dashboard = () => {
             } catch (e) { console.warn('data-bounds fetch failed; falling back to today', e); }
             setBoundsLoaded(true);
         };
+        setBoundsLoaded(false);
         loadBounds();
-    }, []);
+    }, [tenantVersion]);
 
     // tick the relative-time label every 15s
     useEffect(() => {
@@ -288,7 +289,7 @@ const Dashboard = () => {
         finally { setLoading(false); }
     };
 
-    useEffect(() => { if (boundsLoaded) fetchAllData(); }, [period, boundsLoaded]);
+    useEffect(() => { if (boundsLoaded) fetchAllData(); }, [period, boundsLoaded, tenantVersion]);
 
     const kpis = useMemo(() => {
         if (!metrics) return [];

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Download, Filter, Search, Calendar, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
 import { SmartEmptyState } from '../../components/CockpitControls';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency as fmt } from '../../utils/formatters';
 
 // --- Preset Values ---
@@ -14,6 +15,7 @@ const PRESETS = [
 ];
 
 const MerchantInsightHub = () => {
+    const { tenantVersion } = useAuth();
     // --- State ---
     const [filters, setFilters] = useState({
         datePreset: "PREVIOUS_YEAR",
@@ -68,7 +70,7 @@ const MerchantInsightHub = () => {
             } catch (e) { console.error("Error fetching master filters", e); }
         };
         fetchMasters();
-    }, []);
+    }, [tenantVersion]);
 
     // Effect to refetch when page changes (but not when filters change, that's manual Run Report)
     useEffect(() => {

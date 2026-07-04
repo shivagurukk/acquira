@@ -1,9 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, Filter, Store, CreditCard, ChevronDown, ChevronRight, X } from 'lucide-react';
 import Loader from '../components/Loader';
 import DateRangePicker from './DateRangePicker';
+import { useAuth } from '../contexts/AuthContext';
 
 const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
+    // tenantVersion bumps on every super-admin tenant switch. This tree is
+    // tenant-scoped server-side (X-Tenant-Id header); on a switch we must reset
+    // paging/expansion caches and re-fetch, else stale rows from the previous
+    // tenant linger (a cross-tenant leak to the viewer).
+    const { tenantVersion } = useAuth();
     const [merchants, setMerchants] = useState([]);
     const [loading, setLoading] = useState(false);
     const [filters, setFilters] = useState({
@@ -33,6 +39,27 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
     useEffect(() => {
         fetchHierarchy(0, true);
     }, []);
+
+    // On tenant switch: clear filters + expansion/fetch caches (they belong to the
+    // previous tenant) and reload page 1. Skip the initial mount so we don't
+    // double-fetch alongside the mount effect above.
+    const didMountRef = useRef(false);
+    useEffect(() => {
+        if (!didMountRef.current) { didMountRef.current = true; return; }
+        setFilters({
+            merchantOnboardingFrom: '', merchantOnboardingTo: '',
+            storeCreatedFrom: '', storeCreatedTo: '',
+            terminalCreatedFrom: '', terminalCreatedTo: '',
+            search: '', sid: '', tid: '', storeName: ''
+        });
+        setExpandedMerchants({});
+        setExpandedStores({});
+        setFetchedMerchants(new Set());
+        setFetchedStores(new Set());
+        setPage(0);
+        fetchHierarchy(0, true, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tenantVersion]);
 
     const fetchHierarchy = async (pageIdx = 0, reset = false, clear = false) => {
         setLoading(true);

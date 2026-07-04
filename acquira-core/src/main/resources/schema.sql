@@ -37,6 +37,8 @@ DROP TABLE IF EXISTS bank_budget_target CASCADE;
 DROP TABLE IF EXISTS merchant_lifecycle_status CASCADE;
 DROP TABLE IF EXISTS merchant_activity_summary CASCADE;
 DROP TABLE IF EXISTS merchant_opportunity_score CASCADE;
+DROP TABLE IF EXISTS merchant_churn_score CASCADE;
+DROP TABLE IF EXISTS merchant_segment CASCADE;
 DROP TABLE IF EXISTS revenue_leakage_flags CASCADE;
 DROP TABLE IF EXISTS merchant_contact CASCADE;
 DROP TABLE IF EXISTS merchant_document CASCADE;
@@ -516,6 +518,54 @@ CREATE TABLE IF NOT EXISTS merchant_opportunity_score (
     
     UNIQUE(tenant_id, merchant_id, calc_date)
 );
+-- ML churn-risk score (ChurnScoringService, Smile RandomForest). One row per
+-- (tenant, merchant, calc_date); the Attrition Report reads the latest per merchant.
+-- churn_probability 0..1; risk_band LOW|MEDIUM|HIGH; scored_by MODEL|HEURISTIC.
+-- Prod lands via V2026_07_03_01__merchant_churn_score.sql (idempotent ALTER).
+CREATE TABLE IF NOT EXISTS merchant_churn_score (
+    churn_id BIGSERIAL PRIMARY KEY,
+    tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
+    merchant_id BIGINT REFERENCES dim_merchant(merchant_id),
+    calc_date DATE NOT NULL,
+    
+    churn_probability NUMERIC(6, 4) DEFAULT 0,
+    risk_band VARCHAR(10),
+    top_reason VARCHAR(255),
+    model_version VARCHAR(60),
+    scored_by VARCHAR(20) DEFAULT 'MODEL',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT uq_merchant_churn_score UNIQUE (tenant_id, merchant_id, calc_date)
+);
+CREATE INDEX IF NOT EXISTS idx_churn_score_tenant_date ON merchant_churn_score (tenant_id, calc_date DESC);
+CREATE INDEX IF NOT EXISTS idx_churn_score_merchant ON merchant_churn_score (tenant_id, merchant_id, calc_date DESC);
+-- Merchant portfolio segmentation (MerchantSegmentationService, 6 data-backed segments).
+-- One row per (tenant, merchant, calc_date); latest per merchant = current segment.
+-- primary_segment ∈ STRATEGIC|VOLUME_DRIVER|PROFIT_DRIVER|AT_RISK|NEW|LONG_TAIL.
+-- Prod lands via V2026_07_03_02__merchant_segment.sql (idempotent ALTER).
+CREATE TABLE IF NOT EXISTS merchant_segment (
+    segment_id BIGSERIAL PRIMARY KEY,
+    tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
+    merchant_id BIGINT REFERENCES dim_merchant(merchant_id),
+    calc_date DATE NOT NULL,
+    primary_segment VARCHAR(30),
+    secondary_tags VARCHAR(255),
+    segment_reason VARCHAR(255),
+    segment_score NUMERIC(5,2) DEFAULT 0,
+    total_volume NUMERIC(19,2),
+    net_revenue NUMERIC(19,2),
+    net_margin_pct NUMERIC(9,2),
+    effective_bps NUMERIC(9,2),
+    net_take_bps NUMERIC(9,2),
+    volume_growth_pct NUMERIC(9,2),
+    days_since_last INT,
+    model_version VARCHAR(60),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_merchant_segment UNIQUE (tenant_id, merchant_id, calc_date)
+);
+CREATE INDEX IF NOT EXISTS idx_merchant_segment_tenant_date ON merchant_segment (tenant_id, calc_date DESC);
+CREATE INDEX IF NOT EXISTS idx_merchant_segment_merchant ON merchant_segment (tenant_id, merchant_id, calc_date DESC);
+CREATE INDEX IF NOT EXISTS idx_merchant_segment_primary ON merchant_segment (tenant_id, calc_date, primary_segment);
 CREATE TABLE IF NOT EXISTS revenue_leakage_flags (
     flag_id BIGSERIAL PRIMARY KEY,
     merchant_id BIGINT REFERENCES dim_merchant(merchant_id),
@@ -1555,6 +1605,8 @@ ALTER TABLE bank_budget_target ENABLE ROW LEVEL SECURITY;
 ALTER TABLE merchant_lifecycle_status ENABLE ROW LEVEL SECURITY;
 ALTER TABLE merchant_activity_summary ENABLE ROW LEVEL SECURITY;
 ALTER TABLE merchant_opportunity_score ENABLE ROW LEVEL SECURITY;
+ALTER TABLE merchant_churn_score ENABLE ROW LEVEL SECURITY;
+ALTER TABLE merchant_segment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE revenue_leakage_flags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE merchant_contact ENABLE ROW LEVEL SECURITY;
 ALTER TABLE merchant_document ENABLE ROW LEVEL SECURITY;
@@ -1630,6 +1682,8 @@ CREATE POLICY tenant_isolation_policy ON bank_budget_target USING (tenant_id = g
 CREATE POLICY tenant_isolation_policy ON merchant_lifecycle_status USING (tenant_id = get_current_tenant());
 CREATE POLICY tenant_isolation_policy ON merchant_activity_summary USING (tenant_id = get_current_tenant());
 CREATE POLICY tenant_isolation_policy ON merchant_opportunity_score USING (tenant_id = get_current_tenant());
+CREATE POLICY tenant_isolation_policy ON merchant_churn_score USING (tenant_id = get_current_tenant());
+CREATE POLICY tenant_isolation_policy ON merchant_segment USING (tenant_id = get_current_tenant());
 CREATE POLICY tenant_isolation_policy ON revenue_leakage_flags USING (tenant_id = get_current_tenant());
 CREATE POLICY tenant_isolation_policy ON merchant_contact USING (tenant_id = get_current_tenant());
 CREATE POLICY tenant_isolation_policy ON merchant_document USING (tenant_id = get_current_tenant());
@@ -2305,6 +2359,8 @@ DROP POLICY IF EXISTS tenant_isolation_policy ON bank_budget_target;
 DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_lifecycle_status;
 DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_activity_summary;
 DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_opportunity_score;
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_churn_score;
+DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_segment;
 DROP POLICY IF EXISTS tenant_isolation_policy ON revenue_leakage_flags;
 DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_contact;
 DROP POLICY IF EXISTS tenant_isolation_policy ON merchant_document;
@@ -2374,3 +2430,246 @@ CREATE TABLE IF NOT EXISTS explorer_alert (
 );
 CREATE INDEX IF NOT EXISTS idx_explorer_alert_enabled ON explorer_alert (is_enabled);
 CREATE INDEX IF NOT EXISTS idx_explorer_alert_tenant ON explorer_alert (tenant_id);
+
+-- ============================================================================
+-- sum_daily_insight covering indexes (merged from V2026_06_29_01). Plain
+-- CREATE INDEX on the partitioned parent auto-creates local indexes on every
+-- partition. These make the merchant/store and card-dimension rollups on the
+-- day table index-only. (No dollar-quoting; safe under spring.sql.init.)
+-- ============================================================================
+CREATE INDEX IF NOT EXISTS idx_sdi_merchant_rollup
+    ON sum_daily_insight (tenant_id, business_date, merchant_id, store_id)
+    INCLUDE (total_txns, total_volume, total_msf);
+
+CREATE INDEX IF NOT EXISTS idx_sdi_card_rollup
+    ON sum_daily_insight (tenant_id, business_date, card_scheme, card_type, destination, channel)
+    INCLUDE (total_txns, total_volume, total_msf);
+
+-- ============================================================================
+-- sum_monthly_insight — month-grain pre-aggregate of sum_daily_insight
+-- (merged from db/migration V2026_06_29_01/02/03 so it lands in the single
+--  schema.sql pass. Kept idempotent — CREATE IF NOT EXISTS / ON CONFLICT — so a
+--  re-run is a harmless no-op. No dollar-quoted blocks: Spring's spring.sql.init script
+--  splitter does not understand PL/pgSQL dollar-quoting and would fail on them.)
+--
+-- WHY: sum_daily_insight is day-grained and at scale reaches hundreds of
+-- millions / billions of rows. Wide date ranges (a year / all-time) on the
+-- Explorer / Interactive / Business pages can't sum that live. This month-grain
+-- rollup reads ~12 month-rows instead of 365 day-rows per dimensional combo
+-- (~30x fewer rows). The app routes wide ranges here; narrow ranges keep using
+-- the day table for exact grain. Measures are additive so monthly = SUM(daily)
+-- reconciles exactly.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS sum_monthly_insight (
+    summary_id   BIGSERIAL,
+    tenant_id    INT NOT NULL,
+    month_key    INT NOT NULL,          -- YYYYMM, e.g. 202606
+
+    merchant_id  BIGINT,
+    store_id     BIGINT,
+    terminal_id  BIGINT,
+
+    card_scheme  VARCHAR(50),
+    card_type    VARCHAR(50),
+    destination  VARCHAR(50),
+    channel      VARCHAR(50),
+    is_opt_in    BOOLEAN,
+
+    total_txns   BIGINT DEFAULT 0,
+    total_volume DECIMAL(19, 2) DEFAULT 0,
+    total_msf    DECIMAL(19, 2) DEFAULT 0,
+
+    PRIMARY KEY (summary_id),
+    UNIQUE (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
+);
+
+-- Covering indexes mirroring the day-grain ones (index-only rollups).
+CREATE INDEX IF NOT EXISTS idx_smi_merchant_rollup
+    ON sum_monthly_insight (tenant_id, month_key, merchant_id, store_id)
+    INCLUDE (total_txns, total_volume, total_msf);
+
+CREATE INDEX IF NOT EXISTS idx_smi_card_rollup
+    ON sum_monthly_insight (tenant_id, month_key, card_scheme, card_type, destination, channel)
+    INCLUDE (total_txns, total_volume, total_msf);
+
+-- Row-Level Security (defence-in-depth, matches the rest of the warehouse).
+-- Plain DROP-then-CREATE (Postgres has no CREATE POLICY IF NOT EXISTS) so it is
+-- idempotent AND single-statement / Spring-splittable — no dollar-quoted block.
+ALTER TABLE sum_monthly_insight ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_policy ON sum_monthly_insight;
+CREATE POLICY tenant_isolation_policy ON sum_monthly_insight USING (tenant_id = get_current_tenant());
+
+-- One-time historical backfill: roll up every (tenant, month) present in
+-- sum_daily_insight that is not yet in sum_monthly_insight. On a fresh DB the
+-- day table is empty so this rolls up nothing (correct). On an existing DB it
+-- catches up history once; ON CONFLICT DO UPDATE makes re-runs idempotent.
+--
+-- Option C: the skip-guard is a WHERE EXISTS on the SELECT, keeping the whole
+-- thing a SINGLE INSERT statement (no dollar-quoted block). When every month
+-- is already rolled up the WHERE EXISTS is false, the SELECT returns no rows,
+-- and the INSERT is an instant no-op — so this stays cheap on every boot.
+INSERT INTO sum_monthly_insight (
+    tenant_id, month_key, merchant_id, store_id, terminal_id,
+    card_scheme, card_type, destination, channel, is_opt_in,
+    total_txns, total_volume, total_msf
+)
+SELECT
+    tenant_id,
+    CAST(TO_CHAR(business_date, 'YYYYMM') AS INTEGER),
+    merchant_id, store_id, terminal_id,
+    card_scheme, card_type, destination, channel, is_opt_in,
+    SUM(total_txns), SUM(total_volume), SUM(total_msf)
+FROM sum_daily_insight
+WHERE EXISTS (
+    SELECT 1
+    FROM (
+        SELECT DISTINCT tenant_id AS t, CAST(TO_CHAR(business_date, 'YYYYMM') AS INTEGER) AS mk
+        FROM sum_daily_insight
+    ) d
+    LEFT JOIN (
+        SELECT DISTINCT tenant_id AS t, month_key AS mk FROM sum_monthly_insight
+    ) m ON m.t = d.t AND m.mk = d.mk
+    WHERE m.mk IS NULL
+)
+GROUP BY
+    tenant_id, TO_CHAR(business_date, 'YYYYMM'),
+    merchant_id, store_id, terminal_id,
+    card_scheme, card_type, destination, channel, is_opt_in
+ON CONFLICT (tenant_id, month_key, merchant_id, store_id, terminal_id,
+             card_scheme, card_type, destination, channel, is_opt_in)
+DO UPDATE SET
+    total_txns   = EXCLUDED.total_txns,
+    total_volume = EXCLUDED.total_volume,
+    total_msf    = EXCLUDED.total_msf;
+
+-- ============================================================================
+-- MERGED MIGRATIONS (appended) — kept idempotent so both a fresh spring.sql.init
+-- run and prod's ALTER-based landing stay consistent. Sources, now folded here:
+--   V2026_02_28_01__new_screens_security_alerts_api.sql  (alert_rule/alert_history/api_key + menus)
+--   V2026_07_04_01__api_management_foundation.sql         (api_key lifecycle cols + api_request_log)
+--   V2026_07_02_01__budget_targets_menu.sql               (Budget Targets menu)
+-- Constraints inlined in CREATE (no dollar-quoted DO blocks) so Spring.s splitter is
+-- happy; all statements are IF NOT EXISTS / ON CONFLICT. RLS enabled WITHOUT
+-- FORCE (app connects as table owner; global schedulers run cross-tenant).
+-- ============================================================================
+
+-- Alerts & Notifications
+CREATE TABLE IF NOT EXISTS alert_rule (
+    rule_id     BIGSERIAL PRIMARY KEY,
+    tenant_id   INT REFERENCES tenant(tenant_id) ON DELETE CASCADE,
+    name        VARCHAR(200) NOT NULL,
+    description TEXT,
+    metric      VARCHAR(100) NOT NULL,
+    operator    VARCHAR(5) NOT NULL DEFAULT '>',
+    threshold   NUMERIC(18,4) NOT NULL DEFAULT 0,
+    severity    VARCHAR(20) NOT NULL DEFAULT 'WARNING',
+    recipients  TEXT,
+    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+    check_frequency VARCHAR(20) DEFAULT 'DAILY',
+    scope       VARCHAR(50) DEFAULT 'ALL_MERCHANTS',
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_alert_rule_tenant ON alert_rule(tenant_id);
+
+CREATE TABLE IF NOT EXISTS alert_history (
+    alert_id        BIGSERIAL PRIMARY KEY,
+    rule_id         BIGINT REFERENCES alert_rule(rule_id) ON DELETE SET NULL,
+    tenant_id       INT REFERENCES tenant(tenant_id) ON DELETE CASCADE,
+    rule_name       VARCHAR(200),
+    severity        VARCHAR(20),
+    merchant_name   VARCHAR(200),
+    merchant_id     BIGINT,
+    message         TEXT,
+    metric_value    NUMERIC(18,4),
+    acknowledged    BOOLEAN DEFAULT FALSE,
+    acknowledged_by VARCHAR(100),
+    acknowledged_at TIMESTAMP,
+    triggered_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_alert_history_tenant ON alert_history(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_alert_history_triggered ON alert_history(triggered_at DESC);
+
+-- API keys (base table + lifecycle/security columns from 07_04)
+CREATE TABLE IF NOT EXISTS api_key (
+    key_id          BIGSERIAL PRIMARY KEY,
+    tenant_id       INT REFERENCES tenant(tenant_id) ON DELETE CASCADE,
+    name            VARCHAR(200) NOT NULL,
+    key_hash        VARCHAR(255) NOT NULL,
+    key_prefix      VARCHAR(20) NOT NULL,
+    permissions     TEXT,
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by      VARCHAR(100),
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used       TIMESTAMP,
+    request_count   BIGINT DEFAULT 0,
+    revoked_at      TIMESTAMP,
+    revoked_by      VARCHAR(100)
+);
+CREATE INDEX IF NOT EXISTS idx_api_key_tenant ON api_key(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_api_key_hash ON api_key(key_hash);
+
+-- Lifecycle/security columns (V2026_07_04_01). ADD COLUMN IF NOT EXISTS so an
+-- existing api_key table gets extended in place.
+ALTER TABLE api_key ADD COLUMN IF NOT EXISTS expires_at            TIMESTAMP;
+ALTER TABLE api_key ADD COLUMN IF NOT EXISTS rate_limit_per_minute INT DEFAULT 120;
+ALTER TABLE api_key ADD COLUMN IF NOT EXISTS allowed_ips           TEXT;
+ALTER TABLE api_key ADD COLUMN IF NOT EXISTS last_used_ip          VARCHAR(64);
+ALTER TABLE api_key ADD COLUMN IF NOT EXISTS updated_at            TIMESTAMP;
+CREATE INDEX IF NOT EXISTS idx_api_key_prefix_active ON api_key(key_prefix) WHERE is_active = true;
+
+-- API request log (usage analytics; V2026_07_04_01)
+CREATE TABLE IF NOT EXISTS api_request_log (
+    log_id      BIGSERIAL PRIMARY KEY,
+    tenant_id   INT REFERENCES tenant(tenant_id) ON DELETE CASCADE,
+    key_id      BIGINT,
+    method      VARCHAR(8),
+    endpoint    VARCHAR(300),
+    status      INT,
+    client_ip   VARCHAR(64),
+    latency_ms  INT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_api_req_log_tenant_key_time ON api_request_log(tenant_id, key_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_req_log_time ON api_request_log(created_at DESC);
+
+-- RLS (enabled, NOT forced — matches api_request_log migration note)
+ALTER TABLE alert_rule ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_policy ON alert_rule;
+CREATE POLICY tenant_isolation_policy ON alert_rule USING (tenant_id = get_current_tenant());
+
+ALTER TABLE alert_history ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_policy ON alert_history;
+CREATE POLICY tenant_isolation_policy ON alert_history USING (tenant_id = get_current_tenant());
+
+ALTER TABLE api_key ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_policy ON api_key;
+CREATE POLICY tenant_isolation_policy ON api_key USING (tenant_id = get_current_tenant());
+
+ALTER TABLE api_request_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_policy ON api_request_log;
+CREATE POLICY tenant_isolation_policy ON api_request_log USING (tenant_id = get_current_tenant());
+
+-- Menu entries (Security Settings, Alerts, API Management, Budget Targets)
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
+('Security Settings',      '/admin/security-settings', 'Shield', 'ADMINISTRATION', 18),
+('Alerts & Notifications', '/admin/alerts',            'Bell',   'ADMINISTRATION', 19),
+('API Management',         '/admin/api-management',     'Code',   'ADMINISTRATION', 20),
+('Budget Targets',        '/business/budget-targets',  'Target', 'BUSINESS',        18)
+ON CONFLICT (path) DO NOTHING;
+
+-- Grant to admin groups (both seeded-name and uppercase-name styles).
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Super Admin', 'SUPER_ADMIN')
+  AND m.path IN ('/admin/security-settings', '/admin/alerts', '/admin/api-management', '/business/budget-targets')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g, sys_menu m
+WHERE g.group_name IN ('Bank Admin', 'ADMIN')
+  AND m.path IN ('/admin/security-settings', '/admin/alerts', '/admin/api-management', '/business/budget-targets')
+ON CONFLICT DO NOTHING;

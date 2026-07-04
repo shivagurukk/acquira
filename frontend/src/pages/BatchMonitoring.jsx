@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Activity, CheckCircle, XCircle, Clock, RefreshCw, Loader2, Wifi, WifiOff } from 'lucide-react';
 import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
 import PageHeader from '../components/PageHeader';
 
 const thStyle = {
@@ -13,6 +14,7 @@ const thStyle = {
 };
 
 const BatchMonitoring = () => {
+    const { tenantVersion } = useAuth();
     const [jobs, setJobs] = useState([]);
     const [liveJobs, setLiveJobs] = useState({});
     const [loading, setLoading] = useState(true);
@@ -78,7 +80,7 @@ const BatchMonitoring = () => {
             if (retryTimeoutRef.current)  clearTimeout(retryTimeoutRef.current);
             if (sseFailTimerRef.current)  clearTimeout(sseFailTimerRef.current);
         };
-    }, []);
+    }, [tenantVersion]);
 
     // Merge live data into historical list
     const mergedJobs = jobs.map(job => {

@@ -7,7 +7,7 @@ import {
 import {
     Filter, X, RefreshCw, Search, Briefcase, Layers, Monitor, Hash
 } from 'lucide-react';
-import api from '../api/axios';
+import { cachedGet } from '../api/apiCache';
 
 const DEFAULT_OPTIONS = {
     partners: [], mccs: [], industries: ['Retail', 'F&B', 'Services', 'Travel', 'Education', 'Healthcare'],
@@ -70,7 +70,10 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose }) => {
     useEffect(() => {
         const fetchOptions = async () => {
             try {
-                const res = await api.get('/business/filter-options');
+                // Filter option lists are near-static per tenant/session — served
+                // from the shared client cache so re-opening the drawer on any
+                // page doesn't re-hit the backend. Cache is tenant-scoped + TTL'd.
+                const res = await cachedGet('/business/filter-options');
                 const data = res.data;
                 setOptions(prev => ({
                     ...prev, ...data,

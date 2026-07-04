@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Download, Filter, Search, Calendar, ChevronRight, Loader2, PieChart } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const TransactionTrendsHub = () => {
+    const { tenantVersion } = useAuth();
     // --- State ---
     const [filters, setFilters] = useState({
         datePreset: 'CURRENT_YEAR',
@@ -47,7 +49,7 @@ const TransactionTrendsHub = () => {
     };
 
     // Auto-fetch
-    useEffect(() => { fetchMonthly(); }, [filters.year, filters.optStatus, filters.datePreset]); // Auto-refresh on simple filter changes
+    useEffect(() => { fetchMonthly(); }, [filters.year, filters.optStatus, filters.datePreset, tenantVersion]); // Auto-refresh on simple filter changes
 
     // Toggle Details logic (Level 1 -> 2)
     const toggleMonth = async (monthNum, year) => {

@@ -12,6 +12,7 @@ import {
     Timer, Users, Ban
 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const POLICY_DEFAULTS = {
     // password
@@ -35,6 +36,7 @@ const POLICY_DEFAULTS = {
 const ENFORCED = new Set(['password', 'lockout', 'session']);
 
 const SecuritySettings = () => {
+    const { tenantVersion } = useAuth();
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
     const primary = theme.palette.primary.main;
@@ -79,7 +81,7 @@ const SecuritySettings = () => {
         } catch { setLockedUsers([]); }
     }, []);
 
-    useEffect(() => { loadSettings(); loadLockedUsers(); }, [loadSettings, loadLockedUsers]);
+    useEffect(() => { loadSettings(); loadLockedUsers(); }, [loadSettings, loadLockedUsers, tenantVersion]);
 
     const savePolicy = async () => {
         setSaving(true);

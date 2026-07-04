@@ -22,7 +22,9 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -63,6 +65,110 @@ public class TransactionController {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "paymentDate"));
         Page<Transaction> result = transactionRepository.findAll(spec, pageable);
         return ResponseEntity.ok(result);
+    }
+
+    // ============================================================
+    // KEYSET (cursor) pagination — the scalable Transaction List path.
+    // ------------------------------------------------------------
+    // Replaces the offset/Page approach for large fact_transaction. Never
+    // issues COUNT(*); returns a forward cursor instead of a total/page count.
+    //
+    // Response shape:
+    //   {
+    //     content:        [ Transaction, ... up to `size` ],
+    //     hasMore:        boolean,                 // is there a next page?
+    //     nextCursorDate: ISO-8601 timestamp|null, // pass back as cursorPaymentDate
+    //     nextCursorId:   long|null                // pass back as cursorTxnId
+    //   }
+    //
+    // First page: omit cursorPaymentDate / cursorTxnId.
+    // Next page:  send the nextCursorDate + nextCursorId from the previous response.
+    //
+    // MID/SID/TID filters: when provided, they resolve to id lists. With keyset we
+    // keep the date-window path fast; id-list filtering is applied in-memory on the
+    // fetched page is NOT acceptable (would break "hasMore"), so when an id filter is
+    // present we fall back to the bounded spec query but STILL avoid the global count
+    // by using a slice (limit+1) rather than Page. Date filters remain the primary,
+    // index-friendly predicate.
+    // ============================================================
+    @GetMapping("/keyset")
+    public ResponseEntity<Map<String, Object>> getTransactionsKeyset(
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String mid,
+            @RequestParam(required = false) String sid,
+            @RequestParam(required = false) String tid,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate paymentDateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate paymentDateTo,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime cursorPaymentDate,
+            @RequestParam(required = false) Long cursorTxnId) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null)
+            return ResponseEntity.status(403).build();
+
+        // Clamp page size to a sane bound.
+        int pageSize = Math.max(1, Math.min(size, 200));
+
+        LocalDateTime from = paymentDateFrom != null ? paymentDateFrom.atStartOfDay() : null;
+        LocalDateTime to   = paymentDateTo   != null ? paymentDateTo.atTime(23, 59, 59) : null;
+
+        List<Transaction> rows;
+        boolean hasIdFilter = (mid != null && !mid.isBlank())
+                || (sid != null && !sid.isBlank())
+                || (tid != null && !tid.isBlank());
+
+        // Fetch one extra row to detect "has more" without a COUNT.
+        Pageable limitPlusOne = PageRequest.of(0, pageSize + 1);
+
+        if (!hasIdFilter) {
+            // Fast path: pure keyset over the (tenant_id, payment_date) index.
+            rows = transactionRepository.findKeyset(tenantId, from, to, cursorPaymentDate, cursorTxnId, limitPlusOne);
+        } else {
+            // ID-filter path: build the bounded spec and fetch a SLICE (limit+1),
+            // ordered the same way, applying the keyset cursor as an extra predicate.
+            // This still avoids the global COUNT (we use findAll(spec, pageable) with a
+            // single page and never call getTotalElements()).
+            Specification<Transaction> spec = createSpecification(tenantId, mid, sid, tid,
+                    paymentDateFrom, paymentDateTo, null, null);
+            spec = spec.and(keysetSpec(cursorPaymentDate, cursorTxnId));
+            Pageable sortedSlice = PageRequest.of(0, pageSize + 1,
+                    Sort.by(Sort.Direction.DESC, "paymentDate").and(Sort.by(Sort.Direction.DESC, "transactionId")));
+            rows = transactionRepository.findAll(spec, sortedSlice).getContent();
+        }
+
+        boolean hasMore = rows.size() > pageSize;
+        List<Transaction> content = hasMore ? rows.subList(0, pageSize) : rows;
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("content", content);
+        body.put("hasMore", hasMore);
+        if (!content.isEmpty()) {
+            Transaction last = content.get(content.size() - 1);
+            body.put("nextCursorDate", last.getPaymentDate());
+            body.put("nextCursorId", last.getTransactionId());
+        } else {
+            body.put("nextCursorDate", null);
+            body.put("nextCursorId", null);
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    /** Keyset predicate: rows strictly older than (cursorDate, cursorId) in DESC order. */
+    private Specification<Transaction> keysetSpec(LocalDateTime cursorDate, Long cursorId) {
+        return (root, query, cb) -> {
+            if (cursorDate == null) {
+                return cb.conjunction(); // first page — no cursor constraint
+            }
+            // payment_date < cursorDate OR (payment_date = cursorDate AND transaction_id < cursorId)
+            var olderDate = cb.lessThan(root.get("paymentDate"), cursorDate);
+            if (cursorId == null) {
+                return olderDate;
+            }
+            var sameDateLowerId = cb.and(
+                    cb.equal(root.get("paymentDate"), cursorDate),
+                    cb.lessThan(root.get("transactionId"), cursorId));
+            return cb.or(olderDate, sameDateLowerId);
+        };
     }
 
     @GetMapping("/export/csv")

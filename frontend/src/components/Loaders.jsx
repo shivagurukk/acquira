@@ -6,6 +6,9 @@ import React from 'react';
  *   <PageLoader />       Full-area branded loader. Used as the Suspense
  *                        fallback in App.jsx (first visit to a lazy route)
  *                        and anywhere a whole screen is still resolving.
+ *   <SectionLoader />    Full centered branded loader that REPLACES a
+ *                        section's content while its data is (re)fetching —
+ *                        the "in-between" state loader. Orbiting-dots motion.
  *   <Spinner size={…}/>  Small inline spinner for buttons / sections.
  *   <ContentLoader />    Skeleton-shimmer placeholder a page can render
  *                        while its own data fetch is in flight.
@@ -25,6 +28,8 @@ const LoaderKeyframes = () => (
     @keyframes acq-pulse  { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
     @keyframes acq-shimmer{ 0% { background-position: -468px 0; } 100% { background-position: 468px 0; } }
     @keyframes acq-fade   { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes acq-orbit  { to { transform: rotate(360deg); } }
+    @keyframes acq-dot    { 0%,100% { transform: scale(0.55); opacity: 0.45; } 50% { transform: scale(1); opacity: 1; } }
   `}</style>
 );
 
@@ -45,6 +50,107 @@ export const Spinner = ({ size = 20, stroke = 2.5, color }) => (
   >
     <LoaderKeyframes />
   </span>
+);
+
+/**
+ * Orbiting-dots mark. A ring of dots rotates as a group while each dot
+ * pulses on a staggered delay — reads as an intentional branded loader
+ * rather than a generic spinner. Colour + size are token-driven.
+ */
+const OrbitDots = ({ size = 56, dots = 8, color }) => {
+  const c = color || 'var(--accent, #1E3A8A)';
+  const r = size / 2;
+  const dotSize = Math.max(5, Math.round(size * 0.12));
+  return (
+    <div
+      style={{
+        position: 'relative',
+        width: size,
+        height: size,
+        animation: 'acq-orbit 1.6s linear infinite',
+      }}
+    >
+      {Array.from({ length: dots }).map((_, i) => {
+        const angle = (i / dots) * 2 * Math.PI;
+        const x = r + (r - dotSize) * Math.cos(angle) - dotSize / 2;
+        const y = r + (r - dotSize) * Math.sin(angle) - dotSize / 2;
+        return (
+          <span
+            key={i}
+            style={{
+              position: 'absolute',
+              left: x,
+              top: y,
+              width: dotSize,
+              height: dotSize,
+              borderRadius: '50%',
+              background: c,
+              animation: 'acq-dot 1.1s ease-in-out infinite',
+              animationDelay: `${(i / dots) * 1.1}s`,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
+/**
+ * Full centered branded loader — the "in-between" state loader.
+ * Drop it in place of a section's content while a (re)fetch is running:
+ *
+ *   if (loading) return <SectionLoader label="Loading merchants…" />;
+ *
+ * Fills its container (minHeight default), centers an orbiting-dots mark
+ * over a pulsing label. Card-framed by default so it reads as a deliberate
+ * loading panel; pass framed={false} to drop the border/background.
+ */
+export const SectionLoader = ({
+  label = 'Loading',
+  minHeight = '52vh',
+  size = 56,
+  framed = true,
+}) => (
+  <div
+    role="status"
+    aria-live="polite"
+    aria-busy="true"
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight,
+      width: '100%',
+      animation: 'acq-fade 0.2s ease',
+      ...(framed
+        ? {
+            border: '1px solid var(--border, #E5E7EB)',
+            borderRadius: 'var(--radius-lg, 14px)',
+            background: 'var(--bg-card, #FFFFFF)',
+            boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(15,23,42,0.04))',
+          }
+        : {}),
+    }}
+  >
+    <LoaderKeyframes />
+    <div style={{ textAlign: 'center' }}>
+      <div style={{ margin: '0 auto 18px', width: size, height: size }}>
+        <OrbitDots size={size} />
+      </div>
+      <div
+        style={{
+          fontSize: 13,
+          fontWeight: 500,
+          letterSpacing: 0.2,
+          color: 'var(--text-secondary, #6B7280)',
+          fontFamily: 'var(--font-sans, Inter, system-ui, sans-serif)',
+          animation: 'acq-pulse 1.4s ease-in-out infinite',
+        }}
+      >
+        {label}
+      </div>
+    </div>
+  </div>
 );
 
 /**

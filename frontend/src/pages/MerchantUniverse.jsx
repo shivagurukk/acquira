@@ -7,6 +7,7 @@ import {
     Upload as UploadIcon, ChevronLeft, Download
 } from 'lucide-react';
 import Loader from '../components/Loader';
+import { useAuth } from '../contexts/AuthContext';
 
 import MerchantHierarchy from '../components/MerchantHierarchy';
 import TransactionList from '../components/TransactionList';
@@ -59,6 +60,7 @@ const NAV_SECTIONS = [
 ];
 
 const MerchantUniverse = () => {
+    const { tenantVersion } = useAuth();
     const [loading, setLoading] = useState(true);
 
     // Refresh Key to trigger re-fetches in children
@@ -144,7 +146,16 @@ const MerchantUniverse = () => {
         fetchSession();
 
         return () => stopPolling();
-    }, []);
+    }, [tenantVersion]);
+
+    // When a super-admin switches tenant elsewhere in the app, AuthContext bumps
+    // tenantVersion. Remount the data children so they re-fetch under the new
+    // tenant (skip the very first mount, which the session effect already covers).
+    const didMountRef = useRef(false);
+    useEffect(() => {
+        if (!didMountRef.current) { didMountRef.current = true; return; }
+        setRefreshKey(prev => prev + 1);
+    }, [tenantVersion]);
 
     const handleTenantSelect = (tenantId) => {
         // Write BOTH keys so the entire app sees the new tenant.

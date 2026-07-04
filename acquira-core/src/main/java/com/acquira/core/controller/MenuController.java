@@ -79,6 +79,11 @@ public class MenuController {
                 {"Report Configs",         "/admin/integration/reports","FileCode",    "DATA INTEGRATION", 3},
                 {"Schedules",              "/admin/integration/schedules","Clock",     "DATA INTEGRATION", 4},
                 {"Run History",            "/admin/integration/runs",   "ScrollText",  "DATA INTEGRATION", 5},
+                // Business-analytics pages added post-seed are registered here so they
+                // appear in the sidebar without a separate DB migration. display_order
+                // 15 keeps Retention next to Attrition in the Business group.
+                {"Retention Report",       "/business/retention",        "HeartHandshake","BUSINESS",      15},
+                {"Forecasting",            "/business/forecasting",      "Gauge",        "BUSINESS",      16},
             };
 
             for (Object[] row : adminMenus) {

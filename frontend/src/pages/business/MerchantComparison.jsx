@@ -111,7 +111,7 @@ const EmptyState = () => (
 
 // ── Main component ─────────────────────────────────────────────────
 const MerchantComparison = () => {
-    const { currencySymbol } = useAuth();
+    const { currencySymbol, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
     const [options, setOptions] = useState([]);
     const [loadingOptions, setLoadingOptions] = useState(false);
@@ -122,15 +122,18 @@ const MerchantComparison = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
-    // Load merchant list on mount
+    // Load merchant list on mount and whenever the tenant changes. On switch,
+    // clear any prior selection/results so we never compare across tenants.
     useEffect(() => {
+        setSelected([]);
+        setData(null);
         (async () => {
             try {
                 const res = await merchantApi.search('');
                 setOptions(Array.from(new Map(res.map(m => [m.merchantId, m])).values()));
             } catch (e) { console.error(e); }
         })();
-    }, []);
+    }, [tenantVersion]);
 
     const handleSearch = useCallback(async (q) => {
         if (!q) return;

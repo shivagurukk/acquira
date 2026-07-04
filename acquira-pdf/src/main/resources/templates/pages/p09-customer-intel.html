@@ -128,7 +128,11 @@
         </div>
 
         <th:block th:with="repeatPct=${dto.loyalty.repeatCardPct != null ? dto.loyalty.repeatCardPct : 0},
-                           lapsedPct=${dto.loyalty.lapsedCardPct != null ? dto.loyalty.lapsedCardPct : 0}">
+                           lapsedPct=${dto.loyalty.lapsedCardPct != null ? dto.loyalty.lapsedCardPct : 0},
+                           tier2Pct=${dto.loyalty.repeatTier2Pct != null ? dto.loyalty.repeatTier2Pct : 0},
+                           tier35Pct=${dto.loyalty.repeatTier35Pct != null ? dto.loyalty.repeatTier35Pct : 0},
+                           tier6Pct=${dto.loyalty.repeatTier6Pct != null ? dto.loyalty.repeatTier6Pct : 0},
+                           hasTiers=${dto.loyalty.repeatTier2Pct != null}">
         <div class="card mb-6" style="padding: 0; overflow: hidden;">
             <table class="data-table" style="font-size: 8.5px;">
                 <thead>
@@ -140,7 +144,31 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr>
+                    <!-- FIX NEW: repeat cohort split into visit-depth tiers (2 / 3–5 / 6+).
+                         Falls back to a single combined Repeat(2+) row when tier data is
+                         unavailable (hasTiers=false). Loyal 6+ first so the most valuable
+                         segment reads top-down. -->
+                    <th:block th:if="${hasTiers}">
+                    <tr th:if="${tier6Pct > 0}">
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #0F766E; font-size: 9px;">&#9679; Loyal (6+)</span></td>
+                        <td style="font-weight: 700;" th:text="${tier6Pct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${tier6Pct} + '%; height: 100%; background: linear-gradient(90deg, #0F766E, #2DD4BF); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-teal">VIP &amp; Reward</span></td>
+                    </tr>
+                    <tr th:if="${tier35Pct > 0}">
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #0D9488; font-size: 9px;">&#9679; Core (3–5)</span></td>
+                        <td style="font-weight: 700;" th:text="${tier35Pct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${tier35Pct} + '%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-teal">Nurture</span></td>
+                    </tr>
+                    <tr th:if="${tier2Pct > 0}">
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #14B8A6; font-size: 9px;">&#9679; Occasional (2)</span></td>
+                        <td style="font-weight: 700;" th:text="${tier2Pct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${tier2Pct} + '%; height: 100%; background: linear-gradient(90deg, #14B8A6, #99F6E4); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-teal">Encourage Return</span></td>
+                    </tr>
+                    </th:block>
+                    <tr th:unless="${hasTiers}">
                         <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #0D9488; font-size: 9px;">&#9679; Repeat (2+)</span></td>
                         <td style="font-weight: 700;" th:text="${repeatPct + '%'}">0%</td>
                         <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${repeatPct} + '%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 4px;'"></div></div></td>

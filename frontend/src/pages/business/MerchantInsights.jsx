@@ -86,13 +86,13 @@ const DarkChartCard = ({ title, children, height = 300 }) => (
 );
 
 const MerchantInsights = () => {
-    const { currencyCode } = useAuth();
+    const { currencyCode, tenantVersion } = useAuth();
     const [activeTab, setActiveTab] = useState(0);
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [monthOffset, setMonthOffset] = useState(1);
 
-    useEffect(() => { fetchInsights(); }, [monthOffset]);
+    useEffect(() => { fetchInsights(); }, [monthOffset, tenantVersion]);
 
     const fetchInsights = async () => {
         setLoading(true);

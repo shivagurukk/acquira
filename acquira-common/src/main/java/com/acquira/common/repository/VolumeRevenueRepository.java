@@ -28,17 +28,39 @@ public class VolumeRevenueRepository {
     public List<Map<String, Object>> getSummary(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
+        // ── Monthly pre-aggregate routing ──────────────────────────────────
+        // This method is month-grained by construction (GROUP BY YYYY-MM), so it
+        // can read the month-grain pre-aggregate sum_monthly_insight instead of
+        // the day-grain sum_daily_insight — ~30x fewer rows, the key to keeping
+        // wide ranges fast at billions of day rows.
+        //
+        // EXACTNESS GUARD: monthly = SUM(daily) reconciles EXACTLY only when the
+        // range covers WHOLE months. If the range starts mid-month or ends
+        // mid-month, month_key <= endMonthKey would include days outside
+        // [startDate, endDate], over-counting vs the daily query. So we route to
+        // monthly ONLY for whole-month ranges (start = 1st, end = month-end),
+        // which is exactly what the trend screens use by default. Any partial
+        // month falls back to the daily table, preserving correctness.
+        boolean useMonthly = canUseMonthly(filter.getStartDate(), filter.getEndDate());
+        final String S_DATE  = useMonthly ? "s.month_key" : "s.business_date";
+        final String MONTH_LABEL = useMonthly
+                ? "TO_CHAR(TO_DATE(s.month_key::text, 'YYYYMM'), 'YYYY-MM')"
+                : "TO_CHAR(s.business_date, 'YYYY-MM')";
+        final String BASE_TABLE = useMonthly ? "sum_monthly_insight s" : "sum_daily_insight s";
+        final Integer startMonthKey = useMonthly ? monthKey(filter.getStartDate()) : null;
+        final Integer endMonthKey   = useMonthly ? monthKey(filter.getEndDate())   : null;
+
         // Base Query joining Fact/Summary with Dimensions
         // We use sum_daily_insight as the base as it has scheme, card_type, etc.
         // But for 'Partner', 'RM', 'Merchant Name' we need dim_merchant.
 
         sql.append("SELECT ");
-        sql.append("  TO_CHAR(s.business_date, 'YYYY-MM') as month_label, ");
+        sql.append("  ").append(MONTH_LABEL).append(" as month_label, ");
         sql.append("  SUM(s.total_txns) as total_txns, ");
         sql.append("  SUM(s.total_volume) as total_volume, ");
         sql.append("  SUM(s.total_msf) as total_msf, ");
         sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as opt_in_volume ");
-        sql.append("FROM sum_daily_insight s ");
+        sql.append("FROM ").append(BASE_TABLE).append(" ");
         sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
         // sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id "); // Use if
         // Store filters needed
@@ -52,10 +74,10 @@ public class VolumeRevenueRepository {
             sql.append("AND s.tenant_id = :tenantId ");
         }
         if (filter.getStartDate() != null) {
-            sql.append("AND s.business_date >= :startDate ");
+            sql.append("AND ").append(S_DATE).append(useMonthly ? " >= :startMonthKey " : " >= :startDate ");
         }
         if (filter.getEndDate() != null) {
-            sql.append("AND s.business_date <= :endDate ");
+            sql.append("AND ").append(S_DATE).append(useMonthly ? " <= :endMonthKey " : " <= :endDate ");
         }
 
         // Multi-select Lists
@@ -102,17 +124,21 @@ public class VolumeRevenueRepository {
             sql.append("AND s.channel IN (:channels) ");
         }
 
-        sql.append("GROUP BY TO_CHAR(s.business_date, 'YYYY-MM') ");
+        sql.append("GROUP BY ").append(MONTH_LABEL).append(" ");
         sql.append("ORDER BY month_label DESC");
 
         Query query = entityManager.createNativeQuery(sql.toString());
 
         if (tenantId != null)
             query.setParameter("tenantId", tenantId);
-        if (filter.getStartDate() != null)
-            query.setParameter("startDate", filter.getStartDate());
-        if (filter.getEndDate() != null)
-            query.setParameter("endDate", filter.getEndDate());
+        if (filter.getStartDate() != null) {
+            if (useMonthly) query.setParameter("startMonthKey", startMonthKey);
+            else            query.setParameter("startDate", filter.getStartDate());
+        }
+        if (filter.getEndDate() != null) {
+            if (useMonthly) query.setParameter("endMonthKey", endMonthKey);
+            else            query.setParameter("endDate", filter.getEndDate());
+        }
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
         if (filter.getRmList() != null && !filter.getRmList().isEmpty())
@@ -1104,6 +1130,29 @@ public class VolumeRevenueRepository {
         return ((current - previous) / previous) * 100.0;
     }
 
+    // ── Monthly pre-aggregate helpers ──────────────────────────────────────
+    /**
+     * month_key (YYYYMM int) for a date, matching the convention written by
+     * populateSummaryStep (year*100 + month).
+     */
+    private static Integer monthKey(java.time.LocalDate d) {
+        return d == null ? null : d.getYear() * 100 + d.getMonthValue();
+    }
+
+    /**
+     * Whether a [start, end] range can be served EXACTLY from the month-grain
+     * sum_monthly_insight. True only when the range covers WHOLE calendar months
+     * (start is the 1st, end is the last day of its month). For any partial
+     * month, the monthly table would include days outside the range, so we must
+     * stay on the daily table. Both bounds must be present.
+     */
+    private static boolean canUseMonthly(java.time.LocalDate start, java.time.LocalDate end) {
+        if (start == null || end == null) return false;
+        boolean startIsMonthStart = start.getDayOfMonth() == 1;
+        boolean endIsMonthEnd = end.getDayOfMonth() == end.lengthOfMonth();
+        return startIsMonthStart && endIsMonthEnd && !start.isAfter(end);
+    }
+
     public Map<String, Object> getMerchantAnalyticsReport(VolumeRevenueFilterDTO filter, int page, int size) {
         return getMerchantAnalyticsReport(filter, page, size, null);
     }
@@ -1280,5 +1329,184 @@ public class VolumeRevenueRepository {
         response.put("content", content);
         response.put("totalElements", totalElements);
         return response;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  RETENTION REPORT  (Merchant Churn + Revenue-Weighted Churn + Reactivation)
+    // ════════════════════════════════════════════════════════════════════════
+    public List<Map<String, Object>> getRetentionReport(VolumeRevenueFilterDTO filter) {
+        return getRetentionReport(filter, null);
+    }
+
+    /**
+     * Per-merchant retention classification over two equal-length, back-to-back
+     * windows, plus the roll-up KPIs the Retention page needs.
+     *
+     * Windows (both equal length so the comparison is apples-to-apples):
+     *   current : [start, end]                     — the selected range
+     *   prior   : [start - len, start - 1 day]     — the window immediately before it
+     * where len = (end - start) in days.
+     *
+     * Per merchant we emit current/prior volume, txns and MSF, plus a status:
+     *   CHURNED     — transacted in the prior window, silent in the current window
+     *   REACTIVATED — silent in the prior window, transacting again in the current window
+     *   RETAINED    — active in both windows
+     *   NEW         — first seen in the current window (onboarded in-range, no prior activity)
+     *
+     * [TENANCY] Every join is tenant-scoped (dX.tenant_id = s.tenant_id) and the
+     * base scan carries `AND s.tenant_id = :tenantId`, matching the P2-1 pattern
+     * used across this repository.
+     */
+    public List<Map<String, Object>> getRetentionReport(VolumeRevenueFilterDTO filter, Long tenantId) {
+        java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
+        java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
+
+        // Equal-length prior window immediately preceding the current one.
+        long lenDays = java.time.temporal.ChronoUnit.DAYS.between(start, end); // inclusive length - 1
+        java.time.LocalDate priorEnd   = start.minusDays(1);
+        java.time.LocalDate priorStart = priorEnd.minusDays(lenDays);
+
+        // Lower bound for partition pruning — earliest date any window reads.
+        java.time.LocalDate globalLowerBound = priorStart;
+
+        boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT m.mid AS mid, m.name AS merchant_name, m.created_date AS created_date, ");
+        // Two windows x (vol, txn, msf)
+        appendWindowMeasures(sql, "cur",   ":startDate",      ":endDate");
+        appendWindowMeasures(sql, "prior", ":priorStartDate", ":priorEndDate");
+        sql.setLength(sql.length() - 2); // strip trailing comma
+        sql.append(" FROM sum_daily_insight s ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        if (needStore) {
+            sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        }
+
+        sql.append("WHERE s.business_date >= :globalLowerBound AND s.business_date <= :endDate ");
+        if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
+
+        // Merchant-dimension filters
+        if (listNonEmpty(filter.getPartnerList()))    sql.append("AND m.referral_partner IN (:partners) ");
+        if (listNonEmpty(filter.getRmList()))         sql.append("AND m.sales_email IN (:rms) ");
+        if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
+        if (listNonEmpty(filter.getMidList()))        sql.append("AND m.mid IN (:mids) ");
+        if (listNonEmpty(filter.getIndustryList()))   sql.append("AND m.industry IN (:industries) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            sql.append("AND m.name ILIKE :merchName ");
+        // Store-dimension filters
+        if (listNonEmpty(filter.getMccList()))        sql.append("AND st.mcc IN (:mccs) ");
+        if (listNonEmpty(filter.getSidList()))        sql.append("AND st.sid IN (:sids) ");
+        // Insight-dimension filters
+        if (listNonEmpty(filter.getChannelList()))     sql.append("AND s.channel IN (:channels) ");
+        if (listNonEmpty(filter.getSchemeList()))      sql.append("AND s.card_scheme IN (:schemes) ");
+        if (listNonEmpty(filter.getCardTypeList()))    sql.append("AND s.card_type IN (:cardTypes) ");
+        if (listNonEmpty(filter.getDestinationList())) sql.append("AND s.destination IN (:destinations) ");
+
+        sql.append("GROUP BY m.mid, m.name, m.created_date ORDER BY m.mid ASC");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("startDate", start);
+        query.setParameter("endDate", end);
+        query.setParameter("priorStartDate", priorStart);
+        query.setParameter("priorEndDate", priorEnd);
+        query.setParameter("globalLowerBound", globalLowerBound);
+        if (tenantId != null) query.setParameter("tenantId", tenantId);
+
+        if (listNonEmpty(filter.getPartnerList()))    query.setParameter("partners", filter.getPartnerList());
+        if (listNonEmpty(filter.getRmList()))         query.setParameter("rms", filter.getRmList());
+        if (listNonEmpty(filter.getTeamLeaderList())) query.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (listNonEmpty(filter.getMidList()))        query.setParameter("mids", filter.getMidList());
+        if (listNonEmpty(filter.getIndustryList()))   query.setParameter("industries", filter.getIndustryList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            query.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+        if (listNonEmpty(filter.getMccList()))        query.setParameter("mccs", filter.getMccList());
+        if (listNonEmpty(filter.getSidList()))        query.setParameter("sids", filter.getSidList());
+        if (listNonEmpty(filter.getChannelList()))     query.setParameter("channels", filter.getChannelList());
+        if (listNonEmpty(filter.getSchemeList()))      query.setParameter("schemes", filter.getSchemeList());
+        if (listNonEmpty(filter.getCardTypeList()))    query.setParameter("cardTypes", filter.getCardTypeList());
+        if (listNonEmpty(filter.getDestinationList())) query.setParameter("destinations", filter.getDestinationList());
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (Object[] row : rows) {
+            // Column order: mid, name, created_date, then cur(vol,txn,msf), prior(vol,txn,msf)
+            java.math.BigDecimal curVol   = bd(row[3]),  priorVol  = bd(row[6]);
+            long                 curTxn   = lng(row[4]), priorTxn  = lng(row[7]);
+            java.math.BigDecimal curMsf   = bd(row[5]),  priorMsf  = bd(row[8]);
+
+            // Drop merchants with no activity in EITHER window — noise, never retention signal.
+            if (isZero(curVol) && isZero(priorVol)) continue;
+
+            boolean activeNow   = !isZero(curVol);
+            boolean activePrior = !isZero(priorVol);
+
+            String status = classifyRetention(activeNow, activePrior, row[2], start, end);
+
+            Map<String, Object> map = new HashMap<>();
+            map.put("mid", row[0]);
+            map.put("name", row[1]);
+            map.put("createdDate", row[2] != null ? row[2].toString() : null);
+
+            map.put("cur_volume", curVol);
+            map.put("prior_volume", priorVol);
+            map.put("volume_pct", calculateGrowth(curVol.doubleValue(), priorVol.doubleValue()));
+            map.put("cur_txns", curTxn);
+            map.put("prior_txns", priorTxn);
+            map.put("txns_pct", calculateGrowth(curTxn, priorTxn));
+            map.put("cur_msf", curMsf);
+            map.put("prior_msf", priorMsf);
+            map.put("msf_pct", calculateGrowth(curMsf.doubleValue(), priorMsf.doubleValue()));
+            // Revenue lost to churn = prior-window MSF of a merchant now silent.
+            map.put("lost_msf", "CHURNED".equals(status) ? priorMsf : java.math.BigDecimal.ZERO);
+
+            map.put("status", status);
+            result.add(map);
+        }
+
+        // Churned first (biggest retention concern), then reactivated, then the rest.
+        result.sort((a, b) -> retentionRank((String) a.get("status")) - retentionRank((String) b.get("status")));
+
+        return result;
+    }
+
+    /**
+     * RETAINED / CHURNED / REACTIVATED / NEW from two-window activity flags.
+     * NEW wins over REACTIVATED only when the merchant was onboarded inside the
+     * current window (created_date within [start, end]); otherwise a merchant
+     * that was silent-then-active is a genuine REACTIVATION.
+     */
+    private String classifyRetention(boolean activeNow, boolean activePrior,
+                                     Object createdDateObj,
+                                     java.time.LocalDate start, java.time.LocalDate end) {
+        if (activeNow && activePrior)  return "RETAINED";
+        if (!activeNow && activePrior) return "CHURNED";
+        // activeNow && !activePrior  → either brand-new or reactivated
+        java.time.LocalDate created = parseDate(createdDateObj);
+        boolean onboardedInWindow = created != null && !created.isBefore(start) && !created.isAfter(end);
+        return onboardedInWindow ? "NEW" : "REACTIVATED";
+    }
+
+    /** Sort weight: churned first, then reactivated, retained, new. */
+    private int retentionRank(String status) {
+        if (status == null) return 9;
+        switch (status) {
+            case "CHURNED":     return 0;
+            case "REACTIVATED": return 1;
+            case "RETAINED":    return 2;
+            case "NEW":         return 3;
+            default:            return 9;
+        }
+    }
+
+    private static java.time.LocalDate parseDate(Object o) {
+        if (o == null) return null;
+        if (o instanceof java.sql.Date)        return ((java.sql.Date) o).toLocalDate();
+        if (o instanceof java.time.LocalDate)  return (java.time.LocalDate) o;
+        if (o instanceof java.sql.Timestamp)   return ((java.sql.Timestamp) o).toLocalDateTime().toLocalDate();
+        try { return java.time.LocalDate.parse(o.toString().substring(0, 10)); }
+        catch (Exception e) { return null; }
     }
 }

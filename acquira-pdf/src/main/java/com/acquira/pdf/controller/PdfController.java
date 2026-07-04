@@ -515,22 +515,23 @@ public class PdfController {
         // tenant's SMTP config (not just "any active config"). merchant_id /
         // merchant_name / statement_month are populated so the Email Manager
         // stats & logs page (which filters by statement_month) shows these rows.
-        // is_html=false because the body below is plain text.
+        // is_html=TRUE — the body below is branded HTML (see buildReportEmailHtml).
         Long tenantId = null;
         try {
             tenantId = TenantContext.getCurrentTenant();
         } catch (Exception ignored) { /* no tenant context - leave null */ }
 
         String subject = "Your Business Insight Report — " + monthYear;
-        String body = "Dear " + merchantName + ",\n\n"
-                + "Please find your monthly business insight report attached.\n\n"
-                + "Best regards,\nAFS NEXUS";
+        // Branded HTML body (Stripe/Linear-register: light, restrained, table-based
+        // so it survives Outlook/Gmail — no flexbox, no <style> head, no web fonts).
+        // is_html=TRUE below; EmailQueueProcessor renders it via helper.setText(body,true).
+        String body = buildReportEmailHtml(merchantName, monthYear);
         try {
             jdbcTemplate.update(
                 "INSERT INTO email_queue " +
                 "(tenant_id, merchant_id, merchant_name, recipient, subject, body, is_html, " +
                 " attachment_path, statement_month, status, retry_count, created_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, FALSE, ?, ?, 'PENDING', 0, NOW())",
+                "VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, ?, 'PENDING', 0, NOW())",
                 tenantId, merchantId, merchantName, toEmail, subject, body,
                 pdfFile.toString(), statementMonth);
             log.info("[EMAIL] Queued report for {} to {} (tenant={})", merchantName, toEmail, tenantId);
@@ -538,6 +539,82 @@ public class PdfController {
             // Re-thrown so the post-batch loop records this merchant as failed.
             throw new RuntimeException("Failed to queue email for " + merchantName + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Branded HTML body for the monthly statement email.
+     *
+     * EMAIL-CLIENT SAFE by construction: table layout (no flexbox/grid), all CSS
+     * inline (no &lt;style&gt; block, which Gmail strips), a system font stack (no
+     * web fonts), hex colours only, and a max-width wrapper centred with an outer
+     * table. Register matches the app: light background, restrained navy accent,
+     * no gradients or glow. {@code name} and {@code monthYear} are the only
+     * dynamic values; both are plain text we control (merchant name + "March 2026").
+     */
+    private String buildReportEmailHtml(String name, String monthYear) {
+        String safeName = name != null ? name : "Merchant";
+        String period = monthYear != null ? monthYear : "";
+        return ""
+            + "<!DOCTYPE html>"
+            + "<html lang=\"en\"><head><meta charset=\"utf-8\">"
+            + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            + "<title>Business Insight Report</title></head>"
+            + "<body style=\"margin:0;padding:0;background:#f4f5f7;\">"
+            + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
+            +   "style=\"background:#f4f5f7;padding:32px 12px;\"><tr><td align=\"center\">"
+
+            +   "<table role=\"presentation\" width=\"560\" cellpadding=\"0\" cellspacing=\"0\" "
+            +     "style=\"width:560px;max-width:560px;background:#ffffff;border:1px solid #e6e8eb;"
+            +     "border-radius:12px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"
+            +     "'Segoe UI',Roboto,Helvetica,Arial,sans-serif;\">"
+
+            +     "<tr><td style=\"padding:20px 32px;border-bottom:1px solid #eef0f2;\">"
+            +       "<span style=\"font-size:15px;font-weight:700;letter-spacing:.02em;color:#0b1f3a;\">"
+            +         "AFS&nbsp;NEXUS</span>"
+            +       "<span style=\"float:right;font-size:12px;color:#8a94a6;\">Monthly Statement</span>"
+            +     "</td></tr>"
+
+            +     "<tr><td style=\"padding:32px;\">"
+            +       "<div style=\"font-size:12px;text-transform:uppercase;letter-spacing:.08em;"
+            +         "color:#6b7688;margin-bottom:6px;\">Business Insight Report</div>"
+            +       "<div style=\"font-size:22px;font-weight:700;color:#0b1f3a;margin-bottom:2px;\">"
+            +         period + "</div>"
+            +       "<div style=\"height:3px;width:44px;background:#2f5fe0;border-radius:2px;"
+            +         "margin:14px 0 22px;\"></div>"
+
+            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 14px;\">"
+            +         "Dear " + safeName + ",</p>"
+            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 14px;\">"
+            +         "Your monthly business insight report for <strong>" + period + "</strong> is "
+            +         "ready. It covers your sales performance, transaction trends, card mix, "
+            +         "customer activity and DCC opportunities for the period.</p>"
+            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 22px;\">"
+            +         "The full report is attached to this email as a PDF.</p>"
+
+            +       "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" "
+            +         "style=\"margin:0 0 26px;\"><tr>"
+            +         "<td style=\"background:#f6f8fc;border:1px solid #e2e8f4;border-radius:8px;"
+            +           "padding:12px 16px;font-size:13px;color:#33415a;\">"
+            +           "&#128196;&nbsp; Business_Insight_Report_" + period.replace(" ", "_") + ".pdf"
+            +         "</td></tr></table>"
+
+            +       "<p style=\"font-size:13px;line-height:1.6;color:#6b7688;margin:0;\">"
+            +         "If you have any questions about this report, simply reply to this email.</p>"
+            +     "</td></tr>"
+
+            +     "<tr><td style=\"padding:18px 32px;background:#fafbfc;border-top:1px solid #eef0f2;\">"
+            +       "<div style=\"font-size:12px;color:#8a94a6;line-height:1.5;\">"
+            +         "Best regards,<br><strong style=\"color:#33415a;\">AFS&nbsp;NEXUS</strong> "
+            +         "&mdash; Connecting Your Business Intelligence</div>"
+            +     "</td></tr>"
+
+            +     "</table>"
+
+            +     "<div style=\"font-size:11px;color:#aab2c0;margin-top:16px;\">"
+            +       "This is an automated statement. Please do not share it externally.</div>"
+
+            +   "</td></tr></table>"
+            + "</body></html>";
     }
 
     // ─── Generate by MID — one / all / file (tenant-scoped) ──────────────

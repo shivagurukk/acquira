@@ -6,14 +6,16 @@ import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 
 const OpportunityIntelligence = () => {
+    const { tenantVersion } = useAuth();
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [errorMsg, setErrorMsg] = useState(null);
 
-    useEffect(() => { fetchData(); }, []);
+    useEffect(() => { fetchData(); }, [tenantVersion]);
 
     const fetchData = async () => {
         setLoading(true);

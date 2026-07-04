@@ -4,6 +4,8 @@ import com.acquira.common.service.CryptoService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.Base64;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -137,11 +139,25 @@ class CryptoServiceTest {
     void tamperedTokenThrows() {
         CryptoService c = svc();
         String token = c.encrypt("integrity-protected");
-        // flip a character in the base64 body
-        char[] chars = token.toCharArray();
-        int idx = token.length() - 2;
-        chars[idx] = chars[idx] == 'A' ? 'B' : 'A';
-        String tampered = new String(chars);
+
+        // Tamper on the DECODED bytes, not on a base64 character.
+        //
+        // The previous version flipped a base64 char near the end of the string.
+        // That is unreliable: Base64 packs 3 bytes into 4 chars, and the trailing
+        // bits of the final quantum are ignored on decode — so flipping a char in
+        // that tail region can decode to the SAME byte array, GCM then passes, and
+        // decrypt() returns normally (the "nothing was thrown" failure). Decoding
+        // the body, flipping a byte in the middle of the ciphertext, and re-encoding
+        // guarantees the decoded bytes actually change, so the GCM auth tag MUST fail.
+        String body = token.substring(CryptoService.ENC_PREFIX.length());
+        byte[] raw = Base64.getDecoder().decode(body);
+
+        // Flip a byte squarely inside the ciphertext (past the 12-byte IV,
+        // before the trailing 16-byte tag) so the change is unambiguous.
+        int idx = raw.length / 2;
+        raw[idx] ^= 0x01;
+
+        String tampered = CryptoService.ENC_PREFIX + Base64.getEncoder().encodeToString(raw);
         assertThrows(RuntimeException.class, () -> c.decrypt(tampered));
     }
 

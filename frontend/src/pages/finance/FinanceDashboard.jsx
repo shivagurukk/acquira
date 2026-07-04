@@ -73,7 +73,7 @@ const marginOf = (r) => {
 const valOf = (r, key) => key === 'marginPct' ? marginOf(r) : Number(r[key] || 0);
 
 export default function FinanceDashboard() {
-  const { currencyCode = 'AED', formatCurrency: fmtCurr } = useAuth() || {};
+  const { currencyCode = 'AED', formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
   const cur = useCallback((v) => fmtCurr ? fmtCurr(v)
     : new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode, maximumFractionDigits: 0 }).format(v || 0), [fmtCurr, currencyCode]);
   const curC = useCallback((v) => `${currencyCode} ${compact(v)}`, [currencyCode]);
@@ -135,9 +135,9 @@ export default function FinanceDashboard() {
     finally { setRiskLoading(false); }
   }, [riskTab, range]);
 
-  useEffect(() => { loadTop(); }, [loadTop]);
-  useEffect(() => { loadProf(); }, [loadProf]);
-  useEffect(() => { loadRisk(); }, [loadRisk]);
+  useEffect(() => { loadTop(); }, [loadTop, tenantVersion]);
+  useEffect(() => { loadProf(); }, [loadProf, tenantVersion]);
+  useEffect(() => { loadRisk(); }, [loadRisk, tenantVersion]);
 
   const exportCsv = async () => {
     try {

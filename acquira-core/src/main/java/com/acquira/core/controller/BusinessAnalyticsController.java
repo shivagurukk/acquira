@@ -76,6 +76,13 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getAttritionReport(filters, tenantId);
     }
 
+    @PostMapping("/retention-report")
+    public List<Map<String, Object>> getRetentionReport(@RequestBody VolumeRevenueFilterDTO filters) {
+        resolveFilters(filters);
+        Long tenantId = tenantService.getCurrentTenantId();
+        return volumeRevenueRepository.getRetentionReport(filters, tenantId);
+    }
+
     @PostMapping("/executive-metrics")
     public Map<String, Object> getExecutiveMetrics(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);

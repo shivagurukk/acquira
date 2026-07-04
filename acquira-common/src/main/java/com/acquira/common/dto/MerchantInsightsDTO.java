@@ -430,10 +430,34 @@ public class MerchantInsightsDTO {
         private Long   lapsedCardCount;
         private BigDecimal lapsedCardPct;   // percentage of all unique cards (prior month union)
 
+        // ── FIX NEW: tiered repeat-customer segmentation. The binary Repeat(2+)/Single
+        //    split hid how loyal the repeat base actually is. These break the repeat
+        //    cohort into occasional (exactly 2 visits), core (3–5) and loyal (6+),
+        //    each as a % of total unique cards this month. Sum of the three ==
+        //    repeatCardPct. Drives the tiered rows on the Customer Intelligence page.
+        private BigDecimal repeatTier2Pct;    // exactly 2 visits
+        private BigDecimal repeatTier35Pct;   // 3–5 visits
+        private BigDecimal repeatTier6Pct;    // 6+ visits
+        private Long repeatTier2Count;
+        private Long repeatTier35Count;
+        private Long repeatTier6Count;
+
         public Long getLapsedCardCount() { return lapsedCardCount; }
         public void setLapsedCardCount(Long v) { this.lapsedCardCount = v; }
         public BigDecimal getLapsedCardPct() { return lapsedCardPct; }
         public void setLapsedCardPct(BigDecimal v) { this.lapsedCardPct = v; }
+        public BigDecimal getRepeatTier2Pct() { return repeatTier2Pct; }
+        public void setRepeatTier2Pct(BigDecimal v) { this.repeatTier2Pct = v; }
+        public BigDecimal getRepeatTier35Pct() { return repeatTier35Pct; }
+        public void setRepeatTier35Pct(BigDecimal v) { this.repeatTier35Pct = v; }
+        public BigDecimal getRepeatTier6Pct() { return repeatTier6Pct; }
+        public void setRepeatTier6Pct(BigDecimal v) { this.repeatTier6Pct = v; }
+        public Long getRepeatTier2Count() { return repeatTier2Count; }
+        public void setRepeatTier2Count(Long v) { this.repeatTier2Count = v; }
+        public Long getRepeatTier35Count() { return repeatTier35Count; }
+        public void setRepeatTier35Count(Long v) { this.repeatTier35Count = v; }
+        public Long getRepeatTier6Count() { return repeatTier6Count; }
+        public void setRepeatTier6Count(Long v) { this.repeatTier6Count = v; }
 
         public BigDecimal getRetentionRate() { return retentionRate; }
         public void setRetentionRate(BigDecimal v) { this.retentionRate = v; }

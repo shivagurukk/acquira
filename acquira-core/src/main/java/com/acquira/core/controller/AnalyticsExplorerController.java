@@ -127,6 +127,21 @@ public class AnalyticsExplorerController {
         MEASURE_DEFS.put("total_interchange",         meas("COALESCE(SUM(t.interchange_fee), 0)",            null));
         MEASURE_DEFS.put("distinct_cards",            meas("COUNT(DISTINCT t.card_number)",                  null));
 
+        // ----- Derived financial measures (added) -----
+        // net_revenue: fact-only — interchange & vat live only on the fact grain
+        // (sum_daily_insight carries neither), so this cannot route to summary.
+        MEASURE_DEFS.put("net_revenue",               meas("COALESCE(SUM(t.msf) - SUM(t.interchange_fee) - SUM(t.vat), 0)", null));
+        // effective_msf_rate: MSF as basis points of volume. Both grains have msf+volume.
+        MEASURE_DEFS.put("effective_msf_rate",        meas("CASE WHEN SUM(t.store_base_currency_amount) > 0 THEN SUM(t.msf)/SUM(t.store_base_currency_amount)*10000 ELSE 0 END",
+                                                           "CASE WHEN SUM(s.total_volume) > 0 THEN SUM(s.total_msf)/SUM(s.total_volume)*10000 ELSE 0 END"));
+        // avg_msf_per_txn: MSF per transaction. Both grains have msf + txn count.
+        MEASURE_DEFS.put("avg_msf_per_txn",           meas("CASE WHEN COUNT(*) > 0 THEN SUM(t.msf)/COUNT(*) ELSE 0 END",
+                                                           "CASE WHEN SUM(s.total_txns) > 0 THEN SUM(s.total_msf)/SUM(s.total_txns) ELSE 0 END"));
+        // interchange_rate: interchange as basis points of volume. Fact-only.
+        MEASURE_DEFS.put("interchange_rate",          meas("CASE WHEN SUM(t.store_base_currency_amount) > 0 THEN SUM(t.interchange_fee)/SUM(t.store_base_currency_amount)*10000 ELSE 0 END", null));
+        // settlement_ratio: settled ÷ cardholder amount, as a percent. Fact-only.
+        MEASURE_DEFS.put("settlement_ratio",          meas("CASE WHEN SUM(t.txn_currency_amount) > 0 THEN SUM(t.total_amount_settled)/SUM(t.txn_currency_amount)*100 ELSE 0 END", null));
+
         // ----- Aggregatable columns (fact grain) for the Measure Studio builder -----
         AGG_COLUMNS.put("rows", "*");                                  AGG_COLUMN_LABELS.put("rows", "Transaction Rows");      AGG_COLUMN_KINDS.put("rows", "rows");
         AGG_COLUMNS.put("store_base_currency_amount", "t.store_base_currency_amount"); AGG_COLUMN_LABELS.put("store_base_currency_amount", "Volume (settlement)"); AGG_COLUMN_KINDS.put("store_base_currency_amount", "amount");
@@ -1184,6 +1199,11 @@ public class AnalyticsExplorerController {
             case "avg_txn_value" -> "Avg Txn Value";
             case "distinct_merchants" -> "Distinct Merchants";
             case "distinct_cards" -> "Distinct Cards";
+            case "net_revenue" -> "Net Revenue";
+            case "effective_msf_rate" -> "Effective MSF Rate (bps)";
+            case "avg_msf_per_txn" -> "Avg MSF / Txn";
+            case "interchange_rate" -> "Interchange Rate (bps)";
+            case "settlement_ratio" -> "Settlement Ratio (%)";
             default -> key;
         };
     }

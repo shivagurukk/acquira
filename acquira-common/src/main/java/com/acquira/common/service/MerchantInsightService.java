@@ -1180,17 +1180,34 @@ public class MerchantInsightService {
         return best.getLabel();
     }
 
+    /**
+     * Typical (median) month-over-month growth %.
+     *
+     * FIX (correctness): previously this returned the ARITHMETIC MEAN of the
+     * per-month MoM growth percentages. With an uneven history that mean is
+     * meaningless — a single low-base jump (e.g. 254k → 2.1M = +726%) dominates
+     * every other month and produces a headline like "162% avg monthly growth"
+     * that describes no real month. The median is robust to those low-base
+     * outliers and represents a growth rate the merchant actually experiences in
+     * a typical month, so it is the honest summary statistic for this KPI.
+     */
     private BigDecimal calcAvgMonthlyGrowth(List<ChartData> mSales) {
         if (mSales.size() < 2) return BigDecimal.ZERO;
-        int count = 0; double sumGrowth = 0;
+        List<Double> growths = new ArrayList<>();
         for (int i = 1; i < mSales.size(); i++) {
             BigDecimal prev = mSales.get(i - 1).getValue();
-            if (prev.compareTo(BigDecimal.ZERO) > 0) {
-                sumGrowth += mSales.get(i).getValue().subtract(prev).divide(prev, 4, RoundingMode.HALF_UP).doubleValue() * 100;
-                count++;
+            if (prev != null && prev.compareTo(BigDecimal.ZERO) > 0 && mSales.get(i).getValue() != null) {
+                growths.add(mSales.get(i).getValue().subtract(prev)
+                        .divide(prev, 4, RoundingMode.HALF_UP).doubleValue() * 100);
             }
         }
-        return count > 0 ? new BigDecimal(sumGrowth / count).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        if (growths.isEmpty()) return BigDecimal.ZERO;
+        Collections.sort(growths);
+        int m = growths.size();
+        double median = (m % 2 == 1)
+                ? growths.get(m / 2)
+                : (growths.get(m / 2 - 1) + growths.get(m / 2)) / 2.0;
+        return new BigDecimal(median).setScale(1, RoundingMode.HALF_UP);
     }
 
     private String findPeakSeason(List<ChartData> mSales) {
@@ -1330,13 +1347,32 @@ public class MerchantInsightService {
         BigDecimal retentionRate = totalCards > 0
                 ? new BigDecimal(repeatCards * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
 
+        // FIX NEW: tiered repeat segmentation — split the repeat cohort by visit depth
+        //   occasional = exactly 2 visits, core = 3–5, loyal = 6+.
+        //   Each expressed as a % of total unique cards so the three tiers plus the
+        //   single-visit share sum to 100%. Rounded to whole percent to match the
+        //   existing repeatCardPct/retentionRate display convention.
+        long tier2  = cardVisits.values().stream().filter(v -> v == 2).count();
+        long tier35 = cardVisits.values().stream().filter(v -> v >= 3 && v <= 5).count();
+        long tier6  = cardVisits.values().stream().filter(v -> v >= 6).count();
+
         List<ChartData> monthlyFreq = buildMonthlyFrequency(trendCardRows, endOfMonth);
 
-        return ConsumerLoyalty.builder()
+        ConsumerLoyalty loyalty = ConsumerLoyalty.builder()
                 .visitFrequency(freqData).spendBands(bandData).monthlyVisitFreqTrend(monthlyFreq)
                 .retentionRate(retentionRate).totalUniqueCards(new BigDecimal(totalCards))
                 .repeatCardPct(totalCards > 0 ? new BigDecimal(repeatCards * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP) : BigDecimal.ZERO)
                 .build();
+
+        if (totalCards > 0) {
+            loyalty.setRepeatTier2Count(tier2);
+            loyalty.setRepeatTier35Count(tier35);
+            loyalty.setRepeatTier6Count(tier6);
+            loyalty.setRepeatTier2Pct(new BigDecimal(tier2 * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP));
+            loyalty.setRepeatTier35Pct(new BigDecimal(tier35 * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP));
+            loyalty.setRepeatTier6Pct(new BigDecimal(tier6 * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP));
+        }
+        return loyalty;
     }
 
     private List<ChartData> buildSpendBands(Map<String, BigDecimal> cardSpend) {
@@ -1549,7 +1585,7 @@ public class MerchantInsightService {
                 + "comparing the recent half of that period to the earlier half shows a %s%% trend.",
                 monthsOfData, String.format("%+.1f", yoy));
         }
-        n.setGrowthInsight(String.format("Your best performing month so far has been %s. Average monthly growth rate is %s%%. %s",
+        n.setGrowthInsight(String.format("Your best performing month so far has been %s. A typical month grows around %s%% (median). %s",
             bestMo, fmt(avgGrowth), yoyClause).trim());
         String peakSeason = demo.getPeakSeason() != null ? demo.getPeakSeason() : "-";
         String lowSeason = demo.getLowSeason() != null ? demo.getLowSeason() : "-";

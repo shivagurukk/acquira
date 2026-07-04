@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Mail, Send, RefreshCw, AlertCircle, CheckCircle, Clock, Search, FileText } from 'lucide-react';
 import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
 
 const StatementEmails = () => {
+    const { tenantVersion } = useAuth();
     const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
     const [stats, setStats] = useState({ sent: 0, failed: 0, total: 0 });
     const [logs, setLogs] = useState([]);
@@ -16,7 +18,7 @@ const StatementEmails = () => {
     useEffect(() => {
         fetchStats();
         fetchLogs();
-    }, [month, page]);
+    }, [month, page, tenantVersion]);
 
     useEffect(() => {
         let interval;

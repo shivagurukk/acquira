@@ -5,6 +5,7 @@ import {
   CheckCircle, XCircle, Clock, RefreshCw, Copy, Code, Variable
 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const card = { background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 1px 3px rgba(0,0,0,.08)', border: '1px solid #e5e7eb' };
 const badge = (c) => ({ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, background: c + '18', color: c });
@@ -22,6 +23,7 @@ const MERGE_VARS = ['merchant_name', 'mid', 'contact_name', 'contact_email', 'mo
 
 // ─── Templates Tab ───────────────────────────────────────────
 const TemplatesTab = () => {
+  const { tenantVersion } = useAuth();
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -30,7 +32,7 @@ const TemplatesTab = () => {
   const [form, setForm] = useState({ name: '', templateType: 'CUSTOM', subjectTemplate: '', bodyHtml: '', isActive: true, isDefaultForType: false });
 
   const load = async () => { try { const r = await api.get('/email-campaigns/templates'); setTemplates(r.data); } catch (e) { console.error(e); } finally { setLoading(false); } };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [tenantVersion]);
 
   const openAdd = () => { setForm({ name: '', templateType: 'CUSTOM', subjectTemplate: '', bodyHtml: '', isActive: true, isDefaultForType: false }); setEditId(null); setModalOpen(true); };
   const openEdit = (t) => { setForm({ ...t }); setEditId(t.id); setModalOpen(true); };
@@ -154,6 +156,7 @@ const TemplatesTab = () => {
 
 // ─── Campaigns Tab ───────────────────────────────────────────
 const CampaignsTab = () => {
+  const { tenantVersion } = useAuth();
   const [campaigns, setCampaigns] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -169,7 +172,7 @@ const CampaignsTab = () => {
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, []);
+  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [tenantVersion]);
 
   const previewRecipients = async () => {
     try {
@@ -329,6 +332,7 @@ const CampaignsTab = () => {
 
 // ─── History Tab ─────────────────────────────────────────────
 const HistoryTab = () => {
+  const { tenantVersion } = useAuth();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -342,7 +346,7 @@ const HistoryTab = () => {
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [page]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, tenantVersion]);
 
   const statusIcon = (s) => {
     if (s === 'SENT') return <CheckCircle size={14} color="#16a34a" />;

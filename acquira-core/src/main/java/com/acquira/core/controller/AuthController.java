@@ -17,6 +17,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import com.acquira.core.service.EmailService;
@@ -489,6 +490,13 @@ public class AuthController {
     }
 
     // ===== FORGOT PASSWORD — Send reset link via email =====
+    // @Transactional is REQUIRED: this method calls resetTokenRepository
+    // .deleteByUserId(...), a @Modifying bulk-delete query. Without an active
+    // transaction Spring Data throws TransactionRequiredException ("Executing an
+    // update/delete query"), which surfaced as a 500 on the Forgot Password screen
+    // (the frontend swallowed it into the generic success message, so the token
+    // was never saved and no email was ever sent).
+    @Transactional
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(@RequestBody Map<String, String> payload) {
         String email = payload.get("email");
@@ -521,6 +529,10 @@ public class AuthController {
     }
 
     // ===== RESET PASSWORD — Using token from email =====
+    // @Transactional for the same reason as forgot-password: this writes the
+    // reset-token row (used=true) and the user (new password + flags) in one unit,
+    // and adminResetPassword touches password history — all should commit together.
+    @Transactional
     @PostMapping("/reset-password")
     public ResponseEntity<?> resetPassword(@RequestBody Map<String, String> payload) {
         String token = payload.get("token");

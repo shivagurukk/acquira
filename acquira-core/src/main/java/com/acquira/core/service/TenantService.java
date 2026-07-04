@@ -84,6 +84,25 @@ public class TenantService {
     }
 
     public Long getCurrentTenantId() {
+        // CRITICAL: the per-request active tenant lives in TenantContext, which
+        // JwtRequestFilter populates from the X-Tenant-Id header on EVERY request
+        // (validating the user actually has access to it, super-admins excepted).
+        // When a user switches tenant, the frontend sends the new tenant in that
+        // header, so TenantContext holds the switched-to tenant. We MUST honour it.
+        //
+        // Previously this method ignored TenantContext and always re-derived the
+        // user's DB *default* tenant, so after switching from tenant A to tenant B
+        // every endpoint that calls getCurrentTenantId() (the whole
+        // BusinessAnalyticsController, finance, etc.) kept serving tenant A's data
+        // — a cross-tenant data leak. Prefer the request-scoped tenant here.
+        Long ctxTenant = com.acquira.common.config.TenantContext.getCurrentTenant();
+        if (ctxTenant != null) {
+            return ctxTenant;
+        }
+
+        // Fallback path: no request-scoped tenant (e.g. a non-HTTP thread such as
+        // a scheduled/batch job, or a request that arrived without X-Tenant-Id).
+        // Fall back to the authenticated user's default tenant.
         org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder
                 .getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()) {

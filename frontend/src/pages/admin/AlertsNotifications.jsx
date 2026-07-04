@@ -12,6 +12,7 @@ import {
     CheckCircle, XCircle
 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const METRIC_OPTIONS = [
     { value: 'daily_volume_drop', label: 'Daily Volume Drop %', icon: TrendingDown, color: '#EF4444' },
@@ -41,6 +42,7 @@ const demoHistory = [
 ];
 
 const AlertsNotifications = () => {
+    const { tenantVersion } = useAuth();
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
     const [rules, setRules] = useState([]);
@@ -61,7 +63,7 @@ const AlertsNotifications = () => {
         catch { setHistory(demoHistory); }
     }, []);
 
-    useEffect(() => { loadRules(); loadHistory(); }, [loadRules, loadHistory]);
+    useEffect(() => { loadRules(); loadHistory(); }, [loadRules, loadHistory, tenantVersion]);
 
     const saveRule = async () => {
         if (!dialog.name) { setSnack({ open: true, msg: 'Rule name is required', severity: 'error' }); return; }

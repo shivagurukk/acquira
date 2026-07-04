@@ -104,11 +104,12 @@ const useCountUp = (target, dur = 900) => {
 };
 
 const ExecutiveDashboard = () => {
-  const { currencyCode } = useAuth();
+  const { currencyCode, tenantVersion } = useAuth();
   CCY = currencyCode || CCY; // use the active tenant's currency everywhere on this page
   const [data, setData] = useState(null);
   const [schemes, setSchemes] = useState([]);
   const [topMerchants, setTopMerchants] = useState([]);
+  const [cardMix, setCardMix] = useState({ credit: 0, debitPrepaid: 0 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [metric, setMetric] = useState('volume');     // volume | revenue | txns
@@ -136,11 +137,19 @@ const ExecutiveDashboard = () => {
         .map(m => ({ name: merchantLabel(m), value: n(m.mtdVolume), txns: n(m.mtdCount) }))
         .filter(m => m.value > 0)
         .sort((a, b) => b.value - a.value)
-        .slice(0, 7));
+        .slice(0, 10));
+      // Credit vs Debit/Prepaid split — aggregate the day's split across all
+      // fetched merchant rows. These columns come from sum_daily_merchant (daily
+      // grain) via the merchant-summaries endpoint.
+      const mix = content.reduce((a, m) => ({
+        credit: a.credit + n(m.creditVolume),
+        debitPrepaid: a.debitPrepaid + n(m.debitPrepaidVolume),
+      }), { credit: 0, debitPrepaid: 0 });
+      setCardMix(mix);
     }
   }, []);
 
-  useEffect(() => { (async () => { setLoading(true); try { await loadAll(); } finally { setLoading(false); } })(); }, [loadAll]);
+  useEffect(() => { (async () => { setLoading(true); try { await loadAll(); } finally { setLoading(false); } })(); }, [loadAll, tenantVersion]);
 
   const refresh = async () => { setRefreshing(true); try { await loadAll(); } finally { setRefreshing(false); } };
 
@@ -159,6 +168,12 @@ const ExecutiveDashboard = () => {
   const daily = data?.dailySnapshot || {};
   const mtd = data?.mtdSnapshot || {};
   const avgTicket = n(mtd.totalTxns) > 0 ? n(mtd.totalVolume) / n(mtd.totalTxns) : 0;
+  const mtdRevenue = n(mtd.totalRevenue);
+  const mtdMargin = n(mtd.totalVolume) > 0 ? (mtdRevenue / n(mtd.totalVolume)) * 100 : 0;
+  const mtdTxns = n(mtd.totalTxns);
+  const mtdVolLastYear = n(data?.mtdVolumeLastYear);
+  const yoyPct = mtdVolLastYear > 0 ? ((n(mtd.totalVolume) - mtdVolLastYear) / mtdVolLastYear) * 100 : null;
+  const dormantMerchants = n(data?.dormantMerchants);
 
   const spark = (key) => series.map(s => ({ x: s.full, y: s[key] }));
 
@@ -175,8 +190,8 @@ const ExecutiveDashboard = () => {
         .ex-seg{cursor:pointer;transition:all .15s}
         .ex-skel{background:linear-gradient(90deg,${T.subtle} 25%,${T.border} 37%,${T.subtle} 63%);background-size:400% 100%;animation:exsh 1.4s ease infinite;border-radius:10px}
         @keyframes exsh{0%{background-position:100% 50%}100%{background-position:0 50%}}
-        @media (max-width:1024px){.ex-main{grid-template-columns:1fr !important}}
-        @media (max-width:640px){.ex-kpis{grid-template-columns:1fr 1fr !important}}
+        @media (max-width:1024px){.ex-main{grid-template-columns:1fr !important}.ex-kpis{grid-template-columns:1fr 1fr !important}}
+        @media (max-width:640px){.ex-kpis{grid-template-columns:1fr !important}}
       `}</style>
 
       {/* Header */}
@@ -199,15 +214,27 @@ const ExecutiveDashboard = () => {
       </div>
 
       {/* KPI cards */}
-      <div className="ex-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
+      <div className="ex-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
         <KpiCard title="Today's Volume" value={fmtMoney(daily.totalVolume, true)} raw={daily.totalVolume}
           icon={DollarSign} color="#4f46e5" delta={metric === 'volume' ? delta : null} spark={spark('volume')} sparkColor="#4f46e5" />
         <KpiCard title="Today's Revenue" value={fmtMoney(daily.totalRevenue, true)} raw={daily.totalRevenue}
           icon={TrendingUp} color="#10b981" delta={metric === 'revenue' ? delta : null} spark={spark('revenue')} sparkColor="#10b981" />
         <KpiCard title="MTD Volume" value={fmtMoney(mtd.totalVolume, true)} raw={mtd.totalVolume}
           icon={Activity} color="#8b5cf6" sub={`${fmtNum(mtd.totalTxns, true)} txns`} spark={spark('volume')} sparkColor="#8b5cf6" />
+        <KpiCard title="MTD Net Revenue" value={fmtMoney(mtdRevenue, true)} raw={mtdRevenue}
+          icon={Receipt} color="#06b6d4" sub={`${mtdMargin.toFixed(1)}% margin`} spark={spark('revenue')} sparkColor="#06b6d4" />
+        <KpiCard title="MTD Transactions" value={fmtNum(mtdTxns, true)} raw={mtdTxns}
+          icon={Activity} color="#f59e0b" sub="this month" spark={spark('txns')} sparkColor="#f59e0b" />
+        <KpiCard title="MTD Avg Ticket" value={fmtMoney(avgTicket)} raw={avgTicket}
+          icon={CreditCard} color="#ec4899" sub="per transaction" />
+        <KpiCard title="YoY Volume" value={yoyPct == null ? '—' : `${yoyPct >= 0 ? '+' : ''}${yoyPct.toFixed(1)}%`} raw={0}
+          icon={yoyPct != null && yoyPct < 0 ? TrendingDown : TrendingUp}
+          color={yoyPct != null && yoyPct < 0 ? '#ef4444' : '#10b981'}
+          sub={yoyPct == null ? 'no prior-year data' : 'vs last year MTD'} />
         <KpiCard title="Active Merchants" value={fmtNum(data?.activeMerchants)} raw={data?.activeMerchants}
-          icon={Users} color="#f59e0b" sub={`Avg ticket ${fmtMoney(avgTicket)}`} integer />
+          icon={Users} color="#4f46e5" integer />
+        <KpiCard title="Dormant Merchants" value={fmtNum(dormantMerchants)} raw={dormantMerchants}
+          icon={Users} color="#64748b" sub="no recent activity" integer />
       </div>
 
       {/* Main grid: trend + scheme donut */}
@@ -282,23 +309,10 @@ const ExecutiveDashboard = () => {
       {/* Bottom grid: top merchants + revenue composition */}
       <div className="ex-main" style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 16 }}>
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Top merchants</h3>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Top 10 merchants</h3>
           <p style={{ margin: '2px 0 10px', fontSize: 12, color: T.textMut }}>By month-to-date volume</p>
           {topMerchants.length === 0 ? <EmptyChart label="No merchant data" /> : (
-            <div style={{ height: 280 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topMerchants} layout="vertical" margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={T.border} horizontal={false} />
-                  <XAxis type="number" tickFormatter={(v) => fmtMoney(v, true)} tick={{ fontSize: 11, fill: T.textMut }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 12, fill: T.text }} axisLine={false} tickLine={false}
-                    tickFormatter={(s) => s.length > 18 ? s.slice(0, 17) + '…' : s} />
-                  <Tooltip content={<MerchTip />} cursor={{ fill: T.subtle }} />
-                  <Bar dataKey="value" radius={[0, 6, 6, 0]} animationDuration={700}>
-                    {topMerchants.map((_, i) => <Cell key={i} fill={SCHEME_COLORS[i % SCHEME_COLORS.length]} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <TopMerchantList merchants={topMerchants} />
           )}
         </Panel>
 
@@ -306,6 +320,15 @@ const ExecutiveDashboard = () => {
           <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Revenue composition</h3>
           <p style={{ margin: '2px 0 10px', fontSize: 12, color: T.textMut }}>{range}-day fees</p>
           <RevenueComposition series={series} />
+        </Panel>
+      </div>
+
+      {/* Card mix row */}
+      <div style={{ marginTop: 16 }}>
+        <Panel>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Credit vs Debit / Prepaid</h3>
+          <p style={{ margin: '2px 0 14px', fontSize: 12, color: T.textMut }}>Volume split, today</p>
+          <CardMixChart mix={cardMix} />
         </Panel>
       </div>
     </div>
@@ -402,6 +425,106 @@ const MerchTip = ({ active, payload }) => {
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 12px', boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
       <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{d.name}</div>
       <div style={{ fontSize: 12, color: T.textSec }}>{fmtMoney(d.value)} · {fmtNum(d.txns)} txns</div>
+    </div>
+  );
+};
+
+/* Top 10 merchants — ranked list: rank # + name + inline volume bar + txns + % share.
+   Bars are scaled to the leader (max) so the #1 bar fills the track; % share is of
+   the group total so the percentages sum to 100% across the visible list. */
+const TopMerchantList = ({ merchants }) => {
+  const max = merchants.reduce((a, m) => Math.max(a, n(m.value)), 0) || 1;
+  const total = merchants.reduce((a, m) => a + n(m.value), 0) || 1;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {merchants.map((m, i) => {
+        const color = SCHEME_COLORS[i % SCHEME_COLORS.length];
+        const barPct = (n(m.value) / max) * 100;
+        const sharePct = (n(m.value) / total) * 100;
+        return (
+          <div key={i} className="ex-seg" style={{
+            display: 'grid',
+            gridTemplateColumns: '26px 1fr 92px 52px',
+            alignItems: 'center', gap: 10,
+            padding: '9px 6px',
+            borderBottom: i < merchants.length - 1 ? `1px solid ${T.border}` : 'none',
+          }}>
+            {/* Rank */}
+            <span style={{
+              fontSize: 12, fontWeight: 800, textAlign: 'center',
+              color: i < 3 ? color : T.textMut,
+              fontVariantNumeric: 'tabular-nums',
+            }}>{i + 1}</span>
+
+            {/* Name + inline volume bar */}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                title={m.name}>{m.name}</div>
+              <div style={{ marginTop: 5, height: 6, background: T.subtle, borderRadius: 999, overflow: 'hidden' }}>
+                <div style={{ width: `${barPct}%`, height: '100%', background: color, borderRadius: 999, transition: 'width .6s ease' }} />
+              </div>
+            </div>
+
+            {/* Volume + txns */}
+            <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{fmtMoney(m.value, true)}</div>
+              <div style={{ fontSize: 11, color: T.textMut, marginTop: 2 }}>{fmtNum(m.txns, true)} txns</div>
+            </div>
+
+            {/* % share */}
+            <span style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 600, color: T.textSec, fontVariantNumeric: 'tabular-nums' }}>
+              {sharePct.toFixed(1)}%
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+/* Credit vs Debit/Prepaid volume split — donut + legend.
+   Data aggregated client-side from the merchant-summaries rows (sum_daily_merchant
+   creditVolume / debitPrepaidVolume columns). */
+const CardMixChart = ({ mix }) => {
+  const data = [
+    { name: 'Credit', value: n(mix.credit), color: '#4f46e5' },
+    { name: 'Debit / Prepaid', value: n(mix.debitPrepaid), color: '#10b981' },
+  ].filter(d => d.value > 0);
+  const total = data.reduce((a, b) => a + b.value, 0);
+  if (total === 0) return <EmptyChart label="No credit/debit split for today" />;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 20, alignItems: 'center' }}>
+      <div style={{ height: 200 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88} paddingAngle={2} animationDuration={700}>
+              {data.map((d, i) => <Cell key={i} fill={d.color} stroke="none" />)}
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {data.map((d, i) => (
+          <div key={i}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, marginBottom: 5 }}>
+              <span style={{ width: 11, height: 11, borderRadius: 3, background: d.color, flexShrink: 0 }} />
+              <span style={{ fontWeight: 600 }}>{d.name}</span>
+              <span style={{ marginLeft: 'auto', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(d.value, true)}</span>
+              <span style={{ color: T.textMut, width: 52, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                {((d.value / total) * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div style={{ height: 8, background: T.subtle, borderRadius: 999, overflow: 'hidden' }}>
+              <div style={{ width: `${(d.value / total) * 100}%`, height: '100%', background: d.color, borderRadius: 999, transition: 'width .6s ease' }} />
+            </div>
+          </div>
+        ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, padding: '9px 12px', background: T.subtle, borderRadius: 10 }}>
+          <CreditCard size={16} color={T.textSec} />
+          <span style={{ fontSize: 13, color: T.textSec }}>Total split volume</span>
+          <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 800 }}>{fmtMoney(total)}</span>
+        </div>
+      </div>
     </div>
   );
 };

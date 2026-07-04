@@ -29,6 +29,19 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     private final UserTenantAccessRepository userTenantAccessRepository;
     private final TenantRepository tenantRepository;
 
+    // ── Cached all-tenant-IDs list (super-admin visible-tenants scope) ──────
+    // Super-admin requests need the full list of tenant IDs to populate
+    // visibleTenants for cross-tenant rollups. Loading it from the DB on EVERY
+    // super-admin request is a needless hot-path query. Tenants are created very
+    // rarely (admin action), so a short TTL cache is safe: a newly-created tenant
+    // becomes visible to super-admins within at most CACHE_TTL_MS. The cached
+    // reference is replaced atomically (volatile), so concurrent reads are safe
+    // without locking; a brief window where two threads both refresh is harmless
+    // (same data). On any DB error we do NOT cache, so the next request retries.
+    private static volatile java.util.List<Long> cachedTenantIds = null;
+    private static volatile long cachedTenantIdsAt = 0L;
+    private static final long CACHE_TTL_MS = 60_000L; // 60s
+
     public JwtRequestFilter(CustomUserDetailsService userDetailsService,
             JwtUtil jwtUtil,
             UserRepository userRepository,
@@ -39,6 +52,29 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
         this.tenantRepository = tenantRepository;
+    }
+
+    /**
+     * All tenant IDs, cached for {@link #CACHE_TTL_MS}. Returns null on DB error
+     * (caller falls back to current-tenant-only scope, which is the safe default).
+     */
+    private java.util.List<Long> getAllTenantIdsCached() {
+        long now = System.currentTimeMillis();
+        java.util.List<Long> cached = cachedTenantIds;
+        if (cached != null && (now - cachedTenantIdsAt) < CACHE_TTL_MS) {
+            return cached;
+        }
+        try {
+            java.util.List<Long> fresh = tenantRepository.findAll().stream()
+                    .map(com.acquira.common.model.Tenant::getTenantId)
+                    .collect(java.util.stream.Collectors.toList());
+            cachedTenantIds = fresh;
+            cachedTenantIdsAt = now;
+            return fresh;
+        } catch (Exception e) {
+            logger.warn("Could not load all tenants for super admin scope: " + e.getMessage());
+            return null; // do not cache failures; safe fallback handled by caller
+        }
     }
 
     @Override
@@ -175,16 +211,14 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                                 // this, getVisibleTenants() returned only the currently
                                 // active tenant for SA users — silently scoping every
                                 // multi-tenant query to one tenant.
-                                try {
-                                    java.util.List<Long> allTenantIds = tenantRepository.findAll().stream()
-                                            .map(com.acquira.common.model.Tenant::getTenantId)
-                                            .collect(java.util.stream.Collectors.toList());
+                                // Cached (60s TTL) to avoid a tenantRepository.findAll()
+                                // on every super-admin request — see getAllTenantIdsCached().
+                                java.util.List<Long> allTenantIds = getAllTenantIdsCached();
+                                if (allTenantIds != null) {
                                     TenantContext.setVisibleTenants(allTenantIds);
-                                } catch (Exception e) {
-                                    logger.warn("Could not load all tenants for super admin scope: " + e.getMessage());
-                                    // Fall back to current-tenant-only scope; safer than
-                                    // accidentally widening visibility.
                                 }
+                                // else: load failed — fall back to current-tenant-only
+                                // scope; safer than accidentally widening visibility.
                             }
                         }
                     }

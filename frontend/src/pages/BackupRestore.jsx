@@ -33,7 +33,10 @@ const BackupRestore = () => {
             setMsg({ type: 'success', text: `Backup created: ${res.data.fileName}` });
             fetchBackups();
         } catch (error) {
-            const errMsg = error.response?.data?.error || 'Unknown error';
+            const d = error.response?.data || {};
+            // The backend returns { error, detail } where detail holds the real
+            // pg_dump output (binary-not-found / version mismatch / auth / perms).
+            const errMsg = [d.error || 'Unknown error', d.detail].filter(Boolean).join(' — ');
             setMsg({ type: 'error', text: `Backup failed: ${errMsg}` });
         } finally {
             setActionLoading(false);
@@ -52,7 +55,8 @@ const BackupRestore = () => {
             await api.post(`/admin/backups/restore/${fileName}`);
             setMsg({ type: 'success', text: 'Restore completed successfully!' });
         } catch (error) {
-            const errMsg = error.response?.data?.error || 'Unknown error';
+            const d = error.response?.data || {};
+            const errMsg = [d.error || 'Unknown error', d.detail].filter(Boolean).join(' — ');
             setMsg({ type: 'error', text: `Restore failed: ${errMsg}` });
         } finally {
             setActionLoading(false);

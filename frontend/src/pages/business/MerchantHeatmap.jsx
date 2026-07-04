@@ -7,12 +7,14 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 
 const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', maximumFractionDigits: 0 }).format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
 const MerchantHeatmap = () => {
+    const { tenantVersion } = useAuth();
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [years, setYears] = useState([new Date().getFullYear()]);
@@ -44,7 +46,7 @@ const MerchantHeatmap = () => {
     }, []);
 
     // P0-1 FIX: depend on appliedFilters (not the live `filters` object).
-    useEffect(() => { fetchData(); }, [year, appliedFilters]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { fetchData(); }, [year, appliedFilters, tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchData = async () => {
         setLoading(true);

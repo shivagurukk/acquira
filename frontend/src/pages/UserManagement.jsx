@@ -6,6 +6,7 @@ import {
   Trash2, Star, Globe, Clock, CheckCircle, XCircle, Users, Inbox
 } from 'lucide-react';
 import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
 
 /* ─────────────────────────────────────────────────────────────
    Design tokens — single source of truth. Every colour routes
@@ -43,6 +44,7 @@ const card = { background: T.card, borderRadius: T.radiusLg, boxShadow: 'var(--s
 const badge = (bg, fg) => ({ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600, background: bg, color: fg, whiteSpace: 'nowrap' });
 
 const UserManagement = () => {
+  const { tenantVersion } = useAuth();
   const [users, setUsers] = useState([]);
   const [banks, setBanks] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -117,7 +119,7 @@ const UserManagement = () => {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { fetchAll(); }, [fetchAll, tenantVersion]);
 
   // ─── Filter users ─────────────────────────────────────
   const filteredUsers = users.filter(u => {

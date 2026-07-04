@@ -3,6 +3,7 @@ import { Box, Paper, Typography, Chip, Stack, Button, Tooltip } from '@mui/mater
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { ShieldAlert, TrendingDown, DollarSign, AlertTriangle, Users, Check, X, RotateCcw, Download } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
@@ -31,6 +32,7 @@ const fmtMoney = (v) => {
 };
 
 const RevenueLeakage = () => {
+    const { tenantVersion } = useAuth();
     const [rows, setRows] = useState([]);
     const [summary, setSummary] = useState(null);
     const [status, setStatus] = useState('OPEN');
@@ -55,7 +57,7 @@ const RevenueLeakage = () => {
         }
     }, [status]);
 
-    useEffect(() => { fetchAll(); }, [fetchAll]);
+    useEffect(() => { fetchAll(); }, [fetchAll, tenantVersion]);
 
     // "Run report" runs detection on the server, then reloads.
     const runDetection = async () => {

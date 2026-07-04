@@ -62,13 +62,17 @@ public class TransactionJobConfig {
     private final SumDailyMerchantRepository dailyMerchantRepo;
     private final SumMonthlyMerchantMetricsRepository monthlyMetricsRepo;
     private final com.acquira.batch.service.PartitionMaintenanceService partitionMaintenanceService;
+    private final com.acquira.common.service.ChurnScoringService churnScoringService;
+    private final com.acquira.common.service.MerchantSegmentationService merchantSegmentationService;
 
     public TransactionJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate,
             MerchantMetricCalculator merchantMetricCalculator,
             SumDailyMerchantRepository dailyMerchantRepo,
             SumMonthlyMerchantMetricsRepository monthlyMetricsRepo,
-            com.acquira.batch.service.PartitionMaintenanceService partitionMaintenanceService) {
+            com.acquira.batch.service.PartitionMaintenanceService partitionMaintenanceService,
+            com.acquira.common.service.ChurnScoringService churnScoringService,
+            com.acquira.common.service.MerchantSegmentationService merchantSegmentationService) {
         this.jobRepository = jobRepository;
         this.transactionManager = transactionManager;
         this.dataSource = dataSource;
@@ -77,6 +81,8 @@ public class TransactionJobConfig {
         this.dailyMerchantRepo = dailyMerchantRepo;
         this.monthlyMetricsRepo = monthlyMetricsRepo;
         this.partitionMaintenanceService = partitionMaintenanceService;
+        this.churnScoringService = churnScoringService;
+        this.merchantSegmentationService = merchantSegmentationService;
     }
 
     private static final String NUMERIC_ONLY_REGEX = "'^[0-9.]+$'";
@@ -117,12 +123,15 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("stagingToFactStep") Step stagingToFactStep,
             @org.springframework.beans.factory.annotation.Qualifier("populateSummaryStep") Step populateSummaryStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateBusinessMetricsStep") Step calculateBusinessMetricsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("scoreMlStep") Step scoreMlStep,
+            @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
         return new JobBuilder("transactionLoadJob", jobRepository)
                 .start(ensurePartitionsStep).next(splitExcelStep).next(cleanTargetDayStep)
                 .next(masterIngestStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
-                .next(calculateBusinessMetricsStep).next(calculateDailyDashboardMetricsStep).build();
+                .next(calculateBusinessMetricsStep).next(scoreMlStep).next(computeSegmentsStep)
+                .next(calculateDailyDashboardMetricsStep).build();
     }
 
     @Bean
@@ -1066,6 +1075,23 @@ public class TransactionJobConfig {
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
                         "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
+                // sum_monthly_insight — month-grain rollup of sum_daily_insight (phase1).
+                // Powers WIDE-range Explorer/Business queries: a year reads ~12 month
+                // rows per dimensional combo instead of 365 day rows. Additive SUMs, so
+                // monthly = SUM(daily) reconciles exactly. Mirrors the daily grain with
+                // business_date replaced by month_key (YYYYMM).
+                phase2.add(runAsync(exec, "sum_monthly_insight", () ->
+                    jdbcTemplate.update("INSERT INTO sum_monthly_insight (tenant_id, month_key, merchant_id, store_id, terminal_id, " +
+                        "card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf) " +
+                        "SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), merchant_id, store_id, terminal_id, " +
+                        "card_scheme, card_type, destination, channel, is_opt_in, " +
+                        "SUM(total_txns), SUM(total_volume), SUM(total_msf) " +
+                        "FROM sum_daily_insight WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN " + monthScope +
+                        " GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM'), merchant_id, store_id, terminal_id, " +
+                        "card_scheme, card_type, destination, channel, is_opt_in " +
+                        "ON CONFLICT (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +
+                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf",
+                        tenantId)));
                 phase2.add(runAsync(exec, "top_spending_customer", () ->
                     jdbcTemplate.update("WITH DailyCustSpend AS (SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number, " +
                         "SUM(store_base_currency_amount) as total_spend FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
@@ -1184,6 +1210,64 @@ public class TransactionJobConfig {
                 }
             }
             log.info(String.format("businessMetrics completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
+            return RepeatStatus.FINISHED;
+        };
+    }
+
+    /**
+     * ML churn-risk scoring step. Runs AFTER calculateBusinessMetricsStep so that
+     * merchant_activity_summary (labels) and sum_daily_merchant (features) are both
+     * fresh for this tenant. CRITICAL: this step must NEVER fail the ingestion job —
+     * the entire body is exception-isolated and always returns FINISHED. A model
+     * failure at worst leaves churn scores stale; ingestion is unaffected.
+     */
+    @Bean public Step scoreMlStep(Tasklet scoreMlTasklet) {
+        return new StepBuilder("scoreMlStep", jobRepository)
+            .tasklet(scoreMlTasklet, transactionManager)
+            .transactionAttribute(noTxn()).build();
+    }
+
+    @Bean @StepScope
+    public Tasklet scoreMlTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+        return (contribution, chunkContext) -> {
+            if (tenantId == null) return RepeatStatus.FINISHED;
+            long start = System.currentTimeMillis();
+            try {
+                int scored = churnScoringService.trainAndScore(tenantId);
+                log.info(String.format("scoreMl (churn) completed in %.1fs (scored %d merchants)",
+                    (System.currentTimeMillis() - start) / 1000.0, scored));
+            } catch (Exception e) {
+                // Never fail the ingestion job because of ML. Log and move on.
+                log.warn("scoreMl (churn) failed (non-fatal, ingestion unaffected): {}", e.toString());
+            }
+            return RepeatStatus.FINISHED;
+        };
+    }
+
+    /**
+     * Merchant segmentation step. Runs AFTER scoreMlStep so sum_daily_merchant,
+     * merchant_activity_summary, and the churn score are all fresh. Assigns each
+     * merchant a primary segment + secondary tags from trailing-90d metrics and
+     * per-tenant percentiles. Exception-isolated — can never fail ingestion.
+     */
+    @Bean public Step computeSegmentsStep(Tasklet computeSegmentsTasklet) {
+        return new StepBuilder("computeSegmentsStep", jobRepository)
+            .tasklet(computeSegmentsTasklet, transactionManager)
+            .transactionAttribute(noTxn()).build();
+    }
+
+    @Bean @StepScope
+    public Tasklet computeSegmentsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+        return (contribution, chunkContext) -> {
+            if (tenantId == null) return RepeatStatus.FINISHED;
+            long start = System.currentTimeMillis();
+            try {
+                int n = merchantSegmentationService.computeForTenant(tenantId);
+                log.info(String.format("computeSegments completed in %.1fs (segmented %d merchants)",
+                    (System.currentTimeMillis() - start) / 1000.0, n));
+            } catch (Exception e) {
+                log.warn("computeSegments failed (non-fatal, ingestion unaffected): {}", e.toString());
+            }
             return RepeatStatus.FINISHED;
         };
     }

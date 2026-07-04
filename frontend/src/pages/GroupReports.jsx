@@ -57,7 +57,7 @@ const formatNumber  = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
 const GroupReports = () => {
-    const { currencyCode = 'AED', formatCurrency: fmtCurr } = useAuth() || {};
+    const { currencyCode = 'AED', formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
     const formatCurrency = useCallback((val) => {
         if (fmtCurr) return fmtCurr(val);
         return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(val || 0);
@@ -80,7 +80,7 @@ const GroupReports = () => {
     // useDataBounds resolves the FULL window of data that actually exists
     // (earliest -> latest) from /api/business/data-bounds, with a wide fallback.
     // Shared across all business report pages so the logic can't drift.
-    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds();
+    const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds(tenantVersion);
 
     // Push the resolved window into the filter state once it arrives. Marked
     // CUSTOM because we're supplying an explicit range, not a preset.
@@ -159,7 +159,7 @@ const GroupReports = () => {
     // guaranteed-empty fetch on a fresh page where transaction data lags).
     useEffect(() => {
         if (boundsLoaded) fetchData();
-    }, [boundsLoaded, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [boundsLoaded, activeTab, tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleFilterChange = (keyOrObj, val) => {
         if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));

@@ -20,9 +20,11 @@ import {
     ResponsiveContainer, PieChart as RPieChart, Pie, Cell, Legend,
     LineChart, Line, AreaChart, Area, ScatterChart, Scatter, ZAxis,
     RadarChart, Radar as RadarShape, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-    ComposedChart, Treemap, RadialBarChart, RadialBar
+    ComposedChart, Treemap, RadialBarChart, RadialBar,
+    ReferenceLine, LabelList, FunnelChart, Funnel, Sankey, Layer, Rectangle
 } from 'recharts';
 import { explorerApi, reportApi, savedViewsApi } from '../../api/explorer';
+import { useAuth } from '../../contexts/AuthContext';
 import RGL, { WidthProvider } from 'react-grid-layout';
 
 const SheetGrid = WidthProvider(RGL);
@@ -75,6 +77,11 @@ const CHART_TYPES = [
     { key: 'treemap',    label: 'Treemap',      icon: LayoutGrid,   group: 'advanced' },
     { key: 'gauge',      label: 'Gauge',        icon: Gauge,        group: 'advanced' },
     { key: 'waterfall',  label: 'Waterfall',    icon: ArrowUpDown,  group: 'advanced' },
+    { key: 'heatmap',    label: 'Heatmap',      icon: Layers,       group: 'advanced' },
+    { key: 'funnel',     label: 'Funnel',       icon: Filter,       group: 'advanced' },
+    { key: 'sankey',     label: 'Sankey',       icon: GitBranch,    group: 'advanced' },
+    { key: 'kpi',        label: 'KPI',          icon: Hash,         group: 'advanced' },
+    { key: 'bullet',     label: 'Bullet',       icon: Target,       group: 'advanced' },
 ];
 
 const CATS = {
@@ -109,6 +116,11 @@ const BASE_FMT = {
     total_interchange: { unit: 'currency', decimals: 2 },
     total_txn_currency_amount: { unit: 'currency', decimals: 2 },
     avg_txn_value: { unit: 'currency', decimals: 2 },
+    net_revenue: { unit: 'currency', decimals: 2 },
+    avg_msf_per_txn: { unit: 'currency', decimals: 2 },
+    effective_msf_rate: { unit: 'number', decimals: 1, suffix: ' bps' },
+    interchange_rate: { unit: 'number', decimals: 1, suffix: ' bps' },
+    settlement_ratio: { unit: 'number', decimals: 1, suffix: '%' },
 };
 // Format a number per a {unit,decimals,scale,prefix,suffix} spec. Currency is symbol-agnostic
 // (multi-tenant currencies vary) — use prefix/suffix for a symbol.
@@ -174,6 +186,11 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
         .qe4-scroll::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.13); }
         .qe4 *:focus-visible { outline: 2px solid rgba(67,97,238,0.45); outline-offset: 1px; border-radius: 5px; }
         .qe4-tile:hover { box-shadow: 0 14px 30px -10px rgba(15,23,42,0.18), 0 4px 10px -4px rgba(15,23,42,0.08); transform: translateY(-3px); }
+        .qe4-caret { width: 3px; height: 26px; border-radius: 3px; background: #4361ee; box-shadow: 0 0 8px rgba(67,97,238,0.6); animation: qe4Caret 0.8s ease-in-out infinite; align-self: center; }
+        @keyframes qe4Caret { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+        @keyframes qe4Shake { 0%,100% { transform: translateX(0); } 20%,60% { transform: translateX(-4px); } 40%,80% { transform: translateX(4px); } }
+        .qe4-shake { animation: qe4Shake 0.35s ease; }
+        .qe4-droptarget { outline: 2px dashed rgba(67,97,238,0.55) !important; outline-offset: -2px; }
     `;
     document.head.appendChild(s);
 }
@@ -181,12 +198,31 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
 /* ═══════════════════════════════════════════════════════
    SUB COMPONENTS
    ═══════════════════════════════════════════════════════ */
+/* DnD context — module-level so drop targets can inspect the in-flight payload
+   during dragover (dataTransfer data is unreadable until drop). Same-page only. */
+let DRAG_CTX = null;
+/* Double-click-to-add bridge (set by the main component, like CHART_FMT). */
+let QE4_ADD = null;
+/* Custom drag ghost: styled chip instead of the browser's washed-out snapshot. */
+const dragGhost = (e, label, color) => {
+    try {
+        const g = document.createElement('div');
+        g.textContent = label;
+        g.style.cssText = `position:fixed;top:-1000px;left:-1000px;padding:5px 12px;border-radius:7px;font:700 12px Inter,system-ui,sans-serif;color:#fff;background:${color};box-shadow:0 8px 24px rgba(15,23,42,.35);pointer-events:none;z-index:9999;`;
+        document.body.appendChild(g);
+        e.dataTransfer.setDragImage(g, 12, 14);
+        setTimeout(() => { try { document.body.removeChild(g); } catch {} }, 0);
+    } catch {}
+};
+
 const SideChip = ({ field, source, active }) => {
     const c = gc(field.category); const I = c.icon;
     return (
         <Box className="qe4-pill qe4-chip-soft" draggable
-            onDragStart={e => { e.dataTransfer.setData('text/plain', JSON.stringify({ ...field, source })); e.dataTransfer.effectAllowed = 'copy'; }}
-            title={active ? `${field.label} — in use` : field.label}
+            onDragStart={e => { DRAG_CTX = { zone: null, item: { ...field, source }, consumed: false }; e.dataTransfer.setData('text/plain', JSON.stringify({ ...field, source })); e.dataTransfer.effectAllowed = 'copy'; dragGhost(e, field.label, c.color); }}
+            onDragEnd={() => { DRAG_CTX = null; }}
+            onDoubleClick={() => QE4_ADD?.dim?.(field)}
+            title={active ? `${field.label} — in use` : `${field.label} · double-click to add`}
             sx={{ display: 'inline-flex', alignItems: 'center', gap: '5px', px: '9px', py: '4.5px', borderRadius: '6px', fontSize: 11.5, fontWeight: 600, letterSpacing: '-0.01em', cursor: 'grab', userSelect: 'none', whiteSpace: 'nowrap', color: active ? '#fff' : 'rgba(255,255,255,0.75)', bgcolor: active ? `${c.color}26` : 'rgba(255,255,255,0.04)', border: `1px solid ${active ? `${c.color}66` : 'rgba(255,255,255,0.06)'}`, transition: 'all 0.2s ease', '&:hover': { bgcolor: active ? `${c.color}33` : 'rgba(255,255,255,0.08)', borderColor: `${c.color}55`, transform: 'translateY(-1px)', boxShadow: `0 4px 12px ${c.color}20` } }}>
             {active && <Box component="span" sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: c.color, boxShadow: `0 0 6px ${c.color}` }} />}
             <I size={11} style={{ opacity: 0.6 }} />{field.label}
@@ -196,7 +232,9 @@ const SideChip = ({ field, source, active }) => {
 
 const SideMeasChip = ({ measure }) => (
     <Box className="qe4-pill" draggable
-        onDragStart={e => { e.dataTransfer.setData('text/plain', JSON.stringify({ ...measure, source: 'measure' })); }}
+        onDragStart={e => { DRAG_CTX = { zone: null, item: { ...measure, source: 'measure' }, consumed: false }; e.dataTransfer.setData('text/plain', JSON.stringify({ ...measure, source: 'measure' })); dragGhost(e, measure.label, '#00b37e'); }}
+        onDragEnd={() => { DRAG_CTX = null; }}
+        onDoubleClick={() => QE4_ADD?.meas?.(measure)}
         sx={{ display: 'inline-flex', alignItems: 'center', gap: '5px', px: '9px', py: '4.5px', borderRadius: '6px', fontSize: 11.5, fontWeight: 600, cursor: 'grab', userSelect: 'none', whiteSpace: 'nowrap', color: 'rgba(0,179,126,0.85)', bgcolor: 'rgba(0,179,126,0.05)', border: '1px solid rgba(0,179,126,0.1)', transition: 'all 0.2s ease', '&:hover': { bgcolor: 'rgba(0,179,126,0.12)', transform: 'translateY(-1px)' } }}>
         <BarChart3 size={11} style={{ opacity: 0.6 }} />{measure.label}
     </Box>
@@ -213,21 +251,77 @@ const ZoneMeasChip = ({ measure, onRemove }) => (
         sx={{ height: 28, fontSize: 12, fontWeight: 600, bgcolor: T.greenGhost, color: T.green, border: `1px solid ${T.greenBorder}`, '& .MuiChip-deleteIcon': { color: T.green, opacity: 0.5, '&:hover': { opacity: 1, color: T.rose } }, '& .MuiChip-icon': { ml: 0.5 } }} />
 );
 
-const DropZone = ({ label, items, onDrop, onRemove, accent, emptyText, renderItem }) => {
-    const [over, setOver] = useState(false);
+/* DnD-aware drop zone: reorder by dragging chips, swap by dropping a field onto
+   a chip, insert-at-caret, wrong-type shake feedback, drag-out-to-remove. */
+const DropZone = ({ label, items, onChange, validate, zoneId, accent, emptyText, renderItem }) => {
+    const [over, setOver] = useState(null);   // 'ok' | 'no' | null
+    const [caret, setCaret] = useState(-1);
+    const [shake, setShake] = useState(false);
+    const wrapRef = useRef(null);
+
+    const payloadOf = e => { try { return JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return null; } };
+    const caretFrom = e => {
+        const wrap = wrapRef.current; if (!wrap) return items.length;
+        const chips = [...wrap.querySelectorAll('[data-zi]')];
+        for (let i = 0; i < chips.length; i++) { const r = chips[i].getBoundingClientRect(); if (e.clientY < r.top - 4) continue; if (e.clientY <= r.bottom + 4 && e.clientX < r.left + r.width / 2) return i; }
+        return items.length;
+    };
+    const acceptable = () => !DRAG_CTX || DRAG_CTX.zone === zoneId || (DRAG_CTX.zone == null && !!validate(DRAG_CTX.item));
+    const reject = () => { setShake(true); setTimeout(() => setShake(false), 380); };
+
+    const handleDrop = (e, chipIdx = null) => {
+        e.preventDefault(); e.stopPropagation();
+        setOver(null); setCaret(-1);
+        if (DRAG_CTX) DRAG_CTX.consumed = true;
+        if (DRAG_CTX?.zone === zoneId) {                       // reorder within this zone
+            const from = DRAG_CTX.index;
+            let to = chipIdx != null ? chipIdx : caretFrom(e);
+            if (to > from) to -= 1;
+            if (from === to) return;
+            const n = [...items]; const [m] = n.splice(from, 1); n.splice(to, 0, m);
+            onChange(n); return;
+        }
+        if (DRAG_CTX?.zone) { reject(); return; }              // chip from the other zone
+        const p = DRAG_CTX?.item || payloadOf(e);
+        const v = p ? validate(p) : null;
+        if (!v) { reject(); return; }
+        if (chipIdx != null) {                                 // swap-on-drop over a chip
+            if (items.some((x, i) => x.key === v.key && i !== chipIdx)) return;
+            const n = [...items]; n[chipIdx] = v; onChange(n); return;
+        }
+        if (items.some(x => x.key === v.key)) return;
+        const n = [...items]; n.splice(caretFrom(e), 0, v); onChange(n);
+    };
+
     return (
-        <Paper elevation={0}
-            onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
-            onDrop={e => { e.preventDefault(); setOver(false); try { onDrop(JSON.parse(e.dataTransfer.getData('text/plain'))); } catch {} }}
-            sx={{ px: 1.75, py: 1.15, borderRadius: `${T.radius}px`, minHeight: 56, bgcolor: over ? `${accent}08` : T.surfaceMuted, border: `1px solid ${over ? accent : T.cardBorder}`, boxShadow: over ? `0 0 0 3px ${accent}1f` : 'inset 0 1px 2px rgba(15,23,42,0.03)', transition: 'background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease' }}>
+        <Paper elevation={0} className={shake ? 'qe4-shake' : ''}
+            onDragOver={e => { e.preventDefault(); const ok = acceptable(); e.dataTransfer.dropEffect = ok ? 'copy' : 'none'; setOver(ok ? 'ok' : 'no'); setCaret(ok && DRAG_CTX ? caretFrom(e) : -1); }}
+            onDragLeave={() => { setOver(null); setCaret(-1); }}
+            onDrop={e => handleDrop(e)}
+            sx={{ px: 1.75, py: 1.15, borderRadius: `${T.radius}px`, minHeight: 56, bgcolor: over === 'ok' ? `${accent}08` : over === 'no' ? `${T.rose}06` : T.surfaceMuted, border: `1px solid ${over === 'ok' ? accent : over === 'no' ? T.rose : T.cardBorder}`, boxShadow: over === 'ok' ? `0 0 0 3px ${accent}1f` : 'inset 0 1px 2px rgba(15,23,42,0.03)', transition: 'background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease' }}>
             <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: items.length ? 0.85 : 0 }}>
-                <Box sx={{ width: 4, height: 13, borderRadius: 4, bgcolor: accent, opacity: over ? 1 : 0.7 }} />
+                <Box sx={{ width: 4, height: 13, borderRadius: 4, bgcolor: over === 'no' ? T.rose : accent, opacity: over ? 1 : 0.7 }} />
                 <Typography variant="caption" sx={{ fontWeight: 800, color: T.td2, textTransform: 'uppercase', letterSpacing: 1.4, fontSize: 9.5 }}>{label}</Typography>
                 {items.length > 0 && <Chip size="small" label={items.length} sx={{ height: 18, fontSize: 10, fontWeight: 800, bgcolor: `${accent}14`, color: accent, '& .MuiChip-label': { px: 0.6 } }} />}
+                {over === 'no' && <Typography sx={{ fontSize: 9.5, fontWeight: 800, color: T.rose, textTransform: 'none', letterSpacing: 0 }}>not allowed here</Typography>}
             </Stack>
             {items.length > 0 ? (
-                <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
-                    {items.map((f, i) => renderItem ? renderItem(f, i) : <ZoneChip key={f.key + i} field={f} onRemove={() => onRemove(i)} />)}
+                <Stack ref={wrapRef} direction="row" flexWrap="wrap" useFlexGap sx={{ gap: '6px', alignItems: 'center' }}>
+                    {items.map((f, i) => (
+                        <React.Fragment key={f.key + i}>
+                            {caret === i && <Box className="qe4-caret" />}
+                            <Box data-zi={i} draggable
+                                onDragStart={e => { DRAG_CTX = { zone: zoneId, index: i, item: f, consumed: false }; e.dataTransfer.setData('text/plain', JSON.stringify({ __zone: zoneId, index: i })); e.dataTransfer.effectAllowed = 'move'; dragGhost(e, f.label, accent); }}
+                                onDragEnd={() => { if (DRAG_CTX && DRAG_CTX.zone === zoneId && !DRAG_CTX.consumed) onChange(items.filter((_, x) => x !== i)); DRAG_CTX = null; }}
+                                onDragOver={e => { e.preventDefault(); e.stopPropagation(); setOver(acceptable() ? 'ok' : 'no'); setCaret(-1); }}
+                                onDrop={e => handleDrop(e, i)}
+                                sx={{ display: 'inline-flex', cursor: 'grab', '&:active': { cursor: 'grabbing' } }}>
+                                {renderItem ? renderItem(f, i, () => onChange(items.filter((_, x) => x !== i)))
+                                            : <ZoneChip field={f} onRemove={() => onChange(items.filter((_, x) => x !== i))} />}
+                            </Box>
+                        </React.Fragment>
+                    ))}
+                    {caret === items.length && <Box className="qe4-caret" />}
                 </Stack>
             ) : (
                 <Stack direction="row" spacing={0.75} alignItems="center" sx={{ py: 0.4, opacity: 0.6 }}>
@@ -239,18 +333,120 @@ const DropZone = ({ label, items, onDrop, onRemove, accent, emptyText, renderIte
     );
 };
 
+/* ═══ MINI DATE-RANGE PICKER — calendar popover, no native input UI ═══
+   Keeps the YYYY-MM-DD string contract (sd/ed) the rest of the screen relies on,
+   and is timezone-safe (builds the string from local Y/M/D, never toISOString). */
+const MDP_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const mdpFmt = (s) => {
+    if (!s) return '';
+    const [y, m, d] = s.split('-').map(Number);
+    if (!y || !m || !d) return s;
+    return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+const mdpStr = (date) => {
+    const y = date.getFullYear(), m = String(date.getMonth() + 1).padStart(2, '0'), d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+};
+const MiniDatePicker = ({ startDate, endDate, onChange }) => {
+    const [open, setOpen] = useState(false);
+    const [selectingStart, setSelectingStart] = useState(true);
+    const [month, setMonth] = useState(() => {
+        const anchor = startDate || endDate;
+        if (anchor) { const [y, m] = anchor.split('-').map(Number); return new Date(y, (m || 1) - 1, 1); }
+        return new Date();
+    });
+    const ref = useRef(null);
+    useEffect(() => {
+        const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', h);
+        return () => document.removeEventListener('mousedown', h);
+    }, []);
+
+    const openFor = (start) => { setSelectingStart(start); const anchor = (start ? startDate : endDate) || startDate || endDate; if (anchor) { const [y, m] = anchor.split('-').map(Number); setMonth(new Date(y, (m || 1) - 1, 1)); } setOpen(true); };
+    const days = (() => {
+        const y = month.getFullYear(), mo = month.getMonth();
+        const count = new Date(y, mo + 1, 0).getDate();
+        const lead = new Date(y, mo, 1).getDay();
+        const out = [];
+        for (let i = 0; i < lead; i++) out.push(null);
+        for (let i = 1; i <= count; i++) out.push(new Date(y, mo, i));
+        return out;
+    })();
+    const isSel = (date) => { if (!date) return false; const s = mdpStr(date); return s === startDate || s === endDate; };
+    const inRange = (date) => { if (!date || !startDate || !endDate) return false; const s = mdpStr(date); return s > startDate && s < endDate; };
+    const pick = (date) => {
+        if (!date) return;
+        const s = mdpStr(date);
+        if (selectingStart) {
+            if (endDate && s > endDate) { onChange(s, ''); setSelectingStart(false); }
+            else { onChange(s, endDate); setSelectingStart(false); }
+        } else {
+            if (startDate && s < startDate) { onChange(s, ''); setSelectingStart(false); }
+            else { onChange(startDate, s); setOpen(false); }
+        }
+    };
+    const clearAll = (e) => { e.stopPropagation(); onChange('', ''); setSelectingStart(true); };
+    const trigSx = (active, filled) => ({ display: 'flex', alignItems: 'center', gap: 0.75, height: 30, px: 1.25, borderRadius: '7px', cursor: 'pointer', bgcolor: '#f8f9fb', border: `1px solid ${active ? T.primary : T.cardBorder}`, boxShadow: active ? `0 0 0 3px ${T.primary}1f` : 'none', fontSize: 11.5, fontWeight: 600, color: filled ? T.td : T.td3, whiteSpace: 'nowrap', transition: 'border-color 0.15s, box-shadow 0.15s', '&:hover': { borderColor: T.primary } });
+
+    return (
+        <Box ref={ref} sx={{ position: 'relative' }}>
+            <Stack direction="row" spacing={0.5} alignItems="center">
+                <Box onClick={() => openFor(true)} sx={trigSx(open && selectingStart, !!startDate)}>
+                    <Calendar size={12} color={T.td3} />
+                    <span>{startDate ? mdpFmt(startDate) : 'From'}</span>
+                </Box>
+                <ArrowRight size={12} color={T.td3} />
+                <Box onClick={() => openFor(false)} sx={trigSx(open && !selectingStart, !!endDate)}>
+                    <span>{endDate ? mdpFmt(endDate) : 'To'}</span>
+                    {endDate
+                        ? <Box component="span" onClick={clearAll} sx={{ display: 'inline-flex', color: T.td3, borderRadius: '999px', '&:hover': { color: T.rose } }}><X size={12} /></Box>
+                        : <Calendar size={12} color={T.td3} />}
+                </Box>
+            </Stack>
+            {open && (
+                <Paper elevation={8} sx={{ position: 'absolute', top: '110%', left: 0, mt: 0.5, zIndex: 9999, p: 1.5, width: 268, borderRadius: '12px', border: `1px solid ${T.cardBorder}`, boxShadow: T.shadowLg }}>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+                        <IconButton size="small" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} sx={{ color: T.td2 }}><ChevronLeft size={16} /></IconButton>
+                        <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: T.td }}>{MDP_MONTHS[month.getMonth()]} {month.getFullYear()}</Typography>
+                        <IconButton size="small" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} sx={{ color: T.td2 }}><ChevronRight size={16} /></IconButton>
+                    </Stack>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '3px', mb: 0.5 }}>
+                        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => <Box key={d} sx={{ textAlign: 'center', fontSize: 9.5, fontWeight: 800, color: T.td3, py: 0.25 }}>{d}</Box>)}
+                    </Box>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '3px' }}>
+                        {days.map((date, i) => {
+                            if (!date) return <Box key={i} />;
+                            const sel = isSel(date), rng = inRange(date);
+                            return (
+                                <Box key={i} onClick={() => pick(date)} sx={{ height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11.5, fontWeight: sel ? 800 : 500, cursor: 'pointer', color: sel ? '#fff' : T.td, bgcolor: sel ? T.primary : rng ? `${T.primary}14` : 'transparent', borderRadius: sel ? '7px' : rng ? 0 : '7px', transition: 'background 0.12s', '&:hover': { bgcolor: sel ? T.primaryDark : `${T.primary}10` } }}>
+                                    {date.getDate()}
+                                </Box>
+                            );
+                        })}
+                    </Box>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 1, pt: 1, borderTop: `1px solid ${T.cardBorder}` }}>
+                        <Typography sx={{ fontSize: 10.5, fontWeight: 600, color: T.td3 }}>{selectingStart ? 'Selecting: From' : 'Selecting: To'}</Typography>
+                        <Typography onClick={() => setOpen(false)} sx={{ fontSize: 11, fontWeight: 700, color: T.primary, cursor: 'pointer', '&:hover': { textDecoration: 'underline' } }}>Done</Typography>
+                    </Stack>
+                </Paper>
+            )}
+        </Box>
+    );
+};
+
 const KpiCard = ({ label, value, color, icon: Icon, delay = 0, sub = null }) => (
     <Fade in timeout={600} style={{ transitionDelay: `${delay}ms` }}>
-        <Card elevation={0} className="qe4-kpi" sx={{ minWidth: 168, borderRadius: `${T.radius + 4}px`, border: `1px solid ${T.cardBorder}`, overflow: 'hidden', position: 'relative', background: `linear-gradient(135deg, #ffffff 0%, ${color}07 100%)`, '&:hover': { boxShadow: `0 12px 32px ${color}22`, transform: 'translateY(-3px)', borderColor: `${color}33` } }}>
-            <Box sx={{ position: 'absolute', top: -30, right: -30, width: 96, height: 96, borderRadius: '50%', background: `radial-gradient(circle, ${color}22 0%, transparent 70%)`, pointerEvents: 'none' }} />
-            <Box sx={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: 3, background: `linear-gradient(180deg, ${color}, ${color}55)` }} />
+        {/* Register aesthetic: flat surface, hairline border, single directional
+           accent rule, restrained box-shadow-only hover (no glow blob / gradient fill). */}
+        <Card elevation={0} className="qe4-kpi" sx={{ minWidth: 168, borderRadius: `${T.radius + 4}px`, border: `1px solid ${T.cardBorder}`, overflow: 'hidden', position: 'relative', bgcolor: T.card, '&:hover': { boxShadow: T.shadowMd, borderColor: `${color}33` } }}>
+            <Box sx={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: 3, bgcolor: color }} />
             <CardContent sx={{ p: '15px 18px !important', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1, position: 'relative' }}>
                 <Box sx={{ minWidth: 0 }}>
                     <Typography sx={{ fontSize: 10, fontWeight: 800, color: T.td3, textTransform: 'uppercase', letterSpacing: 0.8, mb: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>{label}</Typography>
-                    <Typography sx={{ fontSize: 26, fontWeight: 900, color: T.td, letterSpacing: -1, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
+                    <Typography sx={{ fontSize: 25, fontWeight: 800, color: T.td, letterSpacing: -0.5, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
                     {sub != null && <Typography sx={{ fontSize: 11, fontWeight: 700, color: T.td3, mt: 0.4 }}>{sub}</Typography>}
                 </Box>
-                {Icon && <Box sx={{ width: 38, height: 38, flexShrink: 0, borderRadius: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${color}12`, border: `1px solid ${color}22` }}><Icon size={18} color={color} /></Box>}
+                {Icon && <Box sx={{ width: 38, height: 38, flexShrink: 0, borderRadius: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: `${color}12`, border: `1px solid ${color}22` }}><Icon size={18} color={color} /></Box>}
             </CardContent>
         </Card>
     </Fade>
@@ -322,10 +518,33 @@ const FilterBox = ({ title, items, loading, selected, onToggle, onClear, color }
 };
 
 /* ═══ CHART RENDERER — supports 12 types ═══ */
-const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height = 360, measFmt = {} }) => {
+const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height = 360, measFmt = {}, refLines = false, trend = false, rawRows = null, dimKeys = [] }) => {
     if (!data?.length || !measureKeys?.length) return null;
     CHART_FMT = measFmt || {};
     const mK = measureKeys.slice(0, 3);
+
+    // Reference lines (avg / max / min of the first measure) — toggled from the toolbar.
+    let refEls = null;
+    if (refLines && data.length > 1) {
+        const vals = data.map(d => Number(d[mK[0]]) || 0);
+        const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+        refEls = [
+            <ReferenceLine key="ref-avg" y={avg} stroke={T.td3} strokeDasharray="5 4" label={{ value: `avg ${chartFmt(avg, mK[0], true)}`, position: 'insideTopRight', fontSize: 10, fill: T.td3 }} />,
+            <ReferenceLine key="ref-max" y={Math.max(...vals)} stroke={T.green} strokeDasharray="2 4" strokeOpacity={0.5} />,
+            <ReferenceLine key="ref-min" y={Math.min(...vals)} stroke={T.rose} strokeDasharray="2 4" strokeOpacity={0.5} />,
+        ];
+    }
+    // Linear trend over the first measure — enrich the series with a __trend value.
+    if (trend && data.length > 2) {
+        const n = data.length, ys = data.map(d => Number(d[mK[0]]) || 0);
+        const sx = (n - 1) * n / 2;
+        const sxx = ys.reduce((s, _, i) => s + i * i, 0);
+        const sy = ys.reduce((s, v) => s + v, 0);
+        const sxy = ys.reduce((s, v, i) => s + i * v, 0);
+        const denom = n * sxx - sx * sx || 1;
+        const slope = (n * sxy - sx * sy) / denom, icpt = (sy - slope * sx) / n;
+        data = data.map((d, i) => ({ ...d, __trend: icpt + slope * i }));
+    }
 
     const common = { margin: { top: 10, right: 20, bottom: 5, left: 0 } };
     const axisX = { dataKey: 'name', tick: { fontSize: 11, fill: T.td3, fontWeight: 500 }, axisLine: false, tickLine: false };
@@ -337,6 +556,7 @@ const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height 
             return (
                 <ResponsiveContainer width="100%" height={height}>
                     <BarChart data={data} {...common} onClick={d => d?.activePayload?.[0] && onChartClick?.(d.activePayload[0])}>
+                        {refEls}
                         <defs>{mK.map((k, i) => (<linearGradient key={k} id={`bg${i}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={palette[i]} stopOpacity={0.9}/><stop offset="100%" stopColor={palette[i]} stopOpacity={0.55}/></linearGradient>))}</defs>
                         {grid}<XAxis {...axisX} angle={data.length > 10 ? -20 : 0} textAnchor={data.length > 10 ? 'end' : 'middle'} height={data.length > 10 ? 55 : 35} /><YAxis {...axisY} />
                         <RTooltip content={<ChartTip />} cursor={{ fill: `${T.primary}06` }} /><Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
@@ -372,9 +592,11 @@ const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height 
             return (
                 <ResponsiveContainer width="100%" height={height}>
                     <LineChart data={data} {...common} onClick={d => d?.activePayload?.[0] && onChartClick?.(d.activePayload[0])}>
+                        {refEls}
                         {grid}<XAxis {...axisX} /><YAxis {...axisY} />
                         <RTooltip content={<ChartTip />} /><Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
                         {mK.map((k, i) => <Line key={k} dataKey={k} stroke={palette[i]} strokeWidth={2.5} dot={{ r: 4, fill: 'white', stroke: palette[i], strokeWidth: 2.5 }} activeDot={{ r: 6, stroke: 'white', strokeWidth: 2.5 }} name={k.replace(/_/g,' ')} />)}
+                        {trend && <Line dataKey="__trend" stroke={T.td2} strokeDasharray="7 5" strokeWidth={1.75} dot={false} activeDot={false} name="Trend" isAnimationActive={false} />}
                     </LineChart>
                 </ResponsiveContainer>
             );
@@ -383,6 +605,7 @@ const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height 
             return (
                 <ResponsiveContainer width="100%" height={height}>
                     <AreaChart data={data} {...common}>
+                        {refEls}
                         <defs>{mK.map((k, i) => (<linearGradient key={k} id={`ag${i}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={palette[i]} stopOpacity={0.25}/><stop offset="100%" stopColor={palette[i]} stopOpacity={0.02}/></linearGradient>))}</defs>
                         {grid}<XAxis {...axisX} /><YAxis {...axisY} />
                         <RTooltip content={<ChartTip />} /><Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
@@ -502,6 +725,137 @@ const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height 
             );
         }
 
+        case 'kpi': {
+            const totals = mK.map((k, i) => ({ key: k, label: k.replace(/_/g, ' '), color: palette[i], total: data.reduce((s, d) => s + (Number(d[k]) || 0), 0) }));
+            return (
+                <Box sx={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, flexWrap: 'wrap' }}>
+                    {totals.map(t => (
+                        <Box key={t.key} sx={{ textAlign: 'center', minWidth: 150 }}>
+                            <Typography sx={{ fontSize: 11, fontWeight: 800, color: T.td3, textTransform: 'uppercase', letterSpacing: 1.2, mb: 0.75 }}>{t.label}</Typography>
+                            <Typography sx={{ fontSize: height > 220 ? 44 : 30, fontWeight: 800, color: t.color, letterSpacing: '-0.03em', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{chartFmt(t.total, t.key, true)}</Typography>
+                            <Typography sx={{ fontSize: 10.5, color: T.td3, mt: 0.75 }}>{data.length} groups</Typography>
+                        </Box>
+                    ))}
+                </Box>
+            );
+        }
+
+        case 'funnel': {
+            const fData = [...data].sort((a, b) => (b[mK[0]] || 0) - (a[mK[0]] || 0)).slice(0, 8)
+                .map((d, i) => ({ name: d.name, value: Number(d[mK[0]]) || 0, fill: palette[i % palette.length] }));
+            return (
+                <ResponsiveContainer width="100%" height={height}>
+                    <FunnelChart>
+                        <RTooltip content={<ChartTip />} />
+                        <Funnel dataKey="value" data={fData} isAnimationActive onClick={d => d && onChartClick?.(d)} style={{ cursor: 'pointer' }}>
+                            <LabelList position="right" fill={T.td} stroke="none" dataKey="name" fontSize={11} fontWeight={700} />
+                        </Funnel>
+                    </FunnelChart>
+                </ResponsiveContainer>
+            );
+        }
+
+        case 'bullet': {
+            const bData = data.slice(0, 12);
+            const bVals = bData.map(d => Number(d[mK[0]]) || 0);
+            const bAvg = bVals.reduce((s, v) => s + v, 0) / (bVals.length || 1);
+            return (
+                <ResponsiveContainer width="100%" height={height}>
+                    <BarChart data={bData} layout="vertical" {...common} margin={{ left: 10, right: 30 }}>
+                        {React.cloneElement(grid, { horizontal: false, vertical: true })}
+                        <XAxis type="number" {...axisY} />
+                        <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 12, fill: T.td2 }} axisLine={false} tickLine={false} />
+                        <RTooltip content={<ChartTip />} />
+                        <ReferenceLine x={bAvg} stroke={T.amber} strokeWidth={2} strokeDasharray="6 4" label={{ value: `target ${chartFmt(bAvg, mK[0], true)}`, position: 'insideTopRight', fontSize: 10, fill: T.amber }} />
+                        <Bar dataKey={mK[0]} barSize={14} radius={[0, 6, 6, 0]} name={mK[0].replace(/_/g, ' ')} style={{ cursor: 'pointer' }} onClick={d => d && onChartClick?.(d)}>
+                            {bData.map((d, i) => <Cell key={i} fill={(Number(d[mK[0]]) || 0) >= bAvg ? T.green : palette[0]} />)}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            );
+        }
+
+        case 'heatmap': {
+            if (!rawRows?.length || dimKeys.length < 2) {
+                return <Box sx={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.td3, fontSize: 12.5, fontWeight: 600 }}>Heatmap needs two dimensions — add a second field to the Dimensions zone.</Box>;
+            }
+            const [dk1, dk2] = dimKeys;
+            const rSet = [], cSet = [], cellMap = {};
+            rawRows.forEach(r => {
+                const rv = String(r[dk1] ?? '—'), cv = String(r[dk2] ?? '—');
+                if (!rSet.includes(rv) && rSet.length < 20) rSet.push(rv);
+                if (!cSet.includes(cv) && cSet.length < 14) cSet.push(cv);
+                if (rSet.includes(rv) && cSet.includes(cv)) cellMap[rv + '\u0000' + cv] = (cellMap[rv + '\u0000' + cv] || 0) + (Number(r[mK[0]]) || 0);
+            });
+            const allVals = Object.values(cellMap);
+            const vMax = Math.max(...allVals, 1), vMin = Math.min(...allVals, 0);
+            const base = palette[0];
+            return (
+                <Box className="qe4-scroll" sx={{ height, overflow: 'auto' }}>
+                    <table style={{ borderCollapse: 'separate', borderSpacing: 3, width: '100%' }}>
+                        <thead><tr>
+                            <th style={{ position: 'sticky', left: 0, background: 'white', zIndex: 1 }} />
+                            {cSet.map(c => <th key={c} style={{ padding: '4px 6px', fontSize: 10, fontWeight: 800, color: T.td3, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c}</th>)}
+                        </tr></thead>
+                        <tbody>{rSet.map(rv => (
+                            <tr key={rv}>
+                                <td style={{ padding: '4px 8px', fontSize: 11.5, fontWeight: 700, color: T.td, whiteSpace: 'nowrap', position: 'sticky', left: 0, background: 'white', zIndex: 1, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{rv}</td>
+                                {cSet.map(cv => {
+                                    const v = cellMap[rv + '\u0000' + cv];
+                                    const t = v == null ? 0 : (vMax === vMin ? 1 : (v - vMin) / (vMax - vMin));
+                                    const alpha = v == null ? 0 : 0.12 + t * 0.78;
+                                    return (
+                                        <td key={cv} onClick={() => v != null && onChartClick?.({ name: rv })} title={v == null ? '—' : `${rv} × ${cv}: ${chartFmt(v, mK[0], true)}`}
+                                            style={{ minWidth: 52, height: 30, borderRadius: 6, textAlign: 'center', fontSize: 10.5, fontWeight: 700, cursor: v != null ? 'pointer' : 'default', background: v == null ? 'rgba(15,23,42,0.03)' : `${base}${Math.round(alpha * 255).toString(16).padStart(2, '0')}`, color: t > 0.55 ? '#fff' : T.td2, fontVariantNumeric: 'tabular-nums' }}>
+                                            {v == null ? '' : chartFmt(v, mK[0], true)}
+                                        </td>
+                                    );
+                                })}
+                            </tr>
+                        ))}</tbody>
+                    </table>
+                </Box>
+            );
+        }
+
+        case 'sankey': {
+            if (!rawRows?.length || dimKeys.length < 2) {
+                return <Box sx={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.td3, fontSize: 12.5, fontWeight: 600 }}>Sankey needs two dimensions — add a second field to the Dimensions zone.</Box>;
+            }
+            const [dk1, dk2] = dimKeys;
+            const agg = {};
+            rawRows.forEach(r => {
+                const a = String(r[dk1] ?? '—'), b = String(r[dk2] ?? '—');
+                agg[a + '\u0000' + b] = (agg[a + '\u0000' + b] || 0) + (Number(r[mK[0]]) || 0);
+            });
+            const leftTot = {}, rightTot = {};
+            Object.entries(agg).forEach(([k, v]) => { const [a, b] = k.split('\u0000'); leftTot[a] = (leftTot[a] || 0) + v; rightTot[b] = (rightTot[b] || 0) + v; });
+            const topL = Object.entries(leftTot).sort((x, y) => y[1] - x[1]).slice(0, 8).map(x => x[0]);
+            const topR = Object.entries(rightTot).sort((x, y) => y[1] - x[1]).slice(0, 8).map(x => x[0]);
+            const nodes = [...topL.map(n => ({ name: n })), ...topR.map(n => ({ name: n }))];
+            const links = [];
+            Object.entries(agg).forEach(([k, v]) => {
+                const [a, b] = k.split('\u0000');
+                const si = topL.indexOf(a), ti = topR.indexOf(b);
+                if (si >= 0 && ti >= 0 && v > 0) links.push({ source: si, target: topL.length + ti, value: v });
+            });
+            if (!links.length) return <Box sx={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.td3, fontSize: 12.5 }}>No flow data for current selections.</Box>;
+            const SankeyNode = ({ x, y, width: w, height: h, index, payload }) => (
+                <Layer key={`sn-${index}`}>
+                    <Rectangle x={x} y={y} width={w} height={h} fill={palette[index % palette.length]} fillOpacity={0.9} radius={2} />
+                    <text x={index < topL.length ? x - 6 : x + w + 6} y={y + h / 2} textAnchor={index < topL.length ? 'end' : 'start'} dominantBaseline="middle" fontSize={11} fontWeight={700} fill={T.td2}>{payload.name?.substring(0, 16)}</text>
+                </Layer>
+            );
+            return (
+                <ResponsiveContainer width="100%" height={height}>
+                    <Sankey data={{ nodes, links }} node={<SankeyNode />} nodePadding={18} margin={{ top: 10, right: 110, bottom: 10, left: 110 }}
+                        link={{ stroke: palette[0], strokeOpacity: 0.25 }}>
+                        <RTooltip content={<ChartTip />} />
+                    </Sankey>
+                </ResponsiveContainer>
+            );
+        }
+
         default: return null;
     }
 };
@@ -509,7 +863,61 @@ const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height 
 /* ═══════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════ */
+/* ═══ PIVOT TABLE — dim1 rows × dim2 columns × first measure, with totals ═══ */
+const PivotTable = ({ rows, dims, measureKey, fmtVal, onCellClick }) => {
+    const pv = useMemo(() => {
+        if (!rows?.length || dims.length < 2 || !measureKey) return null;
+        const dk1 = dims[0].key, dk2 = dims[1].key;
+        const rSet = [], cSet = [], cell = {};
+        rows.forEach(r => {
+            const rv = String(r[dk1] ?? '—'), cv = String(r[dk2] ?? '—');
+            if (!rSet.includes(rv) && rSet.length < 60) rSet.push(rv);
+            if (!cSet.includes(cv) && cSet.length < 24) cSet.push(cv);
+            if (rSet.includes(rv) && cSet.includes(cv)) cell[rv + '\u0000' + cv] = (cell[rv + '\u0000' + cv] || 0) + (Number(r[measureKey]) || 0);
+        });
+        const rowTot = {}, colTot = {}; let grand = 0;
+        rSet.forEach(rv => cSet.forEach(cv => { const v = cell[rv + '\u0000' + cv] || 0; rowTot[rv] = (rowTot[rv] || 0) + v; colTot[cv] = (colTot[cv] || 0) + v; grand += v; }));
+        rSet.sort((a, b) => (rowTot[b] || 0) - (rowTot[a] || 0));
+        cSet.sort((a, b) => (colTot[b] || 0) - (colTot[a] || 0));
+        return { rSet, cSet, cell, rowTot, colTot, grand, dk1, dk2 };
+    }, [rows, dims, measureKey]);
+
+    if (dims.length < 2) return (
+        <Box sx={{ py: 6, textAlign: 'center', color: T.td3, fontSize: 12.5, fontWeight: 600 }}>Pivot needs two dimensions — add a second field to the Dimensions zone.</Box>
+    );
+    if (!pv) return <Box sx={{ py: 6, textAlign: 'center', color: T.td3, fontSize: 12.5 }}>No data.</Box>;
+
+    const th = { padding: '9px 12px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.7, color: T.td3, borderBottom: '2px solid rgba(0,0,0,0.07)', background: '#fafbfc', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2 };
+    const tdBase = { padding: '7px 12px', fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', borderBottom: '1px solid rgba(0,0,0,0.035)', textAlign: 'right' };
+    return (
+        <Box className="qe4-scroll" sx={{ overflow: 'auto', maxHeight: 520 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr>
+                    <th style={{ ...th, textAlign: 'left', left: 0, zIndex: 3, position: 'sticky' }}>{dims[0].label} / {dims[1].label}</th>
+                    {pv.cSet.map(c => <th key={c} style={{ ...th, textAlign: 'right', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c}</th>)}
+                    <th style={{ ...th, textAlign: 'right', color: T.primary }}>Total</th>
+                </tr></thead>
+                <tbody>
+                    {pv.rSet.map(rv => (
+                        <tr key={rv} className="qe4-row">
+                            <td onClick={() => onCellClick?.(rv)} style={{ ...tdBase, textAlign: 'left', fontWeight: 700, color: T.td, position: 'sticky', left: 0, background: 'white', zIndex: 1, cursor: 'pointer', maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis' }}>{rv}</td>
+                            {pv.cSet.map(cv => { const v = pv.cell[rv + '\u0000' + cv]; return <td key={cv} style={{ ...tdBase, color: v ? T.td2 : 'rgba(15,23,42,0.18)' }}>{v ? fmtVal(v, measureKey) : '·'}</td>; })}
+                            <td style={{ ...tdBase, fontWeight: 800, color: T.primary, background: `${T.primary}05` }}>{fmtVal(pv.rowTot[rv] || 0, measureKey)}</td>
+                        </tr>
+                    ))}
+                    <tr>
+                        <td style={{ ...tdBase, textAlign: 'left', fontWeight: 800, color: T.primary, position: 'sticky', left: 0, background: `${T.primary}06`, zIndex: 1, borderTop: '2px solid rgba(0,0,0,0.08)' }}>Total</td>
+                        {pv.cSet.map(cv => <td key={cv} style={{ ...tdBase, fontWeight: 800, color: T.primary, background: `${T.primary}05`, borderTop: '2px solid rgba(0,0,0,0.08)' }}>{fmtVal(pv.colTot[cv] || 0, measureKey)}</td>)}
+                        <td style={{ ...tdBase, fontWeight: 800, color: '#fff', background: T.primary, borderTop: '2px solid rgba(0,0,0,0.08)' }}>{fmtVal(pv.grand, measureKey)}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </Box>
+    );
+};
+
 export default function DataExplorer() {
+    const { tenantVersion } = useAuth();
     const [catalog, setCatalog] = useState({ merchantFields: [], transactionFields: [], measures: [] });
     const [loading, setLoading] = useState(false);
     const [qLoad, setQLoad] = useState(false);
@@ -549,6 +957,11 @@ export default function DataExplorer() {
     const [sheetData, setSheetData] = useState({}); // id -> { rows, qLoad, qTime }
     const [sheetLayout, setSheetLayout] = useState([]); // RGL layout: [{ i, x, y, w, h }]
     const [copied, setCopied] = useState(false);
+    const [drill, setDrill] = useState([]);          // drill-down path: [{ key, value, label }]
+    const [refLinesOn, setRefLinesOn] = useState(false);
+    const [trendOn, setTrendOn] = useState(false);
+    const [condFmt, setCondFmt] = useState('off');   // 'off' | 'heat' | 'bars'
+    const [chartDropOver, setChartDropOver] = useState(false);
     const [calcMeasures, setCalcMeasures] = useState([]); // [{ key, label, formula, calc:true }]
     const [calcDlg, setCalcDlg] = useState(false);
     const [cmName, setCmName] = useState('');
@@ -613,7 +1026,7 @@ export default function DataExplorer() {
             try { setAlerts((await explorerApi.listAlerts()).data || []); } catch (e) {}
             setLoading(false);
         })();
-    }, []);
+    }, [tenantVersion]);
 
     const loadDist = async k => { if (dcache[k]) return; setDcache(p => ({ ...p, [k]: null })); try { const r = await explorerApi.getDistinct(k); setDcache(p => ({ ...p, [k]: r.data })); } catch (e) { setDcache(p => ({ ...p, [k]: [] })); } };
 
@@ -656,12 +1069,14 @@ export default function DataExplorer() {
         const r = moOnly ? await explorerApi.queryMerchants(p) : await explorerApi.query(p);
         return r.data.data || [];
     }, [filters, sd, ed, catalog, calcMeasures]);
+    // Drill-down: the drilled dimensions are pinned by filters; query the remainder.
+    const activeDims = useMemo(() => (drill.length && drill.length < dims.length) ? dims.slice(drill.length) : dims, [dims, drill]);
     const run = useCallback(async () => {
         if (!dims.length) return;
         setQLoad(true); const t0 = Date.now();
-        try { setRows(await execQuery(dims, meas)); } catch (e) { setRows([]); }
+        try { setRows(await execQuery(activeDims, meas)); } catch (e) { setRows([]); }
         setQTime(Date.now() - t0); setQLoad(false);
-    }, [dims, meas, execQuery]);
+    }, [dims, activeDims, meas, execQuery]);
 
     // Per-measure formatting lookups (custom measures carry .format; base measures use BASE_FMT).
     const measFmt = useMemo(() => {
@@ -829,7 +1244,11 @@ export default function DataExplorer() {
     const objMeasureKeys = (rowsArr, dimsArr, measArr) => measArr.length ? measArr.map(m => m.key) : (rowsArr?.length ? Object.keys(rowsArr[0]).filter(k => !dimsArr.some(d => d.key === k)) : []);
     const toChartData = (rowsArr, dimsArr, measArr) => {
         const keys = measArr.length ? measArr.map(m => m.key) : ['txn_count', 'total_volume', 'total_msf'];
-        return (rowsArr || []).slice(0, 25).map((r, i) => {
+        // Sort by the first measure descending, then top 25 — pinned sheet tiles
+        // show the biggest contributors, matching the main chart's behaviour.
+        const primary = keys[0];
+        const ranked = [...(rowsArr || [])].sort((a, b) => (Number(b[primary]) || 0) - (Number(a[primary]) || 0));
+        return ranked.slice(0, 25).map((r, i) => {
             const e = { name: dimsArr.length ? String(r[dimsArr[0].key] ?? `Row ${i + 1}`).substring(0, 18) : `Row ${i + 1}` };
             keys.forEach(k => { e[k] = Number(r[k]) || 0; });
             return e;
@@ -905,15 +1324,65 @@ export default function DataExplorer() {
     const rmDim = i => setDims(p => p.filter((_, x) => x !== i));
     const addMeas = f => { if (!meas.find(m => m.key === f.key)) setMeas(p => [...p, f]); };
     const rmMeas = i => setMeas(p => p.filter((_, x) => x !== i));
+
+    // Double-click-to-add bridge for the sidebar chips (module-level, like CHART_FMT).
+    useEffect(() => {
+        QE4_ADD = { dim: f => addDim(f), meas: m => addMeas({ ...m, source: 'measure' }) };
+        return () => { QE4_ADD = null; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dims, meas]);
+
+    // Drill housekeeping: reset when the dim set shrinks below the path, or a view loads.
+    useEffect(() => { if (drill.length && drill.length >= dims.length) setDrill([]); }, [dims, drill]);
+    useEffect(() => { setDrill([]); }, [activeView]);
+    // Climb back up the drill path: pop entries >= i and release their filter values.
+    const drillTo = (i) => {
+        const popped = drill.slice(i);
+        setSelHistory(h => [...h, { ...filters }]);
+        setFilters(p => {
+            const o = { ...p };
+            popped.forEach(d => {
+                const cur = (o[d.key] || []).filter(v => v !== d.value);
+                cur.length ? o[d.key] = cur : delete o[d.key];
+            });
+            return o;
+        });
+        setDrill(drill.slice(0, i));
+    };
+
+    // Drop a sidebar field/measure onto a pinned sheet tile → add it to that object.
+    const dropOnTile = (id, p) => {
+        if (!p || !p.key) return;
+        setSheet(prev => prev.map(o => {
+            if (o.id !== id) return o;
+            if (p.source === 'measure' || p.calc) {
+                if (o.meas.some(m => m.key === p.key)) return o;
+                return { ...o, meas: [...o.meas, p] };
+            }
+            if (o.dims.some(d => d.key === p.key)) return o;
+            return { ...o, dims: [...o.dims, p] };
+        }));
+    };
     const toggleFV = (k, v) => {
         setSelHistory(h => [...h, { ...filters }]);
         setFilters(p => { const c = p[k] || []; const h = c.includes(v); const n = h ? c.filter(x => x !== v) : [...c, v]; const o = { ...p }; n.length ? o[k] = n : delete o[k]; return o; });
     };
     const clearFK = k => { setSelHistory(h => [...h, { ...filters }]); setFilters(p => { const o = { ...p }; delete o[k]; return o; }); };
     const stepBack = () => { if (selHistory.length) { const prev = selHistory[selHistory.length - 1]; setFilters(prev); setSelHistory(h => h.slice(0, -1)); } };
-    const clearAll = () => { setDims([]); setMeas([]); setFilters({}); setSd(''); setEd(''); setRows([]); setActiveView(null); setQTime(null); setOpenBoxes([]); setSelHistory([]); };
+    const clearAll = () => { setDims([]); setMeas([]); setFilters({}); setSd(''); setEd(''); setRows([]); setActiveView(null); setQTime(null); setOpenBoxes([]); setSelHistory([]); setDrill([]); };
 
-    const onChartClick = d => { if (!d || !dims.length) return; const val = d.name || d?.payload?.name; if (val) toggleFV(dims[0].key, String(val)); };
+    // Chart click: with >1 remaining dimension, select AND descend (Qlik drill);
+    // on the last level it just cross-filters as before.
+    const onChartClick = d => {
+        if (!d || !activeDims.length) return;
+        const val = d.name || d?.payload?.name;
+        if (!val) return;
+        const cur = activeDims[0];
+        toggleFV(cur.key, String(val));
+        if (activeDims.length > 1 && !(filters[cur.key] || []).includes(String(val))) {
+            setDrill(p => [...p, { key: cur.key, value: String(val), label: cur.label }]);
+        }
+    };
 
     const saveV = async () => { if (!vName.trim()) return; try { await savedViewsApi.create({ name: vName, dashboardType: 'DATA_EXPLORER', filterJson: JSON.stringify({ dimensions: dims.map(d => d.key), measures: meas.map(m => m.key), filters, startDate: sd, endDate: ed, chartType, viewMode, theme, calc: calcMeasures, sheet: sheet.map(o => ({ t: o.title, v: o.vizType, d: o.dims.map(x => x.key), m: o.meas.map(x => x.key) })), sheetLayout: sheet.map(o => { const l = gridLayout.find(g => g.i === o.id) || {}; return { x: l.x, y: l.y, w: l.w, h: l.h }; }) }), isDefault: vDef, isShared: vShare }); setSaveDlg(false); setVName(''); setViews((await savedViewsApi.list('DATA_EXPLORER')).data); } catch (e) {} };
     const loadV = v => { try { const s = JSON.parse(v.filterJson); const af = [...(catalog.merchantFields || []), ...(catalog.transactionFields || [])]; setDims((s.dimensions || []).map(k => af.find(f => f.key === k)).filter(Boolean)); setMeas((s.measures || []).map(k => (catalog.measures || []).find(m => m.key === k)).filter(Boolean)); setFilters(s.filters || {}); setSd(s.startDate || ''); setEd(s.endDate || ''); setChartType(s.chartType || 'bar'); setViewMode(s.viewMode || 'both'); if (s.theme) setTheme(s.theme); if (Array.isArray(s.calc)) setCalcMeasures(s.calc); if (Array.isArray(s.sheet)) { const bp = s.sheet.map((o, i) => ({ obj: { id: `obj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${i}`, title: o.t, vizType: o.v || 'bar', dims: (o.d || []).map(k => af.find(f => f.key === k)).filter(Boolean), meas: (o.m || []).map(k => (catalog.measures || []).find(m => m.key === k)).filter(Boolean) }, sl: (s.sheetLayout || [])[i] })).filter(p => p.obj.dims.length); setSheet(bp.map(p => p.obj)); setSheetLayout(bp.map((p, i) => { const l = p.sl || {}; return { i: p.obj.id, x: l.x ?? (i % 2) * 6, y: l.y ?? Math.floor(i / 2) * 8, w: l.w ?? 6, h: l.h ?? 8 }; })); } setActiveView(v.id); } catch (e) {} };
@@ -947,11 +1416,32 @@ export default function DataExplorer() {
         if (!sortCol || !rows.length) return rows;
         return [...rows].sort((a, b) => { const av = a[sortCol], bv = b[sortCol]; const c = typeof av === 'number' ? av - bv : String(av || '').localeCompare(String(bv || '')); return sortDir === 'asc' ? c : -c; });
     }, [rows, sortCol, sortDir]);
-    const cData = sorted.slice(0, 25).map((r, i) => {
-        const e = { name: dims.length ? String(r[dims[0].key] || `Row ${i + 1}`).substring(0, 18) : `Row ${i + 1}` };
-        (meas.length ? meas.map(m => m.key) : ['txn_count', 'total_volume', 'total_msf']).forEach(k => { e[k] = Number(r[k]) || 0; });
-        return e;
-    });
+    // Per-column min/max for conditional formatting (heat cells / data bars).
+    const colStats = useMemo(() => {
+        const s = {};
+        if (!rows.length) return s;
+        Object.keys(rows[0]).forEach(k => {
+            if (typeof rows[0][k] !== 'number') return;
+            let mn = Infinity, mx = -Infinity;
+            rows.forEach(r => { const v = Number(r[k]); if (!isNaN(v)) { if (v < mn) mn = v; if (v > mx) mx = v; } });
+            s[k] = { mn, mx };
+        });
+        return s;
+    }, [rows]);
+    // Chart data: sort by the FIRST measure descending, then take the top 25.
+    // The table (`sorted`) keeps the user's chosen column sort; the chart always
+    // shows the top-N by primary measure so high-cardinality dimensions (merchants,
+    // MCC, city) render the biggest contributors instead of an arbitrary first slice.
+    const cData = (() => {
+        const mKeys = meas.length ? meas.map(m => m.key) : ['txn_count', 'total_volume', 'total_msf'];
+        const primary = mKeys[0];
+        const ranked = [...rows].sort((a, b) => (Number(b[primary]) || 0) - (Number(a[primary]) || 0));
+        return ranked.slice(0, 25).map((r, i) => {
+            const e = { name: activeDims.length ? String(r[activeDims[0].key] || `Row ${i + 1}`).substring(0, 18) : `Row ${i + 1}` };
+            mKeys.forEach(k => { e[k] = Number(r[k]) || 0; });
+            return e;
+        });
+    })();
     const filterFlds = fs => !fldSearch ? fs : fs.filter(f => f.label.toLowerCase().includes(fldSearch.toLowerCase()));
     const filterableFields = useMemo(() =>
         [...(catalog.merchantFields || []), ...(catalog.transactionFields || [])]
@@ -1040,7 +1530,8 @@ export default function DataExplorer() {
                                 {(catalog.measures || []).map(m => <SideMeasChip key={m.key} measure={m} />)}
                                 {calcMeasures.map(m => (
                                     <Box key={m.key} draggable
-                                        onDragStart={e => { e.dataTransfer.setData('text/plain', JSON.stringify({ ...m, source: 'measure', calc: true })); }}
+                                        onDragStart={e => { DRAG_CTX = { zone: null, item: { ...m, source: 'measure', calc: true }, consumed: false }; e.dataTransfer.setData('text/plain', JSON.stringify({ ...m, source: 'measure', calc: true })); dragGhost(e, m.label, m.kind === 'agg' ? '#38bdf8' : m.kind === 'time' ? '#f59e0b' : '#c084fc'); }}
+                                        onDragEnd={() => { DRAG_CTX = null; }}
                                         onClick={() => openStudio(m)}
                                         title={m.kind === 'agg' ? `${AGG_LABELS[m.agg] || m.agg} of ${m.column}${m.filterField ? ` where ${m.filterField} ∈ (${(m.filterValues || []).length})` : ''} · click to edit` : m.kind === 'time' ? `${m.base} · ${m.comparison} · ${m.mode} · click to edit` : `${m.formula || ''} · click to edit`}
                                         sx={{ display: 'inline-flex', alignItems: 'center', gap: '5px', px: '9px', py: '4.5px', borderRadius: '6px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', color: m.kind === 'agg' ? '#38bdf8' : m.kind === 'time' ? '#f59e0b' : '#c084fc', bgcolor: m.kind === 'agg' ? 'rgba(56,189,248,0.08)' : m.kind === 'time' ? 'rgba(245,158,11,0.08)' : 'rgba(192,132,252,0.08)', border: `1px solid ${m.kind === 'agg' ? 'rgba(56,189,248,0.22)' : m.kind === 'time' ? 'rgba(245,158,11,0.24)' : 'rgba(192,132,252,0.20)'}`, '&:hover': { filter: 'brightness(1.06)' } }}>
@@ -1075,12 +1566,7 @@ export default function DataExplorer() {
                         </IconButton>
                     </Tooltip>
                     <Divider orientation="vertical" flexItem sx={{ mx: 0.25 }} />
-                    <Stack direction="row" spacing={0.5} alignItems="center">
-                        <Calendar size={13} color={T.td3} />
-                        <TextField size="small" type="date" value={sd} onChange={e => setSd(e.target.value)} sx={{ width: 132, '& .MuiInputBase-root': { fontSize: 11.5, height: 30, borderRadius: '7px', bgcolor: '#f8f9fb' } }} />
-                        <ArrowRight size={12} color={T.td3} />
-                        <TextField size="small" type="date" value={ed} onChange={e => setEd(e.target.value)} sx={{ width: 132, '& .MuiInputBase-root': { fontSize: 11.5, height: 30, borderRadius: '7px', bgcolor: '#f8f9fb' } }} />
-                    </Stack>
+                    <MiniDatePicker startDate={sd} endDate={ed} onChange={(s, e) => { setSd(s); setEd(e); }} />
 
                     <Button size="small" onClick={() => setSelPanel(p => !p)} startIcon={<Filter size={12} />}
                         sx={{ textTransform: 'none', fontWeight: 700, fontSize: 11.5, height: 30, borderRadius: '7px', px: 1.5, bgcolor: nF > 0 ? `${SEL}08` : '#f4f5f7', color: nF > 0 ? SEL : T.td2, border: `1px solid ${nF > 0 ? `${SEL}20` : 'transparent'}`, '&:hover': { bgcolor: nF > 0 ? `${SEL}12` : '#eaebef' } }}>
@@ -1143,14 +1629,19 @@ export default function DataExplorer() {
                     </Tooltip>
 
                     <Paper elevation={0} sx={{ display: 'flex', bgcolor: '#f4f5f7', borderRadius: '8px', p: '2.5px', gap: '1px' }}>
-                        {[{ v: 'both', i: Eye, t: 'Both' }, { v: 'chart', i: BarChart3, t: 'Chart' }, { v: 'table', i: Table2, t: 'Table' }].map(({ v, i, t }) =>
+                        {[{ v: 'both', i: Eye, t: 'Both' }, { v: 'chart', i: BarChart3, t: 'Chart' }, { v: 'table', i: Table2, t: 'Table' }, { v: 'pivot', i: Columns, t: 'Pivot (2 dims)' }].map(({ v, i, t }) =>
                             <TogBtn key={v} icon={i} active={viewMode === v} onClick={() => setViewMode(v)} tip={t} />
                         )}
+                    </Paper>
+                    <Paper elevation={0} sx={{ display: 'flex', bgcolor: '#f4f5f7', borderRadius: '8px', p: '2.5px', gap: '1px' }}>
+                        <TogBtn icon={Crosshair} active={refLinesOn} onClick={() => setRefLinesOn(p => !p)} tip="Reference lines (avg / max / min)" />
+                        <TogBtn icon={TrendingUp} active={trendOn} onClick={() => setTrendOn(p => !p)} tip="Trend line (line chart)" />
+                        <TogBtn icon={Sparkles} active={condFmt !== 'off'} onClick={() => setCondFmt(p => p === 'off' ? 'heat' : p === 'heat' ? 'bars' : 'off')} tip={`Table formatting: ${condFmt === 'off' ? 'off → heat cells' : condFmt === 'heat' ? 'heat → data bars' : 'bars → off'}`} />
                     </Paper>
 
                     <Button size="small" onClick={run} disabled={!dims.length || qLoad} variant="contained" disableElevation
                         startIcon={qLoad ? <CircularProgress size={12} sx={{ color: 'white' }} /> : <Play size={12} fill="white" />}
-                        sx={{ textTransform: 'none', fontWeight: 800, fontSize: 12, height: 34, borderRadius: '9px', px: 2.5, bgcolor: T.primary, boxShadow: `0 6px 16px -4px ${T.primary}66`, '&:hover': { bgcolor: T.primaryDark, boxShadow: `0 8px 20px -4px ${T.primary}7a` }, '&:disabled': { bgcolor: '#e2e8f0', color: '#94a3b8', boxShadow: 'none' } }}>
+                        sx={{ textTransform: 'none', fontWeight: 800, fontSize: 12, height: 34, borderRadius: '9px', px: 2.5, bgcolor: T.primary, boxShadow: `0 2px 6px -2px ${T.primary}55`, transition: 'background-color 0.15s ease, box-shadow 0.15s ease', '&:hover': { bgcolor: T.primaryDark, boxShadow: `0 4px 10px -3px ${T.primary}66` }, '&:disabled': { bgcolor: '#e2e8f0', color: '#94a3b8', boxShadow: 'none' } }}>
                         Run
                     </Button>
                     <Tooltip title="Threshold alerts" arrow><IconButton size="small" onClick={() => { setAlForm(f => ({ ...f, measureKey: (meas[0]?.key || catalog.measures?.[0]?.key || 'total_volume') })); setAlertMsg(''); setAlertDlg(true); }} sx={{ color: T.td3, '&:hover': { color: T.primary } }}><Bell size={15} /></IconButton></Tooltip>
@@ -1164,9 +1655,9 @@ export default function DataExplorer() {
 
                 {/* DROP ZONES */}
                 <Box sx={{ px: 2, py: 1, bgcolor: 'white', borderBottom: `1px solid ${T.cardBorder}`, display: 'flex', gap: 1.5 }}>
-                    <Box sx={{ flex: 2 }}><DropZone label="Dimensions" items={dims} onDrop={addDim} onRemove={rmDim} accent={T.primary} emptyText="Drag fields here" /></Box>
-                    <Box sx={{ flex: 1 }}><DropZone label="Measures" items={meas} onDrop={addMeas} onRemove={rmMeas} accent={T.green} emptyText="Auto: Count, Vol, MSF"
-                        renderItem={(f, i) => <ZoneMeasChip key={f.key + i} measure={f} onRemove={() => rmMeas(i)} />} /></Box>
+                    <Box sx={{ flex: 2 }}><DropZone zoneId="dims" label="Dimensions" items={dims} onChange={setDims} validate={p => (p && p.key && p.source !== 'measure' && !p.calc) ? p : null} accent={T.primary} emptyText="Drag fields here · double-click a field to add" /></Box>
+                    <Box sx={{ flex: 1 }}><DropZone zoneId="meas" label="Measures" items={meas} onChange={setMeas} validate={p => (p && p.key && (p.source === 'measure' || p.calc)) ? p : null} accent={T.green} emptyText="Auto: Count, Vol, MSF"
+                        renderItem={(f, i, rm) => <ZoneMeasChip key={f.key + i} measure={f} onRemove={rm} />} /></Box>
                 </Box>
 
                 {/* SELECTION PANEL */}
@@ -1271,13 +1762,47 @@ export default function DataExplorer() {
                                 {qTime != null && <Stack direction="row" spacing={0.4} alignItems="center" sx={{ color: T.td3, ml: 1 }}><Zap size={12} /><Typography sx={{ fontSize: 11, fontWeight: 700 }}>{(qTime / 1000).toFixed(2)}s</Typography></Stack>}
                             </Stack>
 
-                            {/* CHART */}
+                            {/* DRILL BREADCRUMB */}
+                            {drill.length > 0 && (
+                                <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ gap: 0.5 }}>
+                                    <Chip size="small" label="All" clickable onClick={() => drillTo(0)}
+                                        sx={{ height: 24, fontSize: 11, fontWeight: 700, bgcolor: '#f4f5f7', color: T.td2, '&:hover': { bgcolor: `${T.primary}10`, color: T.primary } }} />
+                                    {drill.map((d, i) => (
+                                        <React.Fragment key={d.key + d.value}>
+                                            <ChevronRight size={13} color={T.td3} />
+                                            <Chip size="small" label={`${d.label}: ${d.value}`} clickable onClick={() => drillTo(i + 1)}
+                                                sx={{ height: 24, fontSize: 11, fontWeight: 700, bgcolor: i === drill.length - 1 ? `${T.primary}10` : '#f4f5f7', color: i === drill.length - 1 ? T.primary : T.td2, border: i === drill.length - 1 ? `1px solid ${T.primary}25` : '1px solid transparent' }} />
+                                        </React.Fragment>
+                                    ))}
+                                    <ChevronRight size={13} color={T.td3} />
+                                    <Typography sx={{ fontSize: 11.5, fontWeight: 800, color: T.td }}>{activeDims[0]?.label}</Typography>
+                                </Stack>
+                            )}
+
+                            {/* CHART — also a drop target: drop any field/measure straight onto it */}
                             {(viewMode === 'chart' || viewMode === 'both') && cData.length > 0 && (
-                                <Card elevation={0} className="qe4-tile" sx={{ borderRadius: `${T.radius + 4}px`, border: `1px solid ${T.cardBorder}`, overflow: 'hidden' }}>
+                                <Card elevation={0} className={`qe4-tile ${chartDropOver ? 'qe4-droptarget' : ''}`}
+                                    onDragOver={e => { e.preventDefault(); setChartDropOver(true); }}
+                                    onDragLeave={() => setChartDropOver(false)}
+                                    onDrop={e => { e.preventDefault(); setChartDropOver(false); if (DRAG_CTX) DRAG_CTX.consumed = true; const p = DRAG_CTX?.item; if (!p || DRAG_CTX?.zone) return; (p.source === 'measure' || p.calc) ? addMeas(p) : addDim(p); }}
+                                    sx={{ borderRadius: `${T.radius + 4}px`, border: `1px solid ${T.cardBorder}`, overflow: 'hidden' }}>
                                     <CardContent sx={{ p: '24px !important' }}>
-                                        <ChartRenderer type={chartType} data={cData} measureKeys={mK} palette={palette} onChartClick={onChartClick} height={360} measFmt={measFmt} />
-                                        <Typography sx={{ fontSize: 10.5, color: T.td3, textAlign: 'center', mt: 1.5, fontStyle: 'italic' }}>Click chart elements to cross-filter</Typography>
+                                        <ChartRenderer type={chartType} data={cData} measureKeys={mK} palette={palette} onChartClick={onChartClick} height={360} measFmt={measFmt} refLines={refLinesOn} trend={trendOn} rawRows={sorted} dimKeys={activeDims.map(d => d.key)} />
+                                        <Typography sx={{ fontSize: 10.5, color: T.td3, textAlign: 'center', mt: 1.5, fontStyle: 'italic' }}>{activeDims.length > 1 ? 'Click to drill down · drop fields here to add' : 'Click chart elements to cross-filter · drop fields here to add'}</Typography>
                                     </CardContent>
+                                </Card>
+                            )}
+
+                            {/* PIVOT */}
+                            {viewMode === 'pivot' && (
+                                <Card elevation={0} className="qe4-tile" sx={{ borderRadius: `${T.radius + 4}px`, border: `1px solid ${T.cardBorder}`, overflow: 'hidden' }}>
+                                    <Box sx={{ px: 2, py: 1.25, borderBottom: `1px solid ${T.cardBorder}`, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Columns size={14} color={T.primary} />
+                                        <Typography sx={{ fontSize: 13, fontWeight: 800, color: T.td }}>Pivot — {activeDims[0]?.label || '…'} × {activeDims[1]?.label || 'add 2nd dimension'}</Typography>
+                                        <Box sx={{ flex: 1 }} />
+                                        <Typography sx={{ fontSize: 10.5, color: T.td3 }}>{mK[0]?.replace(/_/g, ' ')}</Typography>
+                                    </Box>
+                                    <PivotTable rows={sorted} dims={activeDims} measureKey={mK[0]} fmtVal={fmtVal} onCellClick={v => activeDims[0] && toggleFV(activeDims[0].key, String(v))} />
                                 </Card>
                             )}
 
@@ -1289,8 +1814,8 @@ export default function DataExplorer() {
                                             <thead>
                                                 <tr>{Object.keys(rows[0] || {}).map((col, ci) => (
                                                     <th key={col} onClick={() => { setSortCol(col); setSortDir(p => sortCol === col ? (p === 'asc' ? 'desc' : 'asc') : 'desc'); }}
-                                                        style={{ padding: '12px 16px', textAlign: ci < dims.length ? 'left' : 'right', fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.8, color: sortCol === col ? T.primary : T.td3, borderBottom: `2px solid ${sortCol === col ? T.primary : 'rgba(0,0,0,0.06)'}`, background: '#fafbfc', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, cursor: 'pointer', userSelect: 'none' }}>
-                                                        <Stack direction="row" spacing={0.5} alignItems="center" justifyContent={ci < dims.length ? 'flex-start' : 'flex-end'}>
+                                                        style={{ padding: '12px 16px', textAlign: ci < activeDims.length ? 'left' : 'right', fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.8, color: sortCol === col ? T.primary : T.td3, borderBottom: `2px solid ${sortCol === col ? T.primary : 'rgba(0,0,0,0.06)'}`, background: '#fafbfc', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, cursor: 'pointer', userSelect: 'none' }}>
+                                                        <Stack direction="row" spacing={0.5} alignItems="center" justifyContent={ci < activeDims.length ? 'flex-start' : 'flex-end'}>
                                                             <span>{col.replace(/_/g, ' ')}</span>
                                                             {sortCol === col && <span>{sortDir === 'asc' ? '↑' : '↓'}</span>}
                                                         </Stack>
@@ -1299,11 +1824,17 @@ export default function DataExplorer() {
                                             </thead>
                                             <tbody>
                                                 {sorted.map((row, ri) => (
-                                                    <tr key={ri} className="qe4-row" onClick={() => { if (dims.length) { const dk = dims[0].key; const v = row[dk]; if (v != null) toggleFV(dk, String(v)); } }} style={{ cursor: dims.length ? 'pointer' : 'default' }}>
+                                                    <tr key={ri} className="qe4-row" onClick={() => { if (activeDims.length) { const v = row[activeDims[0].key]; if (v != null) onChartClick({ name: String(v) }); } }} style={{ cursor: activeDims.length ? 'pointer' : 'default' }}>
                                                         {Object.entries(row).map(([k, val], ci) => {
-                                                            const isSel = dims.length && ci === 0 && filters[dims[0].key]?.includes(String(val));
+                                                            const isSel = activeDims.length && ci === 0 && filters[activeDims[0].key]?.includes(String(val));
+                                                            const isNum = typeof val === 'number' && ci >= activeDims.length;
+                                                            const st = isNum ? colStats[k] : null;
+                                                            const frac = st && st.mx > st.mn ? (Number(val) - st.mn) / (st.mx - st.mn) : (st ? 1 : 0);
+                                                            let cellBg = isSel ? `${SEL}05` : 'transparent';
+                                                            if (isNum && condFmt === 'heat') cellBg = `${T.primary}${Math.round((0.04 + frac * 0.30) * 255).toString(16).padStart(2, '0')}`;
+                                                            const barBg = isNum && condFmt === 'bars' ? `linear-gradient(to left, ${T.primary}2e ${Math.round(frac * 100)}%, transparent ${Math.round(frac * 100)}%)` : null;
                                                             return (
-                                                                <td key={ci} style={{ padding: '9px 16px', whiteSpace: 'nowrap', borderBottom: '1px solid rgba(0,0,0,0.03)', fontSize: 12.5, fontVariantNumeric: 'tabular-nums', fontWeight: ci < dims.length ? 600 : 400, color: isSel ? SEL : ci < dims.length ? T.td : T.td2, textAlign: ci < dims.length ? 'left' : 'right', background: isSel ? `${SEL}05` : 'transparent', borderLeft: isSel ? `3px solid ${SEL}` : '3px solid transparent' }}>
+                                                                <td key={ci} style={{ padding: '9px 16px', whiteSpace: 'nowrap', borderBottom: '1px solid rgba(0,0,0,0.03)', fontSize: 12.5, fontVariantNumeric: 'tabular-nums', fontWeight: ci < activeDims.length ? 600 : (isNum && condFmt === 'heat' && frac > 0.75 ? 700 : 400), color: isSel ? SEL : ci < activeDims.length ? T.td : T.td2, textAlign: ci < activeDims.length ? 'left' : 'right', background: barBg || cellBg, borderLeft: isSel ? `3px solid ${SEL}` : '3px solid transparent' }}>
                                                                     {typeof val === 'number' ? fmtVal(val, k) : (val ?? '—')}
                                                                 </td>
                                                             );
@@ -1345,7 +1876,9 @@ export default function DataExplorer() {
                                     const chH = tileChartH(o.id);
                                     return (
                                         <div key={o.id}>
-                                            <Card elevation={0} className="qe4-tile" sx={{ height: '100%', display: 'flex', flexDirection: 'column', borderRadius: `${T.radius + 4}px`, border: `1px solid ${T.cardBorder}`, overflow: 'hidden' }}>
+                                            <Card elevation={0} className="qe4-tile" sx={{ height: '100%', display: 'flex', flexDirection: 'column', borderRadius: `${T.radius + 4}px`, border: `1px solid ${T.cardBorder}`, overflow: 'hidden' }}
+                                                onDragOver={e => { if (DRAG_CTX && !DRAG_CTX.zone) e.preventDefault(); }}
+                                                onDrop={e => { e.preventDefault(); if (DRAG_CTX && !DRAG_CTX.zone) { DRAG_CTX.consumed = true; dropOnTile(o.id, DRAG_CTX.item); } }}>
                                                 <Box sx={{ px: 1.5, py: 1.25, borderBottom: `1px solid ${T.cardBorder}`, display: 'flex', alignItems: 'center', gap: 0.75 }}>
                                                     <Box className="qe4-drag" sx={{ display: 'flex', alignItems: 'center', color: T.td3, '&:hover': { color: T.td2 } }}><GripVertical size={14} /></Box>
                                                     <CTIcon size={14} color={T.primary} />
@@ -1357,7 +1890,7 @@ export default function DataExplorer() {
                                                 </Box>
                                                 <CardContent sx={{ p: '14px !important', flex: 1, minHeight: 0 }}>
                                                     {rws.length && cd.length ? (
-                                                        <ChartRenderer type={o.vizType} data={cd} measureKeys={mk} palette={palette} onChartClick={dd => { if (dd) { const val = dd.name || dd?.payload?.name; if (val && o.dims[0]) toggleFV(o.dims[0].key, String(val)); } }} height={chH} measFmt={measFmt} />
+                                                        <ChartRenderer type={o.vizType} data={cd} measureKeys={mk} palette={palette} onChartClick={dd => { if (dd) { const val = dd.name || dd?.payload?.name; if (val && o.dims[0]) toggleFV(o.dims[0].key, String(val)); } }} height={chH} measFmt={measFmt} rawRows={rws} dimKeys={o.dims.map(x => x.key)} />
                                                     ) : (
                                                         <Box sx={{ height: chH, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.td3, fontSize: 12 }}>{sd2.qLoad ? 'Loading…' : 'No data for current selections'}</Box>
                                                     )}

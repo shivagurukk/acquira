@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, X, Building, Globe } from 'lucide-react';
 import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
 import './TenantManagement.css';
 
 const TenantManagement = () => {
+    const { tenantVersion } = useAuth();
     const [tenants, setTenants] = useState([]);
     const [countries, setCountries] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -19,7 +21,7 @@ const TenantManagement = () => {
     useEffect(() => {
         fetchTenants();
         fetchCountries();
-    }, []);
+    }, [tenantVersion]);
 
     const fetchTenants = async () => {
         try {

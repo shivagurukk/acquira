@@ -28,10 +28,20 @@ const LoginPage = () => {
     const [forgotLoading, setForgotLoading] = useState(false);
 
     useEffect(() => {
-        fetch('/api/sso/microsoft/config')
+        // The SSO config fetch fires on mount. On a cold backend (just restarted or
+        // idle behind Nginx) this request can take several seconds, and because the
+        // Microsoft button is gated on ssoConfig, a slow response left the page
+        // sitting with no visible cue. We now race it against a short timeout: if
+        // config doesn't arrive quickly we render the page as SSO-disabled and let
+        // the button appear later if the (eventual) response says it's enabled.
+        // AbortController cancels the in-flight request when the timeout wins.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        fetch('/api/sso/microsoft/config', { signal: controller.signal })
             .then(r => r.json())
             .then(data => setSsoConfig(data))
-            .catch(() => setSsoConfig({ enabled: false }));
+            .catch(() => setSsoConfig({ enabled: false }))
+            .finally(() => clearTimeout(timer));
     }, []);
 
     useEffect(() => {
@@ -76,9 +86,31 @@ const LoginPage = () => {
                 navigate('/dashboard');
             } else {
                 const errData = await response.json().catch(() => ({}));
-                setError(errData.error || 'Invalid credentials.');
+                // Distinguish a genuine credential rejection from a backend that is
+                // down / erroring behind Nginx. A 502/503/504 (bad gateway / service
+                // unavailable / gateway timeout) or a 500 means the server — not the
+                // password — is the problem, and it must NOT read as "Invalid
+                // credentials". Only 401 (and a 400 that carried an explicit message)
+                // are true auth failures.
+                if (response.status === 502 || response.status === 503 || response.status === 504) {
+                    setError('The server is temporarily unavailable. Please try again in a moment.');
+                } else if (response.status >= 500) {
+                    setError(errData.error || 'A server error occurred. Please try again shortly.');
+                } else if (response.status === 401) {
+                    setError(errData.error || 'Invalid username or password.');
+                } else {
+                    // 400 / 403 / other 4xx — surface the backend message if present,
+                    // otherwise a neutral fallback (not "invalid credentials", which
+                    // would be misleading for e.g. a locked/pending account).
+                    setError(errData.error || 'Unable to sign in. Please try again.');
+                }
             }
-        } catch (err) { setError('Unable to connect to server.'); }
+        } catch (err) {
+            // fetch() itself rejected — network unreachable, DNS failure, connection
+            // refused (backend fully down and nothing answering on the port). This is
+            // distinct from the branches above, which handle an HTTP error response.
+            setError('Unable to reach the server. Please check your connection and try again.');
+        }
         finally { setLoading(false); }
     };
 
@@ -179,8 +211,8 @@ const LoginPage = () => {
             <div className="login-content">
                 <div className="login-glass-card">
                     <div className="login-logo-section">
-                        <div className="login-logo-icon">A</div>
-                        <h1 className="login-logo-text">Acquira</h1>
+                        <div className="login-logo-icon">N</div>
+                        <h1 className="login-logo-text">NEXUS</h1>
                         <p className="login-logo-subtext">Enterprise Payment Intelligence</p>
                         <span className="login-version-badge">v2.0 · Secure</span>
                     </div>
@@ -364,7 +396,7 @@ const LoginPage = () => {
                     </AnimatePresence>
                 </div>
                 <div className="login-footer">
-                    © {new Date().getFullYear()} Acquira · Secure Enterprise Platform · 256-bit Encryption
+                    © {new Date().getFullYear()} NEXUS · Secure Enterprise Platform · 256-bit Encryption
                 </div>
             </div>
         </div>
