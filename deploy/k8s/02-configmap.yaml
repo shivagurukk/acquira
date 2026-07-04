@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acquira-config
+  namespace: acquira
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://acquira-db:5432/postgres"
+  SPRING_DATASOURCE_USERNAME: "postgres"
+  APP_REPORTS_DIR: "/opt/acquira/reports"
+  # Local kind: turn schema init ON so the DB self-creates (skips migration Job).
+  # On AWS keep this "never" and run the migration Job instead.
+  SPRING_SQL_INIT_MODE: "always"

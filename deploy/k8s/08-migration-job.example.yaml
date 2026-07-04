@@ -1,0 +1,38 @@
+# =============================================================================
+# ONE-TIME schema/migration Job. Needed ONLY when SPRING_SQL_INIT_MODE=never
+# (the AWS/prod setting). For local kind you can skip this and let init mode
+# "always" create the schema. Kept here so your AWS rollout has it ready.
+#
+# This runs psql against the DB and applies schema.sql + the ordered migrations.
+# TODO(verify): mount or COPY your SQL files in, and confirm the exact ordered
+#   list (schema.sql, V2__..., V3__..., V2026_05_07_01__..., V2026_06_27_01__...).
+# A Job runs to completion and exits (unlike a Deployment which stays up).
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: acquira-db-migrate
+  namespace: acquira
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: postgres:16          # has psql
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: acquira-secrets, key: SPRING_DATASOURCE_PASSWORD }
+          command: ["sh","-c"]
+          args:
+            - |
+              echo "Apply schema + migrations in order against acquira-db..."
+              # Example (replace with real mounted files, in order):
+              # psql -h acquira-db -U postgres -d postgres -f /sql/schema.sql
+              # psql -h acquira-db -U postgres -d postgres -f /sql/V2__feature_security_alerts_api.sql
+              # psql -h acquira-db -U postgres -d postgres -f /sql/V3__feature_revenue_leakage.sql
+              # psql -h acquira-db -U postgres -d postgres -f /sql/V2026_05_07_01__performance_indexes.sql
+              # psql -h acquira-db -U postgres -d postgres -f /sql/V2026_06_27_01__revenue_leakage_flags_reconcile.sql
+              echo "TODO: wire in the SQL files, then remove this echo."
