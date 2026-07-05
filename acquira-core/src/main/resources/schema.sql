@@ -1647,6 +1647,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_id VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) DEFAULT 'APPROVED';
 -- APPROVED (normal users), PENDING (SSO requests), REJECTED
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(150);
+-- Account expiry: optional per-user cutoff. After this timestamp the user is
+-- blocked at login and auto-deactivated (is_active flipped off). NULL = never.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_expires_at TIMESTAMP;
 ALTER TABLE user_tenant_access ADD COLUMN IF NOT EXISTS role_in_tenant VARCHAR(50);
 ALTER TABLE user_tenant_access ADD COLUMN IF NOT EXISTS is_default_tenant BOOLEAN DEFAULT FALSE;
 -- One template per (tenant, name) — required so the per-tenant default-template

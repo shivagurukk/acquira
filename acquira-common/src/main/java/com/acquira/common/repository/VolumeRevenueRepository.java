@@ -323,33 +323,39 @@ public class VolumeRevenueRepository {
             sql.append(" st.sid as row_label, st.sid as sort_key, ");
         }
 
-        // Pivoted Columns (Dom Debit, Dom Credit, Intl, Total)
-        // Dom Debit
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'DOMESTIC' AND s.card_type = 'DEBIT' THEN s.total_txns ELSE 0 END) as dom_debit_cnt, ");
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'DOMESTIC' AND s.card_type = 'DEBIT' THEN s.total_volume ELSE 0 END) as dom_debit_vol, ");
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'DOMESTIC' AND s.card_type = 'DEBIT' THEN s.total_msf ELSE 0 END) as dom_debit_msf, ");
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'DOMESTIC' AND s.card_type = 'DEBIT' AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dom_debit_optin, ");
+        // Pivoted Columns (Dom Debit&Prepaid, Dom Credit, Intl, Total).
+        // [FIX] The three buckets are now an EXHAUSTIVE partition of every row:
+        //   dom_debit  = DOMESTIC and card_type in (DEBIT, PREPAID)   — matches the
+        //                sum_daily_finance rollup and the UI header "Debit & Prepaid".
+        //                (Old version matched only DEBIT, so PREPAID rows counted in
+        //                total_vol but in NO bucket -> the three % columns never
+        //                summed to 100 and looked "wrong".)
+        //   dom_credit = DOMESTIC and everything else (CREDIT + unknown/null card
+        //                types) — catch-all so the partition stays exhaustive even
+        //                for unmapped scheme codes.
+        //   intl       = anything not DOMESTIC (incl. null destination).
+        // Invariant: dom_debit + dom_credit + intl == total, per row and per column.
+        final String DOM_DEBIT = "UPPER(COALESCE(s.destination,'')) = 'DOMESTIC' AND UPPER(COALESCE(s.card_type,'')) IN ('DEBIT','PREPAID')";
+        final String DOM_CREDIT = "UPPER(COALESCE(s.destination,'')) = 'DOMESTIC' AND UPPER(COALESCE(s.card_type,'')) NOT IN ('DEBIT','PREPAID')";
+        final String INTL = "UPPER(COALESCE(s.destination,'')) <> 'DOMESTIC'";
 
-        // Dom Credit
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'DOMESTIC' AND s.card_type = 'CREDIT' THEN s.total_txns ELSE 0 END) as dom_credit_cnt, ");
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'DOMESTIC' AND s.card_type = 'CREDIT' THEN s.total_volume ELSE 0 END) as dom_credit_vol, ");
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'DOMESTIC' AND s.card_type = 'CREDIT' THEN s.total_msf ELSE 0 END) as dom_credit_msf, ");
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'DOMESTIC' AND s.card_type = 'CREDIT' AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dom_credit_optin, ");
+        // Dom Debit & Prepaid
+        sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_txns ELSE 0 END) as dom_debit_cnt, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_volume ELSE 0 END) as dom_debit_vol, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_msf ELSE 0 END) as dom_debit_msf, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dom_debit_optin, ");
+
+        // Dom Credit (+ catch-all for unknown card types)
+        sql.append(" SUM(CASE WHEN ").append(DOM_CREDIT).append(" THEN s.total_txns ELSE 0 END) as dom_credit_cnt, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_CREDIT).append(" THEN s.total_volume ELSE 0 END) as dom_credit_vol, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_CREDIT).append(" THEN s.total_msf ELSE 0 END) as dom_credit_msf, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_CREDIT).append(" AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dom_credit_optin, ");
 
         // Intl (All Card Types)
-        sql.append(" SUM(CASE WHEN s.destination = 'INTERNATIONAL' THEN s.total_txns ELSE 0 END) as int_cnt, ");
-        sql.append(" SUM(CASE WHEN s.destination = 'INTERNATIONAL' THEN s.total_volume ELSE 0 END) as int_vol, ");
-        sql.append(" SUM(CASE WHEN s.destination = 'INTERNATIONAL' THEN s.total_msf ELSE 0 END) as int_msf, ");
-        sql.append(
-                " SUM(CASE WHEN s.destination = 'INTERNATIONAL' AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as int_optin, ");
+        sql.append(" SUM(CASE WHEN ").append(INTL).append(" THEN s.total_txns ELSE 0 END) as int_cnt, ");
+        sql.append(" SUM(CASE WHEN ").append(INTL).append(" THEN s.total_volume ELSE 0 END) as int_vol, ");
+        sql.append(" SUM(CASE WHEN ").append(INTL).append(" THEN s.total_msf ELSE 0 END) as int_msf, ");
+        sql.append(" SUM(CASE WHEN ").append(INTL).append(" AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as int_optin, ");
 
         // Total
         sql.append(" SUM(s.total_volume) as total_vol, ");

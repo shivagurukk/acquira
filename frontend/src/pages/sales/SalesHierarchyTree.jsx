@@ -65,7 +65,7 @@ const initials = (name) => {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || name[0].toUpperCase();
 };
 
-function NodeCard({ tier, name, photoUrl, volume, txns, msf, sub, width = 170, dim }) {
+function NodeCard({ tier, name, photoUrl, volume, txns, net, sub, width = 170, dim }) {
   const t = TIER[tier];
   return (
     <div style={{
@@ -88,7 +88,7 @@ function NodeCard({ tier, name, photoUrl, volume, txns, msf, sub, width = 170, d
       <div style={{ fontSize: 9.5, color: T.textMut, marginBottom: 7 }}>volume</div>
       <div style={{ display: 'flex', justifyContent: 'center', gap: 10, borderTop: `1px solid ${T.borderLt}`, paddingTop: 7 }}>
         <span title="Transactions" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: T.textSec, fontWeight: 600 }}><Hash size={10} />{fmt(txns)}</span>
-        <span title="MSF" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: T.textSec, fontWeight: 600 }}><Percent size={10} />{fmtM(msf)}</span>
+        <span title="Net revenue (MSF − interchange − scheme fee)" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: Number(net) < 0 ? T.danger : T.textSec, fontWeight: 600 }}><Percent size={10} />{fmtM(net)}</span>
       </div>
       {sub && <div style={{ fontSize: 10, color: T.textMut, marginTop: 5 }}>{sub}</div>}
     </div>
@@ -129,7 +129,8 @@ export default function SalesHierarchyTree() {
       const cards = leads.map(l => {
         const cv = (l.countryLeadEmail && byEmail[String(l.countryLeadEmail).toLowerCase()]) || byName[l.countryLeadName] || {};
         return { id: l.id, label: l.countryLeadName, countryCode: l.countryCode,
-          volume: Number(cv.total_volume || 0), txns: Number(cv.txn_count || 0), msf: Number(cv.total_msf || 0), teamCount: Number(cv.team_count || 0) };
+          volume: Number(cv.total_volume || 0), txns: Number(cv.txn_count || 0),
+          net: Number(cv.net_revenue != null ? cv.net_revenue : cv.total_msf || 0), teamCount: Number(cv.team_count || 0) };
       });
       const un = byName['Unassigned'] || null;
       const unmapped = teamLeads.filter(t => t.countryLeadId == null);
@@ -156,13 +157,16 @@ export default function SalesHierarchyTree() {
     try {
       let rootNode, teamList;
       if (selected === 'unassigned') {
-        rootNode = { tier: 'country', label: 'Unassigned', volume: unassignedCv?.total_volume, txns: unassignedCv?.txn_count, msf: unassignedCv?.total_msf };
+        rootNode = { tier: 'country', label: 'Unassigned', volume: unassignedCv?.total_volume, txns: unassignedCv?.txn_count,
+          net: unassignedCv?.net_revenue != null ? unassignedCv.net_revenue : unassignedCv?.total_msf };
         teamList = unmappedTeams.map(t => ({ id: t.teamLeadId, label: t.teamLeadName }));
       } else {
         const cp = await api.get(`/sales-portfolio/country/${selected}`, { params: rangeParams() });
         const d = cp.data;
-        rootNode = { tier: 'country', label: d.countryLeadName, volume: d.totalVolume, txns: d.totalTxns, msf: d.totalMsf, photoUrl: d.photoUrl };
-        teamList = (d.teams || []).map(t => ({ id: t.team_lead_id, label: t.team_lead_name, volume: t.volume, txns: t.txn_count, msf: t.msf }));
+        rootNode = { tier: 'country', label: d.countryLeadName, volume: d.totalVolume, txns: d.totalTxns,
+          net: d.totalNet != null ? d.totalNet : d.totalMsf, photoUrl: d.photoUrl };
+        teamList = (d.teams || []).map(t => ({ id: t.team_lead_id, label: t.team_lead_name, volume: t.volume, txns: t.txn_count,
+          net: t.net != null ? t.net : t.msf }));
       }
 
       // fetch agents for each team in parallel
@@ -176,8 +180,9 @@ export default function SalesHierarchyTree() {
           ...t,
           volume: t.volume != null ? t.volume : d?.totalVolume,
           txns: t.txns != null ? t.txns : d?.totalTxns,
-          msf: t.msf != null ? t.msf : d?.totalMsf,
-          agents: (d?.agents || []).map(a => ({ id: a.agent, label: a.displayName || a.agent, volume: a.volume, txns: a.txn_count, msf: a.msf, sub: `${fmt(a.merchants)} merchants`, photoUrl: a.photoUrl })),
+          net: t.net != null ? t.net : (d?.totalNet != null ? d.totalNet : d?.totalMsf),
+          agents: (d?.agents || []).map(a => ({ id: a.agent, label: a.displayName || a.agent, volume: a.volume, txns: a.txn_count,
+            net: a.net != null ? a.net : a.msf, sub: `${fmt(a.merchants)} merchants`, photoUrl: a.photoUrl })),
         };
       });
       setTree({ root: rootNode, teams });
@@ -189,11 +194,15 @@ export default function SalesHierarchyTree() {
   useEffect(() => { buildTree(); }, [buildTree]);
 
   const totals = useMemo(() => {
-    let vol = 0, msf = 0, txns = 0, teams = 0;
-    countryCards.forEach(c => { vol += c.volume; msf += c.msf; txns += c.txns; teams += c.teamCount; });
-    if (unassignedCv) { vol += Number(unassignedCv.total_volume || 0); msf += Number(unassignedCv.total_msf || 0); txns += Number(unassignedCv.txn_count || 0); }
+    let vol = 0, net = 0, txns = 0, teams = 0;
+    countryCards.forEach(c => { vol += c.volume; net += c.net; txns += c.txns; teams += c.teamCount; });
+    if (unassignedCv) {
+      vol += Number(unassignedCv.total_volume || 0);
+      net += Number(unassignedCv.net_revenue != null ? unassignedCv.net_revenue : unassignedCv.total_msf || 0);
+      txns += Number(unassignedCv.txn_count || 0);
+    }
     teams += unmappedTeams.length;
-    return { vol, msf, txns, teams, leads: countryCards.length };
+    return { vol, net, txns, teams, leads: countryCards.length };
   }, [countryCards, unassignedCv, unmappedTeams]);
 
   const chips = [
@@ -243,7 +252,7 @@ export default function SalesHierarchyTree() {
         <Kpi label="Teams" value={fmt(totals.teams)} icon={Users} color={T.brand} />
         <Kpi label="Volume" value={fmtM(totals.vol)} icon={DollarSign} color="var(--tier-agent, #0891b2)" />
         <Kpi label="Transactions" value={fmt(totals.txns)} icon={Hash} color="var(--accent-purple, #7c3aed)" />
-        <Kpi label="MSF Revenue" value={fmtM(totals.msf)} icon={Percent} color={T.successDk} />
+        <Kpi label="Net Revenue" value={fmtM(totals.net)} icon={Percent} color={T.successDk} />
       </div>
 
       {/* country-lead selector chips */}
@@ -279,18 +288,18 @@ export default function SalesHierarchyTree() {
               <ul>
                 <li>
                   <NodeCard tier="country" name={tree.root.label} photoUrl={tree.root.photoUrl}
-                    volume={tree.root.volume} txns={tree.root.txns} msf={tree.root.msf} width={186} dim={treeLoading} />
+                    volume={tree.root.volume} txns={tree.root.txns} net={tree.root.net} width={186} dim={treeLoading} />
                   {tree.teams.length > 0 && (
                     <ul>
                       {tree.teams.map(tm => (
                         <li key={tm.id}>
-                          <NodeCard tier="team" name={tm.label} volume={tm.volume} txns={tm.txns} msf={tm.msf} dim={treeLoading} />
+                          <NodeCard tier="team" name={tm.label} volume={tm.volume} txns={tm.txns} net={tm.net} dim={treeLoading} />
                           {tm.agents.length > 0 && (
                             <ul>
                               {tm.agents.map(a => (
                                 <li key={a.id}>
                                   <NodeCard tier="agent" name={a.label} photoUrl={a.photoUrl}
-                                    volume={a.volume} txns={a.txns} msf={a.msf} sub={a.sub} dim={treeLoading} />
+                                    volume={a.volume} txns={a.txns} net={a.net} sub={a.sub} dim={treeLoading} />
                                 </li>
                               ))}
                             </ul>

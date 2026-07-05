@@ -64,6 +64,12 @@ public class User {
     @Column(name = "display_name")
     private String displayName;
 
+    // ===== ACCOUNT EXPIRY =====
+    // Optional cutoff. After this timestamp the account is expired: login is
+    // blocked and the user is auto-deactivated. NULL = never expires.
+    @Column(name = "account_expires_at")
+    private LocalDateTime accountExpiresAt;
+
     public Long getId() {
         return id;
     }
@@ -155,6 +161,14 @@ public class User {
 
     public String getDisplayName() { return displayName; }
     public void setDisplayName(String displayName) { this.displayName = displayName; }
+
+    public LocalDateTime getAccountExpiresAt() { return accountExpiresAt; }
+    public void setAccountExpiresAt(LocalDateTime accountExpiresAt) { this.accountExpiresAt = accountExpiresAt; }
+
+    /** True when an expiry is set and it has passed. */
+    public boolean isAccountExpired() {
+        return accountExpiresAt != null && accountExpiresAt.isBefore(LocalDateTime.now());
+    }
 
     public boolean isSsoUser() { return ssoProvider != null && !ssoProvider.isEmpty(); }
     public boolean isPendingApproval() { return "PENDING".equals(approvalStatus); }

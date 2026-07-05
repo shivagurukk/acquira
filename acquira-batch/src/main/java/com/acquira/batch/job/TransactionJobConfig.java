@@ -725,7 +725,7 @@ public class TransactionJobConfig {
                 "stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type, " +
                 "stg.card_scheme, stg.card_type, stg.dcc, stg.txn_currency, stg.txn_currency_amount, " +
                 "stg.store_base_currency, stg.store_base_currency_amount, " +
-                "stg.msf, stg.vat, stg.total_amount_settled, stg.interchange_fee, stg.destination " +
+                "ABS(stg.msf), ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination " +
                 "FROM stg_trnx_raw stg " +
                 "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '') " +
                 "LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '') " +
@@ -791,6 +791,75 @@ public class TransactionJobConfig {
                     storeFixed, termFixed, (System.currentTimeMillis() - tFix) / 1000.0));
             }
 
+            // =================================================================
+            // FEE COMPUTATION (V2026_07_05_01): interchange + scheme fee are
+            // computed by US, not trusted from the feed. Both off the
+            // SETTLEMENT amount (store_base_currency_amount) — never the
+            // cardholder amount. Rows without a matching rate row (e.g. an
+            // unseeded tenant) keep the feed interchange value untouched, so
+            // this can never break ingestion.
+            //
+            // Interchange: highest-priority matching interchange_rate_local
+            // row (NULL column = wildcard). Scheme via ref_card_scheme by
+            // CODE or NAME; tier via card_subtype (2=Premium else Standard);
+            // channel via dim_terminal.type exact ECOM whitelist; MCC sector
+            // via mcc_sector_map; ticket thresholds vs settlement amount;
+            // debit cap via LEAST(). Scheme fee: dest x channel percentage.
+            // =================================================================
+            long tFee = System.currentTimeMillis();
+            int icRows = jdbcTemplate.update(
+                "UPDATE fact_transaction f SET interchange_fee = r.computed_ic FROM ( " +
+                "SELECT ft.transaction_id, ft.payment_date, " +
+                // Fallback: if no rate row matches (tenant has no configured rules,
+                // or a gap in the rate table), apply a flat 1.85% for BOTH local and
+                // international. New tenants therefore get sane interchange until
+                // their own rules are seeded. Matched rows use the configured rate
+                // (+cap via LEAST); the 1.85% branch has no cap.
+                "  CASE WHEN lr.interchange_pct IS NULL " +
+                "       THEN 0.018500 * ABS(COALESCE(ft.store_base_currency_amount,0)) " +
+                "       ELSE LEAST(lr.interchange_pct * ABS(COALESCE(ft.store_base_currency_amount,0)), " +
+                "                  COALESCE(lr.cap_amount, 999999999999)) END AS computed_ic " +
+                "FROM fact_transaction ft " +
+                "LEFT JOIN dim_store ds ON ds.store_id = ft.store_id AND ds.tenant_id = ft.tenant_id " +
+                "LEFT JOIN dim_terminal dt ON dt.terminal_id = ft.terminal_id AND dt.tenant_id = ft.tenant_id " +
+                "LEFT JOIN ref_card_scheme rcs ON UPPER(rcs.code) = UPPER(TRIM(ft.card_scheme)) " +
+                "                              OR UPPER(rcs.name) = UPPER(TRIM(ft.card_scheme)) " +
+                "LEFT JOIN LATERAL ( " +
+                "  SELECT ilr.interchange_pct, ilr.cap_amount FROM interchange_rate_local ilr " +
+                "  WHERE ilr.tenant_id = ft.tenant_id " +
+                "    AND ilr.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
+                "    AND (ilr.channel IS NULL OR ilr.channel = " +
+                "         CASE WHEN UPPER(TRIM(COALESCE(dt.type,''))) IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') " +
+                "              THEN 'ECOM' ELSE 'POS' END) " +
+                "    AND (ilr.scheme_group IS NULL OR ilr.scheme_group = COALESCE(rcs.group_name,'')) " +
+                "    AND (ilr.card_type IS NULL OR ilr.card_type = UPPER(TRIM(COALESCE(ft.card_type,'')))) " +
+                "    AND (ilr.tier IS NULL OR ilr.tier = " +
+                "         CASE WHEN rcs.card_subtype = 2 THEN 'Premium' ELSE 'Standard' END) " +
+                "    AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = " +
+                "         (SELECT msm.sector FROM mcc_sector_map msm " +
+                "          WHERE msm.tenant_id = ft.tenant_id AND msm.mcc = ds.mcc)) " +
+                "    AND (ilr.min_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket_aed) " +
+                "    AND (ilr.max_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket_aed) " +
+                "  ORDER BY ilr.priority DESC, ilr.id ASC LIMIT 1 " +
+                ") lr ON TRUE " +
+                "WHERE ft.tenant_id = ? AND DATE(ft.payment_date) IN " + dateScope + " ) r " +
+                "WHERE f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
+                tenantId);
+            int sfRows = jdbcTemplate.update(
+                "UPDATE fact_transaction f " +
+                "SET scheme_fee = sfr.fee_pct * ABS(COALESCE(f.store_base_currency_amount,0)) " +
+                "FROM scheme_fee_rate sfr " +
+                "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN " + dateScope +
+                " AND sfr.tenant_id = f.tenant_id " +
+                " AND sfr.dest = UPPER(TRIM(COALESCE(f.destination,''))) " +
+                " AND sfr.channel = CASE WHEN UPPER(TRIM(COALESCE( " +
+                "       (SELECT dt2.type FROM dim_terminal dt2 " +
+                "        WHERE dt2.terminal_id = f.terminal_id AND dt2.tenant_id = f.tenant_id), ''))) " +
+                "     IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') THEN 'ECOM' ELSE 'POS' END",
+                tenantId);
+            log.info(String.format("Fee computation: %d interchange, %d scheme-fee rows in %.1fs",
+                icRows, sfRows, (System.currentTimeMillis() - tFee) / 1000.0));
+
             log.info(String.format("stagingToFact completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;
         };
@@ -855,14 +924,15 @@ public class TransactionJobConfig {
                 java.util.List<java.util.concurrent.CompletableFuture<Void>> phase1 = new java.util.ArrayList<>();
 
                 phase1.add(runAsync(exec, "sum_daily_bank", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_msf, " +
+                    jdbcTemplate.update("INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_base_volume, total_msf, " +
                         "total_interchange, total_scheme_fee, total_vat, total_net_revenue) " +
-                        "SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(txn_currency_amount), SUM(msf), " +
-                        "SUM(interchange_fee), 0, SUM(vat), SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0)) " +
+                        "SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(txn_currency_amount), SUM(store_base_currency_amount), SUM(msf), " +
+                        "SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), SUM(vat), " +
+                        "SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - COALESCE(scheme_fee,0)) " +
                         "FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date) " +
                         "ON CONFLICT (tenant_id, business_date) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
+                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
                         "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
 
@@ -872,8 +942,9 @@ public class TransactionJobConfig {
                         "total_debit_prepaid_volume, total_credit_volume, sales_user_id, unique_customer_count, " +
                         "dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume, dcc_eligible_count, dcc_optin_count) " +
                         "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, COUNT(*), " +
-                        "SUM(f.txn_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0, " +
-                        "SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0)), " +
+                        "SUM(f.txn_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), " +
+                        "SUM(COALESCE(f.scheme_fee,0)), " +
+                        "SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - COALESCE(f.scheme_fee,0)), " +
                         "SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT','PREPAID') THEN f.store_base_currency_amount ELSE 0 END), " +
                         "SUM(CASE WHEN UPPER(f.card_type) = 'CREDIT' THEN f.store_base_currency_amount ELSE 0 END), " +
                         "m.sales_user_id, COUNT(DISTINCT f.card_number), " +
@@ -898,8 +969,9 @@ public class TransactionJobConfig {
                 phase1.add(runAsync(exec, "sum_daily_mcc", () ->
                     jdbcTemplate.update("INSERT INTO sum_daily_mcc (tenant_id, business_date, mcc, card_scheme, total_txns, " +
                         "total_volume, total_msf, total_scheme_fee, total_net_revenue) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf), 0, " +
-                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)) " +
+                        "SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf), " +
+                        "SUM(COALESCE(f.scheme_fee,0)), " +
+                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)) " +
                         "FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id " +
                         "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme " +
@@ -915,7 +987,8 @@ public class TransactionJobConfig {
                         "       THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') " +
                         "       ELSE card_scheme END, " +
                         "COUNT(*), SUM(txn_currency_amount), SUM(msf), " +
-                        "SUM(interchange_fee), 0, SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)) " +
+                        "SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), " +
+                        "SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)) " +
                         "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date), " +
                         "  CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
@@ -930,7 +1003,8 @@ public class TransactionJobConfig {
                     jdbcTemplate.update("INSERT INTO sum_daily_channel (tenant_id, business_date, channel, total_txns, " +
                         "total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue) " +
                         "SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*), SUM(f.txn_currency_amount), " +
-                        "SUM(f.msf), SUM(f.interchange_fee), 0, SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)) " +
+                        "SUM(f.msf), SUM(f.interchange_fee), SUM(COALESCE(f.scheme_fee,0)), " +
+                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)) " +
                         "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
                         "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS') " +
@@ -941,13 +1015,16 @@ public class TransactionJobConfig {
 
                 phase1.add(runAsync(exec, "sum_daily_terminal", () ->
                     jdbcTemplate.update("INSERT INTO sum_daily_terminal (tenant_id, business_date, merchant_id, store_id, terminal_id, " +
-                        "total_txns, total_volume, total_msf, total_revenue) " +
+                        "total_txns, total_volume, total_base_volume, total_msf, total_interchange, total_scheme_fee, total_revenue) " +
                         "SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id, COUNT(*), SUM(txn_currency_amount), " +
-                        "SUM(msf), SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)) " +
+                        "SUM(store_base_currency_amount), SUM(msf), SUM(COALESCE(interchange_fee,0)), SUM(COALESCE(scheme_fee,0)), " +
+                        "SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)) " +
                         "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, total_revenue=EXCLUDED.total_revenue",
+                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, " +
+                        "total_msf=EXCLUDED.total_msf, total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
+                        "total_revenue=EXCLUDED.total_revenue",
                         tenantId)));
 
                 phase1.add(runAsync(exec, "sum_daily_finance", () ->
@@ -1065,14 +1142,14 @@ public class TransactionJobConfig {
 
                 java.util.List<java.util.concurrent.CompletableFuture<Void>> phase2 = new java.util.ArrayList<>();
                 phase2.add(runAsync(exec, "sum_monthly_bank", () ->
-                    jdbcTemplate.update("INSERT INTO sum_monthly_bank (tenant_id, month_key, total_txns, total_volume, total_msf, " +
+                    jdbcTemplate.update("INSERT INTO sum_monthly_bank (tenant_id, month_key, total_txns, total_volume, total_base_volume, total_msf, " +
                         "total_interchange, total_scheme_fee, total_vat, total_net_revenue) " +
-                        "SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), SUM(total_txns), SUM(total_volume), " +
+                        "SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), SUM(total_txns), SUM(total_volume), SUM(COALESCE(total_base_volume,0)), " +
                         "SUM(total_msf), SUM(total_interchange), SUM(total_scheme_fee), SUM(total_vat), SUM(total_net_revenue) " +
                         "FROM sum_daily_bank WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN " + monthScope +
                         " GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM') " +
                         "ON CONFLICT (tenant_id, month_key) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
+                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
                         "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
                 // sum_monthly_insight — month-grain rollup of sum_daily_insight (phase1).

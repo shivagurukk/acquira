@@ -77,6 +77,10 @@ public class SecurityPolicyService {
         p.blockUserInfo       = getBool(m, "block_user_info_in_password", true);
         p.historyCount        = Math.max(0, getInt(m, "password_history_count", 5));
         p.minPasswordAgeHours = Math.max(0, getInt(m, "min_password_age_hours", 0));
+        // Days after which a password must be changed. 0 = never expires.
+        // Enforced at login (AuthController) by flipping mustChangePassword when
+        // passwordChangedAt + N days is in the past. Local-password users only.
+        p.passwordExpiryDays  = Math.max(0, getInt(m, "password_expiry_days", 90));
         return p;
     }
 
@@ -130,5 +134,6 @@ public class SecurityPolicyService {
         public boolean blockUserInfo = true;
         public int historyCount = 5;
         public int minPasswordAgeHours = 0;
+        public int passwordExpiryDays = 90;
     }
 }

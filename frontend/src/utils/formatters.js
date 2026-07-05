@@ -39,23 +39,29 @@ export const formatPercent = (val, decimals = 1) =>
  * Dashboard formatter factory — creates formatters using tenant currency symbol.
  * Shared across all dashboard/analytics pages to avoid duplicating this logic.
  *
+ * Compact tiers: >= 1B → "1.24B", >= 1M → "987.5M", >= 1K → "45.2K".
+ * (B tier added for the CEO dashboard — large books cross into billions.)
+ *
  * Usage:
  *   const { currencySymbol } = useAuth();
  *   const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
- *   fmt.currency(125000)  → "AED 125.0K"
- *   fmt.number(1500000)   → "1.5M"
- *   fmt.growth(-3.2)      → "-3.2%"
- *   fmt.date('2025-09-15') → "Sep 15"
+ *   fmt.currency(1250000000) → "AED 1.25B"
+ *   fmt.currency(125000)     → "AED 125.0K"
+ *   fmt.number(1500000)      → "1.5M"
+ *   fmt.growth(-3.2)         → "-3.2%"
+ *   fmt.date('2025-09-15')   → "Sep 15"
  */
 export const createFmt = (sym = DEFAULT_CCY) => ({
     currency: (val) => {
         if (val === 0 || val == null) return sym + ' 0';
+        if (Math.abs(val) >= 1_000_000_000) return sym + ' ' + (val / 1_000_000_000).toFixed(2) + 'B';
         if (Math.abs(val) >= 1_000_000) return sym + ' ' + (val / 1_000_000).toFixed(2) + 'M';
         if (Math.abs(val) >= 1_000) return sym + ' ' + (val / 1_000).toFixed(1) + 'K';
         return sym + ' ' + val.toLocaleString();
     },
     number: (val) => {
         if (val == null) return '0';
+        if (Math.abs(val) >= 1_000_000_000) return (val / 1_000_000_000).toFixed(2) + 'B';
         if (Math.abs(val) >= 1_000_000) return (val / 1_000_000).toFixed(1) + 'M';
         if (Math.abs(val) >= 1_000) return (val / 1_000).toFixed(1) + 'K';
         return val.toLocaleString();

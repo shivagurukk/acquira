@@ -60,6 +60,12 @@ const RISK_META = {
     LOW:    { label: 'Low',    color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #d1fae5)' },
 };
 
+// The attrition backend anchors ALL comparison windows on [startDate, endDate]:
+// MoM = the same-length window one month earlier, YoY = one year earlier, YTD =
+// Jan-1-of-endYear -> endDate. The correct default "current" window is therefore
+// the LATEST DATA MONTH, not the full data history.
+const firstOfMonth = (isoDate) => (isoDate ? `${String(isoDate).slice(0, 7)}-01` : '');
+
 const AttritionReport = () => {
     const { currencySymbol, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
@@ -83,13 +89,44 @@ const AttritionReport = () => {
 
     const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded, latest } = useDataBounds(tenantVersion);
 
+    // fetchData(seeded) posts an explicit filter object; fetchData() (from the
+    // header's Run Report / the drawer's Apply) posts the current filters state.
+    // The override path exists because setFilters(...) doesn't commit before a
+    // fetch fired in the same effect — posting the seeded object directly
+    // guarantees the request body matches what the UI shows.
+    const fetchData = async (override) => {
+        const body = (override && override.startDate !== undefined) ? override : filters;
+        setLoading(true);
+        try {
+            const res = await api.post('/business/attrition-report', body);
+            setData(res.data.map((r, i) => ({ id: r.mid || i, ...r })));
+        } catch (error) { console.error(error); }
+        finally { setLoading(false); }
+    };
+
+    // Seed the report window from the data bounds and fetch in ONE step.
+    // Two fixes vs the previous version:
+    //   1. WINDOW — default to the latest data month (first-of-latest-month ->
+    //      latest), not earliest->latest. Seeding the full data history made the
+    //      "current" window all-time volume while the column headers claimed
+    //      MTD, and made the shifted MoM/YoY windows overlap the current one,
+    //      diluting every % change toward 0.
+    //   2. RACE — the old code set filters in one effect and called fetchData()
+    //      in a second; both ran in the same commit, so the first request went
+    //      out with the still-empty initial dates. The backend then defaulted
+    //      to the CURRENT calendar month — empty whenever data lags the
+    //      calendar — so every merchant rendered as -100% / churned.
     useEffect(() => {
         if (!boundsLoaded) return;
-        setFilters(prev => ({ ...prev, datePreset: 'CUSTOM', startDate: boundsStart, endDate: boundsEnd }));
-    }, [boundsLoaded, boundsStart, boundsEnd]);
-
-    useEffect(() => {
-        if (boundsLoaded) fetchData();
+        const seeded = {
+            ...filters,
+            datePreset: 'CUSTOM',
+            startDate: firstOfMonth(boundsEnd) || boundsStart,
+            endDate: boundsEnd,
+        };
+        setFilters(seeded);
+        fetchData(seeded);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [boundsLoaded]);
 
     // Churn-risk scores are precomputed by the batch and independent of the
@@ -111,15 +148,6 @@ const AttritionReport = () => {
         })();
         return () => { cancelled = true; };
     }, [tenantVersion]);
-
-    const fetchData = async () => {
-        setLoading(true);
-        try {
-            const res = await api.post('/business/attrition-report', filters);
-            setData(res.data.map((r, i) => ({ id: r.mid || i, ...r })));
-        } catch (error) { console.error(error); }
-        finally { setLoading(false); }
-    };
 
     const handleFilterChange = (keyOrObj, val) => {
         if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));
@@ -321,16 +349,27 @@ const AttritionReport = () => {
                 title="Attrition Report (MoM & YoY)" subtitle="Month-on-month and year-over-year comparison with churn classification"
                 icon={Activity}
                 onExport={() => exportToCSV(filteredData, 'attrition_report')}
-                onRunReport={fetchData} onFilterChange={handleFilterChange}
+                onRunReport={() => fetchData()} onFilterChange={handleFilterChange}
                 loading={loading} showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
-            <BusinessFilters filters={filters} onChange={setFilters} onApply={fetchData} isOpen={showFilters} onClose={() => setShowFilters(false)} />
+            <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchData()} isOpen={showFilters} onClose={() => setShowFilters(false)} />
             <DataBoundsBanner
                 latest={latest}
                 boundsLoaded={boundsLoaded}
                 currentEnd={filters.endDate}
-                onJumpToLatest={() => { handleFilterChange({ datePreset: 'CUSTOM', startDate: boundsStart, endDate: boundsEnd }); setTimeout(fetchData, 0); }}
+                onJumpToLatest={() => {
+                    // Jump to the latest DATA MONTH (the report's natural window),
+                    // and post the seeded object directly — no setTimeout race.
+                    const seeded = {
+                        ...filters,
+                        datePreset: 'CUSTOM',
+                        startDate: firstOfMonth(boundsEnd) || boundsStart,
+                        endDate: boundsEnd,
+                    };
+                    setFilters(seeded);
+                    fetchData(seeded);
+                }}
             />
             <KpiCards cards={kpis} />
 

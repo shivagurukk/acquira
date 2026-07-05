@@ -13,6 +13,15 @@ import { useAuth } from '../../contexts/AuthContext';
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
+// % of total, guarded: a zero or negative total (refund-dominated cell) has no
+// meaningful share — show an em dash instead of Infinity / NaN / negative %.
+const pctOfTotal = (part, total) => {
+    const t = Number(total), p = Number(part);
+    if (!isFinite(t) || t <= 0) return '—';
+    return ((p / t) * 100).toFixed(1) + '%';
+};
+// Negative volume cells (refund netting) get flagged red instead of looking broken.
+const negClass = (params) => (Number(params.value) < 0 ? 'neg-vol' : '');
 const formatMonth = (dateStr) => {
     if (!dateStr || !dateStr.includes('-')) return dateStr;
     if (/^\d{4}-\d{2}$/.test(dateStr)) {
@@ -176,23 +185,23 @@ const TransactionPerformanceDashboard = () => {
             }
         },
         { field: 'dom_debit_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
-        { field: 'dom_debit_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'dom_debit_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value), cellClassName: negClass },
         { field: 'dom_debit_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
-        { field: 'dom_debit_pct', headerName: '%', width: 70, valueGetter: (value, row) => ((row.dom_debit_vol / row.total_vol) * 100 || 0).toFixed(1) + '%' },
+        { field: 'dom_debit_pct', headerName: '%', width: 70, valueGetter: (value, row) => pctOfTotal(row.dom_debit_vol, row.total_vol) },
         { field: 'dom_debit_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
         { field: 'dom_credit_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
-        { field: 'dom_credit_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'dom_credit_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value), cellClassName: negClass },
         { field: 'dom_credit_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
-        { field: 'dom_credit_pct', headerName: '%', width: 70, valueGetter: (value, row) => ((row.dom_credit_vol / row.total_vol) * 100 || 0).toFixed(1) + '%' },
+        { field: 'dom_credit_pct', headerName: '%', width: 70, valueGetter: (value, row) => pctOfTotal(row.dom_credit_vol, row.total_vol) },
         { field: 'dom_credit_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
         { field: 'int_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
-        { field: 'int_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'int_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value), cellClassName: negClass },
         { field: 'int_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
-        { field: 'int_pct', headerName: '%', width: 70, valueGetter: (value, row) => ((row.int_vol / row.total_vol) * 100 || 0).toFixed(1) + '%' },
+        { field: 'int_pct', headerName: '%', width: 70, valueGetter: (value, row) => pctOfTotal(row.int_vol, row.total_vol) },
         { field: 'int_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
         {
             field: 'total_vol', headerName: 'TOTAL VOL', type: 'number', width: 140,
-            renderCell: (params) => <Typography fontWeight="700" color="primary.main">{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography fontWeight="700" sx={{ color: Number(params.value) < 0 ? 'var(--danger, #dc2626)' : 'var(--brand, #4f46e5)' }}>{formatCurrency(params.value)}</Typography>
         },
     ];
 
@@ -226,6 +235,7 @@ const TransactionPerformanceDashboard = () => {
                     experimentalFeatures={{ columnGrouping: true }} rowHeight={50}
                     slots={{ toolbar: GridToolbar }}
                     sx={{ ...premiumDataGridStyles,
+                        '& .neg-vol': { color: 'var(--danger, #dc2626) !important', fontWeight: 600 },
                         '& .row-level-1': { bgcolor: '#f8fafc !important' },
                         '& .row-level-2': { bgcolor: '#f1f5f9 !important' },
                         '& .row-level-3': { bgcolor: '#e2e8f0 !important' },

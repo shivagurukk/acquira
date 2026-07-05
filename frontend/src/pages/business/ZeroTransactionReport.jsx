@@ -129,20 +129,27 @@ const ZeroTransactionReport = () => {
         setTimeout(runReport, 0);
     };
 
-    // Export: pull up to 1000 matching rows for the current view, then CSV.
+    // Export: pull the FULL current view (paged 1000 at a time, hard cap 10k), then CSV.
     const handleExport = async () => {
         try {
-            const res = await api.post(
-                `/reports/zero-txn/page?rangeType=${rangeType}&status=${statusFilter}&page=0&size=1000`,
-                buildPayload());
-            exportToCSV(res.data?.content || [], 'zero_transaction_report');
+            let all = [];
+            for (let p = 0; p < 10; p++) {
+                const res = await api.post(
+                    `/reports/zero-txn/page?rangeType=${rangeType}&status=${statusFilter}&page=${p}&size=1000`,
+                    buildPayload());
+                const chunk = res.data?.content || [];
+                all = all.concat(chunk);
+                if (chunk.length < 1000 || all.length >= Number(res.data?.total || 0)) break;
+            }
+            exportToCSV(all, 'zero_transaction_report');
         } catch (e) { console.error(e); }
     };
 
     const kpis = useMemo(() => {
         if (!summary) return [];
         return [
-            { title: 'Total Inactive', value: Number(summary.total || 0).toLocaleString(), icon: Users, color: T.indigo },
+            { title: 'Total Inactive', value: Number(summary.total || 0).toLocaleString(), icon: Users, color: T.indigo,
+              subtitle: summary.asOf ? `as of ${summary.asOf} (latest data)` : undefined },
             { title: 'Never Transacted', value: Number(summary.never || 0).toLocaleString(), icon: XCircle, color: STATUS.never.color },
             { title: 'Inactive 30+ Days', value: Number(summary.in30 || 0).toLocaleString(), icon: TrendingDown, color: STATUS.in30.color },
             { title: 'Inactive 7–30 Days', value: Number(summary.in7 || 0).toLocaleString(), icon: Clock, color: STATUS.in7.color },
@@ -151,12 +158,15 @@ const ZeroTransactionReport = () => {
 
     const statusBreakdown = useMemo(() => {
         if (!summary) return [];
-        const t = Number(summary.total) || 1;
-        return [
+        // Chips are now range-independent classifications (never / 30+ / 7–30),
+        // so the share denominator is their own sum — not the range-scoped total.
+        const parts = [
             { label: 'Inactive 30+', count: Number(summary.in30 || 0), color: STATUS.in30.color },
             { label: 'Never Transacted', count: Number(summary.never || 0), color: STATUS.never.color },
             { label: 'Inactive 7–30', count: Number(summary.in7 || 0), color: STATUS.in7.color },
-        ].map(s => ({ ...s, pct: (s.count / t) * 100 }));
+        ];
+        const t = parts.reduce((s, p) => s + p.count, 0) || 1;
+        return parts.map(s => ({ ...s, pct: (s.count / t) * 100 }));
     }, [summary]);
 
     const dist = useMemo(() => (summary?.distribution || [])

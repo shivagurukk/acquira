@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Plus, Edit2, X, Unlock, KeyRound, Mail, User as UserIcon,
   Eye, EyeOff, Check, AlertTriangle, Search, Building2,
-  Trash2, Star, Globe, Clock, CheckCircle, XCircle, Users, Inbox
+  Trash2, Star, Globe, Clock, CheckCircle, XCircle, Users, Inbox, Download
 } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -53,6 +53,7 @@ const UserManagement = () => {
   const [activeTab, setActiveTab] = useState('users'); // users | requests
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [exporting, setExporting] = useState(false);
 
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -136,20 +137,45 @@ const UserManagement = () => {
   const pendingCount = requests.filter(r => r.status === 'PENDING').length;
   const totalPages = Math.ceil(filteredUsers.length / PAGE_SIZE);
 
+  // ─── Export users (server-side CSV, tenant-scoped) ─────
+  // The backend applies the same tenant isolation as the list, so we don't
+  // build the CSV client-side (that would only cover the current page / the
+  // loaded set). We stream the file as a blob and trigger a download.
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const res = await api.get('/users/export/csv', { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      // Prefer the server's filename from Content-Disposition; fall back to a dated default.
+      const cd = res.headers?.['content-disposition'] || '';
+      const match = /filename="?([^"]+)"?/.exec(cd);
+      const filename = match ? match[1] : `users-${new Date().toISOString().slice(0, 10)}.csv`;
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      a.remove(); window.URL.revokeObjectURL(url);
+    } catch (e) {
+      notify(e.response?.data?.error || 'Failed to export users', 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // ─── User CRUD ─────────────────────────────────────────
   const openCreateModal = () => {
     setModalUser(null);
     // If the admin only has one tenant available (typical for a bank admin now
     // that /banks is tenant-scoped), pre-select it so they don't have to.
     const onlyTenantId = banks.length === 1 ? String(banks[0].tenantId) : '';
-    setFormData({ username: '', email: '', displayName: '', password: '', active: true, tenantAssignments: [{ tenantId: onlyTenantId, groupId: '', isDefault: true }] });
+    setFormData({ username: '', email: '', displayName: '', password: '', active: true, accountExpiresAt: '', tenantAssignments: [{ tenantId: onlyTenantId, groupId: '', isDefault: true }] });
     setFormErrors({});
     setIsModalOpen(true);
   };
 
   const openEditModal = (user) => {
     setModalUser(user);
-    setFormData({ username: user.username, email: user.email || '', displayName: user.displayName || '', password: '', active: user.active });
+    setFormData({ username: user.username, email: user.email || '', displayName: user.displayName || '', password: '', active: user.active, accountExpiresAt: toLocalInput(user.accountExpiresAt) });
     setFormErrors({});
     setIsModalOpen(true);
   };
@@ -157,7 +183,8 @@ const UserManagement = () => {
   const handleSaveUser = async () => {
     const errors = {};
     if (!formData.username?.trim()) errors.username = 'Required';
-    if (!formData.email?.trim()) errors.email = 'Required';
+    // Email is optional; only validate format when something was entered.
+    if (formData.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) errors.email = 'Invalid email';
     if (!modalUser && !formData.password?.trim()) errors.password = 'Required for new user';
     if (!modalUser) {
       const validAssignments = (formData.tenantAssignments || []).filter(a => a.tenantId && a.groupId);
@@ -167,12 +194,14 @@ const UserManagement = () => {
     if (Object.keys(errors).length) return;
 
     try {
+      // datetime-local (no timezone) → ISO for the backend; blank → null (no expiry).
+      const payloadExpiry = formData.accountExpiresAt ? new Date(formData.accountExpiresAt).toISOString() : null;
       if (modalUser) {
-        await api.put(`/users/${modalUser.id}`, { ...formData, id: modalUser.id });
+        await api.put(`/users/${modalUser.id}`, { ...formData, id: modalUser.id, accountExpiresAt: payloadExpiry });
         notify('User updated');
       } else {
         // Create user then assign all selected tenants.
-        const res = await api.post('/users', formData);
+        const res = await api.post('/users', { ...formData, accountExpiresAt: payloadExpiry });
         const newUserId = res.data?.id;
         const validAssignments = (formData.tenantAssignments || []).filter(a => a.tenantId && a.groupId);
         let assignedOk = 0;
@@ -217,7 +246,10 @@ const UserManagement = () => {
     try {
       await api.put(`/users/${user.id}`, {
         id: user.id, username: user.username, email: user.email,
-        displayName: user.displayName, active: !user.active, password: ''
+        displayName: user.displayName, active: !user.active, password: '',
+        // Preserve expiry — the controller applies it unconditionally, so omitting
+        // it here would wipe the stored date on a simple activate/deactivate.
+        accountExpiresAt: user.accountExpiresAt || null
       });
       notify(user.active ? 'User deactivated' : 'User activated');
       fetchAll();
@@ -312,6 +344,15 @@ const UserManagement = () => {
   };
 
   const isLocked = (u) => u.lockedUntil && new Date(u.lockedUntil) > new Date();
+  const isExpired = (u) => u.accountExpiresAt && new Date(u.accountExpiresAt) <= new Date();
+  // ISO/string → value for <input type="datetime-local"> (local time, no seconds/zone).
+  const toLocalInput = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
 
   // ─── Password strength ─────────────────────────────────
   const pw = formData.password || '';
@@ -405,6 +446,12 @@ const UserManagement = () => {
               <option value="SSO">SSO Users</option>
               <option value="PENDING">Pending Approval</option>
             </select>
+            {/* Download the full (tenant-scoped) user list as CSV — server-side so it
+                covers every user, not just the loaded page. */}
+            <button className="um-btn" onClick={handleExportCsv} disabled={exporting || loading} title="Download users as CSV"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: T.radius, border: `1px solid ${T.border}`, background: T.card, color: T.text, cursor: (exporting || loading) ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, opacity: (exporting || loading) ? 0.6 : 1 }}>
+              <Download size={15} /> {exporting ? 'Exporting…' : 'Download'}
+            </button>
           </div>
 
           {/* User List */}
@@ -452,6 +499,12 @@ const UserManagement = () => {
                           {user.ssoProvider && <span style={badge('#e0e7ff', '#4338ca')}>SSO</span>}
                           {user.mustChangePassword && !user.ssoProvider && <span style={badge('#fef9c3', '#854d0e')}>Must change PW</span>}
                           {isLocked(user) && <span style={badge(T.dangerBg, T.dangerTx)}>LOCKED</span>}
+                          {isExpired(user) && <span style={badge(T.dangerBg, T.dangerTx)}>EXPIRED</span>}
+                          {!isExpired(user) && user.accountExpiresAt && (
+                            <span style={badge(T.warningBg, T.warningTx)} title={new Date(user.accountExpiresAt).toLocaleString()}>
+                              <Clock size={9} /> Expires {new Date(user.accountExpiresAt).toLocaleDateString()}
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: 12, color: T.textMut, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email || user.username}</div>
                       </div>
@@ -634,9 +687,30 @@ const UserManagement = () => {
                 <Field id="um-username" label="Username" icon={UserIcon} value={formData.username} disabled={!!modalUser}
                   onChange={v => setFormData({ ...formData, username: v })} error={formErrors.username} />
                 <Field id="um-email" label="Email" icon={Mail} type="email" value={formData.email}
-                  onChange={v => setFormData({ ...formData, email: v })} error={formErrors.email} />
+                  onChange={v => setFormData({ ...formData, email: v })} error={formErrors.email} placeholder="Optional" />
                 <Field id="um-display" label="Display Name" icon={UserIcon} value={formData.displayName}
                   onChange={v => setFormData({ ...formData, displayName: v })} placeholder="Optional" />
+
+                {/* Account expiry — optional. After this moment the user is blocked
+                    at login and auto-deactivated. Empty = never expires.
+                    No left icon here: datetime-local already renders the browser's
+                    own calendar picker on the right, so a second (left) clock icon
+                    reads as a duplicate control. */}
+                <div>
+                  <label htmlFor="um-expiry" style={labelStyle}>Account Expiry</label>
+                  <div style={{ position: 'relative' }}>
+                    <input id="um-expiry" className="um-input" type="datetime-local" value={formData.accountExpiresAt || ''}
+                      onChange={e => setFormData({ ...formData, accountExpiresAt: e.target.value })}
+                      style={{ ...inputStyle, paddingLeft: 12, paddingRight: formData.accountExpiresAt ? 36 : 12 }} />
+                    {formData.accountExpiresAt && (
+                      <button type="button" className="um-action" onClick={() => setFormData({ ...formData, accountExpiresAt: '' })} aria-label="Clear expiry"
+                        title="Clear expiry" style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', color: T.textMut }}>
+                        <X size={15} />
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: T.textMut, marginTop: 4 }}>Optional. Leave empty for no expiry. After this time the account is blocked and deactivated.</div>
+                </div>
 
                 {/* Multi-tenant assignment for new users */}
                 {!modalUser && (

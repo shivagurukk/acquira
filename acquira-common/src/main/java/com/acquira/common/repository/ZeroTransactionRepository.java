@@ -11,11 +11,65 @@ import java.util.Map;
 import java.util.HashMap;
 import java.time.LocalDate;
 
+/**
+ * Zero Transaction Report — terminal-grain "who has gone quiet" report over
+ * sum_daily_terminal (last activity per terminal) joined up the
+ * dim_terminal -> dim_store -> dim_merchant chain.
+ *
+ * [2026-07-06 FLOW FIX] Three correctness bugs repaired:
+ *
+ *  1. ANCHOR — all cutoffs were CURRENT_DATE / LocalDate.now(). When ingested
+ *     data lags the calendar (latest business_date 2026-06-25 vs today
+ *     2026-07-06), EVERY terminal — including ones that transacted on the very
+ *     latest data day — sat "past" the 7-day cutoff, so 'Last 7 Days' flagged
+ *     the whole portfolio and every days-inactive figure was inflated by the
+ *     lag. All windows now anchor on the tenant's LATEST DATA DATE
+ *     (MAX(business_date) in sum_daily_terminal), falling back to today only
+ *     when the tenant has no data. The anchor is returned as "asOf".
+ *
+ *  2. STATUS × RANGE CONTRADICTION — /page and /summary AND-combined the
+ *     range predicate with the status predicate. Under the default LAST_30
+ *     range (last_txn < cutoff30 OR NULL), the IN7 bucket
+ *     (cutoff30 <= last_txn < cutoff7) is disjoint from the universe, so the
+ *     'Inactive 7–30' chip always counted 0 and its tab was always empty; the
+ *     ≤14d / 15–30d distribution bars were structurally zero too. Now: chip
+ *     counts and the recency distribution are computed UNRANGED over the
+ *     filtered base (each bucket carries its own complete predicate); the
+ *     range only scopes 'total' and the status=ALL table. A non-ALL status
+ *     fully determines the bucket and is applied alone.
+ *
+ *  3. Legacy smart-list had LIMIT without ORDER BY (arbitrary rows). Ordered.
+ *
+ * Tenant scoping is unchanged: outer joins are all pinned to :tenantId and
+ * every inner sum_daily_terminal subquery is independently scoped.
+ */
 @Repository
 public class ZeroTransactionRepository {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    // ============================================================
+    // Data anchor: the tenant's latest business_date. All "days
+    // inactive" / cutoff math is relative to THIS, not the calendar.
+    // ============================================================
+    private LocalDate resolveAnchor(Long tenantId) {
+        try {
+            String sql = "SELECT MAX(business_date) FROM sum_daily_terminal"
+                    + (tenantId != null ? " WHERE tenant_id = :tenantId" : "");
+            Query q = entityManager.createNativeQuery(sql);
+            if (tenantId != null) q.setParameter("tenantId", tenantId);
+            Object r = q.getSingleResult();
+            if (r instanceof java.sql.Date d) return d.toLocalDate();
+            if (r instanceof LocalDate ld) return ld;
+        } catch (Exception ignored) { /* fall through to today */ }
+        return LocalDate.now();
+    }
+
+    // ============================================================
+    // Legacy list endpoints (kept for compatibility; the UI uses
+    // /summary + /page below).
+    // ============================================================
 
     public List<Map<String, Object>> getZeroTransactionList(VolumeRevenueFilterDTO filter) {
         return getZeroTransactionList(filter, null);
@@ -30,56 +84,39 @@ public class ZeroTransactionRepository {
     public List<Map<String, Object>> getZeroTransactionList(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
-        // Base Query: Terminal granularity
         sql.append("SELECT ");
-        sql.append("  m.name as merchant_name, "); // Merchant Identity
-
-        // Entity Name logic: Use Store Legal Name if available, else Merchant Name
+        sql.append("  m.name as merchant_name, ");
         sql.append("  COALESCE(st.legal_name, m.name) as entity_name, ");
-
         sql.append("  m.referral_partner as aggregator_name, ");
-        sql.append("  m.referral_partner as aggregator_code, "); // Duplicated as per request
+        sql.append("  m.referral_partner as aggregator_code, ");
         sql.append("  m.mid as mid, ");
         sql.append("  st.sid as sid, ");
         sql.append("  st.name as store_name, ");
         sql.append("  t.tid as terminal_id, ");
-
-        // Last Txn Date Subquery (also scoped to tenant when applicable so cross-tenant
-        // terminal-id reuse cannot leak transaction dates)
         sql.append(
                 "  (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id"
                 + (tenantId != null ? " AND s.tenant_id = :tenantId" : "")
-                + ") as last_txn_date, ");
-        sql.append("  t.created_date as onboarding_date "); // or m.created_date
-
+                + ") as last_txn_date ");
         sql.append("FROM dim_terminal t ");
         sql.append("JOIN dim_store st ON t.store_id = st.store_id ");
         sql.append("JOIN dim_merchant m ON st.merchant_id = m.merchant_id ");
-
         sql.append("WHERE 1=1 ");
 
-        // Tenant scope. We attach to m (merchant) since dim_terminal/dim_store/dim_merchant
-        // are all tenant-partitioned in this schema.
         if (tenantId != null) {
             sql.append("AND m.tenant_id = :tenantId ");
             sql.append("AND st.tenant_id = :tenantId ");
             sql.append("AND t.tenant_id = :tenantId ");
         }
 
-        // Filters
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty()) {
             sql.append("AND m.referral_partner IN (:partners) ");
         }
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank()) {
             sql.append("AND (m.name ILIKE :merchName OR st.legal_name ILIKE :merchName) ");
         }
-
-        // Identity Filters
         if (filter.getMidList() != null && !filter.getMidList().isEmpty()) {
             sql.append("AND m.mid IN (:mids) ");
         }
-        // Assuming VolumeRevenueFilterDTO has tidList/sidList or we map request
-        // manually
         if (filter.getSidList() != null && !filter.getSidList().isEmpty()) {
             sql.append("AND st.sid IN (:sids) ");
         }
@@ -87,46 +124,10 @@ public class ZeroTransactionRepository {
             sql.append("AND t.tid IN (:tids) ");
         }
 
-        // Wrap logic for Inactivity Filter (HAVING or WHERE based on subquery)
-        // Since we can't use subquery in WHERE easy without repeating, let's wrap or
-        // iterate.
-        // Actually, for better SQL, we can JOIN a CTE or just accept overhead.
-        // Best approach: Filter in Java for "time since" to keep SQL simple, OR use
-        // HAVING.
-        // Let's use WHERE on the subquery logic if DB supports it (Postgres allows
-        // scalar subqueries in WHERE).
-
-        // Filters: Last 7 days, Last 30 days, Since Onboarding
-        // Passed as startDate/endDate or specific flags?
-        // Let's assume filter.getStartDate() represents the "Start of Inactivity".
-        // Example: "Last 7 days" -> start=Now-7. We want MAX(date) < start.
-
-        // BUT strict requirement: "Zero Txn - Last 7 Days"
-        // If I transacted yesterday, I am NOT in this report.
-        // If I transacted 8 days ago, I AM in this report.
-
-        // However, "Since Onboarding" (Never Transacted) -> MAX(date) IS NULL.
-
-        // We will return ALL rows matching identity/aggregator first, then filter in
-        // Java?
-        // No, dataset might be huge.
-        // Let's add the condition:
-        // sql.append("AND (SELECT MAX(business_date) ...) < :cutoffDate ");
-        // Note: For "Never Transacted", comparison < cutoff might fail on NULL.
-
-        // Handling Logic:
-        // If "Since Onboarding" (Never): last_txn_date IS NULL.
-        // If "Last 7 Days": last_txn_date < (Now - 7) OR last_txn_date IS NULL.
-
-        // Let's structure the SQL to select columns first then filter.
-
-        // LIMIT for safety
         sql.append("ORDER BY m.mid, t.tid LIMIT 1000");
 
         Query query = entityManager.createNativeQuery(sql.toString());
-
         if (tenantId != null) query.setParameter("tenantId", tenantId);
-
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
@@ -138,39 +139,24 @@ public class ZeroTransactionRepository {
         if (filter.getTidList() != null && !filter.getTidList().isEmpty())
             query.setParameter("tids", filter.getTidList());
 
+        @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
-        List<Map<String, Object>> result = new ArrayList<>();
-
-        LocalDate now = LocalDate.now();
-        // Determine cutoffs from filter if present, or assume request logic maps to
-        // specific date params
-        // But here we just get all and filter in Java for the specific "Status" logic
-        // requested?
-        // "Status: Never Transacted, Inactive 7-30, Inactive 30+"
-        // It implies we just show everyone who is "Zero Transacting" recently?
-        // Or "Zero Merchant Transaction Report" usually implies showing ALL inactive
-        // merchants.
-
-        // IMPORTANT: If I just return 1000 arbitrary terminals, I might miss the
-        // inactive ones if I don't filter in SQL.
-        // I MUST filter in SQL.
-
-        // Let's Refine SQL to include HAVING clause logic.
-        // Re-writing the main query logic below in a safer way.
-
-        return processResults(rows);
+        // NOTE: legacy list selects 9 columns (extra aggregator_code at index 3);
+        // remap to the 8-column shape processResults expects.
+        List<Object[]> remapped = new ArrayList<>();
+        for (Object[] r : rows) {
+            remapped.add(new Object[] { r[0], r[1], r[2], r[4], r[5], r[6], r[7], r[8] });
+        }
+        return processResults(remapped, resolveAnchor(tenantId));
     }
 
-    // Better implementation with filtering
     public List<Map<String, Object>> getZeroTransactionListSmart(VolumeRevenueFilterDTO filter, String rangeType) {
         return getZeroTransactionListSmart(filter, rangeType, null);
     }
 
     public List<Map<String, Object>> getZeroTransactionListSmart(VolumeRevenueFilterDTO filter, String rangeType, Long tenantId) {
         // rangeType: "LAST_7", "LAST_30", "NEVER"
-
-        // Tenant predicate fragment (used both in the outer WHERE and in every
-        // inner sum_daily_terminal subquery so each scope is independently safe).
+        LocalDate anchor = resolveAnchor(tenantId);
         final String innerTenant = (tenantId != null) ? " AND s.tenant_id = :tenantId" : "";
 
         StringBuilder sql = new StringBuilder();
@@ -196,7 +182,6 @@ public class ZeroTransactionRepository {
             sql.append("AND (m.name ILIKE :merchName OR st.legal_name ILIKE :merchName) ");
         }
 
-        // Range Logic
         if ("NEVER".equals(rangeType)) {
             sql.append(
                     "AND (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id" + innerTenant + ") IS NULL ");
@@ -212,31 +197,29 @@ public class ZeroTransactionRepository {
                     "     OR (SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id" + innerTenant + ") IS NULL) ");
         }
 
-        sql.append("LIMIT 500");
+        sql.append("ORDER BY m.mid, t.tid LIMIT 500");
 
         Query query = entityManager.createNativeQuery(sql.toString());
-
         if (tenantId != null) query.setParameter("tenantId", tenantId);
-
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
             query.setParameter("merchName", "%" + filter.getMerchantName() + "%");
-
         if ("LAST_7".equals(rangeType)) {
-            query.setParameter("cutoff7", LocalDate.now().minusDays(7));
+            query.setParameter("cutoff7", anchor.minusDays(7));
         } else if ("LAST_30".equals(rangeType)) {
-            query.setParameter("cutoff30", LocalDate.now().minusDays(30));
+            query.setParameter("cutoff30", anchor.minusDays(30));
         }
 
+        @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
-        return processResults(rows);
+        return processResults(rows, anchor);
     }
 
     // ============================================================
     // Accurate, cap-free summary + server-side pagination.
     // A CTE computes each terminal's last_txn once, then counts /
-    // buckets / aggregators / page rows all read from it. No LIMIT 500.
+    // buckets / aggregators / page rows all read from it.
     // ============================================================
 
     private String baseCte(VolumeRevenueFilterDTO f, Long tenantId) {
@@ -258,12 +241,23 @@ public class ZeroTransactionRepository {
         return b.toString();
     }
 
-    private String rangePredicate(String rangeType) {
-        if ("NEVER".equals(rangeType)) return " AND last_txn IS NULL ";
-        if ("LAST_7".equals(rangeType)) return " AND (last_txn < :cutoff7 OR last_txn IS NULL) ";
-        return " AND (last_txn < :cutoff30 OR last_txn IS NULL) "; // LAST_30 (default)
+    /** Bare range condition (no leading AND) — the report's universe. */
+    private String rangeCondition(String rangeType) {
+        if ("NEVER".equals(rangeType)) return "(last_txn IS NULL)";
+        if ("LAST_7".equals(rangeType)) return "(last_txn < :cutoff7 OR last_txn IS NULL)";
+        return "(last_txn < :cutoff30 OR last_txn IS NULL)"; // LAST_30 (default)
     }
 
+    private String rangePredicate(String rangeType) {
+        return " AND " + rangeCondition(rangeType) + " ";
+    }
+
+    /**
+     * Status buckets are SELF-CONTAINED classifications relative to the anchor:
+     *   NEVER = no activity ever; IN30 = lapsed more than 30 days; IN7 = lapsed
+     *   7–30 days. Applied ALONE (never AND-ed with the range) so a bucket tab
+     *   can never contradict the selected range and return a false empty set.
+     */
     private String statusPredicate(String status) {
         if (status == null) return "";
         switch (status) {
@@ -275,15 +269,16 @@ public class ZeroTransactionRepository {
     }
 
     /** Bind only the params actually present in the SQL (avoids "parameter not found"). */
-    private void bindCommon(Query q, String sql, VolumeRevenueFilterDTO f, Long tenantId) {
+    private void bindCommon(Query q, String sql, VolumeRevenueFilterDTO f, Long tenantId, LocalDate anchor) {
         if (sql.contains(":tenantId")) q.setParameter("tenantId", tenantId);
         if (sql.contains(":partners")) q.setParameter("partners", f.getPartnerList());
         if (sql.contains(":merchName")) q.setParameter("merchName", "%" + f.getMerchantName() + "%");
         if (sql.contains(":mids")) q.setParameter("mids", f.getMidList());
         if (sql.contains(":sids")) q.setParameter("sids", f.getSidList());
         if (sql.contains(":tids")) q.setParameter("tids", f.getTidList());
-        if (sql.contains(":cutoff7")) q.setParameter("cutoff7", LocalDate.now().minusDays(7));
-        if (sql.contains(":cutoff30")) q.setParameter("cutoff30", LocalDate.now().minusDays(30));
+        if (sql.contains(":cutoff7")) q.setParameter("cutoff7", anchor.minusDays(7));
+        if (sql.contains(":cutoff30")) q.setParameter("cutoff30", anchor.minusDays(30));
+        if (sql.contains(":anchorDate")) q.setParameter("anchorDate", anchor);
     }
 
     private long num(Object o) { return (o instanceof Number) ? ((Number) o).longValue() : 0L; }
@@ -294,36 +289,44 @@ public class ZeroTransactionRepository {
         return m;
     }
 
-    /** Accurate counts + days-inactive distribution + top aggregators over the FULL filtered set. */
+    /**
+     * Counts + days-inactive distribution + top aggregators over the FULL
+     * filtered set. Bucket counts (never/in30/in7) and the recency distribution
+     * are computed UNRANGED with self-contained predicates; only 'total' — the
+     * headline "inactive in the selected range" figure — applies rangeType.
+     * Distribution days are relative to the DATA anchor, not the calendar.
+     */
     public Map<String, Object> getZeroTransactionSummary(VolumeRevenueFilterDTO f, String rangeType, Long tenantId) {
+        LocalDate anchor = resolveAnchor(tenantId);
         String cte = baseCte(f, tenantId);
-        String range = rangePredicate(rangeType);
+        String rangeCond = rangeCondition(rangeType);
 
         String countSql = cte +
-            "SELECT COUNT(*) AS total, " +
+            "SELECT COUNT(*) FILTER (WHERE " + rangeCond + ") AS total, " +
             "COUNT(*) FILTER (WHERE last_txn IS NULL) AS never_c, " +
             "COUNT(*) FILTER (WHERE last_txn < :cutoff30) AS in30_c, " +
             "COUNT(*) FILTER (WHERE last_txn >= :cutoff30 AND last_txn < :cutoff7) AS in7_c, " +
-            "COUNT(*) FILTER (WHERE last_txn IS NOT NULL AND (CURRENT_DATE - last_txn) <= 14) AS b14, " +
-            "COUNT(*) FILTER (WHERE (CURRENT_DATE - last_txn) BETWEEN 15 AND 30) AS b30, " +
-            "COUNT(*) FILTER (WHERE (CURRENT_DATE - last_txn) BETWEEN 31 AND 60) AS b60, " +
-            "COUNT(*) FILTER (WHERE (CURRENT_DATE - last_txn) BETWEEN 61 AND 90) AS b90, " +
-            "COUNT(*) FILTER (WHERE (CURRENT_DATE - last_txn) > 90) AS b90p " +
-            "FROM base WHERE 1=1 " + range;
+            "COUNT(*) FILTER (WHERE last_txn IS NOT NULL AND (:anchorDate - last_txn) <= 14) AS b14, " +
+            "COUNT(*) FILTER (WHERE (:anchorDate - last_txn) BETWEEN 15 AND 30) AS b30, " +
+            "COUNT(*) FILTER (WHERE (:anchorDate - last_txn) BETWEEN 31 AND 60) AS b60, " +
+            "COUNT(*) FILTER (WHERE (:anchorDate - last_txn) BETWEEN 61 AND 90) AS b90, " +
+            "COUNT(*) FILTER (WHERE (:anchorDate - last_txn) > 90) AS b90p " +
+            "FROM base";
         Query cq = entityManager.createNativeQuery(countSql);
-        bindCommon(cq, countSql, f, tenantId);
+        bindCommon(cq, countSql, f, tenantId, anchor);
         Object[] c = (Object[]) cq.getSingleResult();
 
         String aggSql = cte +
             "SELECT COALESCE(aggregator_name, '— Unassigned —') AS agg, COUNT(*) AS c " +
-            "FROM base WHERE 1=1 " + range +
+            "FROM base WHERE 1=1 " + rangePredicate(rangeType) +
             " GROUP BY COALESCE(aggregator_name, '— Unassigned —') ORDER BY c DESC LIMIT 6";
         Query aq = entityManager.createNativeQuery(aggSql);
-        bindCommon(aq, aggSql, f, tenantId);
+        bindCommon(aq, aggSql, f, tenantId, anchor);
         @SuppressWarnings("unchecked")
         List<Object[]> aggRows = aq.getResultList();
 
         Map<String, Object> out = new HashMap<>();
+        out.put("asOf", anchor.toString());
         out.put("total", num(c[0]));
         out.put("never", num(c[1]));
         out.put("in30", num(c[2]));
@@ -346,11 +349,17 @@ public class ZeroTransactionRepository {
         return out;
     }
 
-    /** Server-side paginated rows (risk-ordered: Inactive 30+ first, then Never, then 7–30) + total. */
+    /**
+     * Server-side paginated rows (risk-ordered: Inactive 30+ first, then Never,
+     * then 7–30) + total. status=ALL pages the RANGE universe; any other status
+     * pages that bucket ALONE (a bucket fully determines its own window).
+     */
     public Map<String, Object> getZeroTransactionPage(VolumeRevenueFilterDTO f, String rangeType, String status,
                                                       int page, int size, Long tenantId) {
+        LocalDate anchor = resolveAnchor(tenantId);
         String cte = baseCte(f, tenantId);
-        String pred = rangePredicate(rangeType) + statusPredicate(status);
+        boolean bucketed = status != null && !"ALL".equals(status) && !status.isBlank();
+        String pred = bucketed ? statusPredicate(status) : rangePredicate(rangeType);
         int safeSize = Math.min(Math.max(size, 1), 1000);
         int offset = Math.max(page, 0) * safeSize;
 
@@ -358,9 +367,9 @@ public class ZeroTransactionRepository {
             "SELECT merchant_name, entity_name, aggregator_name, mid, sid, store_name, tid, last_txn " +
             "FROM base WHERE 1=1 " + pred +
             " ORDER BY (CASE WHEN last_txn < :cutoff30 THEN 3 WHEN last_txn IS NULL THEN 2 ELSE 1 END) DESC, " +
-            " last_txn ASC NULLS LAST LIMIT :size OFFSET :offset";
+            " last_txn ASC NULLS LAST, mid ASC, tid ASC LIMIT :size OFFSET :offset";
         Query rq = entityManager.createNativeQuery(rowSql);
-        bindCommon(rq, rowSql, f, tenantId);
+        bindCommon(rq, rowSql, f, tenantId, anchor);
         rq.setParameter("size", safeSize);
         rq.setParameter("offset", offset);
         @SuppressWarnings("unchecked")
@@ -368,20 +377,21 @@ public class ZeroTransactionRepository {
 
         String countSql = cte + "SELECT COUNT(*) FROM base WHERE 1=1 " + pred;
         Query cq = entityManager.createNativeQuery(countSql);
-        bindCommon(cq, countSql, f, tenantId);
+        bindCommon(cq, countSql, f, tenantId, anchor);
         long total = num(cq.getSingleResult());
 
         Map<String, Object> out = new HashMap<>();
-        out.put("content", processResults(rows));
+        out.put("content", processResults(rows, anchor));
         out.put("total", total);
         out.put("page", Math.max(page, 0));
         out.put("size", safeSize);
+        out.put("asOf", anchor.toString());
         return out;
     }
 
-    private List<Map<String, Object>> processResults(List<Object[]> rows) {
+    /** daysInactive and status thresholds are relative to the DATA anchor. */
+    private List<Map<String, Object>> processResults(List<Object[]> rows, LocalDate anchor) {
         List<Map<String, Object>> result = new ArrayList<>();
-        LocalDate now = LocalDate.now();
 
         for (Object[] row : rows) {
             Map<String, Object> map = new HashMap<>();
@@ -394,16 +404,17 @@ public class ZeroTransactionRepository {
             map.put("storeName", row[5]);
             map.put("terminalId", row[6]);
 
-            java.sql.Date sqlDate = (java.sql.Date) row[7];
-            LocalDate lastTxn = sqlDate != null ? sqlDate.toLocalDate() : null;
+            LocalDate lastTxn = null;
+            Object d = row[7];
+            if (d instanceof java.sql.Date sd) lastTxn = sd.toLocalDate();
+            else if (d instanceof LocalDate ld) lastTxn = ld;
             map.put("lastTransactionDate", lastTxn);
 
-            // Status Calculation
             if (lastTxn == null) {
                 map.put("status", "Never Transacted");
-                map.put("daysInactive", -1); // Or "N/A"
+                map.put("daysInactive", -1);
             } else {
-                long days = java.time.temporal.ChronoUnit.DAYS.between(lastTxn, now);
+                long days = java.time.temporal.ChronoUnit.DAYS.between(lastTxn, anchor);
                 map.put("daysInactive", days);
 
                 if (days > 30) {
@@ -411,7 +422,7 @@ public class ZeroTransactionRepository {
                 } else if (days > 7) {
                     map.put("status", "Inactive 7–30");
                 } else {
-                    map.put("status", "Active"); // Should not happen given filters but as fallback
+                    map.put("status", "Active"); // inside the 7-day window relative to the data anchor
                 }
             }
 

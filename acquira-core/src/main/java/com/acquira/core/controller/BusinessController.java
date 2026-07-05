@@ -10,9 +10,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -98,6 +101,402 @@ public class BusinessController {
                 response.put("effectiveDate", effectiveDate);
 
                 return ResponseEntity.ok(response);
+        }
+
+        /**
+         * CEO landing-dashboard summary (V-CEO-1): MTD week-by-week + YTD
+         * month-by-month, each bucket carrying count / volume / avg ticket /
+         * MSF / net revenue / net-margin %, plus prior-period comparison
+         * totals and an MTD run-rate projection.
+         *
+         * Data sourcing (per project rules — bank-level unfiltered):
+         *   - MTD weekly buckets + prior comparisons: sum_daily_bank
+         *   - YTD monthly buckets:                    sum_monthly_bank
+         *
+         * Week definition (matches the requested "weeks 1 2 3 4"):
+         *   W1 = days 1–7, W2 = 8–14, W3 = 15–21, W4 = 22–28, W5 = 29–end.
+         *
+         * Everything is anchored on the LATEST business_date in
+         * sum_daily_bank — not calendar today — so a data lag never renders
+         * fake-zero weeks. Net revenue is the corrected
+         * msf − interchange − scheme_fee figure.
+         */
+        @GetMapping("/ceo-summary")
+        public ResponseEntity<Map<String, Object>> getCeoSummary(@RequestHeader("X-Tenant-Id") Long tenantId) {
+
+                // Anchor on latest available data.
+                Object maxD = entityManager
+                                .createNativeQuery("SELECT MAX(business_date) FROM sum_daily_bank WHERE tenant_id = :tid")
+                                .setParameter("tid", tenantId)
+                                .getSingleResult();
+                LocalDate eff = toLocalDate(maxD);
+                if (eff == null) eff = LocalDate.now();
+
+                LocalDate mtdStart = eff.withDayOfMonth(1);
+                int daysInMonth = eff.lengthOfMonth();
+                int elapsedDays = eff.getDayOfMonth();
+                int currentWeek = Math.min(5, ((elapsedDays - 1) / 7) + 1);
+
+                // ── MTD weekly buckets ─────────────────────────────────────
+                @SuppressWarnings("unchecked")
+                List<Object[]> wkRows = entityManager.createNativeQuery(
+                                "SELECT LEAST(5, ((CAST(EXTRACT(DAY FROM business_date) AS INTEGER) - 1) / 7) + 1) AS wk, " +
+                                "SUM(total_txns), SUM(COALESCE(total_base_volume,0)), SUM(total_msf), " +
+                                "SUM(COALESCE(total_interchange,0)), SUM(COALESCE(total_scheme_fee,0)), SUM(total_net_revenue) " +
+                                "FROM sum_daily_bank WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
+                                "GROUP BY 1 ORDER BY 1")
+                                .setParameter("tid", tenantId)
+                                .setParameter("s", mtdStart)
+                                .setParameter("e", eff)
+                                .getResultList();
+                Map<Integer, Object[]> byWeek = new HashMap<>();
+                for (Object[] r : wkRows) byWeek.put(((Number) r[0]).intValue(), r);
+
+                List<Map<String, Object>> weeks = new ArrayList<>();
+                long mtdTxns = 0;
+                BigDecimal mtdVol = BigDecimal.ZERO, mtdMsf = BigDecimal.ZERO,
+                                mtdIc = BigDecimal.ZERO, mtdSf = BigDecimal.ZERO, mtdNet = BigDecimal.ZERO;
+                for (int w = 1; w <= currentWeek; w++) {
+                        LocalDate from = mtdStart.plusDays((long) (w - 1) * 7);
+                        LocalDate weekEnd = (w == 5) ? eff.withDayOfMonth(daysInMonth)
+                                        : from.plusDays(6);
+                        if (weekEnd.getMonthValue() != eff.getMonthValue()) weekEnd = eff.withDayOfMonth(daysInMonth);
+                        LocalDate to = weekEnd.isAfter(eff) ? eff : weekEnd;
+                        Object[] r = byWeek.get(w);
+                        long txns = r != null ? toLong(r[1]) : 0L;
+                        BigDecimal vol = r != null ? toBigDecimal(r[2]) : BigDecimal.ZERO;
+                        BigDecimal msf = r != null ? toBigDecimal(r[3]) : BigDecimal.ZERO;
+                        BigDecimal ic = r != null ? toBigDecimal(r[4]) : BigDecimal.ZERO;
+                        BigDecimal sf = r != null ? toBigDecimal(r[5]) : BigDecimal.ZERO;
+                        BigDecimal net = r != null ? toBigDecimal(r[6]) : BigDecimal.ZERO;
+                        Map<String, Object> m = buildMetricBucket("Week " + w, txns, vol, msf, ic, sf, net);
+                        m.put("week", w);
+                        m.put("from", from.toString());
+                        m.put("to", to.toString());
+                        m.put("current", w == currentWeek);
+                        m.put("partial", w == currentWeek && to.isBefore(weekEnd));
+                        weeks.add(m);
+                        mtdTxns += txns;
+                        mtdVol = mtdVol.add(vol);
+                        mtdMsf = mtdMsf.add(msf);
+                        mtdIc = mtdIc.add(ic);
+                        mtdSf = mtdSf.add(sf);
+                        mtdNet = mtdNet.add(net);
+                }
+
+                // ── Prior-month pace (day 1 → same day-of-month, clamped) ──
+                LocalDate prevMtdStart = mtdStart.minusMonths(1);
+                LocalDate prevMtdEnd = prevMtdStart
+                                .plusDays(Math.min(elapsedDays, prevMtdStart.lengthOfMonth()) - 1L);
+                Object[] prevMtd = singleAggregate(tenantId, prevMtdStart, prevMtdEnd);
+
+                // ── YTD monthly buckets (sum_monthly_bank) ─────────────────
+                int year = eff.getYear();
+                @SuppressWarnings("unchecked")
+                List<Object[]> moRows = entityManager.createNativeQuery(
+                                "SELECT month_key, total_txns, COALESCE(total_base_volume,0), total_msf, " +
+                                "COALESCE(total_interchange,0), COALESCE(total_scheme_fee,0), total_net_revenue " +
+                                "FROM sum_monthly_bank WHERE tenant_id = :tid AND month_key BETWEEN :a AND :b " +
+                                "ORDER BY month_key")
+                                .setParameter("tid", tenantId)
+                                .setParameter("a", year * 100 + 1)
+                                .setParameter("b", year * 100 + 12)
+                                .getResultList();
+
+                String[] moNames = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+                List<Map<String, Object>> months = new ArrayList<>();
+                long ytdTxns = 0;
+                BigDecimal ytdVol = BigDecimal.ZERO, ytdMsf = BigDecimal.ZERO,
+                                ytdIc = BigDecimal.ZERO, ytdSf = BigDecimal.ZERO, ytdNet = BigDecimal.ZERO;
+                for (Object[] r : moRows) {
+                        int mk = ((Number) r[0]).intValue();
+                        int moIdx = (mk % 100) - 1;
+                        long txns = toLong(r[1]);
+                        BigDecimal vol = toBigDecimal(r[2]);
+                        BigDecimal msf = toBigDecimal(r[3]);
+                        BigDecimal ic = toBigDecimal(r[4]);
+                        BigDecimal sf = toBigDecimal(r[5]);
+                        BigDecimal net = toBigDecimal(r[6]);
+                        Map<String, Object> m = buildMetricBucket(
+                                        (moIdx >= 0 && moIdx < 12 ? moNames[moIdx] : String.valueOf(mk)),
+                                        txns, vol, msf, ic, sf, net);
+                        m.put("monthKey", mk);
+                        m.put("current", mk == year * 100 + eff.getMonthValue());
+                        months.add(m);
+                        ytdTxns += txns;
+                        ytdVol = ytdVol.add(vol);
+                        ytdMsf = ytdMsf.add(msf);
+                        ytdIc = ytdIc.add(ic);
+                        ytdSf = ytdSf.add(sf);
+                        ytdNet = ytdNet.add(net);
+                }
+
+                // ── Prior YTD (prior year Jan 1 → same day-of-year) ────────
+                LocalDate prevYtdStart = eff.withDayOfYear(1).minusYears(1);
+                LocalDate prevYtdEnd = eff.minusYears(1);
+                Object[] prevYtd = singleAggregate(tenantId, prevYtdStart, prevYtdEnd);
+
+                // ── MTD run-rate projection ────────────────────────────────
+                Map<String, Object> runRate = new LinkedHashMap<>();
+                runRate.put("elapsedDays", elapsedDays);
+                runRate.put("daysInMonth", daysInMonth);
+                if (elapsedDays > 0) {
+                        BigDecimal factor = BigDecimal.valueOf(daysInMonth)
+                                        .divide(BigDecimal.valueOf(elapsedDays), 6, RoundingMode.HALF_UP);
+                        runRate.put("projectedVolume", mtdVol.multiply(factor).setScale(2, RoundingMode.HALF_UP));
+                        runRate.put("projectedNetRevenue", mtdNet.multiply(factor).setScale(2, RoundingMode.HALF_UP));
+                        runRate.put("projectedTxns",
+                                        BigDecimal.valueOf(mtdTxns).multiply(factor).setScale(0, RoundingMode.HALF_UP));
+                } else {
+                        runRate.put("projectedVolume", BigDecimal.ZERO);
+                        runRate.put("projectedNetRevenue", BigDecimal.ZERO);
+                        runRate.put("projectedTxns", BigDecimal.ZERO);
+                }
+
+                // ── Assemble ───────────────────────────────────────────────
+                Map<String, Object> mtd = new LinkedHashMap<>();
+                mtd.put("label", eff.getMonth().toString().charAt(0)
+                                + eff.getMonth().toString().substring(1, 3).toLowerCase() + " " + year);
+                mtd.put("start", mtdStart.toString());
+                mtd.put("end", eff.toString());
+                mtd.put("weeks", weeks);
+                mtd.put("totals", buildMetricBucket("MTD", mtdTxns, mtdVol, mtdMsf, mtdIc, mtdSf, mtdNet));
+                mtd.put("prev", buildMetricBucket("Prev MTD pace",
+                                toLong(prevMtd[0]), toBigDecimal(prevMtd[1]),
+                                toBigDecimal(prevMtd[2]), toBigDecimal(prevMtd[3]),
+                                toBigDecimal(prevMtd[4]), toBigDecimal(prevMtd[5])));
+                mtd.put("runRate", runRate);
+
+                Map<String, Object> ytd = new LinkedHashMap<>();
+                ytd.put("label", "YTD " + year);
+                ytd.put("year", year);
+                ytd.put("months", months);
+                ytd.put("totals", buildMetricBucket("YTD", ytdTxns, ytdVol, ytdMsf, ytdIc, ytdSf, ytdNet));
+                ytd.put("prev", buildMetricBucket("Prev YTD",
+                                toLong(prevYtd[0]), toBigDecimal(prevYtd[1]),
+                                toBigDecimal(prevYtd[2]), toBigDecimal(prevYtd[3]),
+                                toBigDecimal(prevYtd[4]), toBigDecimal(prevYtd[5])));
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("effectiveDate", eff.toString());
+                response.put("mtd", mtd);
+                response.put("ytd", ytd);
+                return ResponseEntity.ok(response);
+        }
+
+        /**
+         * CEO Volume & Revenue detail (V-CEO-2): MID x SID rows with count /
+         * settlement volume / MSF / interchange / scheme fee / net revenue /
+         * net-margin %, for MTD or YTD. Reads sum_daily_terminal ONLY (store
+         * grain summary carrying the fee columns since V2026_07_05_02) —
+         * never fact_transaction — so it loads in the same speed class as
+         * every other summary-backed page. Volume here is SETTLEMENT
+         * (total_base_volume), the figure the fees are computed against.
+         */
+        @GetMapping("/ceo-volume-revenue")
+        public ResponseEntity<Map<String, Object>> getCeoVolumeRevenue(
+                        @RequestHeader("X-Tenant-Id") Long tenantId,
+                        @RequestParam(defaultValue = "MTD") String mode,
+                        @RequestParam(defaultValue = "0") int page,
+                        @RequestParam(defaultValue = "50") int size,
+                        @RequestParam(defaultValue = "volume") String sort,
+                        @RequestParam(defaultValue = "desc") String dir,
+                        @RequestParam(required = false) String search,
+                        @RequestParam(defaultValue = "false") boolean lossOnly,
+                        @RequestParam(required = false) String month) {
+
+                Object maxD = entityManager
+                                .createNativeQuery("SELECT MAX(business_date) FROM sum_daily_bank WHERE tenant_id = :tid")
+                                .setParameter("tid", tenantId)
+                                .getSingleResult();
+                LocalDate eff = toLocalDate(maxD);
+                if (eff == null) eff = LocalDate.now();
+
+                // Period resolution:
+                //   month=YYYY-MM (explicit month pick) wins over mode.
+                //   mode = YTD        -> Jan 1 .. eff
+                //          THIS_MONTH -> 1st of eff's month .. last day of that month
+                //          MTD (default) -> 1st of eff's month .. eff
+                LocalDate from, to;
+                String resolvedMode;
+                if (month != null && month.matches("\\d{4}-\\d{2}")) {
+                        int yr = Integer.parseInt(month.substring(0, 4));
+                        int mo = Integer.parseInt(month.substring(5, 7));
+                        LocalDate first = LocalDate.of(yr, mo, 1);
+                        from = first;
+                        to = first.withDayOfMonth(first.lengthOfMonth());
+                        resolvedMode = month;
+                } else if ("YTD".equalsIgnoreCase(mode)) {
+                        from = eff.withDayOfYear(1);
+                        to = eff;
+                        resolvedMode = "YTD";
+                } else if ("THIS_MONTH".equalsIgnoreCase(mode)) {
+                        from = eff.withDayOfMonth(1);
+                        to = eff.withDayOfMonth(eff.lengthOfMonth());
+                        resolvedMode = "THIS_MONTH";
+                } else {
+                        from = eff.withDayOfMonth(1);
+                        to = eff;
+                        resolvedMode = "MTD";
+                }
+
+                if (page < 0) page = 0;
+                if (size < 1) size = 50;
+                if (size > 500) size = 500;
+
+                // Sort key -> aggregate expression (whitelist; user text never
+                // becomes a SQL identifier).
+                Map<String, String> sortCols = new HashMap<>();
+                sortCols.put("volume",      "SUM(t.total_base_volume)");
+                sortCols.put("txns",        "SUM(t.total_txns)");
+                sortCols.put("msf",         "SUM(t.total_msf)");
+                sortCols.put("interchange", "SUM(t.total_interchange)");
+                sortCols.put("schemeFee",   "SUM(t.total_scheme_fee)");
+                sortCols.put("net",         "SUM(t.total_revenue)");
+                sortCols.put("name",        "m.name");
+                sortCols.put("mid",         "m.mid");
+                String orderExpr = sortCols.getOrDefault(sort, "SUM(t.total_base_volume)");
+                String orderDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
+
+                boolean hasSearch = search != null && !search.isBlank();
+                // lossOnly -> only merchants/stores whose net revenue over the window
+                // is negative (a loss). Applied as HAVING on the grouped aggregate so
+                // it flows identically into the page, count, and totals queries.
+                String havingLoss = lossOnly ? "HAVING SUM(t.total_revenue) < 0 " : "";
+                String base =
+                                "FROM sum_daily_terminal t " +
+                                "JOIN dim_merchant m ON m.merchant_id = t.merchant_id AND m.tenant_id = t.tenant_id " +
+                                "LEFT JOIN dim_store s ON s.store_id = t.store_id AND s.tenant_id = t.tenant_id " +
+                                "WHERE t.tenant_id = :tid AND t.business_date BETWEEN :s AND :e " +
+                                (hasSearch ? "AND (m.name ILIKE :q OR m.mid ILIKE :q OR s.sid ILIKE :q) " : "") +
+                                "GROUP BY m.mid, s.sid, m.name " + havingLoss;
+
+                jakarta.persistence.Query rq = entityManager.createNativeQuery(
+                                "SELECT m.mid, s.sid, m.name, " +
+                                "SUM(t.total_txns), SUM(t.total_base_volume), SUM(t.total_msf), " +
+                                "SUM(t.total_interchange), SUM(t.total_scheme_fee), SUM(t.total_revenue) " +
+                                base +
+                                "ORDER BY " + orderExpr + " " + orderDir + " NULLS LAST " +
+                                "LIMIT :lim OFFSET :off");
+                rq.setParameter("tid", tenantId);
+                rq.setParameter("s", from);
+                rq.setParameter("e", to);
+                if (hasSearch) rq.setParameter("q", "%" + search.trim() + "%");
+                rq.setParameter("lim", size);
+                rq.setParameter("off", (long) page * size);
+
+                @SuppressWarnings("unchecked")
+                List<Object[]> rows = rq.getResultList();
+                List<Map<String, Object>> out = new ArrayList<>(rows.size());
+                for (Object[] r : rows) {
+                        long txns = toLong(r[3]);
+                        BigDecimal vol = toBigDecimal(r[4]);
+                        BigDecimal msf = toBigDecimal(r[5]);
+                        BigDecimal ic = toBigDecimal(r[6]);
+                        BigDecimal sf = toBigDecimal(r[7]);
+                        BigDecimal net = toBigDecimal(r[8]);
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("mid", r[0]);
+                        m.put("sid", r[1]);
+                        m.put("name", r[2]);
+                        m.put("txns", txns);
+                        m.put("volume", vol);
+                        m.put("msf", msf);
+                        m.put("interchange", ic);
+                        m.put("schemeFee", sf);
+                        m.put("netRevenue", net);
+                        m.put("marginPct", vol.compareTo(BigDecimal.ZERO) > 0
+                                        ? net.multiply(BigDecimal.valueOf(100)).divide(vol, 2, RoundingMode.HALF_UP)
+                                        : BigDecimal.ZERO);
+                        out.add(m);
+                }
+
+                jakarta.persistence.Query cq = entityManager.createNativeQuery(
+                                "SELECT COUNT(*) FROM (SELECT 1 " + base + ") x");
+                cq.setParameter("tid", tenantId);
+                cq.setParameter("s", from);
+                cq.setParameter("e", to);
+                if (hasSearch) cq.setParameter("q", "%" + search.trim() + "%");
+                long totalRows = ((Number) cq.getSingleResult()).longValue();
+
+                jakarta.persistence.Query tq = entityManager.createNativeQuery(
+                                "SELECT COALESCE(SUM(x.c1),0), COALESCE(SUM(x.c2),0), COALESCE(SUM(x.c3),0), " +
+                                "COALESCE(SUM(x.c4),0), COALESCE(SUM(x.c5),0), COALESCE(SUM(x.c6),0) FROM ( " +
+                                "SELECT SUM(t.total_txns) c1, SUM(t.total_base_volume) c2, SUM(t.total_msf) c3, " +
+                                "SUM(t.total_interchange) c4, SUM(t.total_scheme_fee) c5, SUM(t.total_revenue) c6 " +
+                                base + ") x");
+                tq.setParameter("tid", tenantId);
+                tq.setParameter("s", from);
+                tq.setParameter("e", to);
+                if (hasSearch) tq.setParameter("q", "%" + search.trim() + "%");
+                Object[] tot = (Object[]) tq.getSingleResult();
+                BigDecimal tVol = toBigDecimal(tot[1]);
+                BigDecimal tNet = toBigDecimal(tot[5]);
+                Map<String, Object> totals = new LinkedHashMap<>();
+                totals.put("txns", toLong(tot[0]));
+                totals.put("volume", tVol);
+                totals.put("msf", toBigDecimal(tot[2]));
+                totals.put("interchange", toBigDecimal(tot[3]));
+                totals.put("schemeFee", toBigDecimal(tot[4]));
+                totals.put("netRevenue", tNet);
+                totals.put("marginPct", tVol.compareTo(BigDecimal.ZERO) > 0
+                                ? tNet.multiply(BigDecimal.valueOf(100)).divide(tVol, 2, RoundingMode.HALF_UP)
+                                : BigDecimal.ZERO);
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("effectiveDate", eff.toString());
+                response.put("mode", resolvedMode);
+                response.put("lossOnly", lossOnly);
+                response.put("from", from.toString());
+                response.put("to", to.toString());
+                response.put("page", page);
+                response.put("size", size);
+                response.put("totalRows", totalRows);
+                response.put("totals", totals);
+                response.put("rows", out);
+                return ResponseEntity.ok(response);
+        }
+
+        /** One-row SUM aggregate over sum_daily_bank for a date window (settlement volume). */
+        private Object[] singleAggregate(Long tenantId, LocalDate from, LocalDate to) {
+                Object res = entityManager.createNativeQuery(
+                                "SELECT COALESCE(SUM(total_txns),0), COALESCE(SUM(total_base_volume),0), " +
+                                "COALESCE(SUM(total_msf),0), COALESCE(SUM(total_interchange),0), " +
+                                "COALESCE(SUM(total_scheme_fee),0), COALESCE(SUM(total_net_revenue),0) " +
+                                "FROM sum_daily_bank WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e")
+                                .setParameter("tid", tenantId)
+                                .setParameter("s", from)
+                                .setParameter("e", to)
+                                .getSingleResult();
+                return (Object[]) res;
+        }
+
+        /** Bucket map: count / volume / msf / interchange / scheme fee / net revenue + derived avgTicket / marginPct. */
+        private static Map<String, Object> buildMetricBucket(String label, long txns,
+                        BigDecimal vol, BigDecimal msf, BigDecimal interchange, BigDecimal schemeFee, BigDecimal net) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("label", label);
+                m.put("txns", txns);
+                m.put("volume", vol);
+                m.put("msf", msf);
+                m.put("interchange", interchange);
+                m.put("schemeFee", schemeFee);
+                m.put("netRevenue", net);
+                m.put("avgTicket", txns > 0
+                                ? vol.divide(BigDecimal.valueOf(txns), 2, RoundingMode.HALF_UP)
+                                : BigDecimal.ZERO);
+                m.put("marginPct", vol.compareTo(BigDecimal.ZERO) > 0
+                                ? net.multiply(BigDecimal.valueOf(100)).divide(vol, 2, RoundingMode.HALF_UP)
+                                : BigDecimal.ZERO);
+                return m;
+        }
+
+        private static LocalDate toLocalDate(Object o) {
+                if (o == null) return null;
+                if (o instanceof LocalDate) return (LocalDate) o;
+                if (o instanceof java.sql.Date) return ((java.sql.Date) o).toLocalDate();
+                try { return LocalDate.parse(o.toString()); } catch (Exception e) { return null; }
         }
 
         /**

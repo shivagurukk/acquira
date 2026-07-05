@@ -13,11 +13,14 @@ import java.util.*;
  * Leaderboard & Gamification API (Phase 2 Enhanced)
  *
  * Rankings for sales agents and team leads based on:
+ * - NET REVENUE = MSF - interchange - scheme fee (the primary ranking metric;
+ *   read from sum_daily_merchant's per-fee columns, populated by the batch
+ *   fee-computation step V2026_07_05_01)
  * - Merchants onboarded (dim_merchant.created_date within period)
  * - Transaction volume, count, MSF revenue
  * - Active merchant ratio
- * - MSF Rate (margin)
- * - Period-over-period change
+ * - MSF Rate and Net Rate (net revenue as % of volume)
+ * - Period-over-period change (net-revenue based)
  */
 @RestController
 @RequestMapping("/api/leaderboard")
@@ -60,7 +63,8 @@ public class LeaderboardController {
             + "   COUNT(DISTINCT sdm.merchant_id) AS active_merchants,"
             + "   COALESCE(SUM(sdm.total_txns), 0) AS txn_count,"
             + "   COALESCE(SUM(sdm.total_base_volume), 0) AS total_volume,"
-            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf"
+            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf,"
+            + "   COALESCE(SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)), 0) AS net_revenue"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
             + " WHERE sdm.tenant_id = ? AND m.sales_email IS NOT NULL"
@@ -79,13 +83,14 @@ public class LeaderboardController {
             + "   COALESCE(av.txn_count, 0) AS txn_count,"
             + "   COALESCE(av.total_volume, 0) AS total_volume,"
             + "   COALESCE(av.total_msf, 0) AS total_msf,"
+            + "   COALESCE(av.net_revenue, 0) AS net_revenue,"
             + "   CASE WHEN COALESCE(at.total_merchants, 0) > 0"
             + "     THEN ROUND(COALESCE(av.active_merchants, 0)::NUMERIC / at.total_merchants * 100, 1)"
             + "     ELSE 0 END AS active_rate"
             + " FROM agent_onboarding ao"
             + " FULL OUTER JOIN agent_volume av ON ao.agent = av.agent"
             + " FULL OUTER JOIN agent_total at ON COALESCE(ao.agent, av.agent) = at.agent"
-            + " ORDER BY total_volume DESC";
+            + " ORDER BY net_revenue DESC, total_volume DESC";
 
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
@@ -96,11 +101,13 @@ public class LeaderboardController {
 
         List<Map<String, Object>> results = jdbcTemplate.queryForList(sql, params.toArray());
 
-        // Previous period volumes for change calculation
+        // Previous period volumes + net revenue for change calculation
         Map<String, Double> prevVolumes = new HashMap<>();
+        Map<String, Double> prevNets = new HashMap<>();
         if (!prevDateFilter.isEmpty()) {
             try {
-                String prevSql = "SELECT m.sales_email AS agent, COALESCE(SUM(sdm.total_base_volume), 0) AS prev_volume"
+                String prevSql = "SELECT m.sales_email AS agent, COALESCE(SUM(sdm.total_base_volume), 0) AS prev_volume,"
+                    + " COALESCE(SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)), 0) AS prev_net"
                     + " FROM sum_daily_merchant sdm"
                     + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
                     + " WHERE sdm.tenant_id = ? AND m.sales_email IS NOT NULL"
@@ -109,6 +116,7 @@ public class LeaderboardController {
                 List<Map<String, Object>> prevResults = jdbcTemplate.queryForList(prevSql, tenantId);
                 for (Map<String, Object> row : prevResults) {
                     prevVolumes.put((String) row.get("agent"), ((Number) row.get("prev_volume")).doubleValue());
+                    prevNets.put((String) row.get("agent"), ((Number) row.get("prev_net")).doubleValue());
                 }
             } catch (Exception e) { log.debug("Could not fetch previous period data: {}", e.getMessage()); }
         }
@@ -121,7 +129,9 @@ public class LeaderboardController {
 
             double currVol = ((Number) row.get("total_volume")).doubleValue();
             double currMsf = ((Number) row.get("total_msf")).doubleValue();
+            double currNet = row.get("net_revenue") != null ? ((Number) row.get("net_revenue")).doubleValue() : 0;
             row.put("msf_rate", currVol > 0 ? Math.round(currMsf / currVol * 10000.0) / 100.0 : 0);
+            row.put("net_rate", currVol > 0 ? Math.round(currNet / currVol * 10000.0) / 100.0 : 0);
 
             String agent = (String) row.get("agent");
             Double prevVol = prevVolumes.get(agent);
@@ -129,6 +139,12 @@ public class LeaderboardController {
                 row.put("volume_change_pct", Math.round((currVol - prevVol) / prevVol * 1000.0) / 10.0);
             } else {
                 row.put("volume_change_pct", null);
+            }
+            Double prevNet = prevNets.get(agent);
+            if (prevNet != null && prevNet > 0) {
+                row.put("net_change_pct", Math.round((currNet - prevNet) / prevNet * 1000.0) / 10.0);
+            } else {
+                row.put("net_change_pct", null);
             }
         }
 
@@ -175,7 +191,8 @@ public class LeaderboardController {
             + "   COUNT(DISTINCT sdm.merchant_id) AS active_merchants,"
             + "   COALESCE(SUM(sdm.total_txns), 0) AS txn_count,"
             + "   COALESCE(SUM(sdm.total_base_volume), 0) AS total_volume,"
-            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf"
+            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf,"
+            + "   COALESCE(SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)), 0) AS net_revenue"
             + " FROM team_agents ta"
             + " JOIN dim_merchant m ON m.sales_user_id = ta.sales_user_id AND m.tenant_id = ?"
             + " JOIN sum_daily_merchant sdm ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
@@ -197,13 +214,14 @@ public class LeaderboardController {
             + "   COALESCE(tv.txn_count, 0) AS txn_count,"
             + "   COALESCE(tv.total_volume, 0) AS total_volume,"
             + "   COALESCE(tv.total_msf, 0) AS total_msf,"
+            + "   COALESCE(tv.net_revenue, 0) AS net_revenue,"
             + "   CASE WHEN COALESCE(tt.total_merchants, 0) > 0"
             + "     THEN ROUND(COALESCE(tv.active_merchants, 0)::NUMERIC / tt.total_merchants * 100, 1)"
             + "     ELSE 0 END AS active_rate"
             + " FROM team_onboarding tob"
             + " FULL OUTER JOIN team_volume tv ON tob.team_lead_name = tv.team_lead_name"
             + " FULL OUTER JOIN team_total tt ON COALESCE(tob.team_lead_name, tv.team_lead_name) = tt.team_lead_name"
-            + " ORDER BY total_volume DESC";
+            + " ORDER BY net_revenue DESC, total_volume DESC";
 
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
@@ -221,7 +239,9 @@ public class LeaderboardController {
             row.put("badges", computeTeamBadges(row));
             double currVol = ((Number) row.get("total_volume")).doubleValue();
             double currMsf = ((Number) row.get("total_msf")).doubleValue();
+            double currNet = row.get("net_revenue") != null ? ((Number) row.get("net_revenue")).doubleValue() : 0;
             row.put("msf_rate", currVol > 0 ? Math.round(currMsf / currVol * 10000.0) / 100.0 : 0);
+            row.put("net_rate", currVol > 0 ? Math.round(currNet / currVol * 10000.0) / 100.0 : 0);
         }
 
         return ResponseEntity.ok(results);
@@ -270,7 +290,8 @@ public class LeaderboardController {
             + "   COUNT(DISTINCT sdm.merchant_id) AS active_merchants,"
             + "   COALESCE(SUM(sdm.total_txns), 0) AS txn_count,"
             + "   COALESCE(SUM(sdm.total_base_volume), 0) AS total_volume,"
-            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf"
+            + "   COALESCE(SUM(sdm.total_msf), 0) AS total_msf,"
+            + "   COALESCE(SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)), 0) AS net_revenue"
             + " FROM country_teams ct"
             + " JOIN dim_merchant m ON m.sales_user_id = ct.sales_user_id AND m.tenant_id = ?"
             + " JOIN sum_daily_merchant sdm ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
@@ -292,13 +313,14 @@ public class LeaderboardController {
             + "   COALESCE(cv.txn_count, 0) AS txn_count,"
             + "   COALESCE(cv.total_volume, 0) AS total_volume,"
             + "   COALESCE(cv.total_msf, 0) AS total_msf,"
+            + "   COALESCE(cv.net_revenue, 0) AS net_revenue,"
             + "   CASE WHEN COALESCE(ctt.total_merchants, 0) > 0"
             + "     THEN ROUND(COALESCE(cv.active_merchants, 0)::NUMERIC / ctt.total_merchants * 100, 1)"
             + "     ELSE 0 END AS active_rate"
             + " FROM country_onboarding co"
             + " FULL OUTER JOIN country_volume cv ON co.country_lead_id = cv.country_lead_id"
             + " FULL OUTER JOIN country_total ctt ON COALESCE(co.country_lead_id, cv.country_lead_id) = ctt.country_lead_id"
-            + " ORDER BY total_volume DESC";
+            + " ORDER BY net_revenue DESC, total_volume DESC";
 
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
@@ -316,7 +338,9 @@ public class LeaderboardController {
             row.put("badges", computeCountryBadges(row));
             double currVol = ((Number) row.get("total_volume")).doubleValue();
             double currMsf = ((Number) row.get("total_msf")).doubleValue();
+            double currNet = row.get("net_revenue") != null ? ((Number) row.get("net_revenue")).doubleValue() : 0;
             row.put("msf_rate", currVol > 0 ? Math.round(currMsf / currVol * 10000.0) / 100.0 : 0);
+            row.put("net_rate", currVol > 0 ? Math.round(currNet / currVol * 10000.0) / 100.0 : 0);
         }
 
         return ResponseEntity.ok(results);
@@ -386,6 +410,19 @@ public class LeaderboardController {
             overview.put("totalMsf", jdbcTemplate.queryForObject(msfSql, Double.class, msfParams.toArray()));
         } catch (Exception e) { overview.put("totalMsf", 0); }
 
+        // Net revenue = MSF - interchange - scheme fee (the leaderboard's ranking metric)
+        String netSql = "SELECT COALESCE(SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)), 0)"
+            + " FROM sum_daily_merchant WHERE tenant_id = ?";
+        List<Object> netParams = new ArrayList<>();
+        netParams.add(tenantId);
+        if (!dateFilter.isEmpty()) {
+            netSql += " AND business_date " + dateFilter;
+            addDateParams(netParams, period, dateFrom, dateTo);
+        }
+        try {
+            overview.put("totalNetRevenue", jdbcTemplate.queryForObject(netSql, Double.class, netParams.toArray()));
+        } catch (Exception e) { overview.put("totalNetRevenue", 0); }
+
         return ResponseEntity.ok(overview);
     }
 
@@ -409,17 +446,19 @@ public class LeaderboardController {
         String merchSql = "SELECT m.merchant_id, m.mid, m.name, m.status, m.city, m.created_date,"
             + " COALESCE(v.total_volume, 0) AS volume,"
             + " COALESCE(v.txn_count, 0) AS txn_count,"
-            + " COALESCE(v.msf_total, 0) AS msf"
+            + " COALESCE(v.msf_total, 0) AS msf,"
+            + " COALESCE(v.net_total, 0) AS net"
             + " FROM dim_merchant m"
             + " LEFT JOIN ("
             + "   SELECT merchant_id, SUM(total_base_volume) AS total_volume,"
-            + "     SUM(total_txns) AS txn_count, SUM(total_msf) AS msf_total"
+            + "     SUM(total_txns) AS txn_count, SUM(total_msf) AS msf_total,"
+            + "     SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)) AS net_total"
             + "   FROM sum_daily_merchant WHERE tenant_id = ?"
             + (dateFilter.isEmpty() ? "" : " AND business_date " + dateFilter)
             + "   GROUP BY merchant_id"
             + " ) v ON m.merchant_id = v.merchant_id"
             + " WHERE m.tenant_id = ? AND m.sales_email = ?"
-            + " ORDER BY volume DESC";
+            + " ORDER BY net DESC, volume DESC";
 
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
@@ -432,7 +471,8 @@ public class LeaderboardController {
         String trendSql = "SELECT TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
             + " SUM(sdm.total_base_volume) AS volume,"
             + " SUM(sdm.total_txns) AS txn_count,"
-            + " SUM(sdm.total_msf) AS msf"
+            + " SUM(sdm.total_msf) AS msf,"
+            + " SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)) AS net"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
             + " WHERE sdm.tenant_id = ? AND m.sales_email = ?"

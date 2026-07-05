@@ -12,7 +12,9 @@ import { PageLoader } from './components/Loaders';
 
 
 // Lazy-loaded route components — only loaded when user navigates to them
-const Dashboard = lazy(() => import('./pages/Dashboard.enhanced'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const CeoVolumeRevenue = lazy(() => import('./pages/CeoVolumeRevenue'));
+const LossMakingMerchants = lazy(() => import('./pages/LossMakingMerchants'));
 const UploadPage = lazy(() => import('./pages/UploadPage'));
 const MerchantHierarchy = lazy(() => import('./components/MerchantHierarchy'));
 const TransactionList = lazy(() => import('./components/TransactionList'));
@@ -94,6 +96,8 @@ function App() {
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               {/* Executive */}
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/business/ceo-volume-revenue" element={<CeoVolumeRevenue />} />
+              <Route path="/business/loss-making" element={<LossMakingMerchants />} />
               <Route path="/business/executive-dashboard-v2" element={<ExecutiveDashboardReport />} />
 
               {/* Merchant MGT */}

@@ -30,6 +30,9 @@ import java.util.*;
  *               single-currency figure, matching the leaderboard. total_volume is
  *               the cardholder-currency figure and is intentionally NOT used.)
  *   - msf     = SUM(total_msf)
+ *   - net     = SUM(total_msf - total_interchange - total_scheme_fee)  (NET REVENUE
+ *               = MSF - interchange - scheme fee; the primary ranking metric,
+ *               matching the leaderboard)
  *   - txns    = SUM(total_txns)
  *
  * Agent identity here is the rep CODE (dim_merchant.sales_user_id) — the same
@@ -108,16 +111,18 @@ public class SalesPortfolioController {
         String merchSql = "SELECT m.merchant_id, m.mid, m.name, m.status, m.city, m.created_date,"
             + " COALESCE(v.total_volume, 0) AS volume,"
             + " COALESCE(v.txn_count, 0) AS txn_count,"
-            + " COALESCE(v.msf_total, 0) AS msf"
+            + " COALESCE(v.msf_total, 0) AS msf,"
+            + " COALESCE(v.net_total, 0) AS net"
             + " FROM dim_merchant m"
             + " LEFT JOIN ("
             + "   SELECT merchant_id, SUM(total_base_volume) AS total_volume,"
-            + "     SUM(total_txns) AS txn_count, SUM(total_msf) AS msf_total"
+            + "     SUM(total_txns) AS txn_count, SUM(total_msf) AS msf_total,"
+            + "     SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)) AS net_total"
             + "   FROM sum_daily_merchant WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
             + "   GROUP BY merchant_id"
             + " ) v ON m.merchant_id = v.merchant_id"
             + " WHERE m.tenant_id = ? AND m.sales_user_id = ?"
-            + " ORDER BY volume DESC";
+            + " ORDER BY net DESC, volume DESC";
 
         List<Object> mp = new ArrayList<>();
         mp.add(tenantId);
@@ -127,21 +132,25 @@ public class SalesPortfolioController {
         List<Map<String, Object>> merchants = jdbcTemplate.queryForList(merchSql, mp.toArray());
         out.put("merchants", merchants);
 
-        double totalVolume = 0, totalMsf = 0, totalTxns = 0;
+        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalNet = 0;
         for (Map<String, Object> m : merchants) {
             totalVolume += num(m.get("volume"));
             totalMsf += num(m.get("msf"));
             totalTxns += num(m.get("txn_count"));
+            totalNet += num(m.get("net"));
         }
         out.put("merchantCount", merchants.size());
         out.put("totalVolume", totalVolume);
         out.put("totalMsf", totalMsf);
         out.put("totalTxns", totalTxns);
+        out.put("totalNet", totalNet);
         out.put("msfRate", totalVolume > 0 ? Math.round(totalMsf / totalVolume * 10000.0) / 100.0 : 0);
+        out.put("netRate", totalVolume > 0 ? Math.round(totalNet / totalVolume * 10000.0) / 100.0 : 0);
         addAttainment(out, totalVolume, profile != null ? profile.getMonthlyTarget() : null);
 
         String trendSql = "SELECT TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
-            + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf"
+            + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf,"
+            + " SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)) AS net"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
             + " WHERE sdm.tenant_id = ? AND m.sales_user_id = ?"
@@ -175,17 +184,19 @@ public class SalesPortfolioController {
             + " COUNT(DISTINCT m.merchant_id) AS merchants,"
             + " COALESCE(SUM(v.total_volume), 0) AS volume,"
             + " COALESCE(SUM(v.msf_total), 0) AS msf,"
+            + " COALESCE(SUM(v.net_total), 0) AS net,"
             + " COALESCE(SUM(v.txn_count), 0) AS txn_count"
             + " FROM sales_user_assignment sua"
             + " LEFT JOIN dim_merchant m ON m.sales_user_id = sua.sales_user_id AND m.tenant_id = ?"
             + " LEFT JOIN ("
             + "   SELECT merchant_id, SUM(total_base_volume) AS total_volume,"
-            + "     SUM(total_msf) AS msf_total, SUM(total_txns) AS txn_count"
+            + "     SUM(total_msf) AS msf_total, SUM(total_txns) AS txn_count,"
+            + "     SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)) AS net_total"
             + "   FROM sum_daily_merchant WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
             + "   GROUP BY merchant_id"
             + " ) v ON v.merchant_id = m.merchant_id"
             + " WHERE sua.tenant_id = ? AND sua.team_lead_id = ?"
-            + " GROUP BY sua.sales_user_id ORDER BY volume DESC";
+            + " GROUP BY sua.sales_user_id ORDER BY net DESC, volume DESC";
 
         List<Object> ap = new ArrayList<>();
         ap.add(tenantId);
@@ -201,7 +212,7 @@ public class SalesPortfolioController {
         }
         BigDecimal teamTarget = BigDecimal.ZERO;
         boolean anyTarget = false;
-        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalMerchants = 0;
+        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalMerchants = 0, totalNet = 0;
         for (Map<String, Object> a : agents) {
             SalesAgentProfile p = profiles.get((String) a.get("agent"));
             a.put("displayName", p != null ? p.getDisplayName() : null);
@@ -213,6 +224,7 @@ public class SalesPortfolioController {
             totalMsf += num(a.get("msf"));
             totalTxns += num(a.get("txn_count"));
             totalMerchants += num(a.get("merchants"));
+            totalNet += num(a.get("net"));
         }
         out.put("agents", agents);
         out.put("agentCount", agents.size());
@@ -220,11 +232,14 @@ public class SalesPortfolioController {
         out.put("totalVolume", totalVolume);
         out.put("totalMsf", totalMsf);
         out.put("totalTxns", totalTxns);
+        out.put("totalNet", totalNet);
         out.put("msfRate", totalVolume > 0 ? Math.round(totalMsf / totalVolume * 10000.0) / 100.0 : 0);
+        out.put("netRate", totalVolume > 0 ? Math.round(totalNet / totalVolume * 10000.0) / 100.0 : 0);
         addAttainment(out, totalVolume, anyTarget ? teamTarget : null);
 
         String trendSql = "SELECT TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
-            + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf"
+            + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf,"
+            + " SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)) AS net"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
             + " JOIN sales_user_assignment sua ON sua.sales_user_id = m.sales_user_id AND sua.tenant_id = m.tenant_id"
@@ -261,18 +276,20 @@ public class SalesPortfolioController {
             + " COUNT(DISTINCT m.merchant_id) AS merchants,"
             + " COALESCE(SUM(v.total_volume), 0) AS volume,"
             + " COALESCE(SUM(v.msf_total), 0) AS msf,"
+            + " COALESCE(SUM(v.net_total), 0) AS net,"
             + " COALESCE(SUM(v.txn_count), 0) AS txn_count"
             + " FROM sales_team_mapping stm"
             + " LEFT JOIN sales_user_assignment sua ON sua.team_lead_id = stm.id AND sua.tenant_id = stm.tenant_id"
             + " LEFT JOIN dim_merchant m ON m.sales_user_id = sua.sales_user_id AND m.tenant_id = stm.tenant_id"
             + " LEFT JOIN ("
             + "   SELECT merchant_id, SUM(total_base_volume) AS total_volume,"
-            + "     SUM(total_msf) AS msf_total, SUM(total_txns) AS txn_count"
+            + "     SUM(total_msf) AS msf_total, SUM(total_txns) AS txn_count,"
+            + "     SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)) AS net_total"
             + "   FROM sum_daily_merchant WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
             + "   GROUP BY merchant_id"
             + " ) v ON v.merchant_id = m.merchant_id"
             + " WHERE stm.tenant_id = ? AND stm.country_lead_id = ?"
-            + " GROUP BY stm.id, stm.team_lead_name ORDER BY volume DESC";
+            + " GROUP BY stm.id, stm.team_lead_name ORDER BY net DESC, volume DESC";
 
         List<Object> tp = new ArrayList<>();
         tp.add(tenantId);
@@ -281,13 +298,14 @@ public class SalesPortfolioController {
         tp.add(countryLeadId);
         List<Map<String, Object>> teams = jdbcTemplate.queryForList(teamSql, tp.toArray());
 
-        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalMerchants = 0, totalAgents = 0;
+        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalMerchants = 0, totalAgents = 0, totalNet = 0;
         for (Map<String, Object> t : teams) {
             totalVolume += num(t.get("volume"));
             totalMsf += num(t.get("msf"));
             totalTxns += num(t.get("txn_count"));
             totalMerchants += num(t.get("merchants"));
             totalAgents += num(t.get("agent_count"));
+            totalNet += num(t.get("net"));
         }
         out.put("teams", teams);
         out.put("teamCount", teams.size());
@@ -296,7 +314,9 @@ public class SalesPortfolioController {
         out.put("totalVolume", totalVolume);
         out.put("totalMsf", totalMsf);
         out.put("totalTxns", totalTxns);
+        out.put("totalNet", totalNet);
         out.put("msfRate", totalVolume > 0 ? Math.round(totalMsf / totalVolume * 10000.0) / 100.0 : 0);
+        out.put("netRate", totalVolume > 0 ? Math.round(totalNet / totalVolume * 10000.0) / 100.0 : 0);
 
         String targetSql = "SELECT COALESCE(SUM(sap.monthly_target), 0) AS total_target"
             + " FROM sales_agent_profile sap"
@@ -308,7 +328,8 @@ public class SalesPortfolioController {
                 (countryTarget != null && countryTarget.doubleValue() > 0) ? countryTarget : null);
 
         String trendSql = "SELECT TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
-            + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf"
+            + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf,"
+            + " SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)) AS net"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
             + " JOIN sales_user_assignment sua ON sua.sales_user_id = m.sales_user_id AND sua.tenant_id = m.tenant_id"

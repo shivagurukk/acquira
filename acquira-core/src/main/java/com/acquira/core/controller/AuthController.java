@@ -169,9 +169,17 @@ public class AuthController {
                         "locked", true));
             }
 
-            if (!dbUser.isActive() || dbUser.isPendingApproval()) {
+            if (!dbUser.isActive() || dbUser.isPendingApproval() || dbUser.isAccountExpired()) {
                 // Audit the real reason for ops to see; respond generically to the user.
-                String reason = !dbUser.isActive() ? "INACTIVE" : "PENDING_APPROVAL";
+                String reason = dbUser.isAccountExpired() ? "EXPIRED"
+                        : !dbUser.isActive() ? "INACTIVE" : "PENDING_APPROVAL";
+                // Account expiry auto-deactivates: flip is_active off once, so the
+                // account shows as Inactive in User Management and stays blocked
+                // even if the expiry date is later cleared.
+                if (dbUser.isAccountExpired() && dbUser.isActive()) {
+                    dbUser.setActive(false);
+                    userRepository.save(dbUser);
+                }
                 auditService.log("LOGIN_DENIED",
                         "User '" + dbUser.getUsername() + "' login denied: " + reason +
                         " from " + clientIp);
@@ -295,7 +303,22 @@ public class AuthController {
         }
 
         // ===== Force password change flag =====
-        if (user != null && user.isMustChangePassword()) {
+        // Either the account is already flagged, or the password has aged past the
+        // tenant's expiry policy (security.password_expiry_days; 0 = never). SSO
+        // users have no local password, so expiry does not apply to them.
+        boolean mustChange = user != null && user.isMustChangePassword();
+        if (user != null && !mustChange && !user.isSsoUser()) {
+            int expiryDays = securityPolicyService.passwordPolicy(policyTenantId).passwordExpiryDays;
+            LocalDateTime changedAt = user.getPasswordChangedAt();
+            if (expiryDays > 0 && changedAt != null
+                    && changedAt.plusDays(expiryDays).isBefore(LocalDateTime.now())) {
+                mustChange = true;
+                auditService.log("PASSWORD_EXPIRED",
+                        "User '" + user.getUsername() + "' password expired (>"
+                                + expiryDays + "d); change required.");
+            }
+        }
+        if (mustChange) {
             response.put("mustChangePassword", true);
         }
 

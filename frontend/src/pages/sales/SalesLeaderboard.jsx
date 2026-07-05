@@ -70,8 +70,8 @@ const OverviewStats = ({ data }) => {
     { icon: Crown, label: 'Team Leads', value: fmt(data.totalTeams), color: T.warning, bg: T.warningBg },
     { icon: UserPlus, label: 'Onboarded', value: fmt(data.merchantsOnboarded), color: T.purple, bg: T.purpleBg },
     { icon: DollarSign, label: 'Total Volume', value: fmtM(data.totalVolume), color: T.success, bg: T.successBg },
-    { icon: TrendingUp, label: 'Total MSF', value: fmtM(data.totalMsf), color: '#f97316', bg: 'var(--orange-bg, #fff7ed)' },
-    { icon: Percent, label: 'Avg MSF Rate', value: data.totalVolume > 0 ? fmtPct(data.totalMsf / data.totalVolume * 100) : '—', color: '#ec4899', bg: 'var(--pink-bg, #fdf2f8)' },
+    { icon: TrendingUp, label: 'Net Revenue', value: fmtM(data.totalNetRevenue != null ? data.totalNetRevenue : data.totalMsf), color: '#f97316', bg: 'var(--orange-bg, #fff7ed)' },
+    { icon: Percent, label: 'Avg Net Rate', value: data.totalVolume > 0 ? fmtPct((data.totalNetRevenue != null ? data.totalNetRevenue : data.totalMsf) / data.totalVolume * 100) : '—', color: '#ec4899', bg: 'var(--pink-bg, #fdf2f8)' },
   ];
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 12, marginBottom: 24 }}>
@@ -104,7 +104,8 @@ const Podium = ({ items, isTeam }) => {
         const origRank = indexMap[idx];
         const name = isTeam ? item.team_lead : item.agent;
         const shortName = name?.includes('@') ? name.split('@')[0] : name;
-        const msfRate = item.total_volume > 0 ? (item.total_msf / item.total_volume * 100) : 0;
+        const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
+        const netRate = item.total_volume > 0 ? (net / item.total_volume * 100) : 0;
         return (
           <div key={idx} style={{ textAlign: 'center', width: 170 }}>
             <div style={{
@@ -118,10 +119,10 @@ const Podium = ({ items, isTeam }) => {
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shortName}</div>
             <div style={{ fontSize: 11, color: T.textSec, marginBottom: 4 }}>
-              {fmtM(item.total_volume)} vol • {fmtM(item.total_msf)} MSF
+              {fmtM(item.total_volume)} vol • {fmtM(net)} net
             </div>
             <div style={{ fontSize: 10, color: T.textMut, marginBottom: 8 }}>
-              {fmt(item.merchants_onboarded)} onboarded • {fmtPct(msfRate)} rate
+              {fmt(item.merchants_onboarded)} onboarded • {fmtPct(netRate)} net rate
             </div>
             <div style={{
               height: heights[idx], borderRadius: '12px 12px 0 0',
@@ -156,11 +157,11 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
               <th style={{ ...th, textAlign: 'center' }}>Onboarded</th>
               <th style={{ ...th, textAlign: 'center' }}>Active</th>
               <th style={{ ...th, textAlign: 'right' }}>Volume</th>
-              <th style={{ ...th, textAlign: 'right' }}>MSF</th>
-              <th style={{ ...th, textAlign: 'right' }}>MSF Rate</th>
+              <th style={{ ...th, textAlign: 'right' }}>Net Revenue</th>
+              <th style={{ ...th, textAlign: 'right' }}>Net Rate</th>
               <th style={{ ...th, textAlign: 'right' }}>Txns</th>
               <th style={{ ...th, textAlign: 'center' }}>Active %</th>
-              {!isTeam && <th style={{ ...th, textAlign: 'center' }}>Δ Vol</th>}
+              {!isTeam && <th style={{ ...th, textAlign: 'center' }}>Δ Net</th>}
               <th style={{ ...th, textAlign: 'left' }}>Badges</th>
             </tr>
           </thead>
@@ -169,7 +170,10 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
               const name = isTeam ? item.team_lead : item.agent;
               const shortName = name?.includes('@') ? name.split('@')[0] : name;
               const rank = item.rank || i + 1;
-              const msfRate = item.total_volume > 0 ? (item.total_msf / item.total_volume * 100) : 0;
+              const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
+              const netRate = item.net_rate != null ? Number(item.net_rate)
+                : (item.total_volume > 0 ? (net / item.total_volume * 100) : 0);
+              const changePct = item.net_change_pct != null ? item.net_change_pct : item.volume_change_pct;
 
               return (
                 <tr key={i} style={{ borderBottom: `1px solid ${T.borderLt}`, cursor: !isTeam ? 'pointer' : 'default', transition: 'background .15s' }}
@@ -197,9 +201,9 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
                     {fmt(item.active_merchants)}<span style={{ color: T.textMut, fontWeight: 400 }}>/{fmt(item.total_merchants)}</span>
                   </td>
                   <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: T.text, fontVariantNumeric: 'tabular-nums' }}>{fmtM(item.total_volume)}</td>
-                  <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 600, color: T.warning, fontVariantNumeric: 'tabular-nums' }}>{fmtM(item.total_msf)}</td>
+                  <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 600, color: net >= 0 ? T.warning : T.danger, fontVariantNumeric: 'tabular-nums' }}>{fmtM(net)}</td>
                   <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: msfRate >= 2 ? T.success : msfRate >= 1 ? T.warning : T.danger }}>{fmtPct(msfRate)}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: netRate >= 0.4 ? T.success : netRate >= 0.2 ? T.warning : T.danger }}>{fmtPct(netRate)}</span>
                   </td>
                   <td style={{ padding: '12px 8px', textAlign: 'right', color: T.textSec, fontVariantNumeric: 'tabular-nums' }}>{fmt(item.txn_count)}</td>
                   <td style={{ padding: '12px 8px', textAlign: 'center' }}>
@@ -212,10 +216,10 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
                   </td>
                   {!isTeam && (
                     <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                      {item.volume_change_pct != null ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, fontWeight: 700, color: item.volume_change_pct >= 0 ? T.success : T.danger }}>
-                          {item.volume_change_pct >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                          {Math.abs(item.volume_change_pct)}%
+                      {changePct != null ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, fontWeight: 700, color: changePct >= 0 ? T.success : T.danger }}>
+                          {changePct >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                          {Math.abs(changePct)}%
                         </span>
                       ) : <span style={{ fontSize: 11, color: T.textMut }}>—</span>}
                     </td>
@@ -260,6 +264,7 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
   const merchants = data.merchants || [];
   const totalVol = merchants.reduce((s, m) => s + Number(m.volume || 0), 0);
   const totalMsf = merchants.reduce((s, m) => s + Number(m.msf || 0), 0);
+  const totalNet = merchants.reduce((s, m) => s + Number(m.net != null ? m.net : m.msf || 0), 0);
 
   return (
     <div style={{ ...CARD, marginBottom: 24, border: `2px solid ${T.brandAlt}` }}>
@@ -270,8 +275,8 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
           <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
             <span style={{ fontSize: 12, color: T.textSec }}><strong>{merchants.length}</strong> merchants</span>
             <span style={{ fontSize: 12, color: T.textSec }}><strong>{fmtM(totalVol)}</strong> volume</span>
-            <span style={{ fontSize: 12, color: T.warning }}><strong>{fmtM(totalMsf)}</strong> MSF</span>
-            <span style={{ fontSize: 12, color: T.success }}><strong>{totalVol > 0 ? fmtPct(totalMsf/totalVol*100) : '—'}</strong> rate</span>
+            <span style={{ fontSize: 12, color: T.warning }}><strong>{fmtM(totalNet)}</strong> net revenue</span>
+            <span style={{ fontSize: 12, color: T.success }}><strong>{totalVol > 0 ? fmtPct(totalNet/totalVol*100) : '—'}</strong> net rate</span>
           </div>
         </div>
         <button style={BTN(T.subtle, T.textSec)} onClick={onClose}>✕ Close</button>
@@ -286,7 +291,7 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
               <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted, #94a3b8)' }} tickFormatter={fmtM} />
               <Tooltip formatter={(v) => fmtM(v)} contentStyle={chartTooltipStyle} />
               <Bar dataKey="volume" fill={T.brandAlt} radius={[4, 4, 0, 0]} name="Volume" />
-              <Bar dataKey="msf" fill={T.warning} radius={[4, 4, 0, 0]} name="MSF" />
+              <Bar dataKey="net" fill={T.warning} radius={[4, 4, 0, 0]} name="Net Revenue" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -297,14 +302,15 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${T.borderLt}`, position: 'sticky', top: 0, background: T.card }}>
-              {['MID', 'Name', 'Status', 'Volume', 'MSF', 'MSF Rate', 'Txns'].map(h =>
+              {['MID', 'Name', 'Status', 'Volume', 'Net Rev', 'Net Rate', 'Txns'].map(h =>
                 <th key={h} style={{ padding: '6px 8px', textAlign: h === 'MID' || h === 'Name' || h === 'Status' ? 'left' : 'right', color: T.textSec, fontWeight: 600, fontSize: 10, textTransform: 'uppercase' }}>{h}</th>
               )}
             </tr>
           </thead>
           <tbody>
             {merchants.map((m, i) => {
-              const msfRate = m.volume > 0 ? (m.msf / m.volume * 100) : 0;
+              const mNet = Number(m.net != null ? m.net : m.msf || 0);
+              const netRate = m.volume > 0 ? (mNet / m.volume * 100) : 0;
               return (
                 <tr key={i} style={{ borderBottom: `1px solid ${T.borderLt}` }}>
                   <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 11, color: T.textSec }}>{m.mid}</td>
@@ -313,8 +319,8 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
                     <span style={{ display: 'inline-flex', padding: '1px 6px', borderRadius: 8, fontSize: 10, fontWeight: 600, background: m.status === 'Active' ? T.successCh : T.dangerCh, color: m.status === 'Active' ? T.successTx : T.dangerTx }}>{m.status || 'Unknown'}</span>
                   </td>
                   <td style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right', color: T.text }}>{fmtM(m.volume)}</td>
-                  <td style={{ padding: '6px 8px', color: T.warning, fontWeight: 600, textAlign: 'right' }}>{fmtM(m.msf)}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, color: msfRate >= 2 ? T.success : T.textSec }}>{fmtPct(msfRate)}</td>
+                  <td style={{ padding: '6px 8px', color: mNet >= 0 ? T.warning : T.danger, fontWeight: 600, textAlign: 'right' }}>{fmtM(mNet)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, color: netRate >= 0.4 ? T.success : netRate >= 0 ? T.textSec : T.danger }}>{fmtPct(netRate)}</td>
                   <td style={{ padding: '6px 8px', color: T.textSec, textAlign: 'right' }}>{fmt(m.txn_count)}</td>
                 </tr>
               );
@@ -377,14 +383,15 @@ const SalesLeaderboard = () => {
   const handleExportCSV = () => {
     const isTeam = activeTab === 'teams' || activeTab === 'countries';
     const headers = isTeam
-      ? ['Rank', 'Team Lead', 'Agents', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'MSF Rate', 'Txns', 'Active %']
-      : ['Rank', 'Agent', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'MSF Rate', 'Txns', 'Active %', 'Volume Change %'];
+      ? ['Rank', 'Team Lead', 'Agents', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Revenue', 'Net Rate', 'Txns', 'Active %']
+      : ['Rank', 'Agent', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Revenue', 'Net Rate', 'Txns', 'Active %', 'Net Change %'];
     const rows = data.map((item, i) => {
       const name = isTeam ? item.team_lead : item.agent;
-      const msfRate = item.total_volume > 0 ? (item.total_msf / item.total_volume * 100).toFixed(2) + '%' : '0%';
-      const base = [item.rank || i+1, name, item.merchants_onboarded, item.active_merchants, item.total_merchants, item.total_volume, item.total_msf, msfRate, item.txn_count, (item.active_rate || 0) + '%'];
+      const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
+      const netRate = item.total_volume > 0 ? (net / item.total_volume * 100).toFixed(2) + '%' : '0%';
+      const base = [item.rank || i+1, name, item.merchants_onboarded, item.active_merchants, item.total_merchants, item.total_volume, item.total_msf, net, netRate, item.txn_count, (item.active_rate || 0) + '%'];
       if (isTeam) base.splice(2, 0, item.agent_count);
-      else base.push(item.volume_change_pct != null ? item.volume_change_pct + '%' : 'N/A');
+      else base.push(item.net_change_pct != null ? item.net_change_pct + '%' : (item.volume_change_pct != null ? item.volume_change_pct + '%' : 'N/A'));
       return base;
     });
     const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
@@ -402,7 +409,7 @@ const SalesLeaderboard = () => {
             <Trophy size={22} color={T.warning} />
             Sales Leaderboard
           </h1>
-          <p style={{ fontSize: 13, color: T.textSec, margin: 0 }}>Track performance by onboarding, volume, MSF revenue, and margin rate</p>
+          <p style={{ fontSize: 13, color: T.textSec, margin: 0 }}>Ranked by net revenue (MSF − interchange − scheme fee), with onboarding, volume, and margin</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button style={BTN(T.subtle, T.textSec)} onClick={handleExportCSV}>

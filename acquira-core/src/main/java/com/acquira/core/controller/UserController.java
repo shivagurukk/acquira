@@ -108,13 +108,18 @@ public class UserController {
                     .body(Map.of("error", "Username '" + user.getUsername() + "' already exists"));
         }
 
-        // Validate email
-        if (user.getEmail() == null || user.getEmail().trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Email is required"));
-        }
-        if (userRepository.existsByEmail(user.getEmail().trim())) {
-            return ResponseEntity.badRequest()
-                    .body(Map.of("error", "Email '" + user.getEmail() + "' is already registered"));
+        // Email is optional. When supplied, normalise and enforce uniqueness;
+        // when blank/absent, store null so multiple email-less users can coexist
+        // (an empty string would collide on the uniqueness check).
+        if (user.getEmail() != null && !user.getEmail().trim().isEmpty()) {
+            String email = user.getEmail().trim();
+            if (userRepository.existsByEmail(email)) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Email '" + email + "' is already registered"));
+            }
+            user.setEmail(email);
+        } else {
+            user.setEmail(null);
         }
 
         // Validate password
@@ -177,6 +182,11 @@ public class UserController {
         if (userDetails.getDisplayName() != null) {
             user.setDisplayName(userDetails.getDisplayName());
         }
+
+        // Account expiry — always applied from the edit payload so it can be both
+        // set and cleared (null = no expiry). The frontend sends the current value
+        // on every save, so an unchanged edit is a harmless no-op.
+        user.setAccountExpiresAt(userDetails.getAccountExpiresAt());
 
         // GAP-4: Update role (only if provided and caller is SUPER_ADMIN)
         if (userDetails.getRole() != null && !userDetails.getRole().isBlank()) {
@@ -486,6 +496,7 @@ public class UserController {
             map.put("approvalStatus", u.getApprovalStatus());
             map.put("mustChangePassword", u.isMustChangePassword());
             map.put("lockedUntil", u.getLockedUntil());
+            map.put("accountExpiresAt", u.getAccountExpiresAt());
             map.put("createdAt", u.getCreatedAt());
 
             // Tenant assignments
@@ -505,5 +516,76 @@ public class UserController {
         }
 
         return ResponseEntity.ok(result);
+    }
+
+    // ===== EXPORT USERS (CSV) =====
+    // Same tenant-isolation as /enriched: super-admins export all users; bank
+    // admins export only users in their active tenant. No secrets are ever
+    // emitted (password hash is @JsonIgnore on the entity and simply not read
+    // here). Tenants column lists the user's bank assignments; the default one
+    // is flagged with an asterisk.
+    @GetMapping("/export/csv")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    public ResponseEntity<byte[]> exportUsersCsv() {
+        List<User> users = isSuperAdmin()
+                ? userRepository.findAll()
+                : userRepository.findAllById(userIdsInCurrentTenant());
+
+        StringBuilder sb = new StringBuilder();
+        // Excel-friendly UTF-8 BOM so accented names render correctly.
+        sb.append('\uFEFF');
+        String[] header = {
+                "Username", "Display Name", "Email", "Role", "Active", "Approval Status",
+                "SSO Provider", "Must Change Password", "Locked Until", "Account Expires At",
+                "Tenants", "Created At"
+        };
+        sb.append(String.join(",", header)).append("\r\n");
+
+        for (User u : users) {
+            List<com.acquira.common.model.UserTenantAccess> accesses = accessRepository.findAllByUser(u);
+            String tenants = accesses.stream()
+                    .map(a -> a.getTenant().getBankName()
+                            + (Boolean.TRUE.equals(a.getIsDefaultTenant()) ? " *" : ""))
+                    .collect(Collectors.joining("; "));
+
+            String[] row = {
+                    nz(u.getUsername()),
+                    nz(u.getDisplayName()),
+                    nz(u.getEmail()),
+                    nz(u.getRole() != null ? u.getRole().replace("ROLE_", "") : ""),
+                    u.isActive() ? "Active" : "Inactive",
+                    nz(u.getApprovalStatus()),
+                    nz(u.getSsoProvider()),
+                    u.isMustChangePassword() ? "Yes" : "No",
+                    u.getLockedUntil() != null ? u.getLockedUntil().toString() : "",
+                    u.getAccountExpiresAt() != null ? u.getAccountExpiresAt().toString() : "",
+                    tenants,
+                    u.getCreatedAt() != null ? u.getCreatedAt().toString() : ""
+            };
+            for (int i = 0; i < row.length; i++) {
+                if (i > 0) sb.append(',');
+                sb.append(csv(row[i]));
+            }
+            sb.append("\r\n");
+        }
+
+        byte[] bytes = sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String filename = "users-" + java.time.LocalDate.now() + ".csv";
+        return ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + filename + "\"")
+                .header(org.springframework.http.HttpHeaders.CONTENT_TYPE, "text/csv; charset=UTF-8")
+                .body(bytes);
+    }
+
+    private static String nz(String s) { return s == null ? "" : s; }
+
+    /** RFC-4180 CSV escaping: wrap in quotes and double internal quotes when the
+        value contains a comma, quote, or newline. */
+    private static String csv(String v) {
+        if (v == null) return "";
+        boolean needsQuote = v.contains(",") || v.contains("\"") || v.contains("\n") || v.contains("\r");
+        String out = v.replace("\"", "\"\"");
+        return needsQuote ? "\"" + out + "\"" : out;
     }
 }
