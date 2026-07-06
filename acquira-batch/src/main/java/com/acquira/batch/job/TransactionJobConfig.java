@@ -644,6 +644,19 @@ public class TransactionJobConfig {
                 dateScope = buildSafeDateInList(distinctDates);
             }
 
+            // PERF: sargable partition-pruning range over the RAW payment_date column.
+            // The fee UPDATEs previously filtered on DATE(payment_date) IN (...), which
+            // wraps the partition key in a function and defeats BOTH partition pruning
+            // and the (tenant_id, payment_date) index -> full scan of every partition.
+            // distinctDates is sorted ASC, so min..max+1day bounds every date in the
+            // batch. We keep the exact DATE(...) IN (...) filter too (dates may be
+            // sparse within the range) — the range prunes partitions, the IN keeps it
+            // exact. `dateRange` is prefixed with the correct table alias per query.
+            final String firstDate = distinctDates.get(0).toString();
+            final String lastDate = distinctDates.get(distinctDates.size() - 1).toString();
+            final String dateRangeF = " f.payment_date >= DATE '" + firstDate + "' AND f.payment_date < DATE '" + lastDate + "' + INTERVAL '1 day' ";
+            final String dateRangeFt = " ft.payment_date >= DATE '" + firstDate + "' AND ft.payment_date < DATE '" + lastDate + "' + INTERVAL '1 day' ";
+
             String updateNameSql = "UPDATE dim_merchant m SET name = sub.merchant_name " +
                 "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
                 "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '') sub " +
@@ -811,89 +824,84 @@ public class TransactionJobConfig {
             // debit cap via LEAST(). Scheme fee: dest x channel percentage.
             // =================================================================
             long tFee = System.currentTimeMillis();
-            int icRows = jdbcTemplate.update(
-                "UPDATE fact_transaction f SET interchange_fee = r.computed_ic FROM ( " +
-                "SELECT ft.transaction_id, ft.payment_date, " +
-                // Fallback: if no rate row matches (tenant has no configured rules,
-                // or a gap in the rate table), apply a flat 1.85% for BOTH local and
-                // international. New tenants therefore get sane interchange until
-                // their own rules are seeded. Matched rows use the configured rate
-                // (+cap via LEAST); the 1.85% branch has no cap.
-                "  CASE WHEN lr.interchange_pct IS NULL " +
-                "       THEN 0.018500 * ABS(COALESCE(ft.store_base_currency_amount,0)) " +
-                "       ELSE LEAST(lr.interchange_pct * ABS(COALESCE(ft.store_base_currency_amount,0)), " +
-                "                  COALESCE(lr.cap_amount, 999999999999)) END AS computed_ic " +
-                "FROM fact_transaction ft " +
-                "LEFT JOIN dim_store ds ON ds.store_id = ft.store_id AND ds.tenant_id = ft.tenant_id " +
-                "LEFT JOIN dim_terminal dt ON dt.terminal_id = ft.terminal_id AND dt.tenant_id = ft.tenant_id " +
-                "LEFT JOIN ref_card_scheme rcs ON UPPER(rcs.code) = UPPER(TRIM(ft.card_scheme)) " +
-                "                              OR UPPER(rcs.name) = UPPER(TRIM(ft.card_scheme)) " +
-                "LEFT JOIN LATERAL ( " +
-                "  SELECT ilr.interchange_pct, ilr.cap_amount FROM interchange_rate_local ilr " +
-                "  WHERE ilr.tenant_id = ft.tenant_id " +
-                "    AND ilr.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
-                "    AND (ilr.channel IS NULL OR ilr.channel = " +
-                "         CASE WHEN UPPER(TRIM(COALESCE(dt.type,''))) IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') " +
-                "              THEN 'ECOM' ELSE 'POS' END) " +
-                "    AND (ilr.scheme_group IS NULL OR ilr.scheme_group = COALESCE(rcs.group_name,'')) " +
-                "    AND (ilr.card_type IS NULL OR ilr.card_type = UPPER(TRIM(COALESCE(ft.card_type,'')))) " +
-                "    AND (ilr.tier IS NULL OR ilr.tier = " +
-                "         CASE WHEN rcs.card_subtype = 2 THEN 'Premium' ELSE 'Standard' END) " +
-                "    AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = " +
-                "         (SELECT msm.sector FROM mcc_sector_map msm " +
-                "          WHERE msm.tenant_id = ft.tenant_id AND msm.mcc = ds.mcc)) " +
-                "    AND (ilr.min_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket_aed) " +
-                "    AND (ilr.max_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket_aed) " +
-                "  ORDER BY ilr.priority DESC, ilr.id ASC LIMIT 1 " +
-                ") lr ON TRUE " +
-                "WHERE ft.tenant_id = ? AND DATE(ft.payment_date) IN " + dateScope + " ) r " +
-                "WHERE f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
-                tenantId);
-            // SCHEME FEE (scheme-aware, 2026-07-06b): rate now depends on card
-            // scheme GROUP as well as destination x channel. The transaction's
-            // group_name is resolved via ref_card_scheme (matched by CODE or NAME,
-            // same as interchange). A scheme-specific rate row wins; a NULL
-            // scheme_group row (if seeded) is the wildcard fallback so ingestion
-            // never breaks on an unmapped scheme. Fee is on ABS(settlement).
-            int sfRows = jdbcTemplate.update(
-                "UPDATE fact_transaction f " +
-                "SET scheme_fee = r.fee_pct * ABS(COALESCE(f.store_base_currency_amount,0)) " +
+            // =================================================================
+            // SINGLE-PASS FEE COMPUTATION (PERF, 2026-07-06c)
+            //
+            // Previously interchange, scheme fee, and ecom fee were THREE separate
+            // UPDATEs, each re-scanning the same fact rows for the date range and
+            // re-joining dim_terminal / ref_card_scheme. Scheme fee even re-derived
+            // the ECOM channel via a correlated dim_terminal subquery that the
+            // interchange join had already computed. That's 3x the scan + redundant
+            // joins.
+            //
+            // Now ONE UPDATE:
+            //   - joins dim_store / dim_terminal / ref_card_scheme ONCE
+            //   - derives `channel` (POS/ECOM) ONCE in the sub-select
+            //   - one LATERAL for the interchange rate, one for the scheme rate
+            //   - ecom_fee is a CASE on the shared channel (no extra pass/subquery)
+            //
+            // Correctness is identical to the three separate statements: same rate
+            // resolution, same ABS(settlement) basis, same fallbacks. Rows with no
+            // matching rate keep the feed interchange value and get scheme/ecom
+            // 0/NULL exactly as before.
+            //
+            // PERF: filters on the RAW payment_date range (partition pruning +
+            // index) AND the exact DATE(...) IN (...) set. Fees off SETTLEMENT
+            // amount (store_base_currency_amount), never cardholder amount.
+            // =================================================================
+            int feeRows = jdbcTemplate.update(
+                "UPDATE fact_transaction f SET " +
+                "  interchange_fee = r.computed_ic, " +
+                "  scheme_fee      = r.computed_scheme, " +
+                "  ecom_fee        = r.computed_ecom " +
                 "FROM ( " +
-                "  SELECT ft.transaction_id, ft.payment_date, sfr.fee_pct " +
+                "  SELECT ft.transaction_id, ft.payment_date, " +
+                // interchange: matched rate (+cap) else flat 1.85% fallback
+                "    CASE WHEN lr.interchange_pct IS NULL " +
+                "         THEN 0.018500 * ABS(COALESCE(ft.store_base_currency_amount,0)) " +
+                "         ELSE LEAST(lr.interchange_pct * ABS(COALESCE(ft.store_base_currency_amount,0)), " +
+                "                    COALESCE(lr.cap_amount, 999999999999)) END AS computed_ic, " +
+                // scheme fee: matched scheme rate * ABS(settlement); NULL if no rate row
+                "    (sfr.fee_pct * ABS(COALESCE(ft.store_base_currency_amount,0))) AS computed_scheme, " +
+                // ecom flat fee: 0.18 on ECOM channel, else NULL (COALESCE'd to 0 in nets)
+                "    CASE WHEN ch.channel = 'ECOM' THEN 0.18 ELSE NULL END AS computed_ecom " +
                 "  FROM fact_transaction ft " +
-                "  LEFT JOIN ref_card_scheme rcs " +
-                "    ON UPPER(rcs.code) = UPPER(TRIM(ft.card_scheme)) OR UPPER(rcs.name) = UPPER(TRIM(ft.card_scheme)) " +
-                "  JOIN LATERAL ( " +
-                "    SELECT s.fee_pct " +
-                "    FROM scheme_fee_rate s " +
+                "  LEFT JOIN dim_store ds ON ds.store_id = ft.store_id AND ds.tenant_id = ft.tenant_id " +
+                "  LEFT JOIN dim_terminal dt ON dt.terminal_id = ft.terminal_id AND dt.tenant_id = ft.tenant_id " +
+                "  LEFT JOIN ref_card_scheme rcs ON UPPER(rcs.code) = UPPER(TRIM(ft.card_scheme)) " +
+                "                                OR UPPER(rcs.name) = UPPER(TRIM(ft.card_scheme)) " +
+                // derive channel ONCE, reused by both rate LATERALs and the ecom CASE
+                "  CROSS JOIN LATERAL (SELECT CASE WHEN UPPER(TRIM(COALESCE(dt.type,''))) " +
+                "         IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') THEN 'ECOM' ELSE 'POS' END AS channel) ch " +
+                // derive mcc sector ONCE (was a correlated subquery inside the LATERAL)
+                "  LEFT JOIN mcc_sector_map msm ON msm.tenant_id = ft.tenant_id AND msm.mcc = ds.mcc " +
+                "  LEFT JOIN LATERAL ( " +
+                "    SELECT ilr.interchange_pct, ilr.cap_amount FROM interchange_rate_local ilr " +
+                "    WHERE ilr.tenant_id = ft.tenant_id " +
+                "      AND ilr.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
+                "      AND (ilr.channel IS NULL OR ilr.channel = ch.channel) " +
+                "      AND (ilr.scheme_group IS NULL OR ilr.scheme_group = COALESCE(rcs.group_name,'')) " +
+                "      AND (ilr.card_type IS NULL OR ilr.card_type = UPPER(TRIM(COALESCE(ft.card_type,'')))) " +
+                "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 2 THEN 'Premium' ELSE 'Standard' END) " +
+                "      AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = msm.sector) " +
+                "      AND (ilr.min_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket_aed) " +
+                "      AND (ilr.max_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket_aed) " +
+                "    ORDER BY ilr.priority DESC, ilr.id ASC LIMIT 1 " +
+                "  ) lr ON TRUE " +
+                "  LEFT JOIN LATERAL ( " +
+                "    SELECT s.fee_pct FROM scheme_fee_rate s " +
                 "    WHERE s.tenant_id = ft.tenant_id " +
                 "      AND s.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
-                "      AND s.channel = CASE WHEN UPPER(TRIM(COALESCE( " +
-                "            (SELECT dt2.type FROM dim_terminal dt2 " +
-                "             WHERE dt2.terminal_id = ft.terminal_id AND dt2.tenant_id = ft.tenant_id), ''))) " +
-                "          IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') THEN 'ECOM' ELSE 'POS' END " +
+                "      AND s.channel = ch.channel " +
                 "      AND (s.scheme_group IS NULL OR s.scheme_group = COALESCE(rcs.group_name,'')) " +
-                "    ORDER BY (s.scheme_group IS NOT NULL) DESC " +
-                "    LIMIT 1 " +
+                "    ORDER BY (s.scheme_group IS NOT NULL) DESC LIMIT 1 " +
                 "  ) sfr ON TRUE " +
-                "  WHERE ft.tenant_id = ? AND DATE(ft.payment_date) IN " + dateScope + " ) r " +
+                "  WHERE ft.tenant_id = ? AND " + dateRangeFt + " AND DATE(ft.payment_date) IN " + dateScope +
+                " ) r " +
                 "WHERE f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
                 tenantId);
-            // ECOM FLAT FEE (added 2026-07-06): 0.18 in SETTLEMENT currency, flat per
-            // transaction, ONLY on ECOM terminals (same exact whitelist as scheme fee/
-            // interchange channel derivation). Applied AFTER scheme fee. Net revenue in
-            // every rollup is msf - interchange - scheme_fee - ecom_fee. POS / physical /
-            // no-terminal rows keep ecom_fee NULL (COALESCE'd to 0 in nets).
-            int ecRows = jdbcTemplate.update(
-                "UPDATE fact_transaction f SET ecom_fee = 0.18 " +
-                "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN " + dateScope +
-                " AND UPPER(TRIM(COALESCE( " +
-                "       (SELECT dt3.type FROM dim_terminal dt3 " +
-                "        WHERE dt3.terminal_id = f.terminal_id AND dt3.tenant_id = f.tenant_id), ''))) " +
-                "     IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON')",
-                tenantId);
-            log.info(String.format("Fee computation: %d interchange, %d scheme-fee, %d ecom-fee rows in %.1fs",
-                icRows, sfRows, ecRows, (System.currentTimeMillis() - tFee) / 1000.0));
+            log.info(String.format("Fee computation (single-pass): %d rows in %.1fs",
+                feeRows, (System.currentTimeMillis() - tFee) / 1000.0));
 
             log.info(String.format("stagingToFact completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;
@@ -956,6 +964,40 @@ public class TransactionJobConfig {
                 java.util.concurrent.Executors.newFixedThreadPool(4,
                     r -> { Thread t = new Thread(r, "summary-agg-"); t.setDaemon(true); return t; });
             try {
+                // ---------------------------------------------------------------
+                // FIX: clean-slate the affected grain BEFORE re-aggregating.
+                // The rollups below are ON CONFLICT DO UPDATE, which refreshes a
+                // (grain) tuple only when it reappears in this upload. A merchant/
+                // day/scheme tuple that transacted in an EARLIER upload but not in
+                // this one is never touched -> orphan rows accumulate across the
+                // many uploads per month, and per-day sums drift from fact in both
+                // directions (and can go negative when stale rows collide with a
+                // fact re-insert on the same day). fact_transaction is already
+                // DELETE+reinserted per upload date upstream, so deleting the
+                // summary rows for the SAME dates (daily) / months (monthly) and
+                // rebuilding from fact makes summary reconcile exactly with fact.
+                // Daily tables: delete by business_date IN dateScope.
+                // Monthly tables: delete by month_key IN monthScope (they are
+                // rebuilt from the freshly-cleaned daily tables covering the whole
+                // month, so a whole-month delete+rebuild is correct).
+                // ---------------------------------------------------------------
+                for (String dailyTbl : new String[]{
+                        "sum_daily_bank", "sum_daily_merchant", "sum_daily_mcc",
+                        "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
+                        "sum_daily_finance", "sum_daily_insight", "sum_daily_merchant_attribute"}) {
+                    int del = jdbcTemplate.update(
+                        "DELETE FROM " + dailyTbl +
+                        " WHERE tenant_id = ? AND business_date IN " + dateScope, tenantId);
+                    log.warn("  [populateSummary] delete {} {} rows", String.format("%-25s", dailyTbl), del);
+                }
+                for (String monthlyTbl : new String[]{
+                        "sum_monthly_bank", "sum_monthly_insight", "sum_monthly_card"}) {
+                    int del = jdbcTemplate.update(
+                        "DELETE FROM " + monthlyTbl +
+                        " WHERE tenant_id = ? AND month_key IN " + monthScope, tenantId);
+                    log.warn("  [populateSummary] delete {} {} rows", String.format("%-25s", monthlyTbl), del);
+                }
+
                 java.util.List<java.util.concurrent.CompletableFuture<Void>> phase1 = new java.util.ArrayList<>();
 
                 phase1.add(runAsync(exec, "sum_daily_bank", () ->
@@ -1278,6 +1320,20 @@ public class TransactionJobConfig {
             }
             String dateScope = buildSafeDateInList(distinctDates);
 
+            // FIX: clean-slate the affected calc_dates before re-inserting. These two
+            // tables are ON CONFLICT (tenant, merchant, calc_date) DO UPDATE and only
+            // include merchants that transacted in THIS upload's dates. A merchant that
+            // had a row for one of these calc_dates from an earlier upload but is absent
+            // now would keep a stale row -> orphan drift on dashboard active/dormant/new
+            // counts and opportunity scores. Delete-then-rebuild for calc_date IN dateScope.
+            {
+                int delAct = jdbcTemplate.update(
+                    "DELETE FROM merchant_activity_summary WHERE tenant_id = ? AND calc_date IN " + dateScope, tenantId);
+                int delScore = jdbcTemplate.update(
+                    "DELETE FROM merchant_opportunity_score WHERE tenant_id = ? AND calc_date IN " + dateScope, tenantId);
+                log.warn("  [businessMetrics] clean-slate activity {} + score {} rows", delAct, delScore);
+            }
+
             jdbcTemplate.update("INSERT INTO merchant_activity_summary (tenant_id, merchant_id, calc_date, " +
                 "first_txn_date, last_txn_date, last_7d_cnt, last_7d_value, last_30d_cnt, last_30d_value, status, status_change_date) " +
                 "SELECT m.tenant_id, m.merchant_id, d.target_date, MIN(f.payment_date), MAX(f.payment_date), " +
@@ -1425,6 +1481,16 @@ public class TransactionJobConfig {
 
                 List<SumDailyMerchant> dailyRecs = dailyMerchantRepo.findByTenantIdAndDateRange(tenantId, monthStart, monthEnd);
                 if (dailyRecs.isEmpty()) continue;
+
+                // FIX: clean-slate this month's monthly-merchant-metrics before rebuild.
+                // sum_daily_merchant was just cleanly rebuilt in populateSummary, so
+                // deleting the month here and re-deriving guarantees no orphan merchant
+                // rows survive from an earlier upload that touched a different day of
+                // the same month. month_year is the YYYY-MM VARCHAR key.
+                int delMonthly = jdbcTemplate.update(
+                    "DELETE FROM sum_monthly_merchant_metrics WHERE tenant_id = ? AND month_year = ?",
+                    tenantId, monthYear);
+                if (delMonthly > 0) log.warn("  [dashboardMetrics] clean-slate {} monthly rows for {}", delMonthly, monthYear);
 
                 java.util.Map<Long, List<SumDailyMerchant>> grouped = dailyRecs.stream()
                         .collect(java.util.stream.Collectors.groupingBy(SumDailyMerchant::getMerchantId));

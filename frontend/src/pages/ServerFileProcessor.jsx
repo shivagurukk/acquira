@@ -15,23 +15,37 @@ const MAX_POLL_DURATION_MS = 30 * 60 * 1000;  // 30-minute cap per batch
 const MAX_CONSECUTIVE_ERRORS = 5;             // surface persistent failures
 
 // Status colour map.
-// IMPORTANT: SUCCESS is the legacy backend pre-completion state — it now means
-// "submitted to batch, not yet COMPLETED". The Chip is therefore styled the
-// same as SUBMITTED/STARTING (blue, in-flight) so users don't see a misleading
-// green tick while the job is actually still running. Real completion is shown
-// only when the polling loop reports COMPLETED.
+// Server File Processor is SEQUENTIAL: the backend processes one file at a time
+// and only returns once every file has reached a terminal state, so the per-file
+// status handed back is FINAL. SUCCESS therefore means genuinely done (green).
 const STATUS_COLORS = {
-    SUBMITTED:  { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
-    SUCCESS:    { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' }, // legacy = in-flight
+    SUCCESS:    { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
     COMPLETED:  { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
+    SUBMITTED:  { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
     FAILED:     { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
     ABANDONED:  { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
-    STARTED:    { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
-    STARTING:   { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
+    SKIPPED:    { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
     RUNNING:    { bg: '#fefce8', color: '#ca8a04', border: '#fef08a' },
 };
 
 const getStatusStyle = (status) => STATUS_COLORS[status] || STATUS_COLORS.RUNNING;
+
+// The fixed ingest pipeline shown in the stepper. The Server File Processor runs
+// strictly one file at a time; the request blocks until every file is done, so we
+// surface the STAGES of the pipeline rather than a fake per-file percentage.
+const PIPELINE_STEPS = [
+    { key: 'validate', label: 'Validate path', desc: 'Check the folder is under an allowed data directory' },
+    { key: 'scan',     label: 'Scan files',    desc: 'Detect each file as Merchant or Transaction' },
+    { key: 'merchant', label: 'Process merchants', desc: 'Load merchant master files first (one at a time)' },
+    { key: 'txn',      label: 'Process transactions', desc: 'Load transaction files next (one at a time)' },
+    { key: 'report',   label: 'Update reporting', desc: 'Aggregate summary tables & dashboards' },
+    { key: 'done',     label: 'Complete',       desc: 'All files finished' },
+];
+
+const fmtElapsed = (secs) => {
+    const m = Math.floor(secs / 60), s = secs % 60;
+    return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`;
+};
 
 const ServerFileProcessor = () => {
     const [serverPath, setServerPath] = useState('');
@@ -40,7 +54,14 @@ const ServerFileProcessor = () => {
     const [fileStatuses, setFileStatuses] = useState({}); // jobId -> { status, read, write, skip, progress }
     const [logs, setLogs] = useState([]);
     const [errorMsg, setErrorMsg] = useState('');
+    // Sequential pipeline: which named step is active (0-based index into PIPELINE_STEPS).
+    // While the (blocking) request is in flight we cannot know sub-file progress, so we
+    // advance the stepper optimistically to the "processing" stage and reconcile to
+    // "done" when the response lands.
+    const [activeStep, setActiveStep] = useState(0);
+    const [elapsed, setElapsed] = useState(0); // seconds since processing began
     const pollRef = useRef(null);
+    const timerRef = useRef(null);
     const logsEndRef = useRef(null);
     // Guard against double-click / React StrictMode double-invoke firing
     // POST /process-server-file twice. setPhase('scanning') is async, so the
@@ -53,8 +74,24 @@ const ServerFileProcessor = () => {
     }, [logs]);
 
     useEffect(() => {
-        return () => { if (pollRef.current) clearInterval(pollRef.current); };
+        return () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+            if (timerRef.current) clearInterval(timerRef.current);
+        };
     }, []);
+
+    // Live elapsed-time ticker while the sequential batch runs.
+    useEffect(() => {
+        if (phase === 'processing') {
+            const t0 = Date.now();
+            setElapsed(0);
+            timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+        } else if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+        }
+        return () => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+    }, [phase]);
 
     const addLog = (msg) => {
         const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -145,12 +182,20 @@ const ServerFileProcessor = () => {
         if (inFlightRef.current) return;  // double-click guard
         inFlightRef.current = true;
 
-        setPhase('scanning');
+        setPhase('processing');
+        setActiveStep(0);      // Validate path
         setLogs([]);
         setScanResult(null);
         setFileStatuses({});
         setErrorMsg('');
-        addLog(`🔍 Scanning path: ${serverPath}`);
+        addLog(`🔍 Validating & scanning path: ${serverPath}`);
+        addLog('⏳ Files are processed ONE AT A TIME — this request stays open until the whole batch finishes.');
+
+        // Optimistically advance the stepper into the "processing" stages while the
+        // (blocking) request runs. We can't know which individual file is mid-flight
+        // from a single blocking call, so we sit on the transaction stage until the
+        // response lands and then reconcile to the true per-file outcomes.
+        setActiveStep(3); // Process transactions (the longest stage)
 
         try {
             const res = await api.post(`/upload/process-server-file?path=${encodeURIComponent(serverPath.trim())}`);
@@ -178,36 +223,30 @@ const ServerFileProcessor = () => {
                 addLog(`❌ ${data.errorSummary}`);
             }
 
-            // Log each file result.
-            // FIX: the backend marks a successfully-queued file as status "SUBMITTED"
-            // (an earlier audit renamed it from "SUCCESS") and sets a jobId ONLY on the
-            // submit path — a FAILED file has no jobId. The old check `fr.status === 'SUCCESS'`
-            // therefore matched NOTHING: every submitted file fell into the else branch, was
-            // logged as ❌ "… — undefined", and its jobId was never collected — so polling never
-            // started and the rows sat looking failed while the batch actually ran in the
-            // background. Key off jobId presence instead (matches the per-file table render).
-            const jobIds = [];
+            // SEQUENTIAL backend: every file has already reached a terminal state by the
+            // time this response arrives, so fr.status is FINAL (SUCCESS / FAILED). No
+            // polling needed — log each outcome in order and mark the pipeline complete.
             if (data.fileResults) {
-                data.fileResults.forEach(fr => {
-                    if (fr.jobId) {
-                        addLog(`🚀 ${fr.type}: ${fr.file} — Job #${fr.jobId} started (${fr.sizeMB} MB, Tenant: ${fr.entity})`);
-                        jobIds.push(fr.jobId);
-                    } else {
-                        addLog(`❌ ${fr.type}: ${fr.file} — ${fr.error || 'failed to submit'}`);
-                    }
+                data.fileResults.forEach((fr, idx) => {
+                    const ok = fr.status === 'SUCCESS' || fr.status === 'COMPLETED';
+                    const icon = ok ? '✅' : '❌';
+                    const detail = ok
+                        ? `done (${fr.sizeMB} MB, Tenant: ${fr.entity || '—'})`
+                        : (fr.error || 'failed');
+                    addLog(`${icon} [${idx + 1}/${data.fileResults.length}] ${fr.type}: ${fr.file} — ${detail}`);
                 });
             }
 
-            if (jobIds.length > 0) {
-                setPhase('processing');
-                startPolling(jobIds);
-            } else if (data.failed > 0) {
-                setPhase('done');
-                addLog('❌ All files failed to process');
-            } else {
-                setPhase('done');
-                addLog('⚠️ No processable files found');
+            if (data.transactionFiles > 0) {
+                addLog('📊 Reporting & dashboards updated for affected tenant(s).');
             }
+
+            const okCount = (data.success || 0);
+            const failCount = (data.failed || 0);
+            addLog(`🏁 Batch complete — ${okCount} succeeded, ${failCount} failed${data.skipped?.length ? `, ${data.skipped.length} skipped` : ''}.`);
+
+            setActiveStep(PIPELINE_STEPS.length - 1); // Complete
+            setPhase('done');
 
         } catch (err) {
             setPhase('input');
@@ -225,21 +264,22 @@ const ServerFileProcessor = () => {
         setScanResult(null);
         setFileStatuses({});
         setErrorMsg('');
+        setActiveStep(0);
+        setElapsed(0);
         if (pollRef.current) clearInterval(pollRef.current);
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     };
 
-    // Compute overall progress
-    const overallProgress = (() => {
-        if (!scanResult?.fileResults) return 0;
-        const jobResults = scanResult.fileResults.filter(fr => fr.jobId);
-        if (jobResults.length === 0) return 0;
-        let total = 0;
-        jobResults.forEach(fr => {
-            const js = fileStatuses[fr.jobId];
-            total += js ? js.progress : 0;
-        });
-        return Math.round(total / jobResults.length);
-    })();
+    // Completed-file counts (sequential backend returns final per-file status).
+    const doneCount = scanResult?.fileResults
+        ? scanResult.fileResults.filter(fr => fr.status === 'SUCCESS' || fr.status === 'COMPLETED').length
+        : 0;
+    const totalProcessable = scanResult?.fileResults ? scanResult.fileResults.length : 0;
+    // On completion the bar is full; while processing we can't know sub-file % (blocking
+    // call), so the bar is indeterminate and the stepper + elapsed timer carry the signal.
+    const overallProgress = phase === 'done'
+        ? (totalProcessable > 0 ? Math.round((doneCount / totalProcessable) * 100) : 100)
+        : 0;
 
     return (
         <Box sx={{ p: 3, bgcolor: '#F8FAFC', minHeight: '100vh' }}>
@@ -318,21 +358,70 @@ const ServerFileProcessor = () => {
                                 </Stack>
                             )}
 
-                            {/* Progress Bar */}
-                            {phase === 'processing' && (
+                            {/* Pipeline stepper + progress (processing & done) */}
+                            {(phase === 'processing' || phase === 'done') && (
                                 <Box mb={2}>
-                                    <Box display="flex" justifyContent="space-between" mb={0.5}>
-                                        <Typography variant="caption" fontWeight="700" color="text.secondary">OVERALL PROGRESS</Typography>
-                                        <Typography variant="caption" fontWeight="700" color="primary">{overallProgress}%</Typography>
+                                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
+                                        <Typography variant="caption" fontWeight="700" color="text.secondary">
+                                            {phase === 'done'
+                                                ? `COMPLETE — ${doneCount}/${totalProcessable} FILE${totalProcessable === 1 ? '' : 'S'} PROCESSED`
+                                                : 'PROCESSING — ONE FILE AT A TIME'}
+                                        </Typography>
+                                        <Typography variant="caption" fontWeight="700" color={phase === 'done' ? 'success.main' : 'primary'}>
+                                            {phase === 'done' ? `${overallProgress}%` : `⏱ ${fmtElapsed(elapsed)}`}
+                                        </Typography>
                                     </Box>
                                     <LinearProgress
-                                        variant={overallProgress > 0 ? "determinate" : "indeterminate"}
+                                        variant={phase === 'done' ? 'determinate' : 'indeterminate'}
                                         value={overallProgress}
                                         sx={{
-                                            height: 8, borderRadius: 4, bgcolor: 'grey.100',
-                                            '& .MuiLinearProgress-bar': { borderRadius: 4, background: 'linear-gradient(90deg, #6366f1, #8b5cf6)' }
+                                            height: 8, borderRadius: 4, bgcolor: 'grey.100', mb: 2,
+                                            '& .MuiLinearProgress-bar': {
+                                                borderRadius: 4,
+                                                background: phase === 'done'
+                                                    ? (scanResult?.failed > 0
+                                                        ? 'linear-gradient(90deg, #f59e0b, #ef4444)'
+                                                        : 'linear-gradient(90deg, #22c55e, #16a34a)')
+                                                    : 'linear-gradient(90deg, #6366f1, #8b5cf6)'
+                                            }
                                         }}
                                     />
+
+                                    {/* Step checklist */}
+                                    <Stack spacing={0.75}>
+                                        {PIPELINE_STEPS.map((step, i) => {
+                                            const isDone = phase === 'done' || i < activeStep;
+                                            const isActive = phase !== 'done' && i === activeStep;
+                                            const color = isDone ? '#16a34a' : isActive ? '#6366f1' : '#cbd5e1';
+                                            return (
+                                                <Box key={step.key} display="flex" alignItems="center" gap={1.25}>
+                                                    <Box sx={{
+                                                        width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        bgcolor: isDone ? '#dcfce7' : isActive ? '#eef2ff' : '#f1f5f9',
+                                                        border: `1.5px solid ${color}`
+                                                    }}>
+                                                        {isDone
+                                                            ? <CheckCircle sx={{ fontSize: 12, color: '#16a34a' }} />
+                                                            : isActive
+                                                                ? <CircularProgress size={10} thickness={6} sx={{ color: '#6366f1' }} />
+                                                                : <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: '#cbd5e1' }} />}
+                                                    </Box>
+                                                    <Box>
+                                                        <Typography variant="body2" fontWeight={isActive ? 700 : 600}
+                                                            sx={{ color: isDone ? '#0f172a' : isActive ? '#4f46e5' : '#94a3b8', lineHeight: 1.3 }}>
+                                                            {step.label}
+                                                        </Typography>
+                                                        {isActive && (
+                                                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+                                                                {step.desc}
+                                                            </Typography>
+                                                        )}
+                                                    </Box>
+                                                </Box>
+                                            );
+                                        })}
+                                    </Stack>
                                 </Box>
                             )}
 
@@ -387,7 +476,7 @@ const ServerFileProcessor = () => {
                                     <Grid item xs={4}>
                                         <Paper elevation={0} sx={{ p: 1.5, bgcolor: '#f0fdf4', borderRadius: 2, textAlign: 'center' }}>
                                             <Typography variant="h5" fontWeight="800" color="#16a34a">{scanResult.success}</Typography>
-                                            <Typography variant="caption" fontWeight="600" color="text.secondary">Submitted</Typography>
+                                            <Typography variant="caption" fontWeight="600" color="text.secondary">Succeeded</Typography>
                                         </Paper>
                                     </Grid>
                                     <Grid item xs={4}>
@@ -421,18 +510,8 @@ const ServerFileProcessor = () => {
                                         </TableHead>
                                         <TableBody>
                                             {scanResult.fileResults.map((fr, i) => {
-                                                const js = fr.jobId ? fileStatuses[fr.jobId] : null;
-                                                // FIX: previously fell back to fr.status ("SUCCESS" from backend
-                                                // = "submitted, not done"), which painted a green tick the moment
-                                                // the response arrived — before any poll happened. Now: if a job
-                                                // was launched, ALWAYS use the polled status. fr.status only shows
-                                                // for failures (no jobId).
-                                                let displayStatus;
-                                                if (fr.jobId) {
-                                                    displayStatus = js?.status || 'SUBMITTED';
-                                                } else {
-                                                    displayStatus = fr.status === 'SUCCESS' ? 'SUBMITTED' : (fr.status || 'UNKNOWN');
-                                                }
+                                                // Sequential backend: fr.status is FINAL (SUCCESS / FAILED).
+                                                const displayStatus = fr.status || 'UNKNOWN';
                                                 const style = getStatusStyle(displayStatus);
 
                                                 return (
@@ -467,17 +546,9 @@ const ServerFileProcessor = () => {
                                                                     border: `1px solid ${style.border}`
                                                                 }}
                                                             />
-                                                            {js && js.progress > 0 && js.status !== 'COMPLETED' && (
-                                                                <LinearProgress
-                                                                    variant="determinate" value={js.progress}
-                                                                    sx={{ mt: 0.5, height: 3, borderRadius: 2, bgcolor: '#f1f5f9',
-                                                                        '& .MuiLinearProgress-bar': { bgcolor: style.color }
-                                                                    }}
-                                                                />
-                                                            )}
                                                         </TableCell>
                                                         <TableCell sx={{ fontSize: '0.78rem', color: '#0f172a', fontWeight: 500 }}>
-                                                            {js ? `${(js.writeCount || 0).toLocaleString()}` : (fr.error ? '—' : '...')}
+                                                            {(fr.status === 'SUCCESS' || fr.status === 'COMPLETED') ? '✓' : (fr.error ? '—' : '')}
                                                         </TableCell>
                                                     </TableRow>
                                                 );
@@ -519,7 +590,7 @@ const ServerFileProcessor = () => {
                                     { icon: '🔍', text: 'Auto-detects file type (Merchant / Transaction) and format (XLSX / CSV)' },
                                     { icon: '🏪', text: 'Merchant files are processed FIRST (so dimension tables exist)' },
                                     { icon: '💳', text: 'Transaction files are processed NEXT (links to merchants)' },
-                                    { icon: '📊', text: 'Reporting & dashboards are updated automatically at the end' },
+                                    { icon: '📊', text: 'Files run ONE AT A TIME; reporting & dashboards update at the end' },
                                 ].map((step, i) => (
                                     <Box key={i} display="flex" alignItems="flex-start" gap={1.5} mb={1.5}>
                                         <Typography fontSize="1.1rem">{step.icon}</Typography>

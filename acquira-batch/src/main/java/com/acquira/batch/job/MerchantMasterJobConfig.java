@@ -666,6 +666,108 @@ public class MerchantMasterJobConfig {
             jdbcTemplate.execute(upsertTerminalSql);
             log.info("Upserted Terminals for tenant {}", tId);
 
+            // ── 3b. BACK-FILL AUTO-CREATED PLACEHOLDERS ───────────────────────────
+            //
+            // WHY: when a TRANSACTION file is ingested for a merchant whose master
+            // record has not yet been loaded, TransactionJobConfig.autoCreateDimensionsTasklet
+            // mints a placeholder merchant (internal_id 'AUTO_SID_<sid>', mid possibly
+            // 'AUTO_MID_<sid>') so the money is never dropped. Those placeholders then
+            // surface as ugly AUTO_ merchant CODES in reports.
+            //
+            // Now that the REAL master has just been upserted above, any AUTO_ merchant
+            // whose SID now resolves to a real (non-AUTO) store can be reconciled:
+            //   1. repoint its fact_transaction rows to the real merchant + store
+            //   2. drop the placeholder's stale merchant-keyed summary/derived rows
+            //      (they are keyed UNIQUE on merchant_id, so we cannot just re-point
+            //       them without collisions; the correct per-merchant totals are
+            //       rebuilt on the next transaction ingest / reporting run for those
+            //       dates)
+            //   3. delete the now-orphaned AUTO_ terminal, store, merchant
+            //
+            // Reconciliation key is the SID: the AUTO_ merchant's store carries the
+            // real sid; the real master creates a real dim_store with the same sid
+            // under the real merchant. We only remap when EXACTLY ONE real store
+            // matches the sid, so an ambiguous sid is left untouched (safe).
+            long tBackfill = System.currentTimeMillis();
+            try {
+                // Map each AUTO_ merchant -> the single real merchant/store that now
+                // owns its sid. dim_store.internal_id LIKE 'AUTO_STORE_SID_%' marks the
+                // placeholder store; the real store shares the same sid but has a
+                // non-AUTO internal_id.
+                String remapSelect =
+                    "SELECT am.merchant_id AS auto_mid, ast.store_id AS auto_sid, " +
+                    "       rs.merchant_id AS real_mid, rs.store_id AS real_sid " +
+                    "FROM dim_merchant am " +
+                    "JOIN dim_store ast ON ast.tenant_id = am.tenant_id AND ast.merchant_id = am.merchant_id " +
+                    "JOIN LATERAL ( " +
+                    "  SELECT rs2.merchant_id, rs2.store_id FROM dim_store rs2 " +
+                    "  WHERE rs2.tenant_id = am.tenant_id AND rs2.sid = ast.sid " +
+                    "    AND rs2.internal_id NOT LIKE 'AUTO_STORE_SID_%' " +
+                    "  LIMIT 2 " +
+                    ") rs ON TRUE " +
+                    "WHERE am.tenant_id = " + tId + " AND am.internal_id LIKE 'AUTO_SID_%' " +
+                    "  AND ast.sid IS NOT NULL " +
+                    "  AND (SELECT COUNT(*) FROM dim_store rs3 WHERE rs3.tenant_id = am.tenant_id " +
+                    "        AND rs3.sid = ast.sid AND rs3.internal_id NOT LIKE 'AUTO_STORE_SID_%') = 1";
+
+                java.util.List<java.util.Map<String, Object>> remaps = jdbcTemplate.queryForList(remapSelect);
+                if (!remaps.isEmpty()) {
+                    int factRows = 0, autoMerchants = 0;
+                    for (java.util.Map<String, Object> r : remaps) {
+                        long autoMid = ((Number) r.get("auto_mid")).longValue();
+                        long realMid = ((Number) r.get("real_mid")).longValue();
+                        long realSid = ((Number) r.get("real_sid")).longValue();
+
+                        // 1. Repoint facts (PK is transaction_id+payment_date, so changing
+                        //    merchant_id/store_id never collides).
+                        factRows += jdbcTemplate.update(
+                            "UPDATE fact_transaction SET merchant_id = ?, store_id = ? " +
+                            "WHERE tenant_id = ? AND merchant_id = ?",
+                            realMid, realSid, tenantId, autoMid);
+
+                        // 2. Drop the placeholder's merchant-keyed summary / derived rows.
+                        //    Correct totals rebuild under the real merchant on the next
+                        //    transaction ingest / reporting run for those dates.
+                        for (String tbl : new String[]{
+                                "sum_daily_merchant", "sum_daily_merchant_attribute",
+                                "sum_daily_terminal", "sum_daily_insight", "sum_monthly_insight",
+                                "sum_monthly_card", "merchant_activity_summary",
+                                "merchant_opportunity_score", "merchant_churn_score", "merchant_segment"}) {
+                            try {
+                                jdbcTemplate.update(
+                                    "DELETE FROM " + tbl + " WHERE tenant_id = ? AND merchant_id = ?",
+                                    tenantId, autoMid);
+                            } catch (Exception delErr) {
+                                // table may not exist on every deployment - non-fatal
+                                log.warn("  backfill: could not purge {} for auto-merchant {} (non-fatal): {}",
+                                    tbl, autoMid, delErr.getMessage());
+                            }
+                        }
+
+                        // 3. Delete the orphaned placeholder terminals, stores, merchant.
+                        jdbcTemplate.update(
+                            "DELETE FROM dim_terminal WHERE tenant_id = ? AND store_id IN " +
+                            "(SELECT store_id FROM dim_store WHERE tenant_id = ? AND merchant_id = ?)",
+                            tenantId, tenantId, autoMid);
+                        jdbcTemplate.update(
+                            "DELETE FROM dim_store WHERE tenant_id = ? AND merchant_id = ?",
+                            tenantId, autoMid);
+                        jdbcTemplate.update(
+                            "DELETE FROM dim_merchant WHERE tenant_id = ? AND merchant_id = ?",
+                            tenantId, autoMid);
+                        autoMerchants++;
+                    }
+                    log.info(String.format(
+                        "Back-filled %d auto-created placeholder merchant(s): remapped %d fact rows to real merchants in %.1fs",
+                        autoMerchants, factRows, (System.currentTimeMillis() - tBackfill) / 1000.0));
+                } else {
+                    log.info("Back-fill: no auto-created placeholders resolvable to real merchants this run");
+                }
+            } catch (Exception e) {
+                // Reconciliation is best-effort - it must never fail a merchant upload.
+                log.warn("Back-fill of auto-created placeholders failed (non-fatal): {}", e.getMessage());
+            }
+
             // ── 4/5/6. Contacts, Risk Profile, Bank Accounts (parallel) ──────────────
             long t456 = System.currentTimeMillis();
             java.util.concurrent.ExecutorService dimExec = java.util.concurrent.Executors.newFixedThreadPool(3,
