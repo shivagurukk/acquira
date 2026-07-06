@@ -42,6 +42,10 @@ import org.slf4j.LoggerFactory;
  *   - store_base_currency_amount = amount in MERCHANT settlement currency (single currency)
  *
  * Any aggregation that produces a single-currency total MUST use store_base_currency_amount.
+ * AS OF 2026-07-06 every summary total_volume (bank/merchant/mcc/scheme/channel/terminal/
+ * finance/insight) and merchant_activity_summary value is aggregated from
+ * store_base_currency_amount — txn_currency_amount is stored on the fact row for
+ * reference/Explorer only and is never summed into a display total.
  * Using txn_currency_amount produces wildly inflated totals when foreign-currency
  * intl transactions are present (e.g. an IQD/KES txn whose raw amount is 100x-1000x the AED).
  *
@@ -926,7 +930,7 @@ public class TransactionJobConfig {
                 phase1.add(runAsync(exec, "sum_daily_bank", () ->
                     jdbcTemplate.update("INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_base_volume, total_msf, " +
                         "total_interchange, total_scheme_fee, total_vat, total_net_revenue) " +
-                        "SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(txn_currency_amount), SUM(store_base_currency_amount), SUM(msf), " +
+                        "SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(store_base_currency_amount), SUM(store_base_currency_amount), SUM(msf), " +
                         "SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), SUM(vat), " +
                         "SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - COALESCE(scheme_fee,0)) " +
                         "FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
@@ -942,7 +946,7 @@ public class TransactionJobConfig {
                         "total_debit_prepaid_volume, total_credit_volume, sales_user_id, unique_customer_count, " +
                         "dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume, dcc_eligible_count, dcc_optin_count) " +
                         "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, COUNT(*), " +
-                        "SUM(f.txn_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), " +
+                        "SUM(f.store_base_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), " +
                         "SUM(COALESCE(f.scheme_fee,0)), " +
                         "SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - COALESCE(f.scheme_fee,0)), " +
                         "SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT','PREPAID') THEN f.store_base_currency_amount ELSE 0 END), " +
@@ -969,7 +973,7 @@ public class TransactionJobConfig {
                 phase1.add(runAsync(exec, "sum_daily_mcc", () ->
                     jdbcTemplate.update("INSERT INTO sum_daily_mcc (tenant_id, business_date, mcc, card_scheme, total_txns, " +
                         "total_volume, total_msf, total_scheme_fee, total_net_revenue) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf), " +
+                        "SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), " +
                         "SUM(COALESCE(f.scheme_fee,0)), " +
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)) " +
                         "FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id " +
@@ -986,14 +990,14 @@ public class TransactionJobConfig {
                         "  CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
                         "       THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') " +
                         "       ELSE card_scheme END, " +
-                        "COUNT(*), SUM(txn_currency_amount), SUM(msf), " +
+                        "COUNT(*), SUM(store_base_currency_amount), SUM(msf), " +
                         "SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), " +
                         "SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)) " +
                         "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date), " +
                         "  CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
                         "       THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') ELSE card_scheme END " +
-                        "HAVING SUM(txn_currency_amount) > 0 " +
+                        "HAVING SUM(store_base_currency_amount) > 0 " +
                         "ON CONFLICT (tenant_id, business_date, card_scheme) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
@@ -1002,7 +1006,7 @@ public class TransactionJobConfig {
                 phase1.add(runAsync(exec, "sum_daily_channel", () ->
                     jdbcTemplate.update("INSERT INTO sum_daily_channel (tenant_id, business_date, channel, total_txns, " +
                         "total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*), SUM(f.txn_currency_amount), " +
+                        "SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*), SUM(f.store_base_currency_amount), " +
                         "SUM(f.msf), SUM(f.interchange_fee), SUM(COALESCE(f.scheme_fee,0)), " +
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)) " +
                         "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
@@ -1016,7 +1020,7 @@ public class TransactionJobConfig {
                 phase1.add(runAsync(exec, "sum_daily_terminal", () ->
                     jdbcTemplate.update("INSERT INTO sum_daily_terminal (tenant_id, business_date, merchant_id, store_id, terminal_id, " +
                         "total_txns, total_volume, total_base_volume, total_msf, total_interchange, total_scheme_fee, total_revenue) " +
-                        "SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id, COUNT(*), SUM(txn_currency_amount), " +
+                        "SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id, COUNT(*), SUM(store_base_currency_amount), " +
                         "SUM(store_base_currency_amount), SUM(msf), SUM(COALESCE(interchange_fee,0)), SUM(COALESCE(scheme_fee,0)), " +
                         "SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)) " +
                         "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
@@ -1034,18 +1038,18 @@ public class TransactionJobConfig {
                         "int_cnt, int_vol, int_msf, int_optin, total_vol, total_msf) " +
                         "SELECT tenant_id, DATE(payment_date), " +
                         "COUNT(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN 1 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN txn_currency_amount ELSE 0 END), " +
+                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN store_base_currency_amount ELSE 0 END), " +
                         "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN msf ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END), " +
+                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END), " +
                         "COUNT(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN 1 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN txn_currency_amount ELSE 0 END), " +
+                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN store_base_currency_amount ELSE 0 END), " +
                         "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN msf ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END), " +
+                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END), " +
                         "COUNT(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN 1 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN txn_currency_amount ELSE 0 END), " +
+                        "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN store_base_currency_amount ELSE 0 END), " +
                         "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN msf ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END), " +
-                        "SUM(txn_currency_amount), SUM(msf) " +
+                        "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END), " +
+                        "SUM(store_base_currency_amount), SUM(msf) " +
                         "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date) " +
                         "ON CONFLICT (tenant_id, business_date) DO UPDATE SET " +
@@ -1063,7 +1067,7 @@ public class TransactionJobConfig {
                         "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
                         "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
                         "     ELSE f.card_scheme END, " +
-                        "f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf) " +
+                        "f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc, COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf) " +
                         "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
                         "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
@@ -1246,9 +1250,9 @@ public class TransactionJobConfig {
                 "first_txn_date, last_txn_date, last_7d_cnt, last_7d_value, last_30d_cnt, last_30d_value, status, status_change_date) " +
                 "SELECT m.tenant_id, m.merchant_id, d.target_date, MIN(f.payment_date), MAX(f.payment_date), " +
                 "COALESCE(COUNT(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN 1 END), 0), " +
-                "COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN f.txn_currency_amount ELSE 0 END), 0), " +
+                "COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN f.store_base_currency_amount ELSE 0 END), 0), " +
                 "COALESCE(COUNT(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN 1 END), 0), " +
-                "COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN f.txn_currency_amount ELSE 0 END), 0), " +
+                "COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN f.store_base_currency_amount ELSE 0 END), 0), " +
                 "CASE WHEN MAX(f.payment_date) >= d.target_date - INTERVAL '30 days' THEN 'ACTIVE' " +
                 "WHEN MAX(f.payment_date) < d.target_date - INTERVAL '30 days' THEN 'DORMANT' ELSE 'ONBOARDED' END, d.target_date " +
                 "FROM dim_merchant m " +

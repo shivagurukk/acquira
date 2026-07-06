@@ -53,14 +53,19 @@ const PremiumReportHeader = ({
     const handlePreset = (preset) => {
         setActivePreset(preset);
         if (preset !== 'CUSTOM' && onFilterChange) {
-            onFilterChange({ ...computeDateRange(preset), datePreset: preset });
-            // P1-4 FIX: clicking a date preset chip should immediately re-run
-            // the report. Previously it only updated state — users had to
-            // also click "Run" to see the new date range, which felt like
-            // "the filter doesn't work." Calling onApplyAfterDatePreset here
-            // (when supplied by the page) closes that gap. We defer to the
-            // next tick so React commits the state update first.
-            if (onApplyAfterDatePreset) setTimeout(onApplyAfterDatePreset, 0);
+            const range = computeDateRange(preset);
+            const next = { ...(filters || {}), ...range, datePreset: preset };
+            onFilterChange({ ...range, datePreset: preset });
+            // P1-4 FIX (v2): clicking a date preset chip should immediately
+            // re-run the report. The first version called
+            // onApplyAfterDatePreset() with NO argument via setTimeout — but
+            // the callback prop was captured at the pre-click render, so pages
+            // fetched through a STALE closure (typically the data-bounds full
+            // window). Result: chips said "This year" while KPIs showed all
+            // history including prior-year rows. Passing the fully-resolved
+            // `next` filters object removes the race entirely — pages must
+            // post `next` as the request body when it is provided.
+            if (onApplyAfterDatePreset) setTimeout(() => onApplyAfterDatePreset(next), 0);
         } else if (onFilterChange) {
             onFilterChange({ datePreset: 'CUSTOM' });
         }

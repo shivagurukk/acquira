@@ -253,7 +253,7 @@ const MerchantAnalyticsReport = () => {
                 onExport={handleExport}
                 onRunReport={() => fetchReport()}
                 onFilterChange={handleFilterChange}
-                onApplyAfterDatePreset={() => fetchReport()}
+                onApplyAfterDatePreset={(next) => fetchReport(next)}
                 loading={loading || exportLoading}
                 showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(v => !v)}

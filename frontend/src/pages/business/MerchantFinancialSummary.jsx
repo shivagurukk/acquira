@@ -84,12 +84,19 @@ const MerchantFinancialSummary = () => {
         if (boundsLoaded) fetchReport();
     }, [boundsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const fetchReport = async () => {
+    // fetchReport(override): the header's date-preset chips pass the fully
+    // resolved next-filters object (see PremiumReportHeader P1-4 v2). Posting
+    // that object directly avoids the stale-closure race where the request
+    // body was still the previous (data-bounds full-window) filters while the
+    // chips already showed the new preset — which made this page report
+    // all-history totals under a "This year" chip.
+    const fetchReport = async (override) => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
             const tenantId = localStorage.getItem('defaultTenantId');
-            const body = { ...filters };
+            const source = (override && override.startDate !== undefined) ? override : filters;
+            const body = { ...source };
             // A non-CUSTOM preset must ALWAYS win when the user picks one. The old
             // `(!startDate || !endDate)` guard meant the preset was ignored once
             // the dates were pre-filled. CUSTOM => use explicit dates as-is.
@@ -194,12 +201,12 @@ const MerchantFinancialSummary = () => {
                 title="Merchant Financial Summary" subtitle="Business Universe — per-merchant breakdown"
                 icon={DollarSign}
                 onExport={() => exportToCSV(data, 'merchant_financial_summary')}
-                onRunReport={fetchReport} onFilterChange={handleFilterChange}
-                onApplyAfterDatePreset={fetchReport}
+                onRunReport={() => fetchReport()} onFilterChange={handleFilterChange}
+                onApplyAfterDatePreset={(next) => fetchReport(next)}
                 loading={loading} showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
-            <BusinessFilters filters={filters} onChange={setFilters} onApply={fetchReport} isOpen={showFilters} onClose={() => setShowFilters(false)} />
+            <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchReport()} isOpen={showFilters} onClose={() => setShowFilters(false)} />
             <KpiCards cards={kpis} />
             <Paper sx={premiumTableWrapper}>
                 <DataGrid rows={rows} columns={columns} loading={loading} rowHeight={60}
