@@ -142,7 +142,7 @@ public class BusinessController {
                 List<Object[]> wkRows = entityManager.createNativeQuery(
                                 "SELECT LEAST(5, ((CAST(EXTRACT(DAY FROM business_date) AS INTEGER) - 1) / 7) + 1) AS wk, " +
                                 "SUM(total_txns), SUM(COALESCE(total_base_volume,0)), SUM(total_msf), " +
-                                "SUM(COALESCE(total_interchange,0)), SUM(COALESCE(total_scheme_fee,0)), SUM(total_net_revenue) " +
+                                "SUM(COALESCE(total_interchange,0)), SUM(COALESCE(total_scheme_fee,0)), SUM(COALESCE(total_ecom_fee,0)), SUM(total_net_revenue) " +
                                 "FROM sum_daily_bank WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
                                 "GROUP BY 1 ORDER BY 1")
                                 .setParameter("tid", tenantId)
@@ -155,7 +155,7 @@ public class BusinessController {
                 List<Map<String, Object>> weeks = new ArrayList<>();
                 long mtdTxns = 0;
                 BigDecimal mtdVol = BigDecimal.ZERO, mtdMsf = BigDecimal.ZERO,
-                                mtdIc = BigDecimal.ZERO, mtdSf = BigDecimal.ZERO, mtdNet = BigDecimal.ZERO;
+                                mtdIc = BigDecimal.ZERO, mtdSf = BigDecimal.ZERO, mtdEc = BigDecimal.ZERO, mtdNet = BigDecimal.ZERO;
                 for (int w = 1; w <= currentWeek; w++) {
                         LocalDate from = mtdStart.plusDays((long) (w - 1) * 7);
                         LocalDate weekEnd = (w == 5) ? eff.withDayOfMonth(daysInMonth)
@@ -168,8 +168,9 @@ public class BusinessController {
                         BigDecimal msf = r != null ? toBigDecimal(r[3]) : BigDecimal.ZERO;
                         BigDecimal ic = r != null ? toBigDecimal(r[4]) : BigDecimal.ZERO;
                         BigDecimal sf = r != null ? toBigDecimal(r[5]) : BigDecimal.ZERO;
-                        BigDecimal net = r != null ? toBigDecimal(r[6]) : BigDecimal.ZERO;
-                        Map<String, Object> m = buildMetricBucket("Week " + w, txns, vol, msf, ic, sf, net);
+                        BigDecimal ec = r != null ? toBigDecimal(r[6]) : BigDecimal.ZERO;
+                        BigDecimal net = r != null ? toBigDecimal(r[7]) : BigDecimal.ZERO;
+                        Map<String, Object> m = buildMetricBucket("Week " + w, txns, vol, msf, ic, sf, ec, net);
                         m.put("week", w);
                         m.put("from", from.toString());
                         m.put("to", to.toString());
@@ -181,6 +182,7 @@ public class BusinessController {
                         mtdMsf = mtdMsf.add(msf);
                         mtdIc = mtdIc.add(ic);
                         mtdSf = mtdSf.add(sf);
+                        mtdEc = mtdEc.add(ec);
                         mtdNet = mtdNet.add(net);
                 }
 
@@ -195,7 +197,7 @@ public class BusinessController {
                 @SuppressWarnings("unchecked")
                 List<Object[]> moRows = entityManager.createNativeQuery(
                                 "SELECT month_key, total_txns, COALESCE(total_base_volume,0), total_msf, " +
-                                "COALESCE(total_interchange,0), COALESCE(total_scheme_fee,0), total_net_revenue " +
+                                "COALESCE(total_interchange,0), COALESCE(total_scheme_fee,0), COALESCE(total_ecom_fee,0), total_net_revenue " +
                                 "FROM sum_monthly_bank WHERE tenant_id = :tid AND month_key BETWEEN :a AND :b " +
                                 "ORDER BY month_key")
                                 .setParameter("tid", tenantId)
@@ -208,7 +210,7 @@ public class BusinessController {
                 List<Map<String, Object>> months = new ArrayList<>();
                 long ytdTxns = 0;
                 BigDecimal ytdVol = BigDecimal.ZERO, ytdMsf = BigDecimal.ZERO,
-                                ytdIc = BigDecimal.ZERO, ytdSf = BigDecimal.ZERO, ytdNet = BigDecimal.ZERO;
+                                ytdIc = BigDecimal.ZERO, ytdSf = BigDecimal.ZERO, ytdEc = BigDecimal.ZERO, ytdNet = BigDecimal.ZERO;
                 for (Object[] r : moRows) {
                         int mk = ((Number) r[0]).intValue();
                         int moIdx = (mk % 100) - 1;
@@ -217,10 +219,11 @@ public class BusinessController {
                         BigDecimal msf = toBigDecimal(r[3]);
                         BigDecimal ic = toBigDecimal(r[4]);
                         BigDecimal sf = toBigDecimal(r[5]);
-                        BigDecimal net = toBigDecimal(r[6]);
+                        BigDecimal ec = toBigDecimal(r[6]);
+                        BigDecimal net = toBigDecimal(r[7]);
                         Map<String, Object> m = buildMetricBucket(
                                         (moIdx >= 0 && moIdx < 12 ? moNames[moIdx] : String.valueOf(mk)),
-                                        txns, vol, msf, ic, sf, net);
+                                        txns, vol, msf, ic, sf, ec, net);
                         m.put("monthKey", mk);
                         m.put("current", mk == year * 100 + eff.getMonthValue());
                         months.add(m);
@@ -229,6 +232,7 @@ public class BusinessController {
                         ytdMsf = ytdMsf.add(msf);
                         ytdIc = ytdIc.add(ic);
                         ytdSf = ytdSf.add(sf);
+                        ytdEc = ytdEc.add(ec);
                         ytdNet = ytdNet.add(net);
                 }
 
@@ -261,22 +265,24 @@ public class BusinessController {
                 mtd.put("start", mtdStart.toString());
                 mtd.put("end", eff.toString());
                 mtd.put("weeks", weeks);
-                mtd.put("totals", buildMetricBucket("MTD", mtdTxns, mtdVol, mtdMsf, mtdIc, mtdSf, mtdNet));
+                mtd.put("totals", buildMetricBucket("MTD", mtdTxns, mtdVol, mtdMsf, mtdIc, mtdSf, mtdEc, mtdNet));
                 mtd.put("prev", buildMetricBucket("Prev MTD pace",
                                 toLong(prevMtd[0]), toBigDecimal(prevMtd[1]),
                                 toBigDecimal(prevMtd[2]), toBigDecimal(prevMtd[3]),
-                                toBigDecimal(prevMtd[4]), toBigDecimal(prevMtd[5])));
+                                toBigDecimal(prevMtd[4]), toBigDecimal(prevMtd[5]),
+                                toBigDecimal(prevMtd[6])));
                 mtd.put("runRate", runRate);
 
                 Map<String, Object> ytd = new LinkedHashMap<>();
                 ytd.put("label", "YTD " + year);
                 ytd.put("year", year);
                 ytd.put("months", months);
-                ytd.put("totals", buildMetricBucket("YTD", ytdTxns, ytdVol, ytdMsf, ytdIc, ytdSf, ytdNet));
+                ytd.put("totals", buildMetricBucket("YTD", ytdTxns, ytdVol, ytdMsf, ytdIc, ytdSf, ytdEc, ytdNet));
                 ytd.put("prev", buildMetricBucket("Prev YTD",
                                 toLong(prevYtd[0]), toBigDecimal(prevYtd[1]),
                                 toBigDecimal(prevYtd[2]), toBigDecimal(prevYtd[3]),
-                                toBigDecimal(prevYtd[4]), toBigDecimal(prevYtd[5])));
+                                toBigDecimal(prevYtd[4]), toBigDecimal(prevYtd[5]),
+                                toBigDecimal(prevYtd[6])));
 
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("effectiveDate", eff.toString());
@@ -353,6 +359,7 @@ public class BusinessController {
                 sortCols.put("msf",         "SUM(t.total_msf)");
                 sortCols.put("interchange", "SUM(t.total_interchange)");
                 sortCols.put("schemeFee",   "SUM(t.total_scheme_fee)");
+                sortCols.put("ecomFee",     "SUM(t.total_ecom_fee)");
                 sortCols.put("net",         "SUM(t.total_revenue)");
                 sortCols.put("name",        "m.name");
                 sortCols.put("mid",         "m.mid");
@@ -375,7 +382,7 @@ public class BusinessController {
                 jakarta.persistence.Query rq = entityManager.createNativeQuery(
                                 "SELECT m.mid, s.sid, m.name, " +
                                 "SUM(t.total_txns), SUM(t.total_base_volume), SUM(t.total_msf), " +
-                                "SUM(t.total_interchange), SUM(t.total_scheme_fee), SUM(t.total_revenue) " +
+                                "SUM(t.total_interchange), SUM(t.total_scheme_fee), SUM(COALESCE(t.total_ecom_fee,0)), SUM(t.total_revenue) " +
                                 base +
                                 "ORDER BY " + orderExpr + " " + orderDir + " NULLS LAST " +
                                 "LIMIT :lim OFFSET :off");
@@ -395,7 +402,8 @@ public class BusinessController {
                         BigDecimal msf = toBigDecimal(r[5]);
                         BigDecimal ic = toBigDecimal(r[6]);
                         BigDecimal sf = toBigDecimal(r[7]);
-                        BigDecimal net = toBigDecimal(r[8]);
+                        BigDecimal ec = toBigDecimal(r[8]);
+                        BigDecimal net = toBigDecimal(r[9]);
                         Map<String, Object> m = new LinkedHashMap<>();
                         m.put("mid", r[0]);
                         m.put("sid", r[1]);
@@ -405,6 +413,7 @@ public class BusinessController {
                         m.put("msf", msf);
                         m.put("interchange", ic);
                         m.put("schemeFee", sf);
+                        m.put("ecomFee", ec);
                         m.put("netRevenue", net);
                         m.put("marginPct", vol.compareTo(BigDecimal.ZERO) > 0
                                         ? net.multiply(BigDecimal.valueOf(100)).divide(vol, 2, RoundingMode.HALF_UP)
@@ -422,9 +431,10 @@ public class BusinessController {
 
                 jakarta.persistence.Query tq = entityManager.createNativeQuery(
                                 "SELECT COALESCE(SUM(x.c1),0), COALESCE(SUM(x.c2),0), COALESCE(SUM(x.c3),0), " +
-                                "COALESCE(SUM(x.c4),0), COALESCE(SUM(x.c5),0), COALESCE(SUM(x.c6),0) FROM ( " +
+                                "COALESCE(SUM(x.c4),0), COALESCE(SUM(x.c5),0), COALESCE(SUM(x.c6),0), COALESCE(SUM(x.c7),0) FROM ( " +
                                 "SELECT SUM(t.total_txns) c1, SUM(t.total_base_volume) c2, SUM(t.total_msf) c3, " +
-                                "SUM(t.total_interchange) c4, SUM(t.total_scheme_fee) c5, SUM(t.total_revenue) c6 " +
+                                "SUM(t.total_interchange) c4, SUM(t.total_scheme_fee) c5, SUM(t.total_revenue) c6, " +
+                                "SUM(COALESCE(t.total_ecom_fee,0)) c7 " +
                                 base + ") x");
                 tq.setParameter("tid", tenantId);
                 tq.setParameter("s", from);
@@ -439,6 +449,7 @@ public class BusinessController {
                 totals.put("msf", toBigDecimal(tot[2]));
                 totals.put("interchange", toBigDecimal(tot[3]));
                 totals.put("schemeFee", toBigDecimal(tot[4]));
+                totals.put("ecomFee", toBigDecimal(tot[6]));
                 totals.put("netRevenue", tNet);
                 totals.put("marginPct", tVol.compareTo(BigDecimal.ZERO) > 0
                                 ? tNet.multiply(BigDecimal.valueOf(100)).divide(tVol, 2, RoundingMode.HALF_UP)
@@ -463,7 +474,7 @@ public class BusinessController {
                 Object res = entityManager.createNativeQuery(
                                 "SELECT COALESCE(SUM(total_txns),0), COALESCE(SUM(total_base_volume),0), " +
                                 "COALESCE(SUM(total_msf),0), COALESCE(SUM(total_interchange),0), " +
-                                "COALESCE(SUM(total_scheme_fee),0), COALESCE(SUM(total_net_revenue),0) " +
+                                "COALESCE(SUM(total_scheme_fee),0), COALESCE(SUM(total_ecom_fee),0), COALESCE(SUM(total_net_revenue),0) " +
                                 "FROM sum_daily_bank WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e")
                                 .setParameter("tid", tenantId)
                                 .setParameter("s", from)
@@ -472,9 +483,9 @@ public class BusinessController {
                 return (Object[]) res;
         }
 
-        /** Bucket map: count / volume / msf / interchange / scheme fee / net revenue + derived avgTicket / marginPct. */
+        /** Bucket map: count / volume / msf / interchange / scheme fee / ecom fee / net revenue + derived avgTicket / marginPct. */
         private static Map<String, Object> buildMetricBucket(String label, long txns,
-                        BigDecimal vol, BigDecimal msf, BigDecimal interchange, BigDecimal schemeFee, BigDecimal net) {
+                        BigDecimal vol, BigDecimal msf, BigDecimal interchange, BigDecimal schemeFee, BigDecimal ecomFee, BigDecimal net) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("label", label);
                 m.put("txns", txns);
@@ -482,6 +493,7 @@ public class BusinessController {
                 m.put("msf", msf);
                 m.put("interchange", interchange);
                 m.put("schemeFee", schemeFee);
+                m.put("ecomFee", ecomFee);
                 m.put("netRevenue", net);
                 m.put("avgTicket", txns > 0
                                 ? vol.divide(BigDecimal.valueOf(txns), 2, RoundingMode.HALF_UP)

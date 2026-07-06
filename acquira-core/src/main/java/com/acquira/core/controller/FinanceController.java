@@ -163,6 +163,7 @@ public class FinanceController {
         response.put("msfRevenue", sum(filteredRecs, SumDailyBank::getTotalMsf));
         response.put("interchangeFees", sum(filteredRecs, SumDailyBank::getTotalInterchange));
         response.put("schemeFees", sum(filteredRecs, SumDailyBank::getTotalSchemeFee));
+        response.put("ecomFees", sum(filteredRecs, SumDailyBank::getTotalEcomFee));
         response.put("vat", sum(filteredRecs, SumDailyBank::getTotalVat));
 
         BigDecimal fVol = sum(filteredRecs, SumDailyBank::getTotalVolume);
@@ -231,6 +232,10 @@ public class FinanceController {
         response.put("msfRevenue",      filteredAgg[1]);
         response.put("interchangeFees", filteredAgg[2]);
         response.put("schemeFees",      filteredAgg[3]);
+        // sum_daily_insight carries no ecom-fee column (like interchange/scheme,
+        // which are also 0 on this filtered path). Kept in the payload as 0 so the
+        // response shape matches the unfiltered GET endpoint.
+        response.put("ecomFees",        java.math.BigDecimal.ZERO);
         response.put("vat",             filteredAgg[4]);
 
         BigDecimal fVol = filteredAgg[0];

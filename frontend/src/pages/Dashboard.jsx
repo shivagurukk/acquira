@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../api/axios';
 import {
     RefreshCw, TrendingUp, TrendingDown, Receipt, Wallet,
-    Percent, Coins, BarChart3, CalendarRange, ArrowDownRight, Layers,
+    Percent, Coins, BarChart3, CalendarRange, ArrowDownRight, Layers, Globe,
 } from 'lucide-react';
 import {
     ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
@@ -103,6 +103,7 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
                 ['MSF', fmt.currency(d.msf)],
                 ['Interchange', fmt.currency(d.interchange)],
                 ['Scheme Fee', fmt.currency(d.schemeFee)],
+                ['ECOM Fee', fmt.currency(d.ecomFee)],
                 ['Net Revenue', fmt.currency(d.netRevenue)],
                 ['Net Margin', `${num(d.marginPct).toFixed(2)}%`],
             ].map(([k, v]) => (
@@ -152,6 +153,7 @@ const Dashboard = () => {
         msf: num(b.msf),
         interchange: num(b.interchange),
         schemeFee: num(b.schemeFee),
+        ecomFee: num(b.ecomFee),
         netRevenue: num(b.netRevenue),
         avgTicket: num(b.avgTicket),
         marginPct: num(b.marginPct),
@@ -182,7 +184,7 @@ const Dashboard = () => {
     const hasData = totals && num(totals.txns) > 0;
 
     const TABLE_HEADS = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume',
-        'Avg Ticket', 'MSF', 'Interchange', 'Scheme Fee', 'Net Revenue', 'Net Margin %'];
+        'Avg Ticket', 'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
 
     return (
         <div style={{ padding: '24px 28px', maxWidth: 1440, margin: '0 auto' }}>
@@ -261,6 +263,11 @@ const Dashboard = () => {
                             value={fmt.currency(num(totals.schemeFee))}
                             fullValue={fullNum(totals.schemeFee, currencySymbol)}
                             deltaPct={deltaPct(totals.schemeFee, prev?.schemeFee)}
+                            compareLabel={`${compareLabel} · lower is better`} invertDelta />
+                        <KpiTile label="ECOM Fee" icon={Globe} accent="#ec4899"
+                            value={fmt.currency(num(totals.ecomFee))}
+                            fullValue={fullNum(totals.ecomFee, currencySymbol)}
+                            deltaPct={deltaPct(totals.ecomFee, prev?.ecomFee)}
                             compareLabel={`${compareLabel} · lower is better`} invertDelta />
                         <KpiTile label="Net Revenue" icon={TrendingUp} accent="#10b981"
                             value={fmt.currency(num(totals.netRevenue))}
@@ -390,6 +397,7 @@ const Dashboard = () => {
                                                 <td style={tdNum} title={fullNum(b.msf, currencySymbol)}>{fmt.currency(b.msf)}</td>
                                                 <td style={tdNum} title={fullNum(b.interchange, currencySymbol)}>{fmt.currency(b.interchange)}</td>
                                                 <td style={tdNum} title={fullNum(b.schemeFee, currencySymbol)}>{fmt.currency(b.schemeFee)}</td>
+                                                <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.currency(b.ecomFee)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 600,
                                                     color: b.netRevenue >= 0 ? 'var(--text)' : '#dc2626' }}
                                                     title={fullNum(b.netRevenue, currencySymbol)}>{fmt.currency(b.netRevenue)}</td>
@@ -410,6 +418,7 @@ const Dashboard = () => {
                                         <td style={tdTotal} title={fullNum(totals.msf, currencySymbol)}>{fmt.currency(num(totals.msf))}</td>
                                         <td style={tdTotal} title={fullNum(totals.interchange, currencySymbol)}>{fmt.currency(num(totals.interchange))}</td>
                                         <td style={tdTotal} title={fullNum(totals.schemeFee, currencySymbol)}>{fmt.currency(num(totals.schemeFee))}</td>
+                                        <td style={tdTotal} title={fullNum(totals.ecomFee, currencySymbol)}>{fmt.currency(num(totals.ecomFee))}</td>
                                         <td style={tdTotal} title={fullNum(totals.netRevenue, currencySymbol)}>{fmt.currency(num(totals.netRevenue))}</td>
                                         <td style={{ ...tdTotal,
                                             color: num(totals.marginPct) >= 0 ? '#059669' : '#dc2626' }}>

@@ -40,6 +40,7 @@ const COLUMNS = [
     { key: 'msf',         label: 'MSF',            align: 'right', sortable: true },
     { key: 'interchange', label: 'Interchange',    align: 'right', sortable: true },
     { key: 'schemeFee',   label: 'Scheme Fee',     align: 'right', sortable: true },
+    { key: 'ecomFee',     label: 'ECOM Fee',       align: 'right', sortable: true },
     { key: 'net',         label: 'Net Revenue',    align: 'right', sortable: true },
     { key: 'margin',      label: 'Net Margin %',   align: 'right', sortable: false },
 ];
@@ -173,12 +174,13 @@ const CeoVolumeRevenue = ({
             }
             const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
             const header = ['MID', 'SID', 'Merchant', 'Count', 'Volume', 'MSF',
-                'Interchange Fee', 'Scheme Fee', 'Net Revenue', 'Net Margin %'];
+                'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
             const lines = [header.join(',')];
             rows.forEach(r => lines.push([
                 esc(r.mid), esc(r.sid), esc(r.name), num(r.txns),
                 num(r.volume).toFixed(2), num(r.msf).toFixed(2),
                 num(r.interchange).toFixed(2), num(r.schemeFee).toFixed(2),
+                num(r.ecomFee).toFixed(2),
                 num(r.netRevenue).toFixed(2), num(r.marginPct).toFixed(2),
             ].join(',')));
             const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -414,6 +416,7 @@ const CeoVolumeRevenue = ({
                                             <td style={tdNum} title={fullNum(r.msf, currencySymbol)}>{fmt.currency(num(r.msf))}</td>
                                             <td style={tdNum} title={fullNum(r.interchange, currencySymbol)}>{fmt.currency(num(r.interchange))}</td>
                                             <td style={tdNum} title={fullNum(r.schemeFee, currencySymbol)}>{fmt.currency(num(r.schemeFee))}</td>
+                                            <td style={tdNum} title={fullNum(r.ecomFee, currencySymbol)}>{fmt.currency(num(r.ecomFee))}</td>
                                             <td style={{ ...tdNum, fontWeight: 600,
                                                 color: num(r.netRevenue) >= 0 ? 'var(--text)' : '#dc2626' }}
                                                 title={fullNum(r.netRevenue, currencySymbol)}>
@@ -444,6 +447,7 @@ const CeoVolumeRevenue = ({
                                             <td style={tdTotal} title={fullNum(totals.msf, currencySymbol)}>{fmt.currency(num(totals.msf))}</td>
                                             <td style={tdTotal} title={fullNum(totals.interchange, currencySymbol)}>{fmt.currency(num(totals.interchange))}</td>
                                             <td style={tdTotal} title={fullNum(totals.schemeFee, currencySymbol)}>{fmt.currency(num(totals.schemeFee))}</td>
+                                            <td style={tdTotal} title={fullNum(totals.ecomFee, currencySymbol)}>{fmt.currency(num(totals.ecomFee))}</td>
                                             <td style={{ ...tdTotal, color: num(totals.netRevenue) >= 0 ? 'var(--text)' : '#dc2626' }}
                                                 title={fullNum(totals.netRevenue, currencySymbol)}>{fmt.currency(num(totals.netRevenue))}</td>
                                             <td style={{ ...tdTotal,

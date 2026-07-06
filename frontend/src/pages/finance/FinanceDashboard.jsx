@@ -154,8 +154,9 @@ export default function FinanceDashboard() {
     const msf = Number(kpis?.msfRevenue || 0);
     const ic = Number(kpis?.interchangeFees || 0);
     const sc = Number(kpis?.schemeFees || 0);
-    const net = msf - ic - sc;
-    return { msf, ic, sc, net, marginPct: Number(kpis?.marginPct || 0) };
+    const ec = Number(kpis?.ecomFees || 0);
+    const net = msf - ic - sc - ec;
+    return { msf, ic, sc, ec, net, marginPct: Number(kpis?.marginPct || 0) };
   }, [kpis]);
 
   const sortedProf = useMemo(() => {
@@ -222,6 +223,7 @@ export default function FinanceDashboard() {
         <Kpi label="MSF Revenue" value={cur(bridge.msf)} sub="Gross fees" icon={DollarSign} color="#2563eb" />
         <Kpi label="Interchange" value={cur(bridge.ic)} sub="Network cost" icon={CreditCard} color="#f97316" />
         <Kpi label="Scheme Fees" value={cur(bridge.sc)} sub="Card scheme" icon={Activity} color="#ef4444" />
+        <Kpi label="ECOM Fees" value={cur(bridge.ec)} sub="Flat e-com fee" icon={CreditCard} color="#a855f7" />
         <Kpi label="Margin %" value={`${Number(bridge.marginPct).toFixed(2)}%`} sub="Net / Volume" icon={Percent} color="#f59e0b" />
       </div>
 
@@ -229,7 +231,7 @@ export default function FinanceDashboard() {
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14, marginBottom: 14 }}>
         <div style={CARD}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 12 }}>Revenue Bridge · MSF → Net</div>
-          <RevenueBridge msf={bridge.msf} ic={bridge.ic} sc={bridge.sc} net={bridge.net} cur={cur} />
+          <RevenueBridge msf={bridge.msf} ic={bridge.ic} sc={bridge.sc} ec={bridge.ec} net={bridge.net} cur={cur} />
         </div>
         <div style={CARD}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 12 }}>At a glance</div>
@@ -451,13 +453,13 @@ function Bucket({ label, today, mtd, ytd, cur }) {
 }
 const Div = () => <div style={{ width: 1, background: '#e2e8f0' }} />;
 
-function RevenueBridge({ msf, ic, sc, net, cur }) {
+function RevenueBridge({ msf, ic, sc, ec, net, cur }) {
   const total = Math.max(1, msf);
   const seg = (val, color, label) => {
     const w = Math.max(0, (val / total) * 100);
     return { w, color, label, val };
   };
-  const segs = [seg(net, '#16a34a', 'Net'), seg(ic, '#f97316', 'Interchange'), seg(sc, '#ef4444', 'Scheme')];
+  const segs = [seg(net, '#16a34a', 'Net'), seg(ic, '#f97316', 'Interchange'), seg(sc, '#ef4444', 'Scheme'), seg(ec, '#a855f7', 'ECOM')];
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
