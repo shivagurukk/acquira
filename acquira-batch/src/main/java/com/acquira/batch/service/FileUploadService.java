@@ -45,6 +45,7 @@ public class FileUploadService {
     private final JobLauncher jobLauncher;
     private final Job merchantMasterJob;
     private final Job transactionLoadJob;
+    private final org.springframework.batch.core.explore.JobExplorer jobExplorer;
 
     private final String UPLOAD_DIR = "data/uploads/";
 
@@ -74,13 +75,15 @@ public class FileUploadService {
             @Qualifier("transactionLoadJob") Job transactionLoadJob,
             com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantRepository tenantRepository,
-            com.acquira.batch.service.ManualIngestionService manualIngestionService) {
+            com.acquira.batch.service.ManualIngestionService manualIngestionService,
+            org.springframework.batch.core.explore.JobExplorer jobExplorer) {
         this.jobLauncher = jobLauncher;
         this.merchantMasterJob = merchantMasterJob;
         this.transactionLoadJob = transactionLoadJob;
         this.auditService = auditService;
         this.tenantRepository = tenantRepository;
         this.manualIngestionService = manualIngestionService;
+        this.jobExplorer = jobExplorer;
 
         // Ensure upload directory exists
         try {
@@ -464,14 +467,19 @@ public class FileUploadService {
         // every job has been submitted — not after they complete. So we cannot delete the
         // temp files in a finally block; the in-flight batch jobs are still reading them.
         // The @Scheduled cleanupOrphanedTempFiles() task removes files older than 1 hour.
-        return runMultiFileBatch(savedFiles);
+        return runMultiFileBatch(savedFiles, false);
     }
 
     /**
      * Internal: classify a list of files (already on disk), launch jobs in the right order,
      * run reporting update per tenant. Shared between screen-multi-upload and server-folder.
+     *
+     * @param sequential when true (server-folder path), each file's batch job is awaited to
+     *   a terminal state before the next file is launched — strict one-file-at-a-time
+     *   ingestion. When false (screen multi-upload path), jobs are submitted async and the
+     *   method returns as soon as all are queued (unchanged legacy behaviour).
      */
-    private java.util.Map<String, Object> runMultiFileBatch(java.util.List<java.io.File> dataFiles) {
+    private java.util.Map<String, Object> runMultiFileBatch(java.util.List<java.io.File> dataFiles, boolean sequential) {
         java.util.List<java.io.File> merchantFiles = new java.util.ArrayList<>();
         java.util.List<java.io.File> transactionFiles = new java.util.ArrayList<>();
         java.util.List<java.util.Map<String, Object>> skippedFiles = new java.util.ArrayList<>();
@@ -491,8 +499,8 @@ public class FileUploadService {
             }
         }
 
-        log.info("Multi-file batch: {} merchant, {} transaction, {} skipped",
-                merchantFiles.size(), transactionFiles.size(), skippedFiles.size());
+        log.info("Multi-file batch: {} merchant, {} transaction, {} skipped (sequential={})",
+                merchantFiles.size(), transactionFiles.size(), skippedFiles.size(), sequential);
 
         java.util.List<java.util.Map<String, Object>> results = new java.util.ArrayList<>();
         java.util.Set<Long> processedTenants = new java.util.LinkedHashSet<>();
@@ -503,7 +511,7 @@ public class FileUploadService {
         // Track per-file outcome by the new SUBMITTED state too. "SUCCESS" was
         // misleading: it meant "job submitted" but read as "file processed".
         for (java.io.File f : merchantFiles) {
-            java.util.Map<String, Object> r = processSingleServerFile(f, "MERCHANT");
+            java.util.Map<String, Object> r = processSingleServerFile(f, "MERCHANT", sequential);
             results.add(r);
             String st = String.valueOf(r.get("status"));
             if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
@@ -514,7 +522,7 @@ public class FileUploadService {
 
         // Phase 2: TRANSACTION files
         for (java.io.File f : transactionFiles) {
-            java.util.Map<String, Object> r = processSingleServerFile(f, "TRANSACTION");
+            java.util.Map<String, Object> r = processSingleServerFile(f, "TRANSACTION", sequential);
             results.add(r);
             String st = String.valueOf(r.get("status"));
             if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
@@ -528,6 +536,9 @@ public class FileUploadService {
         // PERF FIX: same reasoning as the single-file TRANSACTION branch above.
         // Reporting metrics no longer block the HTTP response. With multiple tenants
         // this is especially important because reporting time scales with tenant count.
+        // NOTE (sequential mode): because each transaction job was awaited above, all
+        // transaction data is fully loaded by the time this runs, so the reporting
+        // rollup sees complete data (no race against still-running jobs).
         if (!transactionFiles.isEmpty()) {
             for (Long tenantId : processedTenants) {
                 final Long asyncTenantId = tenantId;
@@ -550,8 +561,8 @@ public class FileUploadService {
         response.put("totalFiles", dataFiles.size());
         response.put("merchantFiles", merchantFiles.size());
         response.put("transactionFiles", transactionFiles.size());
-        // "submitted" reflects the truth: the count of files whose batch jobs were
-        // queued. Whether they COMPLETED is for the UI to determine via polling.
+        // In sequential mode this counts files that actually COMPLETED; in async mode
+        // it counts files whose jobs were queued (completion determined by polling).
         response.put("submitted", successCount);
         response.put("success", successCount); // back-compat for any older UI
         response.put("failed", failCount);
@@ -591,6 +602,8 @@ public class FileUploadService {
      *   - Auto-detects each as MERCHANT or TRANSACTION
      *   - Processes ALL MERCHANT files first (dim tables must exist before transactions)
      *   - Then processes ALL TRANSACTION files
+     *   - Files are processed STRICTLY ONE AT A TIME: each file's batch job is awaited
+     *     to completion before the next file is launched (sequential=true).
      *   - Runs reporting update once at the end
      *   - Returns summary with per-file results
      *
@@ -643,10 +656,10 @@ public class FileUploadService {
             throw new RuntimeException("No data files (.xlsx, .csv, .tsv) found in: " + path);
         }
 
-        // PERF/CONSISTENCY FIX: classification + launch + reporting are now in
-        // runMultiFileBatch(), shared with the screen-multi-upload path. Behavior
-        // is identical regardless of whether files arrived via screen or server folder.
-        java.util.Map<String, Object> response = runMultiFileBatch(dataFiles);
+        // SEQUENTIAL server-folder processing: process one file at a time (wait for each
+        // job to finish before starting the next). Shared launcher/reporting logic lives
+        // in runMultiFileBatch(); the screen-multi-upload path calls it with sequential=false.
+        java.util.Map<String, Object> response = runMultiFileBatch(dataFiles, true);
 
         // Add server-path-specific fields
         java.util.Map<String, Object> wrapped = new java.util.LinkedHashMap<>();
@@ -718,10 +731,66 @@ public class FileUploadService {
     }
 
     /**
+     * Block until a batch JobExecution reaches a terminal state (COMPLETED, FAILED,
+     * STOPPED, or ABANDONED). Used by SEQUENTIAL server-folder processing so files
+     * are ingested strictly one at a time — the next file's job is not launched
+     * until the current one has finished.
+     *
+     * The JobLauncher is async (jobs run on batchTaskExecutor threads), so the
+     * JobExecution handed back from jobLauncher.run() starts as STARTING/STARTED.
+     * We re-fetch its status from the JobExplorer on a short poll interval. A
+     * safety timeout prevents an indefinitely-hung job from blocking the whole
+     * request forever; on timeout we return the last-known execution and the
+     * caller records it as FAILED (the job itself keeps running in the background).
+     */
+    private org.springframework.batch.core.JobExecution waitForJob(
+            org.springframework.batch.core.JobExecution execution) {
+        if (execution == null) return null;
+        final long POLL_MS = 1000L;
+        final long TIMEOUT_MS = 6L * 60L * 60L * 1000L; // 6h ceiling per file
+        long start = System.currentTimeMillis();
+        Long id = execution.getId();
+        org.springframework.batch.core.JobExecution latest = execution;
+        while (!isTerminal(latest)) {
+            if (System.currentTimeMillis() - start > TIMEOUT_MS) {
+                log.warn("waitForJob: timeout after {} ms waiting for job {} (status {}); job continues in background",
+                        System.currentTimeMillis() - start, id, latest.getStatus());
+                break;
+            }
+            try {
+                Thread.sleep(POLL_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                log.warn("waitForJob: interrupted waiting for job {}", id);
+                break;
+            }
+            if (id != null && jobExplorer != null) {
+                org.springframework.batch.core.JobExecution refreshed = jobExplorer.getJobExecution(id);
+                if (refreshed != null) latest = refreshed;
+            }
+        }
+        return latest;
+    }
+
+    /** True once a JobExecution is in a terminal (no longer running) state. */
+    private boolean isTerminal(org.springframework.batch.core.JobExecution ex) {
+        if (ex == null) return true;
+        org.springframework.batch.core.BatchStatus st = ex.getStatus();
+        return st == org.springframework.batch.core.BatchStatus.COMPLETED
+                || st == org.springframework.batch.core.BatchStatus.FAILED
+                || st == org.springframework.batch.core.BatchStatus.STOPPED
+                || st == org.springframework.batch.core.BatchStatus.ABANDONED;
+    }
+
+    /**
      * Process a single server file with known type.
      * Returns a result map with status, jobId, file details.
+     *
+     * @param waitForCompletion when true, block until the launched job reaches a terminal
+     *   state and report SUCCESS/FAILED accordingly; when false, return immediately after
+     *   submitting the async job (status SUBMITTED).
      */
-    private java.util.Map<String, Object> processSingleServerFile(java.io.File file, String fileType) {
+    private java.util.Map<String, Object> processSingleServerFile(java.io.File file, String fileType, boolean waitForCompletion) {
         java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("file", file.getName());
         result.put("type", fileType);
@@ -759,15 +828,35 @@ public class FileUploadService {
             }
 
             result.put("jobId", execution.getId());
-            result.put("jobStatus", execution.getStatus().toString());
-            // Was "SUCCESS" — misleading. The job has only been SUBMITTED to the
-            // async JobLauncher; actual completion is determined by polling
-            // /api/batch/jobs/{id}/status. The frontend interprets SUBMITTED as
-            // "in flight, keep polling" rather than green-tick "done".
-            result.put("status", "SUBMITTED");
 
-            log.info("{} file submitted to batch: {} — Job {} — {} (status will update asynchronously; poll /api/batch/jobs/{}/status)",
-                    fileType, file.getName(), execution.getId(), execution.getStatus(), execution.getId());
+            if (waitForCompletion) {
+                // SEQUENTIAL server-folder processing: the JobLauncher is async
+                // (jobs run on background threads), so execution is only SUBMITTED
+                // here. To guarantee one-file-at-a-time — the next file must not
+                // start until this one FINISHES — we block until this job reaches a
+                // terminal state before returning to the caller loop.
+                execution = waitForJob(execution);
+                String finalStatus = execution.getStatus().toString();
+                result.put("jobStatus", finalStatus);
+                // COMPLETED -> SUCCESS; anything else (FAILED/STOPPED/ABANDONED) -> FAILED.
+                boolean ok = "COMPLETED".equals(finalStatus);
+                result.put("status", ok ? "SUCCESS" : "FAILED");
+                if (!ok) {
+                    String msg = execution.getExitStatus() != null
+                            ? execution.getExitStatus().getExitDescription() : finalStatus;
+                    if (msg == null || msg.isEmpty()) msg = "Job ended with status " + finalStatus;
+                    result.put("error", msg);
+                }
+                log.info("{} file processed (sequential): {} — Job {} — {}",
+                        fileType, file.getName(), execution.getId(), finalStatus);
+            } else {
+                result.put("jobStatus", execution.getStatus().toString());
+                // Async submit: the job has only been SUBMITTED; completion is
+                // determined by polling /api/batch/jobs/{id}/status.
+                result.put("status", "SUBMITTED");
+                log.info("{} file submitted to batch: {} — Job {} — {} (status async; poll /api/batch/jobs/{}/status)",
+                        fileType, file.getName(), execution.getId(), execution.getStatus(), execution.getId());
+            }
 
         } catch (Exception e) {
             result.put("status", "FAILED");
