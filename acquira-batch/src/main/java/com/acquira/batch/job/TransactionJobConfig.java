@@ -827,7 +827,7 @@ public class TransactionJobConfig {
             //
             // Interchange: highest-priority matching interchange_rate_local
             // row (NULL column = wildcard). Scheme via ref_card_scheme by
-            // CODE or NAME; tier via card_subtype (2=Premium else Standard);
+            // CODE or NAME; tier via card_subtype (1=Standard else Premium);
             // channel via dim_terminal.type exact ECOM whitelist; MCC sector
             // via mcc_sector_map; ticket thresholds vs settlement amount;
             // debit cap via LEAST(). Scheme fee: dest x channel percentage.
@@ -901,7 +901,17 @@ public class TransactionJobConfig {
                 "      AND ilr.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
                 "      AND (ilr.channel IS NULL OR ilr.channel = ch.channel) " +
                 "      AND (ilr.scheme_group IS NULL OR ilr.scheme_group = COALESCE(rcs.group_name,'')) " +
-                "      AND (ilr.card_type IS NULL OR ilr.card_type = UPPER(TRIM(COALESCE(ft.card_type,'')))) " +
+                // CARD-TYPE FOR PRICING (2026-07-07, business-confirmed): credit-prepaid
+                // products (rcs.card_type=3, i.e. MCCP) are PRICED as CREDIT (-> Premium
+                // tier below), NOT at the debit/prepaid rate. ft.card_type stays 'PREPAID'
+                // for reporting/splits; only this rate lookup remaps. Debit-prepaid
+                // (rcs.card_type=4, MCDP) stays on the local debit rate via 'DEBIT'.
+                "      AND (ilr.card_type IS NULL OR ilr.card_type = CASE WHEN rcs.card_type = 3 THEN 'CREDIT' ELSE UPPER(TRIM(COALESCE(ft.card_type,''))) END) " +
+                // TIER (2026-07-07, business-confirmed mapping): ONLY explicit Standard
+                // products (card_subtype=1: MCSD/VISD) resolve Standard. EVERYTHING else
+                // - AMEX/JCB/UPI/VICR/MCCR/MCCP/MCPM/VIPM/VICP, generic VISA/MCRD, and
+                // unmatched codes - resolves Premium. (JCB/UPI still hit their priority-11
+                // flat 1.75 rows, which are tier-wildcard, so tier is moot for them.)
                 "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 1 THEN 'Standard' ELSE 'Premium' END) " +
                 // MCC-KEYED RATE CARD (2026-07-07): ilr.mcc NULL = wildcard; a row whose
                 // mcc matches dim_store.mcc is the most specific and wins via priority.
