@@ -861,15 +861,20 @@ public class TransactionJobConfig {
                 "         THEN 0.018500 * ABS(COALESCE(ft.store_base_currency_amount,0)) " +
                 "         ELSE LEAST(lr.interchange_pct * ABS(COALESCE(ft.store_base_currency_amount,0)), " +
                 "                    COALESCE(lr.cap_amount, 999999999999)) END AS computed_ic, " +
-                // scheme fee: matched scheme rate * ABS(settlement); NULL if no rate row
+                // scheme fee: matched scheme rate * ABS(settlement); wildcard fallback guarantees a row
                 "    (sfr.fee_pct * ABS(COALESCE(ft.store_base_currency_amount,0))) AS computed_scheme, " +
                 // ecom flat fee: 0.18 on ECOM channel, else NULL (COALESCE'd to 0 in nets)
                 "    CASE WHEN ch.channel = 'ECOM' THEN 0.18 ELSE NULL END AS computed_ecom " +
                 "  FROM fact_transaction ft " +
                 "  LEFT JOIN dim_store ds ON ds.store_id = ft.store_id AND ds.tenant_id = ft.tenant_id " +
                 "  LEFT JOIN dim_terminal dt ON dt.terminal_id = ft.terminal_id AND dt.tenant_id = ft.tenant_id " +
-                "  LEFT JOIN ref_card_scheme rcs ON UPPER(rcs.code) = UPPER(TRIM(ft.card_scheme)) " +
-                "                                OR UPPER(rcs.name) = UPPER(TRIM(ft.card_scheme)) " +
+                // SCHEME RESOLUTION FIX (2026-07-07): space-insensitive match so feed
+                // variants like 'MASTER CARD' resolve to ref_card_scheme 'MasterCard'.
+                // Without this, ~42% of rows (MASTER CARD) got group_name NULL -> wrong
+                // interchange AND zero scheme fee. Strips spaces on BOTH sides.
+                "  LEFT JOIN ref_card_scheme rcs " +
+                "    ON REPLACE(UPPER(TRIM(rcs.code)),' ','') = REPLACE(UPPER(TRIM(ft.card_scheme)),' ','') " +
+                "    OR REPLACE(UPPER(TRIM(rcs.name)),' ','') = REPLACE(UPPER(TRIM(ft.card_scheme)),' ','') " +
                 // derive channel ONCE, reused by both rate LATERALs and the ecom CASE
                 "  CROSS JOIN LATERAL (SELECT CASE WHEN UPPER(TRIM(COALESCE(dt.type,''))) " +
                 "         IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') THEN 'ECOM' ELSE 'POS' END AS channel) ch " +
@@ -883,11 +888,17 @@ public class TransactionJobConfig {
                 "      AND (ilr.scheme_group IS NULL OR ilr.scheme_group = COALESCE(rcs.group_name,'')) " +
                 "      AND (ilr.card_type IS NULL OR ilr.card_type = UPPER(TRIM(COALESCE(ft.card_type,'')))) " +
                 "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 2 THEN 'Premium' ELSE 'Standard' END) " +
+                // MCC-KEYED RATE CARD (2026-07-07): ilr.mcc NULL = wildcard; a row whose
+                // mcc matches dim_store.mcc is the most specific and wins via priority.
+                "      AND (ilr.mcc IS NULL OR ilr.mcc = ds.mcc) " +
                 "      AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = msm.sector) " +
                 "      AND (ilr.min_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket_aed) " +
                 "      AND (ilr.max_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket_aed) " +
                 "    ORDER BY ilr.priority DESC, ilr.id ASC LIMIT 1 " +
                 "  ) lr ON TRUE " +
+                // SCHEME FEE: match dest x channel; prefer scheme-specific row, then the
+                // scheme_group IS NULL wildcard (seeded 2026-07-07) so EVERY scheme -
+                // incl. Amex / MASTER CARD / unmapped - gets a rate instead of 0.
                 "  LEFT JOIN LATERAL ( " +
                 "    SELECT s.fee_pct FROM scheme_fee_rate s " +
                 "    WHERE s.tenant_id = ft.tenant_id " +
