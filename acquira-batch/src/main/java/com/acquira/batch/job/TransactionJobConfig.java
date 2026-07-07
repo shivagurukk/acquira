@@ -749,8 +749,12 @@ public class TransactionJobConfig {
                 "COALESCE(s.store_id, s2.store_id) AS store_id, t.terminal_id, " +
                 "stg.arn, stg.rrn_number, stg.card_number, stg.auth_code, " +
                 "stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type, " +
-                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, stg.txn_currency, stg.txn_currency_amount, " +
-                "stg.store_base_currency, stg.store_base_currency_amount, " +
+                // GROSS VOLUME (2026-07-08, option B): amounts stored ABS like msf/vat —
+                // refunds (RFND) count as positive volume everywhere (fact + all summaries).
+                // total_amount_settled stays SIGNED (settlement must net refunds).
+                // Staging keeps raw signed values for audit.
+                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, stg.txn_currency, ABS(stg.txn_currency_amount), " +
+                "stg.store_base_currency, ABS(stg.store_base_currency_amount), " +
                 "ABS(stg.msf), ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination " +
                 "FROM stg_trnx_raw stg " +
                 "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '') " +
@@ -865,13 +869,18 @@ public class TransactionJobConfig {
                 "  ecom_fee        = r.computed_ecom " +
                 "FROM ( " +
                 "  SELECT ft.transaction_id, ft.payment_date, " +
-                // interchange: matched rate (+cap) else flat 1.85% fallback
-                "    CASE WHEN lr.interchange_pct IS NULL " +
+                // REFUND RULE (2026-07-08, business-confirmed): refunds carry ZERO
+                // interchange and ZERO scheme fee. Feed transaction_type = 'RFND'.
+                // Ecom flat fee untouched.
+                // interchange: refund => 0; else matched rate (+cap) else flat 1.85% fallback
+                "    CASE WHEN rf.is_refund THEN 0 " +
+                "         WHEN lr.interchange_pct IS NULL " +
                 "         THEN 0.018500 * ABS(COALESCE(ft.store_base_currency_amount,0)) " +
                 "         ELSE LEAST(lr.interchange_pct * ABS(COALESCE(ft.store_base_currency_amount,0)), " +
                 "                    COALESCE(lr.cap_amount, 999999999999)) END AS computed_ic, " +
-                // scheme fee: matched scheme rate * ABS(settlement); wildcard fallback guarantees a row
-                "    (sfr.fee_pct * ABS(COALESCE(ft.store_base_currency_amount,0))) AS computed_scheme, " +
+                // scheme fee: refund => 0; else matched scheme rate * ABS(settlement); wildcard fallback guarantees a row
+                "    CASE WHEN rf.is_refund THEN 0 " +
+                "         ELSE (sfr.fee_pct * ABS(COALESCE(ft.store_base_currency_amount,0))) END AS computed_scheme, " +
                 // ecom flat fee: 0.18 on ECOM channel, else NULL (COALESCE'd to 0 in nets)
                 "    CASE WHEN ch.channel = 'ECOM' THEN 0.18 ELSE NULL END AS computed_ecom " +
                 "  FROM fact_transaction ft " +
@@ -893,6 +902,9 @@ public class TransactionJobConfig {
                 // derive channel ONCE, reused by both rate LATERALs and the ecom CASE
                 "  CROSS JOIN LATERAL (SELECT CASE WHEN UPPER(TRIM(COALESCE(dt.type,''))) " +
                 "         IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') THEN 'ECOM' ELSE 'POS' END AS channel) ch " +
+                // derive refund flag ONCE, reused by both computed_ic and computed_scheme
+                // (feed transaction_type carries exactly 'RFND' for refunds)
+                "  CROSS JOIN LATERAL (SELECT (UPPER(TRIM(COALESCE(ft.transaction_type,''))) = 'RFND') AS is_refund) rf " +
                 // derive mcc sector ONCE (was a correlated subquery inside the LATERAL)
                 "  LEFT JOIN mcc_sector_map msm ON msm.tenant_id = ft.tenant_id AND msm.mcc = ds.mcc " +
                 "  LEFT JOIN LATERAL ( " +

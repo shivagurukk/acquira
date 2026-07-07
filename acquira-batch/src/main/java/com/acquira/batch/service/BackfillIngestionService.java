@@ -248,8 +248,8 @@ public class BackfillIngestionService {
                                 stg.arn, stg.rrn_number, stg.card_number, stg.auth_code,
                                 stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type,
                                 stg.card_scheme, stg.card_type, stg.dcc,
-                                stg.txn_currency, stg.txn_currency_amount, stg.store_base_currency, stg.store_base_currency_amount,
-                                stg.msf, stg.vat, stg.total_amount_settled, stg.interchange_fee, stg.destination
+                                stg.txn_currency, ABS(stg.txn_currency_amount), stg.store_base_currency, ABS(stg.store_base_currency_amount),
+                                ABS(stg.msf), ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination
                             FROM stg_trnx_raw stg
                             LEFT JOIN dim_merchant m ON stg.mid = m.mid AND m.tenant_id = ?
                             LEFT JOIN dim_store s ON s.merchant_id = m.merchant_id
