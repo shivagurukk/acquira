@@ -376,7 +376,9 @@ public class TransactionJobConfig {
                 t.setBatchNumber(fieldSet.readString("BatchNumber"));
                 t.setTransactionType(fieldSet.readString("Transaction Type"));
                 t.setCardScheme(fieldSet.readString("CardScheme"));
-                t.setCardType(fieldSet.readString("Card Type"));
+                String cardTypeRaw = fieldSet.readString("Card Type");
+                t.setCardType(cardTypeRaw);
+                t.setCardProductCode(cardTypeRaw); // preserve granular code (VIPM/MCPM/...) for tier resolution
                 t.setDcc(parseDccFlag(fieldSet.readString("DCC")));
                 t.setTxnCurrency(fieldSet.readString("Txn Currency"));
                 t.setTxnCurrencyAmount(parseDecimal(fieldSet.readString("Txn Currency Amount")));
@@ -537,6 +539,12 @@ public class TransactionJobConfig {
             }
 
             String rawCardType = item.getCardType();
+            // Preserve the granular product code (VIPM/MCPM/MCDB...) BEFORE card_type
+            // is coarsened to DEBIT/CREDIT/PREPAID. The reader already sets this, but
+            // guard here so it is populated regardless of the reader path.
+            if (item.getCardProductCode() == null && rawCardType != null && !rawCardType.isBlank()) {
+                item.setCardProductCode(rawCardType.trim());
+            }
             if (rawCardType != null && !rawCardType.isBlank()) {
                 String resolved = cardSchemeToType.get(rawCardType.trim());
                 if (resolved != null) item.setCardType(resolved);
@@ -580,9 +588,9 @@ public class TransactionJobConfig {
         final String sql = "INSERT INTO stg_trnx_raw (entity_name, aggregator_internal_id, aggregator_name, aggregator_code, " +
             "mid, merchant_internal_id, merchant_name, sid, merchant_store_internal_id, cmm_merchant_store_internal_id, " +
             "merchant_store_legal_name, store_name, tid, arn, rrn_number, card_number, auth_code, payment_date, " +
-            "transaction_date, batch_number, transaction_type, card_scheme, card_type, dcc, txn_currency, " +
+            "transaction_date, batch_number, transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, " +
             "txn_currency_amount, store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, " +
-            "interchange_fee, destination, tenant_id, load_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
+            "interchange_fee, destination, tenant_id, load_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
         return items -> jdbcTemplate.batchUpdate(sql,
             new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
                 @Override public int getBatchSize() { return items.size(); }
@@ -602,6 +610,7 @@ public class TransactionJobConfig {
                     ps.setTimestamp(i++, t.getTransactionDate() != null ? java.sql.Timestamp.valueOf(t.getTransactionDate()) : null);
                     ps.setString(i++, t.getBatchNumber()); ps.setString(i++, t.getTransactionType());
                     ps.setString(i++, t.getCardScheme()); ps.setString(i++, t.getCardType());
+                    ps.setString(i++, t.getCardProductCode());
                     if (t.getDcc() != null) ps.setBoolean(i++, t.getDcc()); else ps.setNull(i++, java.sql.Types.BOOLEAN);
                     ps.setString(i++, t.getTxnCurrency());
                     if (t.getTxnCurrencyAmount() != null) ps.setBigDecimal(i++, t.getTxnCurrencyAmount()); else ps.setNull(i++, java.sql.Types.NUMERIC);
@@ -733,14 +742,14 @@ public class TransactionJobConfig {
             long tIns = System.currentTimeMillis();
             String sql = "INSERT INTO fact_transaction (tenant_id, merchant_id, store_id, terminal_id, " +
                 "arn, rrn_number, card_number, auth_code, payment_date, transaction_date, batch_number, " +
-                "transaction_type, card_scheme, card_type, dcc, txn_currency, txn_currency_amount, " +
+                "transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, txn_currency_amount, " +
                 "store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, interchange_fee, destination) " +
                 "SELECT stg.tenant_id, " +
                 "COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id) AS merchant_id, " +
                 "COALESCE(s.store_id, s2.store_id) AS store_id, t.terminal_id, " +
                 "stg.arn, stg.rrn_number, stg.card_number, stg.auth_code, " +
                 "stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type, " +
-                "stg.card_scheme, stg.card_type, stg.dcc, stg.txn_currency, stg.txn_currency_amount, " +
+                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, stg.txn_currency, stg.txn_currency_amount, " +
                 "stg.store_base_currency, stg.store_base_currency_amount, " +
                 "ABS(stg.msf), ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination " +
                 "FROM stg_trnx_raw stg " +
@@ -873,8 +882,14 @@ public class TransactionJobConfig {
                 // Without this, ~42% of rows (MASTER CARD) got group_name NULL -> wrong
                 // interchange AND zero scheme fee. Strips spaces on BOTH sides.
                 "  LEFT JOIN ref_card_scheme rcs " +
-                "    ON REPLACE(UPPER(TRIM(rcs.code)),' ','') = REPLACE(UPPER(TRIM(ft.card_scheme)),' ','') " +
-                "    OR REPLACE(UPPER(TRIM(rcs.name)),' ','') = REPLACE(UPPER(TRIM(ft.card_scheme)),' ','') " +
+                // TIER FIX (2026-07-07): resolve tier + scheme group from the GRANULAR
+                // product code (card_product_code = feed 'Card Type': VIPM/MCPM/MCDB...),
+                // which carries the Premium/Standard signal. card_scheme is only the
+                // network name ('Visa'/'Master Card') and always resolved Standard.
+                // Match the product code first; fall back to the network name so rows
+                // with a blank product code still resolve the scheme GROUP.
+                "    ON REPLACE(UPPER(TRIM(rcs.code)),' ','') = REPLACE(UPPER(TRIM(COALESCE(NULLIF(TRIM(ft.card_product_code),''), ft.card_scheme))),' ','') " +
+                "    OR REPLACE(UPPER(TRIM(rcs.name)),' ','') = REPLACE(UPPER(TRIM(COALESCE(NULLIF(TRIM(ft.card_product_code),''), ft.card_scheme))),' ','') " +
                 // derive channel ONCE, reused by both rate LATERALs and the ecom CASE
                 "  CROSS JOIN LATERAL (SELECT CASE WHEN UPPER(TRIM(COALESCE(dt.type,''))) " +
                 "         IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') THEN 'ECOM' ELSE 'POS' END AS channel) ch " +
@@ -887,7 +902,7 @@ public class TransactionJobConfig {
                 "      AND (ilr.channel IS NULL OR ilr.channel = ch.channel) " +
                 "      AND (ilr.scheme_group IS NULL OR ilr.scheme_group = COALESCE(rcs.group_name,'')) " +
                 "      AND (ilr.card_type IS NULL OR ilr.card_type = UPPER(TRIM(COALESCE(ft.card_type,'')))) " +
-                "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 2 THEN 'Premium' ELSE 'Standard' END) " +
+                "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 1 THEN 'Standard' ELSE 'Premium' END) " +
                 // MCC-KEYED RATE CARD (2026-07-07): ilr.mcc NULL = wildcard; a row whose
                 // mcc matches dim_store.mcc is the most specific and wins via priority.
                 "      AND (ilr.mcc IS NULL OR ilr.mcc = ds.mcc) " +

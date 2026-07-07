@@ -46,6 +46,12 @@ public class StagingTransaction {
     private String transactionType;
     private String cardScheme;
     private String cardType;
+    // Granular card PRODUCT code from the feed's `Card Type` column (VIPM, MCPM,
+    // MCCP, VIDB, MCDB, MCSD, VISD, MCDP ...). Carries the tier signal. Preserved
+    // separately because the processor overwrites cardType with a coarse
+    // DEBIT/CREDIT/PREPAID label that the summary rollups depend on. The fee
+    // LATERAL resolves interchange tier (Standard vs Premium) from THIS field.
+    private String cardProductCode;
     private Boolean dcc;
     private String txnCurrency;
     private BigDecimal txnCurrencyAmount;
@@ -292,6 +298,22 @@ public class StagingTransaction {
 
     public void setCardScheme(String cardScheme) {
         this.cardScheme = cardScheme;
+    }
+
+    public String getCardType() {
+        return cardType;
+    }
+
+    public void setCardType(String cardType) {
+        this.cardType = cardType;
+    }
+
+    public String getCardProductCode() {
+        return cardProductCode;
+    }
+
+    public void setCardProductCode(String cardProductCode) {
+        this.cardProductCode = cardProductCode;
     }
 
     public Boolean getDcc() {
