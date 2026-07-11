@@ -16,6 +16,10 @@ import java.util.*;
  * Local Ollama provider (default). Nothing leaves the host. Preserves the
  * original AiAssistantController behaviour: /api/tags for health+models,
  * /api/generate for completion, same generation options.
+ *
+ * num_predict 800: multi-join SQL against the expanded schema prompt can
+ * exceed 400 tokens; truncation mid-statement guarantees a syntax error and
+ * burns the retry. num_ctx 8192 comfortably fits the ~3K-token prompt.
  */
 @Component
 public class OllamaProvider implements ModelProvider {
@@ -70,7 +74,7 @@ public class OllamaProvider implements ModelProvider {
         body.put("model", useModel);
         body.put("prompt", prompt);
         body.put("stream", false);
-        body.put("options", Map.of("temperature", temperature, "num_predict", 400,
+        body.put("options", Map.of("temperature", temperature, "num_predict", 800,
             "num_ctx", 8192, "top_p", 0.9, "repeat_penalty", 1.15));
 
         HttpHeaders headers = new HttpHeaders();

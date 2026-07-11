@@ -14,6 +14,7 @@ const LoginPage = () => {
     const [showTenantModal, setShowTenantModal] = useState(false);
     const [allowedTenants, setAllowedTenants] = useState([]);
     const [switchingTenant, setSwitchingTenant] = useState(null);
+    const [loginNotice, setLoginNotice] = useState(null);
 
     const [ssoConfig, setSsoConfig] = useState(null);
     const [ssoLoading, setSsoLoading] = useState(false);
@@ -22,10 +23,42 @@ const LoginPage = () => {
     const [requestForm, setRequestForm] = useState({ message: '', tenantId: '' });
     const [availableTenants, setAvailableTenants] = useState([]);
 
+    // ===== Forgot-password OTP flow =====
+    // step: 'email' -> request OTP | 'otp' -> verify code | 'password' -> set new pw
     const [showForgotPw, setShowForgotPw] = useState(false);
+    const [fpStep, setFpStep] = useState('email');
     const [forgotEmail, setForgotEmail] = useState('');
     const [forgotMsg, setForgotMsg] = useState(null);
     const [forgotLoading, setForgotLoading] = useState(false);
+    const [otpCode, setOtpCode] = useState('');
+    const [resetTicket, setResetTicket] = useState(null);
+    const [resendIn, setResendIn] = useState(0);
+    const [newPw, setNewPw] = useState('');
+    const [confirmPw, setConfirmPw] = useState('');
+
+    // Password strength checks (mirror ChangePasswordPage).
+    const pwChecks = [
+        { label: '8+ characters', valid: newPw.length >= 8 },
+        { label: 'Uppercase', valid: /[A-Z]/.test(newPw) },
+        { label: 'Lowercase', valid: /[a-z]/.test(newPw) },
+        { label: 'Number', valid: /[0-9]/.test(newPw) },
+        { label: 'Special char', valid: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(newPw) },
+    ];
+    const pwAllValid = pwChecks.every(c => c.valid);
+    const pwMatch = newPw && confirmPw && newPw === confirmPw;
+
+    // Resend cooldown ticker.
+    useEffect(() => {
+        if (resendIn <= 0) return;
+        const id = setTimeout(() => setResendIn(resendIn - 1), 1000);
+        return () => clearTimeout(id);
+    }, [resendIn]);
+
+    const resetForgotState = () => {
+        setShowForgotPw(false); setFpStep('email'); setError(null); setForgotMsg(null);
+        setForgotEmail(''); setOtpCode(''); setResetTicket(null); setResendIn(0);
+        setNewPw(''); setConfirmPw('');
+    };
 
     useEffect(() => {
         // The SSO config fetch fires on mount. On a cold backend (just restarted or
@@ -167,8 +200,9 @@ const LoginPage = () => {
         setRequestForm({ message: '', tenantId: '' });
     };
 
-    const handleForgotPassword = async (e) => {
-        e.preventDefault();
+    // STEP 1 — request an OTP for the email.
+    const handleRequestOtp = async (e) => {
+        if (e) e.preventDefault();
         if (!forgotEmail.trim()) return;
         setForgotLoading(true); setForgotMsg(null); setError(null);
         try {
@@ -176,9 +210,59 @@ const LoginPage = () => {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email: forgotEmail.trim() })
             });
-            const data = await res.json();
-            setForgotMsg(data.message || 'If that email is registered, a reset link has been sent.');
-        } catch { setForgotMsg('If that email is registered, a reset link has been sent.'); }
+            const data = await res.json().catch(() => ({}));
+            // Always advance — the backend is enumeration-safe and returns generic success.
+            setForgotMsg(data.message || 'If that email is registered, a verification code has been sent.');
+            setFpStep('otp'); setOtpCode(''); setResendIn(30);
+        } catch { setError('Unable to reach the server. Please try again.'); }
+        finally { setForgotLoading(false); }
+    };
+
+    // STEP 2 — verify the OTP; on success capture the reset ticket.
+    const handleVerifyOtp = async (e) => {
+        if (e) e.preventDefault();
+        if (otpCode.trim().length !== 6) { setError('Enter the 6-digit code.'); return; }
+        setForgotLoading(true); setError(null); setForgotMsg(null);
+        try {
+            const res = await fetch('/api/auth/verify-otp', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: forgotEmail.trim(), otp: otpCode.trim() })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.ticket) {
+                setResetTicket(data.ticket); setFpStep('password'); setNewPw(''); setConfirmPw('');
+            } else {
+                setError(data.error || 'Invalid or expired verification code.');
+            }
+        } catch { setError('Unable to reach the server. Please try again.'); }
+        finally { setForgotLoading(false); }
+    };
+
+    // STEP 3 — set the new password with the verified ticket.
+    const handleSetNewPassword = async (e) => {
+        if (e) e.preventDefault();
+        if (!pwAllValid) { setError('Password does not meet all requirements.'); return; }
+        if (!pwMatch) { setError('Passwords do not match.'); return; }
+        setForgotLoading(true); setError(null);
+        try {
+            const res = await fetch('/api/auth/reset-password', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticket: resetTicket, newPassword: newPw })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                resetForgotState();
+                setError(null);
+                setForgotMsg(null);
+                // Surface success on the login form.
+                setTimeout(() => setError(null), 0);
+                setCredentials({ username: '', password: '' });
+                setForgotMsg(null);
+                setLoginNotice(data.message || 'Password reset. Please sign in with your new password.');
+            } else {
+                setError(data.error || 'Could not reset password. Please try again.');
+            }
+        } catch { setError('Unable to reach the server. Please try again.'); }
         finally { setForgotLoading(false); }
     };
 
@@ -282,6 +366,7 @@ const LoginPage = () => {
                         {!ssoLoading && !ssoStatus && !showTenantModal && !showForgotPw && (
                             <motion.form key="login-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
                                 onSubmit={handleLogin} className="login-form">
+                                {loginNotice && <div style={{ background: 'rgba(5,150,105,0.12)', border: '1px solid rgba(5,150,105,0.2)', padding: '10px 14px', borderRadius: 12, color: '#6ee7b7', fontSize: 13, fontWeight: 500 }}>{loginNotice}</div>}
                                 {error && <div className="login-error-banner">{error}</div>}
                                 <div className="login-input-group">
                                     <label className="login-input-label">Username</label>
@@ -300,7 +385,7 @@ const LoginPage = () => {
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -4, marginBottom: 2 }}>
-                                    <button type="button" onClick={() => { setShowForgotPw(true); setError(null); setForgotMsg(null); setForgotEmail(''); }}
+                                    <button type="button" onClick={() => { setShowForgotPw(true); setFpStep('email'); setError(null); setForgotMsg(null); setForgotEmail(''); setLoginNotice(null); }}
                                         style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 13, cursor: 'pointer', padding: 0, fontWeight: 500 }}
                                         onMouseOver={e => e.currentTarget.style.color = '#93c5fd'}
                                         onMouseOut={e => e.currentTarget.style.color = '#64748b'}>Forgot password?</button>
@@ -337,25 +422,104 @@ const LoginPage = () => {
                         )}
 
                         {!ssoLoading && showForgotPw && !ssoStatus && !showTenantModal && (
-                            <motion.form key="forgot-pw" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-                                onSubmit={handleForgotPassword} className="login-form">
-                                <h3 style={{ color: '#fff', fontSize: 16, fontWeight: 600, textAlign: 'center', marginBottom: 4 }}>Reset Password</h3>
-                                <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', marginBottom: 12, lineHeight: 1.6 }}>Enter your email and we'll send a reset link.</p>
-                                {forgotMsg && <div style={{ background: 'rgba(5,150,105,0.12)', border: '1px solid rgba(5,150,105,0.2)', padding: '10px 14px', borderRadius: 12, color: '#6ee7b7', fontSize: 13, fontWeight: 500 }}>{forgotMsg}</div>}
-                                {error && <div className="login-error-banner">{error}</div>}
-                                <div className="login-input-group">
-                                    <label className="login-input-label">Email Address</label>
-                                    <div className="login-input-wrapper">
-                                        <input name="email" type="email" placeholder="Enter your email" value={forgotEmail}
-                                            onChange={e => setForgotEmail(e.target.value)} autoFocus style={{ paddingLeft: 14 }} />
-                                    </div>
+                            <motion.div key="forgot-pw" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                                className="login-form">
+                                {/* Step indicator */}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 4 }}>
+                                    {['email', 'otp', 'password'].map((st, i) => {
+                                        const order = { email: 0, otp: 1, password: 2 };
+                                        const active = order[fpStep] >= i;
+                                        return <div key={st} style={{ width: 26, height: 4, borderRadius: 2, background: active ? '#3b82f6' : 'rgba(255,255,255,0.12)', transition: 'background .2s' }} />;
+                                    })}
                                 </div>
-                                <button type="submit" disabled={forgotLoading || !forgotEmail.trim()} className="login-submit-btn"
-                                    style={{ opacity: (forgotLoading || !forgotEmail.trim()) ? 0.5 : 1 }}>
-                                    <span>{forgotLoading ? (<><Loader2 size={17} className="spin-icon" /> Sending...</>) : 'Send Reset Link'}</span>
-                                </button>
-                                <button type="button" onClick={() => { setShowForgotPw(false); setError(null); setForgotMsg(null); }} className="login-back-btn">← Back to login</button>
-                            </motion.form>
+
+                                {/* STEP 1 — email */}
+                                {fpStep === 'email' && (
+                                    <form onSubmit={handleRequestOtp} style={{ display: 'contents' }}>
+                                        <h3 style={{ color: '#fff', fontSize: 16, fontWeight: 600, textAlign: 'center', marginBottom: 4 }}>Reset Password</h3>
+                                        <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', marginBottom: 12, lineHeight: 1.6 }}>Enter your email and we'll send a 6-digit verification code.</p>
+                                        {error && <div className="login-error-banner">{error}</div>}
+                                        <div className="login-input-group">
+                                            <label className="login-input-label">Email Address</label>
+                                            <div className="login-input-wrapper">
+                                                <input name="email" type="email" placeholder="Enter your email" value={forgotEmail}
+                                                    onChange={e => setForgotEmail(e.target.value)} autoFocus style={{ paddingLeft: 14 }} />
+                                            </div>
+                                        </div>
+                                        <button type="submit" disabled={forgotLoading || !forgotEmail.trim()} className="login-submit-btn"
+                                            style={{ opacity: (forgotLoading || !forgotEmail.trim()) ? 0.5 : 1 }}>
+                                            <span>{forgotLoading ? (<><Loader2 size={17} className="spin-icon" /> Sending...</>) : 'Send Code'}</span>
+                                        </button>
+                                    </form>
+                                )}
+
+                                {/* STEP 2 — OTP */}
+                                {fpStep === 'otp' && (
+                                    <form onSubmit={handleVerifyOtp} style={{ display: 'contents' }}>
+                                        <h3 style={{ color: '#fff', fontSize: 16, fontWeight: 600, textAlign: 'center', marginBottom: 4 }}>Enter Code</h3>
+                                        <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', marginBottom: 8, lineHeight: 1.6 }}>
+                                            We sent a 6-digit code to <span style={{ color: '#cbd5e1' }}>{forgotEmail}</span>. It expires in 10 minutes.
+                                        </p>
+                                        {forgotMsg && <div style={{ background: 'rgba(5,150,105,0.12)', border: '1px solid rgba(5,150,105,0.2)', padding: '10px 14px', borderRadius: 12, color: '#6ee7b7', fontSize: 13, fontWeight: 500 }}>{forgotMsg}</div>}
+                                        {error && <div className="login-error-banner">{error}</div>}
+                                        <div className="login-input-group">
+                                            <label className="login-input-label">Verification Code</label>
+                                            <div className="login-input-wrapper">
+                                                <input name="otp" type="text" inputMode="numeric" maxLength={6} autoFocus autoComplete="one-time-code"
+                                                    placeholder="000000" value={otpCode}
+                                                    onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                                    style={{ paddingLeft: 14, letterSpacing: '0.5em', textAlign: 'center', fontSize: 20, fontWeight: 600 }} />
+                                            </div>
+                                        </div>
+                                        <button type="submit" disabled={forgotLoading || otpCode.length !== 6} className="login-submit-btn"
+                                            style={{ opacity: (forgotLoading || otpCode.length !== 6) ? 0.5 : 1 }}>
+                                            <span>{forgotLoading ? (<><Loader2 size={17} className="spin-icon" /> Verifying...</>) : 'Verify Code'}</span>
+                                        </button>
+                                        <button type="button" disabled={resendIn > 0 || forgotLoading}
+                                            onClick={handleRequestOtp}
+                                            style={{ background: 'none', border: 'none', color: resendIn > 0 ? '#64748b' : '#93c5fd', fontSize: 13, cursor: resendIn > 0 ? 'default' : 'pointer', padding: 0, fontWeight: 500 }}>
+                                            {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
+                                        </button>
+                                    </form>
+                                )}
+
+                                {/* STEP 3 — new password */}
+                                {fpStep === 'password' && (
+                                    <form onSubmit={handleSetNewPassword} style={{ display: 'contents' }}>
+                                        <h3 style={{ color: '#fff', fontSize: 16, fontWeight: 600, textAlign: 'center', marginBottom: 4 }}>Set New Password</h3>
+                                        <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', marginBottom: 8, lineHeight: 1.6 }}>Choose a strong password you haven't used before.</p>
+                                        {error && <div className="login-error-banner">{error}</div>}
+                                        <div className="login-input-group">
+                                            <label className="login-input-label">New Password</label>
+                                            <div className="login-input-wrapper">
+                                                <input name="newPassword" type="password" placeholder="Create a strong password" autoFocus
+                                                    value={newPw} onChange={e => { setNewPw(e.target.value); setError(null); }} style={{ paddingLeft: 14 }} />
+                                            </div>
+                                        </div>
+                                        {newPw && (
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px', fontSize: 12, marginTop: -4 }}>
+                                                {pwChecks.map((c, i) => (
+                                                    <span key={i} style={{ color: c.valid ? '#34d399' : '#64748b' }}>{c.valid ? '✓' : '•'} {c.label}</span>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <div className="login-input-group">
+                                            <label className="login-input-label">Confirm Password</label>
+                                            <div className="login-input-wrapper">
+                                                <input name="confirmPassword" type="password" placeholder="Re-enter new password"
+                                                    value={confirmPw} onChange={e => { setConfirmPw(e.target.value); setError(null); }} style={{ paddingLeft: 14 }} />
+                                            </div>
+                                            {confirmPw && !pwMatch && <span style={{ color: '#f87171', fontSize: 12, marginTop: 4, display: 'block' }}>Passwords do not match</span>}
+                                        </div>
+                                        <button type="submit" disabled={forgotLoading || !pwAllValid || !pwMatch} className="login-submit-btn"
+                                            style={{ opacity: (forgotLoading || !pwAllValid || !pwMatch) ? 0.5 : 1 }}>
+                                            <span>{forgotLoading ? (<><Loader2 size={17} className="spin-icon" /> Saving...</>) : 'Reset Password'}</span>
+                                        </button>
+                                    </form>
+                                )}
+
+                                <button type="button" onClick={resetForgotState} className="login-back-btn">← Back to login</button>
+                            </motion.div>
                         )}
 
                         {!ssoLoading && !ssoStatus && showTenantModal && (

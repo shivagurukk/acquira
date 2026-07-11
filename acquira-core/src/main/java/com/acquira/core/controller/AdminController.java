@@ -32,6 +32,7 @@ public class AdminController {
     private final RefCountryRepository refCountryRepository;
     private final com.acquira.core.service.PasswordService passwordService;
     private final com.acquira.core.service.RefreshTokenService refreshTokenService;
+    private final com.acquira.core.service.TenantProvisioningService provisioningService;
 
     public AdminController(TenantRepository tenantRepository, UserRepository userRepository,
             UserTenantAccessRepository userTenantAccessRepository, RoleRepository roleRepository,
@@ -40,7 +41,8 @@ public class AdminController {
             com.acquira.common.repository.DashboardConfigRepository dashboardConfigRepository,
             RefCountryRepository refCountryRepository,
             com.acquira.core.service.PasswordService passwordService,
-            com.acquira.core.service.RefreshTokenService refreshTokenService) {
+            com.acquira.core.service.RefreshTokenService refreshTokenService,
+            com.acquira.core.service.TenantProvisioningService provisioningService) {
         this.tenantRepository = tenantRepository;
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
@@ -52,6 +54,7 @@ public class AdminController {
         this.refCountryRepository = refCountryRepository;
         this.passwordService = passwordService;
         this.refreshTokenService = refreshTokenService;
+        this.provisioningService = provisioningService;
     }
 
     @GetMapping("/countries")
@@ -60,10 +63,25 @@ public class AdminController {
     }
 
     @PostMapping("/tenants")
+    // SECURITY: tenant creation is platform-level. Class guard is ADMIN+, so without
+    // this a Bank Admin could create tenants via this parallel of the SA-only
+    // POST /api/banks the UI actually uses.
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<Tenant> createTenant(@RequestBody Tenant tenant) {
         Tenant saved = tenantRepository.save(tenant);
         auditService.log("CREATE_TENANT",
                 "Created tenant: " + saved.getBankName() + " (" + saved.getInstitutionId() + ")");
+        // Auto-provision the new tenant (settings defaults, default sales leads,
+        // email templates, ...) from the tenant_provision_script registry.
+        // Failures never abort creation — re-runnable from Admin > Tenant Provisioning.
+        try {
+            org.springframework.security.core.Authentication a = org.springframework.security.core.context
+                    .SecurityContextHolder.getContext().getAuthentication();
+            provisioningService.provision(saved.getTenantId(), a != null ? a.getName() : "system");
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(AdminController.class)
+                    .error("Tenant provisioning failed for tenant {}: {}", saved.getTenantId(), e.getMessage());
+        }
         return ResponseEntity.ok(saved);
     }
 
@@ -167,11 +185,34 @@ public class AdminController {
                 .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
     }
 
+    /**
+     * SECURITY: tenant-ownership check for the path-variable settings endpoints.
+     * A super-admin may target any tenant; a bank admin only tenants present in
+     * their own UserTenantAccess rows. Without this, /tenants/{id}/settings and
+     * /tenants/{id}/dashboard-config were readable AND writable cross-tenant by
+     * any Bank Admin (class guard is only ADMIN+).
+     */
+    private boolean canAccessTenant(Long tenantId) {
+        if (tenantId == null) return false;
+        if (isSuperAdmin()) return true;
+        org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        User user = userRepository.findByUsername(auth.getName()).orElse(null);
+        if (user == null) return false;
+        return userTenantAccessRepository.findByUser(user).stream()
+                .anyMatch(a -> a.getTenant().getTenantId().equals(tenantId));
+    }
+
     private Long extractTenantId(jakarta.servlet.http.HttpServletRequest request) {
-        String header = request.getHeader("X-Tenant-Id");
-        if (header != null && !header.isBlank()) {
-            try { return Long.parseLong(header); } catch (Exception e) { /* fall through */ }
-        }
+        // SECURITY: use the filter-VALIDATED tenant from TenantContext, never the raw
+        // X-Tenant-Id header. JwtRequestFilter checks the header against the caller's
+        // UserTenantAccess rows (super-admin bypasses) and only then populates
+        // TenantContext; on a spoofed header it logs and falls back to the default
+        // tenant. Re-parsing the raw header here let a bank admin read/write ANOTHER
+        // tenant's settings by sending a foreign X-Tenant-Id.
+        Long ctx = com.acquira.common.config.TenantContext.getCurrentTenant();
+        if (ctx != null) return ctx;
         // Fallback: first tenant
         String username = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication().getName();
         var user = userRepository.findByUsername(username).orElse(null);
@@ -188,12 +229,14 @@ public class AdminController {
     @GetMapping("/tenants/{tenantId}/settings")
     public ResponseEntity<java.util.List<com.acquira.common.model.TenantSetting>> getTenantSettings(
             @PathVariable Long tenantId) {
+        if (!canAccessTenant(tenantId)) return ResponseEntity.status(403).build();
         return ResponseEntity.ok(tenantSettingRepository.findByTenant_TenantId(tenantId));
     }
 
     @PostMapping("/tenants/{tenantId}/settings")
     public ResponseEntity<com.acquira.common.model.TenantSetting> saveTenantSetting(@PathVariable Long tenantId,
             @RequestBody com.acquira.common.model.TenantSetting setting) {
+        if (!canAccessTenant(tenantId)) return ResponseEntity.status(403).build();
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
         setting.setTenant(tenant);
         return ResponseEntity.ok(tenantSettingRepository.save(setting));
@@ -202,12 +245,14 @@ public class AdminController {
     @GetMapping("/tenants/{tenantId}/dashboard-config")
     public ResponseEntity<java.util.List<com.acquira.common.model.DashboardConfig>> getDashboardConfig(
             @PathVariable Long tenantId) {
+        if (!canAccessTenant(tenantId)) return ResponseEntity.status(403).build();
         return ResponseEntity.ok(dashboardConfigRepository.findByTenant_TenantIdOrderByDisplayOrderAsc(tenantId));
     }
 
     @PostMapping("/tenants/{tenantId}/dashboard-config")
     public ResponseEntity<com.acquira.common.model.DashboardConfig> saveDashboardConfig(@PathVariable Long tenantId,
             @RequestBody com.acquira.common.model.DashboardConfig config) {
+        if (!canAccessTenant(tenantId)) return ResponseEntity.status(403).build();
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
         config.setTenant(tenant);
         return ResponseEntity.ok(dashboardConfigRepository.save(config));

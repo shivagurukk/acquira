@@ -411,8 +411,19 @@ export default function AiAssistant() {
 
     useEffect(()=>{
         (async()=>{
-            try { const h=(await aiApi.health()).data; setHealth(h); setSelModel(h.model||''); } catch { setHealth({status:'disconnected'}); }
-            try { setModels((await aiApi.models()).data); } catch {}
+            let h=null;
+            try { h=(await aiApi.health()).data; setHealth(h); } catch { setHealth({status:'disconnected'}); }
+            try {
+                const ms=(await aiApi.models()).data||[];
+                setModels(ms);
+                // Model names are provider-qualified ("ollama/llama3.2",
+                // "anthropic/claude-sonnet-4-5"). Default to the active
+                // provider's default model when present, else the first entry.
+                const want=h?`${h.provider}/${h.model}`:null;
+                const match=ms.find(m=>m.name===want)||ms[0];
+                if(match) setSelModel(match.name);
+                else if(h?.model) setSelModel(h.model);
+            } catch { if(h?.model) setSelModel(h.model); }
         })();
         loadRecent();
     },[loadRecent]);
@@ -615,7 +626,7 @@ export default function AiAssistant() {
                     </Box>
                     <Stack direction="row" spacing={.4} justifyContent="center" alignItems="center" sx={{mt:.75,opacity:.3}}>
                         <Cpu size={9} color={P.t3}/>
-                        <Typography sx={{fontSize:9.5,color:P.t3,fontWeight:500}}>{selModel||'No model'} · Powered by Ollama · Enter to send</Typography>
+                        <Typography sx={{fontSize:9.5,color:P.t3,fontWeight:500}}>{selModel||'No model'} · Enter to send</Typography>
                     </Stack>
                 </Box>
             </Box>

@@ -1032,7 +1032,9 @@ public class TransactionJobConfig {
                 for (String dailyTbl : new String[]{
                         "sum_daily_bank", "sum_daily_merchant", "sum_daily_mcc",
                         "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
-                        "sum_daily_finance", "sum_daily_insight", "sum_daily_merchant_attribute"}) {
+                        "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
+                        "sum_daily_explorer",
+                        "sum_daily_merchant_attribute"}) {
                     int del = jdbcTemplate.update(
                         "DELETE FROM " + dailyTbl +
                         " WHERE tenant_id = ? AND business_date IN " + dateScope, tenantId);
@@ -1198,6 +1200,90 @@ public class TransactionJobConfig {
                         "f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +
                         "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf",
+                        tenantId)));
+
+                // sum_daily_full — the fully-dimensional daily SETTLEMENT pre-aggregate
+                // WITH real fees. Same fact scan as sum_daily_insight but:
+                //   - volume is store_base_currency_amount (settlement), not cardholder
+                //   - carries interchange / scheme / ecom / net fee columns
+                //   - adds mcc (dim_store) to the grain
+                // Grain: day x merchant x store x mcc x channel x destination x scheme
+                //        x card_type x is_opt_in (dcc). channel from dim_terminal.type
+                //        (COALESCE 'POS'); card_scheme normalized exactly like insight.
+                // Fees come straight from fact_transaction (populated by the fee UPDATE
+                // in stagingToFactStep, which runs BEFORE this step).
+                phase1.add(runAsync(exec, "sum_daily_full", () ->
+                    jdbcTemplate.update("INSERT INTO sum_daily_full (tenant_id, business_date, merchant_id, store_id, mcc, " +
+                        "channel, destination, card_scheme, card_type, is_opt_in, " +
+                        "total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, " +
+                        "total_net_revenue, dcc_optin_count) " +
+                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
+                        "COALESCE(t.type,'POS'), f.destination, " +
+                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
+                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
+                        "     ELSE f.card_scheme END, " +
+                        "f.card_type, f.dcc, " +
+                        "COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), " +
+                        "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
+                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)), " +
+                        "COUNT(CASE WHEN f.dcc IS TRUE THEN 1 END) " +
+                        "FROM fact_transaction f " +
+                        "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
+                        "LEFT JOIN dim_store st ON f.store_id=st.store_id " +
+                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
+                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
+                        "COALESCE(t.type,'POS'), f.destination, " +
+                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
+                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END, " +
+                        "f.card_type, f.dcc " +
+                        "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, mcc, channel, destination, card_scheme, card_type, is_opt_in) " +
+                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
+                        "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
+                        "total_ecom_fee=EXCLUDED.total_ecom_fee, total_net_revenue=EXCLUDED.total_net_revenue, " +
+                        "dcc_optin_count=EXCLUDED.dcc_optin_count",
+                        tenantId)));
+
+                // sum_daily_explorer — the Data Explorer history pre-aggregate.
+                // Same fact scan as sum_daily_full but at the EXPLORER grain:
+                //   day x merchant x store x terminal x transaction_type x scheme
+                //     x card_type x destination x channel x txn_currency x is_opt_in
+                // Carries BOTH amount bases (cardholder txn_currency_amount and
+                // settlement store_base_currency_amount) plus msf/vat/settled/
+                // interchange/scheme_fee so the Data Explorer can serve every
+                // measure it previously read from staging — but historically.
+                // Row-level identifiers (arn/rrn/card_number) are deliberately
+                // NOT here; the Transactions page owns row grain. Clean-slate
+                // DELETE above covers this table, so the ON CONFLICT clause is a
+                // belt-and-braces no-op in practice (NULL dim values never match
+                // in a UNIQUE constraint — same accepted behavior as
+                // sum_daily_full, made safe by the preceding DELETE).
+                phase1.add(runAsync(exec, "sum_daily_explorer", () ->
+                    jdbcTemplate.update("INSERT INTO sum_daily_explorer (tenant_id, business_date, merchant_id, store_id, terminal_id, " +
+                        "transaction_type, card_scheme, card_type, destination, channel, txn_currency, store_base_currency, is_opt_in, " +
+                        "total_txns, total_txn_currency_amount, total_base_volume, total_msf, total_vat, total_settled, " +
+                        "total_interchange, total_scheme_fee) " +
+                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
+                        "f.transaction_type, " +
+                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
+                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
+                        "     ELSE f.card_scheme END, " +
+                        "f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc, " +
+                        "COUNT(*), SUM(COALESCE(f.txn_currency_amount,0)), SUM(COALESCE(f.store_base_currency_amount,0)), " +
+                        "SUM(COALESCE(f.msf,0)), SUM(COALESCE(f.vat,0)), SUM(COALESCE(f.total_amount_settled,0)), " +
+                        "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)) " +
+                        "FROM fact_transaction f " +
+                        "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
+                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
+                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
+                        "f.transaction_type, " +
+                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
+                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END, " +
+                        "f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc " +
+                        "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, transaction_type, card_scheme, card_type, destination, channel, txn_currency, is_opt_in) " +
+                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_txn_currency_amount=EXCLUDED.total_txn_currency_amount, " +
+                        "total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, total_vat=EXCLUDED.total_vat, " +
+                        "total_settled=EXCLUDED.total_settled, total_interchange=EXCLUDED.total_interchange, " +
+                        "total_scheme_fee=EXCLUDED.total_scheme_fee, store_base_currency=EXCLUDED.store_base_currency",
                         tenantId)));
 
                 // Merchant attributes serialized into one task to prevent B-tree deadlocks

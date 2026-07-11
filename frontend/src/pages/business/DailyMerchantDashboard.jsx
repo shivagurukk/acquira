@@ -1,66 +1,46 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
-import { Box, Paper, Typography, Avatar, Stack, Tooltip, MenuItem, Select, FormControl, Chip, Card, CardContent, Autocomplete, TextField, Button } from '@mui/material';
+import { Box, Paper, Typography, Stack, Tooltip, MenuItem, Select, FormControl, Chip, Autocomplete, TextField, Button } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
-import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, Activity } from 'lucide-react';
+import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, Activity, TrendingUp as PerfIcon } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
+import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 
-// formatCurrency is now built from the tenant's currency via useAuth + createFmt (see inside component)
-const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
+// currency formatting is built from the tenant's currency via useAuth + createFmt (see inside component)
 
-const SmoothSparkline = ({ data, color }) => {
-    if (!data || data.length < 2) return null;
-    const height = 32, width = 100;
-    const max = Math.max(...data, 1);
-    const min = Math.min(...data, 0);
-    const range = max - min || 1;
-    const points = data.map((val, idx) => ({
-        x: (idx / (data.length - 1)) * width,
-        y: height - ((val - min) / range) * height,
-    }));
-    const pathD = points.reduce((acc, point, i, a) => {
-        if (i === 0) return `M ${point.x},${point.y}`;
-        const prev = a[i - 1];
-        const cp1x = prev.x + (point.x - prev.x) / 2;
-        const cp2x = prev.x + (point.x - prev.x) / 2;
-        return `${acc} C ${cp1x},${prev.y} ${cp2x},${point.y} ${point.x},${point.y}`;
-    }, '');
-    const fillPath = `${pathD} L ${width},${height} L 0,${height} Z`;
-    const gradientId = `grad-${Math.random().toString(36).substr(2, 9)}`;
-    return (
-        <svg width={width} height={height} style={{ overflow: 'visible' }}>
-            <defs>
-                <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-                    <stop offset="100%" stopColor={color} stopOpacity={0.0} />
-                </linearGradient>
-            </defs>
-            <path d={fillPath} fill={`url(#${gradientId})`} />
-            <path d={pathD} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" />
-        </svg>
-    );
+// ─── Local design tokens ─────────────────────────────────────────
+// Every colour routes through a CSS variable with a light-mode fallback, matching
+// the pattern used on the Attrition Report and Volume/Revenue pages, so this page
+// re-skins correctly under html.dark + ThemeContext instead of staying hardcoded.
+const T = {
+    card:     'var(--bg-card, #ffffff)',
+    subtle:   'var(--bg-subtle, #f8fafc)',
+    hover:    'var(--bg-hover, #f8fafc)',
+    border:   'var(--border, #e2e8f0)',
+    borderLt: 'var(--border-light, #eef2f7)',
+    text:     'var(--text, #0f172a)',
+    textSec:  'var(--text-secondary, #475569)',
+    textMut:  'var(--text-muted, #94a3b8)',
+    brand:    'var(--brand, #2563eb)',
+    brandAlt: 'var(--brand-alt, #3b82f6)',
+    success:  'var(--success, #059669)',
+    danger:   'var(--danger, #dc2626)',
+    warning:  'var(--warning, #d97706)',
 };
 
-const StatCard = ({ title, value, icon: Icon, color, subtitle }) => (
-    <Card sx={{ flex: 1, minWidth: 200, borderRadius: 3, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.05)' }}>
-        <CardContent sx={{ p: 3, '&:last-child': { pb: 3 } }}>
-            <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                <Box>
-                    <Typography variant="overline" fontWeight="700" color="text.secondary" letterSpacing={1}>{title}</Typography>
-                    <Typography variant="h4" fontWeight="800" sx={{ mt: 1, mb: 1, color: '#1e293b' }}>{value}</Typography>
-                    {subtitle && <Typography variant="body2" fontWeight="600" color={color}>{subtitle}</Typography>}
-                </Box>
-                <Avatar sx={{ bgcolor: `${color}15`, color: color, width: 48, height: 48, borderRadius: 2 }}><Icon size={24} /></Avatar>
-            </Stack>
-        </CardContent>
-    </Card>
-);
+// Merchant status → muted tint chip, mirroring STATUS_META on the Attrition
+// Report so status colouring reads the same language across the app.
+const STATUS_META = {
+    Stable: { label: 'Stable',  color: 'var(--success, #059669)', bg: 'var(--success-bg, #d1fae5)' },
+    Watch:  { label: 'Watch',   color: 'var(--warning, #d97706)', bg: 'var(--warning-bg, #fef3c7)' },
+    Risk:   { label: 'At Risk', color: 'var(--danger, #dc2626)',  bg: 'var(--danger-bg, #fee2e2)' },
+};
 
 const DailyMerchantDashboard = () => {
     const { currencySymbol, tenantVersion } = useAuth();
@@ -145,13 +125,18 @@ const DailyMerchantDashboard = () => {
                 body
             );
             const result = res.data;
-            // FIX: removed Math.random fake sparkline fallback. If backend doesn't
-            // provide sparklineData, leave it undefined and let the chart render
-            // empty rather than show meaningless random numbers.
-            setData(result.map((r, i) => ({
-                id: r.merchantId || i, ...r,
-                sparklineData: r.sparklineData || []
-            })));
+            // FIX: removed Math.random fake sparkline fallback and the dead
+            // sparklineData field — the backend never populates it (confirmed in
+            // DailyMerchantDashboardController / MerchantDailyMetricsDTO), so the
+            // old TREND (7D) column always rendered empty. Column removed below.
+            setData(result.map((r, i) => {
+                const dailyVolumes = r.dailyVolumes || {};
+                // Row-relative heat scale: each merchant's own peak day, not a
+                // fixed AED threshold — otherwise every mid-size-or-larger day
+                // saturates to identical full colour and the heatmap says nothing.
+                const dailyMax = Math.max(0, ...Object.values(dailyVolumes).map(v => Number(v) || 0));
+                return { id: r.merchantId || i, ...r, dailyVolumes, dailyMax };
+            }));
         } catch (error) { console.error("Failed to fetch data", error); }
         finally { setLoading(false); }
     };
@@ -159,18 +144,48 @@ const DailyMerchantDashboard = () => {
     const daysInMonth = new Date(filters.year, filters.month, 0).getDate();
     const monthName = new Date(0, filters.month - 1).toLocaleString('default', { month: 'long' });
 
+    // Is the selected month the current calendar month? Used to mark "today"'s
+    // column in the heat strip so the grid reads against the calendar.
+    const todayDate = new Date();
+    const isCurrentMonth = todayDate.getFullYear() === filters.year && (todayDate.getMonth() + 1) === filters.month;
+    const todayDay = isCurrentMonth ? todayDate.getDate() : null;
+
+    // Portfolio-wide daily total series (sum across all merchants per day) —
+    // powers the Month Volume KPI sparkline. Built once per data/month change,
+    // not recomputed per render of the day-grid cells.
+    const portfolioDailySeries = useMemo(() => {
+        const totals = Array.from({ length: daysInMonth }, () => 0);
+        data.forEach(row => {
+            const dv = row.dailyVolumes || {};
+            for (let d = 1; d <= daysInMonth; d++) totals[d - 1] += Number(dv[d]) || 0;
+        });
+        return totals;
+    }, [data, daysInMonth]);
+
     const kpis = useMemo(() => {
         if (!data.length) return [];
         const totalVol = data.reduce((s, d) => s + (d.totalVolume || d.totalMtd || 0), 0);
         const totalToday = data.reduce((s, d) => s + (d.todayVol || d.todayVolume || 0), 0);
         const growing = data.filter(d => (d.trendPct || 0) >= 0).length;
+        const growingPct = data.length > 0 ? (growing / data.length) * 100 : 0;
+        // "vs yesterday" for the Today Volume tile — only meaningful when
+        // viewing the current month and there IS a yesterday in it.
+        let todayTrend;
+        if (isCurrentMonth && todayDay > 1) {
+            const yesterdayTotal = data.reduce((s, d) => s + (Number((d.dailyVolumes || {})[todayDay - 1]) || 0), 0);
+            todayTrend = yesterdayTotal > 0 ? ((totalToday - yesterdayTotal) / yesterdayTotal) * 100 : undefined;
+        }
         return [
-            { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: '#6366f1' },
-            { title: 'Month Volume', value: formatCurrency(totalVol), icon: DollarSign, color: '#3b82f6' },
-            { title: 'Today Volume', value: formatCurrency(totalToday), icon: Activity, color: '#10b981' },
-            { title: 'Performance', value: `${growing}/${data.length}`, icon: TrendingUp, color: '#f59e0b', subtitle: `${data.length > 0 ? ((growing / data.length) * 100).toFixed(0) : 0}% Growing` },
+            { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: 'var(--accent-indigo, #6366f1)',
+              trendLabel: `${monthName} ${filters.year}` },
+            { title: 'Month Volume', value: formatCurrency(totalVol), icon: DollarSign, color: T.brandAlt,
+              trendLabel: 'daily portfolio total', sparkData: portfolioDailySeries },
+            { title: 'Today Volume', value: formatCurrency(totalToday), icon: Activity, color: T.success,
+              trend: todayTrend, trendLabel: todayTrend === undefined ? 'no prior day in range' : 'vs yesterday' },
+            { title: 'Performance', value: `${growing}/${data.length}`, icon: PerfIcon, color: T.warning,
+              subtitle: `${growingPct.toFixed(0)}% growing`, trendLabel: 'merchants trending up' },
         ];
-    }, [data]);
+    }, [data, monthName, filters.year, portfolioDailySeries, isCurrentMonth, todayDay]);
 
     // Quick-select helpers for the month bar.
     const _today = new Date();
@@ -182,11 +197,11 @@ const DailyMerchantDashboard = () => {
 
     const quickBtnSx = (active) => ({
         height: 40, px: 2, borderRadius: 2, textTransform: 'none', fontWeight: 700,
-        fontSize: '0.8rem', boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-        bgcolor: active ? '#6366f1' : 'white',
-        color: active ? 'white' : '#475569',
-        border: '1px solid', borderColor: active ? '#6366f1' : '#e2e8f0',
-        '&:hover': { bgcolor: active ? '#4f46e5' : '#f8fafc' },
+        fontSize: '0.8rem', boxShadow: 'none',
+        bgcolor: active ? T.brand : T.card,
+        color: active ? '#fff' : T.textSec,
+        border: '1px solid', borderColor: active ? T.brand : T.border,
+        '&:hover': { bgcolor: active ? 'var(--brand-dark, #1d4ed8)' : T.subtle },
     });
 
     const extraControls = (
@@ -199,13 +214,13 @@ const DailyMerchantDashboard = () => {
             </Stack>
             <FormControl size="small" variant="outlined">
                 <Select value={filters.month} onChange={(e) => setFilters(prev => ({ ...prev, month: Number(e.target.value) }))}
-                    sx={{ borderRadius: 2, height: 40, bgcolor: 'white', fontWeight: 600, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' }, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                    sx={{ borderRadius: 2, height: 40, bgcolor: T.card, fontWeight: 600, '& .MuiOutlinedInput-notchedOutline': { borderColor: T.border } }}>
                     {Array.from({ length: 12 }, (_, i) => <MenuItem key={i + 1} value={i + 1}>{new Date(0, i).toLocaleString('default', { month: 'long' })}</MenuItem>)}
                 </Select>
             </FormControl>
             <FormControl size="small" variant="outlined">
                 <Select value={filters.year} onChange={(e) => setFilters(prev => ({ ...prev, year: Number(e.target.value) }))}
-                    sx={{ borderRadius: 2, height: 40, bgcolor: 'white', fontWeight: 600, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' }, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                    sx={{ borderRadius: 2, height: 40, bgcolor: T.card, fontWeight: 600, '& .MuiOutlinedInput-notchedOutline': { borderColor: T.border } }}>
                     {[2024, 2025, 2026].map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
                 </Select>
             </FormControl>
@@ -215,7 +230,7 @@ const DailyMerchantDashboard = () => {
                 onChange={(e, val) => setFilters(prev => ({ ...prev, sidList: val }))}
                 renderInput={(params) => <TextField {...params} label="SID" placeholder={filters.sidList.length ? '' : 'All'} sx={{ minWidth: 180 }} />}
                 renderTags={(value, getTagProps) =>
-                    value.map((option, index) => <Chip {...getTagProps({ index })} key={option} label={option} size="small" sx={{ bgcolor: '#6366f1', color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white', opacity: 0.7 } }} />)
+                    value.map((option, index) => <Chip {...getTagProps({ index })} key={option} label={option} size="small" sx={{ bgcolor: T.brand, color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white', opacity: 0.7 } }} />)
                 }
             />
             <Autocomplete
@@ -224,60 +239,65 @@ const DailyMerchantDashboard = () => {
                 onChange={(e, val) => setFilters(prev => ({ ...prev, midList: val }))}
                 renderInput={(params) => <TextField {...params} label="MID" placeholder={filters.midList.length ? '' : 'All'} sx={{ minWidth: 180 }} />}
                 renderTags={(value, getTagProps) =>
-                    value.map((option, index) => <Chip {...getTagProps({ index })} key={option} label={option} size="small" sx={{ bgcolor: '#10b981', color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white', opacity: 0.7 } }} />)
+                    value.map((option, index) => <Chip {...getTagProps({ index })} key={option} label={option} size="small" sx={{ bgcolor: T.success, color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white', opacity: 0.7 } }} />)
                 }
             />
         </Stack>
     );
 
-    const dayColumns = Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => ({
-        field: `day_${day}`, headerName: `${day}`, width: 48, align: 'center', headerAlign: 'center',
-        renderCell: (params) => {
-            const val = params.row.dailyVolumes ? params.row.dailyVolumes[day] : 0;
-            const opacity = Math.min(val / 5000, 1);
-            return (
-                <Tooltip title={val ? `Day ${day}: ${formatCurrency(val)}` : 'No Volume'} arrow>
-                    <Box sx={{
-                        width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        bgcolor: val > 0 ? `rgba(59, 130, 246, ${Math.max(opacity, 0.1)})` : 'transparent',
-                        borderRadius: 1.5, transition: 'all 0.2s', '&:hover': { transform: 'scale(1.1)', boxShadow: 2 }
-                    }}>
-                        {val > 0 && <Typography variant="caption" sx={{ fontSize: '0.6rem', color: opacity > 0.6 ? 'white' : '#1e40af', fontWeight: 800 }}>{formatCompact(val)}</Typography>}
-                    </Box>
-                </Tooltip>
-            );
-        }
-    }));
+    // ── Day-grid heat cells ──
+    // Flat, borderless heat cells — intensity is the signal, not embedded text.
+    // Intensity is RELATIVE TO THE ROW'S OWN PEAK DAY (row.dailyMax), so every
+    // merchant's day-shape is legible regardless of its absolute size. A fixed
+    // AED threshold (the old `val / 5000`) saturates every mid-or-larger day to
+    // identical full colour and the heatmap says nothing. Values render only in
+    // the tooltip; the peak day gets a thin accent ring.
+    const dayColumns = Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+        const dow = new Date(filters.year, filters.month - 1, day).getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        const isToday = todayDay === day;
+        return {
+            field: `day_${day}`, headerName: `${day}`, width: 34, align: 'center', headerAlign: 'center',
+            headerClassName: isToday ? 'daycol-today' : (isWeekend ? 'daycol-weekend' : undefined),
+            sortable: false,
+            renderCell: (params) => {
+                const val = Number((params.row.dailyVolumes || {})[day]) || 0;
+                const rowMax = params.row.dailyMax || 0;
+                const isPeak = val > 0 && rowMax > 0 && val === rowMax;
+                const intensity = rowMax > 0 ? Math.max(val / rowMax, 0.14) : 0;
+                const dateLabel = new Date(filters.year, filters.month - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
+                const pctOfPeak = rowMax > 0 ? Math.round((val / rowMax) * 100) : 0;
+                return (
+                    <Tooltip arrow title={val > 0 ? `${dateLabel}: ${formatCurrency(val)} (${pctOfPeak}% of month peak)` : `${dateLabel}: no volume`}>
+                        <Box sx={{
+                            width: 26, height: 26, borderRadius: '4px',
+                            bgcolor: val > 0 ? `color-mix(in srgb, ${T.brandAlt} ${Math.round(intensity * 100)}%, transparent)` : T.subtle,
+                            boxShadow: isPeak ? `inset 0 0 0 1.5px ${T.brand}` : 'none',
+                            transition: 'transform 0.12s ease',
+                            '&:hover': { transform: 'scale(1.15)' },
+                        }} />
+                    </Tooltip>
+                );
+            }
+        };
+    });
 
     const columns = [
         {
-            field: 'merchantName', headerName: 'MERCHANT', width: 240,
+            field: 'merchantName', headerName: 'MERCHANT', width: 220,
             renderCell: (params) => (
-                <Stack direction="row" spacing={2} alignItems="center" height="100%">
-                    <Avatar sx={{ width: 36, height: 36, bgcolor: 'white', color: '#6366f1', fontWeight: 800, fontSize: '0.9rem', border: '1px solid #e0e7ff', boxShadow: '0 2px 4px rgba(99, 102, 241, 0.1)' }}>
-                        {params.value?.charAt(0) || '?'}
-                    </Avatar>
-                    <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="body2" fontWeight="700" color="#1e293b" noWrap>{params.value}</Typography>
-                        <Typography variant="caption" color="#64748b" fontFamily="monospace" sx={{ fontSize: '0.7rem', display: 'block', mt: 0.2 }}>
-                            {params.row.mid}
-                        </Typography>
-                    </Box>
-                </Stack>
+                <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+                    <Typography variant="body2" fontWeight="600" color={T.text} noWrap>{params.value}</Typography>
+                    <Typography variant="caption" color={T.textMut} fontFamily="monospace" sx={{ fontSize: '0.7rem', display: 'block', mt: 0.2 }}>
+                        {params.row.mid}
+                    </Typography>
+                </Box>
             )
         },
         {
-            field: 'sid', headerName: 'SID', width: 130,
+            field: 'sid', headerName: 'SID', width: 110,
             renderCell: (params) => (
-                <Typography variant="body2" sx={{ fontFamily: '"Roboto Mono", monospace', fontSize: '12px', color: '#475569', bgcolor: '#f1f5f9', px: 1, py: 0.5, borderRadius: '4px', border: '1px solid #e2e8f0' }}>
-                    {params.value || '-'}
-                </Typography>
-            )
-        },
-        {
-            field: 'mid', headerName: 'MID', width: 130,
-            renderCell: (params) => (
-                <Typography variant="body2" sx={{ fontFamily: '"Roboto Mono", monospace', fontSize: '12px', color: '#475569', bgcolor: '#f1f5f9', px: 1, py: 0.5, borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: T.textSec }}>
                     {params.value || '-'}
                 </Typography>
             )
@@ -286,40 +306,31 @@ const DailyMerchantDashboard = () => {
             field: 'status', headerName: 'STATUS', width: 100, align: 'center', headerAlign: 'center',
             renderCell: (params) => {
                 const status = params.row.uiStatus || params.row.stabilityLabel || 'Stable';
-                const colors = { 'Stable': { color: 'success', label: 'Stable' }, 'Risk': { color: 'error', label: 'At Risk' }, 'Watch': { color: 'warning', label: 'Watch' } };
-                const config = colors[status] || colors['Stable'];
-                return <Chip label={config.label} size="small" color={config.color} sx={{ fontWeight: 700, fontSize: '0.7rem', height: 24 }} />;
+                const meta = STATUS_META[status] || STATUS_META.Stable;
+                return <Chip label={meta.label} size="small" sx={{ bgcolor: meta.bg, color: meta.color, fontWeight: 700, fontSize: '0.7rem', height: 22 }} />;
             }
         },
         {
-            field: 'todayVol', headerName: 'TODAY', width: 130, align: 'right', headerAlign: 'right',
+            field: 'todayVol', headerName: 'TODAY', width: 120, align: 'right', headerAlign: 'right',
             valueGetter: (value, row) => row.todayVol ?? row.todayVolume ?? 0,
             renderCell: (params) => (
-                <Stack alignItems="flex-end" justifyContent="center" height="100%">
-                    <Typography fontWeight="800" fontSize="0.9rem" color="#1e293b">{formatCurrency(params.value)}</Typography>
+                <Stack alignItems="flex-end" justifyContent="center" height="100%" spacing={0.3}>
+                    <Typography fontWeight="700" fontSize="0.85rem" color={T.text} sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
                     {params.row.trendPct !== undefined && params.row.trendPct !== 0 && (
                         <Chip
-                            icon={params.row.trendPct >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                            icon={params.row.trendPct >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
                             label={`${Math.abs(params.row.trendPct).toFixed(0)}%`} size="small"
-                            sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700,
-                                bgcolor: params.row.trendPct >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                                color: params.row.trendPct >= 0 ? '#059669' : '#dc2626', '& .MuiChip-icon': { color: 'inherit' } }} />
+                            sx={{ height: 18, fontSize: '0.62rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                                bgcolor: params.row.trendPct >= 0 ? 'var(--success-bg, rgba(16, 185, 129, 0.1))' : 'var(--danger-bg, rgba(239, 68, 68, 0.1))',
+                                color: params.row.trendPct >= 0 ? T.success : T.danger, '& .MuiChip-icon': { color: 'inherit' } }} />
                     )}
                 </Stack>
             )
         },
         {
-            field: 'trend', headerName: 'TREND (7D)', width: 140,
-            renderCell: (params) => (
-                <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', px: 1 }}>
-                    <SmoothSparkline data={params.row.sparklineData} color={params.row.trendPct >= 0 ? '#10b981' : '#f43f5e'} />
-                </Box>
-            )
-        },
-        {
-            field: 'totalVolume', headerName: 'MONTH TOTAL', width: 130, align: 'right', headerAlign: 'right',
+            field: 'totalVolume', headerName: 'MONTH TOTAL', width: 120, align: 'right', headerAlign: 'right',
             valueGetter: (value, row) => row.totalVolume ?? row.totalMtd ?? 0,
-            renderCell: (params) => <Typography fontWeight="800" color="#3b82f6" fontSize="0.95rem">{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography fontWeight="700" color={T.text} fontSize="0.88rem" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
         },
         ...dayColumns,
     ];
@@ -328,7 +339,7 @@ const DailyMerchantDashboard = () => {
         <Box sx={pageContainer}>
             <PremiumReportHeader
                 title="Daily Merchant Dashboard"
-                subtitle={`Tracking performance across ${data.length} merchants for ${monthName} ${filters.year}`}
+                subtitle={`Tracking performance across ${data.length} merchant${data.length === 1 ? '' : 's'} for ${monthName} ${filters.year} · ${daysInMonth} days`}
                 icon={Calendar}
                 onExport={() => exportToCSV(data, 'daily_merchant_dashboard')}
                 onRunReport={fetchDashboardData} loading={loading} hideDatePresets
@@ -349,26 +360,24 @@ const DailyMerchantDashboard = () => {
             />
 
             {loading ? (
-                <Box mb={4}><SkeletonLoader variant="kpi-row" count={4} /></Box>
+                <Box mb={3}><SkeletonLoader variant="kpi-row" count={4} /></Box>
             ) : (
-                <Stack direction="row" spacing={3} mb={4}>
-                    {kpis.map((kpi, idx) => <StatCard key={idx} {...kpi} />)}
-                </Stack>
+                <Box mb={3}><KpiCards cards={kpis} /></Box>
             )}
 
             {!loading && data.length === 0 && (
-                <Paper sx={{ p: 3, mb: 3, borderRadius: 3, border: '1px solid #fde68a', bgcolor: '#fffbeb',
+                <Paper sx={{ p: 2.5, mb: 3, borderRadius: 'var(--radius-lg, 14px)', border: '1px solid var(--warning-border, #fde68a)', bgcolor: 'var(--warning-bg, #fffbeb)',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
                     <Stack direction="row" spacing={1.5} alignItems="center">
-                        <Calendar size={20} color="#d97706" />
-                        <Typography variant="body2" fontWeight={600} color="#92400e">
+                        <Calendar size={20} color={T.warning} />
+                        <Typography variant="body2" fontWeight={600} color="var(--warning-text, #92400e)">
                             No data for {monthName} {filters.year}.
                             {latestAvailable && ` Latest available data is ${new Date(0, latestAvailable.month - 1).toLocaleString('default', { month: 'long' })} ${latestAvailable.year}.`}
                         </Typography>
                     </Stack>
                     {latestAvailable && !(latestAvailable.year === filters.year && latestAvailable.month === filters.month) && (
                         <Button disableElevation variant="contained"
-                            sx={{ textTransform: 'none', fontWeight: 700, borderRadius: 2, bgcolor: '#d97706', '&:hover': { bgcolor: '#b45309' } }}
+                            sx={{ textTransform: 'none', fontWeight: 700, borderRadius: 2, bgcolor: T.warning, '&:hover': { bgcolor: 'var(--warning-dark, #b45309)' } }}
                             onClick={() => selectMonth(latestAvailable)}>
                             Jump to {new Date(0, latestAvailable.month - 1).toLocaleString('default', { month: 'short' })} {latestAvailable.year}
                         </Button>
@@ -376,17 +385,31 @@ const DailyMerchantDashboard = () => {
                 </Paper>
             )}
 
-            <Paper sx={{ ...premiumTableWrapper, borderRadius: 3, border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05)' }}>
+            <Paper sx={{
+                ...premiumTableWrapper,
+                '& .daycol-weekend': { bgcolor: T.subtle },
+                '& .daycol-today': { bgcolor: 'var(--brand-light, #eff6ff)', borderBottom: `2px solid ${T.brand} !important` },
+            }}>
                 <DataGrid
                     rows={data} columns={columns} loading={loading} disableRowSelectionOnClick
-                    rowHeight={64} columnHeaderHeight={50}
+                    rowHeight={56} columnHeaderHeight={44}
                     slots={{ toolbar: GridToolbar }}
                     slotProps={{ toolbar: { showQuickFilter: true, quickFilterProps: { debounceMs: 500 }, printOptions: { disableToolbarButton: true } } }}
-                    sx={{ ...premiumDataGridStyles,
-                        '& .MuiDataGrid-columnHeaders': { bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '0.75rem' },
-                        '& .MuiDataGrid-row': { '&:hover': { bgcolor: '#ffffff !important', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }, transition: 'box-shadow 0.2s' }
-                    }}
+                    sx={premiumDataGridStyles}
                 />
+                {/* Heat-scale legend — explains what the day-grid colour encodes,
+                    since the cells intentionally carry no inline numbers. */}
+                {!loading && data.length > 0 && (
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 2, py: 1.25, borderTop: `1px solid ${T.borderLt}` }}>
+                        <Typography variant="caption" color={T.textMut} fontWeight={600}>No volume</Typography>
+                        <Box sx={{ display: 'flex', gap: '2px' }}>
+                            {[0.14, 0.32, 0.5, 0.68, 0.86, 1].map((op, i) => (
+                                <Box key={i} sx={{ width: 16, height: 12, borderRadius: '2px', bgcolor: `color-mix(in srgb, ${T.brandAlt} ${Math.round(op * 100)}%, transparent)` }} />
+                            ))}
+                        </Box>
+                        <Typography variant="caption" color={T.textMut} fontWeight={600}>Row peak (per merchant)</Typography>
+                    </Stack>
+                )}
             </Paper>
         </Box>
     );

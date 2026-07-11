@@ -36,15 +36,16 @@ const DarkTextField = (props) => (
     />
 );
 
-const DarkAutocomplete = ({ label, options, value, onChange, placeholder, freeSolo = false }) => (
+const DarkAutocomplete = ({ label, options, value, onChange, placeholder, freeSolo = false, getOptionLabel }) => (
     <Autocomplete
         multiple freeSolo={freeSolo}
         options={options || []} value={value || []}
+        {...(getOptionLabel ? { getOptionLabel } : {})}
         onChange={(e, newVal) => onChange(newVal)}
         renderInput={(params) => <DarkTextField {...params} label={label} placeholder={value?.length ? '' : placeholder} />}
         renderTags={(value, getTagProps) =>
             value.map((option, index) => (
-                <Chip {...getTagProps({ index })} key={option} label={option} size="small"
+                <Chip {...getTagProps({ index })} key={option} label={getOptionLabel ? getOptionLabel(option) : option} size="small"
                     sx={{ bgcolor: '#3B82F6', color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white !important', opacity: 0.7 } }}
                 />
             ))
@@ -63,9 +64,14 @@ const DarkAutocomplete = ({ label, options, value, onChange, placeholder, freeSo
 );
 
 
-const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose }) => {
+const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDestination = false }) => {
     const [dateType, setDateType] = useState('TRANSACTION');
     const [options, setOptions] = useState(DEFAULT_OPTIONS);
+    // MCC code -> sector/category label (from ref_mcc_category via filter-options).
+    // Index-aligned lists (mccs / mccCategories) are zipped into a lookup so the
+    // MCC dropdown reads "5712 — Furniture" while the applied value stays the code.
+    const [mccLabels, setMccLabels] = useState({});
+    const mccLabel = (code) => (mccLabels[code] && mccLabels[code] !== 'MIS') ? `${code} — ${mccLabels[code]}` : String(code);
 
     useEffect(() => {
         const fetchOptions = async () => {
@@ -86,7 +92,14 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose }) => {
                     mccs: (data.mccs || []).map(m => String(m)),
                     mids: (data.mids || []).map(m => String(m)),
                     sids: (data.sids || []).map(m => String(m)),
+                    industries: (data.industries && data.industries.length)
+                        ? data.industries : DEFAULT_OPTIONS.industries,
                 }));
+                if (data.mccCategories && data.mccs && data.mccCategories.length === data.mccs.length) {
+                    const map = {};
+                    data.mccs.forEach((code, i) => { map[String(code)] = data.mccCategories[i]; });
+                    setMccLabels(map);
+                }
             } catch (error) { console.error("Failed to fetch filter options", error); }
         };
         if (isOpen) fetchOptions();
@@ -205,9 +218,8 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose }) => {
                         <Typography variant="overline" color="text.secondary" fontWeight="700" letterSpacing={1}>Classification</Typography>
                     </Stack>
                     <Stack spacing={2}>
-                        <DarkAutocomplete label="MCC" options={options.mccs} value={filters.mccList} onChange={(v) => update('mccList', v)} placeholder="All MCCs" />
-                        <DarkAutocomplete label="Industry" options={options.industries} value={filters.industryList} onChange={(v) => update('industryList', v)} placeholder="Select Industries" />
-                        <DarkAutocomplete label="Sector" options={options.sectors} value={filters.sectorList} onChange={(v) => update('sectorList', v)} placeholder="All Sectors" />
+                        <DarkAutocomplete label="MCC" options={options.mccs} value={filters.mccList} onChange={(v) => update('mccList', v)} placeholder="All MCCs" getOptionLabel={mccLabel} />
+                        <DarkAutocomplete label="Industry" options={options.industries} value={filters.industryList} onChange={(v) => update('industryList', v)} placeholder="All Industries" />
                     </Stack>
                 </Box>
 
@@ -219,10 +231,17 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose }) => {
                     </Stack>
                     <Box display="grid" gridTemplateColumns="1fr 1fr" gap={2}>
                         <DarkAutocomplete label="Channel" options={options.channels} value={filters.channelList} onChange={(v) => update('channelList', v)} placeholder="All" />
-                        <DarkAutocomplete label="Destination" options={options.destinations} value={filters.destinationList} onChange={(v) => update('destinationList', v)} placeholder="All" />
+                        {!hideDestination && (
+                            <DarkAutocomplete label="Destination" options={options.destinations} value={filters.destinationList} onChange={(v) => update('destinationList', v)} placeholder="All" />
+                        )}
                         <DarkAutocomplete label="Scheme" options={options.schemes} value={filters.schemeList} onChange={(v) => update('schemeList', v)} placeholder="All" />
                         <DarkAutocomplete label="Card Type" options={options.cardTypes} value={filters.cardTypeList} onChange={(v) => update('cardTypeList', v)} placeholder="All" />
                     </Box>
+                    {hideDestination && (
+                        <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#64748B', fontStyle: 'italic' }}>
+                            Destination is controlled by the Domestic / International switcher on this page.
+                        </Typography>
+                    )}
                 </Box>
             </Box>
 

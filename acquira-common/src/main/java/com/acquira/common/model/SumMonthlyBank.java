@@ -40,6 +40,23 @@ public class SumMonthlyBank {
     @Column(name = "total_net_revenue")
     private BigDecimal totalNetRevenue;
 
+    /**
+     * Settlement (single-currency) volume — added by V2026_07_05_03. Budget
+     * targets can be set against this basis (metric BASE_VOLUME) instead of
+     * the cardholder-currency total_volume, for banks whose finance targets
+     * are denominated in settlement terms.
+     */
+    @Column(name = "total_base_volume")
+    private BigDecimal totalBaseVolume;
+
+    public BigDecimal getTotalBaseVolume() {
+        return totalBaseVolume;
+    }
+
+    public void setTotalBaseVolume(BigDecimal totalBaseVolume) {
+        this.totalBaseVolume = totalBaseVolume;
+    }
+
     public Long getSummaryId() {
         return summaryId;
     }

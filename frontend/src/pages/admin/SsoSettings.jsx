@@ -11,6 +11,7 @@ const SsoSettings = () => {
     sso_client_id: '',
     sso_client_secret: '',
     sso_tenant_id: '',
+    sso_email_domains: '',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -171,6 +172,18 @@ const SsoSettings = () => {
             <input value={config.sso_tenant_id} onChange={e => setConfig({ ...config, sso_tenant_id: e.target.value })}
               style={inputStyle} placeholder="e.g. 12345678-abcd-1234-efgh-123456789012 or 'common'" />
             <div style={helpStyle}>Use "common" to allow any Microsoft account, or a specific tenant ID for single-org</div>
+          </div>
+
+          {/* Email domains — per-bank SSO routing */}
+          <div>
+            <label style={labelStyle}>Email domains (per-bank SSO routing)</label>
+            <input value={config.sso_email_domains} onChange={e => setConfig({ ...config, sso_email_domains: e.target.value })}
+              style={inputStyle} placeholder="e.g. acmebank.com, acme.co" />
+            <div style={helpStyle}>
+              Comma-separated. This SSO configuration applies to THIS bank only. When several banks
+              enable SSO, users are routed to the right bank's identity provider by matching their
+              email domain against this list. With a single SSO-enabled bank this can stay empty.
+            </div>
           </div>
 
           {/* Redirect URI (read-only) */}

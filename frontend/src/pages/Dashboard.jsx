@@ -3,10 +3,12 @@ import api from '../api/axios';
 import {
     RefreshCw, TrendingUp, TrendingDown, Receipt, Wallet,
     Percent, Coins, BarChart3, CalendarRange, ArrowDownRight, Layers, Globe,
+    Sigma, Scale, Divide, Zap, Award, AlertTriangle, Download, X, SlidersHorizontal,
 } from 'lucide-react';
 import {
     ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
     Tooltip as ReTooltip, ResponsiveContainer, ReferenceLine, Cell,
+    BarChart, Legend,
 } from 'recharts';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
@@ -15,27 +17,58 @@ import { createFmt } from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Landing Dashboard — MTD (weeks 1–5) / YTD (month-wise).
-   Metrics per period: Volume, Transactions, Avg Ticket, MSF,
-   Interchange, Scheme Fee, Net Revenue, Net Margin %. Compact B/M/K,
-   delta chips vs prior period, MTD run-rate projection.
-   Data: /api/business/ceo-summary (sum_daily_bank weekly buckets +
-   sum_monthly_bank month rows, settlement currency).
+   Redesign v2:
+   • 4 primary hero tiles (Volume, Net Revenue, Net Margin, Transactions)
+     each with an inline sparkline of the period's bucket shape.
+   • Secondary metric rail with derived KPIs — all computed client-side
+     from the existing /business/ceo-summary payload (no backend change):
+       Effective MSF rate  = msf / volume  (blended take rate, %)
+       Total fees          = interchange + scheme + ecom
+       Cost-to-MSF ratio   = fees / msf   (how much of MSF the schemes eat)
+       Revenue / txn       = netRevenue / txns
+   • Client-side bucket-range filter (From–To week/month) — totals,
+     charts, insights, and table recompute over the selected window;
+     prior-period delta chips are suppressed while filtered because the
+     backend baseline no longer matches the visible window.
+   • CSV export of the visible range (KPIs + bucket rows).
+   • Insight strip: best & worst bucket by margin, momentum (last two
+     complete buckets).
+   • Two charts: Volume vs Net Margin % (composed) + Revenue composition
+     (stacked: net revenue / interchange / scheme / ecom = MSF).
+   • Breakdown table with inline margin bars, best/worst tint.
+   Data: sum_daily_bank weekly buckets + sum_monthly_bank month rows,
+   settlement currency. Tenant currency via createFmt(currencySymbol).
    ════════════════════════════════════════════════════════════════════ */
 
 const num = (v) => (v == null ? 0 : Number(v));
 
 const deltaPct = (cur, prev) => {
     const c = num(cur), p = num(prev);
-    if (!p) return null;
+    if (!p) return undefined; // no prior-period baseline to compare against
     return ((c - p) / Math.abs(p)) * 100;
 };
 
 const fullNum = (v, sym = '') =>
     (sym ? sym + ' ' : '') + Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
+const safeDiv = (a, b) => (num(b) === 0 ? 0 : num(a) / num(b));
+
 /* ─── Delta chip ─── */
-const DeltaChip = ({ pct, compareLabel, invert }) => {
-    if (pct == null) return null;
+const DeltaChip = ({ pct, compareLabel, invert, suffix = '%' }) => {
+    if (pct === null) return null; // explicitly suppressed (e.g. filtered view)
+    if (pct === undefined) {
+        // no prior-period baseline to compare against — neutral dash, not hidden
+        return (
+            <span title={compareLabel || 'No prior-period data'} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
+                background: 'var(--bg-subtle, rgba(148,163,184,0.14))',
+                borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap',
+            }}>
+                —
+            </span>
+        );
+    }
     const good = invert ? pct <= 0 : pct >= 0;    // for costs, down is good
     const color = good ? '#059669' : '#dc2626';
     const bg = good ? 'rgba(5,150,105,0.10)' : 'rgba(220,38,38,0.10)';
@@ -47,40 +80,114 @@ const DeltaChip = ({ pct, compareLabel, invert }) => {
             borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap',
         }}>
             <Icon size={12} />
-            {(pct >= 0 ? '+' : '') + pct.toFixed(1)}%
+            {(pct >= 0 ? '+' : '') + pct.toFixed(1)}{suffix}
         </span>
     );
 };
 
-/* ─── Hero KPI tile — top accent hairline, restrained register ─── */
-const KpiTile = ({ label, value, fullValue, deltaPct: dp, compareLabel, invertDelta, icon: Icon, accent }) => (
-    <div style={{
+/* ─── Inline sparkline — the period's shape inside the hero tile ─── */
+const Sparkline = ({ points, color, height = 34, width = 120 }) => {
+    if (!points || points.length < 2) return <div style={{ height }} />;
+    const vals = points.map(num);
+    const min = Math.min(...vals, 0);
+    const max = Math.max(...vals);
+    const range = max - min || 1;
+    const stepX = width / (vals.length - 1);
+    const y = (v) => height - 3 - ((v - min) / range) * (height - 6);
+    const line = vals.map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * stepX).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    const area = `${line} L${width},${height} L0,${height} Z`;
+    const gid = `sp-${color.replace('#', '')}`;
+    return (
+        <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }} aria-hidden="true">
+            <defs>
+                <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+                    <stop offset="100%" stopColor={color} stopOpacity="0" />
+                </linearGradient>
+            </defs>
+            <path d={area} fill={`url(#${gid})`} />
+            <path d={line} fill="none" stroke={color} strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx={(vals.length - 1) * stepX} cy={y(vals[vals.length - 1])} r="2.6" fill={color} />
+        </svg>
+    );
+};
+
+/* ─── Primary hero tile — big value + sparkline ─── */
+const HeroTile = ({ label, value, fullValue, deltaPct: dp, deltaSuffix, compareLabel, invertDelta,
+    icon: Icon, accent, spark, sub }) => (
+    <div className="hero-tile" style={{
         position: 'relative', overflow: 'hidden',
         background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 14, padding: '18px 18px 16px', minWidth: 0,
-        display: 'flex', flexDirection: 'column', gap: 10,
+        borderRadius: 16, padding: '20px 20px 14px', minWidth: 0,
+        display: 'flex', flexDirection: 'column', gap: 8,
         boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))',
+        transition: 'box-shadow 0.18s ease, transform 0.18s ease',
     }}>
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3,
             background: accent, opacity: 0.9 }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.05em',
+            <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.07em',
                 textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{label}</span>
-            <span style={{ display: 'inline-flex', padding: 5, borderRadius: 8,
-                background: accent + '18' }}>
-                <Icon size={14} style={{ color: accent }} />
+            <span style={{ display: 'inline-flex', padding: 6, borderRadius: 9,
+                background: accent + '15' }}>
+                <Icon size={15} style={{ color: accent }} />
             </span>
         </div>
         <div title={fullValue} style={{
-            fontSize: 25, fontWeight: 700, color: 'var(--text)',
-            fontVariantNumeric: 'tabular-nums', lineHeight: 1.1, letterSpacing: '-0.01em',
+            fontSize: 30, fontWeight: 750, color: 'var(--text)',
+            fontVariantNumeric: 'tabular-nums', lineHeight: 1.05, letterSpacing: '-0.02em',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{value}</div>
-        <div style={{ minHeight: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 38, justifyContent: 'flex-end' }}>
+                <DeltaChip pct={dp} compareLabel={compareLabel} invert={invertDelta} suffix={deltaSuffix} />
+                {sub && <span style={{ fontSize: 11.5, color: 'var(--text-muted, var(--text-secondary))' }}>{sub}</span>}
+            </div>
+            <Sparkline points={spark} color={accent} />
+        </div>
+    </div>
+);
+
+/* ─── Secondary metric cell (hairline rail) ─── */
+const RailMetric = ({ label, value, fullValue, deltaPct: dp, compareLabel, invertDelta, icon: Icon, hint }) => (
+    <div style={{ padding: '14px 18px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em',
+            textTransform: 'uppercase', color: 'var(--text-secondary)',
+            display: 'inline-flex', alignItems: 'center', gap: 5 }} title={hint}>
+            <Icon size={12} style={{ opacity: 0.65 }} />{label}
+        </span>
+        <span title={fullValue} style={{ fontSize: 17.5, fontWeight: 700, color: 'var(--text)',
+            fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+        <div style={{ minHeight: 18 }}>
             <DeltaChip pct={dp} compareLabel={compareLabel} invert={invertDelta} />
         </div>
     </div>
 );
+
+/* ─── Insight pill ─── */
+const InsightPill = ({ icon: Icon, tone, title, value }) => {
+    const tones = {
+        good: { c: '#059669', bg: 'rgba(5,150,105,0.08)' },
+        bad: { c: '#dc2626', bg: 'rgba(220,38,38,0.07)' },
+        info: { c: 'var(--brand, #3b82f6)', bg: 'rgba(59,130,246,0.08)' },
+    };
+    const t = tones[tone] || tones.info;
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+            borderRadius: 12, background: t.bg, minWidth: 0 }}>
+            <Icon size={16} style={{ color: t.c, flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em',
+                    textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{title}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)',
+                    fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                    overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
+            </div>
+        </div>
+    );
+};
 
 /* ─── Recharts tooltip ─── */
 const BucketTooltip = ({ active, payload, label, fmt }) => {
@@ -91,7 +198,7 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
             background: 'var(--bg-card)', border: '1px solid var(--border)',
             borderRadius: 10, padding: '11px 14px',
             boxShadow: 'var(--shadow-md, 0 4px 12px rgba(16,24,40,0.10))',
-            fontSize: 12.5, color: 'var(--text)', minWidth: 200,
+            fontSize: 12.5, color: 'var(--text)', minWidth: 210,
         }}>
             <div style={{ fontWeight: 700, marginBottom: 7 }}>
                 {label}{d.partial ? ' · partial' : ''}
@@ -116,11 +223,48 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
     );
 };
 
+const CompositionTooltip = ({ active, payload, label, fmt }) => {
+    if (!active || !payload || !payload.length) return null;
+    return (
+        <div style={{
+            background: 'var(--bg-card)', border: '1px solid var(--border)',
+            borderRadius: 10, padding: '10px 14px',
+            boxShadow: 'var(--shadow-md, 0 4px 12px rgba(16,24,40,0.10))',
+            fontSize: 12.5, color: 'var(--text)', minWidth: 190,
+        }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
+            {payload.map((p) => (
+                <div key={p.dataKey} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '1.5px 0' }}>
+                    <span style={{ color: p.color }}>{p.name}</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{fmt.currency(p.value)}</span>
+                </div>
+            ))}
+        </div>
+    );
+};
+
+/* ─── Chart card wrapper ─── */
+const ChartCard = ({ title, subtitle, children, footer }) => (
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)',
+        borderRadius: 16, padding: '18px 18px 8px', minWidth: 0,
+        boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))' }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>
+            {title}
+            {subtitle && <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}> · {subtitle}</span>}
+        </div>
+        {children}
+        {footer}
+    </div>
+);
+
 const Dashboard = () => {
     const { currencySymbol, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
 
     const [mode, setMode] = useState('MTD');
+    // Bucket-range filter (client-side): indices into the loaded buckets.
+    // to === -1 means "through the last bucket".
+    const [range, setRange] = useState({ from: 0, to: -1 });
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -138,6 +282,7 @@ const Dashboard = () => {
     }, []);
 
     useEffect(() => { load(); }, [load, tenantVersion]);
+    useEffect(() => { setRange({ from: 0, to: -1 }); }, [mode, data]);
 
     const period = mode === 'MTD' ? data?.mtd : data?.ytd;
     const buckets = mode === 'MTD' ? (data?.mtd?.weeks || []) : (data?.ytd?.months || []);
@@ -160,17 +305,122 @@ const Dashboard = () => {
         txns: num(b.txns),
     })), [buckets]);
 
+    /* ── Apply client-side bucket-range filter ── */
+    const lastIdx = chartData.length - 1;
+    const fromIdx = Math.min(Math.max(range.from, 0), Math.max(lastIdx, 0));
+    const toIdx = range.to === -1 ? lastIdx : Math.min(Math.max(range.to, fromIdx), Math.max(lastIdx, 0));
+    const isFiltered = chartData.length > 0 && (fromIdx > 0 || toIdx < lastIdx);
+    const viewData = useMemo(
+        () => chartData.slice(fromIdx, toIdx + 1),
+        [chartData, fromIdx, toIdx]);
+
     const [bestIdx, worstIdx] = useMemo(() => {
         let bi = -1, wi = -1, bv = -Infinity, wv = Infinity;
-        chartData.forEach((b, i) => {
+        viewData.forEach((b, i) => {
             if (b.volume <= 0) return;
             if (b.marginPct > bv) { bv = b.marginPct; bi = i; }
             if (b.marginPct < wv) { wv = b.marginPct; wi = i; }
         });
-        return chartData.filter(b => b.volume > 0).length > 1 ? [bi, wi] : [-1, -1];
-    }, [chartData]);
+        return viewData.filter(b => b.volume > 0).length > 1 ? [bi, wi] : [-1, -1];
+    }, [viewData]);
+
+    /* ── Totals for the visible range. Unfiltered = backend totals;
+       filtered = recomputed from the selected buckets. ── */
+    const viewTotals = useMemo(() => {
+        if (!isFiltered) return totals;
+        const t = viewData.reduce((a, b) => ({
+            txns: a.txns + b.txns, volume: a.volume + b.volume, msf: a.msf + b.msf,
+            interchange: a.interchange + b.interchange, schemeFee: a.schemeFee + b.schemeFee,
+            ecomFee: a.ecomFee + b.ecomFee, netRevenue: a.netRevenue + b.netRevenue,
+        }), { txns: 0, volume: 0, msf: 0, interchange: 0, schemeFee: 0, ecomFee: 0, netRevenue: 0 });
+        return {
+            ...t,
+            avgTicket: safeDiv(t.volume, t.txns),
+            marginPct: safeDiv(t.netRevenue, t.volume) * 100,
+        };
+    }, [isFiltered, totals, viewData]);
+
+    // Prior-period deltas only make sense for the full period — suppress
+    // the chips while a sub-range filter is active (the baseline no longer
+    // matches the visible window).
+    const dpg = useCallback((cur, prv) => (isFiltered ? null : deltaPct(cur, prv)), [isFiltered]);
+
+    /* ── Derived KPIs (client-side, from existing payload) ── */
+    const derived = useMemo(() => {
+        const totals = viewTotals;
+        if (!totals) return null;
+        const fees = num(totals.interchange) + num(totals.schemeFee) + num(totals.ecomFee);
+        const prevFees = prev ? num(prev.interchange) + num(prev.schemeFee) + num(prev.ecomFee) : null;
+        const msfRate = safeDiv(totals.msf, totals.volume) * 100;                 // blended take rate %
+        const prevMsfRate = prev ? safeDiv(prev.msf, prev.volume) * 100 : null;
+        const costRatio = safeDiv(fees, totals.msf) * 100;                        // % of MSF eaten by fees
+        const prevCostRatio = prev && num(prev.msf) ? safeDiv(prevFees, prev.msf) * 100 : null;
+        const revPerTxn = safeDiv(totals.netRevenue, totals.txns);
+        const prevRevPerTxn = prev ? safeDiv(prev.netRevenue, prev.txns) : null;
+        return {
+            fees, prevFees,
+            msfRate, prevMsfRate,
+            costRatio, prevCostRatio,
+            revPerTxn, prevRevPerTxn,
+        };
+    }, [viewTotals, prev]);
+
+    /* ── Momentum: last two complete (non-partial, volume>0) buckets ── */
+    const momentum = useMemo(() => {
+        const complete = viewData.filter(b => !b.partial && b.volume > 0);
+        if (complete.length < 2) return null;
+        const last = complete[complete.length - 1];
+        const before = complete[complete.length - 2];
+        return { pct: deltaPct(last.volume, before.volume), last: last.label, before: before.label };
+    }, [viewData]);
+
+    const sparks = useMemo(() => ({
+        volume: viewData.map(b => b.volume),
+        netRevenue: viewData.map(b => b.netRevenue),
+        marginPct: viewData.map(b => b.marginPct),
+        txns: viewData.map(b => b.txns),
+    }), [viewData]);
 
     const runRate = data?.mtd?.runRate;
+
+    /* ── CSV export of the visible range (KPIs + bucket rows) ── */
+    const exportCsv = useCallback(() => {
+        const t = viewTotals;
+        if (!t) return;
+        const esc = (v) => {
+            const x = v == null ? '' : String(v);
+            return /[",\n\r]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x;
+        };
+        const lines = [];
+        lines.push(['Executive Summary', mode].map(esc).join(','));
+        lines.push(['Period', (mode === 'MTD' ? data?.mtd?.label : data?.ytd?.label) || ''].map(esc).join(','));
+        if (data?.effectiveDate) lines.push(['Through', data.effectiveDate].map(esc).join(','));
+        if (isFiltered && viewData.length) lines.push(['Filter', `${viewData[0].label} to ${viewData[viewData.length - 1].label}`].map(esc).join(','));
+        lines.push(['Currency', currencySymbol].map(esc).join(','));
+        lines.push('');
+        const heads = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume', 'Avg Ticket',
+            'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
+        lines.push(heads.map(esc).join(','));
+        const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(2), num(b.avgTicket).toFixed(2),
+            num(b.msf).toFixed(2), num(b.interchange).toFixed(2), num(b.schemeFee).toFixed(2),
+            num(b.ecomFee).toFixed(2), num(b.netRevenue).toFixed(2), num(b.marginPct).toFixed(2)]
+            .map(esc).join(',');
+        viewData.forEach(b => lines.push(row(b.label + (b.partial ? ' (partial)' : ''), b)));
+        lines.push(row(`${mode} Total`, t));
+        if (derived) {
+            lines.push('');
+            lines.push(['MSF Rate %', derived.msfRate.toFixed(4)].map(esc).join(','));
+            lines.push(['Total Fees', derived.fees.toFixed(2)].map(esc).join(','));
+            lines.push(['Cost / MSF %', derived.costRatio.toFixed(2)].map(esc).join(','));
+            lines.push(['Revenue / Txn', derived.revPerTxn.toFixed(4)].map(esc).join(','));
+        }
+        const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `executive_summary_${mode.toLowerCase()}_${data?.effectiveDate || 'export'}.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }, [viewTotals, viewData, derived, mode, data, currencySymbol, isFiltered]);
 
     if (loading) return <SkeletonLoader type="dashboard" />;
 
@@ -182,19 +432,30 @@ const Dashboard = () => {
     );
 
     const hasData = totals && num(totals.txns) > 0;
+    const vt = viewTotals || totals;
 
     const TABLE_HEADS = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume',
         'Avg Ticket', 'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
 
+    const maxAbsMargin = Math.max(...viewData.map(b => Math.abs(b.marginPct)), 0.0001);
+
     return (
-        <div style={{ padding: '24px 28px', maxWidth: 1440, margin: '0 auto' }}>
+        <div style={{ padding: '24px 28px', width: '100%' }}>
+            <style>{`
+                .hero-tile:hover { box-shadow: var(--shadow-md, 0 4px 14px rgba(16,24,40,0.09)); transform: translateY(-1px); }
+                @media (prefers-reduced-motion: reduce) { .hero-tile { transition: none; } .hero-tile:hover { transform: none; } }
+                .rail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+                .rail-grid > div + div { border-left: 1px solid var(--border-light, var(--border)); }
+                @media (max-width: 900px) { .rail-grid > div + div { border-left: none; border-top: 1px solid var(--border-light, var(--border)); } }
+                .exec-row:hover { background: var(--bg-hover, rgba(148,163,184,0.05)); }
+            `}</style>
 
             {/* ── Header ── */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 flexWrap: 'wrap', gap: 14, marginBottom: 20 }}>
                 <div>
-                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'var(--text)',
-                        letterSpacing: '-0.01em' }}>
+                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 750, color: 'var(--text)',
+                        letterSpacing: '-0.015em' }}>
                         Executive Summary
                     </h1>
                     <div style={{ marginTop: 5, fontSize: 12.5, color: 'var(--text-secondary)',
@@ -204,10 +465,51 @@ const Dashboard = () => {
                         {data?.effectiveDate ? ` · through ${data.effectiveDate}` : ''}
                         <span style={{ color: 'var(--border)' }}>·</span>
                         settlement currency
+                        {isFiltered && viewData.length > 0 && (
+                            <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700,
+                                color: 'var(--brand, #3b82f6)', background: 'rgba(59,130,246,0.10)',
+                                borderRadius: 999, padding: '2px 9px' }}>
+                                {viewData[0].label} – {viewData[viewData.length - 1].label}
+                            </span>
+                        )}
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    {/* Bucket-range filter (client-side) */}
+                    {chartData.length > 1 && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                            background: 'var(--bg-card)', border: '1px solid var(--border)',
+                            borderRadius: 10, padding: '5px 10px', fontSize: 12.5,
+                            color: 'var(--text-secondary)' }}>
+                            <SlidersHorizontal size={13} />
+                            <select value={fromIdx} aria-label={`From ${mode === 'MTD' ? 'week' : 'month'}`}
+                                onChange={(e) => {
+                                    const f = Number(e.target.value);
+                                    setRange(r => ({ from: f, to: r.to === -1 ? -1 : Math.max(r.to, f) }));
+                                }}
+                                style={selStyle}>
+                                {chartData.map((b, i) => <option key={b.label} value={i}>{b.label}</option>)}
+                            </select>
+                            <span>–</span>
+                            <select value={toIdx} aria-label={`To ${mode === 'MTD' ? 'week' : 'month'}`}
+                                onChange={(e) => {
+                                    const t = Number(e.target.value);
+                                    setRange(r => ({ from: Math.min(r.from, t), to: t }));
+                                }}
+                                style={selStyle}>
+                                {chartData.map((b, i) => <option key={b.label} value={i}>{b.label}</option>)}
+                            </select>
+                            {isFiltered && (
+                                <button onClick={() => setRange({ from: 0, to: -1 })} title="Clear filter"
+                                    style={{ border: 'none', background: 'transparent', cursor: 'pointer',
+                                        display: 'flex', padding: 2, color: 'var(--text-secondary)' }}>
+                                    <X size={13} />
+                                </button>
+                            )}
+                        </div>
+                    )}
+
                     <div style={{ display: 'inline-flex', background: 'var(--bg-card)',
                         border: '1px solid var(--border)', borderRadius: 10, padding: 3 }}>
                         {['MTD', 'YTD'].map(m => (
@@ -220,6 +522,14 @@ const Dashboard = () => {
                             }}>{m}</button>
                         ))}
                     </div>
+                    <button onClick={exportCsv} title="Export CSV (respects filter)" disabled={!hasData} style={{
+                        border: '1px solid var(--border)', background: 'var(--bg-card)',
+                        borderRadius: 10, padding: '7px 14px', cursor: hasData ? 'pointer' : 'not-allowed',
+                        color: 'var(--text)', display: 'inline-flex', alignItems: 'center', gap: 7,
+                        fontSize: 13, fontWeight: 600, opacity: hasData ? 1 : 0.5,
+                    }}>
+                        <Download size={14} /> Export
+                    </button>
                     <button onClick={load} title="Refresh" style={{
                         border: '1px solid var(--border)', background: 'var(--bg-card)',
                         borderRadius: 10, padding: 8, cursor: 'pointer',
@@ -235,126 +545,207 @@ const Dashboard = () => {
                     description="No transactions found for this period yet. Upload data to populate the dashboard." />
             ) : (
                 <>
-                    {/* ── Hero KPI strip (8 tiles) ── */}
-                    <div style={{ display: 'grid', gap: 14, marginBottom: 22,
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-                        <KpiTile label="Volume" icon={BarChart3} accent="#3b82f6"
-                            value={fmt.currency(num(totals.volume))}
-                            fullValue={fullNum(totals.volume, currencySymbol)}
-                            deltaPct={deltaPct(totals.volume, prev?.volume)} compareLabel={compareLabel} />
-                        <KpiTile label="Transactions" icon={Receipt} accent="#8b5cf6"
-                            value={fmt.number(num(totals.txns))}
-                            fullValue={fullNum(totals.txns)}
-                            deltaPct={deltaPct(totals.txns, prev?.txns)} compareLabel={compareLabel} />
-                        <KpiTile label="Avg Ticket" icon={Coins} accent="#06b6d4"
-                            value={fmt.currency(num(totals.avgTicket))}
-                            fullValue={fullNum(totals.avgTicket, currencySymbol)}
-                            deltaPct={deltaPct(totals.avgTicket, prev?.avgTicket)} compareLabel={compareLabel} />
-                        <KpiTile label="MSF" icon={Wallet} accent="#f59e0b"
-                            value={fmt.currency(num(totals.msf))}
-                            fullValue={fullNum(totals.msf, currencySymbol)}
-                            deltaPct={deltaPct(totals.msf, prev?.msf)} compareLabel={compareLabel} />
-                        <KpiTile label="Interchange" icon={ArrowDownRight} accent="#0ea5e9"
-                            value={fmt.currency(num(totals.interchange))}
-                            fullValue={fullNum(totals.interchange, currencySymbol)}
-                            deltaPct={deltaPct(totals.interchange, prev?.interchange)}
-                            compareLabel={`${compareLabel} · lower is better`} invertDelta />
-                        <KpiTile label="Scheme Fee" icon={Layers} accent="#a855f7"
-                            value={fmt.currency(num(totals.schemeFee))}
-                            fullValue={fullNum(totals.schemeFee, currencySymbol)}
-                            deltaPct={deltaPct(totals.schemeFee, prev?.schemeFee)}
-                            compareLabel={`${compareLabel} · lower is better`} invertDelta />
-                        <KpiTile label="ECOM Fee" icon={Globe} accent="#ec4899"
-                            value={fmt.currency(num(totals.ecomFee))}
-                            fullValue={fullNum(totals.ecomFee, currencySymbol)}
-                            deltaPct={deltaPct(totals.ecomFee, prev?.ecomFee)}
-                            compareLabel={`${compareLabel} · lower is better`} invertDelta />
-                        <KpiTile label="Net Revenue" icon={TrendingUp} accent="#10b981"
-                            value={fmt.currency(num(totals.netRevenue))}
-                            fullValue={fullNum(totals.netRevenue, currencySymbol)}
-                            deltaPct={deltaPct(totals.netRevenue, prev?.netRevenue)} compareLabel={compareLabel} />
-                        <KpiTile label="Net Margin" icon={Percent} accent="#ef4444"
-                            value={`${num(totals.marginPct).toFixed(2)}%`}
-                            fullValue={`${num(totals.marginPct).toFixed(4)}% of volume`}
-                            deltaPct={prev && num(prev.marginPct) !== 0
-                                ? num(totals.marginPct) - num(prev.marginPct) : null}
-                            compareLabel={`${compareLabel} (pp change)`} />
+                    {/* ── Primary hero band (4 tiles, sparkline shape) ── */}
+                    <div style={{ display: 'grid', gap: 14, marginBottom: 14,
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
+                        <HeroTile label="Volume" icon={BarChart3} accent="#3b82f6"
+                            value={fmt.currency(num(vt.volume))}
+                            fullValue={fullNum(vt.volume, currencySymbol)}
+                            deltaPct={dpg(vt.volume, prev?.volume)} compareLabel={compareLabel}
+                            spark={sparks.volume}
+                            sub={`${num(vt.txns).toLocaleString()} transactions`} />
+                        <HeroTile label="Net Revenue" icon={TrendingUp} accent="#10b981"
+                            value={fmt.currency(num(vt.netRevenue))}
+                            fullValue={fullNum(vt.netRevenue, currencySymbol)}
+                            deltaPct={dpg(vt.netRevenue, prev?.netRevenue)} compareLabel={compareLabel}
+                            spark={sparks.netRevenue}
+                            sub={derived ? `${fmt.currency(derived.revPerTxn)} per txn` : null} />
+                        <HeroTile label="Net Margin" icon={Percent} accent="#ef4444"
+                            value={`${num(vt.marginPct).toFixed(2)}%`}
+                            fullValue={`${num(vt.marginPct).toFixed(4)}% of volume`}
+                            deltaPct={isFiltered ? null
+                                : (prev && num(prev.marginPct) !== 0
+                                    ? num(vt.marginPct) - num(prev.marginPct) : undefined)}
+                            deltaSuffix="pp" compareLabel={`${compareLabel} (pp change)`}
+                            spark={sparks.marginPct}
+                            sub="net revenue / volume" />
+                        <HeroTile label="Transactions" icon={Receipt} accent="#8b5cf6"
+                            value={fmt.number(num(vt.txns))}
+                            fullValue={fullNum(vt.txns)}
+                            deltaPct={dpg(vt.txns, prev?.txns)} compareLabel={compareLabel}
+                            spark={sparks.txns}
+                            sub={`avg ticket ${fmt.currency(num(vt.avgTicket))}`} />
                     </div>
 
-                    {/* ── MTD run-rate strip ── */}
-                    {mode === 'MTD' && runRate && num(runRate.elapsedDays) > 0 && (
-                        <div style={{
+                    {/* ── Secondary metric rail (fees + derived KPIs) ── */}
+                    {derived && (
+                        <div className="rail-grid" style={{
                             background: 'var(--bg-card)', border: '1px solid var(--border)',
-                            borderRadius: 12, padding: '12px 18px', marginBottom: 22,
-                            display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center',
-                            fontSize: 13, color: 'var(--text-secondary)',
+                            borderRadius: 16, marginBottom: 14, overflow: 'hidden',
+                            boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))',
                         }}>
-                            <span style={{ fontWeight: 600, color: 'var(--text)' }}>
-                                Month run-rate · day {runRate.elapsedDays} of {runRate.daysInMonth}
-                            </span>
-                            <span title={fullNum(runRate.projectedVolume, currencySymbol)}>
-                                Volume tracking to <b style={{ color: 'var(--text)' }}>{fmt.currency(num(runRate.projectedVolume))}</b>
-                            </span>
-                            <span title={fullNum(runRate.projectedNetRevenue, currencySymbol)}>
-                                Net revenue tracking to <b style={{ color: 'var(--text)' }}>{fmt.currency(num(runRate.projectedNetRevenue))}</b>
-                            </span>
-                            <span title={fullNum(runRate.projectedTxns)}>
-                                Txns tracking to <b style={{ color: 'var(--text)' }}>{fmt.number(num(runRate.projectedTxns))}</b>
-                            </span>
+                            <RailMetric label="MSF" icon={Wallet}
+                                value={fmt.currency(num(vt.msf))}
+                                fullValue={fullNum(vt.msf, currencySymbol)}
+                                deltaPct={dpg(vt.msf, prev?.msf)} compareLabel={compareLabel}
+                                hint="Merchant service fee billed" />
+                            <RailMetric label="MSF Rate" icon={Sigma}
+                                value={`${derived.msfRate.toFixed(3)}%`}
+                                fullValue={`${derived.msfRate.toFixed(4)}% of volume (blended take rate)`}
+                                deltaPct={isFiltered ? null
+                                    : (derived.prevMsfRate != null && derived.prevMsfRate !== 0
+                                        ? derived.msfRate - derived.prevMsfRate : undefined)}
+                                compareLabel={`${compareLabel} (pp change)`}
+                                hint="Blended take rate: MSF / volume" />
+                            <RailMetric label="Interchange" icon={ArrowDownRight}
+                                value={fmt.currency(num(vt.interchange))}
+                                fullValue={fullNum(vt.interchange, currencySymbol)}
+                                deltaPct={dpg(vt.interchange, prev?.interchange)}
+                                compareLabel={`${compareLabel} · lower is better`} invertDelta
+                                hint="Paid to issuers" />
+                            <RailMetric label="Scheme Fee" icon={Layers}
+                                value={fmt.currency(num(vt.schemeFee))}
+                                fullValue={fullNum(vt.schemeFee, currencySymbol)}
+                                deltaPct={dpg(vt.schemeFee, prev?.schemeFee)}
+                                compareLabel={`${compareLabel} · lower is better`} invertDelta
+                                hint="Paid to card schemes" />
+                            <RailMetric label="ECOM Fee" icon={Globe}
+                                value={fmt.currency(num(vt.ecomFee))}
+                                fullValue={fullNum(vt.ecomFee, currencySymbol)}
+                                deltaPct={dpg(vt.ecomFee, prev?.ecomFee)}
+                                compareLabel={`${compareLabel} · lower is better`} invertDelta
+                                hint="E-commerce gateway fees" />
+                            <RailMetric label="Total Fees" icon={Scale}
+                                value={fmt.currency(derived.fees)}
+                                fullValue={fullNum(derived.fees, currencySymbol)}
+                                deltaPct={isFiltered ? null
+                                    : (derived.prevFees ? deltaPct(derived.fees, derived.prevFees) : undefined)}
+                                compareLabel={`${compareLabel} · lower is better`} invertDelta
+                                hint="Interchange + scheme + ECOM" />
+                            <RailMetric label="Cost / MSF" icon={Divide}
+                                value={`${derived.costRatio.toFixed(1)}%`}
+                                fullValue={`${derived.costRatio.toFixed(2)}% of MSF consumed by scheme costs`}
+                                deltaPct={isFiltered ? null
+                                    : (derived.prevCostRatio != null
+                                        ? derived.costRatio - derived.prevCostRatio : undefined)}
+                                compareLabel={`${compareLabel} (pp change) · lower is better`} invertDelta
+                                hint="Share of MSF consumed by fees" />
+                            <RailMetric label="Rev / Txn" icon={Coins}
+                                value={fmt.currency(derived.revPerTxn)}
+                                fullValue={fullNum(derived.revPerTxn, currencySymbol) + ' net revenue per transaction'}
+                                deltaPct={isFiltered ? null
+                                    : (derived.prevRevPerTxn ? deltaPct(derived.revPerTxn, derived.prevRevPerTxn) : undefined)}
+                                compareLabel={compareLabel}
+                                hint="Net revenue per transaction" />
                         </div>
                     )}
 
-                    {/* ── Breakdown chart ── */}
-                    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)',
-                        borderRadius: 14, padding: '18px 18px 8px', marginBottom: 22,
-                        boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))' }}>
-                        <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>
-                            {mode === 'MTD' ? 'Week-by-week' : 'Month-by-month'}
-                            <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}> · Volume vs Net Margin %</span>
+                    {/* ── Insight strip ── */}
+                    {(bestIdx >= 0 || momentum || (mode === 'MTD' && runRate && num(runRate.elapsedDays) > 0)) && (
+                        <div style={{ display: 'grid', gap: 10, marginBottom: 22,
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                            {bestIdx >= 0 && (
+                                <InsightPill icon={Award} tone="good" title="Best margin"
+                                    value={`${viewData[bestIdx].label} · ${viewData[bestIdx].marginPct.toFixed(2)}%`} />
+                            )}
+                            {worstIdx >= 0 && worstIdx !== bestIdx && (
+                                <InsightPill icon={AlertTriangle} tone="bad" title="Weakest margin"
+                                    value={`${viewData[worstIdx].label} · ${viewData[worstIdx].marginPct.toFixed(2)}%`} />
+                            )}
+                            {momentum && momentum.pct != null && (
+                                <InsightPill icon={Zap} tone={momentum.pct >= 0 ? 'good' : 'bad'}
+                                    title={`Momentum · ${momentum.before} → ${momentum.last}`}
+                                    value={`${momentum.pct >= 0 ? '+' : ''}${momentum.pct.toFixed(1)}% volume`} />
+                            )}
+                            {mode === 'MTD' && runRate && num(runRate.elapsedDays) > 0 && (
+                                <InsightPill icon={CalendarRange} tone="info"
+                                    title={`Run-rate · day ${runRate.elapsedDays}/${runRate.daysInMonth}`}
+                                    value={`${fmt.currency(num(runRate.projectedVolume))} vol · ${fmt.currency(num(runRate.projectedNetRevenue))} rev`} />
+                            )}
                         </div>
-                        <ResponsiveContainer width="100%" height={300}>
-                            <ComposedChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                                <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
-                                <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
-                                    axisLine={false} tickLine={false} />
-                                <YAxis yAxisId="vol" tickFormatter={(v) => fmt.number(v)}
-                                    tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                    axisLine={false} tickLine={false} width={56} />
-                                <YAxis yAxisId="pct" orientation="right"
-                                    tickFormatter={(v) => `${v.toFixed(1)}%`}
-                                    tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                    axisLine={false} tickLine={false} width={50} />
-                                <ReTooltip content={<BucketTooltip fmt={fmt} />}
-                                    cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
-                                <Bar yAxisId="vol" dataKey="volume" name="Volume"
-                                    radius={[6, 6, 0, 0]} maxBarSize={52}>
-                                    {chartData.map((b, i) => (
-                                        <Cell key={i} fill="#3b82f6"
-                                            fillOpacity={b.partial ? 0.4 : 0.82} />
-                                    ))}
-                                </Bar>
-                                <Line yAxisId="pct" type="monotone" dataKey="marginPct" name="Net Margin %"
-                                    stroke="#10b981" strokeWidth={2.2}
-                                    dot={{ r: 3.5, strokeWidth: 0, fill: '#10b981' }} />
-                                {mode === 'MTD' && runRate && num(runRate.projectedVolume) > 0 && (
-                                    <ReferenceLine yAxisId="vol"
-                                        y={num(runRate.projectedVolume) / Math.max(chartData.length, 1)}
-                                        stroke="#94a3b8" strokeDasharray="5 4"
-                                        label={{ value: 'avg pace', position: 'insideTopRight',
-                                            fontSize: 10, fill: 'var(--text-secondary)' }} />
-                                )}
-                            </ComposedChart>
-                        </ResponsiveContainer>
-                        {mode === 'MTD' && chartData.some(b => b.partial) && (
-                            <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', padding: '4px 2px 8px' }}>
-                                Lighter bar = week in progress.
-                            </div>
-                        )}
+                    )}
+
+                    {/* ── Charts row ── */}
+                    <div style={{ display: 'grid', gap: 14, marginBottom: 22,
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))' }}>
+                        <ChartCard
+                            title={mode === 'MTD' ? 'Week-by-week' : 'Month-by-month'}
+                            subtitle="Volume vs Net Margin %"
+                            footer={mode === 'MTD' && viewData.some(b => b.partial) && (
+                                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', padding: '4px 2px 8px' }}>
+                                    Lighter bar = week in progress.
+                                </div>
+                            )}>
+                            <ResponsiveContainer width="100%" height={280}>
+                                <ComposedChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                                    <defs>
+                                        <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.95} />
+                                            <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.55} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
+                                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} />
+                                    <YAxis yAxisId="vol" tickFormatter={(v) => fmt.number(v)}
+                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} width={56} />
+                                    <YAxis yAxisId="pct" orientation="right"
+                                        tickFormatter={(v) => `${v.toFixed(1)}%`}
+                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} width={50} />
+                                    <ReTooltip content={<BucketTooltip fmt={fmt} />}
+                                        cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
+                                    <Bar yAxisId="vol" dataKey="volume" name="Volume"
+                                        radius={[6, 6, 0, 0]} maxBarSize={44}>
+                                        {viewData.map((b, i) => (
+                                            <Cell key={i} fill="url(#volGrad)"
+                                                fillOpacity={b.partial ? 0.45 : 1} />
+                                        ))}
+                                    </Bar>
+                                    <Line yAxisId="pct" type="monotone" dataKey="marginPct" name="Net Margin %"
+                                        stroke="#10b981" strokeWidth={2.2}
+                                        dot={{ r: 3.5, strokeWidth: 0, fill: '#10b981' }} />
+                                    {mode === 'MTD' && runRate && num(runRate.projectedVolume) > 0 && (
+                                        <ReferenceLine yAxisId="vol"
+                                            y={num(runRate.projectedVolume) / Math.max(viewData.length, 1)}
+                                            stroke="#94a3b8" strokeDasharray="5 4"
+                                            label={{ value: 'avg pace', position: 'insideTopRight',
+                                                fontSize: 10, fill: 'var(--text-secondary)' }} />
+                                    )}
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </ChartCard>
+
+                        <ChartCard title="Revenue composition"
+                            subtitle="Where each period's MSF goes">
+                            <ResponsiveContainer width="100%" height={280}>
+                                <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
+                                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} />
+                                    <YAxis tickFormatter={(v) => fmt.number(v)}
+                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} width={56} />
+                                    <ReTooltip content={<CompositionTooltip fmt={fmt} />}
+                                        cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
+                                    <Legend wrapperStyle={{ fontSize: 11.5 }} iconType="circle" iconSize={8} />
+                                    <Bar dataKey="netRevenue" name="Net Revenue" stackId="c"
+                                        fill="#10b981" maxBarSize={44} />
+                                    <Bar dataKey="interchange" name="Interchange" stackId="c"
+                                        fill="#94a3b8" maxBarSize={44} />
+                                    <Bar dataKey="schemeFee" name="Scheme Fee" stackId="c"
+                                        fill="#c4b5fd" maxBarSize={44} />
+                                    <Bar dataKey="ecomFee" name="ECOM Fee" stackId="c"
+                                        fill="#f9a8d4" maxBarSize={44} radius={[6, 6, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </ChartCard>
                     </div>
 
                     {/* ── Breakdown table ── */}
                     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)',
-                        borderRadius: 14, overflow: 'hidden',
+                        borderRadius: 16, overflow: 'hidden',
                         boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))' }}>
                         <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -371,11 +762,12 @@ const Dashboard = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {chartData.map((b, i) => {
+                                    {viewData.map((b, i) => {
                                         const tint = i === bestIdx ? 'rgba(5,150,105,0.06)'
                                             : i === worstIdx ? 'rgba(220,38,38,0.05)' : 'transparent';
+                                        const marginW = Math.min(Math.abs(b.marginPct) / maxAbsMargin, 1) * 100;
                                         return (
-                                            <tr key={b.label} style={{
+                                            <tr key={b.label} className="exec-row" style={{
                                                 borderBottom: '1px solid var(--border)', background: tint,
                                             }}>
                                                 <td style={{ padding: '11px 16px', fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap' }}>
@@ -403,26 +795,36 @@ const Dashboard = () => {
                                                     title={fullNum(b.netRevenue, currencySymbol)}>{fmt.currency(b.netRevenue)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 700,
                                                     color: b.marginPct >= 0 ? '#059669' : '#dc2626' }}>
-                                                    {b.marginPct.toFixed(2)}%
+                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+                                                        <span style={{ width: 44, height: 4, borderRadius: 999,
+                                                            background: 'var(--bg-subtle, rgba(148,163,184,0.18))',
+                                                            overflow: 'hidden', display: 'inline-block' }}>
+                                                            <span style={{ display: 'block', height: '100%',
+                                                                width: `${marginW}%`, borderRadius: 999,
+                                                                background: b.marginPct >= 0 ? '#10b981' : '#ef4444' }} />
+                                                        </span>
+                                                        {b.marginPct.toFixed(2)}%
+                                                    </span>
                                                 </td>
                                             </tr>
                                         );
                                     })}
-                                    <tr style={{ background: 'var(--bg-hover, rgba(148,163,184,0.06))' }}>
+                                    <tr style={{ background: 'var(--bg-hover, rgba(148,163,184,0.06))',
+                                        borderTop: '2px solid var(--border)' }}>
                                         <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--text)' }}>
-                                            {mode} Total
+                                            {mode} Total{isFiltered ? ' (filtered)' : ''}
                                         </td>
-                                        <td style={tdTotal} title={fullNum(totals.txns)}>{num(totals.txns).toLocaleString()}</td>
-                                        <td style={tdTotal} title={fullNum(totals.volume, currencySymbol)}>{fmt.currency(num(totals.volume))}</td>
-                                        <td style={tdTotal} title={fullNum(totals.avgTicket, currencySymbol)}>{fmt.currency(num(totals.avgTicket))}</td>
-                                        <td style={tdTotal} title={fullNum(totals.msf, currencySymbol)}>{fmt.currency(num(totals.msf))}</td>
-                                        <td style={tdTotal} title={fullNum(totals.interchange, currencySymbol)}>{fmt.currency(num(totals.interchange))}</td>
-                                        <td style={tdTotal} title={fullNum(totals.schemeFee, currencySymbol)}>{fmt.currency(num(totals.schemeFee))}</td>
-                                        <td style={tdTotal} title={fullNum(totals.ecomFee, currencySymbol)}>{fmt.currency(num(totals.ecomFee))}</td>
-                                        <td style={tdTotal} title={fullNum(totals.netRevenue, currencySymbol)}>{fmt.currency(num(totals.netRevenue))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.txns)}>{num(vt.txns).toLocaleString()}</td>
+                                        <td style={tdTotal} title={fullNum(vt.volume, currencySymbol)}>{fmt.currency(num(vt.volume))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.avgTicket, currencySymbol)}>{fmt.currency(num(vt.avgTicket))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.msf, currencySymbol)}>{fmt.currency(num(vt.msf))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.interchange, currencySymbol)}>{fmt.currency(num(vt.interchange))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.schemeFee, currencySymbol)}>{fmt.currency(num(vt.schemeFee))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.currency(num(vt.ecomFee))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.currency(num(vt.netRevenue))}</td>
                                         <td style={{ ...tdTotal,
-                                            color: num(totals.marginPct) >= 0 ? '#059669' : '#dc2626' }}>
-                                            {num(totals.marginPct).toFixed(2)}%
+                                            color: num(vt.marginPct) >= 0 ? '#059669' : '#dc2626' }}>
+                                            {num(vt.marginPct).toFixed(2)}%
                                         </td>
                                     </tr>
                                 </tbody>
@@ -438,6 +840,11 @@ const Dashboard = () => {
 const tdNum = {
     padding: '11px 16px', textAlign: 'right', color: 'var(--text)',
     fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+};
+const selStyle = {
+    border: 'none', background: 'transparent', color: 'var(--text)',
+    fontSize: 12.5, fontWeight: 600, cursor: 'pointer', outline: 'none',
+    padding: '2px 0',
 };
 const tdTotal = { ...tdNum, fontWeight: 700 };
 

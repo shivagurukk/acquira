@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Box, Paper, Typography, Stack, IconButton, Chip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
-import { ChevronRight, ChevronDown, TrendingUp, Layers, DollarSign, Hash, CreditCard } from 'lucide-react';
+import { ChevronRight, ChevronDown, TrendingUp, Layers, DollarSign, Hash, CreditCard, Users, Percent, Receipt, Monitor, Globe } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
@@ -32,7 +32,7 @@ const formatMonth = (dateStr) => {
 };
 
 const TransactionPerformanceDashboard = () => {
-    const { tenantVersion } = useAuth();
+    const { tenantVersion, currencySymbol } = useAuth();
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
@@ -49,6 +49,10 @@ const TransactionPerformanceDashboard = () => {
         return { datePreset: 'YEAR', startDate: fmt(new Date(now.getFullYear(), 0, 1)), endDate: fmt(now) };
     });
     const [expanded, setExpanded] = useState({});
+    // Single-row KPI totals from the backend TOTAL grain (whole filtered range).
+    // Needed because Active Merchants (COUNT DISTINCT) and POS/ECOM splits
+    // cannot be derived from the monthly rows.
+    const [kpiTotals, setKpiTotals] = useState(null);
 
     const fetchApiData = async (groupBy, parentValue, grandParentValue) => {
         const token = localStorage.getItem('token');
@@ -92,12 +96,18 @@ const TransactionPerformanceDashboard = () => {
     const loadInitialData = async () => {
         setLoading(true);
         try {
-            const data = await fetchApiData('MONTH', null, null);
+            // TOTAL grain fetched in parallel; .catch keeps the grid alive if the
+            // backend predates the TOTAL branch (tiles fall back to month sums).
+            const [data, totalData] = await Promise.all([
+                fetchApiData('MONTH', null, null),
+                fetchApiData('TOTAL', null, null).catch(() => []),
+            ]);
             const formatedRows = data.map((d, i) => ({
                 id: `MONTH-${d.row_label}`, level: 0, groupKey: 'MONTH',
                 label: formatMonth(d.row_label), rawValue: d.row_label, ...d
             }));
             setRows(formatedRows);
+            setKpiTotals(Array.isArray(totalData) && totalData.length ? totalData[0] : null);
             setExpanded({});
         } catch (error) { console.error(error); }
         finally { setLoading(false); }
@@ -148,21 +158,36 @@ const TransactionPerformanceDashboard = () => {
         }
     };
 
-    // KPI from top-level rows
+    // KPI tiles. Volume/MSF/count come from the TOTAL grain when available
+    // (falls back to summing top-level month rows — bucket counts are an
+    // exhaustive partition, so their sum IS total transactions). Active
+    // Merchants and POS/ECOM exist only on the TOTAL grain.
     const kpis = useMemo(() => {
         const topRows = rows.filter(r => r.level === 0);
-        if (!topRows.length) return [];
-        const totalVol = topRows.reduce((s, r) => s + (r.total_vol || 0), 0);
-        const totalDebit = topRows.reduce((s, r) => s + (r.dom_debit_vol || 0), 0);
-        const totalCredit = topRows.reduce((s, r) => s + (r.dom_credit_vol || 0), 0);
-        const totalIntl = topRows.reduce((s, r) => s + (r.int_vol || 0), 0);
+        if (!topRows.length && !kpiTotals) return [];
+        const sumTop = (fn) => topRows.reduce((s, r) => s + (fn(r) || 0), 0);
+        const totalVol = kpiTotals ? Number(kpiTotals.total_vol || 0) : sumTop(r => r.total_vol);
+        const totalMsf = kpiTotals ? Number(kpiTotals.total_msf || 0) : sumTop(r => r.total_msf);
+        const totalCnt = kpiTotals ? Number(kpiTotals.total_cnt || 0)
+            : sumTop(r => (r.dom_debit_cnt || 0) + (r.dom_credit_cnt || 0) + (r.int_cnt || 0));
+        const activeMerchants = kpiTotals ? Number(kpiTotals.active_merchants || 0) : null;
+        const posVol = kpiTotals ? Number(kpiTotals.pos_vol || 0) : null;
+        const ecomVol = kpiTotals ? Number(kpiTotals.ecom_vol || 0) : null;
+        // Ratio guards: refund-heavy windows can make totals zero/negative —
+        // show an em dash rather than Infinity / a nonsense negative rate.
+        const avgTicket = totalCnt > 0 && totalVol > 0 ? totalVol / totalCnt : null;
+        const takeRate = totalVol > 0 ? (totalMsf / totalVol) * 100 : null;
         return [
-            { title: 'Total Volume', value: `AED ${formatCompact(totalVol)}`, icon: TrendingUp, color: '#6366f1', sparkData: topRows.slice().reverse().map(r => r.total_vol || 0) },
-            { title: 'Domestic Debit', value: `AED ${formatCompact(totalDebit)}`, icon: CreditCard, color: '#3b82f6', subtitle: `${totalVol > 0 ? ((totalDebit / totalVol) * 100).toFixed(1) : 0}% of total` },
-            { title: 'Domestic Credit', value: `AED ${formatCompact(totalCredit)}`, icon: DollarSign, color: '#10b981', subtitle: `${totalVol > 0 ? ((totalCredit / totalVol) * 100).toFixed(1) : 0}% of total` },
-            { title: 'International', value: `AED ${formatCompact(totalIntl)}`, icon: Layers, color: '#f59e0b', subtitle: `${totalVol > 0 ? ((totalIntl / totalVol) * 100).toFixed(1) : 0}% of total` },
+            { title: 'Total Volume', value: `${currencySymbol} ${formatCompact(totalVol)}`, icon: TrendingUp, color: '#6366f1', subtitle: 'Total processed amount', sparkData: topRows.slice().reverse().map(r => r.total_vol || 0) },
+            { title: 'Total Transactions', value: formatNumber(totalCnt), icon: Hash, color: '#3b82f6', subtitle: 'Total transaction count' },
+            { title: 'Total MSF', value: `${currencySymbol} ${formatCompact(totalMsf)}`, icon: DollarSign, color: '#10b981', subtitle: 'Merchant service fee revenue' },
+            { title: 'Average Ticket', value: avgTicket !== null ? `${currencySymbol} ${formatCurrency(avgTicket)}` : '—', icon: Receipt, color: '#8b5cf6', subtitle: 'Volume ÷ transactions' },
+            { title: 'Take Rate', value: takeRate !== null ? `${takeRate.toFixed(2)}%` : '—', icon: Percent, color: '#f59e0b', subtitle: 'MSF ÷ volume' },
+            { title: 'Active Merchants', value: activeMerchants !== null ? formatNumber(activeMerchants) : '—', icon: Users, color: '#06b6d4', subtitle: 'With transactions in period' },
+            { title: 'POS Volume', value: posVol !== null ? `${currencySymbol} ${formatCompact(posVol)}` : '—', icon: Monitor, color: '#0ea5e9', subtitle: posVol !== null ? `${pctOfTotal(posVol, totalVol)} of total · terminal-based` : 'Terminal-based volume' },
+            { title: 'ECOM Volume', value: ecomVol !== null ? `${currencySymbol} ${formatCompact(ecomVol)}` : '—', icon: Globe, color: '#ec4899', subtitle: ecomVol !== null ? `${pctOfTotal(ecomVol, totalVol)} of total · online` : 'Online volume' },
         ];
-    }, [rows]);
+    }, [rows, kpiTotals, currencySymbol]);
 
     const columns = [
         {
@@ -222,7 +247,7 @@ const TransactionPerformanceDashboard = () => {
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
             <BusinessFilters filters={filters} onChange={setFilters} onApply={loadInitialData} isOpen={showFilters} onClose={() => setShowFilters(false)} />
-            {loading ? <SkeletonLoader variant="kpi-row" count={4} /> : <KpiCards cards={kpis} />}
+            {loading ? <SkeletonLoader variant="kpi-row" count={8} /> : <KpiCards cards={kpis} />}
             <Paper sx={{
                 ...premiumTableWrapper,
                 '& .super-header-debit': { bgcolor: '#eff6ff', color: '#1e40af', fontWeight: '700' },

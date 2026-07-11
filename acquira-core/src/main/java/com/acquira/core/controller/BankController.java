@@ -16,10 +16,13 @@ public class BankController {
 
     private final TenantRepository tenantRepository;
     private final TenantService tenantService;
+    private final com.acquira.core.service.TenantProvisioningService provisioningService;
 
-    public BankController(TenantRepository tenantRepository, TenantService tenantService) {
+    public BankController(TenantRepository tenantRepository, TenantService tenantService,
+            com.acquira.core.service.TenantProvisioningService provisioningService) {
         this.tenantRepository = tenantRepository;
         this.tenantService = tenantService;
+        this.provisioningService = provisioningService;
     }
 
     @GetMapping
@@ -60,7 +63,20 @@ public class BankController {
         if (tenant.getInstitutionId() == null) {
             tenant.setInstitutionId("BANK-" + System.currentTimeMillis());
         }
-        return ResponseEntity.ok(tenantRepository.save(tenant));
+        Tenant saved = tenantRepository.save(tenant);
+        // Auto-provision: run the super-admin-managed setup scripts for the new
+        // tenant (settings defaults, default sales leads, email templates, ...).
+        // Failures never abort tenant creation — the provisioning log is the
+        // record; scripts can be re-run from Admin > Tenant Provisioning.
+        try {
+            org.springframework.security.core.Authentication a =
+                    SecurityContextHolder.getContext().getAuthentication();
+            provisioningService.provision(saved.getTenantId(), a != null ? a.getName() : "system");
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(BankController.class)
+                    .error("Tenant provisioning failed for tenant {}: {}", saved.getTenantId(), e.getMessage());
+        }
+        return ResponseEntity.ok(saved);
     }
 
     @PutMapping("/{id}")

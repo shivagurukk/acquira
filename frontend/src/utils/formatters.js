@@ -9,6 +9,59 @@ let DEFAULT_CCY = 'AED';
 export const setDefaultCurrency = (code) => { if (code) DEFAULT_CCY = code; };
 export const getDefaultCurrency = () => DEFAULT_CCY;
 
+// ── Per-tenant locale (date format + timezone) ─────────────────────────
+// Mirrors the currency pattern above: AuthContext fetches GET /users/me/locale
+// (tenant_setting keys locale.date_format / locale.timezone) on login and on
+// tenant switch and pushes the values here, so every formatter renders dates
+// the way the active bank expects, app-wide, with zero per-caller wiring.
+let DEFAULT_DATE_FORMAT = 'DD/MM/YYYY';   // DD/MM/YYYY | MM/DD/YYYY | YYYY-MM-DD | DD-MMM-YYYY
+let DEFAULT_TIMEZONE = '';                // IANA id (e.g. Asia/Bahrain); '' = browser zone
+export const setDefaultLocale = ({ dateFormat, timezone } = {}) => {
+    if (dateFormat) DEFAULT_DATE_FORMAT = dateFormat;
+    if (timezone !== undefined) DEFAULT_TIMEZONE = timezone || '';
+};
+export const getDefaultLocale = () => ({ dateFormat: DEFAULT_DATE_FORMAT, timezone: DEFAULT_TIMEZONE });
+
+const tzOpts = () => (DEFAULT_TIMEZONE ? { timeZone: DEFAULT_TIMEZONE } : {});
+
+/**
+ * Full date in the tenant's configured format (and timezone, if set).
+ *   DD/MM/YYYY → 15/09/2025    MM/DD/YYYY → 09/15/2025
+ *   YYYY-MM-DD → 2025-09-15    DD-MMM-YYYY → 15-Sep-2025
+ * Invalid input is returned untouched (matches fmt.date's forgiving behavior).
+ */
+export const formatDate = (d) => {
+    try {
+        const dt = new Date(d);
+        if (isNaN(dt.getTime())) return d;
+        const parts = new Intl.DateTimeFormat('en-GB',
+            { day: '2-digit', month: '2-digit', year: 'numeric', ...tzOpts() })
+            .formatToParts(dt)
+            .reduce((acc, p) => (acc[p.type] = p.value, acc), {});
+        const mon = new Intl.DateTimeFormat('en-US', { month: 'short', ...tzOpts() }).format(dt);
+        switch (DEFAULT_DATE_FORMAT) {
+            case 'MM/DD/YYYY':  return `${parts.month}/${parts.day}/${parts.year}`;
+            case 'YYYY-MM-DD':  return `${parts.year}-${parts.month}-${parts.day}`;
+            case 'DD-MMM-YYYY': return `${parts.day}-${mon}-${parts.year}`;
+            case 'DD/MM/YYYY':
+            default:            return `${parts.day}/${parts.month}/${parts.year}`;
+        }
+    } catch { return d; }
+};
+
+/**
+ * Date-time in the tenant's format + timezone (24h clock).
+ */
+export const formatDateTime = (d) => {
+    try {
+        const dt = new Date(d);
+        if (isNaN(dt.getTime())) return d;
+        const time = new Intl.DateTimeFormat('en-GB',
+            { hour: '2-digit', minute: '2-digit', hour12: false, ...tzOpts() }).format(dt);
+        return `${formatDate(d)} ${time}`;
+    } catch { return d; }
+};
+
 /**
  * Format a number as currency (defaults to the active tenant's currency).
  * @param {number} val
@@ -73,7 +126,15 @@ export const createFmt = (sym = DEFAULT_CCY) => ({
     },
     date: (d) => {
         try {
-            return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            // Short axis/tile form ("Sep 15") — honors the tenant timezone; the
+            // month-first vs day-first order follows the tenant date format.
+            const dt = new Date(d);
+            if (isNaN(dt.getTime())) return d;
+            const opts = { month: 'short', day: 'numeric', ...tzOpts() };
+            const useDayFirst = DEFAULT_DATE_FORMAT.startsWith('DD');
+            return dt.toLocaleDateString(useDayFirst ? 'en-GB' : 'en-US', opts);
         } catch { return d; }
     },
+    /** Full date in the tenant's configured format — see formatDate(). */
+    fullDate: (d) => formatDate(d),
 });

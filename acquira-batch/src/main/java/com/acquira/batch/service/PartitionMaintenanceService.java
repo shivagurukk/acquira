@@ -10,6 +10,24 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.util.List;
 
+/**
+ * Ensures partitions exist ahead of ingestion.
+ *
+ * Two partitioning strategies are supported, auto-detected per parent table
+ * from pg_partitioned_table.partstrat:
+ *
+ *  'r' (RANGE — legacy):  shared date partitions, e.g. fact_transaction_y2026m07.
+ *  'l' (LIST — tenant-wise, post REBUILD_TENANT_LIST_PARTITIONING.sql):
+ *       one LIST partition per tenant, each RANGE-sub-partitioned by date:
+ *       fact_transaction_t{tid} -> fact_transaction_t{tid}_y2026m07.
+ *       Creation is delegated to the DB function ensure_tenant_partitions()
+ *       (single source of truth, shared with the 'tenant-partitions'
+ *       provisioning script) — this service just loops tenants per year.
+ *
+ * The strategy check means this class is deploy-order-safe: it behaves
+ * exactly as before until the psql-only rebuild script has been run, then
+ * switches to tenant-wise automatically.
+ */
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -17,12 +35,16 @@ public class PartitionMaintenanceService {
 
     private final JdbcTemplate jdbcTemplate;
 
-    // PERF: cache of years for which we've already verified partitions exist.
-    // ensurePartitionsForCurrentAndNextYear() previously did ~40 EXISTS queries
-    // against RDS on every single upload (10+ seconds wasted). Now it does that
-    // work once per JVM lifetime per year. If a partition gets dropped externally
-    // the app will need a restart — acceptable trade-off for the perf win.
-    private final java.util.Set<Integer> verifiedYears = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    // PERF: cache of "year verified" (legacy) / "tenant+year verified"
+    // (tenant-wise) so uploads after the first don't re-check ~40 partitions
+    // against RDS. If a partition is dropped externally, restart the app.
+    private final java.util.Set<String> verifiedKeys = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    // PERF: strategy detection cached per JVM. The LIST rebuild is a psql-only
+    // exclusive-lock script and is always accompanied by an app restart, so a
+    // per-JVM cache is safe (same stance as verifiedKeys: restart if changed
+    // externally). Keeps subsequent-upload cost at zero DB round-trips.
+    private volatile Boolean tenantListPartitionedCache;
 
     private static final List<String> MONTHLY_PARTITIONED_TABLES = List.of(
             "fact_transaction");
@@ -30,27 +52,24 @@ public class PartitionMaintenanceService {
     private static final List<String> YEARLY_PARTITIONED_TABLES = List.of(
             "sum_daily_merchant",
             "sum_daily_merchant_attribute",
+            "sum_daily_merchant_destination",
             "sum_daily_terminal",
             "sum_daily_scheme",
             "sum_daily_channel",
             "sum_daily_bank",
             "sum_daily_finance",
-            "sum_daily_insight");
-    // NOTE: merchant_daily_metrics was REMOVED — it is NOT a partitioned table.
-    // Attempting CREATE TABLE ... PARTITION OF on a non-partitioned table causes
-    // PostgreSQL error: "merchant_daily_metrics" is not partitioned
-    // which poisons the entire transaction (PostgreSQL aborts all subsequent commands).
+            "sum_daily_insight",
+            "sum_daily_full",
+            "sum_daily_explorer");
+    // NOTE: merchant_daily_metrics is NOT partitioned — never add it here.
 
     private static final java.util.Map<String, String> PARTITION_PREFIX_OVERRIDES = java.util.Map.of(
             "sum_daily_merchant_attribute", "sum_daily_merch_attr");
 
     /**
      * Ensure partitions exist for current year and next year.
-     * NOT @Transactional — each partition is created in its own transaction
-     * so that a failure in one doesn't poison the rest (PostgreSQL behavior).
-     *
-     * PERF: skips work for years already verified in this JVM. Saves ~40
-     * RDS round-trips (~10s) on every upload after the first.
+     * NOT @Transactional — each creation runs in its own transaction so one
+     * failure can't poison the rest (PostgreSQL aborted-transaction cascade).
      */
     public void ensurePartitionsForCurrentAndNextYear() {
         int currentYear = LocalDate.now().getYear();
@@ -59,14 +78,76 @@ public class PartitionMaintenanceService {
     }
 
     public void ensurePartitionsForYear(int year) {
-        if (verifiedYears.contains(year)) {
+        if (isTenantListPartitioned("fact_transaction")) {
+            ensureTenantWisePartitionsForYear(year);
+        } else {
+            ensureLegacyPartitionsForYear(year);
+        }
+    }
+
+    // ─── Tenant-wise (LIST -> RANGE) path ────────────────────────────────────
+
+    /**
+     * One ensure_tenant_partitions(tid, year, year) call per tenant per
+     * unverified (tenant, year) pair. New tenants created mid-JVM are covered
+     * both here (tenant list re-read on every uncached call) and by the
+     * 'tenant-partitions' provisioning script at creation time.
+     */
+    private void ensureTenantWisePartitionsForYear(int year) {
+        List<Long> tenantIds = jdbcTemplate.queryForList(
+                "SELECT tenant_id FROM tenant ORDER BY tenant_id", Long.class);
+        for (Long tid : tenantIds) {
+            String key = "t" + tid + ":y" + year;
+            if (verifiedKeys.contains(key)) continue;
+            try {
+                ensureTenantPartitions(tid, year);
+                verifiedKeys.add(key);
+            } catch (Exception e) {
+                log.warn("ensure_tenant_partitions failed for tenant {} year {}: {}",
+                        tid, year, e.getMessage());
+            }
+        }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void ensureTenantPartitions(Long tenantId, int year) {
+        jdbcTemplate.execute(String.format(
+                "SELECT ensure_tenant_partitions(%d, %d, %d)", tenantId, year, year));
+        log.info("Verified tenant-wise partitions for tenant {} year {}", tenantId, year);
+    }
+
+    private boolean isTenantListPartitioned(String table) {
+        Boolean cached = tenantListPartitionedCache;
+        if (cached != null) return cached;
+        try {
+            Boolean isList = jdbcTemplate.queryForObject(
+                    "SELECT EXISTS (SELECT 1 FROM pg_partitioned_table pt "
+                            + "JOIN pg_class c ON c.oid = pt.partrelid "
+                            + "WHERE c.relname = ? AND pt.partstrat = 'l')",
+                    Boolean.class, table);
+            boolean result = Boolean.TRUE.equals(isList);
+            tenantListPartitionedCache = result;
+            return result;
+        } catch (Exception e) {
+            // NOT cached — a transient failure shouldn't pin us to legacy for
+            // the JVM lifetime; next call re-detects.
+            log.warn("Partition strategy check failed for {} — assuming legacy: {}", table, e.getMessage());
+            return false;
+        }
+    }
+
+    // ─── Legacy (shared RANGE) path — unchanged behavior ────────────────────
+
+    private void ensureLegacyPartitionsForYear(int year) {
+        String key = "legacy:y" + year;
+        if (verifiedKeys.contains(key)) {
             log.debug("Partitions for year {} already verified this session, skipping", year);
             return;
         }
-        log.info("Checking partitions for year: {}", year);
+        log.info("Checking (legacy shared) partitions for year: {}", year);
         ensureMonthlyPartitions(year);
         ensureYearlyPartitions(year);
-        verifiedYears.add(year);
+        verifiedKeys.add(key);
     }
 
     private void ensureMonthlyPartitions(int year) {
@@ -92,10 +173,8 @@ public class PartitionMaintenanceService {
     }
 
     /**
-     * Each partition creation runs in its own NEW transaction.
-     * This prevents PostgreSQL's "current transaction is aborted" cascade —
-     * if one CREATE PARTITION fails, it only rolls back that single attempt
-     * and other partitions can still be created successfully.
+     * Each partition creation runs in its own NEW transaction so a single
+     * failure rolls back only that attempt.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void createPartitionIfNotExists(String table, String suffix, LocalDate start, LocalDate end) {
@@ -103,7 +182,6 @@ public class PartitionMaintenanceService {
         String partitionName = prefix + suffix;
 
         try {
-            // Check existence
             Boolean exists = jdbcTemplate.queryForObject(
                     "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE tablename = ?)",
                     Boolean.class, partitionName.toLowerCase());
@@ -119,31 +197,15 @@ public class PartitionMaintenanceService {
         } catch (Exception e) {
             log.warn("Partition {} skipped (table '{}' may not be partitioned): {}",
                     partitionName, table, e.getMessage());
-            // Exception propagates to roll back THIS transaction only (REQUIRES_NEW)
-            // Other partition creations continue in their own transactions
         }
     }
 
     /**
-     * Apply per-partition autovacuum / storage settings right after a partition
-     * is created. Parent-table reloptions do NOT cascade to partitions in
-     * PostgreSQL, so each new partition would otherwise inherit the lazy global
-     * defaults (vacuum only after 20% of the table is dead) — far too slow once
-     * a partition holds hundreds of millions of rows.
-     *
-     * <ul>
-     *   <li><b>fact_transaction</b> (monthly, insert-heavy): tight scale factors +
-     *       absolute thresholds, a real vacuum cost budget, and the PG13+
-     *       insert-vacuum knobs so a mostly-INSERT partition still gets vacuumed
-     *       (keeps the visibility map fresh for index-only scans + freezing).</li>
-     *   <li><b>sum_daily_*</b> (yearly, ON CONFLICT upsert churn): aggressive
-     *       vacuum + fillfactor 90 to leave room for HOT updates.</li>
-     * </ul>
-     *
-     * Each ALTER auto-commits (Hikari auto-commit=true) and is wrapped so a
-     * failure (e.g. insert knobs on PostgreSQL &lt; 13) never undoes partition
-     * creation or the base tuning. Pre-existing partitions created before this
-     * code was deployed need a one-time backfill (see ops notes).
+     * Per-partition autovacuum/storage settings (parent reloptions do NOT
+     * cascade to partitions). fact_transaction: tight thresholds + insert
+     * knobs; summaries: aggressive vacuum + fillfactor 90 for HOT updates.
+     * Tenant-wise partitions get the same tuning inside
+     * ensure_tenant_partitions() / tune_partition_autovacuum() in the DB.
      */
     private void applyAutovacuumTuning(String partitionName, String parentTable) {
         boolean heavyFact = MONTHLY_PARTITIONED_TABLES.contains(parentTable);
@@ -170,8 +232,6 @@ public class PartitionMaintenanceService {
             log.warn("Autovacuum tuning skipped for {}: {}", partitionName, e.getMessage());
         }
 
-        // Insert-vacuum knobs require PostgreSQL 13+. Applied separately so a
-        // failure on older servers doesn't undo the base tuning above.
         if (heavyFact) {
             try {
                 jdbcTemplate.execute(String.format(

@@ -5,7 +5,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 
 const TransactionTrendsHub = () => {
-    const { tenantVersion } = useAuth();
+    const { tenantVersion, currencyCode } = useAuth();
     // --- State ---
     const [filters, setFilters] = useState({
         datePreset: 'CURRENT_YEAR',
@@ -92,7 +92,7 @@ const TransactionTrendsHub = () => {
         }
     };
 
-    const fmt = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'AED', minimumFractionDigits: 0 }).format(val || 0);
+    const fmt = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode || 'AED', minimumFractionDigits: 0 }).format(val || 0);
     const fmtInt = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 
     // Safer month name helpers

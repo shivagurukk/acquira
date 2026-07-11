@@ -13,6 +13,9 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
 
     Optional<PasswordResetToken> findByTokenAndUsedFalse(String token);
 
+    // Newest still-usable OTP row for a user — used by verify-otp and resend.
+    Optional<PasswordResetToken> findFirstByUser_IdAndUsedFalseOrderByCreatedAtDesc(Long userId);
+
     @Modifying
     @Query("DELETE FROM PasswordResetToken t WHERE t.user.id = :userId")
     void deleteByUserId(Long userId);

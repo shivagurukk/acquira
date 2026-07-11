@@ -30,6 +30,11 @@ public class MigrationController {
     private static final java.util.regex.Pattern DATE_PATTERN = java.util.regex.Pattern.compile("^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$");
 
     @PostMapping("/start")
+    // SECURITY: bulk migration writes fact_transaction + every summary table for an
+    // ARBITRARY body tenantId. The URL rule only requires ADMIN, and the Settings hub
+    // now exposes this screen to Bank Admins — without this guard a bank admin could
+    // migrate data into ANY tenant. Same posture as /delete-day.
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> startMigration(@RequestBody Map<String, Object> request) {
         // #8: Validate required fields
         if (request.get("tenantId") == null) {
@@ -147,6 +152,9 @@ public class MigrationController {
     }
 
     @PostMapping("/dry-run")
+    // SECURITY: reads an arbitrary source table for an arbitrary tenantId — SA-only,
+    // matching /start and /delete-day.
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> dryRun(@RequestBody Map<String, Object> request) {
         if (request.get("tenantId") == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "tenantId is required"));

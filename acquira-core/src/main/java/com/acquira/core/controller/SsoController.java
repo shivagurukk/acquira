@@ -58,8 +58,11 @@ public class SsoController {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RestTemplate restTemplate = new RestTemplate();
 
-    // GAP-22: Store OAuth state tokens for CSRF protection (in-memory, short-lived)
-    private final java.util.concurrent.ConcurrentHashMap<String, Long> stateTokens = new java.util.concurrent.ConcurrentHashMap<>();
+    // GAP-22: Store OAuth state tokens for CSRF protection (in-memory, short-lived).
+    // Each state token is BOUND to the tenant whose SSO config minted the auth URL,
+    // so the callback exchanges the code against the SAME client/secret/IdP tenant.
+    private record StateEntry(long createdAt, Long tenantId) {}
+    private final java.util.concurrent.ConcurrentHashMap<String, StateEntry> stateTokens = new java.util.concurrent.ConcurrentHashMap<>();
     private static final long STATE_TTL_MS = 600_000; // 10 minutes
 
     @Value("${sso.microsoft.client-id:}")
@@ -102,36 +105,86 @@ public class SsoController {
     }
 
     /**
-     * Resolve effective SSO config: DB settings override application.properties.
-     * This allows admin to toggle SSO from the UI without restart.
+     * PER-TENANT SSO (2026-07-11). Replaces the old getEffectiveSsoConfig() which
+     * iterated ALL tenants and merged the first non-blank sso_* value — one bank's
+     * Entra config silently won for the whole platform and two banks could never
+     * have different IdPs. Resolution now picks exactly ONE tenant:
+     *   1. explicit tenantId hint (future bank-picker on the login page),
+     *   2. email-domain match against that tenant's 'sso_email_domains' setting
+     *      (comma/space-separated list, e.g. "acmebank.com, acme.co"),
+     *   3. if exactly ONE tenant has sso_enabled=true in tenant_setting, use it
+     *      (covers the common single-IdP deployment with zero extra config),
+     *   4. otherwise null → application.properties values only.
      */
-    private Map<String, String> getEffectiveSsoConfig() {
+    private Long resolveSsoTenantId(String emailHint, Long tenantIdHint) {
+        try {
+            if (tenantIdHint != null) return tenantIdHint;
+
+            List<com.acquira.common.model.Tenant> tenants = tenantRepository.findAll();
+
+            // 2. email-domain match
+            if (emailHint != null && emailHint.contains("@")) {
+                String domain = emailHint.substring(emailHint.indexOf('@') + 1).toLowerCase().trim();
+                for (var t : tenants) {
+                    String domains = settingFor(t.getTenantId(), "sso_email_domains");
+                    if (domains == null) continue;
+                    for (String d : domains.split("[,;\\s]+")) {
+                        if (!d.isBlank() && domain.equalsIgnoreCase(d.trim())) return t.getTenantId();
+                    }
+                }
+            }
+
+            // 3. single enabled tenant
+            Long only = null;
+            for (var t : tenants) {
+                if ("true".equalsIgnoreCase(settingFor(t.getTenantId(), "sso_enabled"))) {
+                    if (only != null) { only = null; break; } // more than one → ambiguous
+                    only = t.getTenantId();
+                }
+            }
+            return only;
+        } catch (Exception e) {
+            log.debug("[SSO] Tenant resolution failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String settingFor(Long tenantId, String key) {
+        try {
+            for (TenantSetting s : tenantSettingRepository.findByTenant_TenantId(tenantId)) {
+                if (key.equals(s.getKey())) {
+                    String v = s.getValue();
+                    return (v == null || v.isBlank()) ? null : v;
+                }
+            }
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    /**
+     * Effective SSO config for ONE tenant: application.properties defaults
+     * overlaid with ONLY that tenant's sso_* settings. tenantId null = properties
+     * only (no DB overlay at all — never another tenant's values).
+     */
+    private Map<String, String> ssoConfigForTenant(Long tenantId) {
         Map<String, String> cfg = new HashMap<>();
         cfg.put("sso_enabled", String.valueOf(ssoEnabled));
         cfg.put("sso_client_id", clientId);
         cfg.put("sso_client_secret", clientSecret);
         cfg.put("sso_tenant_id", azureTenantId);
-        // GAP-11: Include redirect URI so DB can override it
         cfg.put("sso_redirect_uri", redirectUri);
 
-        // GAP-24: Override from DB settings. Iterate ALL tenants and merge
-        // (first non-blank value for each key wins — supports multi-tenant)
+        if (tenantId == null) return cfg;
         try {
-            List<com.acquira.common.model.Tenant> tenants = tenantRepository.findAll();
-            for (var t : tenants) {
-                var settings = tenantSettingRepository.findByTenant_TenantId(t.getTenantId());
-                for (var s : settings) {
-                    String k = s.getKey();
-                    String v = s.getValue();
-                    if (k != null && k.startsWith("sso_") && v != null && !v.isBlank()) {
-                        // Only override if not already set by a previous tenant
-                        cfg.putIfAbsent("db_" + k, v);
-                        cfg.put(k, v);
-                    }
+            for (TenantSetting s : tenantSettingRepository.findByTenant_TenantId(tenantId)) {
+                String k = s.getKey();
+                String v = s.getValue();
+                if (k != null && k.startsWith("sso_") && v != null && !v.isBlank()) {
+                    cfg.put(k, v);
                 }
             }
         } catch (Exception e) {
-            log.debug("Could not load SSO settings from DB: {}", e.getMessage());
+            log.debug("[SSO] Could not load SSO settings for tenant {}: {}", tenantId, e.getMessage());
         }
         return cfg;
     }
@@ -142,8 +195,11 @@ public class SsoController {
      * If SSO is disabled, returns { enabled: false }.
      */
     @GetMapping("/microsoft/config")
-    public ResponseEntity<?> getSsoConfig() {
-        Map<String, String> cfg = getEffectiveSsoConfig();
+    public ResponseEntity<?> getSsoConfig(
+            @RequestParam(required = false) String email,
+            @RequestParam(required = false) Long tenantId) {
+        Long ssoTenantId = resolveSsoTenantId(email, tenantId);
+        Map<String, String> cfg = ssoConfigForTenant(ssoTenantId);
         boolean enabled = "true".equalsIgnoreCase(cfg.get("sso_enabled"));
         String cid = cfg.get("sso_client_id");
 
@@ -152,11 +208,11 @@ public class SsoController {
         }
 
         String tid = cfg.getOrDefault("sso_tenant_id", "common");
-        // GAP-22: Generate state token for CSRF protection
+        // GAP-22: Generate state token for CSRF protection, bound to the resolved tenant
         String state = UUID.randomUUID().toString();
-        stateTokens.put(state, System.currentTimeMillis());
+        stateTokens.put(state, new StateEntry(System.currentTimeMillis(), ssoTenantId));
         // Cleanup expired tokens
-        stateTokens.entrySet().removeIf(e -> System.currentTimeMillis() - e.getValue() > STATE_TTL_MS);
+        stateTokens.entrySet().removeIf(e -> System.currentTimeMillis() - e.getValue().createdAt() > STATE_TTL_MS);
 
         String authUrl = "https://login.microsoftonline.com/" + tid + "/oauth2/v2.0/authorize"
             + "?client_id=" + cid
@@ -187,17 +243,24 @@ public class SsoController {
             return ResponseEntity.badRequest().body(Map.of("error", "Authorization code is required"));
         }
 
-        // GAP-22: Validate state token for CSRF protection
+        // GAP-22: Validate state token for CSRF protection. The entry also carries the
+        // tenant whose config minted the auth URL, so the code exchange below uses the
+        // SAME client/secret — mandatory for correctness with per-tenant SSO.
+        Long ssoTenantId = null;
         String state = payload.get("state");
         if (state != null && !state.isBlank()) {
-            Long created = stateTokens.remove(state);
-            if (created == null || System.currentTimeMillis() - created > STATE_TTL_MS) {
+            StateEntry entry = stateTokens.remove(state);
+            if (entry == null || System.currentTimeMillis() - entry.createdAt() > STATE_TTL_MS) {
                 log.warn("[SSO] Invalid or expired state token");
                 return ResponseEntity.badRequest().body(Map.of("error", "Invalid or expired SSO request. Please try again."));
             }
+            ssoTenantId = entry.tenantId();
+        } else {
+            // Legacy client without state: best-effort resolution (no email known yet).
+            ssoTenantId = resolveSsoTenantId(null, null);
         }
 
-        Map<String, String> cfg = getEffectiveSsoConfig();
+        Map<String, String> cfg = ssoConfigForTenant(ssoTenantId);
         boolean enabled = "true".equalsIgnoreCase(cfg.get("sso_enabled"));
         if (!enabled) {
             return ResponseEntity.badRequest().body(Map.of("error", "SSO is not enabled"));

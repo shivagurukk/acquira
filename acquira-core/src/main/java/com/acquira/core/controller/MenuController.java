@@ -57,6 +57,10 @@ public class MenuController {
                 "VALUES (?, ?, ?, ?, ?) ON CONFLICT (path) DO NOTHING";
 
             Object[][] adminMenus = {
+                // Unified Settings hub (mirrors V2026_07_11_02__settings_hub_menu.sql
+                // as a startup safety net — the migration comment promises this).
+                // display_order 0 puts it at the top of the ADMINISTRATION group.
+                {"Settings",               "/settings",                 "Settings",    "ADMINISTRATION",   0},
                 {"User Management",        "/users",                    "Users",       "ADMINISTRATION",   1},
                 {"Bank Setup",             "/tenants",                  "Building",    "ADMINISTRATION",   2},
                 {"Group Management",       "/admin/groups",             "Shield",      "ADMINISTRATION",   3},
@@ -84,6 +88,19 @@ public class MenuController {
                 // 15 keeps Retention next to Attrition in the Business group.
                 {"Retention Report",       "/business/retention",        "HeartHandshake","BUSINESS",      15},
                 {"Forecasting",            "/business/forecasting",      "Gauge",        "BUSINESS",      16},
+                {"Top Performers",         "/business/top-performers",   "Trophy",       "BUSINESS",      17},
+                // ── SALES suite ──────────────────────────────────────────────
+                // Routes for all five screens exist in App.jsx, but only Team
+                // Management and Leaderboard ever had sys_menu rows (from an
+                // earlier seed) — Country Leads, Agent Directory and the
+                // Hierarchy Explorer were unreachable from the sidebar. Register
+                // the full set here, idempotently, so every environment gets
+                // the complete Sales group on next startup.
+                {"Sales Team Management",  "/sales/team-management",     "Users",        "SALES",          1},
+                {"Country Leads",          "/sales/country-management",  "Globe",        "SALES",          2},
+                {"Agent Directory",        "/sales/agents",              "Contact",      "SALES",          3},
+                {"Sales Leaderboard",      "/sales/leaderboard",         "Trophy",       "SALES",          4},
+                {"Sales Hierarchy",        "/sales/hierarchy",           "Network",      "SALES",          5},
             };
 
             for (Object[] row : adminMenus) {
@@ -127,6 +144,42 @@ public class MenuController {
         } catch (Exception e) {
             log.error("[MenuController] Startup menu safety net failed: {}", e.getMessage(), e);
         }
+    }
+
+    /**
+     * GET /api/users/me/locale — per-tenant locale settings for the ACTIVE tenant,
+     * readable by EVERY authenticated user (unlike /api/admin/settings, admin-only).
+     * The frontend applies these to its shared date formatters the same way
+     * currency already flows from the tenant row.
+     * Keys (tenant_setting, optional):
+     *   locale.date_format — DD/MM/YYYY | MM/DD/YYYY | YYYY-MM-DD | DD-MMM-YYYY
+     *   locale.timezone    — IANA zone id, e.g. Asia/Bahrain (blank = browser default)
+     * Whitelisted read: only locale.* keys are ever returned here.
+     */
+    @GetMapping("/locale")
+    public ResponseEntity<?> getMyLocale() {
+        Long tenantId = TenantContext.getCurrentTenant();
+        Map<String, String> out = new java.util.HashMap<>();
+        out.put("dateFormat", "DD/MM/YYYY");
+        out.put("timezone", "");
+        if (tenantId != null) {
+            try {
+                java.util.List<Map<String, Object>> rows = jdbc.queryForList(
+                    "SELECT setting_key, setting_value FROM tenant_setting " +
+                    "WHERE tenant_id = ? AND setting_key IN ('locale.date_format','locale.timezone')",
+                    tenantId);
+                for (Map<String, Object> r : rows) {
+                    String k = String.valueOf(r.get("setting_key"));
+                    Object v = r.get("setting_value");
+                    if (v == null || String.valueOf(v).isBlank()) continue;
+                    if ("locale.date_format".equals(k)) out.put("dateFormat", String.valueOf(v).trim());
+                    if ("locale.timezone".equals(k))    out.put("timezone", String.valueOf(v).trim());
+                }
+            } catch (Exception e) {
+                log.debug("[MenuController] locale lookup failed for tenant {}: {}", tenantId, e.getMessage());
+            }
+        }
+        return ResponseEntity.ok(out);
     }
 
     @GetMapping("/menus")

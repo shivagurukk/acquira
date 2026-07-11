@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,6 +23,21 @@ public class GroupAnalyticsController {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    // Shared SELECT fragment for every grouping type (MCC/MERCHANT/SALES/REFERRAL).
+    // All four ultimately query sum_daily_merchant aliased "s" (the MCC branch
+    // joins dim_store on top of it), so the same metric set applies everywhere.
+    // Volume basis is total_base_volume (settlement, single-currency) per the
+    // platform rule — NOT total_volume (cardholder currency).
+    private static final String METRICS_SELECT =
+            "COUNT(DISTINCT s.merchant_id) as merchant_count, " +
+            "SUM(s.total_txns) as total_txns, " +
+            "SUM(s.total_base_volume) as total_volume, " +
+            "SUM(s.total_msf) as total_msf, " +
+            "SUM(s.total_interchange) as total_interchange, " +
+            "SUM(s.total_scheme_fee) as total_scheme_fee, " +
+            "SUM(s.total_debit_prepaid_volume) as debit_prepaid_volume, " +
+            "SUM(s.total_credit_volume) as credit_volume ";
 
     /**
      * Generic endpoint for Group Reports.
@@ -106,9 +122,7 @@ public class GroupAnalyticsController {
         }
 
         String finalSql = "SELECT " + selectClause +
-                "COUNT(DISTINCT s.merchant_id) as merchant_count, " + // distinct merchants in this group
-                "SUM(s.total_txns) as total_txns, " +
-                "SUM(s.total_volume) as total_volume " +
+                METRICS_SELECT +
                 sql +
                 "WHERE s.tenant_id = :tenantId AND s.business_date >= :startDate AND s.business_date <= :endDate " +
                 groupBy +
@@ -138,9 +152,7 @@ public class GroupAnalyticsController {
             // summary table and consistent with the other report types.
             // P1-9: tenant-scope dim_store join.
             finalSql = "SELECT st.mcc, COALESCE(st.mcc, 'Unknown') as label, " +
-                    "COUNT(DISTINCT s.merchant_id) as merchant_count, " +
-                    "SUM(s.total_txns) as total_txns, " +
-                    "SUM(s.total_volume) as total_volume " +
+                    METRICS_SELECT +
                     "FROM sum_daily_merchant s " +
                     "JOIN dim_store st ON st.merchant_id = s.merchant_id AND st.tenant_id = s.tenant_id " +
                     "WHERE s.tenant_id = :tenantId AND s.business_date >= :startDate AND s.business_date <= :endDate " +
@@ -158,18 +170,7 @@ public class GroupAnalyticsController {
 
         List<Object[]> results = query.getResultList();
 
-        List<Map<String, Object>> response = new ArrayList<>();
-        for (Object[] row : results) {
-            Map<String, Object> map = new HashMap<>();
-            map.put("id", row[0]);
-            map.put("label", row[1]);
-            map.put("merchantCount", ((Number) row[2]).longValue());
-            map.put("txnCount", ((Number) row[3]).longValue());
-            map.put("volume", (BigDecimal) row[4]);
-            response.add(map);
-        }
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(buildEnrichedResponse(results));
     }
 
     /**
@@ -264,9 +265,7 @@ public class GroupAnalyticsController {
 
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT ").append(selectClause)
-           .append("COUNT(DISTINCT s.merchant_id) as merchant_count, ")
-           .append("SUM(s.total_txns) as total_txns, ")
-           .append("SUM(s.total_volume) as total_volume ")
+           .append(METRICS_SELECT)
            .append(fromClause);
 
         // Append filter-required joins only if not already in fromClause.
@@ -320,20 +319,73 @@ public class GroupAnalyticsController {
         query.setMaxResults(500); // higher cap than legacy GET (was 100); UI virtualizes.
 
         List<Object[]> results = query.getResultList();
+        return ResponseEntity.ok(buildEnrichedResponse(results));
+    }
+
+    /**
+     * Shared row-mapping + derived-metrics logic for both the legacy GET and
+     * the filtered POST endpoint. Row shape (both endpoints now emit the
+     * identical column set via METRICS_SELECT):
+     *   [0] id, [1] label, [2] merchant_count, [3] total_txns, [4] total_volume
+     *   (settlement basis), [5] total_msf, [6] total_interchange,
+     *   [7] total_scheme_fee, [8] debit_prepaid_volume, [9] credit_volume
+     *
+     * Derived (computed here, not in SQL): net_revenue, avg_ticket,
+     * msf_rate_bps, margin_pct, share_pct (share of grand-total volume across
+     * the returned rows).
+     */
+    private List<Map<String, Object>> buildEnrichedResponse(List<Object[]> results) {
         List<Map<String, Object>> response = new ArrayList<>();
+
+        // First pass: raw fields + running grand total for share%.
+        BigDecimal grandTotalVolume = BigDecimal.ZERO;
         for (Object[] row : results) {
             Map<String, Object> map = new HashMap<>();
             map.put("id", row[0]);
             map.put("label", row[1]);
-            // Defensive null handling — some grouping keys (sales_user_id,
-            // referral_partner) can produce null COUNTs if the join filters
-            // strip everything.
             map.put("merchantCount", row[2] != null ? ((Number) row[2]).longValue() : 0L);
             map.put("txnCount",      row[3] != null ? ((Number) row[3]).longValue() : 0L);
-            map.put("volume",        row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO);
+
+            BigDecimal volume        = row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO;
+            BigDecimal msf           = row[5] != null ? (BigDecimal) row[5] : BigDecimal.ZERO;
+            BigDecimal interchange   = row[6] != null ? (BigDecimal) row[6] : BigDecimal.ZERO;
+            BigDecimal schemeFee     = row[7] != null ? (BigDecimal) row[7] : BigDecimal.ZERO;
+            BigDecimal debitPrepaid  = row[8] != null ? (BigDecimal) row[8] : BigDecimal.ZERO;
+            BigDecimal credit        = row[9] != null ? (BigDecimal) row[9] : BigDecimal.ZERO;
+            BigDecimal netRevenue    = msf.subtract(interchange).subtract(schemeFee);
+
+            map.put("volume", volume);
+            map.put("msf", msf);
+            map.put("interchange", interchange);
+            map.put("schemeFee", schemeFee);
+            map.put("netRevenue", netRevenue);
+            map.put("debitPrepaidVolume", debitPrepaid);
+            map.put("creditVolume", credit);
+
+            long txnCount = (Long) map.get("txnCount");
+            map.put("avgTicket", txnCount > 0
+                    ? volume.divide(BigDecimal.valueOf(txnCount), 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO);
+            map.put("msfRateBps", volume.compareTo(BigDecimal.ZERO) > 0
+                    ? msf.multiply(BigDecimal.valueOf(10000)).divide(volume, 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO);
+            map.put("marginPct", msf.compareTo(BigDecimal.ZERO) > 0
+                    ? netRevenue.multiply(BigDecimal.valueOf(100)).divide(msf, 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO);
+
+            grandTotalVolume = grandTotalVolume.add(volume);
             response.add(map);
         }
-        return ResponseEntity.ok(response);
+
+        // Second pass: share of grand-total volume (needs the total from pass 1).
+        for (Map<String, Object> map : response) {
+            BigDecimal volume = (BigDecimal) map.get("volume");
+            map.put("sharePct", grandTotalVolume.compareTo(BigDecimal.ZERO) > 0
+                    ? volume.multiply(BigDecimal.valueOf(100)).divide(grandTotalVolume, 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO);
+        }
+
+        return response;
     }
 
     private static boolean listNonEmpty(List<?> l) { return l != null && !l.isEmpty(); }

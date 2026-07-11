@@ -32,9 +32,19 @@ import java.util.regex.Pattern;
  * data-sourcing rules — NOT the staging tables, which hold only the last upload.
  * This makes "monthly trend", "last 6 months" etc. actually historical.
  *
- * Model backend is pluggable via ModelProvider (ollama | anthropic | openai |
- * gemini), selected by ai.provider. This service is provider-agnostic — it only
- * calls modelProvider.generate(...); all HTTP/auth specifics live in the provider.
+ * DATA-BOUNDS ANCHORING: relative-date questions ("this month", "today") are
+ * anchored to the tenant's latest loaded business_date, not the wall clock.
+ * Otherwise a tenant whose newest upload is May gets zero rows for "this
+ * month" asked in July — a correct query over an empty window, perceived as
+ * a model failure. The anchor is injected into the prompt as a date literal;
+ * CURRENT_DATE is used only when the tenant has no data at all.
+ *
+ * MULTI-PROVIDER ROUTING: all ModelProvider beans are injected; the model
+ * string may be provider-qualified ("anthropic/claude-sonnet-4-5",
+ * "ollama/llama3.2"). Unqualified names route to the default (@Primary)
+ * provider selected by ai.provider, so existing clients keep working.
+ * /models merges every configured provider's list (qualified names), letting
+ * the UI offer Ollama and Claude side by side with zero frontend changes.
  *
  * Guardrails:
  *  - Generated SQL is wrapped as SELECT * FROM ( <gen> ) q LIMIT N — a hard cap
@@ -52,7 +62,10 @@ public class AiQueryService {
     private final JdbcTemplate jdbcTemplate;
     private final UserRepository userRepository;
     private final AiChatHistoryRepository historyRepository;
-    private final ModelProvider modelProvider;
+    /** The @Primary provider selected by ai.provider — used for unqualified model names. */
+    private final ModelProvider defaultProvider;
+    /** All providers keyed by id (ollama/anthropic/openai/gemini), deduped. */
+    private final Map<String, ModelProvider> providersById;
 
     @Value("${ai.query.row-limit:1000}")
     private int rowLimit;
@@ -65,6 +78,7 @@ public class AiQueryService {
         "sum_daily_bank", "sum_monthly_bank",
         "sum_daily_merchant", "sum_daily_insight",
         "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal", "sum_daily_mcc",
+        "sum_daily_merchant_destination",
         "dim_merchant", "dim_store", "dim_terminal"
     );
 
@@ -84,9 +98,23 @@ public class AiQueryService {
     private static final Pattern TABLE_REF_PATTERN =
         Pattern.compile("(?i)\\b(?:FROM|JOIN)\\s+([a-zA-Z_][a-zA-Z0-9_\\.]*)");
 
+    // First FROM target + optional alias — used to alias-qualify the injected
+    // tenant predicate so it isn't ambiguous on join queries.
+    private static final Pattern FROM_ALIAS_PATTERN =
+        Pattern.compile("(?i)\\bFROM\\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?");
+
+    // Words that can follow "FROM table" without being an alias.
+    private static final Set<String> NON_ALIAS_KEYWORDS = Set.of(
+        "WHERE", "GROUP", "ORDER", "LIMIT", "HAVING", "UNION", "JOIN",
+        "LEFT", "RIGHT", "INNER", "FULL", "CROSS", "ON", "AND", "OR"
+    );
+
     // ══════════════════════════════════════════════════════════════════
     // SCHEMA + TRAINING PROMPT — grounded on the WAREHOUSE (historical).
     // Kept compact so it fits the model context (num_ctx below).
+    // {TENANT_ID}  -> the tenant id literal.
+    // {ANCHOR}     -> date literal of the tenant's latest loaded business_date
+    //                 (e.g. '2026-05-31'::date), or CURRENT_DATE if none.
     // ══════════════════════════════════════════════════════════════════
     private static final String SCHEMA_CONTEXT = """
 You are a PostgreSQL SELECT generator for a multi-tenant card-acquiring analytics warehouse.
@@ -95,12 +123,14 @@ RESPOND WITH ONLY ONE RAW SQL SELECT. No markdown, no backticks, no prose.
 === TABLES (pre-aggregated daily warehouse; each row is already one day) ===
 
 sum_daily_bank  -- bank-wide daily totals (UNFILTERED KPIs/trends)
-  tenant_id, business_date DATE, total_txns, total_volume, total_msf,
-  total_interchange, total_scheme_fee, total_vat, total_net_revenue
+  tenant_id, business_date DATE, total_txns, total_volume (cardholder ccy),
+  total_base_volume (SETTLEMENT ccy), total_msf, total_interchange,
+  total_scheme_fee, total_vat, total_net_revenue
 
 sum_monthly_bank  -- bank-wide monthly totals
-  tenant_id, month_key INT (YYYYMM), total_txns, total_volume, total_msf,
-  total_interchange, total_scheme_fee, total_vat, total_net_revenue
+  tenant_id, month_key INT (YYYYMM), total_txns, total_volume,
+  total_base_volume, total_msf, total_interchange, total_scheme_fee,
+  total_vat, total_net_revenue
 
 sum_daily_merchant  -- per-merchant per-day (leaderboards, per-merchant views)
   tenant_id, business_date DATE, merchant_id, total_txns,
@@ -109,11 +139,22 @@ sum_daily_merchant  -- per-merchant per-day (leaderboards, per-merchant views)
   total_credit_volume, total_debit_prepaid_volume, sales_user_id,
   dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume
 
+sum_daily_merchant_destination  -- per-merchant per-day DOMESTIC/INTERNATIONAL split WITH real fees (settlement ccy)
+  tenant_id, business_date DATE, merchant_id, destination ('DOMESTIC'|'INTERNATIONAL'),
+  total_txns, total_volume (settlement), total_msf, total_interchange,
+  total_scheme_fee, total_ecom_fee, total_net_revenue
+  -- USE THIS for domestic vs international questions at merchant grain or when fees per destination are needed.
+
 sum_daily_insight  -- dimensional cross-tab (card scheme/type/destination/channel)
   tenant_id, business_date DATE, merchant_id, store_id, terminal_id,
   card_scheme, card_type, destination, channel, is_opt_in BOOLEAN,
   total_txns, total_volume (cardholder ccy), total_msf
   -- NOTE: has NO interchange/scheme/vat columns.
+
+sum_daily_mcc  -- per-MCC (industry category) per-scheme daily rollup
+  tenant_id, business_date DATE, mcc, card_scheme, total_txns, total_volume,
+  total_msf, total_scheme_fee, total_net_revenue
+  -- USE THIS for "by MCC" / "by industry category" rollups (NOT dim_merchant.mcc).
 
 sum_daily_scheme   -- tenant_id, business_date, card_scheme, total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue
 sum_daily_channel  -- tenant_id, business_date, channel, total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue
@@ -122,38 +163,42 @@ sum_daily_terminal -- tenant_id, business_date, merchant_id, store_id, terminal_
 dim_merchant  -- merchant master (join on merchant_id)
   merchant_id, tenant_id, mid, name, status, city, mcc, industry,
   risk_level, sales_user_id, sales_email, referral_partner, created_date
+  -- NOTE: the canonical MCC lives on dim_store.mcc; dim_merchant.mcc can be sparse.
 dim_store     -- store_id, tenant_id, merchant_id, sid, name, city, mcc, status
 dim_terminal  -- terminal_id, tenant_id, store_id, tid, status
 
 === RULES ===
 1. ALWAYS include WHERE tenant_id = {TENANT_ID} (on the base table; if joining dims, also dX.tenant_id = base.tenant_id).
 2. SELECT only. Never write. Only the tables above.
-3. Volume/amount -> total_volume; ranking/leaderboard/settlement -> total_base_volume (sum_daily_merchant only).
-4. Revenue/fees -> total_msf; net revenue -> total_net_revenue (bank/scheme/channel tables).
+3. Volume/amount -> total_volume; ranking/leaderboard/settlement -> total_base_volume (sum_daily_merchant / sum_daily_bank).
+4. Revenue/fees -> total_msf; net revenue -> total_net_revenue (bank/scheme/channel/mcc/destination tables).
 5. Count of transactions -> SUM(total_txns) (rows are pre-aggregated; do NOT COUNT(*)).
 6. Distinct merchants -> COUNT(DISTINCT merchant_id).
 7. Wrap sums in COALESCE(SUM(x),0).
-8. Merchant name/city/mcc live in dim_merchant -> join sum_daily_merchant m ON d.merchant_id = m.merchant_id AND d.tenant_id = m.tenant_id.
+8. Merchant name/city live in dim_merchant -> join sum_daily_merchant m ON d.merchant_id = m.merchant_id AND d.tenant_id = m.tenant_id.
 9. When joining, prefix every column with its table alias. GROUP BY every non-aggregated SELECT column.
+10. MCC/industry rollups -> sum_daily_mcc. Domestic vs international -> sum_daily_merchant_destination (merchant grain / fees) or sum_daily_insight.destination (card-dimension cross-tab).
 
-=== DATES (business_date is a DATE) ===
-- This month: business_date >= DATE_TRUNC('month', CURRENT_DATE)::date AND business_date < (DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month')::date
-- Last month (calendar): business_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')::date AND business_date < DATE_TRUNC('month', CURRENT_DATE)::date
-- This year: business_date >= DATE_TRUNC('year', CURRENT_DATE)::date
-- Last year (calendar): business_date >= DATE_TRUNC('year', CURRENT_DATE - INTERVAL '1 year')::date AND business_date < DATE_TRUNC('year', CURRENT_DATE)::date
-- Last N days (rolling): business_date >= CURRENT_DATE - INTERVAL 'N days'
+=== DATES (business_date is a DATE; anchor = latest loaded data date) ===
+The latest loaded business date for this tenant is {ANCHOR}. There is NO data after it.
+Interpret "today", "this month", "this year", "recent" relative to {ANCHOR}, not the wall clock.
+- This month: business_date >= DATE_TRUNC('month', {ANCHOR})::date AND business_date <= {ANCHOR}
+- Last month (calendar): business_date >= DATE_TRUNC('month', {ANCHOR} - INTERVAL '1 month')::date AND business_date < DATE_TRUNC('month', {ANCHOR})::date
+- This year: business_date >= DATE_TRUNC('year', {ANCHOR})::date AND business_date <= {ANCHOR}
+- Last year (calendar): business_date >= DATE_TRUNC('year', {ANCHOR} - INTERVAL '1 year')::date AND business_date < DATE_TRUNC('year', {ANCHOR})::date
+- Last N days (rolling): business_date >= {ANCHOR} - INTERVAL 'N days' AND business_date <= {ANCHOR}
 - Specific month: business_date >= '2026-01-01'::date AND business_date < '2026-02-01'::date
-- Today: business_date = CURRENT_DATE
+- Today / latest day: business_date = {ANCHOR}
 - Month grouping: TO_CHAR(business_date, 'YYYY-MM') AS month
-- Use CURRENT_DATE, never NOW(). Always cast literals ::date.
+- Never use NOW(). Always cast literals ::date.
 
 === EXAMPLES ===
 
 Q: Total volume and revenue this month
-SELECT COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_msf),0) AS total_msf, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_bank WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('month', CURRENT_DATE)::date
+SELECT COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_msf),0) AS total_msf, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_bank WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('month', {ANCHOR})::date AND business_date <= {ANCHOR}
 
 Q: Monthly volume trend last 6 months
-SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_msf),0) AS total_msf, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_bank WHERE tenant_id = {TENANT_ID} AND business_date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')::date GROUP BY TO_CHAR(business_date, 'YYYY-MM') ORDER BY month
+SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_msf),0) AS total_msf, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_bank WHERE tenant_id = {TENANT_ID} AND business_date >= (DATE_TRUNC('month', {ANCHOR}) - INTERVAL '5 months')::date GROUP BY TO_CHAR(business_date, 'YYYY-MM') ORDER BY month
 
 Q: Top 10 merchants by volume
 SELECT d.merchant_id, m.name AS merchant_name, COALESCE(SUM(d.total_base_volume),0) AS total_volume, COALESCE(SUM(d.total_msf),0) AS total_msf FROM sum_daily_merchant d JOIN dim_merchant m ON d.merchant_id = m.merchant_id AND d.tenant_id = m.tenant_id WHERE d.tenant_id = {TENANT_ID} GROUP BY d.merchant_id, m.name ORDER BY total_volume DESC LIMIT 10
@@ -161,17 +206,23 @@ SELECT d.merchant_id, m.name AS merchant_name, COALESCE(SUM(d.total_base_volume)
 Q: Volume by card scheme
 SELECT card_scheme, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_msf),0) AS total_msf, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_scheme WHERE tenant_id = {TENANT_ID} AND card_scheme IS NOT NULL GROUP BY card_scheme ORDER BY total_volume DESC
 
+Q: Volume by MCC this year
+SELECT mcc, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_msf),0) AS total_msf, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_mcc WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('year', {ANCHOR})::date GROUP BY mcc ORDER BY total_volume DESC
+
+Q: Domestic vs international volume and net revenue by merchant last month
+SELECT d.merchant_id, m.name AS merchant_name, d.destination, COALESCE(SUM(d.total_volume),0) AS total_volume, COALESCE(SUM(d.total_net_revenue),0) AS net_revenue FROM sum_daily_merchant_destination d JOIN dim_merchant m ON d.merchant_id = m.merchant_id AND d.tenant_id = m.tenant_id WHERE d.tenant_id = {TENANT_ID} AND d.business_date >= DATE_TRUNC('month', {ANCHOR} - INTERVAL '1 month')::date AND d.business_date < DATE_TRUNC('month', {ANCHOR})::date GROUP BY d.merchant_id, m.name, d.destination ORDER BY total_volume DESC LIMIT 50
+
 Q: Local vs international volume
-SELECT destination, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_insight WHERE tenant_id = {TENANT_ID} AND destination IS NOT NULL GROUP BY destination ORDER BY total_volume DESC
+SELECT destination, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_merchant_destination WHERE tenant_id = {TENANT_ID} GROUP BY destination ORDER BY total_volume DESC
 
 Q: Active merchants by city
 SELECT city, COUNT(DISTINCT merchant_id) AS merchant_count FROM dim_merchant WHERE tenant_id = {TENANT_ID} AND status = 'Active' AND city IS NOT NULL GROUP BY city ORDER BY merchant_count DESC
 
 Q: Net revenue by scheme this year
-SELECT card_scheme, COALESCE(SUM(total_net_revenue),0) AS net_revenue, COALESCE(SUM(total_volume),0) AS total_volume FROM sum_daily_scheme WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('year', CURRENT_DATE)::date GROUP BY card_scheme ORDER BY net_revenue DESC
+SELECT card_scheme, COALESCE(SUM(total_net_revenue),0) AS net_revenue, COALESCE(SUM(total_volume),0) AS total_volume FROM sum_daily_scheme WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('year', {ANCHOR})::date GROUP BY card_scheme ORDER BY net_revenue DESC
 
 Q: Daily volume last 30 days
-SELECT business_date, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_bank WHERE tenant_id = {TENANT_ID} AND business_date >= CURRENT_DATE - INTERVAL '30 days' GROUP BY business_date ORDER BY business_date
+SELECT business_date, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_bank WHERE tenant_id = {TENANT_ID} AND business_date >= {ANCHOR} - INTERVAL '30 days' AND business_date <= {ANCHOR} GROUP BY business_date ORDER BY business_date
 
 Q: Card type breakdown
 SELECT card_type, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_insight WHERE tenant_id = {TENANT_ID} AND card_type IS NOT NULL GROUP BY card_type ORDER BY total_volume DESC
@@ -186,7 +237,7 @@ Q: High risk merchants
 SELECT mid, name, city, industry, status, risk_level FROM dim_merchant WHERE tenant_id = {TENANT_ID} AND risk_level = 'High' ORDER BY name LIMIT 500
 
 Q: Volume last year vs this year by month
-SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0) AS total_volume FROM sum_daily_bank WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('year', CURRENT_DATE - INTERVAL '1 year')::date GROUP BY TO_CHAR(business_date, 'YYYY-MM') ORDER BY month
+SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0) AS total_volume FROM sum_daily_bank WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('year', {ANCHOR} - INTERVAL '1 year')::date GROUP BY TO_CHAR(business_date, 'YYYY-MM') ORDER BY month
 
 === NOW GENERATE SQL ===
 """;
@@ -194,40 +245,146 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
     public AiQueryService(JdbcTemplate jdbcTemplate,
                           UserRepository userRepository,
                           AiChatHistoryRepository historyRepository,
-                          ModelProvider modelProvider) {
+                          ModelProvider modelProvider,
+                          List<ModelProvider> allProviders) {
         this.jdbcTemplate = jdbcTemplate;
         this.userRepository = userRepository;
         this.historyRepository = historyRepository;
-        this.modelProvider = modelProvider;
+        this.defaultProvider = modelProvider; // @Primary — selected by ai.provider
+        // Dedupe by id: the @Primary bean is the same instance as one of the
+        // @Component providers, so the injected list can contain it twice.
+        Map<String, ModelProvider> byId = new LinkedHashMap<>();
+        for (ModelProvider p : allProviders) byId.putIfAbsent(p.id().toLowerCase(), p);
+        this.providersById = byId;
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // HEALTH / MODELS — provider-agnostic (Ollama pings; remote = configured)
+    // PROVIDER ROUTING — "provider/model" strings pick a provider; bare
+    // model names go to the default (@Primary) provider.
+    // ═══════════════════════════════════════════════════════════════
+    private ModelProvider resolveProvider(String requestedModel) {
+        if (requestedModel != null && requestedModel.contains("/")) {
+            String prefix = requestedModel.substring(0, requestedModel.indexOf('/')).trim().toLowerCase();
+            ModelProvider p = providersById.get(prefix);
+            if (p != null) return p;
+        }
+        return defaultProvider;
+    }
+
+    /** Strips a recognized "provider/" prefix so the provider gets a bare model name. */
+    private String resolveModelName(String requestedModel) {
+        if (requestedModel == null || requestedModel.isBlank()) return null;
+        if (requestedModel.contains("/")) {
+            String prefix = requestedModel.substring(0, requestedModel.indexOf('/')).trim().toLowerCase();
+            if (providersById.containsKey(prefix)) {
+                String bare = requestedModel.substring(requestedModel.indexOf('/') + 1).trim();
+                return bare.isEmpty() ? null : bare;
+            }
+        }
+        return requestedModel;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // HEALTH / MODELS — reports the default provider plus every other
+    // configured provider (multi-provider aware).
     // ═══════════════════════════════════════════════════════════════
     public Map<String, Object> health() {
         boolean healthy = false;
-        try { healthy = modelProvider.isHealthy(); } catch (Exception ignore) { }
+        try { healthy = defaultProvider.isHealthy(); } catch (Exception ignore) { }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", healthy ? "connected" : "disconnected");
-        out.put("provider", modelProvider.id());
-        out.put("model", modelProvider.defaultModel());
-        out.put("availableModels", safeModels());
+        out.put("provider", defaultProvider.id());
+        out.put("model", defaultProvider.defaultModel());
+        out.put("availableModels", safeModels(defaultProvider));
+        List<Map<String, Object>> providers = new ArrayList<>();
+        for (ModelProvider p : providersById.values()) {
+            boolean h = false;
+            try { h = p.isHealthy(); } catch (Exception ignore) { }
+            Map<String, Object> pv = new LinkedHashMap<>();
+            pv.put("id", p.id());
+            pv.put("healthy", h);
+            pv.put("defaultModel", p.defaultModel());
+            pv.put("isDefault", p.id().equals(defaultProvider.id()));
+            providers.add(pv);
+        }
+        out.put("providers", providers);
         if (!healthy) {
-            out.put("hint", "ollama".equals(modelProvider.id())
+            out.put("hint", "ollama".equals(defaultProvider.id())
                 ? "Run: ollama serve"
-                : "Set ai." + modelProvider.id() + ".api-key (via acquira.secrets.keys)");
+                : "Set ai." + defaultProvider.id() + ".api-key (via acquira.secrets.keys)");
         }
         return out;
     }
 
+    /**
+     * Merged model list across every healthy/configured provider. Names are
+     * provider-qualified ("ollama/llama3.2", "anthropic/claude-sonnet-4-5") so
+     * the same string round-trips through the UI's model picker into
+     * resolveProvider() with no frontend changes.
+     */
     public List<Map<String, Object>> listModels() {
         List<Map<String, Object>> result = new ArrayList<>();
-        for (String name : safeModels()) result.add(Map.of("name", name));
+        for (ModelProvider p : providersById.values()) {
+            boolean h = false;
+            try { h = p.isHealthy(); } catch (Exception ignore) { }
+            if (!h) continue;
+            for (String name : safeModels(p)) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("name", p.id() + "/" + name);
+                m.put("provider", p.id());
+                m.put("model", name);
+                result.add(m);
+            }
+        }
+        // Degenerate case: nothing healthy — still expose the default provider's
+        // configured list so the UI has something to show alongside the health hint.
+        if (result.isEmpty()) {
+            for (String name : safeModels(defaultProvider)) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("name", defaultProvider.id() + "/" + name);
+                m.put("provider", defaultProvider.id());
+                m.put("model", name);
+                result.add(m);
+            }
+        }
         return result;
     }
 
-    private List<String> safeModels() {
-        try { return modelProvider.availableModels(); } catch (Exception e) { return Collections.emptyList(); }
+    private List<String> safeModels(ModelProvider p) {
+        try { return p.availableModels(); } catch (Exception e) { return Collections.emptyList(); }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DATA-BOUNDS ANCHOR — latest loaded business_date for the tenant.
+    // sum_daily_bank is one indexed row per day; MAX() is effectively free.
+    // Falls back to sum_daily_insight, then null (-> CURRENT_DATE anchor).
+    // ═══════════════════════════════════════════════════════════════
+    private java.time.LocalDate latestDataDate(Long tenantId) {
+        try {
+            java.sql.Date d = jdbcTemplate.queryForObject(
+                "SELECT MAX(business_date) FROM sum_daily_bank WHERE tenant_id = ?",
+                java.sql.Date.class, tenantId);
+            if (d != null) return d.toLocalDate();
+        } catch (Exception e) {
+            logger.debug("latestDataDate via sum_daily_bank failed: {}", e.getMessage());
+        }
+        try {
+            java.sql.Date d = jdbcTemplate.queryForObject(
+                "SELECT MAX(business_date) FROM sum_daily_insight WHERE tenant_id = ?",
+                java.sql.Date.class, tenantId);
+            if (d != null) return d.toLocalDate();
+        } catch (Exception e) {
+            logger.debug("latestDataDate via sum_daily_insight failed: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String buildPrompt(Long tenantId) {
+        java.time.LocalDate maxDate = latestDataDate(tenantId);
+        String anchor = maxDate != null ? "'" + maxDate + "'::date" : "CURRENT_DATE";
+        return SCHEMA_CONTEXT
+            .replace("{TENANT_ID}", String.valueOf(tenantId))
+            .replace("{ANCHOR}", anchor);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -238,9 +395,13 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
         if (tenantId == null) return Map.of("error", "No tenant context");
         if (question == null || question.trim().isEmpty()) return Map.of("error", "Question is required");
 
+        ModelProvider provider = resolveProvider(requestedModel);
+        String modelName = resolveModelName(requestedModel);
+
         long totalStart = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("question", question);
+        result.put("provider", provider.id());
 
         int maxRetries = 2;
         String lastError = null;
@@ -249,15 +410,16 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
         int rowCount = 0;
         boolean success = false;
 
+        String basePrompt = buildPrompt(tenantId);
+
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                String prompt = SCHEMA_CONTEXT.replace("{TENANT_ID}", String.valueOf(tenantId))
-                    + "Q: " + question;
+                String prompt = basePrompt + "Q: " + question;
                 if (attempt > 1 && lastError != null) {
                     prompt += "\n\nPREVIOUS ATTEMPT FAILED: " + lastError + "\nFix and output corrected SQL only:";
                 }
 
-                String sqlRaw = modelProvider.generate(prompt, requestedModel, attempt > 1 ? 0.15 : 0.05);
+                String sqlRaw = provider.generate(prompt, modelName, attempt > 1 ? 0.15 : 0.05);
                 String sql = ensureTenant(cleanSql(sqlRaw), tenantId);
                 finalSql = sql;
                 result.put("generatedSql", sql);
@@ -310,9 +472,12 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return Map.of("error", "No tenant context");
         try {
-            String prompt = SCHEMA_CONTEXT.replace("{TENANT_ID}", String.valueOf(tenantId)) + "Q: " + question;
-            String sql = ensureTenant(cleanSql(modelProvider.generate(prompt, requestedModel, 0.05)), tenantId);
-            return Map.of("question", question, "generatedSql", sql, "safe", validateSql(sql) == null);
+            ModelProvider provider = resolveProvider(requestedModel);
+            String modelName = resolveModelName(requestedModel);
+            String prompt = buildPrompt(tenantId) + "Q: " + question;
+            String sql = ensureTenant(cleanSql(provider.generate(prompt, modelName, 0.05)), tenantId);
+            return Map.of("question", question, "generatedSql", sql,
+                "provider", provider.id(), "safe", validateSql(sql) == null);
         } catch (Exception e) {
             return Map.of("error", String.valueOf(e.getMessage()));
         }
@@ -378,23 +543,41 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
         return sql;
     }
 
-    /** Guarantees a tenant predicate exists; does not trust the model alone. */
+    /**
+     * Guarantees a tenant predicate exists; does not trust the model alone.
+     * The injected predicate is alias-qualified against the first FROM target
+     * so it isn't "column reference is ambiguous" on join queries.
+     */
     private String ensureTenant(String sql, Long tenantId) {
         if (sql == null || sql.isEmpty()) return sql;
         String upper = sql.toUpperCase();
         if (upper.contains("TENANT_ID")) return sql; // model included it
+
+        String qualifier = firstFromQualifier(sql);
+        String predicate = (qualifier != null ? qualifier + "." : "") + "tenant_id = " + tenantId;
+
         // Inject into the first WHERE, else append one before GROUP/ORDER/LIMIT.
         int w = upper.indexOf(" WHERE ");
         if (w >= 0) {
             int after = w + 7;
-            return sql.substring(0, after) + "tenant_id = " + tenantId + " AND " + sql.substring(after);
+            return sql.substring(0, after) + predicate + " AND " + sql.substring(after);
         }
         int ins = sql.length();
         for (String kw : new String[]{" GROUP BY", " ORDER BY", " LIMIT", " HAVING"}) {
             int idx = upper.indexOf(kw);
             if (idx >= 0 && idx < ins) ins = idx;
         }
-        return sql.substring(0, ins) + " WHERE tenant_id = " + tenantId + " " + sql.substring(ins);
+        return sql.substring(0, ins) + " WHERE " + predicate + " " + sql.substring(ins);
+    }
+
+    /** Alias of the first FROM target if present, else the table name; null if unparseable. */
+    private String firstFromQualifier(String sql) {
+        Matcher m = FROM_ALIAS_PATTERN.matcher(sql);
+        if (!m.find()) return null;
+        String table = m.group(1);
+        String alias = m.group(2);
+        if (alias != null && !NON_ALIAS_KEYWORDS.contains(alias.toUpperCase())) return alias;
+        return table;
     }
 
     private String validateSql(String sql) {

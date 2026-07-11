@@ -255,4 +255,26 @@ public class EmailService {
             log.warn("[EMAIL] Reset email not sent (no SMTP). Reset link for {}: {}", username, resetLink);
         }
     }
+
+    /**
+     * Send a 6-digit password-reset OTP. Runs pre-login (no tenant context), so
+     * it uses the same property-fallback sender path as the link email above.
+     * If no SMTP is configured the OTP is logged (dev fallback) so the flow can
+     * still be completed locally.
+     */
+    public void sendPasswordResetOtp(String toEmail, String username, String otp, int ttlMinutes) {
+        boolean sent = sendEmail(
+                toEmail,
+                "Your Acquira verification code",
+                "Hello " + (username != null ? username : "") + ",\n\n"
+                        + "Your password reset verification code is:\n\n"
+                        + "    " + otp + "\n\n"
+                        + "It is valid for " + ttlMinutes + " minutes and can be used once.\n\n"
+                        + "If you did not request this, you can safely ignore this email \u2014 "
+                        + "your password will not change.\n\n"
+                        + "\u2014 Acquira Team");
+        if (!sent) {
+            log.warn("[EMAIL] OTP email not sent (no SMTP). Reset OTP for {}: {}", username, otp);
+        }
+    }
 }

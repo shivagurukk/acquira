@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import api from '../api/axios';
 import { invalidateApiCache } from '../api/apiCache';
 import { clearAuthStorage } from '../utils/authStorage';
-import { setDefaultCurrency } from '../utils/formatters';
+import { setDefaultCurrency, setDefaultLocale } from '../utils/formatters';
 
 const AuthContext = createContext(null);
 
@@ -179,6 +179,26 @@ export const AuthProvider = ({ children }) => {
     // tenant so formatCurrency()/createFmt() render in the right currency app-wide.
     useEffect(() => { setDefaultCurrency(currencyCode); }, [currencyCode]);
 
+    // Per-tenant locale (date format + timezone) — same pattern as currency.
+    // Fetched from GET /users/me/locale (tenant_setting locale.* keys) whenever
+    // the active tenant changes; pushed into the shared formatters so fmt.date /
+    // formatDate render in the bank's convention app-wide. Failure is harmless
+    // (formatters keep their defaults).
+    const [tenantLocale, setTenantLocale] = useState({ dateFormat: 'DD/MM/YYYY', timezone: '' });
+    useEffect(() => {
+        if (!auth.token || !auth.activeTenantId) return;
+        let cancelled = false;
+        api.get('/users/me/locale')
+            .then(res => {
+                if (cancelled || !res?.data) return;
+                const loc = { dateFormat: res.data.dateFormat, timezone: res.data.timezone };
+                setDefaultLocale(loc);
+                setTenantLocale(loc);
+            })
+            .catch(() => { /* keep defaults */ });
+        return () => { cancelled = true; };
+    }, [auth.token, auth.activeTenantId, auth.tenantVersion]);
+
     // #16: Currency formatter — use instead of hardcoded currency symbols
     const formatCurrency = useCallback((value, opts = {}) => {
         if (value == null || isNaN(value)) return currencySymbol + ' 0';
@@ -194,6 +214,8 @@ export const AuthProvider = ({ children }) => {
         isSuperAdmin, isAdmin, activeTenant,
         // #16: Currency
         currencyCode, currencySymbol, formatCurrency,
+        // Per-tenant locale (date format + timezone)
+        dateFormat: tenantLocale.dateFormat, timezone: tenantLocale.timezone,
     };
 
     return (

@@ -133,8 +133,10 @@ public class RevenueKpiController {
         boolean needMerchant = listNonEmpty(f.getPartnerList()) || listNonEmpty(f.getRmList())
                 || listNonEmpty(f.getTeamLeaderList())
                 || (f.getMerchantName() != null && !f.getMerchantName().isBlank())
-                || listNonEmpty(f.getMidList());
-        boolean needStore = listNonEmpty(f.getMccList()) || listNonEmpty(f.getSidList());
+                || listNonEmpty(f.getMidList())
+                || f.getOpenDateStart() != null || f.getOpenDateEnd() != null;
+        boolean needStore = listNonEmpty(f.getMccList()) || listNonEmpty(f.getSidList())
+                || listNonEmpty(f.getIndustryList());
 
         StringBuilder sql = new StringBuilder(
                 "SELECT COALESCE(SUM(s.total_volume),0), COALESCE(SUM(s.total_msf),0), " +
@@ -156,8 +158,10 @@ public class RevenueKpiController {
         boolean needMerchant = listNonEmpty(f.getPartnerList()) || listNonEmpty(f.getRmList())
                 || listNonEmpty(f.getTeamLeaderList())
                 || (f.getMerchantName() != null && !f.getMerchantName().isBlank())
-                || listNonEmpty(f.getMidList());
-        boolean needStore = listNonEmpty(f.getMccList()) || listNonEmpty(f.getSidList());
+                || listNonEmpty(f.getMidList())
+                || f.getOpenDateStart() != null || f.getOpenDateEnd() != null;
+        boolean needStore = listNonEmpty(f.getMccList()) || listNonEmpty(f.getSidList())
+                || listNonEmpty(f.getIndustryList());
 
         StringBuilder sql = new StringBuilder(
                 "SELECT COALESCE(SUM(s.dcc_eligible_volume),0), COALESCE(SUM(s.dcc_optin_volume),0), " +
@@ -176,8 +180,11 @@ public class RevenueKpiController {
         if (f.getMerchantName() != null && !f.getMerchantName().isBlank())
                                                  sql.append("  AND m.name ILIKE :merchName ");
         if (listNonEmpty(f.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
+        if (f.getOpenDateStart() != null)        sql.append("  AND CAST(m.created_date AS DATE) >= :openStart ");
+        if (f.getOpenDateEnd() != null)          sql.append("  AND CAST(m.created_date AS DATE) <= :openEnd ");
         if (listNonEmpty(f.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
         if (listNonEmpty(f.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
+        if (listNonEmpty(f.getIndustryList()))   sql.append("  AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) ");
 
         Query q = entityManager.createNativeQuery(sql.toString());
         q.setParameter("tid", tid).setParameter("s", s).setParameter("e", e);
@@ -187,8 +194,11 @@ public class RevenueKpiController {
         if (f.getMerchantName() != null && !f.getMerchantName().isBlank())
                                                  q.setParameter("merchName",   "%" + f.getMerchantName() + "%");
         if (listNonEmpty(f.getMidList()))        q.setParameter("mids",        f.getMidList());
+        if (f.getOpenDateStart() != null)        q.setParameter("openStart",   f.getOpenDateStart());
+        if (f.getOpenDateEnd() != null)          q.setParameter("openEnd",     f.getOpenDateEnd());
         if (listNonEmpty(f.getMccList()))        q.setParameter("mccs",        f.getMccList());
         if (listNonEmpty(f.getSidList()))        q.setParameter("sids",        f.getSidList());
+        if (listNonEmpty(f.getIndustryList()))   q.setParameter("industries",  f.getIndustryList());
         return q;
     }
 
@@ -199,8 +209,11 @@ public class RevenueKpiController {
         if (f.getMerchantName() != null && !f.getMerchantName().isBlank())
                                                  sql.append("  AND m.name ILIKE :merchName ");
         if (listNonEmpty(f.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
+        if (f.getOpenDateStart() != null)        sql.append("  AND CAST(m.created_date AS DATE) >= :openStart ");
+        if (f.getOpenDateEnd() != null)          sql.append("  AND CAST(m.created_date AS DATE) <= :openEnd ");
         if (listNonEmpty(f.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
         if (listNonEmpty(f.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
+        if (listNonEmpty(f.getIndustryList()))   sql.append("  AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) ");
         if (listNonEmpty(f.getSchemeList()))     sql.append("  AND s.card_scheme IN (:schemes) ");
         if (listNonEmpty(f.getCardTypeList()))   sql.append("  AND s.card_type IN (:cardTypes) ");
         if (listNonEmpty(f.getDestinationList()))sql.append("  AND s.destination IN (:destinations) ");
@@ -214,8 +227,11 @@ public class RevenueKpiController {
         if (f.getMerchantName() != null && !f.getMerchantName().isBlank())
                                                  q.setParameter("merchName",    "%" + f.getMerchantName() + "%");
         if (listNonEmpty(f.getMidList()))        q.setParameter("mids",         f.getMidList());
+        if (f.getOpenDateStart() != null)        q.setParameter("openStart",    f.getOpenDateStart());
+        if (f.getOpenDateEnd() != null)          q.setParameter("openEnd",      f.getOpenDateEnd());
         if (listNonEmpty(f.getMccList()))        q.setParameter("mccs",         f.getMccList());
         if (listNonEmpty(f.getSidList()))        q.setParameter("sids",         f.getSidList());
+        if (listNonEmpty(f.getIndustryList()))   q.setParameter("industries",   f.getIndustryList());
         if (listNonEmpty(f.getSchemeList()))     q.setParameter("schemes",      f.getSchemeList());
         if (listNonEmpty(f.getCardTypeList()))   q.setParameter("cardTypes",    f.getCardTypeList());
         if (listNonEmpty(f.getDestinationList()))q.setParameter("destinations", f.getDestinationList());
@@ -234,6 +250,8 @@ public class RevenueKpiController {
         return !listNonEmpty(f.getPartnerList()) && !listNonEmpty(f.getRmList())
                 && !listNonEmpty(f.getTeamLeaderList()) && !listNonEmpty(f.getMidList())
                 && !listNonEmpty(f.getSidList()) && !listNonEmpty(f.getMccList())
+                && !listNonEmpty(f.getIndustryList())
+                && f.getOpenDateStart() == null && f.getOpenDateEnd() == null
                 && !listNonEmpty(f.getSchemeList()) && !listNonEmpty(f.getCardTypeList())
                 && !listNonEmpty(f.getDestinationList()) && !listNonEmpty(f.getChannelList())
                 && (f.getMerchantName() == null || f.getMerchantName().isBlank());

@@ -301,12 +301,32 @@ public class ZeroTransactionRepository {
         String cte = baseCte(f, tenantId);
         String rangeCond = rangeCondition(rangeType);
 
+        // Counts come in TWO grains:
+        //   *_t  = terminal-grain (one row per dim_terminal) — the drill-down unit.
+        //   *_m  = merchant-grain (COUNT(DISTINCT mid))       — the headline unit.
+        // A churn/dormancy report headlines MERCHANTS: one merchant with 20 idle
+        // terminals is ONE dormant merchant, not twenty. The old report only had
+        // terminal counts, so a single never-transacted test merchant read as a
+        // portfolio of 20 inactive entities.
+        //
+        // Distribution buckets are DORMANCY buckets — they must exclude terminals
+        // that are still active. Dormancy begins after the 7-day floor (the same
+        // threshold processResults uses for row status: days > 7). The old ≤14d
+        // bucket counted terminals whose last txn was within 14 days of the anchor,
+        // i.e. recently-active terminals that don't belong in this report at all —
+        // that was the stray blue bar sitting next to "Never".
         String countSql = cte +
-            "SELECT COUNT(*) FILTER (WHERE " + rangeCond + ") AS total, " +
-            "COUNT(*) FILTER (WHERE last_txn IS NULL) AS never_c, " +
-            "COUNT(*) FILTER (WHERE last_txn < :cutoff30) AS in30_c, " +
-            "COUNT(*) FILTER (WHERE last_txn >= :cutoff30 AND last_txn < :cutoff7) AS in7_c, " +
-            "COUNT(*) FILTER (WHERE last_txn IS NOT NULL AND (:anchorDate - last_txn) <= 14) AS b14, " +
+            "SELECT COUNT(*) FILTER (WHERE " + rangeCond + ") AS total_t, " +
+            "COUNT(DISTINCT mid) FILTER (WHERE " + rangeCond + ") AS total_m, " +
+            "COUNT(*) FILTER (WHERE last_txn IS NULL) AS never_t, " +
+            "COUNT(DISTINCT mid) FILTER (WHERE last_txn IS NULL) AS never_m, " +
+            "COUNT(*) FILTER (WHERE last_txn < :cutoff30) AS in30_t, " +
+            "COUNT(DISTINCT mid) FILTER (WHERE last_txn < :cutoff30) AS in30_m, " +
+            "COUNT(*) FILTER (WHERE last_txn >= :cutoff30 AND last_txn < :cutoff7) AS in7_t, " +
+            "COUNT(DISTINCT mid) FILTER (WHERE last_txn >= :cutoff30 AND last_txn < :cutoff7) AS in7_m, " +
+            // Dormancy distribution (terminal-grain), floored at >7 days so no
+            // active terminal is counted. 8–14 / 15–30 / 31–60 / 61–90 / 90d+ / Never.
+            "COUNT(*) FILTER (WHERE last_txn IS NOT NULL AND (:anchorDate - last_txn) BETWEEN 8 AND 14) AS b14, " +
             "COUNT(*) FILTER (WHERE (:anchorDate - last_txn) BETWEEN 15 AND 30) AS b30, " +
             "COUNT(*) FILTER (WHERE (:anchorDate - last_txn) BETWEEN 31 AND 60) AS b60, " +
             "COUNT(*) FILTER (WHERE (:anchorDate - last_txn) BETWEEN 61 AND 90) AS b90, " +
@@ -316,33 +336,51 @@ public class ZeroTransactionRepository {
         bindCommon(cq, countSql, f, tenantId, anchor);
         Object[] c = (Object[]) cq.getSingleResult();
 
+        // Top aggregators by dormancy — merchant-grain (distinct dormant merchants
+        // per aggregator), with terminal count kept as a secondary figure.
         String aggSql = cte +
-            "SELECT COALESCE(aggregator_name, '— Unassigned —') AS agg, COUNT(*) AS c " +
+            "SELECT COALESCE(aggregator_name, '— Unassigned —') AS agg, " +
+            "COUNT(DISTINCT mid) AS c_m, COUNT(*) AS c_t " +
             "FROM base WHERE 1=1 " + rangePredicate(rangeType) +
-            " GROUP BY COALESCE(aggregator_name, '— Unassigned —') ORDER BY c DESC LIMIT 6";
+            " GROUP BY COALESCE(aggregator_name, '— Unassigned —') ORDER BY c_m DESC, c_t DESC LIMIT 6";
         Query aq = entityManager.createNativeQuery(aggSql);
         bindCommon(aq, aggSql, f, tenantId, anchor);
         @SuppressWarnings("unchecked")
         List<Object[]> aggRows = aq.getResultList();
 
+        // Column order from countSql:
+        //  [0] total_t  [1] total_m  [2] never_t [3] never_m
+        //  [4] in30_t   [5] in30_m   [6] in7_t   [7] in7_m
+        //  [8] b14 [9] b30 [10] b60 [11] b90 [12] b90p
         Map<String, Object> out = new HashMap<>();
         out.put("asOf", anchor.toString());
-        out.put("total", num(c[0]));
-        out.put("never", num(c[1]));
-        out.put("in30", num(c[2]));
-        out.put("in7", num(c[3]));
+        // Headline counts are MERCHANT-grain. Terminal counts are exposed
+        // alongside (…Terminals) so the UI can show "N merchants · M terminals".
+        out.put("total", num(c[1]));
+        out.put("never", num(c[3]));
+        out.put("in30", num(c[5]));
+        out.put("in7",  num(c[7]));
+        out.put("totalTerminals", num(c[0]));
+        out.put("neverTerminals", num(c[2]));
+        out.put("in30Terminals",  num(c[4]));
+        out.put("in7Terminals",   num(c[6]));
+
+        // Dormancy distribution (terminal-grain). No active-terminal bucket.
         List<Map<String, Object>> dist = new ArrayList<>();
-        dist.add(bucket("≤14d", num(c[4])));
-        dist.add(bucket("15–30d", num(c[5])));
-        dist.add(bucket("31–60d", num(c[6])));
-        dist.add(bucket("61–90d", num(c[7])));
-        dist.add(bucket("90d+", num(c[8])));
-        dist.add(bucket("Never", num(c[1])));
+        dist.add(bucket("8–14d", num(c[8])));
+        dist.add(bucket("15–30d", num(c[9])));
+        dist.add(bucket("31–60d", num(c[10])));
+        dist.add(bucket("61–90d", num(c[11])));
+        dist.add(bucket("90d+", num(c[12])));
+        dist.add(bucket("Never", num(c[2])));
         out.put("distribution", dist);
+
         List<Map<String, Object>> aggs = new ArrayList<>();
         for (Object[] r : aggRows) {
             Map<String, Object> m = new HashMap<>();
-            m.put("name", r[0]); m.put("count", num(r[1]));
+            m.put("name", r[0]);
+            m.put("count", num(r[1]));           // merchant-grain (primary)
+            m.put("terminals", num(r[2]));       // terminal-grain (secondary)
             aggs.add(m);
         }
         out.put("topAggregators", aggs);
@@ -415,14 +453,19 @@ public class ZeroTransactionRepository {
                 map.put("daysInactive", -1);
             } else {
                 long days = java.time.temporal.ChronoUnit.DAYS.between(lastTxn, anchor);
+                // Guard against a future last_txn (clock/anchor edge cases) so
+                // daysInactive is never negative for a transacted terminal.
+                if (days < 0) days = 0;
                 map.put("daysInactive", days);
 
+                // This report's universe is inactive terminals only (rows are
+                // pre-scoped by the range/bucket predicate). Never emit "Active"
+                // — the UI has no such chip and would mislabel it. Anything that
+                // reaches here at <=30 days is the mildest dormant band.
                 if (days > 30) {
                     map.put("status", "Inactive 30+");
-                } else if (days > 7) {
-                    map.put("status", "Inactive 7–30");
                 } else {
-                    map.put("status", "Active"); // inside the 7-day window relative to the data anchor
+                    map.put("status", "Inactive 7–30");
                 }
             }
 

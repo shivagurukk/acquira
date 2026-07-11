@@ -17,6 +17,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -44,6 +45,13 @@ public class AuthController {
     private final com.acquira.common.service.AuditService auditService;
     private final com.acquira.common.repository.TenantSettingRepository tenantSettingRepository;
     private final SecurityPolicyService securityPolicyService;
+    private final PasswordEncoder passwordEncoder;
+
+    // ===== Password-reset OTP config =====
+    private static final int OTP_TTL_MINUTES = 10;   // OTP validity window
+    private static final int OTP_MAX_ATTEMPTS = 5;   // verify-otp attempts before the token is burned
+    private static final int TICKET_TTL_MINUTES = 10; // set-password ticket window after verify
+    private static final java.security.SecureRandom OTP_RNG = new java.security.SecureRandom();
 
     // ===== IP-based rate limiter (defense-in-depth, kept alongside per-user lockout) =====
     // P2-7 fix: bucket key is now (ip|username), not just ip. Previously a single
@@ -75,7 +83,8 @@ public class AuthController {
             RefreshTokenService refreshTokenService,
             com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantSettingRepository tenantSettingRepository,
-            SecurityPolicyService securityPolicyService) {
+            SecurityPolicyService securityPolicyService,
+            PasswordEncoder passwordEncoder) {
         this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
         this.tenantService = tenantService;
@@ -90,6 +99,7 @@ public class AuthController {
         this.auditService = auditService;
         this.tenantSettingRepository = tenantSettingRepository;
         this.securityPolicyService = securityPolicyService;
+        this.passwordEncoder = passwordEncoder;
     }
 
     // ===== Session timeout (inactivity auto-logout) =====
@@ -512,84 +522,171 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
-    // ===== FORGOT PASSWORD — Send reset link via email =====
-    // @Transactional is REQUIRED: this method calls resetTokenRepository
-    // .deleteByUserId(...), a @Modifying bulk-delete query. Without an active
-    // transaction Spring Data throws TransactionRequiredException ("Executing an
-    // update/delete query"), which surfaced as a 500 on the Forgot Password screen
-    // (the frontend swallowed it into the generic success message, so the token
-    // was never saved and no email was ever sent).
+    // ════════════════════════════════════════════════════════════════════════
+    //  FORGOT PASSWORD — OTP flow (send code → verify code → set new password)
+    //
+    //  Enumeration-safe: every step returns the SAME generic response whether or
+    //  not the email exists / the OTP is right, and never reveals account state.
+    //  The OTP is a 6-digit code, BCrypt-hashed at rest (plaintext only emailed),
+    //  single-use, 10-min TTL, and attempt-limited. On successful verification a
+    //  fresh opaque reset TICKET is issued; the set-password call carries that
+    //  ticket, not the OTP.
+    // ════════════════════════════════════════════════════════════════════════
+
+    private static final String OTP_GENERIC_SENT =
+            "If that email is registered, a verification code has been sent.";
+    private static final String OTP_GENERIC_FAIL =
+            "Invalid or expired verification code.";
+
+    // ===== STEP 1: request an OTP =====
+    // @Transactional is REQUIRED: deleteByUserId(...) is a @Modifying bulk-delete
+    // that throws TransactionRequiredException without an active transaction.
     @Transactional
     @PostMapping("/forgot-password")
-    public ResponseEntity<?> forgotPassword(@RequestBody Map<String, String> payload) {
+    public ResponseEntity<?> forgotPassword(@RequestBody Map<String, String> payload,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
         String email = payload.get("email");
         if (email == null || email.trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Email is required"));
         }
 
+        // Rate-limit OTP requests per (ip|email) with the same limiter as login,
+        // so this endpoint can't be used as an email-bomb / brute amplifier.
+        String rateKey = getClientIp(httpRequest) + "|otp|" + email.trim().toLowerCase();
+        if (isRateLimited(rateKey, MAX_IP_ATTEMPTS)) {
+            // Still generic — don't reveal that the address is being targeted.
+            return ResponseEntity.ok(Map.of("message", OTP_GENERIC_SENT));
+        }
+        recordFailedAttempt(rateKey);
+
         Optional<User> userOpt = userRepository.findByEmail(email.trim());
         // Always return success (don't leak whether email exists)
         if (userOpt.isEmpty()) {
-            return ResponseEntity.ok(Map.of("message",
-                    "If that email is registered, a password reset link has been sent."));
+            return ResponseEntity.ok(Map.of("message", OTP_GENERIC_SENT));
         }
 
         User user = userOpt.get();
 
-        // Delete any existing tokens for this user
+        // One live OTP per user — clear any prior rows first.
         resetTokenRepository.deleteByUserId(user.getId());
 
-        // Generate token
-        String token = UUID.randomUUID().toString();
-        LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
-        resetTokenRepository.save(new PasswordResetToken(user, token, expiresAt));
+        // 6-digit numeric code (000000–999999), hashed at rest.
+        String otp = String.format("%06d", OTP_RNG.nextInt(1_000_000));
+        String otpHash = passwordEncoder.encode(otp);
+        LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(OTP_TTL_MINUTES);
+        resetTokenRepository.save(new PasswordResetToken(user, otpHash, expiresAt, true));
 
-        // GAP-18: Send email with reset link (falls back to log if SMTP not configured)
-        emailService.sendPasswordResetEmail(user.getEmail(), user.getUsername(), token);
+        emailService.sendPasswordResetOtp(user.getEmail(), user.getUsername(), otp, OTP_TTL_MINUTES);
+        auditService.log("PWRESET_OTP_SENT",
+                "Password-reset OTP issued for '" + user.getUsername() + "' from " + getClientIp(httpRequest));
 
-        return ResponseEntity.ok(Map.of("message",
-                "If that email is registered, a password reset link has been sent."));
+        return ResponseEntity.ok(Map.of("message", OTP_GENERIC_SENT));
     }
 
-    // ===== RESET PASSWORD — Using token from email =====
-    // @Transactional for the same reason as forgot-password: this writes the
-    // reset-token row (used=true) and the user (new password + flags) in one unit,
-    // and adminResetPassword touches password history — all should commit together.
+    // ===== STEP 2: verify the OTP → issue a single-use reset ticket =====
+    @Transactional
+    @PostMapping("/verify-otp")
+    public ResponseEntity<?> verifyOtp(@RequestBody Map<String, String> payload,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+        String email = payload.get("email");
+        String otp = payload.get("otp");
+        if (email == null || email.trim().isEmpty() || otp == null || otp.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Email and code are required"));
+        }
+
+        Optional<User> userOpt = userRepository.findByEmail(email.trim());
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", OTP_GENERIC_FAIL));
+        }
+
+        Optional<PasswordResetToken> tokenOpt =
+                resetTokenRepository.findFirstByUser_IdAndUsedFalseOrderByCreatedAtDesc(userOpt.get().getId());
+        if (tokenOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", OTP_GENERIC_FAIL));
+        }
+        PasswordResetToken t = tokenOpt.get();
+
+        if (t.isExpired() || t.getOtpHash() == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", OTP_GENERIC_FAIL));
+        }
+        if (t.getAttemptCount() >= OTP_MAX_ATTEMPTS) {
+            // Burn the token so it can't be brute-forced further; force a re-request.
+            t.setUsed(true);
+            resetTokenRepository.save(t);
+            auditService.log("PWRESET_OTP_LOCKED",
+                    "Password-reset OTP locked (too many attempts) for '" + userOpt.get().getUsername() + "'");
+            return ResponseEntity.status(429).body(Map.of("error",
+                    "Too many incorrect attempts. Please request a new code."));
+        }
+
+        if (!passwordEncoder.matches(otp.trim(), t.getOtpHash())) {
+            t.setAttemptCount(t.getAttemptCount() + 1);
+            resetTokenRepository.save(t);
+            auditService.log("PWRESET_OTP_FAIL",
+                    "Bad password-reset OTP for '" + userOpt.get().getUsername() + "' from " + getClientIp(httpRequest));
+            return ResponseEntity.badRequest().body(Map.of("error", OTP_GENERIC_FAIL));
+        }
+
+        // Correct — mark verified, issue a fresh opaque ticket, extend the window
+        // so the user has time to type a new password.
+        String ticket = UUID.randomUUID().toString();
+        t.setVerified(true);
+        t.setToken(ticket);
+        t.setExpiresAt(LocalDateTime.now().plusMinutes(TICKET_TTL_MINUTES));
+        resetTokenRepository.save(t);
+
+        return ResponseEntity.ok(Map.of("ticket", ticket));
+    }
+
+    // ===== STEP 3: set the new password using the verified ticket =====
+    // @Transactional: writes the token (used=true), the user (new password +
+    // flags), password history (in adminResetPassword), and revokes sessions —
+    // all one unit of work.
     @Transactional
     @PostMapping("/reset-password")
     public ResponseEntity<?> resetPassword(@RequestBody Map<String, String> payload) {
-        String token = payload.get("token");
+        String ticket = payload.get("ticket");
         String newPassword = payload.get("newPassword");
 
-        if (token == null || newPassword == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Token and new password are required"));
+        if (ticket == null || newPassword == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Reset ticket and new password are required"));
         }
 
-        Optional<PasswordResetToken> tokenOpt = resetTokenRepository.findByTokenAndUsedFalse(token);
+        Optional<PasswordResetToken> tokenOpt = resetTokenRepository.findByTokenAndUsedFalse(ticket);
         if (tokenOpt.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Invalid or expired reset link"));
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid or expired reset request. Please start over."));
         }
 
         PasswordResetToken resetToken = tokenOpt.get();
+        if (!resetToken.isVerified()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Please verify your code before setting a new password."));
+        }
         if (resetToken.isExpired()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Reset link has expired. Please request a new one."));
+            return ResponseEntity.badRequest().body(Map.of("error", "Reset request has expired. Please start over."));
         }
 
         User user = resetToken.getUser();
 
-        // Use admin reset (no current password needed)
+        // Admin-style reset (no current password needed). Validates strength +
+        // history and clears any lockout.
         String error = passwordService.adminResetPassword(user, newPassword);
         if (error != null) {
             return ResponseEntity.badRequest().body(Map.of("error", error));
         }
 
-        // Mark token as used
+        // Burn the ticket.
         resetToken.setUsed(true);
         resetTokenRepository.save(resetToken);
 
-        // For email-based reset, don't force change on next login (they just chose it)
+        // The user just chose this password knowingly — don't force another change.
         user.setMustChangePassword(false);
         userRepository.save(user);
+
+        // Security: a password reset invalidates every existing session, so a
+        // previously-compromised login can't survive the reset.
+        int revoked = refreshTokenService.revokeAllForUser(user.getUsername());
+        auditService.log("PWRESET_DONE",
+                "Password reset via OTP for '" + user.getUsername() + "'; revoked " + revoked + " session(s).");
 
         return ResponseEntity.ok(Map.of("message", "Password has been reset successfully. You can now sign in."));
     }

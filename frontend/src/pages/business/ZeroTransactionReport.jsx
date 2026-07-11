@@ -145,16 +145,33 @@ const ZeroTransactionReport = () => {
         } catch (e) { console.error(e); }
     };
 
+    // Counts are now MERCHANT-grain (summary.total / never / in30 / in7), with
+    // the terminal-grain figures exposed alongside as *Terminals. A churn report
+    // headlines merchants: one merchant with 20 idle terminals is ONE dormant
+    // merchant, not twenty. Terminals appear as the card subtitle.
+    const n = (v) => Number(v || 0);
     const kpis = useMemo(() => {
         if (!summary) return [];
+        const term = (t) => `${n(t).toLocaleString()} terminal${n(t) === 1 ? '' : 's'}`;
         return [
-            { title: 'Total Inactive', value: Number(summary.total || 0).toLocaleString(), icon: Users, color: T.indigo,
-              subtitle: summary.asOf ? `as of ${summary.asOf} (latest data)` : undefined },
-            { title: 'Never Transacted', value: Number(summary.never || 0).toLocaleString(), icon: XCircle, color: STATUS.never.color },
-            { title: 'Inactive 30+ Days', value: Number(summary.in30 || 0).toLocaleString(), icon: TrendingDown, color: STATUS.in30.color },
-            { title: 'Inactive 7–30 Days', value: Number(summary.in7 || 0).toLocaleString(), icon: Clock, color: STATUS.in7.color },
+            { title: 'Inactive Merchants', value: n(summary.total).toLocaleString(), icon: Users, color: T.indigo,
+              subtitle: `${term(summary.totalTerminals)}${summary.asOf ? ` · as of ${summary.asOf}` : ''}` },
+            { title: 'Never Transacted', value: n(summary.never).toLocaleString(), icon: XCircle, color: STATUS.never.color,
+              subtitle: term(summary.neverTerminals) },
+            { title: 'Dormant 30+ Days', value: n(summary.in30).toLocaleString(), icon: TrendingDown, color: STATUS.in30.color,
+              subtitle: term(summary.in30Terminals) },
+            { title: 'Dormant 7–30 Days', value: n(summary.in7).toLocaleString(), icon: Clock, color: STATUS.in7.color,
+              subtitle: term(summary.in7Terminals) },
         ];
     }, [summary]);
+
+    // When the entire inactive set is "never transacted" (common for a fresh
+    // tenant / test data), the 30+ and 7–30 tiles are structurally zero and the
+    // analytics band is a single bar — it reads as broken. Detect that so the UI
+    // can show a focused callout instead of three dead zero-panels.
+    const allNever = summary && n(summary.total) > 0
+        && n(summary.never) === n(summary.total)
+        && n(summary.in30) === 0 && n(summary.in7) === 0;
 
     const statusBreakdown = useMemo(() => {
         if (!summary) return [];
@@ -174,7 +191,7 @@ const ZeroTransactionReport = () => {
         .map(b => ({ label: b.label, count: Number(b.count), color: BUCKET_COLORS[b.label] || T.indigo })), [summary]);
 
     const topAggregators = useMemo(() => (summary?.topAggregators || [])
-        .map(a => ({ name: a.name, count: Number(a.count) })), [summary]);
+        .map(a => ({ name: a.name, count: Number(a.count), terminals: Number(a.terminals || 0) })), [summary]);
     const maxAgg = topAggregators[0]?.count || 1;
 
     const getStatusChip = (status) => {
@@ -183,15 +200,28 @@ const ZeroTransactionReport = () => {
         return <Chip label="Inactive 7-30" size="small" sx={{ fontWeight: 700, bgcolor: STATUS.in7.bg, color: STATUS.in7.fg, fontSize: '11px' }} />;
     };
 
+    // Rows are terminal-grain, so the same merchant/MID repeats across many rows.
+    // To stop 20 terminals of one merchant reading like 20 merchants, MERCHANT +
+    // MID are rendered muted/plain (context), while the TERMINAL (TID) — the thing
+    // that's actually unique per row — carries the weight. Dropped the redundant
+    // AGG CODE column (backend sets it equal to the aggregator name) and the
+    // heavy chip-boxes on MID/TID in favour of clean monospace.
+    const mono = { fontFamily: 'monospace', fontSize: '12px' };
     const columns = [
-        { field: 'entityName', headerName: 'ENTITY NAME', flex: 1, minWidth: 160, renderCell: (p) => <Typography variant="body2" fontWeight={700} color={T.text}>{p.value || '—'}</Typography> },
+        { field: 'merchantName', headerName: 'MERCHANT', flex: 1.2, minWidth: 170, renderCell: (p) => (
+            <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+                <Typography variant="body2" fontWeight={600} color={T.text} noWrap>{p.value || p.row.entityName || '—'}</Typography>
+                <Typography variant="caption" sx={{ ...mono, color: T.textMut }}>{p.row.mid}</Typography>
+            </Box>
+        ) },
         { field: 'aggregatorName', headerName: 'AGGREGATOR', flex: 1, minWidth: 140, renderCell: (p) => <Typography variant="body2" color={T.textSec}>{p.value || '—'}</Typography> },
-        { field: 'aggregatorCode', headerName: 'AGG CODE', width: 100, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: T.textMut }}>{p.value || '—'}</Typography> },
-        { field: 'mid', headerName: 'MID', width: 130, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: T.textSec, bgcolor: T.borderLt, px: 1, py: 0.3, borderRadius: '4px', border: `1px solid ${T.border}` }}>{p.value}</Typography> },
-        { field: 'merchantName', headerName: 'MERCHANT NAME', flex: 1.2, minWidth: 160, renderCell: (p) => <Typography variant="body2" fontWeight={600} color={T.strong}>{p.value}</Typography> },
-        { field: 'sid', headerName: 'SID', width: 100, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', color: T.textMut }}>{p.value}</Typography> },
-        { field: 'storeName', headerName: 'STORE', flex: 1, minWidth: 130, renderCell: (p) => <Typography variant="body2" color={T.textSec}>{p.value || '—'}</Typography> },
-        { field: 'terminalId', headerName: 'TID', width: 110, renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '12px', fontWeight: 700, color: T.strong, bgcolor: T.borderLt, px: 1, py: 0.3, borderRadius: '4px' }}>{p.value}</Typography> },
+        { field: 'storeName', headerName: 'STORE', flex: 1, minWidth: 130, renderCell: (p) => (
+            <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+                <Typography variant="body2" color={T.textSec} noWrap>{p.value || '—'}</Typography>
+                <Typography variant="caption" sx={{ ...mono, color: T.textMut }}>{p.row.sid}</Typography>
+            </Box>
+        ) },
+        { field: 'terminalId', headerName: 'TERMINAL (TID)', width: 140, renderCell: (p) => <Typography variant="body2" sx={{ ...mono, fontWeight: 700, color: T.strong }}>{p.value}</Typography> },
         { field: 'status', headerName: 'STATUS', width: 150, renderCell: (p) => getStatusChip(p.value) },
         { field: 'lastTransactionDate', headerName: 'LAST TXN', width: 120, align: 'right', headerAlign: 'right', renderCell: (p) => <Typography variant="body2" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>{p.value || <em style={{ color: 'var(--text-muted, #cbd5e1)' }}>Never</em>}</Typography> },
         { field: 'daysInactive', headerName: 'INACTIVE DAYS', type: 'number', width: 120, align: 'right', headerAlign: 'right', renderCell: (p) => <Typography variant="body2" fontWeight={600} color={p.value > 30 ? 'var(--danger, #ef4444)' : T.textSec} sx={{ fontVariantNumeric: 'tabular-nums' }}>{p.value > -1 ? p.value : '—'}</Typography> },
@@ -260,8 +290,24 @@ const ZeroTransactionReport = () => {
 
             <KpiCards cards={kpis} />
 
+            {/* Focused callout when the whole inactive set is "never transacted"
+                — the 30+/7–30 panels would all be zero, so show one clear line
+                instead of three dead zero-panels + a single-segment bar. */}
+            {allNever && (
+                <Paper sx={{ ...panelSx, mt: 1, mb: 3, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <XCircle size={18} color={STATUS.never.color} />
+                    <Typography variant="body2" color={T.textSec}>
+                        <Box component="span" sx={{ fontWeight: 700, color: T.text }}>
+                            {n(summary.total).toLocaleString()} merchant{n(summary.total) === 1 ? '' : 's'}
+                        </Box>
+                        {' '}({n(summary.totalTerminals).toLocaleString()} terminal{n(summary.totalTerminals) === 1 ? '' : 's'}) onboarded but never transacted.
+                        No dormant-but-previously-active merchants in this range.
+                    </Typography>
+                </Paper>
+            )}
+
             {/* ═══ Churn analytics band (accurate, full-set counts) ═══ */}
-            {summary && Number(summary.total) > 0 && (
+            {summary && Number(summary.total) > 0 && !allNever && (
                 <Box sx={{
                     display: 'grid', gap: 2, mb: 3, mt: 1,
                     gridTemplateColumns: { xs: '1fr', md: '1.1fr 1fr', lg: '1.2fr 1fr 1fr' },
@@ -290,7 +336,7 @@ const ZeroTransactionReport = () => {
                     </Paper>
 
                     <Paper sx={panelSx}>
-                        {panelTitle('Days Inactive Distribution')}
+                        {panelTitle('Dormancy Distribution (terminals)')}
                         <Box sx={{ height: 160 }}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={dist} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -317,7 +363,10 @@ const ZeroTransactionReport = () => {
                                             <Building2 size={13} color="var(--text-muted, #94a3b8)" />
                                             <Typography className="agg-name" variant="body2" color={T.textSec} noWrap sx={{ maxWidth: 160, transition: 'color .15s' }}>{a.name}</Typography>
                                         </Box>
-                                        <Typography variant="body2" fontWeight={700} color={T.text} sx={{ fontVariantNumeric: 'tabular-nums' }}>{a.count}</Typography>
+                                        <Stack direction="row" spacing={0.75} alignItems="baseline">
+                                            <Typography variant="body2" fontWeight={700} color={T.text} sx={{ fontVariantNumeric: 'tabular-nums' }}>{a.count}</Typography>
+                                            <Typography variant="caption" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>· {a.terminals} term</Typography>
+                                        </Stack>
                                     </Box>
                                     <Box sx={{ height: 6, borderRadius: 999, bgcolor: T.borderLt, overflow: 'hidden' }}>
                                         <Box sx={{ width: `${Math.max((a.count / maxAgg) * 100, 3)}%`, height: '100%', borderRadius: 999, background: 'var(--ztx-agg-bar, linear-gradient(90deg,#6366f1,#818cf8))' }} />

@@ -59,13 +59,18 @@ public class VolumeRevenueRepository {
         sql.append("  SUM(s.total_txns) as total_txns, ");
         sql.append("  SUM(s.total_volume) as total_volume, ");
         sql.append("  SUM(s.total_msf) as total_msf, ");
-        sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as opt_in_volume ");
+        sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as opt_in_volume, ");
+        // International volume split — domestic is derivable client-side as
+        // total_volume - intl_volume, so a fifth bucket column isn't needed.
+        sql.append("  SUM(CASE WHEN UPPER(COALESCE(s.destination,'')) <> 'DOMESTIC' THEN s.total_volume ELSE 0 END) as intl_volume, ");
+        sql.append("  COUNT(DISTINCT s.merchant_id) as active_merchants ");
         sql.append("FROM ").append(BASE_TABLE).append(" ");
         sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
-        // sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id "); // Use if
-        // Store filters needed
 
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
+        // dim_store is needed whenever we filter on MCC or SID.
+        boolean needStore = (filter.getMccList() != null && !filter.getMccList().isEmpty())
+                || (filter.getSidList() != null && !filter.getSidList().isEmpty());
+        if (needStore) {
             sql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
         }
 
@@ -116,6 +121,17 @@ public class VolumeRevenueRepository {
             sql.append("AND st.mcc IN (:mccs) ");
         }
 
+        // P-FIX: midList/sidList were exposed in the BusinessFilters drawer (used
+        // on this page) but silently dropped here — picking a MID/SID never
+        // narrowed the Volume & Revenue report. Wired through now.
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty()) {
+            sql.append("AND m.mid IN (:mids) ");
+        }
+
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty()) {
+            sql.append("AND st.sid IN (:sids) ");
+        }
+
         if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty()) {
             sql.append("AND m.sales_user_id IN (:teamLeaders) ");
         }
@@ -153,6 +169,10 @@ public class VolumeRevenueRepository {
             query.setParameter("destinations", filter.getDestinationList());
         if (filter.getMccList() != null && !filter.getMccList().isEmpty())
             query.setParameter("mccs", filter.getMccList());
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            query.setParameter("mids", filter.getMidList());
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            query.setParameter("sids", filter.getSidList());
         if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
             query.setParameter("teamLeaders", filter.getTeamLeaderList());
         if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
@@ -168,6 +188,8 @@ public class VolumeRevenueRepository {
             map.put("volume", row[2]);
             map.put("msf", row[3]);
             map.put("opt_in_volume", row[4]);
+            map.put("intl_volume", row[5]);
+            map.put("active_merchants", row[6]);
             result.add(map);
         }
 
@@ -321,6 +343,10 @@ public class VolumeRevenueRepository {
             sql.append(" m.mid as row_label, m.mid as sort_key, ");
         } else if ("STORE".equals(groupBy)) {
             sql.append(" st.sid as row_label, st.sid as sort_key, ");
+        } else if ("TOTAL".equals(groupBy)) {
+            // Single-row KPI grain: whole filtered range collapsed to one row.
+            // Every select item must be an aggregate/constant (no GROUP BY below).
+            sql.append(" CAST('TOTAL' AS text) as row_label, MIN(s.business_date) as sort_key, ");
         }
 
         // Pivoted Columns (Dom Debit&Prepaid, Dom Credit, Intl, Total).
@@ -366,6 +392,20 @@ public class VolumeRevenueRepository {
             sql.append(" m.name as merchant_name ");
         } else {
             sql.append(" CAST(NULL as text) as merchant_name ");
+        }
+
+        // TOTAL-only KPI columns (indices 17-20), appended AFTER merchant_name so
+        // the positional mapping of every existing groupBy mode is untouched.
+        // Channel note: sum_daily_insight.channel stores DEVICE/PROFILE names
+        // (N96, Aisino A90, SoftPOS, ECOM PROFILE, Pay By Link, ...), NOT
+        // POS/ECOM literals. ECOM is a small explicit whitelist; POS is the
+        // catch-all (everything except ECOM values and 'None'/blank), so new
+        // terminal models in the feed default to POS instead of vanishing.
+        if ("TOTAL".equals(groupBy)) {
+            sql.append(", SUM(s.total_txns) as total_cnt ");
+            sql.append(", COUNT(DISTINCT s.merchant_id) as active_merchants ");
+            sql.append(", SUM(CASE WHEN UPPER(COALESCE(s.channel,'')) IN ('ECOM PROFILE','PAY BY LINK','PAY ON') THEN s.total_volume ELSE 0 END) as ecom_vol ");
+            sql.append(", SUM(CASE WHEN UPPER(COALESCE(s.channel,'')) NOT IN ('ECOM PROFILE','PAY BY LINK','PAY ON','NONE','') THEN s.total_volume ELSE 0 END) as pos_vol ");
         }
 
         sql.append("FROM sum_daily_insight s ");
@@ -543,6 +583,14 @@ public class VolumeRevenueRepository {
             // Extra context (index 16)
             map.put("merchant_name", col < row.length ? row[col++] : null);
 
+            // TOTAL-only KPI columns (indices 17-20)
+            if ("TOTAL".equals(groupBy)) {
+                map.put("total_cnt", col < row.length ? row[col++] : 0);
+                map.put("active_merchants", col < row.length ? row[col++] : 0);
+                map.put("ecom_vol", col < row.length ? row[col++] : 0);
+                map.put("pos_vol", col < row.length ? row[col++] : 0);
+            }
+
             result.add(map);
         }
 
@@ -587,6 +635,42 @@ public class VolumeRevenueRepository {
                     (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
             if (tenantId != null) qMcc.setParameter("tid", tenantId);
             options.put("mccs", qMcc.getResultList());
+
+            // MCC category labels + Industry (sector) options — sourced from
+            // ref_mcc_category (the bank's MCC sector sheet, V2026_07_10_01).
+            // mccCategories is index-aligned with mccs (both DISTINCT + ORDER BY
+            // mcc over the same dim_store predicate; ref_mcc_category.mcc is a PK
+            // so each code maps to exactly one category). We overwrite "mccs"
+            // from the same result set to make the alignment structural.
+            // Guarded in its own try so an environment missing the reference
+            // table (prod before the migration lands) degrades to plain-code
+            // MCC dropdowns instead of throwing and losing every later option.
+            try {
+                Query qMccCat = entityManager.createNativeQuery(
+                        "SELECT DISTINCT st.mcc, COALESCE(rc.category, 'MIS') " +
+                        "FROM dim_store st LEFT JOIN ref_mcc_category rc ON rc.mcc = st.mcc " +
+                        "WHERE st.mcc IS NOT NULL " +
+                        (tenantId != null ? "AND st.tenant_id = :tid " : "") + "ORDER BY 1");
+                if (tenantId != null) qMccCat.setParameter("tid", tenantId);
+                @SuppressWarnings("unchecked")
+                List<Object[]> catRows = qMccCat.getResultList();
+                List<String> codes = new ArrayList<>();
+                List<String> cats = new ArrayList<>();
+                java.util.TreeSet<String> industrySet = new java.util.TreeSet<>();
+                for (Object[] r : catRows) {
+                    String code = r[0] != null ? r[0].toString() : null;
+                    if (code == null) continue;
+                    String cat = r[1] != null ? r[1].toString() : "MIS";
+                    codes.add(code);
+                    cats.add(cat);
+                    if (!"MIS".equals(cat)) industrySet.add(cat);
+                }
+                options.put("mccs", codes);
+                options.put("mccCategories", cats);
+                options.put("industries", new ArrayList<>(industrySet));
+            } catch (Exception refEx) {
+                // ref_mcc_category absent — keep the plain mccs list from above.
+            }
 
             // SIDs (NEW — unblocks the SID dropdown in BusinessFilters / DailyMerchantDashboard)
             // Capped at 5000 — if a tenant has more stores than that, the dropdown UX
@@ -680,7 +764,10 @@ public class VolumeRevenueRepository {
         sql.append("  st2.sid as sid, ");
         sql.append("  m.name as merchant_name, ");
         sql.append("  SUM(s.total_txns) as count, ");
-        sql.append("  SUM(s.total_volume) as volume ");
+        sql.append("  SUM(s.total_volume) as volume, ");
+        sql.append("  SUM(s.total_msf) as msf, ");
+        sql.append("  SUM(CASE WHEN ").append(debitBucketMatcherSql()).append(" THEN s.total_volume ELSE 0 END) as debit_volume, ");
+        sql.append("  SUM(CASE WHEN ").append(prepaidBucketMatcherSql()).append(" THEN s.total_volume ELSE 0 END) as prepaid_volume ");
         sql.append("FROM sum_daily_insight s ");
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
         sql.append("LEFT JOIN dim_store st2 ON s.store_id = st2.store_id AND st2.tenant_id = s.tenant_id ");
@@ -801,8 +888,18 @@ public class VolumeRevenueRepository {
             map.put("mid", row[0]);
             map.put("sid", row[1]);
             map.put("merchantName", row[2]);
-            map.put("count", row[3]);
-            map.put("volume", row[4]);
+            long rowCount = lng(row[3]);
+            java.math.BigDecimal rowVolume = bd(row[4]);
+            java.math.BigDecimal rowMsf = bd(row[5]);
+            java.math.BigDecimal rowDebitVol = bd(row[6]);
+            java.math.BigDecimal rowPrepaidVol = bd(row[7]);
+            map.put("count", rowCount);
+            map.put("volume", rowVolume);
+            map.put("msf", rowMsf);
+            map.put("msfRateBps", bpsOf(rowMsf, rowVolume));
+            map.put("avgTicket", ratioOf(rowVolume, java.math.BigDecimal.valueOf(rowCount)));
+            map.put("debitVolume", rowDebitVol);
+            map.put("prepaidVolume", rowPrepaidVol);
             result.add(map);
         }
 
@@ -835,8 +932,328 @@ public class VolumeRevenueRepository {
         return result;
     }
 
+    // ── Debit/Prepaid segment summary (tiles + charts) ───────────────────────
+    // Additive & isolated: reuses the exact card-type matcher semantics from
+    // getDebitPrepaidMetrics (including the P1-7 "user-picked card types
+    // override the hardcoded matcher" rule) so the tiles and table always
+    // agree. New method, touches nothing else.
+
+    /** Debit-only bucket matcher (card_type=2 family, explicitly excluding prepaid text). */
+    private static String debitBucketMatcherSql() {
+        return "( (UPPER(TRIM(s.card_type)) IN ('DEBIT','DEB','DBT','D','2') " +
+               "    OR UPPER(TRIM(s.card_type)) LIKE 'DEBIT%' " +
+               "    OR s.card_type IN (SELECT code FROM ref_card_scheme WHERE card_type = 2) " +
+               "    OR s.card_scheme IN (SELECT code FROM ref_card_scheme WHERE card_type = 2)) " +
+               "  AND UPPER(TRIM(s.card_type)) NOT LIKE '%PREPAID%' ) ";
+    }
+
+    /** Prepaid-only bucket matcher (card_type 3/4 family). */
+    private static String prepaidBucketMatcherSql() {
+        return "( UPPER(TRIM(s.card_type)) IN ('PREPAID','PREP','PPD','P','3','4','DEBIT PREPAID','CREDIT PREPAID') " +
+               "   OR UPPER(TRIM(s.card_type)) LIKE 'PREPAID%' " +
+               "   OR s.card_type IN (SELECT code FROM ref_card_scheme WHERE card_type IN (3,4)) " +
+               "   OR s.card_scheme IN (SELECT code FROM ref_card_scheme WHERE card_type IN (3,4)) ) ";
+    }
+
+    /** Debit OR Prepaid — the default segment matcher (mirrors getDebitPrepaidMetrics). */
+    private static String debitPrepaidMatcherSql() {
+        return "( " + debitBucketMatcherSql() + " OR " + prepaidBucketMatcherSql() + " ) ";
+    }
+
+    public Map<String, Object> getDebitPrepaidSummary(VolumeRevenueFilterDTO filter) {
+        return getDebitPrepaidSummary(filter, null);
+    }
+
+    public Map<String, Object> getDebitPrepaidSummary(VolumeRevenueFilterDTO filter, Long tenantId) {
+        boolean userPickedCardTypes = listNonEmpty(filter.getCardTypeList());
+        String segmentLabel = userPickedCardTypes ? "CUSTOM" : "DEBIT_PREPAID";
+        String cardMatcher = userPickedCardTypes ? "s.card_type IN (:cardTypes) " : debitPrepaidMatcherSql();
+
+        // SETTLEMENT-BASIS source: sum_daily_full carries settlement volume
+        // (total_volume = store_base_currency_amount at build time), real fees
+        // (interchange/scheme/ecom/net), AND the full dimensional grain
+        // (mid/sid/mcc/channel/destination/scheme/card_type/is_opt_in). Channel
+        // is ALREADY normalized to POS/ECOM in this table, so no device-name
+        // remapping is needed here. dim_store is only joined when a SID filter is
+        // active (sum_daily_full has store_id + mcc but not sid).
+        boolean needSid = listNonEmpty(filter.getSidList());
+        final String fromJoins = "FROM sum_daily_full s " +
+                "JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id " +
+                (needSid ? "LEFT JOIN dim_store st2 ON s.store_id = st2.store_id AND st2.tenant_id = s.tenant_id " : "");
+
+        StringBuilder commonB = new StringBuilder();
+        if (tenantId != null) commonB.append("AND s.tenant_id = :tenantId ");
+        if (filter.getStartDate() != null) commonB.append("AND s.business_date >= :startDate ");
+        if (filter.getEndDate() != null) commonB.append("AND s.business_date <= :endDate ");
+        if (listNonEmpty(filter.getPartnerList())) commonB.append("AND m.referral_partner IN (:partners) ");
+        if (listNonEmpty(filter.getRmList())) commonB.append("AND m.sales_email IN (:rms) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            commonB.append("AND m.name ILIKE :merchName ");
+        if (listNonEmpty(filter.getMccList())) commonB.append("AND s.mcc IN (:mccs) ");
+        if (listNonEmpty(filter.getTeamLeaderList())) commonB.append("AND m.sales_user_id IN (:teamLeaders) ");
+        if (listNonEmpty(filter.getChannelList())) commonB.append("AND s.channel IN (:channels) ");
+        if (listNonEmpty(filter.getSchemeList())) commonB.append("AND s.card_scheme IN (:schemes) ");
+        if (listNonEmpty(filter.getDestinationList())) commonB.append("AND s.destination IN (:destinations) ");
+        if (listNonEmpty(filter.getMidList())) commonB.append("AND m.mid IN (:mids) ");
+        if (needSid) commonB.append("AND st2.sid IN (:sids) ");
+        final String commonSql = commonB.toString();
+
+        // ── Book totals: ALL card types, same other filters. Denominator for
+        // every "% of book" figure — always ignores the card-type matcher so
+        // the share is meaningful even if the user picked custom card types.
+        java.math.BigDecimal bookVol; long bookCnt; java.math.BigDecimal bookMsf;
+        java.math.BigDecimal segVol; long segCnt; java.math.BigDecimal segMsf;
+        Object[] bucketRow;
+
+        Query bookQ = entityManager.createNativeQuery(
+                "SELECT COALESCE(SUM(s.total_volume),0), COALESCE(SUM(s.total_txns),0), COALESCE(SUM(s.total_msf),0) " +
+                fromJoins + "WHERE 1=1 " + commonSql);
+        bindDebitPrepaidCommonParams(bookQ, filter, tenantId);
+        Object[] bookRow = (Object[]) bookQ.getSingleResult();
+        bookVol = bd(bookRow[0]); bookCnt = lng(bookRow[1]); bookMsf = bd(bookRow[2]);
+
+        Query segQ = entityManager.createNativeQuery(
+                "SELECT COALESCE(SUM(s.total_volume),0), COALESCE(SUM(s.total_txns),0), COALESCE(SUM(s.total_msf),0) " +
+                fromJoins + "WHERE " + cardMatcher + commonSql);
+        bindDebitPrepaidCommonParams(segQ, filter, tenantId);
+        if (userPickedCardTypes) segQ.setParameter("cardTypes", filter.getCardTypeList());
+        Object[] segRow = (Object[]) segQ.getSingleResult();
+        segVol = bd(segRow[0]); segCnt = lng(segRow[1]); segMsf = bd(segRow[2]);
+
+        Query bucketQ = entityManager.createNativeQuery(
+                "SELECT " +
+                "  SUM(CASE WHEN " + debitBucketMatcherSql() + " THEN s.total_volume ELSE 0 END), " +
+                "  SUM(CASE WHEN " + debitBucketMatcherSql() + " THEN s.total_txns ELSE 0 END), " +
+                "  SUM(CASE WHEN " + prepaidBucketMatcherSql() + " THEN s.total_volume ELSE 0 END), " +
+                "  SUM(CASE WHEN " + prepaidBucketMatcherSql() + " THEN s.total_txns ELSE 0 END) " +
+                fromJoins + "WHERE " + cardMatcher + commonSql);
+        bindDebitPrepaidCommonParams(bucketQ, filter, tenantId);
+        if (userPickedCardTypes) bucketQ.setParameter("cardTypes", filter.getCardTypeList());
+        bucketRow = (Object[]) bucketQ.getSingleResult();
+
+        List<Object[]> destRows   = debitPrepaidGroupedRows("s.destination", fromJoins, cardMatcher, commonSql, filter, tenantId, userPickedCardTypes, null);
+        // Channel is already POS/ECOM in sum_daily_full — group on it directly.
+        List<Object[]> chanRows   = debitPrepaidGroupedRows("s.channel", fromJoins, cardMatcher, commonSql, filter, tenantId, userPickedCardTypes, null);
+        List<Object[]> schemeRows = debitPrepaidGroupedRows("s.card_scheme", fromJoins, cardMatcher, commonSql, filter, tenantId, userPickedCardTypes, "ORDER BY 2 DESC LIMIT 5");
+        List<Object[]> monthRows  = debitPrepaidGroupedRows("TO_CHAR(s.business_date, 'YYYY-MM')", fromJoins, cardMatcher, commonSql, filter, tenantId, userPickedCardTypes, "ORDER BY 1 ASC");
+
+        // ── Assemble response ──
+        Map<String, Object> response = new HashMap<>();
+        response.put("segmentLabel", segmentLabel);
+
+        Map<String, Object> segment = new HashMap<>();
+        segment.put("volume", segVol);
+        segment.put("count", segCnt);
+        segment.put("msf", segMsf);
+        segment.put("msfRateBps", bpsOf(segMsf, segVol));
+        segment.put("avgTicket", ratioOf(segVol, java.math.BigDecimal.valueOf(segCnt)));
+        segment.put("volumeSharePct", pctOf(segVol, bookVol));
+        segment.put("countSharePct", pctOf(java.math.BigDecimal.valueOf(segCnt), java.math.BigDecimal.valueOf(bookCnt)));
+        response.put("segment", segment);
+
+        Map<String, Object> book = new HashMap<>();
+        book.put("volume", bookVol);
+        book.put("count", bookCnt);
+        book.put("msf", bookMsf);
+        book.put("msfRateBps", bpsOf(bookMsf, bookVol));
+        book.put("avgTicket", ratioOf(bookVol, java.math.BigDecimal.valueOf(bookCnt)));
+        response.put("book", book);
+
+        java.math.BigDecimal debitVol = bd(bucketRow[0]);
+        long debitCnt = lng(bucketRow[1]);
+        java.math.BigDecimal prepaidVol = bd(bucketRow[2]);
+        long prepaidCnt = lng(bucketRow[3]);
+        List<Map<String, Object>> byBucket = new ArrayList<>();
+        byBucket.add(bucketMap("DEBIT", debitVol, debitCnt, segVol));
+        byBucket.add(bucketMap("PREPAID", prepaidVol, prepaidCnt, segVol));
+        response.put("byBucket", byBucket);
+
+        response.put("byDestination", groupedRowsToMaps(destRows, segVol));
+        response.put("byChannel", groupedRowsToMaps(chanRows, segVol));
+        response.put("byScheme", groupedRowsToMaps(schemeRows, segVol));
+        response.put("byMonth", monthRowsToMaps(monthRows));
+
+        return response;
+    }
+
+    private List<Object[]> debitPrepaidGroupedRows(String groupExpr, String fromJoins, String cardMatcher,
+            String commonSql, VolumeRevenueFilterDTO filter, Long tenantId, boolean userPickedCardTypes,
+            String extraOrderLimit) {
+        String sql = "SELECT " + groupExpr + " AS grp, COALESCE(SUM(s.total_volume),0), COALESCE(SUM(s.total_txns),0) " +
+                fromJoins + "WHERE " + cardMatcher + commonSql +
+                "AND " + groupExpr + " IS NOT NULL " +
+                "GROUP BY 1 " + (extraOrderLimit != null ? extraOrderLimit : "ORDER BY 2 DESC");
+        Query q = entityManager.createNativeQuery(sql);
+        bindDebitPrepaidCommonParams(q, filter, tenantId);
+        if (userPickedCardTypes) q.setParameter("cardTypes", filter.getCardTypeList());
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = q.getResultList();
+        return rows;
+    }
+
+    private void bindDebitPrepaidCommonParams(Query q, VolumeRevenueFilterDTO filter, Long tenantId) {
+        if (tenantId != null) q.setParameter("tenantId", tenantId);
+        if (filter.getStartDate() != null) q.setParameter("startDate", filter.getStartDate());
+        if (filter.getEndDate() != null) q.setParameter("endDate", filter.getEndDate());
+        if (listNonEmpty(filter.getPartnerList())) q.setParameter("partners", filter.getPartnerList());
+        if (listNonEmpty(filter.getRmList())) q.setParameter("rms", filter.getRmList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            q.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+        if (listNonEmpty(filter.getMccList())) q.setParameter("mccs", filter.getMccList());
+        if (listNonEmpty(filter.getTeamLeaderList())) q.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (listNonEmpty(filter.getChannelList())) q.setParameter("channels", filter.getChannelList());
+        if (listNonEmpty(filter.getSchemeList())) q.setParameter("schemes", filter.getSchemeList());
+        if (listNonEmpty(filter.getDestinationList())) q.setParameter("destinations", filter.getDestinationList());
+        if (listNonEmpty(filter.getMidList())) q.setParameter("mids", filter.getMidList());
+        if (listNonEmpty(filter.getSidList())) q.setParameter("sids", filter.getSidList());
+    }
+
+    private Map<String, Object> bucketMap(String bucket, java.math.BigDecimal volume, long count, java.math.BigDecimal segVol) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("bucket", bucket);
+        m.put("volume", volume);
+        m.put("count", count);
+        m.put("sharePct", pctOf(volume, segVol));
+        return m;
+    }
+
+    private List<Map<String, Object>> groupedRowsToMaps(List<Object[]> rows, java.math.BigDecimal segVol) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object[] r : rows) {
+            Map<String, Object> m = new HashMap<>();
+            java.math.BigDecimal vol = bd(r[1]);
+            m.put("key", r[0]);
+            m.put("volume", vol);
+            m.put("count", lng(r[2]));
+            m.put("sharePct", pctOf(vol, segVol));
+            out.add(m);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> monthRowsToMaps(List<Object[]> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object[] r : rows) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("month", r[0]);
+            m.put("volume", bd(r[1]));
+            m.put("count", lng(r[2]));
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** basis points = numerator/denominator * 10000, 1 dp. Null-safe → 0 when denom 0. */
+    private static java.math.BigDecimal bpsOf(java.math.BigDecimal num, java.math.BigDecimal den) {
+        if (den == null || den.signum() == 0) return java.math.BigDecimal.ZERO;
+        return num.multiply(java.math.BigDecimal.valueOf(10000)).divide(den, 1, java.math.RoundingMode.HALF_UP);
+    }
+
+    /** percentage = numerator/denominator * 100, 1 dp. */
+    private static java.math.BigDecimal pctOf(java.math.BigDecimal num, java.math.BigDecimal den) {
+        if (den == null || den.signum() == 0) return java.math.BigDecimal.ZERO;
+        return num.multiply(java.math.BigDecimal.valueOf(100)).divide(den, 1, java.math.RoundingMode.HALF_UP);
+    }
+
+    /** simple ratio, 2 dp. */
+    private static java.math.BigDecimal ratioOf(java.math.BigDecimal num, java.math.BigDecimal den) {
+        if (den == null || den.signum() == 0) return java.math.BigDecimal.ZERO;
+        return num.divide(den, 2, java.math.RoundingMode.HALF_UP);
+    }
+
     public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter) {
         return getAttritionReport(filter, null);
+    }
+
+    /**
+     * Coverage check for the attrition report's three auto-computed
+     * comparison windows (MoM prior month, YoY prior-period, YoY YTD-prior),
+     * so the frontend can distinguish "nothing changed" from "the comparison
+     * window itself has no data" — the same class of issue fixed for the
+     * Retention report. A tenant with less than a year of history will have
+     * an empty YoY window well before it runs out of MoM history, so the two
+     * are tracked and reported independently rather than collapsed into one
+     * flag.
+     *
+     * Applies the exact same dimension filters as getAttritionReport().
+     * Mirrors its window math — must stay in sync with it.
+     */
+    public Map<String, Object> getAttritionReportMeta(VolumeRevenueFilterDTO filter, Long tenantId) {
+        java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
+        java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
+
+        java.time.LocalDate prevEnd    = end.minusYears(1);
+        java.time.LocalDate prevStart  = start.minusYears(1);
+        java.time.LocalDate prevYtdStart = prevEnd.withDayOfYear(1);
+        java.time.LocalDate momStart   = start.minusMonths(1);
+        java.time.LocalDate momEnd     = end.minusMonths(1);
+
+        boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
+
+        java.util.function.BiFunction<java.time.LocalDate, java.time.LocalDate, Boolean> windowHasData = (wStart, wEnd) -> {
+            StringBuilder sql = new StringBuilder();
+            sql.append("SELECT EXISTS(SELECT 1 FROM sum_daily_insight s ");
+            sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+            if (needStore) {
+                sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+            }
+            sql.append("WHERE s.business_date >= :wStart AND s.business_date <= :wEnd AND s.total_volume > 0 ");
+            if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
+
+            if (listNonEmpty(filter.getPartnerList()))    sql.append("AND m.referral_partner IN (:partners) ");
+            if (listNonEmpty(filter.getRmList()))         sql.append("AND m.sales_email IN (:rms) ");
+            if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
+            if (listNonEmpty(filter.getMidList()))        sql.append("AND m.mid IN (:mids) ");
+            if (listNonEmpty(filter.getIndustryList()))   sql.append("AND m.industry IN (:industries) ");
+            if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                sql.append("AND m.name ILIKE :merchName ");
+            if (listNonEmpty(filter.getMccList()))        sql.append("AND st.mcc IN (:mccs) ");
+            if (listNonEmpty(filter.getSidList()))        sql.append("AND st.sid IN (:sids) ");
+            if (listNonEmpty(filter.getChannelList()))     sql.append("AND s.channel IN (:channels) ");
+            if (listNonEmpty(filter.getSchemeList()))      sql.append("AND s.card_scheme IN (:schemes) ");
+            if (listNonEmpty(filter.getCardTypeList()))    sql.append("AND s.card_type IN (:cardTypes) ");
+            if (listNonEmpty(filter.getDestinationList())) sql.append("AND s.destination IN (:destinations) ");
+            sql.append(")");
+
+            Query q = entityManager.createNativeQuery(sql.toString());
+            q.setParameter("wStart", wStart);
+            q.setParameter("wEnd", wEnd);
+            if (tenantId != null) q.setParameter("tenantId", tenantId);
+
+            if (listNonEmpty(filter.getPartnerList()))    q.setParameter("partners", filter.getPartnerList());
+            if (listNonEmpty(filter.getRmList()))         q.setParameter("rms", filter.getRmList());
+            if (listNonEmpty(filter.getTeamLeaderList())) q.setParameter("teamLeaders", filter.getTeamLeaderList());
+            if (listNonEmpty(filter.getMidList()))        q.setParameter("mids", filter.getMidList());
+            if (listNonEmpty(filter.getIndustryList()))   q.setParameter("industries", filter.getIndustryList());
+            if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                q.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+            if (listNonEmpty(filter.getMccList()))        q.setParameter("mccs", filter.getMccList());
+            if (listNonEmpty(filter.getSidList()))        q.setParameter("sids", filter.getSidList());
+            if (listNonEmpty(filter.getChannelList()))     q.setParameter("channels", filter.getChannelList());
+            if (listNonEmpty(filter.getSchemeList()))      q.setParameter("schemes", filter.getSchemeList());
+            if (listNonEmpty(filter.getCardTypeList()))    q.setParameter("cardTypes", filter.getCardTypeList());
+            if (listNonEmpty(filter.getDestinationList())) q.setParameter("destinations", filter.getDestinationList());
+
+            return Boolean.TRUE.equals(q.getSingleResult());
+        };
+
+        boolean momHasData = windowHasData.apply(momStart, momEnd);
+        boolean yoyHasData = windowHasData.apply(prevStart, prevEnd);
+        boolean ytdPrevHasData = windowHasData.apply(prevYtdStart, prevEnd);
+
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("currentStart", start.toString());
+        meta.put("currentEnd", end.toString());
+        meta.put("momPrevStart", momStart.toString());
+        meta.put("momPrevEnd", momEnd.toString());
+        meta.put("momWindowHasData", momHasData);
+        meta.put("yoyPrevStart", prevStart.toString());
+        meta.put("yoyPrevEnd", prevEnd.toString());
+        meta.put("yoyWindowHasData", yoyHasData);
+        meta.put("ytdPrevStart", prevYtdStart.toString());
+        meta.put("ytdPrevEnd", prevEnd.toString());
+        meta.put("ytdPrevWindowHasData", ytdPrevHasData);
+        return meta;
     }
 
     /**
@@ -1113,6 +1530,15 @@ public class VolumeRevenueRepository {
             long merchPrev = result[5] != null ? ((Number) result[5]).longValue() : 0;
             metrics.put("activeMerchants", merchCurr);
             metrics.put("merchantsGrowth", calculateGrowth(merchCurr, merchPrev));
+
+            // Same guard as the Retention/Attrition reports: the "prior period"
+            // half of this comparison is auto-computed as an equal-length
+            // window immediately before the selected range. If that window has
+            // no volume/txn activity at all, every *Growth figure above is a
+            // divide-by-near-zero artifact (e.g. "+100%") rather than a real
+            // trend — flag it so the dashboard can say so instead of showing a
+            // confidently wrong number.
+            metrics.put("priorWindowHasData", volPrev > 0 || txnsPrev > 0);
         } else {
             metrics.put("totalVolume", 0);
             metrics.put("volumeGrowth", 0);
@@ -1120,7 +1546,10 @@ public class VolumeRevenueRepository {
             metrics.put("txnsGrowth", 0);
             metrics.put("activeMerchants", 0);
             metrics.put("merchantsGrowth", 0);
+            metrics.put("priorWindowHasData", false);
         }
+        metrics.put("priorStart", prevStart.toString());
+        metrics.put("priorEnd", prevEnd.toString());
 
         // Leakage (Placeholder: Placeholder logic or hardcoded 0 for now as previously
         // discussed)
@@ -1189,28 +1618,13 @@ public class VolumeRevenueRepository {
         // DataGrid column) without causing a SQL grammar error.
         sql.append("  CAST(0 AS NUMERIC) as interchange, ");
         sql.append("  st.mcc as mcc, ");
-        // FIX: derive industry from MCC using ISO 18245 range bands instead of hardcoded 'Retail'
-        sql.append("  CASE ");
-        sql.append("    WHEN st.mcc IS NULL THEN 'Other' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 1    AND 1499 THEN 'Agriculture' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 1500 AND 2999 THEN 'Construction' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 3000 AND 3299 THEN 'Airlines & Travel' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 3300 AND 3499 THEN 'Car Rental' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 3500 AND 3999 THEN 'Lodging & Hotels' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 4000 AND 4799 THEN 'Transportation' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 4800 AND 4999 THEN 'Utilities & Telecom' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 5000 AND 5199 THEN 'Wholesale' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 5200 AND 5999 THEN 'Retail' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 5800 AND 5814 THEN 'Food & Beverage' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 6000 AND 6599 THEN 'Financial Services' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 7000 AND 7299 THEN 'Business Services' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 7300 AND 7999 THEN 'Entertainment' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 8000 AND 8099 THEN 'Healthcare' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 8100 AND 8299 THEN 'Professional Services' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 8300 AND 8999 THEN 'Education' ");
-        sql.append("    WHEN CAST(st.mcc AS INTEGER) BETWEEN 9000 AND 9999 THEN 'Government' ");
-        sql.append("    ELSE 'Other' ");
-        sql.append("  END as industry, ");
+        // Industry/category now resolved from ref_mcc_category (global reference
+        // table seeded from the bank's MCC sector sheet, V2026_07_10_01) instead
+        // of the old ISO-18245 range-band CASE — exact per-MCC sectors, and the
+        // mapping can be corrected with SQL alone (no redeploy). Any MCC not in
+        // the sheet falls back to the 'MIS' bucket (unmapped) so it stays visible
+        // rather than silently collapsing.
+        sql.append("  COALESCE(rc.category, 'MIS') as industry, ");
         sql.append("  m.name as legal_name, "); // Fallback to name
         sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dcc_optin, ");
         sql.append("  count(*) OVER() as total_count, "); // Window function
@@ -1225,6 +1639,8 @@ public class VolumeRevenueRepository {
         // Join dim_terminal to get Type
         sql.append("LEFT JOIN dim_terminal t ON s.terminal_id = t.terminal_id AND t.tenant_id = s.tenant_id "); // Use LEFT JOIN in case terminal_id
                                                                                   // is null or missing
+        // Global reference table (no tenant_id — same class as ref_country).
+        sql.append("LEFT JOIN ref_mcc_category rc ON rc.mcc = st.mcc ");
 
         sql.append("WHERE 1=1 ");
         if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
@@ -1262,7 +1678,7 @@ public class VolumeRevenueRepository {
         }
 
         // Grouping (FIX: dropped t.type — see SELECT above for why)
-        sql.append("GROUP BY m.merchant_id, st.sid, m.mid, m.name, st.mcc ");
+        sql.append("GROUP BY m.merchant_id, st.sid, m.mid, m.name, st.mcc, rc.category ");
 
         // Sorting and Pagination
         sql.append("ORDER BY m.name ASC, st.sid ASC ");
@@ -1345,6 +1761,179 @@ public class VolumeRevenueRepository {
     }
 
     /**
+     * Cheap coverage check for the retention report's auto-computed prior
+     * window, so the frontend can tell "0 churn because nothing changed"
+     * apart from "0 churn because the prior window has no data at all"
+     * (e.g. a wide range like YTD whose prior-equal-length window falls
+     * before the tenant's data started).
+     *
+     * Applies the exact same dimension filters (partner, MCC, RM, team
+     * leader, MID, industry, merchant name, SID, channel, scheme, card
+     * type, destination) as getRetentionReport() — a heavily-filtered
+     * slice can legitimately have no prior activity even when the tenant
+     * broadly does, and the guard needs to reflect what the user is
+     * actually looking at, not the whole book.
+     *
+     * Mirrors the exact window math and filter clauses in
+     * getRetentionReport() — must stay in sync with it.
+     */
+    public Map<String, Object> getRetentionReportMeta(VolumeRevenueFilterDTO filter, Long tenantId) {
+        java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
+        java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
+        long lenDays = java.time.temporal.ChronoUnit.DAYS.between(start, end);
+        java.time.LocalDate priorEnd   = start.minusDays(1);
+        java.time.LocalDate priorStart = priorEnd.minusDays(lenDays);
+
+        boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT EXISTS(SELECT 1 FROM sum_daily_insight s ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        if (needStore) {
+            sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        }
+        sql.append("WHERE s.business_date >= :priorStart AND s.business_date <= :priorEnd AND s.total_volume > 0 ");
+        if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
+
+        // Same dimension filters as getRetentionReport() — kept identical on purpose.
+        if (listNonEmpty(filter.getPartnerList()))    sql.append("AND m.referral_partner IN (:partners) ");
+        if (listNonEmpty(filter.getRmList()))         sql.append("AND m.sales_email IN (:rms) ");
+        if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
+        if (listNonEmpty(filter.getMidList()))        sql.append("AND m.mid IN (:mids) ");
+        if (listNonEmpty(filter.getIndustryList()))   sql.append("AND m.industry IN (:industries) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            sql.append("AND m.name ILIKE :merchName ");
+        if (listNonEmpty(filter.getMccList()))        sql.append("AND st.mcc IN (:mccs) ");
+        if (listNonEmpty(filter.getSidList()))        sql.append("AND st.sid IN (:sids) ");
+        if (listNonEmpty(filter.getChannelList()))     sql.append("AND s.channel IN (:channels) ");
+        if (listNonEmpty(filter.getSchemeList()))      sql.append("AND s.card_scheme IN (:schemes) ");
+        if (listNonEmpty(filter.getCardTypeList()))    sql.append("AND s.card_type IN (:cardTypes) ");
+        if (listNonEmpty(filter.getDestinationList())) sql.append("AND s.destination IN (:destinations) ");
+        sql.append(")");
+
+        Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("priorStart", priorStart);
+        q.setParameter("priorEnd", priorEnd);
+        if (tenantId != null) q.setParameter("tenantId", tenantId);
+
+        if (listNonEmpty(filter.getPartnerList()))    q.setParameter("partners", filter.getPartnerList());
+        if (listNonEmpty(filter.getRmList()))         q.setParameter("rms", filter.getRmList());
+        if (listNonEmpty(filter.getTeamLeaderList())) q.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (listNonEmpty(filter.getMidList()))        q.setParameter("mids", filter.getMidList());
+        if (listNonEmpty(filter.getIndustryList()))   q.setParameter("industries", filter.getIndustryList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            q.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+        if (listNonEmpty(filter.getMccList()))        q.setParameter("mccs", filter.getMccList());
+        if (listNonEmpty(filter.getSidList()))        q.setParameter("sids", filter.getSidList());
+        if (listNonEmpty(filter.getChannelList()))     q.setParameter("channels", filter.getChannelList());
+        if (listNonEmpty(filter.getSchemeList()))      q.setParameter("schemes", filter.getSchemeList());
+        if (listNonEmpty(filter.getCardTypeList()))    q.setParameter("cardTypes", filter.getCardTypeList());
+        if (listNonEmpty(filter.getDestinationList())) q.setParameter("destinations", filter.getDestinationList());
+
+        boolean priorHasData = Boolean.TRUE.equals(q.getSingleResult());
+
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("currentStart", start.toString());
+        meta.put("currentEnd", end.toString());
+        meta.put("priorStart", priorStart.toString());
+        meta.put("priorEnd", priorEnd.toString());
+        meta.put("priorWindowHasData", priorHasData);
+
+        // ── True reactivation denominator ──────────────────────────────────
+        // The per-row payload can't express a genuine "reactivation rate": it
+        // drops merchants silent in BOTH windows, so the population that was
+        // dormant entering the current window isn't fully visible client-side.
+        // Compute it here: merchants that (a) had some history strictly BEFORE
+        // the prior window, AND (b) were silent in the prior window itself. Of
+        // those, the ones now transacting are true reactivations. We emit the
+        // base count so the frontend can show reactivated / dormantEnteringBase
+        // as an honest rate (and fall back to the win-back proxy when null).
+        try {
+            StringBuilder dSql = new StringBuilder();
+            dSql.append("SELECT COUNT(*) FROM ( ");
+            dSql.append("  SELECT m.merchant_id ");
+            dSql.append("  FROM dim_merchant m ");
+            dSql.append("  WHERE 1=1 ");
+            if (tenantId != null) dSql.append("AND m.tenant_id = :tenantId ");
+            appendMerchantDimFilters(dSql, filter);
+            // Had history before the prior window … capped to a 12-month
+            // lookback so this EXISTS scan prunes to at most ~one extra year of
+            // partitions per merchant instead of the entire history. A merchant
+            // dormant for >12 months reads more like a lapsed/new relationship
+            // than a reactivation candidate, so the cap also tightens the
+            // definition rather than only bounding cost.
+            java.time.LocalDate lookbackStart = priorStart.minusMonths(12);
+            dSql.append("  AND EXISTS (SELECT 1 FROM sum_daily_insight s2 ");
+            dSql.append("       WHERE s2.merchant_id = m.merchant_id AND s2.tenant_id = m.tenant_id ");
+            dSql.append("         AND s2.business_date >= :lookbackStart AND s2.business_date < :priorStart AND s2.total_volume > 0");
+            appendInsightDimFilters(dSql, filter, "s2");
+            dSql.append("  ) ");
+            // … but silent in the prior window.
+            dSql.append("  AND NOT EXISTS (SELECT 1 FROM sum_daily_insight s3 ");
+            dSql.append("       WHERE s3.merchant_id = m.merchant_id AND s3.tenant_id = m.tenant_id ");
+            dSql.append("         AND s3.business_date >= :priorStart AND s3.business_date <= :priorEnd AND s3.total_volume > 0");
+            appendInsightDimFilters(dSql, filter, "s3");
+            dSql.append("  ) ");
+            dSql.append(") dormant_base");
+
+            Query dq = entityManager.createNativeQuery(dSql.toString());
+            dq.setParameter("priorStart", priorStart);
+            dq.setParameter("priorEnd", priorEnd);
+            dq.setParameter("lookbackStart", lookbackStart);
+            if (tenantId != null) dq.setParameter("tenantId", tenantId);
+            bindMerchantDimFilters(dq, filter);
+            bindInsightDimFilters(dq, filter);
+            long dormantBase = lng(dq.getSingleResult());
+            meta.put("dormantEnteringBase", dormantBase);
+        } catch (Exception e) {
+            // Non-fatal: frontend falls back to the win-back proxy if absent.
+            meta.put("dormantEnteringBase", null);
+        }
+        return meta;
+    }
+
+    // ── Shared filter appenders/binders for the retention queries ──────────
+    // Extracted so the meta reactivation query reuses the EXACT same clauses as
+    // getRetentionReport()/getRetentionReportMeta() without triplicating them.
+    private void appendMerchantDimFilters(StringBuilder sql, VolumeRevenueFilterDTO filter) {
+        if (listNonEmpty(filter.getPartnerList()))    sql.append("AND m.referral_partner IN (:partners) ");
+        if (listNonEmpty(filter.getRmList()))         sql.append("AND m.sales_email IN (:rms) ");
+        if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
+        if (listNonEmpty(filter.getMidList()))        sql.append("AND m.mid IN (:mids) ");
+        if (listNonEmpty(filter.getIndustryList()))   sql.append("AND m.industry IN (:industries) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            sql.append("AND m.name ILIKE :merchName ");
+    }
+
+    private void appendInsightDimFilters(StringBuilder sql, VolumeRevenueFilterDTO filter, String alias) {
+        if (listNonEmpty(filter.getChannelList()))     sql.append(" AND ").append(alias).append(".channel IN (:channels)");
+        if (listNonEmpty(filter.getSchemeList()))      sql.append(" AND ").append(alias).append(".card_scheme IN (:schemes)");
+        if (listNonEmpty(filter.getCardTypeList()))    sql.append(" AND ").append(alias).append(".card_type IN (:cardTypes)");
+        if (listNonEmpty(filter.getDestinationList())) sql.append(" AND ").append(alias).append(".destination IN (:destinations)");
+        // Note: MCC/SID are store-dimension and not applied inside these
+        // EXISTS sub-scans; the outer dormant query is merchant-grained, so a
+        // store-level filter would need a dim_store join per sub-scan. Kept out
+        // deliberately to match the merchant-grained reactivation definition.
+    }
+
+    private void bindMerchantDimFilters(Query q, VolumeRevenueFilterDTO filter) {
+        if (listNonEmpty(filter.getPartnerList()))    q.setParameter("partners", filter.getPartnerList());
+        if (listNonEmpty(filter.getRmList()))         q.setParameter("rms", filter.getRmList());
+        if (listNonEmpty(filter.getTeamLeaderList())) q.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (listNonEmpty(filter.getMidList()))        q.setParameter("mids", filter.getMidList());
+        if (listNonEmpty(filter.getIndustryList()))   q.setParameter("industries", filter.getIndustryList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            q.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+    }
+
+    private void bindInsightDimFilters(Query q, VolumeRevenueFilterDTO filter) {
+        if (listNonEmpty(filter.getChannelList()))     q.setParameter("channels", filter.getChannelList());
+        if (listNonEmpty(filter.getSchemeList()))      q.setParameter("schemes", filter.getSchemeList());
+        if (listNonEmpty(filter.getCardTypeList()))    q.setParameter("cardTypes", filter.getCardTypeList());
+        if (listNonEmpty(filter.getDestinationList())) q.setParameter("destinations", filter.getDestinationList());
+    }
+
+    /**
      * Per-merchant retention classification over two equal-length, back-to-back
      * windows, plus the roll-up KPIs the Retention page needs.
      *
@@ -1367,6 +1956,12 @@ public class VolumeRevenueRepository {
         java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
         java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
 
+        // Guard against an inverted range (start after end). A negative length
+        // would push the prior window into nonsense (prior end AFTER prior start)
+        // and produce garbage classifications; normalise by swapping so the
+        // report degrades to a valid same-length comparison instead.
+        if (start.isAfter(end)) { java.time.LocalDate t = start; start = end; end = t; }
+
         // Equal-length prior window immediately preceding the current one.
         long lenDays = java.time.temporal.ChronoUnit.DAYS.between(start, end); // inclusive length - 1
         java.time.LocalDate priorEnd   = start.minusDays(1);
@@ -1378,7 +1973,9 @@ public class VolumeRevenueRepository {
         boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
 
         StringBuilder sql = new StringBuilder();
-        sql.append("SELECT m.mid AS mid, m.name AS merchant_name, m.created_date AS created_date, ");
+        // merchant_id first so the frontend has a stable, globally-unique row key
+        // (duplicate MIDs from re-onboarded merchants otherwise collide in the grid).
+        sql.append("SELECT m.merchant_id AS merchant_id, m.mid AS mid, m.name AS merchant_name, m.created_date AS created_date, ");
         // Two windows x (vol, txn, msf)
         appendWindowMeasures(sql, "cur",   ":startDate",      ":endDate");
         appendWindowMeasures(sql, "prior", ":priorStartDate", ":priorEndDate");
@@ -1409,7 +2006,7 @@ public class VolumeRevenueRepository {
         if (listNonEmpty(filter.getCardTypeList()))    sql.append("AND s.card_type IN (:cardTypes) ");
         if (listNonEmpty(filter.getDestinationList())) sql.append("AND s.destination IN (:destinations) ");
 
-        sql.append("GROUP BY m.mid, m.name, m.created_date ORDER BY m.mid ASC");
+        sql.append("GROUP BY m.merchant_id, m.mid, m.name, m.created_date ORDER BY m.mid ASC");
 
         Query query = entityManager.createNativeQuery(sql.toString());
         query.setParameter("startDate", start);
@@ -1438,23 +2035,26 @@ public class VolumeRevenueRepository {
         List<Map<String, Object>> result = new ArrayList<>();
 
         for (Object[] row : rows) {
-            // Column order: mid, name, created_date, then cur(vol,txn,msf), prior(vol,txn,msf)
-            java.math.BigDecimal curVol   = bd(row[3]),  priorVol  = bd(row[6]);
-            long                 curTxn   = lng(row[4]), priorTxn  = lng(row[7]);
-            java.math.BigDecimal curMsf   = bd(row[5]),  priorMsf  = bd(row[8]);
+            // Column order: merchant_id, mid, name, created_date, then cur(vol,txn,msf), prior(vol,txn,msf)
+            java.math.BigDecimal curVol   = bd(row[4]),  priorVol  = bd(row[7]);
+            long                 curTxn   = lng(row[5]), priorTxn  = lng(row[8]);
+            java.math.BigDecimal curMsf   = bd(row[6]),  priorMsf  = bd(row[9]);
 
             // Drop merchants with no activity in EITHER window — noise, never retention signal.
-            if (isZero(curVol) && isZero(priorVol)) continue;
+            // "Activity" = volume OR transactions, so a merchant with only
+            // zero-value/refund txns (volume 0 but txns > 0) still counts as
+            // present rather than being mis-flagged as churned/silent.
+            boolean activeNow   = !isZero(curVol)   || curTxn   > 0;
+            boolean activePrior = !isZero(priorVol) || priorTxn > 0;
+            if (!activeNow && !activePrior) continue;
 
-            boolean activeNow   = !isZero(curVol);
-            boolean activePrior = !isZero(priorVol);
-
-            String status = classifyRetention(activeNow, activePrior, row[2], start, end);
+            String status = classifyRetention(activeNow, activePrior, row[3], start, end);
 
             Map<String, Object> map = new HashMap<>();
-            map.put("mid", row[0]);
-            map.put("name", row[1]);
-            map.put("createdDate", row[2] != null ? row[2].toString() : null);
+            map.put("merchant_id", row[0]);
+            map.put("mid", row[1]);
+            map.put("name", row[2]);
+            map.put("createdDate", row[3] != null ? row[3].toString() : null);
 
             map.put("cur_volume", curVol);
             map.put("prior_volume", priorVol);

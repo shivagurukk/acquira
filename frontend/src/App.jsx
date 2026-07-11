@@ -27,11 +27,11 @@ const FinanceDashboard = lazy(() => import('./pages/finance/FinanceDashboard'));
 const FinanceLists = lazy(() => import('./pages/finance/FinanceLists'));
 const VolumeRevenueSummary = lazy(() => import('./pages/business/VolumeRevenueSummary'));
 const MerchantFinancialSummary = lazy(() => import('./pages/business/MerchantFinancialSummary'));
-const TransactionPerformanceDashboard = lazy(() => import('./pages/business/TransactionPerformanceDashboard'));
 const DebitPrepaidMetrics = lazy(() => import('./pages/business/DebitPrepaidMetrics'));
 const AttritionReport = lazy(() => import('./pages/business/AttritionReport'));
 const RetentionReport = lazy(() => import('./pages/business/RetentionReport'));
 const ForecastingBenchmarking = lazy(() => import('./pages/business/ForecastingBenchmarking'));
+const TopPerformers = lazy(() => import('./pages/business/TopPerformers'));
 const ZeroTransactionReport = lazy(() => import('./pages/business/ZeroTransactionReport'));
 const ExecutiveDashboardReport = lazy(() => import('./pages/business/ExecutiveDashboardReport'));
 const MerchantReportManager = lazy(() => import('./pages/business/MerchantReportManager'));
@@ -65,11 +65,13 @@ const IntegrationHub = lazy(() => import('./pages/admin/IntegrationHub'));
 const EmailCampaignHub = lazy(() => import('./pages/admin/EmailCampaignHub'));
 const SsoSettings = lazy(() => import('./pages/admin/SsoSettings'));
 const DataMigration = lazy(() => import('./pages/admin/DataMigration'));
+const TenantProvisioning = lazy(() => import('./pages/admin/TenantProvisioning'));
 const SecuritySettings = lazy(() => import('./pages/admin/SecuritySettings'));
 const DatabaseMaintenance = lazy(() => import('./pages/admin/DatabaseMaintenance'));
 const AlertsNotifications = lazy(() => import('./pages/admin/AlertsNotifications'));
 const ApiManagement = lazy(() => import('./pages/admin/ApiManagement'));
 const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
+const SettingsHub = lazy(() => import('./pages/SettingsHub'));
 // S3 report storage settings
 const S3Settings = lazy(() => import('./pages/admin/S3Settings'));
 const BudgetTargets = lazy(() => import('./pages/admin/BudgetTargets'));
@@ -112,11 +114,11 @@ function App() {
               <Route path="/business/dashboard" element={<BusinessDashboard />} />
               <Route path="/business/volume-revenue" element={<VolumeRevenueSummary />} />
               <Route path="/business/merchant-financial" element={<MerchantFinancialSummary />} />
-              <Route path="/business/performance" element={<TransactionPerformanceDashboard />} />
               <Route path="/business/debit-prepaid" element={<DebitPrepaidMetrics />} />
               <Route path="/business/attrition" element={<AttritionReport />} />
               <Route path="/business/retention" element={<RetentionReport />} />
               <Route path="/business/forecasting" element={<ForecastingBenchmarking />} />
+              <Route path="/business/top-performers" element={<TopPerformers />} />
               <Route path="/business/zero-transaction" element={<ZeroTransactionReport />} />
               <Route path="/business/heatmap" element={<MerchantHeatmap />} />
               <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
@@ -160,15 +162,26 @@ function App() {
               <Route path="/business/revenue-leakage" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><RevenueLeakage /></RoleGuard>
               } />
+              {/* Unified Settings hub — Bank Admin gets everything; Super
+                  Admin can also view. No super-admin-only gating. */}
+              <Route path="/settings" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SettingsHub /></RoleGuard>
+              } />
+              <Route path="/settings/:section" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SettingsHub /></RoleGuard>
+              } />
+
               {/* Administration */}
               <Route path="/users" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><UserManagement /></RoleGuard>
               } />
+              {/* SA-only: tenant create/update (/api/banks POST/PUT) is guarded
+                  hasRole('SUPER_ADMIN') server-side — a Bank Admin would only get 403s. */}
               <Route path="/tenants" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><TenantManagement /></RoleGuard>
               } />
               <Route path="/admin/groups" element={
-                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><RbacGroups /></RoleGuard>
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><RbacGroups /></RoleGuard>
               } />
               <Route path="/admin/smtp-settings" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SmtpSettings /></RoleGuard>
@@ -179,6 +192,7 @@ function App() {
               <Route path="/admin/audit-logs" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><AuditLogViewer /></RoleGuard>
               } />
+              {/* SA-only: BackupController is class-level hasRole('SUPER_ADMIN'). */}
               <Route path="/admin/backups" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><BackupRestore /></RoleGuard>
               } />
@@ -198,13 +212,18 @@ function App() {
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><IntegrationHub defaultTab="runs" /></RoleGuard>
               } />
               <Route path="/admin/sso-settings" element={
-                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><SsoSettings /></RoleGuard>
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SsoSettings /></RoleGuard>
               } />
               <Route path="/admin/email-campaigns" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><EmailCampaignHub /></RoleGuard>
               } />
+              {/* SA-only: migration start/dry-run/delete-day are hasRole('SUPER_ADMIN'). */}
               <Route path="/admin/data-migration" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><DataMigration /></RoleGuard>
+              } />
+              {/* SA-only: provisioning scripts execute arbitrary SQL — platform-level. */}
+              <Route path="/admin/tenant-provisioning" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><TenantProvisioning /></RoleGuard>
               } />
               <Route path="/admin/security-settings" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SecuritySettings /></RoleGuard>

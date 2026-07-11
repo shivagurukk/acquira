@@ -66,9 +66,13 @@ public class FileUploadService {
      * Global transaction load mode: REPLACE (default) or APPEND. Applies to ALL transaction
      * uploads (AMS and CMM alike). JCB* files always force APPEND regardless of this flag.
      * Merchant files ignore this entirely (always UPSERT).
+     * PER-TENANT OVERRIDE (2026-07-11): tenant_setting key 'load.mode' (REPLACE|APPEND)
+     * takes precedence over this property for that tenant — see loadModeFor().
      */
     @org.springframework.beans.factory.annotation.Value("${acquira.load.mode:REPLACE}")
     private String globalLoadMode;
+
+    private final com.acquira.common.repository.TenantSettingRepository tenantSettingRepository;
 
     public FileUploadService(JobLauncher jobLauncher,
             @Qualifier("merchantMasterJob") Job merchantMasterJob,
@@ -76,7 +80,8 @@ public class FileUploadService {
             com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantRepository tenantRepository,
             com.acquira.batch.service.ManualIngestionService manualIngestionService,
-            org.springframework.batch.core.explore.JobExplorer jobExplorer) {
+            org.springframework.batch.core.explore.JobExplorer jobExplorer,
+            com.acquira.common.repository.TenantSettingRepository tenantSettingRepository) {
         this.jobLauncher = jobLauncher;
         this.merchantMasterJob = merchantMasterJob;
         this.transactionLoadJob = transactionLoadJob;
@@ -84,6 +89,7 @@ public class FileUploadService {
         this.tenantRepository = tenantRepository;
         this.manualIngestionService = manualIngestionService;
         this.jobExplorer = jobExplorer;
+        this.tenantSettingRepository = tenantSettingRepository;
 
         // Ensure upload directory exists
         try {
@@ -142,12 +148,24 @@ public class FileUploadService {
     /**
      * Load mode for a TRANSACTION file:
      *   - JCB* files are ALWAYS APPEND (preserves existing behaviour, independent of config).
-     *   - every other file follows the global acquira.load.mode flag (REPLACE by default).
+     *   - otherwise the TENANT's tenant_setting 'load.mode' wins if set (REPLACE|APPEND),
+     *   - otherwise the global acquira.load.mode flag (REPLACE by default).
      * Merchant files never call this — they are always UPSERT.
      */
-    private String loadModeFor(String fileName) {
+    private String loadModeFor(String fileName, Long tenantId) {
         if (isAppendModeFileName(fileName)) return "APPEND";
-        return "APPEND".equalsIgnoreCase(globalLoadMode) ? "APPEND" : "REPLACE";
+        String effective = globalLoadMode;
+        if (tenantId != null) {
+            try {
+                var s = tenantSettingRepository.findByTenant_TenantIdAndKey(tenantId, "load.mode");
+                if (s.isPresent() && s.get().getValue() != null && !s.get().getValue().isBlank()) {
+                    effective = s.get().getValue().trim();
+                }
+            } catch (Exception e) {
+                // Setting lookup must never break an upload — fall back to the property.
+            }
+        }
+        return "APPEND".equalsIgnoreCase(effective) ? "APPEND" : "REPLACE";
     }
 
     /** Holder for the result of a single-pass file scan. */
@@ -370,7 +388,7 @@ public class FileUploadService {
                 JobParameters jobParameters = new JobParametersBuilder()
                         .addLong("tenantId", targetTenantId)
                         .addString("fullPath", filePath)
-                        .addString("loadMode", loadModeFor(file.getOriginalFilename()))
+                        .addString("loadMode", loadModeFor(file.getOriginalFilename(), targetTenantId))
                         .addString("inputType", inputTypeFor(file.getOriginalFilename()))
                         .addLong("startedAt", System.currentTimeMillis())
                         .toJobParameters();
@@ -815,7 +833,7 @@ public class FileUploadService {
             JobParameters jobParameters = new JobParametersBuilder()
                     .addLong("tenantId", targetTenantId)
                     .addString("fullPath", filePath)
-                    .addString("loadMode", loadModeFor(file.getName()))
+                    .addString("loadMode", loadModeFor(file.getName(), targetTenantId))
                     .addString("inputType", inputTypeFor(file.getName()))
                     .addLong("startedAt", System.currentTimeMillis())
                     .toJobParameters();

@@ -106,8 +106,8 @@ const FinanceSummary = () => {
 
     const totals = data.reduce((acc, row) => {
         const keys = [
-            'dom_debit_cnt', 'dom_debit_vol', 'dom_debit_msf', 'dom_debit_optin',
-            'dom_credit_cnt', 'dom_credit_vol', 'dom_credit_msf', 'dom_credit_optin',
+            'dom_debit_cnt', 'dom_debit_vol', 'dom_debit_msf',
+            'dom_credit_cnt', 'dom_credit_vol', 'dom_credit_msf',
             'int_cnt', 'int_vol', 'int_msf', 'int_optin',
             'total_vol', 'total_msf'
         ];
@@ -145,16 +145,14 @@ const FinanceSummary = () => {
                 <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{formatNumber(row.dom_debit_cnt)}</td>
                 <td style={{ padding: '8px', textAlign: 'right', fontWeight: '500' }}>{formatCurrency(row.dom_debit_vol)}</td>
                 <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{formatCurrency(row.dom_debit_msf)}</td>
-                {/* Fixed: Use Total Vol for denominator */}
-                <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{formatPct(row.dom_debit_vol, row.total_vol)}</td>
-                <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', borderRight: '1px solid #f1f5f9' }}>{formatCurrency(row.dom_debit_optin)}</td>
+                {/* Volume % — vol / total month vol */}
+                <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', borderRight: '1px solid #f1f5f9' }}>{formatPct(row.dom_debit_vol, row.total_vol)}</td>
 
                 {/* Dom Credit */}
                 <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{formatNumber(row.dom_credit_cnt)}</td>
                 <td style={{ padding: '8px', textAlign: 'right', fontWeight: '500' }}>{formatCurrency(row.dom_credit_vol)}</td>
                 <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{formatCurrency(row.dom_credit_msf)}</td>
-                <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{formatPct(row.dom_credit_vol, row.total_vol)}</td>
-                <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', borderRight: '1px solid #f1f5f9' }}>{formatCurrency(row.dom_credit_optin)}</td>
+                <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', borderRight: '1px solid #f1f5f9' }}>{formatPct(row.dom_credit_vol, row.total_vol)}</td>
 
                 {/* International */}
                 <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{formatNumber(row.int_cnt)}</td>
@@ -247,23 +245,33 @@ const FinanceSummary = () => {
                     <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'white' }}>
                         <tr style={{ height: '40px' }}>
                             <th style={{ position: 'sticky', left: 0, zIndex: 20, background: '#f8fafc', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', minWidth: '220px' }}></th>
-                            <th colSpan="5" style={{ background: '#e0f2fe', borderBottom: '1px solid #bae6fd', borderRight: '1px solid #e2e8f0', color: '#0369a1', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase' }}>Domestic Debit & Prepaid</th>
-                            <th colSpan="5" style={{ background: '#dcfce7', borderBottom: '1px solid #bbf7d0', borderRight: '1px solid #e2e8f0', color: '#15803d', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase' }}>Domestic Credit</th>
-                            <th colSpan="5" style={{ background: '#ffedd5', borderBottom: '1px solid #fed7aa', borderRight: '1px solid #e2e8f0', color: '#c2410c', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase' }}>International</th>
-                            <th colSpan="2" style={{ background: '#f1f5f9', borderBottom: '1px solid #e2e8f0', color: '#334155', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase' }}>Total</th>
+                            <th colSpan="4" style={{ background: '#e0f2fe', borderBottom: '1px solid #bae6fd', borderRight: '1px solid #e2e8f0', color: '#0369a1', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Domestic Debit &amp; Prepaid</th>
+                            <th colSpan="4" style={{ background: '#dcfce7', borderBottom: '1px solid #bbf7d0', borderRight: '1px solid #e2e8f0', color: '#15803d', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Domestic Credit</th>
+                            <th colSpan="5" style={{ background: '#ffedd5', borderBottom: '1px solid #fed7aa', borderRight: '1px solid #e2e8f0', color: '#c2410c', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.03em' }}>International</th>
+                            <th colSpan="2" style={{ background: '#f1f5f9', borderBottom: '1px solid #e2e8f0', color: '#334155', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Total</th>
                         </tr>
-                        <tr style={{ height: '40px', background: '#f8fafc', fontSize: '11px', color: '#64748b' }}>
-                            <th style={{ position: 'sticky', left: 0, zIndex: 20, background: '#f8fafc', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', padding: '8px', textAlign: 'left' }}>Month</th>
-                            {['Count', 'Volume', 'MSF', '%', 'Opt-in Vol', 'Count', 'Volume', 'MSF', '%', 'Opt-in Vol', 'Count', 'Volume', 'MSF', '%', 'Opt-in Vol', 'Volume', 'MSF'].map((h, i) => (
-                                <th key={i} style={{ borderBottom: '1px solid #e2e8f0', padding: '8px', borderRight: (i + 1) % 5 === 0 ? '1px solid #e2e8f0' : 'none' }}>{h}</th>
+                        <tr style={{ height: '38px', background: '#f8fafc', fontSize: '11px', color: '#64748b' }}>
+                            <th style={{ position: 'sticky', left: 0, zIndex: 20, background: '#f8fafc', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', padding: '8px', textAlign: 'left', fontWeight: '600' }}>Month</th>
+                            {[
+                                // [label, groupEnd?] — groupEnd draws the group divider on the right.
+                                ['Count', false], ['Volume', false], ['MSF', false], ['Volume %', true],
+                                ['Count', false], ['Volume', false], ['MSF', false], ['Volume %', true],
+                                ['Count', false], ['Volume', false], ['MSF', false], ['Volume %', false], ['Opt-in Vol', true],
+                                ['Volume', false], ['MSF', false],
+                            ].map(([h, groupEnd], i) => (
+                                <th key={i} style={{
+                                    borderBottom: '1px solid #e2e8f0', padding: '8px', textAlign: 'right',
+                                    fontWeight: '600', whiteSpace: 'nowrap',
+                                    borderRight: groupEnd ? '1px solid #e2e8f0' : 'none',
+                                }}>{h}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody style={{ fontSize: '12px' }}>
                         {loading ? (
-                            <tr><td colSpan="18" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Loading Financial Data...</td></tr>
+                            <tr><td colSpan="16" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Loading Financial Data...</td></tr>
                         ) : data.length === 0 ? (
-                            <tr><td colSpan="18" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No data for selected period</td></tr>
+                            <tr><td colSpan="16" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No data for selected period</td></tr>
                         ) : (
                             data.map((row) => (
                                 <React.Fragment key={row.month_label}>
@@ -273,7 +281,7 @@ const FinanceSummary = () => {
                                     {/* Level 2: Days */}
                                     {expandedMonth === row.month_label && (
                                         <>
-                                            {loadingDaily && <tr><td colSpan="18" className="text-center py-4 bg-slate-50"><Loader2 className="animate-spin inline text-slate-400" size={16} /></td></tr>}
+                                            {loadingDaily && <tr><td colSpan="16" className="text-center py-4 bg-slate-50"><Loader2 className="animate-spin inline text-slate-400" size={16} /></td></tr>}
                                             {(dailyData[row.month_label] || []).map(day => (
                                                 <React.Fragment key={day.sort_date}>
                                                     <DataRow row={day} isExpanded={expandedDate === day.sort_date} onClick={() => toggleDate(day)} level={2} />
@@ -281,12 +289,12 @@ const FinanceSummary = () => {
                                                     {/* Level 3: Merchants */}
                                                     {expandedDate === day.sort_date && (
                                                         <>
-                                                            {loadingMerchants && <tr><td colSpan="18" className="text-center py-4 bg-slate-50 ml-10"><Loader2 className="animate-spin inline text-indigo-400" size={16} /></td></tr>}
+                                                            {loadingMerchants && <tr><td colSpan="16" className="text-center py-4 bg-slate-50 ml-10"><Loader2 className="animate-spin inline text-indigo-400" size={16} /></td></tr>}
                                                             {(merchantData[day.sort_date] || []).map(merch => (
                                                                 <DataRow key={merch.merchant_id} row={merch} isExpanded={false} onClick={null} level={3} />
                                                             ))}
                                                             {merchantData[day.sort_date]?.length === 0 && (
-                                                                <tr><td colSpan="18" className="pl-20 py-2 italic text-slate-400 bg-slate-50">No merchant data available</td></tr>
+                                                                <tr><td colSpan="16" className="pl-20 py-2 italic text-slate-400 bg-slate-50">No merchant data available</td></tr>
                                                             )}
                                                         </>
                                                     )}
@@ -304,14 +312,12 @@ const FinanceSummary = () => {
                             <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatNumber(totals.dom_debit_cnt)}</td>
                             <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatCurrency(totals.dom_debit_vol)}</td>
                             <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatCurrency(totals.dom_debit_msf)}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatPct(totals.dom_debit_vol, totals.total_vol)}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1', borderRight: '1px solid #cbd5e1' }}>{formatCurrency(totals.dom_debit_optin)}</td>
+                            <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1', borderRight: '1px solid #cbd5e1' }}>{formatPct(totals.dom_debit_vol, totals.total_vol)}</td>
 
                             <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatNumber(totals.dom_credit_cnt)}</td>
                             <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatCurrency(totals.dom_credit_vol)}</td>
                             <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatCurrency(totals.dom_credit_msf)}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatPct(totals.dom_credit_vol, totals.total_vol)}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1', borderRight: '1px solid #cbd5e1' }}>{formatCurrency(totals.dom_credit_optin)}</td>
+                            <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1', borderRight: '1px solid #cbd5e1' }}>{formatPct(totals.dom_credit_vol, totals.total_vol)}</td>
 
                             <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatNumber(totals.int_cnt)}</td>
                             <td style={{ padding: '8px', textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>{formatCurrency(totals.int_vol)}</td>

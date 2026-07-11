@@ -35,6 +35,15 @@ public interface MerchantActivitySummaryRepository extends JpaRepository<Merchan
     @Query("SELECT MAX(m.calcDate) FROM MerchantActivitySummary m WHERE m.tenantId = :tenantId")
     java.time.LocalDate findMaxCalcDate(Long tenantId);
 
+    /**
+     * Latest snapshot date on or before a given date. Used by the Business
+     * Dashboard so dormant/new counts anchor to the nearest available
+     * snapshot instead of returning 0 when the user's endDate doesn't fall
+     * exactly on a calc_date.
+     */
+    @Query("SELECT MAX(m.calcDate) FROM MerchantActivitySummary m WHERE m.tenantId = :tenantId AND m.calcDate <= :onOrBefore")
+    java.time.LocalDate findMaxCalcDateOnOrBefore(Long tenantId, java.time.LocalDate onOrBefore);
+
     // Zero sales checks (status = ACTIVE but last 7d/30d count is 0? Or use
     // specific query)
     // Actually, "Zero Sales" feature might just look for merchants where

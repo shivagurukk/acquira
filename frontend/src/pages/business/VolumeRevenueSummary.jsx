@@ -5,7 +5,7 @@ import {
     ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
     ResponsiveContainer, Cell,
 } from 'recharts';
-import { TrendingUp, TrendingDown, BarChart3, DollarSign, Hash, Percent } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, DollarSign, Hash, Percent, Globe2, Users, Receipt, Gauge } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
@@ -251,17 +251,37 @@ const VolumeRevenueSummary = () => {
         const totalVol = data.reduce((s, d) => s + (d.volume || 0), 0);
         const totalMsf = data.reduce((s, d) => s + (d.msf || 0), 0);
         const totalCount = data.reduce((s, d) => s + (d.count || 0), 0);
+        const totalOptIn = data.reduce((s, d) => s + (d.opt_in_volume || 0), 0);
+        const totalIntl = data.reduce((s, d) => s + (d.intl_volume || 0), 0);
         const avgVol = totalVol / data.length;
+        const avgTicket = totalCount > 0 ? totalVol / totalCount : 0;
+        const takeRateBps = totalVol > 0 ? (totalMsf / totalVol) * 10000 : 0;
+        const dccOptInRate = totalVol > 0 ? (totalOptIn / totalVol) * 100 : 0;
+        const intlSharePct = totalVol > 0 ? (totalIntl / totalVol) * 100 : 0;
+        // Active merchants: most recent month's count is more meaningful than
+        // a sum (a merchant active every month would otherwise be over-counted).
+        const latestActiveMerchants = data[0]?.active_merchants || 0;
+        const avgActiveMerchants = data.reduce((s, d) => s + (d.active_merchants || 0), 0) / data.length;
+
         const sparkVols = data.slice().reverse().map(d => d.volume || 0);
         const sparkMsf = data.slice().reverse().map(d => d.msf || 0);
+        const sparkIntl = data.slice().reverse().map(d => d.intl_volume || 0);
+        const sparkActive = data.slice().reverse().map(d => d.active_merchants || 0);
         const latest = data[0]; const prev = data[1];
         const volTrend = prev && prev.volume > 0 ? ((latest.volume - prev.volume) / prev.volume) * 100 : 0;
         const msfTrend = prev && prev.msf > 0 ? ((latest.msf - prev.msf) / prev.msf) * 100 : 0;
+        const merchantTrend = prev && prev.active_merchants > 0
+            ? ((latest.active_merchants - prev.active_merchants) / prev.active_merchants) * 100 : 0;
+
         return [
             { title: 'Total Volume', value: `${currencySymbol} ${formatCompact(totalVol)}`, icon: BarChart3, color: 'var(--brand-alt, #3b82f6)', trend: volTrend, trendLabel: 'vs prev month', sparkData: sparkVols },
             { title: 'Total MSF Revenue', value: `${currencySymbol} ${formatCompact(totalMsf)}`, icon: DollarSign, color: 'var(--success, #10b981)', trend: msfTrend, trendLabel: 'vs prev month', sparkData: sparkMsf },
             { title: 'Transaction Count', value: formatNumber(totalCount), icon: Hash, color: 'var(--warning, #f59e0b)', trendLabel: 'monthly counts', sparkData: data.slice().reverse().map(d => d.count || 0) },
-            { title: 'Avg Monthly Volume', value: `${currencySymbol} ${formatCompact(avgVol)}`, icon: Percent, color: 'var(--accent-cyan, #06b6d4)' },
+            { title: 'Effective MSF Rate', value: `${takeRateBps.toFixed(1)} bps`, icon: Gauge, color: 'var(--accent-cyan, #06b6d4)', trendLabel: 'fee revenue / volume' },
+            { title: 'Avg Ticket Size', value: `${currencySymbol} ${formatCompact(avgTicket)}`, icon: Receipt, color: 'var(--accent-purple, #8b5cf6)', trendLabel: 'volume / transaction' },
+            { title: 'DCC Opt-in Rate', value: `${dccOptInRate.toFixed(1)}%`, icon: Percent, color: 'var(--accent-pink, #ec4899)', trendLabel: `${currencySymbol} ${formatCompact(totalOptIn)} opted in` },
+            { title: 'International Volume', value: `${currencySymbol} ${formatCompact(totalIntl)}`, icon: Globe2, color: 'var(--brand-alt, #3b82f6)', trendLabel: `${intlSharePct.toFixed(1)}% of total`, sparkData: sparkIntl },
+            { title: 'Active Merchants', value: formatNumber(latestActiveMerchants), icon: Users, color: 'var(--warning, #f59e0b)', trend: merchantTrend, trendLabel: `avg ${formatNumber(Math.round(avgActiveMerchants))}/mo`, sparkData: sparkActive },
         ];
     }, [data]);
 
@@ -292,6 +312,14 @@ const VolumeRevenueSummary = () => {
             renderCell: (params) => <Typography variant="body2" fontWeight="600" color={params.value < 0 ? 'var(--danger, #ef4444)' : 'var(--text, #334155)'} sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
         },
         {
+            field: 'intl_volume', headerName: 'Intl Volume', flex: 1.1, align: 'right', headerAlign: 'right',
+            renderCell: (params) => <Typography variant="body2" fontWeight="500" color="var(--text-secondary, #64748b)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
+        },
+        {
+            field: 'active_merchants', headerName: 'Active Merchants', flex: 1, align: 'center', headerAlign: 'center',
+            renderCell: (params) => <Chip label={formatNumber(params.value)} size="small" variant="outlined" sx={{ fontWeight: 600, borderColor: 'var(--border, #e2e8f0)', bgcolor: 'var(--bg-subtle, #f8fafc)', color: 'var(--text, inherit)', fontVariantNumeric: 'tabular-nums' }} />
+        },
+        {
             field: 'opt_in_volume', headerName: 'Opt-in volume', flex: 1.2, align: 'right', headerAlign: 'right',
             renderCell: (params) => <Typography variant="body2" fontWeight="500" color="var(--text-secondary, #64748b)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
         }
@@ -309,7 +337,7 @@ const VolumeRevenueSummary = () => {
             />
             <BusinessFilters filters={filters} onChange={handleAdvancedFilterChange} onApply={handleRunReport} isOpen={showFilters} onClose={() => setShowFilters(false)} />
 
-            {loading ? <SkeletonLoader variant="kpi-row" count={4} /> : <KpiCards cards={kpis} />}
+            {loading ? <SkeletonLoader variant="kpi-row" count={8} /> : <KpiCards cards={kpis} />}
 
             {!loading && chartData.length > 0 && (
                 <VolumeRevenueChart data={chartData} currencySymbol={currencySymbol} formatCurrency={formatCurrency} />

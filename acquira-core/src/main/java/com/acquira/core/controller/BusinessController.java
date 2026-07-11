@@ -367,20 +367,35 @@ public class BusinessController {
                 String orderDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
 
                 boolean hasSearch = search != null && !search.isBlank();
-                // lossOnly -> only merchants/stores whose net revenue over the window
-                // is negative (a loss). Applied as HAVING on the grouped aggregate so
+                // lossOnly -> only merchants whose net revenue over the window is
+                // negative (a loss). Applied as HAVING on the grouped aggregate so
                 // it flows identically into the page, count, and totals queries.
                 String havingLoss = lossOnly ? "HAVING SUM(t.total_revenue) < 0 " : "";
+                // lossOnly rolls up to MERCHANT level (MID only), not MID x SID. A
+                // merchant can be net-negative overall while individual stores are
+                // fine (or vice versa) — the loss list must reflect the merchant's
+                // true combined position, not flag/hide stores independently of
+                // their siblings under the same MID.
+                String groupBy = lossOnly ? "GROUP BY m.mid, m.name " : "GROUP BY m.mid, s.sid, m.name ";
+                // lossOnly rolls up to MID grain, so filtering on s.sid (which
+                // runs in WHERE, before GROUP BY) would evaluate a merchant's net
+                // position over only the matching store's rows -- contradicting
+                // the merchant-level rollup. Drop the SID predicate in that case.
                 String base =
                                 "FROM sum_daily_terminal t " +
                                 "JOIN dim_merchant m ON m.merchant_id = t.merchant_id AND m.tenant_id = t.tenant_id " +
                                 "LEFT JOIN dim_store s ON s.store_id = t.store_id AND s.tenant_id = t.tenant_id " +
                                 "WHERE t.tenant_id = :tid AND t.business_date BETWEEN :s AND :e " +
-                                (hasSearch ? "AND (m.name ILIKE :q OR m.mid ILIKE :q OR s.sid ILIKE :q) " : "") +
-                                "GROUP BY m.mid, s.sid, m.name " + havingLoss;
+                                (hasSearch
+                                                ? (lossOnly
+                                                                ? "AND (m.name ILIKE :q OR m.mid ILIKE :q) "
+                                                                : "AND (m.name ILIKE :q OR m.mid ILIKE :q OR s.sid ILIKE :q) ")
+                                                : "") +
+                                groupBy + havingLoss;
 
+                String sidSelect = lossOnly ? "NULL" : "s.sid";
                 jakarta.persistence.Query rq = entityManager.createNativeQuery(
-                                "SELECT m.mid, s.sid, m.name, " +
+                                "SELECT m.mid, " + sidSelect + ", m.name, " +
                                 "SUM(t.total_txns), SUM(t.total_base_volume), SUM(t.total_msf), " +
                                 "SUM(t.total_interchange), SUM(t.total_scheme_fee), SUM(COALESCE(t.total_ecom_fee,0)), SUM(t.total_revenue) " +
                                 base +
@@ -589,10 +604,12 @@ public class BusinessController {
                                 listNonEmpty(filter.getRmList())        ||
                                 listNonEmpty(filter.getTeamLeaderList())||
                                 (filter.getMerchantName() != null && !filter.getMerchantName().isBlank()) ||
-                                listNonEmpty(filter.getMidList());
+                                listNonEmpty(filter.getMidList())       ||
+                                filter.getOpenDateStart() != null || filter.getOpenDateEnd() != null;
                 boolean needStore =
                                 listNonEmpty(filter.getMccList()) ||
-                                listNonEmpty(filter.getSidList());
+                                listNonEmpty(filter.getSidList()) ||
+                                listNonEmpty(filter.getIndustryList());
 
                 if (needMerchant) sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
                 if (needStore)    sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id ");
@@ -608,8 +625,11 @@ public class BusinessController {
                 if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                                                               sql.append("  AND m.name ILIKE :merchName ");
                 if (listNonEmpty(filter.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
+                if (filter.getOpenDateStart() != null)        sql.append("  AND CAST(m.created_date AS DATE) >= :openStart ");
+                if (filter.getOpenDateEnd() != null)          sql.append("  AND CAST(m.created_date AS DATE) <= :openEnd ");
                 if (listNonEmpty(filter.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
                 if (listNonEmpty(filter.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
+                if (listNonEmpty(filter.getIndustryList()))   sql.append("  AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) ");
                 if (listNonEmpty(filter.getSchemeList()))     sql.append("  AND s.card_scheme IN (:schemes) ");
                 if (listNonEmpty(filter.getCardTypeList()))   sql.append("  AND s.card_type IN (:cardTypes) ");
                 if (listNonEmpty(filter.getDestinationList()))sql.append("  AND s.destination IN (:destinations) ");
@@ -645,18 +665,23 @@ public class BusinessController {
                 long       prevYtdCnt   = toLong(row[11]);
 
                 // Merchant counts — distinct merchants in the filtered universe.
-                // For "active" we count merchants with daily-window volume.
+                // Window basis: the explicit range when one is set, else MTD. The old
+                // behaviour collapsed to a single day (dailyStart == effectiveDate)
+                // when no start date was chosen, so "Active Merchants" showed only
+                // merchants that transacted on the latest day — misleading as a
+                // portfolio count. Zero-sales uses the same window for symmetry.
+                LocalDate activityStart = (startDate != null) ? dailyStart : mtdStart;
                 String activeSql =
                                 "SELECT COUNT(DISTINCT s.merchant_id) FROM sum_daily_insight s " +
                                 (needMerchant ? "JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id " : "") +
                                 (needStore    ? "LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id " : "") +
                                 "WHERE s.tenant_id = :tid " +
-                                "  AND s.business_date BETWEEN :dailyStart AND :endDate " +
+                                "  AND s.business_date BETWEEN :activityStart AND :endDate " +
                                 "  AND s.total_volume > 0 " +
                                 filterFragment(filter);
                 jakarta.persistence.Query aq = entityManager.createNativeQuery(activeSql);
                 aq.setParameter("tid", tenantId);
-                aq.setParameter("dailyStart", dailyStart);
+                aq.setParameter("activityStart", activityStart);
                 aq.setParameter("endDate", effectiveDate);
                 bindFilterParams(aq, filter);
                 long activeCount = ((Number) aq.getSingleResult()).longValue();
@@ -674,21 +699,26 @@ public class BusinessController {
                 if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                                                               zsql.append("  AND m.name ILIKE :merchName ");
                 if (listNonEmpty(filter.getMidList()))        zsql.append("  AND m.mid IN (:mids) ");
-                if (listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList())) {
+                if (filter.getOpenDateStart() != null)        zsql.append("  AND CAST(m.created_date AS DATE) >= :openStart ");
+                if (filter.getOpenDateEnd() != null)          zsql.append("  AND CAST(m.created_date AS DATE) <= :openEnd ");
+                if (listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList())
+                                || listNonEmpty(filter.getIndustryList())) {
                         zsql.append("  AND EXISTS (SELECT 1 FROM dim_store st ");
                         zsql.append("       WHERE st.merchant_id = m.merchant_id AND st.tenant_id = m.tenant_id ");
                         if (listNonEmpty(filter.getMccList())) zsql.append("       AND st.mcc IN (:mccs) ");
                         if (listNonEmpty(filter.getSidList())) zsql.append("       AND st.sid IN (:sids) ");
+                        if (listNonEmpty(filter.getIndustryList()))
+                                zsql.append("       AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) ");
                         zsql.append("  ) ");
                 }
                 zsql.append("  AND NOT EXISTS (SELECT 1 FROM sum_daily_insight s ");
                 zsql.append("       WHERE s.tenant_id = m.tenant_id AND s.merchant_id = m.merchant_id ");
-                zsql.append("         AND s.business_date BETWEEN :dailyStart AND :endDate ");
+                zsql.append("         AND s.business_date BETWEEN :activityStart AND :endDate ");
                 zsql.append("         AND s.total_volume > 0) ");
 
                 jakarta.persistence.Query zq = entityManager.createNativeQuery(zsql.toString());
                 zq.setParameter("tid", tenantId);
-                zq.setParameter("dailyStart", dailyStart);
+                zq.setParameter("activityStart", activityStart);
                 zq.setParameter("endDate", effectiveDate);
                 if (listNonEmpty(filter.getPartnerList()))    zq.setParameter("partners",    filter.getPartnerList());
                 if (listNonEmpty(filter.getRmList()))         zq.setParameter("rms",         filter.getRmList());
@@ -696,15 +726,23 @@ public class BusinessController {
                 if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                                                               zq.setParameter("merchName",   "%" + filter.getMerchantName() + "%");
                 if (listNonEmpty(filter.getMidList()))        zq.setParameter("mids",        filter.getMidList());
+                if (filter.getOpenDateStart() != null)        zq.setParameter("openStart",   filter.getOpenDateStart());
+                if (filter.getOpenDateEnd() != null)          zq.setParameter("openEnd",     filter.getOpenDateEnd());
                 if (listNonEmpty(filter.getMccList()))        zq.setParameter("mccs",        filter.getMccList());
                 if (listNonEmpty(filter.getSidList()))        zq.setParameter("sids",        filter.getSidList());
+                if (listNonEmpty(filter.getIndustryList()))   zq.setParameter("industries",  filter.getIndustryList());
                 long zeroSalesCount = ((Number) zq.getSingleResult()).longValue();
 
                 // Dormant / new — kept tenant-wide (activity snapshots aren't
                 // filter-scoped). The frontend badges these tiles as tenant-wide
                 // whenever filtersApplied is true.
-                long dormantCount = activityRepository.countByTenantIdAndStatusAndCalcDate(tenantId, "DORMANT", effectiveDate);
-                long onboardedCount = activityRepository.countByTenantIdAndStatusAndCalcDate(tenantId, "ONBOARDED", effectiveDate);
+                // Snapshot anchor: latest calc_date ON OR BEFORE the effective date.
+                // The old exact-match lookup returned 0 whenever the user's endDate
+                // didn't coincide with a snapshot day.
+                LocalDate snapshotDate = activityRepository.findMaxCalcDateOnOrBefore(tenantId, effectiveDate);
+                if (snapshotDate == null) snapshotDate = effectiveDate;
+                long dormantCount = activityRepository.countByTenantIdAndStatusAndCalcDate(tenantId, "DORMANT", snapshotDate);
+                long onboardedCount = activityRepository.countByTenantIdAndStatusAndCalcDate(tenantId, "ONBOARDED", snapshotDate);
 
                 Map<String, Object> response = new HashMap<>();
                 response.put("dailyVolume",       dailyVol);
@@ -726,6 +764,10 @@ public class BusinessController {
                 response.put("dormantMerchants",  dormantCount);
                 response.put("zeroSalesMerchants", zeroSalesCount);
                 response.put("effectiveDate",     effectiveDate);
+                response.put("rangeStart",        dailyStart);
+                response.put("customRange",       startDate != null);
+                response.put("merchantWindowStart", activityStart);
+                response.put("snapshotDate",      snapshotDate);
                 response.put("filtersApplied",    !isFilterEmpty(filter));
 
                 return ResponseEntity.ok(response);
@@ -739,8 +781,11 @@ public class BusinessController {
                         ((filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                                                                   ? "  AND m.name ILIKE :merchName " : "") +
                         (listNonEmpty(filter.getMidList())        ? "  AND m.mid IN (:mids) " : "") +
+                        (filter.getOpenDateStart() != null        ? "  AND CAST(m.created_date AS DATE) >= :openStart " : "") +
+                        (filter.getOpenDateEnd() != null          ? "  AND CAST(m.created_date AS DATE) <= :openEnd " : "") +
                         (listNonEmpty(filter.getMccList())        ? "  AND st.mcc IN (:mccs) " : "") +
                         (listNonEmpty(filter.getSidList())        ? "  AND st.sid IN (:sids) " : "") +
+                        (listNonEmpty(filter.getIndustryList())   ? "  AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) " : "") +
                         (listNonEmpty(filter.getSchemeList())     ? "  AND s.card_scheme IN (:schemes) " : "") +
                         (listNonEmpty(filter.getCardTypeList())   ? "  AND s.card_type IN (:cardTypes) " : "") +
                         (listNonEmpty(filter.getDestinationList())? "  AND s.destination IN (:destinations) " : "") +
@@ -755,7 +800,10 @@ public class BusinessController {
                 if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                                                               q.setParameter("merchName",    "%" + filter.getMerchantName() + "%");
                 if (listNonEmpty(filter.getMidList()))        q.setParameter("mids",         filter.getMidList());
+                if (filter.getOpenDateStart() != null)        q.setParameter("openStart",    filter.getOpenDateStart());
+                if (filter.getOpenDateEnd() != null)          q.setParameter("openEnd",      filter.getOpenDateEnd());
                 if (listNonEmpty(filter.getMccList()))        q.setParameter("mccs",         filter.getMccList());
+                if (listNonEmpty(filter.getIndustryList()))   q.setParameter("industries",   filter.getIndustryList());
                 if (listNonEmpty(filter.getSidList()))        q.setParameter("sids",         filter.getSidList());
                 if (listNonEmpty(filter.getSchemeList()))     q.setParameter("schemes",      filter.getSchemeList());
                 if (listNonEmpty(filter.getCardTypeList()))   q.setParameter("cardTypes",    filter.getCardTypeList());
@@ -769,6 +817,8 @@ public class BusinessController {
                 return !listNonEmpty(f.getPartnerList()) && !listNonEmpty(f.getRmList())
                                 && !listNonEmpty(f.getTeamLeaderList()) && !listNonEmpty(f.getMidList())
                                 && !listNonEmpty(f.getSidList()) && !listNonEmpty(f.getMccList())
+                                && !listNonEmpty(f.getIndustryList())
+                                && f.getOpenDateStart() == null && f.getOpenDateEnd() == null
                                 && !listNonEmpty(f.getSchemeList()) && !listNonEmpty(f.getCardTypeList())
                                 && !listNonEmpty(f.getDestinationList()) && !listNonEmpty(f.getChannelList())
                                 && (f.getMerchantName() == null || f.getMerchantName().isBlank());

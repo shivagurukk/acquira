@@ -35,6 +35,49 @@ public class BusinessAnalyticsController {
                 }
             }
         }
+
+        // Industry (MCC sector) → MCC translation.
+        // The Industry dropdown is fed from ref_mcc_category (the bank's MCC
+        // sector sheet), but most report queries have no ref_mcc_category join
+        // and dim_merchant.industry carries raw feed text that never matches
+        // those categories — so an Industry pick used to silently return
+        // zero/unfiltered rows. Resolving categories to their MCC codes here
+        // makes every endpoint that honours mccList honour Industry too.
+        if (filters.getIndustryList() != null && !filters.getIndustryList().isEmpty()) {
+            boolean resolved = false;
+            try {
+                @SuppressWarnings("unchecked")
+                List<String> industryMccs = entityManager.createNativeQuery(
+                        "SELECT mcc FROM ref_mcc_category WHERE category IN (:cats)")
+                        .setParameter("cats", filters.getIndustryList())
+                        .getResultList();
+                if (industryMccs.isEmpty()) {
+                    // Category selected but no MCC maps to it → force no results
+                    // (mirrors the team-leader sentinel) instead of silently
+                    // ignoring the filter.
+                    filters.setMccList(java.util.Collections.singletonList("__NO_MATCH__"));
+                } else if (filters.getMccList() != null && !filters.getMccList().isEmpty()) {
+                    // Both Industry and explicit MCCs selected → intersect (AND).
+                    List<String> intersect = new java.util.ArrayList<>(filters.getMccList());
+                    intersect.retainAll(industryMccs);
+                    filters.setMccList(intersect.isEmpty()
+                            ? java.util.Collections.singletonList("__NO_MATCH__")
+                            : intersect);
+                } else {
+                    filters.setMccList(industryMccs);
+                }
+                resolved = true;
+            } catch (Exception refEx) {
+                // ref_mcc_category absent (pre-migration env) — leave
+                // industryList untouched for the few queries that still
+                // filter on dim_merchant.industry.
+            }
+            if (resolved) {
+                // Prevent double-filtering against the mismatched
+                // dim_merchant.industry column in queries that apply both.
+                filters.setIndustryList(null);
+            }
+        }
     }
 
     @PostMapping("/volume-revenue-summary")
@@ -69,6 +112,20 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getDebitPrepaidMetrics(filters, tenantId);
     }
 
+    /**
+     * Debit/Prepaid segment summary: tiles (segment vs. book share, MSF bps,
+     * avg ticket), the debit-vs-prepaid bucket split, and destination/channel/
+     * scheme/month breakdowns. Reuses resolveFilters so Industry and Team
+     * Leader picks behave identically to every other Business Analytics
+     * endpoint. Additive — the existing table endpoint above is untouched.
+     */
+    @PostMapping("/debit-prepaid-summary")
+    public Map<String, Object> getDebitPrepaidSummary(@RequestBody VolumeRevenueFilterDTO filters) {
+        resolveFilters(filters);
+        Long tenantId = tenantService.getCurrentTenantId();
+        return volumeRevenueRepository.getDebitPrepaidSummary(filters, tenantId);
+    }
+
     @PostMapping("/attrition-report")
     public List<Map<String, Object>> getAttritionReport(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -77,10 +134,15 @@ public class BusinessAnalyticsController {
     }
 
     @PostMapping("/retention-report")
-    public List<Map<String, Object>> getRetentionReport(@RequestBody VolumeRevenueFilterDTO filters) {
+    public Map<String, Object> getRetentionReport(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
         Long tenantId = tenantService.getCurrentTenantId();
-        return volumeRevenueRepository.getRetentionReport(filters, tenantId);
+        List<Map<String, Object>> rows = volumeRevenueRepository.getRetentionReport(filters, tenantId);
+        Map<String, Object> meta = volumeRevenueRepository.getRetentionReportMeta(filters, tenantId);
+        Map<String, Object> response = new java.util.HashMap<>();
+        response.put("rows", rows);
+        response.put("meta", meta);
+        return response;
     }
 
     @PostMapping("/executive-metrics")

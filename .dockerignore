@@ -1,0 +1,13 @@
+# legacy monolith - NOT part of the multi-module app, and it does not compile
+/src/
+migration/
+
+# build output / caches / junk
+**/target/
+**/node_modules/
+**/dist/
+.git/
+*.log
+backups/
+temp/
+data/

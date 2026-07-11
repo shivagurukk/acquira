@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   DollarSign, CreditCard, Activity, TrendingUp, TrendingDown, Users,
-  RefreshCw, ArrowUpRight, ArrowDownRight, Receipt
+  RefreshCw, ArrowUpRight, ArrowDownRight, Receipt, Download
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
-  PieChart, Pie, Cell, BarChart, Bar, Sector
+  PieChart, Pie, Cell, Sector
 } from 'recharts';
-import { motion } from 'framer-motion';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -18,9 +17,10 @@ const T = {
   textSec: 'var(--text-secondary, #64748b)',
   textMut: 'var(--text-muted, #94a3b8)',
   card: 'var(--bg-card, #ffffff)',
-  bg: 'var(--bg, #f1f5f9)',
+  bg: 'var(--bg, #f9fafb)',
   subtle: 'var(--bg-subtle, #f8fafc)',
   border: 'var(--border, #e8edf3)',
+  borderLight: 'var(--border-light, #f1f5f9)',
   up: '#10b981', down: '#ef4444',
 };
 let CCY = 'AED'; // overridden per-tenant from AuthContext at render time
@@ -30,6 +30,7 @@ const SERIES = {
   txns:    { key: 'txns',    label: 'Transactions', color: '#f59e0b', icon: Activity },
 };
 const SCHEME_COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899', '#64748b'];
+const NUMS = { fontVariantNumeric: 'tabular-nums' };
 
 /* ── Formatting helpers ──────────────────────────────────── */
 const n = (v) => (v == null || isNaN(Number(v)) ? 0 : Number(v));
@@ -81,6 +82,37 @@ const merchantLabel = (m) => {
   if (mid) return `MID ${mid}`;                   // numeric/blank name -> show the MID
   const cleaned = sciToPlain(name);
   return cleaned || '—';
+};
+
+/* ── CSV export (client-side; no backend call) ───────────── */
+const csvCell = (v) => {
+  const s = v == null ? '' : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const buildCsv = ({ kpiRows, trendRows, merchantRows, range }) => {
+  const lines = [];
+  lines.push(`Executive Dashboard Export,${new Date().toISOString().slice(0, 10)}`);
+  lines.push(`Currency,${CCY}`);
+  lines.push('');
+  lines.push('KPI,Value');
+  kpiRows.forEach(([k, v]) => lines.push(`${csvCell(k)},${csvCell(v)}`));
+  lines.push('');
+  lines.push(`Daily Trend (last ${range} days)`);
+  lines.push('Date,Volume,Net Revenue,Transactions,MSF,Interchange,VAT');
+  trendRows.forEach(t => lines.push([t.full, t.volume, t.revenue, t.txns, t.msf, t.interchange, t.vat].map(csvCell).join(',')));
+  lines.push('');
+  lines.push('Top Merchants (MTD)');
+  lines.push('Rank,Merchant,Volume,Transactions');
+  merchantRows.forEach((m, i) => lines.push([i + 1, m.name, m.value, m.txns].map(csvCell).join(',')));
+  return lines.join('\n');
+};
+const downloadCsv = (csv, filename) => {
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
 };
 
 /* ── Animated count-up ───────────────────────────────────── */
@@ -177,64 +209,96 @@ const ExecutiveDashboard = () => {
 
   const spark = (key) => series.map(s => ({ x: s.full, y: s[key] }));
 
+  const exportCsv = () => {
+    const csv = buildCsv({
+      kpiRows: [
+        ["Today's Volume", n(daily.totalVolume)],
+        ["Today's Revenue", n(daily.totalRevenue)],
+        ['MTD Volume', n(mtd.totalVolume)],
+        ['MTD Net Revenue', mtdRevenue],
+        ['MTD Transactions', mtdTxns],
+        ['MTD Avg Ticket', avgTicket.toFixed(2)],
+        ['MTD Margin %', mtdMargin.toFixed(2)],
+        ['YoY Volume %', yoyPct == null ? '' : yoyPct.toFixed(2)],
+        ['Active Merchants', n(data?.activeMerchants)],
+        ['Dormant Merchants', dormantMerchants],
+      ],
+      trendRows: series,
+      merchantRows: topMerchants,
+      range,
+    });
+    downloadCsv(csv, `executive-dashboard_${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
   if (loading) return <DashboardSkeleton />;
 
   const activeMeta = SERIES[metric];
   const latestDate = trends.length ? trends[trends.length - 1].full : daily.date;
 
   return (
-    <div style={{ padding: 24, color: T.text, maxWidth: 1500, margin: '0 auto' }}>
+    <div style={{ padding: 'var(--space-page, 28px)', color: T.text, minHeight: '100vh', background: T.bg }}>
       <style>{`
-        .ex-card{transition:transform .18s ease, box-shadow .18s ease}
-        .ex-card:hover{transform:translateY(-3px);box-shadow:0 12px 30px rgba(15,23,42,.10)}
+        .ex-card{transition:border-color .15s ease, box-shadow .15s ease}
+        .ex-card:hover{border-color:var(--text-muted, #cbd5e1);box-shadow:var(--shadow-hover, 0 4px 16px rgba(15,23,42,.06))}
         .ex-seg{cursor:pointer;transition:all .15s}
+        .ex-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:9px;border:1px solid ${T.border};background:${T.card};color:${T.text};cursor:pointer;font-size:13px;font-weight:600;transition:border-color .15s, background .15s}
+        .ex-btn:hover{border-color:var(--text-muted,#cbd5e1);background:${T.subtle}}
+        .ex-btn:focus-visible{outline:2px solid ${T.brand};outline-offset:2px}
         .ex-skel{background:linear-gradient(90deg,${T.subtle} 25%,${T.border} 37%,${T.subtle} 63%);background-size:400% 100%;animation:exsh 1.4s ease infinite;border-radius:10px}
         @keyframes exsh{0%{background-position:100% 50%}100%{background-position:0 50%}}
-        @media (max-width:1024px){.ex-main{grid-template-columns:1fr !important}.ex-kpis{grid-template-columns:1fr 1fr !important}}
-        @media (max-width:640px){.ex-kpis{grid-template-columns:1fr !important}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @media (prefers-reduced-motion: reduce){.ex-card,.ex-btn,.ex-seg{transition:none}}
+        @media (max-width:1280px){.ex-strip{grid-template-columns:repeat(3,1fr) !important}.ex-strip>div{border-bottom:1px solid ${T.borderLight}}}
+        @media (max-width:1024px){.ex-main{grid-template-columns:1fr !important}.ex-heroes{grid-template-columns:1fr !important}}
+        @media (max-width:640px){.ex-strip{grid-template-columns:1fr 1fr !important}}
       `}</style>
 
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 14, marginBottom: 22 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 14, marginBottom: 20, paddingBottom: 18, borderBottom: `1px solid ${T.border}` }}>
         <div>
           <div style={{ fontFamily: 'ui-monospace,monospace', fontSize: 11, letterSpacing: '.22em', textTransform: 'uppercase', color: T.textMut }}>Executive Overview</div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, margin: '4px 0 0', letterSpacing: '-.02em' }}>Performance at a glance</h1>
-          <p style={{ fontSize: 13, color: T.textSec, margin: '4px 0 0' }}>
+          <h1 style={{ fontSize: 26, fontWeight: 800, margin: '4px 0 0', letterSpacing: '-.02em' }}>Performance at a glance</h1>
+          <p style={{ fontSize: 13, color: T.textSec, margin: '4px 0 0', ...NUMS }}>
             {latestDate ? `Latest data: ${latestDate}` : 'No data loaded yet'} · {range}-day view
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <Segmented value={range} onChange={setRange} options={[{ v: 7, l: '7D' }, { v: 30, l: '30D' }]} />
-          <button onClick={refresh} aria-label="Refresh"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 10, border: `1px solid ${T.border}`, background: T.card, color: T.text, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+          <button className="ex-btn" onClick={exportCsv} aria-label="Export CSV">
+            <Download size={15} /> Export
+          </button>
+          <button className="ex-btn" onClick={refresh} aria-label="Refresh">
             <RefreshCw size={15} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} /> Refresh
           </button>
-          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         </div>
       </div>
 
-      {/* KPI cards */}
-      <div className="ex-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
-        <KpiCard title="Today's Volume" value={fmtMoney(daily.totalVolume, true)} raw={daily.totalVolume}
-          icon={DollarSign} color="#4f46e5" delta={metric === 'volume' ? delta : null} spark={spark('volume')} sparkColor="#4f46e5" />
-        <KpiCard title="Today's Revenue" value={fmtMoney(daily.totalRevenue, true)} raw={daily.totalRevenue}
-          icon={TrendingUp} color="#10b981" delta={metric === 'revenue' ? delta : null} spark={spark('revenue')} sparkColor="#10b981" />
-        <KpiCard title="MTD Volume" value={fmtMoney(mtd.totalVolume, true)} raw={mtd.totalVolume}
-          icon={Activity} color="#8b5cf6" sub={`${fmtNum(mtd.totalTxns, true)} txns`} spark={spark('volume')} sparkColor="#8b5cf6" />
-        <KpiCard title="MTD Net Revenue" value={fmtMoney(mtdRevenue, true)} raw={mtdRevenue}
-          icon={Receipt} color="#06b6d4" sub={`${mtdMargin.toFixed(1)}% margin`} spark={spark('revenue')} sparkColor="#06b6d4" />
-        <KpiCard title="MTD Transactions" value={fmtNum(mtdTxns, true)} raw={mtdTxns}
-          icon={Activity} color="#f59e0b" sub="this month" spark={spark('txns')} sparkColor="#f59e0b" />
-        <KpiCard title="MTD Avg Ticket" value={fmtMoney(avgTicket)} raw={avgTicket}
-          icon={CreditCard} color="#ec4899" sub="per transaction" />
-        <KpiCard title="YoY Volume" value={yoyPct == null ? '—' : `${yoyPct >= 0 ? '+' : ''}${yoyPct.toFixed(1)}%`} raw={0}
-          icon={yoyPct != null && yoyPct < 0 ? TrendingDown : TrendingUp}
-          color={yoyPct != null && yoyPct < 0 ? '#ef4444' : '#10b981'}
-          sub={yoyPct == null ? 'no prior-year data' : 'vs last year MTD'} />
-        <KpiCard title="Active Merchants" value={fmtNum(data?.activeMerchants)} raw={data?.activeMerchants}
-          icon={Users} color="#4f46e5" integer />
-        <KpiCard title="Dormant Merchants" value={fmtNum(dormantMerchants)} raw={dormantMerchants}
-          icon={Users} color="#64748b" sub="no recent activity" integer />
+      {/* Hero KPIs — the three numbers a CEO checks first */}
+      <div className="ex-heroes" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
+        <HeroKpi title="Today's Volume" value={fmtMoney(daily.totalVolume, true)}
+          icon={DollarSign} color="#4f46e5" delta={metric === 'volume' ? delta : null}
+          spark={spark('volume')} />
+        <HeroKpi title="Today's Net Revenue" value={fmtMoney(daily.totalRevenue, true)}
+          icon={TrendingUp} color="#10b981" delta={metric === 'revenue' ? delta : null}
+          spark={spark('revenue')} />
+        <HeroKpi title="MTD Volume" value={fmtMoney(mtd.totalVolume, true)}
+          icon={Activity} color="#8b5cf6" sub={`${fmtNum(mtd.totalTxns, true)} transactions`}
+          spark={spark('volume')} />
+      </div>
+
+      {/* Secondary metrics — one quiet strip, hairline-divided */}
+      <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, marginBottom: 16, overflow: 'hidden' }}>
+        <div className="ex-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
+          <StatCell label="MTD Net Revenue" value={fmtMoney(mtdRevenue, true)} sub={`${mtdMargin.toFixed(1)}% margin`} />
+          <StatCell label="MTD Transactions" value={fmtNum(mtdTxns, true)} sub="this month" countTo={mtdTxns} integer />
+          <StatCell label="Avg Ticket" value={fmtMoney(avgTicket)} sub="per transaction" />
+          <StatCell label="YoY Volume"
+            value={yoyPct == null ? '—' : `${yoyPct >= 0 ? '+' : ''}${yoyPct.toFixed(1)}%`}
+            sub={yoyPct == null ? 'no prior-year data' : 'vs last year MTD'}
+            tone={yoyPct == null ? null : (yoyPct >= 0 ? 'up' : 'down')} />
+          <StatCell label="Active Merchants" value={fmtNum(data?.activeMerchants)} sub="processing" countTo={n(data?.activeMerchants)} integer />
+          <StatCell label="Dormant Merchants" value={fmtNum(dormantMerchants)} sub="no recent activity" countTo={dormantMerchants} integer last />
+        </div>
       </div>
 
       {/* Main grid: trend + scheme donut */}
@@ -243,7 +307,7 @@ const ExecutiveDashboard = () => {
         <Panel>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 10 }}>
             <div>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{activeMeta.label} trend</h3>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>{activeMeta.label} trend</h3>
               <p style={{ margin: '2px 0 0', fontSize: 12, color: T.textMut }}>Last {range} days</p>
             </div>
             <Segmented value={metric} onChange={setMetric}
@@ -255,11 +319,11 @@ const ExecutiveDashboard = () => {
                 <AreaChart data={series} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="exGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={activeMeta.color} stopOpacity={0.35} />
+                      <stop offset="5%" stopColor={activeMeta.color} stopOpacity={0.28} />
                       <stop offset="95%" stopColor={activeMeta.color} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={T.borderLight} vertical={false} />
                   <XAxis dataKey="full" tickFormatter={shortDate} tick={{ fontSize: 11, fill: T.textMut }} tickLine={false} axisLine={{ stroke: T.border }} minTickGap={24} />
                   <YAxis tickFormatter={(v) => metric === 'txns' ? fmtNum(v, true) : fmtMoney(v, true)} tick={{ fontSize: 11, fill: T.textMut }} tickLine={false} axisLine={false} width={56} />
                   <Tooltip content={<TrendTip metric={metric} />} />
@@ -272,7 +336,7 @@ const ExecutiveDashboard = () => {
 
         {/* Scheme donut */}
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Card scheme mix</h3>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Card scheme mix</h3>
           <p style={{ margin: '2px 0 10px', fontSize: 12, color: T.textMut }}>Volume share, last 30 days</p>
           {schemes.length === 0 ? <EmptyChart label="No scheme data" /> : (
             <>
@@ -295,8 +359,8 @@ const ExecutiveDashboard = () => {
                       style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, padding: '3px 4px', borderRadius: 6, background: activeSlice === i ? T.subtle : 'transparent', cursor: 'default' }}>
                       <span style={{ width: 10, height: 10, borderRadius: 3, background: SCHEME_COLORS[i % SCHEME_COLORS.length], flexShrink: 0 }} />
                       <span style={{ fontWeight: 600 }}>{s.name}</span>
-                      <span style={{ marginLeft: 'auto', color: T.textSec }}>{fmtMoney(s.value, true)}</span>
-                      <span style={{ color: T.textMut, width: 44, textAlign: 'right' }}>{((s.value / total) * 100).toFixed(1)}%</span>
+                      <span style={{ marginLeft: 'auto', color: T.textSec, ...NUMS }}>{fmtMoney(s.value, true)}</span>
+                      <span style={{ color: T.textMut, width: 44, textAlign: 'right', ...NUMS }}>{((s.value / total) * 100).toFixed(1)}%</span>
                     </div>
                   );
                 })}
@@ -309,7 +373,7 @@ const ExecutiveDashboard = () => {
       {/* Bottom grid: top merchants + revenue composition */}
       <div className="ex-main" style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 16 }}>
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Top 10 merchants</h3>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Top 10 merchants</h3>
           <p style={{ margin: '2px 0 10px', fontSize: 12, color: T.textMut }}>By month-to-date volume</p>
           {topMerchants.length === 0 ? <EmptyChart label="No merchant data" /> : (
             <TopMerchantList merchants={topMerchants} />
@@ -317,7 +381,7 @@ const ExecutiveDashboard = () => {
         </Panel>
 
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Revenue composition</h3>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Revenue composition</h3>
           <p style={{ margin: '2px 0 10px', fontSize: 12, color: T.textMut }}>{range}-day fees</p>
           <RevenueComposition series={series} />
         </Panel>
@@ -326,7 +390,7 @@ const ExecutiveDashboard = () => {
       {/* Card mix row */}
       <div style={{ marginTop: 16 }}>
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Credit vs Debit / Prepaid</h3>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Credit vs Debit / Prepaid</h3>
           <p style={{ margin: '2px 0 14px', fontSize: 12, color: T.textMut }}>Volume split, today</p>
           <CardMixChart mix={cardMix} />
         </Panel>
@@ -337,54 +401,64 @@ const ExecutiveDashboard = () => {
 
 /* ── Sub-components ──────────────────────────────────────── */
 const Panel = ({ children }) => (
-  <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(15,23,42,.04)' }}>
+  <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20, boxShadow: 'var(--shadow-card, 0 1px 2px rgba(15,23,42,.04))' }}>
     {children}
   </div>
 );
 
-const KpiCard = ({ title, value, raw, icon: Icon, color, delta, sub, spark, sparkColor, integer }) => {
-  const animated = useCountUp(n(raw));
-  const display = integer ? fmtNum(Math.round(animated)) : value; // count-up for integers, formatted string otherwise
+/* Hero KPI — large number, muted label, sparkline underneath */
+const HeroKpi = ({ title, value, icon: Icon, color, delta, sub, spark }) => (
+  <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: '18px 20px 12px', boxShadow: 'var(--shadow-card, 0 1px 2px rgba(15,23,42,.04))', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ color: T.textSec, fontSize: 12, fontWeight: 600, margin: 0, textTransform: 'uppercase', letterSpacing: '.05em' }}>{title}</p>
+        <h3 style={{ fontSize: 28, fontWeight: 800, color: T.text, margin: '6px 0 0', letterSpacing: '-.02em', ...NUMS }}>{value}</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, minHeight: 18 }}>
+          {delta != null && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, fontWeight: 700, color: delta >= 0 ? T.up : T.down, ...NUMS }}>
+              {delta >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{Math.abs(delta).toFixed(1)}%
+            </span>
+          )}
+          {delta != null && <span style={{ fontSize: 11, color: T.textMut }}>vs prev day</span>}
+          {sub && <span style={{ fontSize: 11.5, color: T.textMut, ...NUMS }}>{sub}</span>}
+        </div>
+      </div>
+      <div style={{ padding: 9, background: `${color}14`, borderRadius: 10, color, flexShrink: 0 }}><Icon size={18} /></div>
+    </div>
+    {spark && spark.length > 1 && (
+      <div style={{ height: 38, marginTop: 8, marginLeft: -20, marginRight: -20, marginBottom: -12 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={spark} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id={`sp-${title}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={color} stopOpacity={0.22} />
+                <stop offset="100%" stopColor={color} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Area type="monotone" dataKey="y" stroke={color} strokeWidth={1.8} fill={`url(#sp-${title})`} isAnimationActive={false} dot={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    )}
+  </div>
+);
+
+/* Stat strip cell — hairline-divided, tabular numerals */
+const StatCell = ({ label, value, sub, tone, countTo, integer, last }) => {
+  const animated = useCountUp(integer ? n(countTo) : 0);
+  const display = integer ? fmtNum(Math.round(animated)) : value;
+  const toneColor = tone === 'up' ? T.up : tone === 'down' ? T.down : T.text;
   return (
-    <motion.div className="ex-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
-      style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 18, boxShadow: '0 1px 2px rgba(15,23,42,.04)', position: 'relative', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ minWidth: 0 }}>
-          <p style={{ color: T.textSec, fontSize: 12.5, fontWeight: 600, margin: 0 }}>{title}</p>
-          <h3 style={{ fontSize: 25, fontWeight: 800, color: T.text, margin: '6px 0 0', letterSpacing: '-.02em' }}>{display}</h3>
-        </div>
-        <div style={{ padding: 10, background: `${color}1a`, borderRadius: 12, color, flexShrink: 0 }}><Icon size={20} /></div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, minHeight: 18 }}>
-        {delta != null && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, fontWeight: 700, color: delta >= 0 ? T.up : T.down }}>
-            {delta >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{Math.abs(delta).toFixed(1)}%
-          </span>
-        )}
-        {delta != null && <span style={{ fontSize: 11, color: T.textMut }}>vs prev day</span>}
-        {sub && <span style={{ fontSize: 11.5, color: T.textMut }}>{sub}</span>}
-      </div>
-      {spark && spark.length > 1 && (
-        <div style={{ height: 34, marginTop: 8, marginLeft: -4, marginRight: -4 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={spark} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id={`sp-${title}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={sparkColor} stopOpacity={0.3} />
-                  <stop offset="100%" stopColor={sparkColor} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Area type="monotone" dataKey="y" stroke={sparkColor} strokeWidth={1.8} fill={`url(#sp-${title})`} isAnimationActive={false} dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-    </motion.div>
+    <div style={{ padding: '16px 20px', borderRight: last ? 'none' : `1px solid ${T.borderLight}` }}>
+      <p style={{ color: T.textMut, fontSize: 11, fontWeight: 600, margin: 0, textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
+      <div style={{ fontSize: 19, fontWeight: 750, color: toneColor, margin: '5px 0 0', letterSpacing: '-.01em', ...NUMS }}>{display}</div>
+      {sub && <div style={{ fontSize: 11, color: T.textMut, marginTop: 3 }}>{sub}</div>}
+    </div>
   );
 };
 
 const Segmented = ({ value, onChange, options, small }) => (
-  <div style={{ display: 'inline-flex', background: T.bg, borderRadius: 10, padding: 3, gap: 2 }}>
+  <div style={{ display: 'inline-flex', background: 'var(--bg-subtle, #f1f5f9)', border: `1px solid ${T.border}`, borderRadius: 10, padding: 3, gap: 2 }}>
     {options.map(o => (
       <button key={o.v} onClick={() => onChange(o.v)}
         style={{ border: 'none', cursor: 'pointer', borderRadius: 8, padding: small ? '5px 10px' : '7px 13px', fontSize: small ? 12 : 13, fontWeight: 600,
@@ -413,18 +487,7 @@ const TrendTip = ({ active, payload, label, metric }) => {
   return (
     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 12px', boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
       <div style={{ fontSize: 11, color: T.textMut, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700 }}>{metric === 'txns' ? fmtNum(v) : fmtMoney(v)}</div>
-    </div>
-  );
-};
-
-const MerchTip = ({ active, payload }) => {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-  return (
-    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 12px', boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
-      <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{d.name}</div>
-      <div style={{ fontSize: 12, color: T.textSec }}>{fmtMoney(d.value)} · {fmtNum(d.txns)} txns</div>
+      <div style={{ fontSize: 14, fontWeight: 700, ...NUMS }}>{metric === 'txns' ? fmtNum(v) : fmtMoney(v)}</div>
     </div>
   );
 };
@@ -447,13 +510,12 @@ const TopMerchantList = ({ merchants }) => {
             gridTemplateColumns: '26px 1fr 92px 52px',
             alignItems: 'center', gap: 10,
             padding: '9px 6px',
-            borderBottom: i < merchants.length - 1 ? `1px solid ${T.border}` : 'none',
+            borderBottom: i < merchants.length - 1 ? `1px solid ${T.borderLight}` : 'none',
           }}>
             {/* Rank */}
             <span style={{
               fontSize: 12, fontWeight: 800, textAlign: 'center',
-              color: i < 3 ? color : T.textMut,
-              fontVariantNumeric: 'tabular-nums',
+              color: i < 3 ? color : T.textMut, ...NUMS,
             }}>{i + 1}</span>
 
             {/* Name + inline volume bar */}
@@ -466,13 +528,13 @@ const TopMerchantList = ({ merchants }) => {
             </div>
 
             {/* Volume + txns */}
-            <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+            <div style={{ textAlign: 'right', ...NUMS }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{fmtMoney(m.value, true)}</div>
               <div style={{ fontSize: 11, color: T.textMut, marginTop: 2 }}>{fmtNum(m.txns, true)} txns</div>
             </div>
 
             {/* % share */}
-            <span style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 600, color: T.textSec, fontVariantNumeric: 'tabular-nums' }}>
+            <span style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 600, color: T.textSec, ...NUMS }}>
               {sharePct.toFixed(1)}%
             </span>
           </div>
@@ -509,8 +571,8 @@ const CardMixChart = ({ mix }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, marginBottom: 5 }}>
               <span style={{ width: 11, height: 11, borderRadius: 3, background: d.color, flexShrink: 0 }} />
               <span style={{ fontWeight: 600 }}>{d.name}</span>
-              <span style={{ marginLeft: 'auto', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(d.value, true)}</span>
-              <span style={{ color: T.textMut, width: 52, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ marginLeft: 'auto', fontWeight: 700, ...NUMS }}>{fmtMoney(d.value, true)}</span>
+              <span style={{ color: T.textMut, width: 52, textAlign: 'right', ...NUMS }}>
                 {((d.value / total) * 100).toFixed(1)}%
               </span>
             </div>
@@ -522,7 +584,7 @@ const CardMixChart = ({ mix }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, padding: '9px 12px', background: T.subtle, borderRadius: 10 }}>
           <CreditCard size={16} color={T.textSec} />
           <span style={{ fontSize: 13, color: T.textSec }}>Total split volume</span>
-          <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 800 }}>{fmtMoney(total)}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 800, ...NUMS }}>{fmtMoney(total)}</span>
         </div>
       </div>
     </div>
@@ -544,17 +606,17 @@ const RevenueComposition = ({ series }) => {
         {data.map((d, i) => <div key={i} title={`${d.name}: ${fmtMoney(d.value)}`} style={{ width: `${(d.value / sum) * 100}%`, background: d.color }} />)}
       </div>
       {data.map((d, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '7px 0', borderBottom: i < data.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '7px 0', borderBottom: i < data.length - 1 ? `1px solid ${T.borderLight}` : 'none' }}>
           <span style={{ width: 10, height: 10, borderRadius: 3, background: d.color }} />
           <span style={{ fontWeight: 600 }}>{d.name}</span>
-          <span style={{ marginLeft: 'auto', color: T.textSec }}>{fmtMoney(d.value)}</span>
-          <span style={{ color: T.textMut, width: 46, textAlign: 'right' }}>{((d.value / sum) * 100).toFixed(1)}%</span>
+          <span style={{ marginLeft: 'auto', color: T.textSec, ...NUMS }}>{fmtMoney(d.value)}</span>
+          <span style={{ color: T.textMut, width: 46, textAlign: 'right', ...NUMS }}>{((d.value / sum) * 100).toFixed(1)}%</span>
         </div>
       ))}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, padding: '10px 12px', background: T.subtle, borderRadius: 10 }}>
         <Receipt size={16} color={T.textSec} />
         <span style={{ fontSize: 13, color: T.textSec }}>Total fees</span>
-        <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 800 }}>{fmtMoney(sum)}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 800, ...NUMS }}>{fmtMoney(sum)}</span>
       </div>
     </div>
   );
@@ -567,12 +629,13 @@ const EmptyChart = ({ label }) => (
 );
 
 const DashboardSkeleton = () => (
-  <div style={{ padding: 24, maxWidth: 1500, margin: '0 auto' }}>
+  <div style={{ padding: 'var(--space-page, 28px)' }}>
     <div className="ex-skel" style={{ width: 280, height: 30, marginBottom: 22 }} />
     <style>{`.ex-skel{background:linear-gradient(90deg,${T.subtle} 25%,${T.border} 37%,${T.subtle} 63%);background-size:400% 100%;animation:exsh 1.4s ease infinite;border-radius:12px}@keyframes exsh{0%{background-position:100% 50%}100%{background-position:0 50%}}`}</style>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 16 }}>
-      {[...Array(4)].map((_, i) => <div key={i} className="ex-skel" style={{ height: 130 }} />)}
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16, marginBottom: 16 }}>
+      {[...Array(3)].map((_, i) => <div key={i} className="ex-skel" style={{ height: 150 }} />)}
     </div>
+    <div className="ex-skel" style={{ height: 84, marginBottom: 16 }} />
     <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 16, marginBottom: 16 }}>
       <div className="ex-skel" style={{ height: 360 }} /><div className="ex-skel" style={{ height: 360 }} />
     </div>

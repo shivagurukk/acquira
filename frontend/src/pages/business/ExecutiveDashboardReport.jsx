@@ -277,7 +277,7 @@ const ExecutiveDashboardReport = () => {
                 </Grid>
 
                 <Grid item xs={12} md={6}>
-                    <ChartCard title="MTD Volume USD Split by Program"
+                    <ChartCard title="MTD Volume Split by Program"
                         subtitle="Share of month-to-date processing volume" accent="#f59e0b"
                         empty={!data.charts.mtdVolumeSplit?.length}>
                         <ResponsiveContainer width="100%" height="100%">

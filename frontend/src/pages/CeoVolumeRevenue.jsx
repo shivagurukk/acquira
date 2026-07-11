@@ -19,19 +19,26 @@ import { createFmt } from '../utils/formatters';
    read only, never fact_transaction).
 
    Reused for the Loss-Making Merchants screen via the `lossOnly` prop
-   (adds lossOnly=true -> HAVING net_revenue < 0 server-side).
+   (adds lossOnly=true -> HAVING net_revenue < 0 server-side). lossOnly
+   also rolls the server-side query up to MID (merchant) level instead
+   of MID x SID, so a merchant's overall position is evaluated as a
+   whole rather than flagging/hiding individual stores independently
+   of their siblings under the same MID — the SID column is dropped
+   from that view since it has nothing meaningful left to show.
 
    Visual register: restrained financial instrument — white panels on the
    slate workspace, hairline borders, uppercase micro-labels, tabular
    numerals, no gradients. KPI band summarises the period totals above
-   the detail table.
+   the detail table. Full-bleed width — no max-width cap — so the table
+   uses the available workspace on wide monitors instead of being boxed
+   in at ~1380px.
    ════════════════════════════════════════════════════════════════════ */
 
 const num = (v) => (v == null ? 0 : Number(v));
 const fullNum = (v, sym = '') =>
     (sym ? sym + ' ' : '') + Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
-const COLUMNS = [
+const ALL_COLUMNS = [
     { key: 'mid',         label: 'MID',            align: 'left',  sortable: true },
     { key: 'sid',         label: 'SID',            align: 'left',  sortable: false },
     { key: 'name',        label: 'Merchant',       align: 'left',  sortable: true },
@@ -44,6 +51,9 @@ const COLUMNS = [
     { key: 'net',         label: 'Net Revenue',    align: 'right', sortable: true },
     { key: 'margin',      label: 'Net Margin %',   align: 'right', sortable: false },
 ];
+// lossOnly rolls the server-side query up to MID (merchant) level, so the
+// SID column has nothing meaningful to show — drop it from that view.
+const columnsFor = (lossOnly) => lossOnly ? ALL_COLUMNS.filter(c => c.key !== 'sid') : ALL_COLUMNS;
 
 const PAGE_SIZE = 50;
 
@@ -126,6 +136,10 @@ const CeoVolumeRevenue = ({
         return { mode: 'MTD' };
     }, [period, month]);
 
+    // lossOnly is a fixed prop (not state), so this only needs to react to it
+    // in case a future caller ever toggles it live.
+    const visibleColumns = useMemo(() => columnsFor(lossOnly), [lossOnly]);
+
     useEffect(() => {
         clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => { setQuery(search.trim()); setPage(0); }, 350);
@@ -152,7 +166,7 @@ const CeoVolumeRevenue = ({
     useEffect(() => { load(); }, [load, tenantVersion]);
 
     const onSort = (key) => {
-        const col = COLUMNS.find(c => c.key === key);
+        const col = visibleColumns.find(c => c.key === key);
         if (!col?.sortable) return;
         if (sort === key) setDir(d => (d === 'desc' ? 'asc' : 'desc'));
         else { setSort(key); setDir('desc'); }
@@ -173,11 +187,14 @@ const CeoVolumeRevenue = ({
                 rows = rows.concat(chunk);
             }
             const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-            const header = ['MID', 'SID', 'Merchant', 'Count', 'Volume', 'MSF',
-                'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
+            const header = lossOnly
+                ? ['MID', 'Merchant', 'Count', 'Volume', 'MSF',
+                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %']
+                : ['MID', 'SID', 'Merchant', 'Count', 'Volume', 'MSF',
+                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
             const lines = [header.join(',')];
             rows.forEach(r => lines.push([
-                esc(r.mid), esc(r.sid), esc(r.name), num(r.txns),
+                esc(r.mid), ...(lossOnly ? [] : [esc(r.sid)]), esc(r.name), num(r.txns),
                 num(r.volume).toFixed(2), num(r.msf).toFixed(2),
                 num(r.interchange).toFixed(2), num(r.schemeFee).toFixed(2),
                 num(r.ecomFee).toFixed(2),
@@ -209,7 +226,7 @@ const CeoVolumeRevenue = ({
     const totalCosts = totals ? num(totals.interchange) + num(totals.schemeFee) : 0;
 
     return (
-        <div style={{ padding: '24px 28px', maxWidth: 1380, margin: '0 auto' }}>
+        <div style={{ padding: '24px 28px', width: '100%', maxWidth: '100%', margin: 0, boxSizing: 'border-box' }}>
             <style>{`
                 .cvr-table tbody tr { transition: background .12s ease; }
                 .cvr-table tbody tr:hover { background: var(--bg-hover, rgba(148,163,184,0.07)); }
@@ -250,7 +267,7 @@ const CeoVolumeRevenue = ({
                         <Search size={14} style={{ position: 'absolute', left: 10, top: '50%',
                             transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                         <input value={search} onChange={e => setSearch(e.target.value)}
-                            placeholder="Search MID / SID / name"
+                            placeholder={lossOnly ? 'Search MID / name' : 'Search MID / SID / name'}
                             style={{
                                 padding: '8px 12px 8px 30px', fontSize: 13, width: 200,
                                 background: 'var(--bg-card)', border: '1px solid var(--border)',
@@ -311,11 +328,11 @@ const CeoVolumeRevenue = ({
             </div>
 
             {loading ? <SkeletonLoader type="table" /> : error ? (
-                <EmptyState title="Could not load report" description={error}
-                    action={<button className="btn btn-primary" onClick={load}>Retry</button>} />
+                <EmptyState title="Could not load report" message={error}
+                    action={{ label: 'Retry', onClick: load }} />
             ) : !rows.length ? (
                 <EmptyState title={lossOnly ? 'No loss-making merchants' : 'No rows'}
-                    description={query ? 'No merchants match your search for this period.'
+                    message={query ? 'No merchants match your search for this period.'
                         : lossOnly ? `No merchants are running at a loss for ${periodLabel}. That's good news.`
                         : `No data yet for ${periodLabel}. Upload data to populate this report.`} />
             ) : (
@@ -378,7 +395,7 @@ const CeoVolumeRevenue = ({
                             <table className="cvr-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                                        {COLUMNS.map(c => {
+                                        {visibleColumns.map(c => {
                                             const active = sort === c.key;
                                             return (
                                                 <th key={c.key} onClick={() => onSort(c.key)}
@@ -407,7 +424,9 @@ const CeoVolumeRevenue = ({
                                             style={{ borderBottom: '1px solid var(--border-light, var(--border))',
                                                 background: lossOnly ? 'rgba(220,38,38,0.03)' : 'transparent' }}>
                                             <td style={{ ...tdText, fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{r.mid || '—'}</td>
-                                            <td style={{ ...tdText, fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{r.sid || '—'}</td>
+                                            {!lossOnly && (
+                                                <td style={{ ...tdText, fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{r.sid || '—'}</td>
+                                            )}
                                             <td style={{ ...tdText, maxWidth: 260, overflow: 'hidden',
                                                 textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}
                                                 title={r.name}>{r.name || '—'}</td>
@@ -439,7 +458,7 @@ const CeoVolumeRevenue = ({
                                     ))}
                                     {totals && (
                                         <tr style={{ background: 'var(--bg-hover, rgba(148,163,184,0.06))' }}>
-                                            <td colSpan={3} style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)' }}>
+                                            <td colSpan={lossOnly ? 2 : 3} style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)' }}>
                                                 {periodLabel} Total · {totalRows.toLocaleString()} {lossOnly ? 'loss rows' : 'rows'}
                                             </td>
                                             <td style={tdTotal} title={fullNum(totals.txns)}>{num(totals.txns).toLocaleString()}</td>
