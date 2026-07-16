@@ -39,6 +39,15 @@ public class IntegrationReport {
     @Column(name = "param_schema", columnDefinition = "TEXT")
     private String paramSchema; // JSON — [{"name":"year","type":"INTEGER"},{"name":"month","type":"INTEGER"}]
 
+    /**
+     * TRUE when the external query returns amounts in minor units (fils/halalas):
+     * the pull normalization step then divides txn/store-base amounts by the
+     * currency's decimal_notation_value and interchange by 10000, mirroring the
+     * CMM file path. FALSE (default) = amounts are already final decimals.
+     */
+    @Column(name = "amounts_minor_units")
+    private Boolean amountsMinorUnits = false;
+
     @Column(name = "is_active")
     private Boolean isActive = true;
 

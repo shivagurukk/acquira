@@ -169,8 +169,12 @@ public class PdfController {
     //
     //  Merchant selection:
     //    - If `merchantIds` is NOT provided (or empty) → runs for ALL merchants
+    //      with generate_report_flag = 1
     //    - If `merchantIds` IS provided → runs ONLY for those merchant IDs
     //      (missing IDs are logged and skipped; batch proceeds with valid ones)
+    //    - generate_report_flag is a HARD BLOCK in BOTH modes: even explicitly
+    //      requested merchants with flag != 1 are skipped (reported back as
+    //      flaggedOffMerchantIds).
     //
     //  Examples:
     //    /generate-all?year=2026&month=3                                → all, local
@@ -214,6 +218,7 @@ public class PdfController {
             // ── Resolve the merchant list based on selective vs all ──
             List<Merchant> merchants;
             List<Long> missingIds = Collections.emptyList();
+            List<Long> flaggedOffIds = Collections.emptyList();
 
             if (selective) {
                 // Deduplicate requested IDs, preserve caller order for logs
@@ -242,17 +247,33 @@ public class PdfController {
                     log.warn("[BATCH] Requested merchant IDs not found (will be skipped): {}", missingIds);
                 }
 
+                // HARD BLOCK: generate_report_flag applies even to explicitly
+                // requested merchants. flag != 1 (0 or null) → skipped, reported
+                // back so the UI can tell the user WHY nothing was generated.
+                flaggedOffIds = merchants.stream()
+                        .filter(m -> m.getGenerateReportFlag() == null || m.getGenerateReportFlag() != 1)
+                        .map(Merchant::getMerchantId)
+                        .collect(Collectors.toList());
+                if (!flaggedOffIds.isEmpty()) {
+                    log.warn("[BATCH] Requested merchants skipped — generate_report_flag != 1: {}", flaggedOffIds);
+                    merchants = merchants.stream()
+                            .filter(m -> m.getGenerateReportFlag() != null && m.getGenerateReportFlag() == 1)
+                            .collect(Collectors.toList());
+                }
+
                 if (merchants.isEmpty()) {
                     return ResponseEntity.badRequest().body(Map.of(
                         "status",  "NO_VALID_MERCHANTS",
-                        "message", "None of the requested merchantIds were found.",
+                        "message", "None of the requested merchantIds are eligible "
+                                 + "(not found, wrong tenant, or generate_report_flag != 1).",
                         "requestedIds", uniqueRequested,
-                        "missingIds",   missingIds
+                        "missingIds",   missingIds,
+                        "flaggedOffMerchantIds", flaggedOffIds
                     ));
                 }
 
-                log.info("[BATCH] Selective mode — {} of {} requested merchants resolved",
-                        merchants.size(), uniqueRequested.size());
+                log.info("[BATCH] Selective mode — {} of {} requested merchants resolved ({} flagged off)",
+                        merchants.size(), uniqueRequested.size(), flaggedOffIds.size());
             } else {
                 // Tenant-scoped ALL + PDF generate-flag filter. Only merchants whose
                 // generate_report_flag = 1 are loaded (filtered in the DB, so flagged-off
@@ -477,6 +498,7 @@ public class PdfController {
             if (selective) {
                 response.put("processedMerchantIds", midList);
                 response.put("missingMerchantIds",   missingIds);
+                response.put("flaggedOffMerchantIds", flaggedOffIds);
             }
             response.put("storageType",     reportStorageService.getStorageInfo());
             return ResponseEntity.ok(response);
@@ -628,7 +650,8 @@ public class PdfController {
     //
     // MIDs are the bank-assigned codes (dim_merchant.mid), NOT internal IDs. Unmatched
     // MIDs are reported back; matched ones go through the same batch pipeline as
-    // /generate-all (identical email/S3 behaviour).
+    // /generate-all (identical email/S3 behaviour). generate_report_flag = 1 is
+    // required in every mode (hard block enforced in the selective batch path).
     //
     //   POST /generate-by-mid   (multipart/form-data)
     //   params: year, month, sendEmail, sendS3, scope, mid, mids, file
@@ -715,7 +738,9 @@ public class PdfController {
                 .collect(Collectors.toList());
 
         // Hand resolved internal IDs to the existing batch pipeline (selective mode,
-        // also tenant-guarded), then enrich the response with MID resolution info.
+        // also tenant-guarded and flag-guarded), then enrich the response with MID
+        // resolution info. Flag-blocked merchants come back in flaggedOffMerchantIds;
+        // map them back to MIDs so the UI can name them.
         ResponseEntity<Map<String, Object>> resp =
                 generateAllReports(year, month, sendEmail, sendS3, resolvedIds);
 
@@ -724,6 +749,16 @@ public class PdfController {
         body.put("requestedMidCount", requestedMids.size());
         body.put("matchedMidCount", matched.size());
         body.put("unmatchedMids", unmatchedMids);
+
+        Object flaggedOff = body.get("flaggedOffMerchantIds");
+        if (flaggedOff instanceof List<?> flaggedIds && !flaggedIds.isEmpty()) {
+            List<String> flaggedOffMids = matched.stream()
+                    .filter(m -> flaggedIds.contains(m.getMerchantId()))
+                    .map(Merchant::getMid)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            body.put("flaggedOffMids", flaggedOffMids);
+        }
         return ResponseEntity.status(resp.getStatusCode()).body(body);
     }
 

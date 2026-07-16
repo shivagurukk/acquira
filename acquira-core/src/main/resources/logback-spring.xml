@@ -15,7 +15,7 @@
     <springProfile name="!prod">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
-                <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) [%X{correlationId:-no-ctx}] %cyan(%-40.40logger{39}) : %msg%n</pattern>
+                <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) %magenta([%15.15thread]) %yellow([t=%X{tenantId:-·} %X{job:-·}/%X{step:-·}]) %cyan(%-36.36logger{35}) : %msg%n</pattern>
             </encoder>
         </appender>
 
@@ -31,7 +31,7 @@
                 <totalSizeCap>200MB</totalSizeCap>
             </rollingPolicy>
             <encoder>
-                <pattern>%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-no-ctx}] %-40.40logger{39} : %msg%n</pattern>
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%15.15thread] [cid=%X{correlationId:-} t=%X{tenantId:-} %X{job:-}/%X{step:-}] %-36.36logger{35} : %msg%n</pattern>
             </encoder>
         </appender>
 
@@ -45,6 +45,12 @@
         <logger name="org.hibernate" level="ERROR"/>
         <logger name="org.springframework.web" level="INFO"/>
         <logger name="org.springframework.security" level="WARN"/>
+        <!-- Quiet Spring Batch's per-step/per-chunk INFO chatter (job launched,
+             executing step X, step complete) which otherwise interleaves with and
+             drowns out our own batch progress lines. WARN keeps failures visible. -->
+        <logger name="org.springframework.batch" level="WARN"/>
+        <logger name="org.springframework.jdbc" level="WARN"/>
+        <logger name="com.zaxxer.hikari" level="WARN"/>
     </springProfile>
 
     <!-- ─── PROD PROFILE: JSON file logging with rotation ─── -->
@@ -62,7 +68,7 @@
                 <totalSizeCap>2GB</totalSizeCap>
             </rollingPolicy>
             <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] %logger{36} - %msg%n</pattern>
+                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] [job=%X{job:-}/%X{step:-}] %logger{36} - %msg%n</pattern>
             </encoder>
         </appender>
 
@@ -95,14 +101,14 @@
                 <totalSizeCap>1GB</totalSizeCap>
             </rollingPolicy>
             <encoder>
-                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] %logger{36} - %msg%n%ex</pattern>
+                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] [job=%X{job:-}/%X{step:-}] %logger{36} - %msg%n%ex</pattern>
             </encoder>
         </appender>
 
         <!-- Console in prod — minimal, for systemd journal -->
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
-                <pattern>%d{HH:mm:ss} %-5level [%X{correlationId:-}] %logger{20} - %msg%n</pattern>
+                <pattern>%d{HH:mm:ss} %-5level [%X{correlationId:-}] [t=%X{tenantId:-} %X{job:-}/%X{step:-}] %logger{20} - %msg%n</pattern>
             </encoder>
         </appender>
 

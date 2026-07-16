@@ -48,7 +48,7 @@ const ALL_COLUMNS = [
     { key: 'interchange', label: 'Interchange',    align: 'right', sortable: true },
     { key: 'schemeFee',   label: 'Scheme Fee',     align: 'right', sortable: true },
     { key: 'ecomFee',     label: 'ECOM Fee',       align: 'right', sortable: true },
-    { key: 'net',         label: 'Net Revenue',    align: 'right', sortable: true },
+    { key: 'net',         label: 'Net Margin',     align: 'right', sortable: true },
     { key: 'margin',      label: 'Net Margin %',   align: 'right', sortable: false },
 ];
 // lossOnly rolls the server-side query up to MID (merchant) level, so the
@@ -189,9 +189,9 @@ const CeoVolumeRevenue = ({
             const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
             const header = lossOnly
                 ? ['MID', 'Merchant', 'Count', 'Volume', 'MSF',
-                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %']
+                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %']
                 : ['MID', 'SID', 'Merchant', 'Count', 'Volume', 'MSF',
-                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
+                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
             const lines = [header.join(',')];
             rows.forEach(r => lines.push([
                 esc(r.mid), ...(lossOnly ? [] : [esc(r.sid)]), esc(r.name), num(r.txns),
@@ -256,7 +256,7 @@ const CeoVolumeRevenue = ({
                         {subtitleSuffix}
                         {lossOnly && <>
                             <span style={{ color: 'var(--border)' }}>·</span>
-                            <span style={{ color: '#dc2626', fontWeight: 600 }}>net revenue &lt; 0 only</span>
+                            <span style={{ color: '#dc2626', fontWeight: 600 }}>net margin &lt; 0 only</span>
                         </>}
                     </div>
                 </div>
@@ -373,16 +373,16 @@ const CeoVolumeRevenue = ({
                             </div>
                             <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
                                 <StatTile icon={lossOnly ? TrendingDown : Receipt}
-                                    label={lossOnly ? 'Total Net Loss' : 'Net Revenue'}
+                                    label={lossOnly ? 'Total Net Loss' : 'Net Margin'}
                                     value={fmt.currency(num(totals.netRevenue))}
                                     caption={lossOnly ? 'across loss rows' : 'MSF − costs'}
                                     tone={num(totals.netRevenue) >= 0 ? 'success' : 'danger'}
                                     title={fullNum(totals.netRevenue, currencySymbol)} />
                             </div>
                             <div>
-                                <StatTile icon={Percent} label="Net Margin"
+                                <StatTile icon={Percent} label="Net Margin %"
                                     value={`${num(totals.marginPct).toFixed(2)}%`}
-                                    caption="net revenue ÷ volume"
+                                    caption="net margin ÷ volume"
                                     tone={num(totals.marginPct) >= 0 ? 'success' : 'danger'} />
                             </div>
                         </div>

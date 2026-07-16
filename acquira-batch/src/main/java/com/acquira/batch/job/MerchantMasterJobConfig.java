@@ -37,6 +37,10 @@ public class MerchantMasterJobConfig {
     private final DataSource dataSource;
     private final JdbcTemplate jdbcTemplate;
 
+    // MDC context listener — tenant/job/step on the batch worker thread.
+    @org.springframework.beans.factory.annotation.Autowired
+    private MdcStepListener mdcStepListener;
+
     public MerchantMasterJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate) {
         this.jobRepository = jobRepository;
@@ -55,11 +59,27 @@ public class MerchantMasterJobConfig {
                 .build();
     }
 
+    /**
+     * DB-pull merchant processing job — same post-ingestion step as
+     * merchantMasterJob minus the file-read step. IntegrationPullService
+     * populates stg_merchant_master_raw itself, then launches this job so
+     * merchant pulls run the SAME dimension upsert logic as file uploads
+     * (no NULL-clobbering hand-rolled SQL). Job params: tenantId, startedAt.
+     */
+    @Bean
+    public Job dbPullMerchantJob(
+            @org.springframework.beans.factory.annotation.Qualifier("upsertAndSummarizeStep") Step upsertAndSummarizeStep) {
+        return new JobBuilder("dbPullMerchantJob", jobRepository)
+                .start(upsertAndSummarizeStep)
+                .build();
+    }
+
     @Bean
     public Step upsertAndSummarizeStep(Tasklet upsertAndSummarizeTasklet) {
         return new StepBuilder("upsertAndSummarizeStep", jobRepository)
                 .tasklet(upsertAndSummarizeTasklet, transactionManager)
                 .transactionAttribute(noTxn())
+                .listener(mdcStepListener)
                 .build();
     }
 
@@ -133,6 +153,7 @@ public class MerchantMasterJobConfig {
                 .reader(merchantExcelReader)
                 .processor(merchantTenantProcessor)
                 .writer(merchantWriter)
+                .listener(mdcStepListener)
                 .build();
     }
 

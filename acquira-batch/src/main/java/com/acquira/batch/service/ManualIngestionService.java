@@ -47,7 +47,24 @@ public class ManualIngestionService {
      */
     @org.springframework.scheduling.annotation.Async
     public void processManualUpload(Long tenantId) {
-        log.info("Starting Manual Ingestion Processing for Tenant: {}", tenantId);
+        doProcess(tenantId, null);
+    }
+
+    /**
+     * Date-scoped variant used by the DB-pull path. When {@code scopeDates} is
+     * provided, the expensive full-history discovery query
+     * (SELECT DISTINCT DATE(payment_date) FROM fact_transaction …) is skipped and
+     * only the months containing those dates are recomputed — a pull of one day
+     * no longer re-aggregates the tenant's entire history.
+     */
+    @org.springframework.scheduling.annotation.Async
+    public void processManualUpload(Long tenantId, java.util.Collection<LocalDate> scopeDates) {
+        doProcess(tenantId, scopeDates);
+    }
+
+    private void doProcess(Long tenantId, java.util.Collection<LocalDate> scopeDates) {
+        log.info("Starting Manual Ingestion Processing for Tenant: {}{}", tenantId,
+                scopeDates != null ? " (scoped to " + scopeDates.size() + " date(s))" : "");
 
         // 1. Identify distinct dates to process (Data-Driven).
         //
@@ -59,10 +76,18 @@ public class ManualIngestionService {
         // fact_transaction is fully populated. fact_transaction is the
         // permanent table and is also what processSingleDate aggregates from,
         // so discovering the dates here keeps step 1 and step 2 consistent.
-        List<LocalDate> reportDates = new ArrayList<>(jdbcTemplate.queryForList(
-                "SELECT DISTINCT DATE(payment_date) FROM fact_transaction WHERE tenant_id = ? AND payment_date IS NOT NULL",
-                LocalDate.class,
-                tenantId));
+        //
+        // When the caller already knows the affected dates (DB pull), use them
+        // directly instead of the full-partition discovery scan.
+        List<LocalDate> reportDates;
+        if (scopeDates != null && !scopeDates.isEmpty()) {
+            reportDates = new ArrayList<>(scopeDates);
+        } else {
+            reportDates = new ArrayList<>(jdbcTemplate.queryForList(
+                    "SELECT DISTINCT DATE(payment_date) FROM fact_transaction WHERE tenant_id = ? AND payment_date IS NOT NULL",
+                    LocalDate.class,
+                    tenantId));
+        }
 
         // Filter out any null entries that may slip through
         reportDates.removeIf(d -> d == null);

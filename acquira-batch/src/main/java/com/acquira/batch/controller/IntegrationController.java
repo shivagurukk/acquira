@@ -106,6 +106,7 @@ public class IntegrationController {
                     }
                     existing.setTimeoutSeconds(updated.getTimeoutSeconds());
                     existing.setMaxRetries(updated.getMaxRetries());
+                    if (updated.getTrustServerCert() != null) existing.setTrustServerCert(updated.getTrustServerCert());
                     existing.setIsActive(updated.getIsActive());
                     existing.setUpdatedAt(LocalDateTime.now());
                     return ResponseEntity.ok(sanitizeForResponse(connectionRepo.save(existing)));
@@ -173,6 +174,7 @@ public class IntegrationController {
         report.setDescription((String) body.get("description"));
         report.setParamSchema((String) body.get("paramSchema"));
         report.setApprovedBy((String) body.get("approvedBy"));
+        report.setAmountsMinorUnits(body.get("amountsMinorUnits") != null ? (Boolean) body.get("amountsMinorUnits") : false);
         report.setIsActive(body.get("isActive") != null ? (Boolean) body.get("isActive") : true);
         report.setCreatedAt(LocalDateTime.now());
 
@@ -200,6 +202,7 @@ public class IntegrationController {
                     if (body.containsKey("description")) existing.setDescription((String) body.get("description"));
                     if (body.containsKey("paramSchema")) existing.setParamSchema((String) body.get("paramSchema"));
                     if (body.containsKey("approvedBy")) existing.setApprovedBy((String) body.get("approvedBy"));
+                    if (body.containsKey("amountsMinorUnits")) existing.setAmountsMinorUnits((Boolean) body.get("amountsMinorUnits"));
                     if (body.containsKey("isActive")) existing.setIsActive((Boolean) body.get("isActive"));
                     if (body.containsKey("connectionId")) {
                         Long connectionId = Long.valueOf(body.get("connectionId").toString());

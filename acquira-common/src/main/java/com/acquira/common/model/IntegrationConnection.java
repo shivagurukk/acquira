@@ -44,6 +44,14 @@ public class IntegrationConnection {
     @Column(name = "max_retries")
     private Integer maxRetries = 3;
 
+    /**
+     * MSSQL only: whether the JDBC URL sets trustServerCertificate=true.
+     * Default TRUE preserves historical behaviour (internal networks);
+     * set FALSE to enforce certificate validation on production links.
+     */
+    @Column(name = "trust_server_cert")
+    private Boolean trustServerCert = true;
+
     @Column(name = "is_active")
     private Boolean isActive = true;
 
@@ -70,8 +78,9 @@ public class IntegrationConnection {
             case POSTGRES:
                 return "jdbc:postgresql://" + host + ":" + port + "/" + dbName;
             case MSSQL:
+                boolean trust = trustServerCert == null || trustServerCert;
                 return "jdbc:sqlserver://" + host + ":" + port + ";databaseName=" + dbName
-                        + ";encrypt=true;trustServerCertificate=true";
+                        + ";encrypt=true;trustServerCertificate=" + trust;
             default:
                 throw new IllegalArgumentException("Unsupported DB Type: " + dbType);
         }

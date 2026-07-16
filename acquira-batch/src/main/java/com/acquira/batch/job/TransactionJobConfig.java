@@ -69,6 +69,12 @@ public class TransactionJobConfig {
     private final com.acquira.common.service.ChurnScoringService churnScoringService;
     private final com.acquira.common.service.MerchantSegmentationService merchantSegmentationService;
 
+    // MDC context listener — populates tenant/job/step on the batch worker thread
+    // for every step so parallel batch log lines are attributable. Field-injected
+    // (not constructor) to keep the existing constructor signature untouched.
+    @org.springframework.beans.factory.annotation.Autowired
+    private MdcStepListener mdcStepListener;
+
     public TransactionJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate,
             MerchantMetricCalculator merchantMetricCalculator,
@@ -138,10 +144,37 @@ public class TransactionJobConfig {
                 .next(calculateDailyDashboardMetricsStep).build();
     }
 
+    /**
+     * DB-pull processing job — the EXACT same post-ingestion pipeline as
+     * transactionLoadJob, minus the file-specific steps (splitExcel,
+     * cleanTargetDay, masterIngest). IntegrationPullService populates
+     * stg_trnx_raw itself (staging is cleared + batch-inserted there), then
+     * launches this job so DB pulls get full parity with file uploads:
+     * dimension auto-create, stagingToFact with fee computation, ALL summary
+     * tables, business metrics, ML scoring, segments, and dashboard metrics.
+     * Job params: tenantId (Long), loadMode (String), startedAt (Long, uniqueness).
+     */
+    @Bean
+    public Job dbPullTransactionJob(
+            @org.springframework.beans.factory.annotation.Qualifier("ensurePartitionsStep") Step ensurePartitionsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("autoCreateDimensionsStep") Step autoCreateDimensionsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("stagingToFactStep") Step stagingToFactStep,
+            @org.springframework.beans.factory.annotation.Qualifier("populateSummaryStep") Step populateSummaryStep,
+            @org.springframework.beans.factory.annotation.Qualifier("calculateBusinessMetricsStep") Step calculateBusinessMetricsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("scoreMlStep") Step scoreMlStep,
+            @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
+        return new JobBuilder("dbPullTransactionJob", jobRepository)
+                .start(ensurePartitionsStep).next(autoCreateDimensionsStep)
+                .next(stagingToFactStep).next(populateSummaryStep)
+                .next(calculateBusinessMetricsStep).next(scoreMlStep).next(computeSegmentsStep)
+                .next(calculateDailyDashboardMetricsStep).build();
+    }
+
     @Bean
     public Step autoCreateDimensionsStep(Tasklet autoCreateDimensionsTasklet) {
         return new StepBuilder("autoCreateDimensionsStep", jobRepository)
-            .tasklet(autoCreateDimensionsTasklet, transactionManager).build();
+            .tasklet(autoCreateDimensionsTasklet, transactionManager).listener(mdcStepListener).build();
     }
 
     @Bean @StepScope
@@ -266,7 +299,7 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step ensurePartitionsStep(Tasklet ensurePartitionsTasklet) {
-        return new StepBuilder("ensurePartitionsStep", jobRepository).tasklet(ensurePartitionsTasklet, transactionManager).build();
+        return new StepBuilder("ensurePartitionsStep", jobRepository).tasklet(ensurePartitionsTasklet, transactionManager).listener(mdcStepListener).build();
     }
     @Bean public Tasklet ensurePartitionsTasklet() {
         return (contribution, chunkContext) -> {
@@ -278,11 +311,11 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step splitExcelStep(ExcelSplitterTasklet excelSplitterTasklet) {
-        return new StepBuilder("splitExcelStep", jobRepository).tasklet(excelSplitterTasklet, transactionManager).build();
+        return new StepBuilder("splitExcelStep", jobRepository).tasklet(excelSplitterTasklet, transactionManager).listener(mdcStepListener).build();
     }
 
     @Bean public Step cleanTargetDayStep(Tasklet cleanTargetDayTasklet) {
-        return new StepBuilder("cleanTargetDayStep", jobRepository).tasklet(cleanTargetDayTasklet, transactionManager).build();
+        return new StepBuilder("cleanTargetDayStep", jobRepository).tasklet(cleanTargetDayTasklet, transactionManager).listener(mdcStepListener).build();
     }
     @Bean @StepScope public Tasklet cleanTargetDayTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
         return (contribution, chunkContext) -> {
@@ -299,7 +332,7 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("transactionPartitionExecutor")
             org.springframework.core.task.TaskExecutor partitionExecutor) {
         return new StepBuilder("masterIngestStep", jobRepository).partitioner("csvWorkerStep", partitioner)
-                .step(csvWorkerStep).taskExecutor(partitionExecutor).gridSize(8).build();
+                .step(csvWorkerStep).taskExecutor(partitionExecutor).gridSize(8).listener(mdcStepListener).build();
     }
 
     // PERF FIX: ThreadPoolTaskExecutor instead of SimpleAsyncTaskExecutor.
@@ -313,6 +346,23 @@ public class TransactionJobConfig {
         executor.setMaxPoolSize(8);
         executor.setQueueCapacity(0);
         executor.setThreadNamePrefix("batch-ingest-");
+        // Propagate the manager thread's MDC (tenant/job/step/correlationId set by
+        // MdcStepListener on masterIngestStep) onto each partition worker thread,
+        // so parallel csvWorkerStep partition logs are attributable instead of
+        // showing empty context. Snapshot at submit time, install for the task,
+        // restore afterwards so pooled threads don't leak context between tasks.
+        executor.setTaskDecorator(runnable -> {
+            java.util.Map<String, String> parent = org.slf4j.MDC.getCopyOfContextMap();
+            return () -> {
+                java.util.Map<String, String> previous = org.slf4j.MDC.getCopyOfContextMap();
+                if (parent != null) org.slf4j.MDC.setContextMap(parent); else org.slf4j.MDC.clear();
+                try {
+                    runnable.run();
+                } finally {
+                    if (previous != null) org.slf4j.MDC.setContextMap(previous); else org.slf4j.MDC.clear();
+                }
+            };
+        });
         executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.initialize();
@@ -630,6 +680,7 @@ public class TransactionJobConfig {
         return new StepBuilder("stagingToFactStep", jobRepository)
             .tasklet(stagingToFactTasklet, transactionManager)
             .transactionAttribute(noTxn())
+            .listener(mdcStepListener)
             .build();
     }
 
@@ -907,11 +958,25 @@ public class TransactionJobConfig {
                 "  CROSS JOIN LATERAL (SELECT (UPPER(TRIM(COALESCE(ft.transaction_type,''))) = 'RFND') AS is_refund) rf " +
                 // derive mcc sector ONCE (was a correlated subquery inside the LATERAL)
                 "  LEFT JOIN mcc_sector_map msm ON msm.tenant_id = ft.tenant_id AND msm.mcc = ds.mcc " +
+                // PERF (2026-07-14): lateral split into MCC-keyed + wildcard branches so
+                // the planner drives each via an index instead of scanning all ~365
+                // candidate rows per transaction (was 9.4M heap blocks / ~270s per window).
+                // Branch 1 uses idx_interchange_rate_local_mcc (tenant_id, mcc);
+                // Branch 2 uses idx_interchange_rate_local_generic (partial, mcc IS NULL).
+                // Same candidate set, same priority pick - semantics unchanged.
                 "  LEFT JOIN LATERAL ( " +
-                "    SELECT ilr.interchange_pct, ilr.cap_amount FROM interchange_rate_local ilr " +
-                "    WHERE ilr.tenant_id = ft.tenant_id " +
-                "      AND ilr.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
-                "      AND (ilr.channel IS NULL OR ilr.channel = ch.channel) " +
+                "    SELECT ilr.interchange_pct, ilr.cap_amount FROM ( " +
+                "      SELECT i.* FROM interchange_rate_local i " +
+                "      WHERE i.tenant_id = ft.tenant_id " +
+                "        AND i.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
+                "        AND i.mcc = ds.mcc " +
+                "      UNION ALL " +
+                "      SELECT i.* FROM interchange_rate_local i " +
+                "      WHERE i.tenant_id = ft.tenant_id " +
+                "        AND i.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
+                "        AND i.mcc IS NULL " +
+                "    ) ilr " +
+                "    WHERE (ilr.channel IS NULL OR ilr.channel = ch.channel) " +
                 "      AND (ilr.scheme_group IS NULL OR ilr.scheme_group = COALESCE(rcs.group_name,'')) " +
                 // CARD-TYPE FOR PRICING (2026-07-07, business-confirmed): credit-prepaid
                 // products (rcs.card_type=3, i.e. MCCP) are PRICED as CREDIT (-> Premium
@@ -925,9 +990,8 @@ public class TransactionJobConfig {
                 // unmatched codes - resolves Premium. (JCB/UPI still hit their priority-11
                 // flat 1.75 rows, which are tier-wildcard, so tier is moot for them.)
                 "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 1 THEN 'Standard' ELSE 'Premium' END) " +
-                // MCC-KEYED RATE CARD (2026-07-07): ilr.mcc NULL = wildcard; a row whose
-                // mcc matches dim_store.mcc is the most specific and wins via priority.
-                "      AND (ilr.mcc IS NULL OR ilr.mcc = ds.mcc) " +
+                // MCC-KEYED RATE CARD (2026-07-07): mcc match/wildcard now enforced by the
+                // UNION ALL branches above (most-specific still wins via priority DESC).
                 "      AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = msm.sector) " +
                 "      AND (ilr.min_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket_aed) " +
                 "      AND (ilr.max_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket_aed) " +
@@ -960,6 +1024,7 @@ public class TransactionJobConfig {
         return new StepBuilder("populateSummaryStep", jobRepository)
             .tasklet(populateSummaryTasklet, transactionManager)
             .transactionAttribute(noTxn())
+            .listener(mdcStepListener)
             .build();
     }
 
@@ -1434,7 +1499,7 @@ public class TransactionJobConfig {
     @Bean public Step calculateBusinessMetricsStep(Tasklet calculateBusinessMetricsTasklet) {
         return new StepBuilder("calculateBusinessMetricsStep", jobRepository)
             .tasklet(calculateBusinessMetricsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
     }
 
     @Bean @StepScope
@@ -1527,7 +1592,7 @@ public class TransactionJobConfig {
     @Bean public Step scoreMlStep(Tasklet scoreMlTasklet) {
         return new StepBuilder("scoreMlStep", jobRepository)
             .tasklet(scoreMlTasklet, transactionManager)
-            .transactionAttribute(noTxn()).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
     }
 
     @Bean @StepScope
@@ -1556,7 +1621,7 @@ public class TransactionJobConfig {
     @Bean public Step computeSegmentsStep(Tasklet computeSegmentsTasklet) {
         return new StepBuilder("computeSegmentsStep", jobRepository)
             .tasklet(computeSegmentsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
     }
 
     @Bean @StepScope
@@ -1585,7 +1650,7 @@ public class TransactionJobConfig {
     @Bean public Step calculateDailyDashboardMetricsStep(Tasklet calculateDailyDashboardMetricsTasklet) {
         return new StepBuilder("calculateDailyDashboardMetricsStep", jobRepository)
             .tasklet(calculateDailyDashboardMetricsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
     }
 
     @Bean @StepScope
