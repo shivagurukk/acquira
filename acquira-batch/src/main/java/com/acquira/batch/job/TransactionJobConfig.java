@@ -800,12 +800,17 @@ public class TransactionJobConfig {
                 "COALESCE(s.store_id, s2.store_id) AS store_id, t.terminal_id, " +
                 "stg.arn, stg.rrn_number, stg.card_number, stg.auth_code, " +
                 "stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type, " +
-                // GROSS VOLUME (2026-07-08, option B): amounts stored ABS like msf/vat —
-                // refunds (RFND) count as positive volume everywhere (fact + all summaries).
-                // total_amount_settled stays SIGNED (settlement must net refunds).
-                // Staging keeps raw signed values for audit.
-                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, stg.txn_currency, ABS(stg.txn_currency_amount), " +
-                "stg.store_base_currency, ABS(stg.store_base_currency_amount), " +
+                // SIGNED VOLUME (2026-07-18, reverses 2026-07-08 option B): refunds (RFND)
+                // are stored NEGATIVE so fact + all summaries net refunds out of volume,
+                // matching the raw feed / MIS reconciliation basis. Sign is forced from
+                // transaction_type (not trusted from the feed): purchases +ABS, refunds -ABS.
+                // msf/vat/interchange remain ABS; total_amount_settled stays raw SIGNED.
+                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, stg.txn_currency, " +
+                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
+                "     THEN -ABS(stg.txn_currency_amount) ELSE ABS(stg.txn_currency_amount) END, " +
+                "stg.store_base_currency, " +
+                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
+                "     THEN -ABS(stg.store_base_currency_amount) ELSE ABS(stg.store_base_currency_amount) END, " +
                 "ABS(stg.msf), ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination " +
                 "FROM stg_trnx_raw stg " +
                 "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '') " +
