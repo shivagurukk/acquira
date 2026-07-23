@@ -572,6 +572,11 @@ public class PdfController {
      * table. Register matches the app: light background, restrained navy accent,
      * no gradients or glow. {@code name} and {@code monthYear} are the only
      * dynamic values; both are plain text we control (merchant name + "March 2026").
+     *
+     * Copy matches the approved Business Insight Report template (subject,
+     * greeting, body, sign-off, unsubscribe instructions, and confidentiality
+     * notice) — {{MONTH_YEAR}} / {{MERCHANT_NAME}} placeholders are filled in
+     * with {@code period} / {@code safeName} below.
      */
     private String buildReportEmailHtml(String name, String monthYear) {
         String safeName = name != null ? name : "Merchant";
@@ -607,11 +612,15 @@ public class PdfController {
             +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 14px;\">"
             +         "Dear " + safeName + ",</p>"
             +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 14px;\">"
-            +         "Your monthly business insight report for <strong>" + period + "</strong> is "
-            +         "ready. It covers your sales performance, transaction trends, card mix, "
-            +         "customer activity and DCC opportunities for the period.</p>"
+            +         "We are pleased to share your Business Insight Report for <strong>" + period + "</strong>, "
+            +         "prepared exclusively for your business. The full report is attached to this email "
+            +         "as a PDF.</p>"
+            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 14px;\">"
+            +         "We hope these insights help you better understand your business performance and "
+            +         "support your decision-making.</p>"
             +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 22px;\">"
-            +         "The full report is attached to this email as a PDF.</p>"
+            +         "If you have any questions about this report, simply reply to this email and our "
+            +         "team will be happy to assist you.</p>"
 
             +       "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" "
             +         "style=\"margin:0 0 26px;\"><tr>"
@@ -620,20 +629,28 @@ public class PdfController {
             +           "&#128196;&nbsp; Business_Insight_Report_" + period.replace(" ", "_") + ".pdf"
             +         "</td></tr></table>"
 
-            +       "<p style=\"font-size:13px;line-height:1.6;color:#6b7688;margin:0;\">"
-            +         "If you have any questions about this report, simply reply to this email.</p>"
+            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0;\">"
+            +         "Best regards,<br>"
+            +         "The AFS NEXUS Team<br>"
+            +         "Arab Financial Services</p>"
             +     "</td></tr>"
 
             +     "<tr><td style=\"padding:18px 32px;background:#fafbfc;border-top:1px solid #eef0f2;\">"
-            +       "<div style=\"font-size:12px;color:#8a94a6;line-height:1.5;\">"
-            +         "Best regards,<br><strong style=\"color:#33415a;\">AFS&nbsp;NEXUS</strong> "
-            +         "&mdash; Connecting Your Business Intelligence</div>"
+            +       "<div style=\"font-size:11px;color:#8a94a6;line-height:1.6;\">"
+            +         "This is an automated message from AFS NEXUS, the merchant intelligence platform "
+            +         "by Arab Financial Services.<br>"
+            +         "If you prefer not to receive these monthly reports, simply email to "
+            +         "<a href=\"mailto:uaemerchants@afs.com.bh\" style=\"color:#6b7688;\">uaemerchants@afs.com.bh</a> "
+            +         "or contact our call center +971 4312 4848 and we will remove you from future mailings."
+            +       "</div>"
             +     "</td></tr>"
 
             +     "</table>"
 
-            +     "<div style=\"font-size:11px;color:#aab2c0;margin-top:16px;\">"
-            +       "This is an automated statement. Please do not share it externally.</div>"
+            +     "<div style=\"font-size:11px;color:#aab2c0;margin-top:16px;line-height:1.6;max-width:560px;\">"
+            +       "This email and its attachment are confidential and intended solely for the named "
+            +       "recipient. If you have received this message in error, please notify the sender and "
+            +       "delete it. &copy; Arab Financial Services B.S.C.(c). All rights reserved.</div>"
 
             +   "</td></tr></table>"
             + "</body></html>";
