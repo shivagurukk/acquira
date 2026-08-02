@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import './index.css'
-import './fixes.css'
 import ErrorBoundary from './components/ErrorBoundary'
 
 // NOTE: MUI ThemeProvider + CssBaseline are provided inside

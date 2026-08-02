@@ -1,15 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-    Box, Typography, Paper, Grid, TextField, Button, Chip,
-    Card, CardContent, useTheme
-} from '@mui/material';
-import { DataGrid } from '@mui/x-data-grid';
-import {
-    Search, Download, RefreshCw, Shield,
-    CheckCircle, XCircle, Filter
+    Download, RefreshCw, Shield, CheckCircle, XCircle, Filter, FileText,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { showToast } from '../../contexts/ToastContext';
+import {
+    Page, Stack, Row, Card, Button, Badge, DataTable,
+    FormGrid, Input, Select,
+} from '../../components/ui';
 
 /* ────────── helpers ────────── */
 
@@ -46,38 +45,48 @@ const formatTimestamp = (value) => {
     return `${mo} ${day}, ${hh}:${mm}:${ss}`;
 };
 
-const categoryColorMap = {
-    AUTH: 'primary',
-    ADMIN: 'error',
+/** Category → Badge tone. */
+const CATEGORY_TONES = {
+    AUTH: 'brand',
+    ADMIN: 'danger',
     DATA: 'success',
     EXPORT: 'info',
     BATCH: 'warning',
-    AI: 'secondary',
-    BUSINESS: 'default',
+    AI: 'brand',
+    BUSINESS: 'neutral',
 };
+
+const CATEGORIES = ['AUTH', 'ADMIN', 'DATA', 'EXPORT', 'BATCH', 'AI', 'BUSINESS'];
+
+const PAGE_SIZES = [
+    { value: 20, label: '20 per page' },
+    { value: 50, label: '50 per page' },
+    { value: 100, label: '100 per page' },
+];
+
+const EMPTY_FILTERS = { search: '', category: '', action: '', username: '', startDate: '', endDate: '' };
+
+/** Small metric tile — no kit primitive for this shape yet. */
+const StatTile = ({ label, value, tone = 'var(--text)' }) => (
+    <Card pad>
+        <div className="ui-field__label" style={{ marginBottom: 4 }}>{label}</div>
+        <div style={{ fontSize: '1.5rem', fontWeight: 600, lineHeight: 1.2, color: tone }}>{value}</div>
+    </Card>
+);
 
 /* ────────── component ────────── */
 
 const AuditLogViewer = () => {
     const { tenantVersion } = useAuth();
-    const theme = useTheme();
-    const isDark = theme.palette.mode === 'dark';
 
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [exporting, setExporting] = useState(false);
+    const [reporting, setReporting] = useState(false);
     const [stats, setStats] = useState({ totalToday: 0, errors: 0, activeUsers: 0, errorRate: 0 });
-    const [filters, setFilters] = useState({
-        search: '',
-        category: '',
-        action: '',
-        username: '',
-        startDate: '',
-        endDate: ''
-    });
+    const [filters, setFilters] = useState(EMPTY_FILTERS);
     const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 20 });
     const [rowCount, setRowCount] = useState(0);
-
-    const categories = ['AUTH', 'ADMIN', 'DATA', 'EXPORT', 'BATCH', 'AI', 'BUSINESS'];
 
     const fetchLogs = useCallback(async () => {
         setLoading(true);
@@ -98,6 +107,7 @@ const AuditLogViewer = () => {
         } catch (error) {
             console.error('Failed to fetch audit logs', error);
             setLogs([]);
+            showToast('Could not load audit logs', 'error');
         } finally {
             setLoading(false);
         }
@@ -129,6 +139,7 @@ const AuditLogViewer = () => {
     }, [tenantVersion]);
 
     const handleExport = async () => {
+        setExporting(true);
         try {
             const params = {};
             Object.entries(filters).forEach(([key, val]) => {
@@ -148,12 +159,17 @@ const AuditLogViewer = () => {
             link.click();
             link.remove();
             window.URL.revokeObjectURL(url);
+            showToast('Audit log CSV downloaded', 'success');
         } catch (error) {
             console.error('Export failed', error);
+            showToast('Export failed', 'error');
+        } finally {
+            setExporting(false);
         }
     };
 
     const handleComplianceExport = async () => {
+        setReporting(true);
         try {
             const params = {};
             Object.entries(filters).forEach(([key, val]) => {
@@ -182,7 +198,7 @@ const AuditLogViewer = () => {
             report += `Generated: ${now.toLocaleString()}\n`;
             report += `Period: ${params.startDate?.split('T')[0] || 'All'} to ${params.endDate?.split('T')[0] || 'All'}\n`;
             report += `Total Events: ${totalEvents}\n`;
-            report += `Filters Applied: ${Object.entries(params).filter(([k,v]) => v && k !== 'startDate' && k !== 'endDate').map(([k,v]) => `${k}=${v}`).join(', ') || 'None'}\n\n`;
+            report += `Filters Applied: ${Object.entries(params).filter(([k, v]) => v && k !== 'startDate' && k !== 'endDate').map(([k, v]) => `${k}=${v}`).join(', ') || 'None'}\n\n`;
 
             // Category breakdown
             const catCounts = {};
@@ -200,12 +216,12 @@ const AuditLogViewer = () => {
             });
 
             report += `${'-'.repeat(40)}\nSUMMARY BY CATEGORY\n${'-'.repeat(40)}\n`;
-            Object.entries(catCounts).sort((a,b) => b[1] - a[1]).forEach(([cat, count]) => {
+            Object.entries(catCounts).sort((a, b) => b[1] - a[1]).forEach(([cat, count]) => {
                 report += `  ${cat.padEnd(20)} ${String(count).padStart(6)}\n`;
             });
 
             report += `\n${'-'.repeat(40)}\nSUMMARY BY USER\n${'-'.repeat(40)}\n`;
-            Object.entries(userCounts).sort((a,b) => b[1] - a[1]).forEach(([user, count]) => {
+            Object.entries(userCounts).sort((a, b) => b[1] - a[1]).forEach(([user, count]) => {
                 report += `  ${user.padEnd(20)} ${String(count).padStart(6)}\n`;
             });
 
@@ -226,8 +242,12 @@ const AuditLogViewer = () => {
             link.click();
             link.remove();
             window.URL.revokeObjectURL(url);
+            showToast('Compliance report downloaded', 'success');
         } catch (error) {
             console.error('Compliance export failed', error);
+            showToast('Compliance report failed', 'error');
+        } finally {
+            setReporting(false);
         }
     };
 
@@ -237,231 +257,199 @@ const AuditLogViewer = () => {
     };
 
     const handleFilterReset = () => {
-        const cleared = { search: '', category: '', action: '', username: '', startDate: '', endDate: '' };
-        setFilters(cleared);
+        setFilters({ ...EMPTY_FILTERS });
         setPaginationModel(prev => ({ ...prev, page: 0 }));
     };
+
+    const setFilter = (key) => (e) => setFilters(f => ({ ...f, [key]: e.target.value }));
+    const onEnterApply = (e) => { if (e.key === 'Enter') handleFilterApply(); };
 
     /* ────────── columns ────────── */
 
     const columns = [
         {
-            field: 'eventTime',
-            headerName: 'Timestamp',
+            key: 'eventTime',
+            header: 'Timestamp',
+            sortable: true,
+            nowrap: true,
             width: 180,
-            valueGetter: (value) => formatTimestamp(value),
+            sortValue: (r) => safeParseDateValue(r.eventTime)?.getTime() ?? null,
+            render: (r) => formatTimestamp(r.eventTime),
         },
-        { field: 'username', headerName: 'User', width: 120 },
+        { key: 'username', header: 'User', sortable: true, width: 130 },
         {
-            field: 'category',
-            headerName: 'Category',
+            key: 'category',
+            header: 'Category',
+            sortable: true,
             width: 120,
-            renderCell: (params) => {
-                const cat = params.value || 'N/A';
-                return (
-                    <Chip
-                        label={cat}
-                        size="small"
-                        color={categoryColorMap[cat] || 'default'}
-                        variant="outlined"
-                    />
-                );
-            }
+            render: (r) => {
+                const cat = r.category || 'N/A';
+                return <Badge tone={CATEGORY_TONES[cat] || 'neutral'}>{cat}</Badge>;
+            },
         },
-        { field: 'actionType', headerName: 'Action', width: 160, flex: 1 },
-        { field: 'endpoint', headerName: 'Endpoint', width: 220 },
+        { key: 'actionType', header: 'Action', sortable: true },
+        { key: 'endpoint', header: 'Endpoint', mono: true, muted: true },
         {
-            field: 'statusCode',
-            headerName: 'Status',
-            width: 100,
-            renderCell: (params) => {
-                const code = params.value;
+            key: 'statusCode',
+            header: 'Status',
+            sortable: true,
+            nowrap: true,
+            width: 110,
+            render: (r) => {
+                const code = r.statusCode;
                 if (code == null) return '—';
                 const ok = code >= 200 && code < 300;
                 return (
-                    <Box display="flex" alignItems="center" gap={0.5}>
+                    <span className="ui-row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                         {ok
-                            ? <CheckCircle size={16} color="green" />
-                            : <XCircle size={16} color="red" />
-                        }
+                            ? <CheckCircle size={14} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                            : <XCircle size={14} style={{ color: 'var(--danger)', flexShrink: 0 }} />}
                         {code}
-                    </Box>
+                    </span>
                 );
-            }
+            },
         },
-        { field: 'ipAddress', headerName: 'IP Address', width: 130 },
+        { key: 'ipAddress', header: 'IP address', mono: true, muted: true, width: 140 },
         {
-            field: 'duration',
-            headerName: 'Time (ms)',
-            width: 100,
-            valueGetter: (value) =>
-                value != null ? `${value}ms` : '—',
-        }
+            key: 'duration',
+            header: 'Time (ms)',
+            sortable: true,
+            numeric: true,
+            align: 'right',
+            width: 110,
+            render: (r) => (r.duration != null ? `${r.duration}ms` : '—'),
+        },
     ];
+
+    /* ────────── pagination ────────── */
+
+    const totalPages = Math.max(1, Math.ceil(rowCount / paginationModel.pageSize));
+    const currentPage = paginationModel.page;
+    const firstRow = rowCount === 0 ? 0 : currentPage * paginationModel.pageSize + 1;
+    const lastRow = Math.min(rowCount, (currentPage + 1) * paginationModel.pageSize);
+
+    const tableFooter = (
+        <Row between>
+            <span className="ui-field__hint">
+                {rowCount > 0
+                    ? `Showing ${firstRow.toLocaleString()} to ${lastRow.toLocaleString()} of ${rowCount.toLocaleString()} events`
+                    : 'No events'}
+            </span>
+            <Row>
+                <Select
+                    value={paginationModel.pageSize}
+                    onChange={(e) => setPaginationModel({ page: 0, pageSize: Number(e.target.value) })}
+                    options={PAGE_SIZES}
+                    aria-label="Rows per page"
+                    style={{ width: 150 }}
+                />
+                <Button
+                    size="sm"
+                    disabled={currentPage === 0}
+                    onClick={() => setPaginationModel(p => ({ ...p, page: p.page - 1 }))}
+                >
+                    Previous
+                </Button>
+                <span className="ui-field__hint" style={{ whiteSpace: 'nowrap' }}>
+                    Page {currentPage + 1} of {totalPages}
+                </span>
+                <Button
+                    size="sm"
+                    disabled={currentPage + 1 >= totalPages}
+                    onClick={() => setPaginationModel(p => ({ ...p, page: p.page + 1 }))}
+                >
+                    Next
+                </Button>
+            </Row>
+        </Row>
+    );
 
     /* ────────── render ────────── */
 
     return (
-        <Box p={3}>
-            {/* Header */}
-            <Typography variant="h4" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 2, fontWeight: 'bold' }}>
-                <Shield size={32} color={isDark ? '#90caf9' : '#1976d2'} />
-                Audit Logs & Security Trail
-            </Typography>
+        <Page
+            title="Audit logs and security trail"
+            subtitle="Every authenticated request, admin action and export recorded for the active tenant."
+            icon={Shield}
+            actions={
+                <>
+                    <Button icon={Download} onClick={handleExport} loading={exporting}>
+                        Export CSV
+                    </Button>
+                    <Button variant="primary" icon={FileText} onClick={handleComplianceExport} loading={reporting}>
+                        Compliance report
+                    </Button>
+                </>
+            }
+        >
+            <Stack gap="md">
+                <FormGrid cols={4}>
+                    <StatTile label="Total events today" value={stats.totalToday || 0} />
+                    <StatTile label="Errors today" value={stats.errors ?? 0} tone="var(--danger)" />
+                    <StatTile label="Active users" value={stats.activeUsers ?? 0} tone="var(--success)" />
+                    <StatTile label="Error rate" value={`${(stats.errorRate ?? 0).toFixed(1)}%`} tone="var(--warning)" />
+                </FormGrid>
 
-            {/* Stats */}
-            <Grid container spacing={3} mb={3}>
-                <Grid item xs={12} md={3}>
-                    <Card sx={{ bgcolor: isDark ? 'rgba(25,118,210,0.15)' : '#e3f2fd' }}>
-                        <CardContent>
-                            <Typography color="textSecondary" gutterBottom>Total Events Today</Typography>
-                            <Typography variant="h4">{stats.totalToday || 0}</Typography>
-                        </CardContent>
-                    </Card>
-                </Grid>
-                <Grid item xs={12} md={3}>
-                    <Card sx={{ bgcolor: isDark ? 'rgba(244,67,54,0.15)' : '#ffebee' }}>
-                        <CardContent>
-                            <Typography color="textSecondary" gutterBottom>Errors Today</Typography>
-                            <Typography variant="h4">{stats.errors ?? 0}</Typography>
-                        </CardContent>
-                    </Card>
-                </Grid>
-                <Grid item xs={12} md={3}>
-                    <Card sx={{ bgcolor: isDark ? 'rgba(76,175,80,0.15)' : '#e8f5e9' }}>
-                        <CardContent>
-                            <Typography color="textSecondary" gutterBottom>Active Users</Typography>
-                            <Typography variant="h4">{stats.activeUsers ?? 0}</Typography>
-                        </CardContent>
-                    </Card>
-                </Grid>
-                <Grid item xs={12} md={3}>
-                    <Card sx={{ bgcolor: isDark ? 'rgba(255,152,0,0.15)' : '#fff3e0' }}>
-                        <CardContent>
-                            <Typography color="textSecondary" gutterBottom>Error Rate</Typography>
-                            <Typography variant="h4">{(stats.errorRate ?? 0).toFixed(1)}%</Typography>
-                        </CardContent>
-                    </Card>
-                </Grid>
-            </Grid>
-
-            {/* Filters */}
-            <Paper sx={{ p: 2, mb: 3 }}>
-                <Grid container spacing={2} alignItems="center">
-                    <Grid item xs={12} md={3}>
-                        <TextField
-                            label="Search Logs"
-                            fullWidth
-                            size="small"
-                            value={filters.search}
-                            onChange={(e) => setFilters(f => ({ ...f, search: e.target.value }))}
-                            InputProps={{
-                                startAdornment: <Search size={18} style={{ marginRight: 8, color: '#666' }} />
-                            }}
-                            onKeyDown={(e) => e.key === 'Enter' && handleFilterApply()}
-                        />
-                    </Grid>
-                    <Grid item xs={6} md={2}>
-                        <TextField
-                            select
-                            label="Category"
-                            fullWidth
-                            size="small"
-                            value={filters.category}
-                            onChange={(e) => setFilters(f => ({ ...f, category: e.target.value }))}
-                            SelectProps={{ native: true }}
-                        >
-                            <option value="">All Categories</option>
-                            {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                        </TextField>
-                    </Grid>
-                    <Grid item xs={6} md={2}>
-                        <TextField
-                            label="User"
-                            fullWidth
-                            size="small"
-                            value={filters.username}
-                            onChange={(e) => setFilters(f => ({ ...f, username: e.target.value }))}
-                            onKeyDown={(e) => e.key === 'Enter' && handleFilterApply()}
-                        />
-                    </Grid>
-                    <Grid item xs={6} md={2}>
-                        <TextField
-                            type="date"
-                            label="From Date"
-                            fullWidth
-                            size="small"
-                            value={filters.startDate ? filters.startDate.split('T')[0] : ''}
-                            onChange={(e) => setFilters(f => ({ ...f, startDate: e.target.value ? e.target.value + 'T00:00:00' : '' }))}
-                            InputLabelProps={{ shrink: true }}
-                        />
-                    </Grid>
-                    <Grid item xs={6} md={2}>
-                        <TextField
-                            type="date"
-                            label="To Date"
-                            fullWidth
-                            size="small"
-                            value={filters.endDate ? filters.endDate.split('T')[0] : ''}
-                            onChange={(e) => setFilters(f => ({ ...f, endDate: e.target.value ? e.target.value + 'T23:59:59' : '' }))}
-                            InputLabelProps={{ shrink: true }}
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={5} display="flex" gap={2} justifyContent="flex-end">
-                        <Button
-                            variant="contained"
-                            startIcon={<Filter size={18} />}
-                            onClick={handleFilterApply}
-                        >
-                            Filter
-                        </Button>
-                        <Button
-                            variant="outlined"
-                            startIcon={<RefreshCw size={18} />}
-                            onClick={handleFilterReset}
-                        >
-                            Reset
-                        </Button>
-                        <Button
-                            variant="contained"
-                            color="success"
-                            startIcon={<Download size={18} />}
-                            onClick={handleExport}
-                        >
-                            Export CSV
-                        </Button>
-                        <Button
-                            variant="contained"
-                            color="info"
-                            startIcon={<Download size={18} />}
-                            onClick={handleComplianceExport}
-                        >
-                            Compliance Report
-                        </Button>
-                    </Grid>
-                </Grid>
-            </Paper>
-
-            {/* Data Grid */}
-            <Paper sx={{ height: 600, width: '100%' }}>
-                <DataGrid
-                    rows={logs}
-                    getRowId={(row) => row.logId}
-                    columns={columns}
-                    loading={loading}
-                    paginationMode="server"
-                    rowCount={rowCount}
-                    paginationModel={paginationModel}
-                    onPaginationModelChange={setPaginationModel}
-                    pageSizeOptions={[20, 50, 100]}
-                    disableRowSelectionOnClick
-                    sx={{
-                        '& .MuiDataGrid-cell': { fontSize: '0.85rem' },
-                        '& .MuiDataGrid-columnHeader': { fontWeight: 'bold' },
-                    }}
-                />
-            </Paper>
-        </Box>
+                <Card footer={tableFooter}>
+                    <DataTable
+                        columns={columns}
+                        rows={logs}
+                        rowKey={(r) => r.logId}
+                        loading={loading}
+                        skeletonRows={8}
+                        emptyVariant="search"
+                        toolbarLeft={
+                            <>
+                                <Input
+                                    value={filters.search}
+                                    onChange={setFilter('search')}
+                                    onKeyDown={onEnterApply}
+                                    placeholder="Search logs…"
+                                    aria-label="Search logs"
+                                    style={{ width: 200 }}
+                                />
+                                <Select
+                                    value={filters.category}
+                                    onChange={setFilter('category')}
+                                    placeholder="All categories"
+                                    options={CATEGORIES}
+                                    aria-label="Filter by category"
+                                    style={{ width: 160 }}
+                                />
+                                <Input
+                                    value={filters.username}
+                                    onChange={setFilter('username')}
+                                    onKeyDown={onEnterApply}
+                                    placeholder="User"
+                                    aria-label="Filter by user"
+                                    style={{ width: 140 }}
+                                />
+                                <Input
+                                    type="date"
+                                    value={filters.startDate ? filters.startDate.split('T')[0] : ''}
+                                    onChange={(e) => setFilters(f => ({ ...f, startDate: e.target.value ? e.target.value + 'T00:00:00' : '' }))}
+                                    aria-label="From date"
+                                    style={{ width: 150 }}
+                                />
+                                <Input
+                                    type="date"
+                                    value={filters.endDate ? filters.endDate.split('T')[0] : ''}
+                                    onChange={(e) => setFilters(f => ({ ...f, endDate: e.target.value ? e.target.value + 'T23:59:59' : '' }))}
+                                    aria-label="To date"
+                                    style={{ width: 150 }}
+                                />
+                            </>
+                        }
+                        toolbarRight={
+                            <>
+                                <Button variant="primary" icon={Filter} onClick={handleFilterApply}>Filter</Button>
+                                <Button icon={RefreshCw} onClick={handleFilterReset}>Reset</Button>
+                            </>
+                        }
+                    />
+                </Card>
+            </Stack>
+        </Page>
     );
 };
 

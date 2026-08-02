@@ -44,6 +44,12 @@ public class DatabaseMaintenanceService {
         "sum_daily_bank", "sum_daily_merchant", "sum_daily_terminal", "sum_daily_finance",
         "sum_daily_insight", "sum_daily_scheme", "sum_daily_channel", "sum_daily_mcc",
         "sum_daily_merchant_attribute", "sum_monthly_bank", "sum_monthly_card",
+        // High-churn tables added after the original list was written — all are
+        // rewritten wholesale per ingest and read by the Explorer / Debit-Prepaid /
+        // destination / daily-dashboard screens, so their stats and bloat matter
+        // as much as the originals'.
+        "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
+        "sum_monthly_insight", "merchant_daily_metrics",
         "stg_trnx_raw", "stg_merchant_master_raw"
     );
 

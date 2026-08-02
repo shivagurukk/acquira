@@ -31,7 +31,14 @@ public class ExecutiveDashboardRepository {
      * appends an `AND <alias>.tenant_id = :tenantId` clause so cross-tenant rows
      * cannot leak. Previously this entire repository ran un-scoped which meant the
      * Executive Dashboard would mix data across tenants in any multi-tenant deployment.
+     *
+     * Cached: this method runs 9 sequential queries, two of them month-wide scans
+     * of sum_daily_insight — their latencies add up on every dashboard open. Data
+     * moves only on ingest; the batch jobs evict this cache on completion.
      */
+    @org.springframework.cache.annotation.Cacheable(
+            cacheNames = com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+            key = "'execDash:' + #tenantId + ':' + #dataset + ':' + #asOfDate")
     public ExecutiveDashboardDTO getDashboardData(String dataset, LocalDate asOfDate, Long tenantId) {
         if (asOfDate == null)
             asOfDate = LocalDate.now();

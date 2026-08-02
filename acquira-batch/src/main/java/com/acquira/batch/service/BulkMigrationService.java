@@ -49,6 +49,12 @@ public class BulkMigrationService {
     private volatile String currentMonth = "";
     private volatile long startTimeMs = 0;
 
+    // Report caches must be dropped after any bulk write outside the batch
+    // jobs (migration, day deletion) — same reason CacheEvictionJobListener
+    // exists for the ingest jobs.
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.cache.CacheManager cacheManager;
+
     public BulkMigrationService(JdbcTemplate jdbcTemplate,
                                 com.acquira.common.repository.SumDailyMerchantRepository dailyMerchantRepo,
                                 com.acquira.common.repository.SumMonthlyMerchantMetricsRepository monthlyMetricsRepo,
@@ -59,6 +65,13 @@ public class BulkMigrationService {
         this.monthlyMetricsRepo = monthlyMetricsRepo;
         this.merchantMetricCalculator = merchantMetricCalculator;
         this.partitionService = partitionService;
+    }
+
+    private void evictReportCaches() {
+        for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
+            org.springframework.cache.Cache cache = cacheManager.getCache(name);
+            if (cache != null) cache.clear();
+        }
     }
 
     public Map<String, Object> getProgress() {
@@ -203,6 +216,10 @@ public class BulkMigrationService {
             currentPhase = "FAILED: " + e.getMessage();
             log.error("[MIGRATION] Failed: {}", e.getMessage(), e);
             throw new RuntimeException("Migration failed: " + e.getMessage(), e);
+        } finally {
+            // Evict on success AND failure — a failed run may still have
+            // written months of data before dying.
+            evictReportCaches();
         }
     }
 
@@ -309,6 +326,7 @@ public class BulkMigrationService {
             tenantId, date));
 
         log.warn("[DELETE-DAY] tenant={} date={} removed: {}", tenantId, date, deleted);
+        evictReportCaches();
         return deleted;
     }
 

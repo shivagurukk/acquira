@@ -26,7 +26,7 @@ const T = {
 let CCY = 'AED'; // overridden per-tenant from AuthContext at render time
 const SERIES = {
   volume:  { key: 'volume',  label: 'Volume',       color: '#4f46e5', icon: DollarSign },
-  revenue: { key: 'revenue', label: 'Net Revenue',  color: '#10b981', icon: TrendingUp },
+  revenue: { key: 'revenue', label: 'Net Margin',   color: '#10b981', icon: TrendingUp },
   txns:    { key: 'txns',    label: 'Transactions', color: '#f59e0b', icon: Activity },
 };
 const SCHEME_COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899', '#64748b'];
@@ -98,7 +98,7 @@ const buildCsv = ({ kpiRows, trendRows, merchantRows, range }) => {
   kpiRows.forEach(([k, v]) => lines.push(`${csvCell(k)},${csvCell(v)}`));
   lines.push('');
   lines.push(`Daily Trend (last ${range} days)`);
-  lines.push('Date,Volume,Net Revenue,Transactions,MSF,Interchange,VAT');
+  lines.push('Date,Volume,Net Margin,Transactions,MSF,Interchange,VAT');
   trendRows.forEach(t => lines.push([t.full, t.volume, t.revenue, t.txns, t.msf, t.interchange, t.vat].map(csvCell).join(',')));
   lines.push('');
   lines.push('Top Merchants (MTD)');
@@ -215,7 +215,7 @@ const ExecutiveDashboard = () => {
         ["Today's Volume", n(daily.totalVolume)],
         ["Today's Revenue", n(daily.totalRevenue)],
         ['MTD Volume', n(mtd.totalVolume)],
-        ['MTD Net Revenue', mtdRevenue],
+        ['MTD Net Margin', mtdRevenue],
         ['MTD Transactions', mtdTxns],
         ['MTD Avg Ticket', avgTicket.toFixed(2)],
         ['MTD Margin %', mtdMargin.toFixed(2)],
@@ -278,7 +278,7 @@ const ExecutiveDashboard = () => {
         <HeroKpi title="Today's Volume" value={fmtMoney(daily.totalVolume, true)}
           icon={DollarSign} color="#4f46e5" delta={metric === 'volume' ? delta : null}
           spark={spark('volume')} />
-        <HeroKpi title="Today's Net Revenue" value={fmtMoney(daily.totalRevenue, true)}
+        <HeroKpi title="Today's Net Margin" value={fmtMoney(daily.totalRevenue, true)}
           icon={TrendingUp} color="#10b981" delta={metric === 'revenue' ? delta : null}
           spark={spark('revenue')} />
         <HeroKpi title="MTD Volume" value={fmtMoney(mtd.totalVolume, true)}
@@ -289,7 +289,7 @@ const ExecutiveDashboard = () => {
       {/* Secondary metrics — one quiet strip, hairline-divided */}
       <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, marginBottom: 16, overflow: 'hidden' }}>
         <div className="ex-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
-          <StatCell label="MTD Net Revenue" value={fmtMoney(mtdRevenue, true)} sub={`${mtdMargin.toFixed(1)}% margin`} />
+          <StatCell label="MTD Net Margin" value={fmtMoney(mtdRevenue, true)} sub={`${mtdMargin.toFixed(1)}% margin`} />
           <StatCell label="MTD Transactions" value={fmtNum(mtdTxns, true)} sub="this month" countTo={mtdTxns} integer />
           <StatCell label="Avg Ticket" value={fmtMoney(avgTicket)} sub="per transaction" />
           <StatCell label="YoY Volume"

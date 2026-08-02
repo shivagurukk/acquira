@@ -1,37 +1,45 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  DatabaseZap, Play, Eye, Loader2, CheckCircle, XCircle, AlertTriangle,
-  ArrowRightLeft, Clock, ChevronDown, ChevronUp, RefreshCw, Table2,
-  Columns, Calendar, Hash, Zap, FileText, Pause, Info, Trash2
+  DatabaseZap, Play, Eye, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp,
+  RefreshCw, Table2, Columns, Zap, Trash2, AlertTriangle,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext'; // #12: Dynamic tenantId
+import { showToast } from '../../contexts/ToastContext';
+import {
+  Page, Stack, Row, Card, Button, Badge, Alert, Tabs, DataTable,
+  FormField, FormGrid, Input, Select, useConfirm,
+} from '../../components/ui';
 
-// ─── Shared Styles (same as IntegrationHub) ──────────────────
-const card = { background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 1px 3px rgba(0,0,0,.08)', border: '1px solid #e5e7eb' };
-const badge = (color) => ({
-  display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 12,
-  fontSize: 12, fontWeight: 600, background: color + '18', color
-});
-const btn = (bg = '#2563eb', fg = '#fff') => ({
-  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 8,
-  background: bg, color: fg, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-  transition: 'opacity .15s', whiteSpace: 'nowrap'
-});
-const inputStyle = { width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, outline: 'none', boxSizing: 'border-box' };
-const selectStyle = { ...inputStyle, background: '#fff' };
-const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 };
+/**
+ * Admin > Data Migration (SUPER_ADMIN only).
+ *
+ * Two separate concerns, deliberately kept on separate tabs so the
+ * irreversible day-correction tool is never adjacent to the migration flow:
+ *
+ *  1. Bulk migration — configure a source table, run a READ-ONLY validation
+ *     preview (dry run), then start the real migration. The real run is
+ *     armed by an explicit step and then gated by a danger confirmation that
+ *     names the tenant, the table, the month range and the row count.
+ *  2. Day correction — permanent full-day delete for one tenant + one date.
+ *     Armed explicitly, then gated by a danger confirmation naming the exact
+ *     date and tenant. The backend also demands `confirm: true` in the body.
+ */
 
-const PHASE_COLORS = {
-  IDLE: '#6b7280', INITIALIZING: '#2563eb', CREATING_PARTITIONS: '#8b5cf6',
-  CALCULATING_METRICS: '#f59e0b', COMPLETED: '#16a34a', FAILED: '#dc2626'
+/* Phase → badge tone + meter colour. Replaces the old hard-coded hex map. */
+const phaseTone = (phase) => {
+  if (!phase) return 'neutral';
+  if (phase.startsWith('FAILED')) return 'danger';
+  if (phase === 'COMPLETED') return 'success';
+  if (phase === 'IDLE') return 'neutral';
+  return 'info';
 };
-const getPhaseColor = (phase) => {
-  if (!phase) return '#6b7280';
-  if (phase.startsWith('MIGRATING_')) return '#2563eb';
-  if (phase.startsWith('SUMMARIZING_')) return '#8b5cf6';
-  if (phase.startsWith('FAILED')) return '#dc2626';
-  return PHASE_COLORS[phase] || '#6b7280';
+const TONE_COLOR = {
+  neutral: 'var(--text-muted)',
+  info: 'var(--brand)',
+  success: 'var(--success)',
+  warning: 'var(--warning)',
+  danger: 'var(--danger)',
 };
 
 // All mappable columns with descriptions
@@ -57,8 +65,49 @@ const COLUMN_DEFS = [
   { key: 'auth_code', label: 'Auth Code', required: false, hint: 'Authorization code' },
 ];
 
+const SECTION_LABEL = {
+  fontSize: '0.7rem',
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+  margin: '0 0 var(--space-md)',
+};
+
+/** Small stat tile. One-off layout, so it stays inline. */
+const Stat = ({ label, value, color }) => (
+  <div style={{
+    padding: '12px 14px',
+    borderRadius: 'var(--radius-md)',
+    background: 'var(--bg-muted)',
+    border: '1px solid var(--border)',
+    textAlign: 'center',
+  }}>
+    <div style={{
+      fontSize: '0.68rem', color: 'var(--text-secondary)',
+      textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.04em',
+    }}>
+      {label}
+    </div>
+    <div style={{
+      fontSize: '1.35rem', fontWeight: 700, marginTop: 2,
+      fontVariantNumeric: 'tabular-nums', color: color || 'var(--text)',
+    }}>
+      {value}
+    </div>
+  </div>
+);
+
+const Meter = ({ pct, color }) => (
+  <div style={{ height: 10, borderRadius: 5, background: 'var(--bg-subtle)', overflow: 'hidden' }}>
+    <div style={{
+      height: '100%', borderRadius: 5, background: color,
+      width: `${Math.min(Math.max(pct, 0), 100)}%`, transition: 'width .5s ease',
+    }} />
+  </div>
+);
+
 // ═══════════════════════════════════════════════════════════════
-//  STEP 1: SOURCE TABLE CONFIGURATION
+//  STEP 1: SOURCE TABLE CONFIGURATION  (read-only validation only)
 // ═══════════════════════════════════════════════════════════════
 const ConfigureStep = ({ config, setConfig, onDryRun, dryRunResult, dryRunLoading }) => {
   const [showOptional, setShowOptional] = useState(false);
@@ -81,187 +130,209 @@ const ConfigureStep = ({ config, setConfig, onDryRun, dryRunResult, dryRunLoadin
 
   // Source columns from dry-run for autocomplete
   const sourceCols = (dryRunResult?.columns || []).map(c => c.column_name);
+  const sampleRows = dryRunResult?.sampleRows || [];
+  const sampleColumns = sampleRows.length > 0
+    ? Object.keys(sampleRows[0]).map(k => ({
+      key: k,
+      header: k,
+      nowrap: true,
+      render: (row) => (row[k] === null || row[k] === undefined
+        ? <span className="ui-td--muted">NULL</span>
+        : String(row[k])),
+    }))
+    : [];
+
+  const mappingControl = (col, placeholderOption) => (
+    sourceCols.length > 0 ? (
+      <Select
+        value={config.columnMapping[col.key] || ''}
+        onChange={e => updateMapping(col.key, e.target.value)}
+        placeholder={placeholderOption}
+        options={sourceCols}
+      />
+    ) : (
+      <Input
+        value={config.columnMapping[col.key] || ''}
+        onChange={e => updateMapping(col.key, e.target.value)}
+        placeholder={col.key}
+      />
+    )
+  );
 
   return (
-    <div style={{ display: 'grid', gap: 20 }}>
+    <Stack gap="md">
       {/* Source table */}
-      <div style={card}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Table2 size={18} color="#2563eb" /> Source Table
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 14 }}>
-          <div>
-            <label style={labelStyle}>Table Name <span style={{ color: '#dc2626' }}>*</span></label>
-            <input style={inputStyle} value={config.sourceTable} onChange={e => setConfig({ ...config, sourceTable: e.target.value })}
-              placeholder="legacy_transactions" />
-            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Must be in the same PostgreSQL database</div>
-          </div>
-          <div>
-            <label style={labelStyle}>Start Month <span style={{ color: '#dc2626' }}>*</span></label>
-            <input style={inputStyle} type="month" value={config.startMonth} onChange={e => setConfig({ ...config, startMonth: e.target.value })} />
-          </div>
-          <div>
-            <label style={labelStyle}>End Month <span style={{ color: '#dc2626' }}>*</span></label>
-            <input style={inputStyle} type="month" value={config.endMonth} onChange={e => setConfig({ ...config, endMonth: e.target.value })} />
-          </div>
-        </div>
-        <div style={{ marginTop: 14 }}>
-          <button style={btn('#eff6ff', '#2563eb')} onClick={() => onDryRun(cleanMapping(config.columnMapping))} disabled={dryRunLoading || !config.sourceTable}>
-            {dryRunLoading ? <Loader2 size={14} className="spin" /> : <Eye size={14} />}
-            Validate & Preview
-          </button>
-        </div>
-      </div>
+      <Card
+        title={<span className="ui-row" style={{ gap: 8 }}><Table2 size={16} /> Source table</span>}
+        subtitle="Must be in the same PostgreSQL database."
+        pad
+      >
+        <Stack gap="sm">
+          <FormGrid cols={4}>
+            <FormField label="Table name" required className="ui-form-grid--span">
+              <Input
+                value={config.sourceTable}
+                onChange={e => setConfig({ ...config, sourceTable: e.target.value })}
+                placeholder="legacy_transactions"
+              />
+            </FormField>
+            <FormField label="Start month" required>
+              <Input
+                type="month"
+                value={config.startMonth}
+                onChange={e => setConfig({ ...config, startMonth: e.target.value })}
+              />
+            </FormField>
+            <FormField label="End month" required>
+              <Input
+                type="month"
+                value={config.endMonth}
+                onChange={e => setConfig({ ...config, endMonth: e.target.value })}
+              />
+            </FormField>
+          </FormGrid>
+
+          <Row>
+            <Button
+              icon={Eye}
+              loading={dryRunLoading}
+              disabled={dryRunLoading || !config.sourceTable}
+              onClick={() => onDryRun(cleanMapping(config.columnMapping))}
+            >
+              Validate and preview
+            </Button>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Read only. Nothing is written and no data is changed.
+            </span>
+          </Row>
+        </Stack>
+      </Card>
 
       {/* Dry-run result */}
       {dryRunResult && (
-        <div style={{ ...card, border: dryRunResult.error ? '1px solid #fca5a5' : '1px solid #86efac' }}>
-          {dryRunResult.error ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#dc2626' }}>
-              <XCircle size={20} /> <span style={{ fontWeight: 600 }}>{dryRunResult.error}</span>
-            </div>
-          ) : (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                <CheckCircle size={20} color="#16a34a" />
-                <span style={{ fontWeight: 600, color: '#16a34a' }}>Table found — {(dryRunResult.totalRows || 0).toLocaleString()} rows</span>
+        dryRunResult.error ? (
+          <Alert tone="danger" title="Validation failed">{dryRunResult.error}</Alert>
+        ) : (
+          <Card
+            title={
+              <span className="ui-row" style={{ gap: 8, color: 'var(--success)' }}>
+                <CheckCircle size={16} /> Table found, {(dryRunResult.totalRows || 0).toLocaleString()} rows
+              </span>
+            }
+            subtitle="Preview only. No rows have been migrated."
+            pad
+          >
+            <Stack gap="sm">
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                gap: 'var(--space-md)',
+              }}>
+                <Stat label="Total rows" value={(dryRunResult.totalRows || 0).toLocaleString()} />
+                <Stat
+                  label="Date range"
+                  value={
+                    <span style={{ fontSize: '0.85rem' }}>
+                      {dryRunResult.dateRange?.min_date ? new Date(dryRunResult.dateRange.min_date).toLocaleDateString() : '—'}
+                      {' → '}
+                      {dryRunResult.dateRange?.max_date ? new Date(dryRunResult.dateRange.max_date).toLocaleDateString() : '—'}
+                    </span>
+                  }
+                />
+                <Stat label="Columns" value={(dryRunResult.columns || []).length} />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16 }}>
-                <div style={{ padding: '10px 14px', background: '#f0fdf4', borderRadius: 8 }}>
-                  <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', fontWeight: 600 }}>Total Rows</div>
-                  <div style={{ fontSize: 20, fontWeight: 700 }}>{(dryRunResult.totalRows || 0).toLocaleString()}</div>
-                </div>
-                <div style={{ padding: '10px 14px', background: '#eff6ff', borderRadius: 8 }}>
-                  <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', fontWeight: 600 }}>Date Range</div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>
-                    {dryRunResult.dateRange?.min_date ? new Date(dryRunResult.dateRange.min_date).toLocaleDateString() : '—'}
-                    {' → '}
-                    {dryRunResult.dateRange?.max_date ? new Date(dryRunResult.dateRange.max_date).toLocaleDateString() : '—'}
-                  </div>
-                </div>
-                <div style={{ padding: '10px 14px', background: '#faf5ff', borderRadius: 8 }}>
-                  <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', fontWeight: 600 }}>Columns</div>
-                  <div style={{ fontSize: 20, fontWeight: 700 }}>{(dryRunResult.columns || []).length}</div>
-                </div>
-              </div>
+
               {/* Available columns */}
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Available Columns:</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {sourceCols.map(c => (
-                    <span key={c} style={{ padding: '2px 8px', background: '#f3f4f6', borderRadius: 6, fontSize: 11, fontFamily: 'monospace', color: '#374151' }}>{c}</span>
-                  ))}
+              <div>
+                <p style={{ ...SECTION_LABEL, color: 'var(--text-secondary)' }}>Available columns</p>
+                <div className="ui-row" style={{ gap: 4 }}>
+                  {sourceCols.map(c => <Badge key={c} mono>{c}</Badge>)}
                 </div>
               </div>
+
               {/* Sample data */}
-              {dryRunResult.sampleRows?.length > 0 && (
-                <div style={{ overflow: 'auto', maxHeight: 200, borderRadius: 8, border: '1px solid #e5e7eb' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                    <thead>
-                      <tr style={{ background: '#f9fafb' }}>
-                        {Object.keys(dryRunResult.sampleRows[0]).map(k => (
-                          <th key={k} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600, borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{k}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dryRunResult.sampleRows.map((row, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                          {Object.values(row).map((v, j) => (
-                            <td key={j} style={{ padding: '4px 8px', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {v !== null && v !== undefined ? String(v) : <span style={{ color: '#d1d5db' }}>NULL</span>}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {sampleColumns.length > 0 && (
+                <div style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  overflow: 'hidden',
+                  maxHeight: 260,
+                  overflowY: 'auto',
+                }}>
+                  <DataTable
+                    columns={sampleColumns}
+                    rows={sampleRows}
+                    rowKey={(_row, i) => i}
+                    loading={dryRunLoading}
+                    compact
+                    stickyHeader
+                  />
                 </div>
               )}
-            </div>
-          )}
-        </div>
+            </Stack>
+          </Card>
+        )
       )}
 
-      {/* Column mapping — Required */}
-      <div style={card}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Columns size={18} color="#2563eb" /> Column Mapping
-        </h3>
-        <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 16, margin: '0 0 16px' }}>
-          Map your source table columns to Acquira fields. Only 3 required fields — everything else has safe defaults.
-        </p>
-
-        {/* Required columns */}
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Required Fields
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            {requiredCols.map(col => (
-              <div key={col.key}>
-                <label style={labelStyle}>
-                  {col.label} <span style={{ color: '#dc2626' }}>*</span>
-                </label>
-                {sourceCols.length > 0 ? (
-                  <select style={selectStyle} value={config.columnMapping[col.key] || ''}
-                    onChange={e => updateMapping(col.key, e.target.value)}>
-                    <option value="">— Select Column —</option>
-                    {sourceCols.map(sc => <option key={sc} value={sc}>{sc}</option>)}
-                  </select>
-                ) : (
-                  <input style={inputStyle} value={config.columnMapping[col.key] || ''}
-                    onChange={e => updateMapping(col.key, e.target.value)} placeholder={col.key} />
-                )}
-                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{col.hint}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Optional columns */}
-        <div>
-          <button style={{ ...btn('#f3f4f6', '#374151'), marginBottom: 12 }} onClick={() => setShowOptional(!showOptional)}>
-            {showOptional ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            {showOptional ? 'Hide' : 'Show'} Optional Fields ({optionalCols.length})
-          </button>
-
-          {showOptional && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, padding: 16, background: '#f9fafb', borderRadius: 10 }}>
-              {optionalCols.map(col => (
-                <div key={col.key}>
-                  <label style={labelStyle}>{col.label}</label>
-                  {sourceCols.length > 0 ? (
-                    <select style={selectStyle} value={config.columnMapping[col.key] || ''}
-                      onChange={e => updateMapping(col.key, e.target.value)}>
-                      <option value="">— Not Mapped (default) —</option>
-                      {sourceCols.map(sc => <option key={sc} value={sc}>{sc}</option>)}
-                    </select>
-                  ) : (
-                    <input style={inputStyle} value={config.columnMapping[col.key] || ''}
-                      onChange={e => updateMapping(col.key, e.target.value)} placeholder={`Default: see hint`} />
-                  )}
-                  <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{col.hint}</div>
-                </div>
+      {/* Column mapping */}
+      <Card
+        title={<span className="ui-row" style={{ gap: 8 }}><Columns size={16} /> Column mapping</span>}
+        subtitle="Map your source table columns to Acquira fields. Only 3 fields are required, everything else has safe defaults."
+        pad
+      >
+        <Stack gap="md">
+          <div>
+            <p style={{ ...SECTION_LABEL, color: 'var(--danger)' }}>Required fields</p>
+            <FormGrid cols={3}>
+              {requiredCols.map(col => (
+                <FormField key={col.key} label={col.label} required hint={col.hint}>
+                  {mappingControl(col, 'Select column')}
+                </FormField>
               ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+            </FormGrid>
+          </div>
+
+          <div>
+            <Button
+              variant="subtle"
+              size="sm"
+              icon={showOptional ? ChevronUp : ChevronDown}
+              onClick={() => setShowOptional(!showOptional)}
+            >
+              {showOptional ? 'Hide' : 'Show'} optional fields ({optionalCols.length})
+            </Button>
+
+            {showOptional && (
+              <div style={{ marginTop: 'var(--space-lg)' }}>
+                <FormGrid cols={3}>
+                  {optionalCols.map(col => (
+                    <FormField key={col.key} label={col.label} hint={col.hint}>
+                      {mappingControl(col, 'Not mapped (default)')}
+                    </FormField>
+                  ))}
+                </FormGrid>
+              </div>
+            )}
+          </div>
+        </Stack>
+      </Card>
+    </Stack>
   );
 };
 
 // ═══════════════════════════════════════════════════════════════
 //  STEP 2: MIGRATION PROGRESS MONITOR
 // ═══════════════════════════════════════════════════════════════
-const ProgressMonitor = ({ progress, onRefresh }) => {
+const ProgressMonitor = ({ progress, onRefresh, refreshing }) => {
   if (!progress) return null;
 
   const pct = progress.totalMonths > 0 ? Math.round((progress.completedMonths / progress.totalMonths) * 100) : 0;
   const isRunning = progress.phase && !['IDLE', 'COMPLETED'].includes(progress.phase) && !progress.phase.startsWith('FAILED');
   const isComplete = progress.phase === 'COMPLETED';
   const isFailed = progress.phase?.startsWith('FAILED');
+
+  const tone = phaseTone(progress.phase);
+  const color = TONE_COLOR[tone];
 
   const formatTime = (sec) => {
     if (!sec || sec <= 0) return '—';
@@ -270,90 +341,94 @@ const ProgressMonitor = ({ progress, onRefresh }) => {
     return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
   };
 
+  const StatusIcon = isComplete ? CheckCircle : isFailed ? XCircle : isRunning ? Zap : Clock;
+
   return (
-    <div style={{ ...card, border: isComplete ? '2px solid #86efac' : isFailed ? '2px solid #fca5a5' : isRunning ? '2px solid #93c5fd' : '1px solid #e5e7eb' }}>
-      {/* Status header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {isRunning && <Loader2 size={24} color="#2563eb" className="spin" />}
-          {isComplete && <CheckCircle size={24} color="#16a34a" />}
-          {isFailed && <XCircle size={24} color="#dc2626" />}
-          {!isRunning && !isComplete && !isFailed && <Clock size={24} color="#6b7280" />}
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: getPhaseColor(progress.phase) }}>
-              {isComplete ? 'Migration Complete' : isFailed ? 'Migration Failed' : isRunning ? 'Migration In Progress...' : 'Idle'}
-            </div>
-            <div style={{ fontSize: 12, color: '#6b7280' }}>
-              Phase: <span style={badge(getPhaseColor(progress.phase))}>{progress.phase || 'IDLE'}</span>
-              {progress.currentMonth && <span style={{ marginLeft: 8 }}>• Month: <strong>{progress.currentMonth}</strong></span>}
-            </div>
+    <Card
+      title={
+        <span className="ui-row" style={{ gap: 8, color }}>
+          <StatusIcon size={17} />
+          {isComplete ? 'Migration complete'
+            : isFailed ? 'Migration failed'
+              : isRunning ? 'Migration in progress' : 'Idle'}
+        </span>
+      }
+      actions={
+        <Button icon={RefreshCw} size="sm" onClick={onRefresh} loading={refreshing}>Refresh</Button>
+      }
+      pad
+    >
+      <Stack gap="sm">
+        <Row>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Phase</span>
+          <Badge tone={tone}>{progress.phase || 'IDLE'}</Badge>
+          {progress.currentMonth && (
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+              Month <strong>{progress.currentMonth}</strong>
+            </span>
+          )}
+        </Row>
+
+        <div>
+          <div className="ui-row ui-row--between" style={{ marginBottom: 6 }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+              {progress.completedMonths} / {progress.totalMonths} months
+            </span>
+            <span style={{ fontSize: '0.8rem', fontWeight: 700, color }}>{pct}%</span>
           </div>
+          <Meter pct={pct} color={color} />
         </div>
-        <button style={btn('#f3f4f6', '#374151')} onClick={onRefresh}><RefreshCw size={14} /> Refresh</button>
-      </div>
 
-      {/* Progress bar */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{progress.completedMonths} / {progress.totalMonths} months</span>
-          <span style={{ fontSize: 13, fontWeight: 700, color: getPhaseColor(progress.phase) }}>{pct}%</span>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gap: 'var(--space-md)',
+        }}>
+          <Stat label="Rows migrated" value={(progress.totalRowsMigrated || 0).toLocaleString()} color="var(--success)" />
+          <Stat label="Months done" value={progress.completedMonths || 0} color="var(--brand)" />
+          <Stat label="Elapsed" value={formatTime(progress.elapsedSeconds)} />
+          <Stat label="ETA remaining" value={formatTime(progress.estimatedRemainingSeconds)} color="var(--warning)" />
         </div>
-        <div style={{ height: 10, borderRadius: 5, background: '#f3f4f6', overflow: 'hidden' }}>
-          <div style={{
-            height: '100%', borderRadius: 5, width: `${pct}%`,
-            background: isComplete ? '#16a34a' : isFailed ? '#dc2626' : 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
-            transition: 'width 0.5s ease'
-          }} />
-        </div>
-      </div>
 
-      {/* Stats grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-        <div style={{ padding: '12px 14px', background: '#f0fdf4', borderRadius: 8, textAlign: 'center' }}>
-          <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', fontWeight: 600 }}>Rows Migrated</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#16a34a' }}>{(progress.totalRowsMigrated || 0).toLocaleString()}</div>
-        </div>
-        <div style={{ padding: '12px 14px', background: '#eff6ff', borderRadius: 8, textAlign: 'center' }}>
-          <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', fontWeight: 600 }}>Months Done</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#2563eb' }}>{progress.completedMonths || 0}</div>
-        </div>
-        <div style={{ padding: '12px 14px', background: '#faf5ff', borderRadius: 8, textAlign: 'center' }}>
-          <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', fontWeight: 600 }}>Elapsed</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#8b5cf6' }}>{formatTime(progress.elapsedSeconds)}</div>
-        </div>
-        <div style={{ padding: '12px 14px', background: '#fefce8', borderRadius: 8, textAlign: 'center' }}>
-          <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', fontWeight: 600 }}>ETA Remaining</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#ca8a04' }}>{formatTime(progress.estimatedRemainingSeconds)}</div>
-        </div>
-      </div>
-
-      {/* Failed message */}
-      {isFailed && (
-        <div style={{ marginTop: 16, padding: 14, background: '#fef2f2', borderRadius: 8, color: '#dc2626', fontSize: 13, fontFamily: 'monospace' }}>
-          {progress.phase.replace('FAILED: ', '')}
-        </div>
-      )}
-    </div>
+        {isFailed && (
+          <Alert tone="danger" title="Failure detail">
+            <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '0.78rem' }}>
+              {progress.phase.replace('FAILED: ', '')}
+            </span>
+          </Alert>
+        )}
+      </Stack>
+    </Card>
   );
 };
 
 // ═══════════════════════════════════════════════════════════════
-//  MAIN COMPONENT
+//  DAY CORRECTION — irreversible, super-admin only
 // ═══════════════════════════════════════════════════════════════
 const DeleteDayPanel = ({ activeTenantId }) => {
+  const confirmDialog = useConfirm();
   const [date, setDate] = useState('');
-  const [confirm, setConfirm] = useState(false);
+  const [armed, setArmed] = useState(false);          // guard 2: explicit arming step
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
 
-  const reset = () => { setConfirm(false); setResult(null); };
+  const reset = () => { setArmed(false); setResult(null); };
 
   const handleDelete = async () => {
+    // Guard 3: danger confirmation naming the exact day and tenant.
+    const ok = await confirmDialog({
+      title: `Permanently delete every transaction dated ${date}?`,
+      message: `All AMS and CMM transactions for ${date} in tenant ${activeTenantId || 'unknown'} will be deleted, and every summary for that day is cleared so dashboards show it as empty. Monthly totals are rebuilt from the remaining days. This cannot be undone. Re-upload that day's file to restore it.`,
+      confirmLabel: `Delete ${date}`,
+      tone: 'danger',
+    });
+    if (!ok) return;
+
     setLoading(true);
     setResult(null);
     if (!activeTenantId) {
       setResult({ error: 'No active tenant. Please re-login or pick a tenant.' });
-      setLoading(false); setConfirm(false);
+      setLoading(false); setArmed(false);
       return;
     }
     try {
@@ -365,77 +440,95 @@ const DeleteDayPanel = ({ activeTenantId }) => {
       setResult(res.data);
     } catch (e) {
       setResult({ error: e.response?.data?.error || e.message || 'Delete failed' });
-    } finally { setLoading(false); setConfirm(false); }
+    } finally { setLoading(false); setArmed(false); }
   };
 
+  const removedRows = Object.entries(result?.removed || {}).map(([table, count]) => ({
+    table, count: String(count),
+  }));
+
   return (
-    <div style={{ ...card, marginTop: 20, border: '1px solid #fecaca' }}>
-      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8, color: '#b91c1c' }}>
-        <Trash2 size={18} color="#dc2626" /> Delete a Day
-      </h3>
-      <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 16px' }}>
-        Super-admin only. Permanently removes <strong>all</strong> transactions (AMS and CMM) for the
-        selected date in the current tenant, and clears every summary so dashboards show the day as empty.
-        The monthly totals are rebuilt from the remaining days. Re-upload that day's file to restore it.
-      </p>
+    <Stack gap="md">
+      <Alert tone="danger" title="Irreversible operation">
+        Super-admin only. Deleting a day permanently removes <strong>all</strong> transactions
+        (AMS and CMM) for the selected date in the current tenant, and clears every summary so
+        dashboards show the day as empty. The monthly totals are rebuilt from the remaining days.
+        Re-upload that day's file to restore it.
+      </Alert>
 
-      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div>
-          <label style={labelStyle}>Date to delete <span style={{ color: '#dc2626' }}>*</span></label>
-          <input style={{ ...inputStyle, width: 200 }} type="date" value={date}
-            max={new Date().toISOString().slice(0, 10)}
-            onChange={e => { setDate(e.target.value); reset(); }} />
-        </div>
+      <Card
+        title={<span className="ui-row" style={{ gap: 8, color: 'var(--danger)' }}><Trash2 size={16} /> Delete a day</span>}
+        subtitle={`Target tenant: ${activeTenantId || 'none selected'}`}
+        pad
+      >
+        <Stack gap="sm">
+          <FormGrid cols={4}>
+            <FormField label="Date to delete" required hint="Future dates are not selectable.">
+              <Input
+                type="date"
+                value={date}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={e => { setDate(e.target.value); reset(); }}
+              />
+            </FormField>
+          </FormGrid>
 
-        {!confirm ? (
-          <button
-            style={{ ...btn(date ? '#dc2626' : '#d1d5db', '#fff'), opacity: date ? 1 : 0.5 }}
-            disabled={!date} onClick={() => setConfirm(true)}>
-            <Trash2 size={15} /> Delete This Day
-          </button>
-        ) : (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 13, color: '#dc2626', fontWeight: 600 }}>
-              Permanently delete {date}?
-            </span>
-            <button style={btn('#dc2626', '#fff')} onClick={handleDelete} disabled={loading}>
-              {loading ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
-              Yes, delete
-            </button>
-            <button style={btn('#f3f4f6', '#374151')} onClick={() => setConfirm(false)}>Cancel</button>
-          </div>
-        )}
-      </div>
-
-      {result && (
-        <div style={{ marginTop: 16 }}>
-          {result.error ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#dc2626', fontSize: 13 }}>
-              <XCircle size={18} /> <span style={{ fontWeight: 600 }}>{result.error}</span>
-            </div>
+          {/* Guard 1: nothing is clickable until a date is chosen. */}
+          {!armed ? (
+            <Row>
+              <Button variant="danger" icon={Trash2} disabled={!date} onClick={() => setArmed(true)}>
+                Delete this day
+              </Button>
+            </Row>
           ) : (
-            <div style={{ padding: 14, background: '#f0fdf4', borderRadius: 8, border: '1px solid #86efac' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, color: '#16a34a' }}>
-                <CheckCircle size={18} />
-                <span style={{ fontWeight: 600 }}>Deleted {result.date} — dashboards now show this day as empty.</span>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {Object.entries(result.removed || {}).map(([tbl, count]) => (
-                  <span key={tbl} style={{ padding: '2px 8px', background: '#fff', borderRadius: 6, fontSize: 11, fontFamily: 'monospace', color: '#374151', border: '1px solid #e5e7eb' }}>
-                    {tbl}: {String(count)}
-                  </span>
-                ))}
-              </div>
-            </div>
+            <Row>
+              <AlertTriangle size={16} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.82rem', color: 'var(--danger)', fontWeight: 600 }}>
+                Permanently delete every transaction dated {date}? This cannot be undone.
+              </span>
+              <Button variant="danger" icon={Trash2} loading={loading} onClick={handleDelete}>
+                Yes, delete {date}
+              </Button>
+              <Button onClick={() => setArmed(false)}>Cancel</Button>
+            </Row>
           )}
-        </div>
-      )}
-    </div>
+
+          {result && (
+            result.error ? (
+              <Alert tone="danger" title="Delete failed">{result.error}</Alert>
+            ) : (
+              <Stack gap="sm">
+                <Alert tone="success" title={`Deleted ${result.date}`}>
+                  Dashboards now show this day as empty.
+                </Alert>
+                <Card>
+                  <DataTable
+                    columns={[
+                      { key: 'table', header: 'Table', mono: true },
+                      { key: 'count', header: 'Rows removed', align: 'right', numeric: true },
+                    ]}
+                    rows={removedRows}
+                    rowKey={(r) => r.table}
+                    loading={loading}
+                    compact
+                  />
+                </Card>
+              </Stack>
+            )
+          )}
+        </Stack>
+      </Card>
+    </Stack>
   );
 };
 
+// ═══════════════════════════════════════════════════════════════
+//  MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════
 const DataMigration = () => {
   const { activeTenantId } = useAuth(); // #12: Dynamic tenantId from auth context
+  const confirmDialog = useConfirm();
+  const [tab, setTab] = useState('migration');
 
   // Dynamic month defaults: roughly 2 years back to last completed month.
   // Was hardcoded '2024-01' → '2025-12' which is in the past as of mid-2026 and
@@ -457,12 +550,14 @@ const DataMigration = () => {
   const [dryRunResult, setDryRunResult] = useState(null);
   const [dryRunLoading, setDryRunLoading] = useState(false);
   const [progress, setProgress] = useState(null);
+  const [progressLoading, setProgressLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [confirmStart, setConfirmStart] = useState(false);
   const pollRef = useRef(null);
 
   // Poll progress
   const fetchProgress = useCallback(async () => {
+    setProgressLoading(true);
     try {
       const res = await api.get('/admin/migration/progress');
       setProgress(res.data);
@@ -471,12 +566,13 @@ const DataMigration = () => {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       }
     } catch (e) { console.error('Progress fetch error', e); }
+    finally { setProgressLoading(false); }
   }, []);
 
   // Initial progress check
   useEffect(() => { fetchProgress(); return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, [fetchProgress]);
 
-  // Dry run
+  // Dry run — READ ONLY. Validates the source table and previews sample rows.
   const handleDryRun = async (cleanedMapping) => {
     setDryRunLoading(true);
     setDryRunResult(null);
@@ -497,15 +593,28 @@ const DataMigration = () => {
     } finally { setDryRunLoading(false); }
   };
 
-  // Start migration
+  // Start migration — the real, irreversible run.
   const handleStart = async () => {
-    setStarting(true);
-    setConfirmStart(false);
     if (!activeTenantId) {
-      alert('No active tenant. Please re-login or pick a tenant.');
-      setStarting(false);
+      showToast('No active tenant. Please re-login or pick a tenant.', 'error');
+      setConfirmStart(false);
       return;
     }
+
+    // Guard 3: danger confirmation naming tenant, table, month range and rows.
+    const rowsNote = (dryRunResult && !dryRunResult.error && dryRunResult.totalRows != null)
+      ? `Validation last reported ${Number(dryRunResult.totalRows).toLocaleString()} rows in this table.`
+      : 'This table has not been validated with a dry run yet, so the row count is unknown.';
+    const ok = await confirmDialog({
+      title: 'Start the real migration now?',
+      message: `This is not a dry run. Every month from ${config.startMonth} to ${config.endMonth} will be read from "${config.sourceTable}" and written into tenant ${activeTenantId}, replacing any existing data for those months and rebuilding all 13 summary tables. ${rowsNote} The write cannot be undone.`,
+      confirmLabel: 'Start real migration',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    setStarting(true);
+    setConfirmStart(false);
     try {
       // Clean mapping — remove empty values
       const cleaned = {};
@@ -523,7 +632,7 @@ const DataMigration = () => {
       pollRef.current = setInterval(fetchProgress, 5000);
       setTimeout(fetchProgress, 1000); // Quick first fetch
     } catch (e) {
-      alert('Failed to start migration: ' + (e.response?.data?.error || e.message));
+      showToast('Failed to start migration: ' + (e.response?.data?.error || e.message), 'error');
     } finally { setStarting(false); }
   };
 
@@ -532,86 +641,96 @@ const DataMigration = () => {
     && config.columnMapping.mid && config.columnMapping.payment_date && config.columnMapping.txn_currency_amount
     && !isRunning;
 
+  const mappedCount = Object.values(config.columnMapping).filter(v => v && v.trim()).length;
+
+  const tabs = [
+    { key: 'migration', label: 'Bulk migration', icon: DatabaseZap },
+    { key: 'day', label: 'Day correction', icon: Trash2 },
+  ];
+
   return (
-    <div style={{ padding: '0 0 40px' }}>
-      {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111', marginBottom: 4 }}>
-          <DatabaseZap size={22} style={{ verticalAlign: 'middle', marginRight: 8, color: '#2563eb' }} />
-          Data Migration
-        </h1>
-        <p style={{ fontSize: 13, color: '#6b7280', margin: 0 }}>
-          Migrate historical transaction data from an existing database table into the Acquira platform.
-          Bypasses CSV upload — processes millions of rows via bulk SQL, month by month.
-        </p>
-      </div>
+    <Page
+      title="Data migration"
+      subtitle="Migrate historical transaction data from an existing database table into the Acquira platform. Bypasses CSV upload and processes millions of rows via bulk SQL, month by month."
+      icon={DatabaseZap}
+    >
+      <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
-      {/* Info banner */}
-      <div style={{ ...card, background: '#eff6ff', border: '1px solid #bfdbfe', marginBottom: 20, padding: 16, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-        <Info size={18} color="#2563eb" style={{ flexShrink: 0, marginTop: 2 }} />
-        <div style={{ fontSize: 13, color: '#1e40af', lineHeight: 1.6 }}>
-          <strong>How it works:</strong> Your source table must be in the same PostgreSQL database.
-          The migration reads directly via <code style={{ background: '#dbeafe', padding: '1px 4px', borderRadius: 3 }}>INSERT...SELECT</code> —
-          no files, no network transfer. For each month it: inserts into <code style={{ background: '#dbeafe', padding: '1px 4px', borderRadius: 3 }}>fact_transaction</code>,
-          populates all 13 summary tables, and calculates dashboard metrics. Safe to re-run — existing data for each month is replaced.
-        </div>
-      </div>
+      {tab === 'migration' && (
+        <Stack gap="md">
+          <Alert tone="info" title="How it works">
+            Your source table must be in the same PostgreSQL database. The migration reads directly
+            via <code>INSERT...SELECT</code>, so there are no files and no network transfer. For each
+            month it inserts into <code>fact_transaction</code>, populates all 13 summary tables, and
+            calculates dashboard metrics. Safe to re-run: existing data for each month is replaced.
+          </Alert>
 
-      {/* Progress (if running or completed) */}
-      {progress && progress.phase !== 'IDLE' && (
-        <div style={{ marginBottom: 20 }}>
-          <ProgressMonitor progress={progress} onRefresh={fetchProgress} />
-        </div>
+          {/* Progress (if running or completed) */}
+          {progress && progress.phase !== 'IDLE' && (
+            <ProgressMonitor progress={progress} onRefresh={fetchProgress} refreshing={progressLoading} />
+          )}
+
+          {/* Configuration + read-only validation */}
+          <ConfigureStep
+            config={config}
+            setConfig={setConfig}
+            onDryRun={handleDryRun}
+            dryRunResult={dryRunResult}
+            dryRunLoading={dryRunLoading}
+          />
+
+          {/* Start the real migration — deliberately kept in its own card,
+              well away from the read-only "Validate and preview" action. */}
+          <Card
+            title={<span className="ui-row" style={{ gap: 8 }}><Zap size={16} /> Run the real migration</span>}
+            subtitle="This writes live data into the tenant. It is not a dry run."
+            pad
+          >
+            <Stack gap="sm">
+              <Alert tone="warning" title="This step is irreversible">
+                Data for every month in the range is replaced in the target tenant. Run
+                &quot;Validate and preview&quot; first if you have not already.
+              </Alert>
+
+              <div className="ui-row ui-row--between">
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  <div><strong>Tenant:</strong> {activeTenantId || 'none selected'}</div>
+                  <div>
+                    <strong>Source:</strong> {config.sourceTable || '(no table)'} ·{' '}
+                    {config.startMonth || '?'} → {config.endMonth || '?'} · {mappedCount} columns mapped
+                  </div>
+                </div>
+
+                <Row>
+                  {isRunning && <Badge tone="warning" dot>Migration in progress</Badge>}
+
+                  {/* Guard 1: disabled until required mapping + range are set. */}
+                  {!confirmStart ? (
+                    <Button variant="danger" icon={Zap} disabled={!canStart} onClick={() => setConfirmStart(true)}>
+                      Start migration
+                    </Button>
+                  ) : (
+                    /* Guard 2: explicit arming step, then the danger dialog. */
+                    <Row>
+                      <AlertTriangle size={16} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+                      <span style={{ fontSize: '0.82rem', color: 'var(--danger)', fontWeight: 600 }}>
+                        Are you sure? This writes live data.
+                      </span>
+                      <Button variant="danger" icon={Play} loading={starting} onClick={handleStart}>
+                        Yes, start now
+                      </Button>
+                      <Button onClick={() => setConfirmStart(false)}>Cancel</Button>
+                    </Row>
+                  )}
+                </Row>
+              </div>
+            </Stack>
+          </Card>
+        </Stack>
       )}
 
-      {/* Configuration */}
-      <ConfigureStep
-        config={config}
-        setConfig={setConfig}
-        onDryRun={handleDryRun}
-        dryRunResult={dryRunResult}
-        dryRunLoading={dryRunLoading}
-      />
-
-      {/* Start button */}
-      <div style={{ ...card, marginTop: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Ready to migrate?</div>
-          <div style={{ fontSize: 12, color: '#6b7280' }}>
-            {config.sourceTable || '(no table)'} • {config.startMonth || '?'} → {config.endMonth || '?'} •
-            {' '}{Object.values(config.columnMapping).filter(v => v && v.trim()).length} columns mapped
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {isRunning && (
-            <span style={badge('#f59e0b')}>
-              <Loader2 size={12} className="spin" /> Migration in progress...
-            </span>
-          )}
-          {!confirmStart ? (
-            <button style={{ ...btn(canStart ? '#2563eb' : '#d1d5db', '#fff'), opacity: canStart ? 1 : 0.5 }}
-              disabled={!canStart} onClick={() => setConfirmStart(true)}>
-              <Zap size={16} /> Start Migration
-            </button>
-          ) : (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 13, color: '#dc2626', fontWeight: 600 }}>Are you sure?</span>
-              <button style={btn('#dc2626', '#fff')} onClick={handleStart} disabled={starting}>
-                {starting ? <Loader2 size={14} className="spin" /> : <Play size={14} />}
-                Yes, Start Now
-              </button>
-              <button style={btn('#f3f4f6', '#374151')} onClick={() => setConfirmStart(false)}>Cancel</button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Delete a day (super-admin correction tool) */}
-      <DeleteDayPanel activeTenantId={activeTenantId} />
-
-      {/* Spin animation */}
-      <style>{`.spin { animation: spin 1s linear infinite; } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-    </div>
+      {tab === 'day' && <DeleteDayPanel activeTenantId={activeTenantId} />}
+    </Page>
   );
 };
 

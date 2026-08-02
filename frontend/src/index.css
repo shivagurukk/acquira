@@ -118,6 +118,15 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Icon rotations used as UI state indicators (chevrons, disclosure arrows). */
+svg.rotate-180 { transform: rotate(180deg); }
+svg.rotate-90  { transform: rotate(90deg); }
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-feature-settings: 'cv11', 'ss01';

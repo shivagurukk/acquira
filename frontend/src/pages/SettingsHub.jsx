@@ -2,10 +2,11 @@ import React, { Suspense, lazy, useMemo, useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
-    Search, User, Lock, Building2, Palette, Shield, KeyRound, Mail,
+    Search, Lock, Building2, Palette, Shield, KeyRound, Mail,
     Bell, Server, Database, Plug, Users, HardDrive, Cpu, FileClock,
     ChevronRight, SlidersHorizontal, Settings as SettingsIcon
 } from 'lucide-react';
+import { Page, Button, Input, Alert } from '../components/ui';
 
 // ============================================================================
 // Settings Hub — one consolidated home for every configurable knob.
@@ -46,10 +47,9 @@ const RegionalSettings     = lazy(() => import('./admin/RegionalSettings'));
 // Placeholder panel for sections whose backing store exists but has no UI yet,
 // or that are planned. Keeps the nav honest without pretending to be wired.
 const ComingSoon = ({ title, note }) => (
-    <div style={{ padding: 40, color: 'var(--text)' }}>
-        <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>{title}</h2>
-        <p style={{ color: 'var(--text-secondary)', maxWidth: 560, lineHeight: 1.6, fontSize: 14 }}>{note}</p>
-    </div>
+    <Page title={title} width="narrow">
+        <Alert tone="info">{note}</Alert>
+    </Page>
 );
 
 // ── Section catalog. Order defines the nav. `el` renders in the right panel. ─
@@ -104,7 +104,7 @@ const GROUPS = [
     {
         group: 'Platform',
         items: [
-            { key: 'tenants',     label: 'Tenants (Banks)',    icon: Building2, keywords: 'tenant bank create configure', el: <TenantManagement />, superAdminOnly: true },
+            { key: 'tenants',     label: 'Tenants (Banks)',    icon: Building2, keywords: 'tenant bank create configure', el: <TenantManagement embedded />, superAdminOnly: true },
             { key: 'rbac',        label: 'Roles & Menus (RBAC)', icon: Users,   keywords: 'rbac group role menu permission', el: <RbacGroups /> },
             { key: 'maintenance', label: 'Database Maintenance', icon: Database, keywords: 'maintenance vacuum analyze nightly window', el: <DatabaseMaintenance /> },
             { key: 'backups',     label: 'Backup & Restore',   icon: HardDrive, keywords: 'backup restore dump database', el: <BackupRestore />, superAdminOnly: true },
@@ -165,69 +165,60 @@ const SettingsHub = () => {
                 width: 280, flexShrink: 0, borderRight: '1px solid var(--border)',
                 background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
             }}>
-                <div style={{ padding: '20px 18px 12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                        <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--accent-light, #eff6ff)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <SettingsIcon size={18} style={{ color: 'var(--accent, #3b82f6)' }} />
+                <div style={{ padding: 'var(--space-xl) var(--space-lg) var(--space-md)' }}>
+                    <div className="ui-row" style={{ gap: 10, marginBottom: 'var(--space-lg)', flexWrap: 'nowrap' }}>
+                        <div className="ui-page__icon">
+                            <SettingsIcon size={18} strokeWidth={1.9} />
                         </div>
-                        <div>
-                            <div style={{ fontSize: 15, fontWeight: 700 }}>Settings</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                        <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: '0.95rem', fontWeight: 700 }}>Settings</div>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
                                 {userRole === 'ROLE_SUPER_ADMIN' ? 'Super Admin' : 'Bank Admin'} · this bank
                             </div>
                         </div>
                     </div>
-                    <div style={{ position: 'relative' }}>
-                        <Search size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                        <input
+                    <div className="ui-table-search" style={{ width: '100%' }}>
+                        <Search size={14} />
+                        <Input
+                            type="search"
                             value={query}
                             onChange={e => setQuery(e.target.value)}
                             placeholder="Find a setting…"
-                            style={{
-                                width: '100%', boxSizing: 'border-box', padding: '9px 12px 9px 34px',
-                                borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg)',
-                                color: 'var(--text)', fontSize: 13, outline: 'none',
-                            }}
+                            aria-label="Find a setting"
+                            style={{ width: '100%' }}
                         />
                     </div>
                 </div>
 
-                <nav style={{ flex: 1, overflowY: 'auto', padding: '4px 10px 20px' }}>
+                <nav style={{ flex: 1, overflowY: 'auto', padding: '4px 10px var(--space-xl)' }}>
                     {groupsToShow.map(g => (
                         <div key={g.group} style={{ marginBottom: 10 }}>
                             <div style={{
-                                fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                                fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
                                 color: 'var(--text-secondary)', padding: '8px 10px 4px',
                             }}>{g.group}</div>
                             {g.items.map(it => {
                                 const Icon = it.icon;
                                 const isActive = active.key === it.key;
                                 return (
-                                    <button
+                                    <Button
                                         key={it.key}
+                                        block
+                                        variant={isActive ? 'subtle' : 'ghost'}
+                                        icon={Icon}
+                                        iconRight={isActive ? ChevronRight : undefined}
                                         onClick={() => navigate(`/settings/${it.key}`)}
-                                        style={{
-                                            width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                                            padding: '9px 10px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                                            marginBottom: 2, textAlign: 'left', fontSize: 13.5, fontFamily: 'inherit',
-                                            background: isActive ? 'var(--accent-light, #eff6ff)' : 'transparent',
-                                            color: isActive ? 'var(--accent, #2563eb)' : 'var(--text)',
-                                            fontWeight: isActive ? 600 : 500,
-                                            transition: 'background .15s',
-                                        }}
-                                        onMouseOver={e => { if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                                        onMouseOut={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                                        aria-current={isActive ? 'page' : undefined}
+                                        style={{ justifyContent: 'flex-start', marginBottom: 2 }}
                                     >
-                                        <Icon size={16} style={{ flexShrink: 0 }} />
-                                        <span style={{ flex: 1 }}>{it.label}</span>
-                                        {isActive && <ChevronRight size={14} />}
-                                    </button>
+                                        <span style={{ flex: 1, textAlign: 'left' }}>{it.label}</span>
+                                    </Button>
                                 );
                             })}
                         </div>
                     ))}
                     {groupsToShow.length === 0 && (
-                        <div style={{ padding: '20px 12px', color: 'var(--text-secondary)', fontSize: 13 }}>
+                        <div style={{ padding: 'var(--space-xl) var(--space-md)', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
                             No settings match “{query}”.
                         </div>
                     )}
@@ -237,7 +228,9 @@ const SettingsHub = () => {
             {/* ── Right content panel ───────────────────────────────────── */}
             <main style={{ flex: 1, overflowY: 'auto', minWidth: 0 }}>
                 <Suspense fallback={
-                    <div style={{ padding: 40, color: 'var(--text-secondary)' }}>Loading {active.label}…</div>
+                    <div style={{ padding: 'var(--space-4xl)', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                        Loading {active.label}…
+                    </div>
                 }>
                     {/* key forces a clean remount when switching sections so each
                         panel re-runs its own fetch effects. */}

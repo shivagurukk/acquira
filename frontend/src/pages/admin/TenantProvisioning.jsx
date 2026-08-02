@@ -1,11 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
+import { FileCode, ScrollText, Layers, Play, Plus, Server } from 'lucide-react';
 import api from '../../api/axios';
 import { showToast } from '../../contexts/ToastContext';
+import {
+  Page, Stack, Card, Button, Badge, StatusBadge, Alert, Tabs, DataTable, Modal,
+  FormField, FormGrid, Input, Textarea, Select, Switch, useConfirm,
+} from '../../components/ui';
 
 /**
  * Admin > Tenant Provisioning (SUPER_ADMIN only).
  *
- * Two tabs:
+ * Two concerns:
  *  1. Provision Scripts — CRUD over tenant_provision_script (the scripts that
  *     run automatically when a tenant is created), a per-tenant "Run now"
  *     action, and the execution log.
@@ -15,7 +20,7 @@ import { showToast } from '../../contexts/ToastContext';
  */
 
 const PLACEHOLDER_HINT =
-  'Placeholders: ${TENANT_ID} ${INSTITUTION_ID} ${BANK_SHORT_CODE} ${BASE_CURRENCY} ${BANK_NAME} — substituted from the tenant row at run time. Scripts must be idempotent (ON CONFLICT / IF NOT EXISTS).';
+  'Placeholders ${TENANT_ID} ${INSTITUTION_ID} ${BANK_SHORT_CODE} ${BASE_CURRENCY} ${BANK_NAME} are substituted from the tenant row at run time. Scripts must be idempotent (ON CONFLICT / IF NOT EXISTS).';
 
 const emptyForm = {
   scriptId: null,
@@ -27,22 +32,19 @@ const emptyForm = {
   continueOnError: false,
 };
 
-const statusColor = (s) =>
-  s === 'SUCCESS' ? 'var(--status-success, #16a34a)'
-  : s === 'FAILED' ? 'var(--status-error, #dc2626)'
-  : 'var(--text-secondary, #64748b)';
-
 export default function TenantProvisioning() {
+  const confirm = useConfirm();
   const [tab, setTab] = useState('scripts');
 
   const [scripts, setScripts] = useState([]);
   const [logs, setLogs] = useState([]);
   const [registry, setRegistry] = useState([]);
   const [tenants, setTenants] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const [form, setForm] = useState(emptyForm);
   const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [runTenantId, setRunTenantId] = useState('');
   const [logTenantFilter, setLogTenantFilter] = useState('');
   const [running, setRunning] = useState(false);
@@ -97,7 +99,8 @@ export default function TenantProvisioning() {
     setShowForm(true);
   };
 
-  const saveScript = async () => {
+  const saveScript = async (e) => {
+    e?.preventDefault();
     if (!form.scriptName.trim() || !form.scriptSql.trim()) {
       showToast('Name and SQL are required', 'warning');
       return;
@@ -110,6 +113,7 @@ export default function TenantProvisioning() {
       isActive: form.isActive,
       continueOnError: form.continueOnError,
     };
+    setSaving(true);
     try {
       if (form.scriptId) {
         await api.put(`/admin/provision/scripts/${form.scriptId}`, body);
@@ -122,11 +126,17 @@ export default function TenantProvisioning() {
       loadScripts();
     } catch (e) {
       showToast(e?.response?.data?.error || 'Save failed', 'error');
-    }
+    } finally { setSaving(false); }
   };
 
   const deleteScript = async (s) => {
-    if (!window.confirm(`Delete script "${s.script_name}"? Past log entries are kept.`)) return;
+    const ok = await confirm({
+      title: 'Delete provisioning script?',
+      message: `"${s.script_name}" will no longer run for new tenants. Past log entries are kept.`,
+      confirmLabel: 'Delete script',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await api.delete(`/admin/provision/scripts/${s.script_id}`);
       showToast('Script deleted', 'success');
@@ -136,6 +146,15 @@ export default function TenantProvisioning() {
 
   const runNow = async () => {
     if (!runTenantId) { showToast('Pick a tenant first', 'warning'); return; }
+    const tenant = tenants.find((t) => String(t.tenantId) === String(runTenantId));
+    const ok = await confirm({
+      title: 'Run provisioning scripts?',
+      message: `All active scripts will run against ${tenant?.bankName || 'this tenant'} in order. Scripts are idempotent, so re-running is safe.`,
+      confirmLabel: 'Run now',
+      tone: 'warning',
+    });
+    if (!ok) return;
+
     setRunning(true);
     try {
       const { data } = await api.post(`/admin/provision/run/${runTenantId}`);
@@ -162,266 +181,284 @@ export default function TenantProvisioning() {
     } catch { showToast('Update failed', 'error'); }
   };
 
-  const inputStyle = {
-    width: '100%', padding: '8px 10px', borderRadius: 'var(--radius-md, 8px)',
-    border: '1px solid var(--border)', background: 'var(--bg-card)',
-    color: 'var(--text)', fontSize: 14, boxSizing: 'border-box',
-  };
-  const th = {
-    textAlign: 'left', padding: '10px 12px', fontSize: 12, fontWeight: 600,
-    color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em',
-    borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
-  };
-  const td = {
-    padding: '10px 12px', fontSize: 13, color: 'var(--text)',
-    borderBottom: '1px solid var(--border)', verticalAlign: 'top',
-  };
-  const btn = {
-    padding: '7px 14px', borderRadius: 'var(--radius-md, 8px)', fontSize: 13,
-    fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border)',
-    background: 'var(--bg-card)', color: 'var(--text)',
-  };
-  const btnPrimary = { ...btn, background: 'var(--brand)', borderColor: 'var(--brand)', color: '#fff' };
-  const card = {
-    background: 'var(--bg-card)', border: '1px solid var(--border)',
-    borderRadius: 'var(--radius-lg, 12px)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden',
-  };
-  const tabBtn = (active) => ({
-    ...btn,
-    background: active ? 'var(--brand)' : 'var(--bg-card)',
-    color: active ? '#fff' : 'var(--text)',
-    borderColor: active ? 'var(--brand)' : 'var(--border)',
-  });
+  const tenantOptions = tenants.map((t) => ({
+    value: t.tenantId,
+    label: `${t.bankName} (${t.bankShortCode})`,
+  }));
+
+  // ── Column definitions ────────────────────────────────────────────────────
+  const scriptColumns = [
+    { key: 'script_order', header: 'Order', sortable: true, numeric: true, width: 80 },
+    { key: 'script_name', header: 'Name', sortable: true, render: (s) => <strong>{s.script_name}</strong> },
+    { key: 'description', header: 'Description', muted: true },
+    {
+      key: 'is_active',
+      header: 'Active',
+      sortable: true,
+      render: (s) => <StatusBadge status={s.is_active ? 'Active' : 'Inactive'} />,
+    },
+    {
+      key: 'continue_on_error',
+      header: 'On failure',
+      render: (s) => (
+        <Badge tone={s.continue_on_error ? 'neutral' : 'warning'}>
+          {s.continue_on_error ? 'Continue' : 'Stop chain'}
+        </Badge>
+      ),
+    },
+    {
+      key: '_actions',
+      header: '',
+      align: 'right',
+      nowrap: true,
+      render: (s) => (
+        <>
+          <Button size="sm" onClick={() => openEdit(s)}>Edit</Button>
+          <Button size="sm" variant="danger-ghost" onClick={() => deleteScript(s)}>Delete</Button>
+        </>
+      ),
+    },
+  ];
+
+  const logColumns = [
+    {
+      key: 'executed_at',
+      header: 'When',
+      sortable: true,
+      nowrap: true,
+      render: (l) => (l.executed_at ? new Date(l.executed_at).toLocaleString() : '—'),
+    },
+    { key: 'bank_name', header: 'Tenant', sortable: true, render: (l) => l.bank_name || l.tenant_id },
+    { key: 'script_name', header: 'Script', sortable: true, render: (l) => <strong>{l.script_name}</strong> },
+    { key: 'status', header: 'Status', sortable: true, render: (l) => <StatusBadge status={l.status} /> },
+    {
+      key: 'duration_ms',
+      header: 'Duration',
+      sortable: true,
+      numeric: true,
+      align: 'right',
+      render: (l) => (l.duration_ms != null ? `${l.duration_ms} ms` : '—'),
+    },
+    { key: 'executed_by', header: 'By', muted: true },
+    {
+      key: 'error_message',
+      header: 'Error',
+      muted: true,
+      render: (l) => (
+        <span style={{ display: 'block', maxWidth: 340, wordBreak: 'break-word' }}>
+          {l.error_message}
+        </span>
+      ),
+    },
+  ];
+
+  const registryColumns = [
+    { key: 'migration_name', header: 'Migration', sortable: true, mono: true },
+    { key: 'description', header: 'Description', muted: true },
+    {
+      key: 'applied_on_dev',
+      header: 'Dev',
+      sortable: true,
+      render: (r) => (r.applied_on_dev ? <StatusBadge status="Applied" /> : <span className="ui-td--muted">—</span>),
+    },
+    {
+      key: 'applied_on_prod',
+      header: 'Prod',
+      sortable: true,
+      render: (r) => (
+        <Switch
+          checked={r.applied_on_prod}
+          onChange={() => toggleProdApplied(r)}
+          label={r.applied_on_prod ? 'Applied' : 'Pending'}
+          aria-label={`Mark ${r.migration_name} as applied on production`}
+        />
+      ),
+    },
+    {
+      key: 'created_at',
+      header: 'Registered',
+      sortable: true,
+      nowrap: true,
+      muted: true,
+      render: (r) => (r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'),
+    },
+  ];
+
+  const tabs = [
+    { key: 'scripts', label: 'Provision scripts', icon: FileCode, count: scripts.length },
+    { key: 'logs', label: 'Execution log', icon: ScrollText, count: logs.length },
+    { key: 'registry', label: 'Migration registry', icon: Layers, count: registry.length },
+  ];
 
   return (
-    <div style={{ padding: 24, maxWidth: 1280, margin: '0 auto' }}>
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', margin: 0 }}>
-          Tenant Provisioning
-        </h1>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>
-          Scripts here run automatically when a new tenant is created, in order. They can be re-run
-          per tenant at any time (all scripts must be idempotent). The Migration Registry tab tracks
-          which schema migrations are applied where.
-        </p>
-      </div>
+    <Page
+      title="Tenant provisioning"
+      subtitle="Scripts here run automatically when a new tenant is created, in order. They can be re-run per tenant at any time, so every script must be idempotent."
+      icon={Server}
+    >
+      <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-        <button style={tabBtn(tab === 'scripts')} onClick={() => setTab('scripts')}>Provision Scripts</button>
-        <button style={tabBtn(tab === 'logs')} onClick={() => setTab('logs')}>Execution Log</button>
-        <button style={tabBtn(tab === 'registry')} onClick={() => setTab('registry')}>Migration Registry</button>
-      </div>
-
-      {loading && <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading…</div>}
-
-      {tab === 'scripts' && !loading && (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <select value={runTenantId} onChange={(e) => setRunTenantId(e.target.value)}
-                style={{ ...inputStyle, width: 260 }}>
-                <option value="">Run scripts for tenant…</option>
-                {tenants.map((t) => (
-                  <option key={t.tenantId} value={t.tenantId}>
-                    {t.bankName} ({t.bankShortCode})
-                  </option>
-                ))}
-              </select>
-              <button style={btnPrimary} onClick={runNow} disabled={running}>
+      {tab === 'scripts' && (
+        <Stack gap="sm">
+          <div className="ui-row ui-row--between">
+            <div className="ui-row">
+              <Select
+                value={runTenantId}
+                onChange={(e) => setRunTenantId(e.target.value)}
+                placeholder="Run scripts for tenant…"
+                options={tenantOptions}
+                style={{ width: 260 }}
+                aria-label="Tenant to provision"
+              />
+              <Button variant="primary" icon={Play} onClick={runNow} loading={running}>
                 {running ? 'Running…' : 'Run now'}
-              </button>
+              </Button>
             </div>
-            <button style={btnPrimary} onClick={openCreate}>+ New Script</button>
+            <Button variant="primary" icon={Plus} onClick={openCreate}>New script</Button>
           </div>
 
-          <div style={card}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={th}>Order</th>
-                  <th style={th}>Name</th>
-                  <th style={th}>Description</th>
-                  <th style={th}>Active</th>
-                  <th style={th}>On error</th>
-                  <th style={th}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {scripts.map((s) => (
-                  <tr key={s.script_id}>
-                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{s.script_order}</td>
-                    <td style={{ ...td, fontWeight: 600 }}>{s.script_name}</td>
-                    <td style={{ ...td, color: 'var(--text-secondary)' }}>{s.description}</td>
-                    <td style={td}>{s.is_active ? 'Yes' : 'No'}</td>
-                    <td style={td}>{s.continue_on_error ? 'Continue' : 'Stop chain'}</td>
-                    <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
-                      <button style={{ ...btn, marginRight: 6 }} onClick={() => openEdit(s)}>Edit</button>
-                      <button style={btn} onClick={() => deleteScript(s)}>Delete</button>
-                    </td>
-                  </tr>
-                ))}
-                {scripts.length === 0 && (
-                  <tr><td style={td} colSpan={6}>No provisioning scripts defined.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {showForm && (
-            <div style={{ ...card, marginTop: 16, padding: 20 }}>
-              <h3 style={{ margin: '0 0 12px', fontSize: 16, color: 'var(--text)' }}>
-                {form.scriptId ? 'Edit script' : 'New script'}
-              </h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
-                <div>
-                  <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Name</label>
-                  <input style={inputStyle} value={form.scriptName}
-                    onChange={(e) => setForm({ ...form, scriptName: e.target.value })} />
+          <Card>
+            <DataTable
+              columns={scriptColumns}
+              rows={scripts}
+              rowKey={(s) => s.script_id}
+              loading={loading}
+              defaultSort={{ key: 'script_order', dir: 'asc' }}
+              empty={
+                <div style={{ padding: 'var(--space-3xl)', textAlign: 'center' }}>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 14 }}>
+                    No provisioning scripts defined yet. New tenants will be created with schema defaults only.
+                  </p>
+                  <Button variant="subtle" icon={Plus} onClick={openCreate}>Add the first script</Button>
                 </div>
-                <div>
-                  <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Order</label>
-                  <input style={inputStyle} type="number" value={form.scriptOrder}
-                    onChange={(e) => setForm({ ...form, scriptOrder: e.target.value })} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Active</label>
-                  <select style={inputStyle} value={form.isActive ? '1' : '0'}
-                    onChange={(e) => setForm({ ...form, isActive: e.target.value === '1' })}>
-                    <option value="1">Yes</option>
-                    <option value="0">No</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>On failure</label>
-                  <select style={inputStyle} value={form.continueOnError ? '1' : '0'}
-                    onChange={(e) => setForm({ ...form, continueOnError: e.target.value === '1' })}>
-                    <option value="0">Stop the chain</option>
-                    <option value="1">Continue to next</option>
-                  </select>
-                </div>
-              </div>
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Description</label>
-                <input style={inputStyle} value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })} />
-              </div>
-              <div style={{ marginBottom: 8 }}>
-                <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>SQL</label>
-                <textarea style={{ ...inputStyle, minHeight: 160, fontFamily: 'monospace', fontSize: 13 }}
-                  value={form.scriptSql}
-                  onChange={(e) => setForm({ ...form, scriptSql: e.target.value })} />
-              </div>
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 14px' }}>
-                {PLACEHOLDER_HINT}
-              </p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button style={btnPrimary} onClick={saveScript}>Save</button>
-                <button style={btn} onClick={() => setShowForm(false)}>Cancel</button>
-              </div>
-            </div>
-          )}
-        </>
+              }
+            />
+          </Card>
+        </Stack>
       )}
 
-      {tab === 'logs' && !loading && (
-        <>
-          <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <select value={logTenantFilter}
-              onChange={(e) => { setLogTenantFilter(e.target.value); loadLogs(e.target.value); }}
-              style={{ ...inputStyle, width: 260 }}>
-              <option value="">All tenants</option>
-              {tenants.map((t) => (
-                <option key={t.tenantId} value={t.tenantId}>
-                  {t.bankName} ({t.bankShortCode})
-                </option>
-              ))}
-            </select>
-            <button style={btn} onClick={() => loadLogs(logTenantFilter)}>Refresh</button>
-          </div>
-          <div style={card}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={th}>When</th>
-                  <th style={th}>Tenant</th>
-                  <th style={th}>Script</th>
-                  <th style={th}>Status</th>
-                  <th style={th}>Duration</th>
-                  <th style={th}>By</th>
-                  <th style={th}>Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((l) => (
-                  <tr key={l.log_id}>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                      {l.executed_at ? new Date(l.executed_at).toLocaleString() : ''}
-                    </td>
-                    <td style={td}>{l.bank_name || l.tenant_id}</td>
-                    <td style={{ ...td, fontWeight: 600 }}>{l.script_name}</td>
-                    <td style={{ ...td, color: statusColor(l.status), fontWeight: 600 }}>{l.status}</td>
-                    <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>
-                      {l.duration_ms != null ? `${l.duration_ms} ms` : ''}
-                    </td>
-                    <td style={td}>{l.executed_by}</td>
-                    <td style={{ ...td, color: 'var(--text-secondary)', maxWidth: 340, wordBreak: 'break-word' }}>
-                      {l.error_message}
-                    </td>
-                  </tr>
-                ))}
-                {logs.length === 0 && (
-                  <tr><td style={td} colSpan={7}>No provisioning runs logged yet.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </>
+      {tab === 'logs' && (
+        <Card>
+          <DataTable
+            columns={logColumns}
+            rows={logs}
+            rowKey={(l) => l.log_id}
+            loading={loading}
+            defaultSort={{ key: 'executed_at', dir: 'desc' }}
+            pageSize={15}
+            toolbarLeft={
+              <Select
+                value={logTenantFilter}
+                onChange={(e) => { setLogTenantFilter(e.target.value); loadLogs(e.target.value); }}
+                placeholder="All tenants"
+                options={tenantOptions}
+                style={{ width: 240 }}
+                aria-label="Filter log by tenant"
+              />
+            }
+            toolbarRight={<Button onClick={() => loadLogs(logTenantFilter)}>Refresh</Button>}
+            empty={
+              <div style={{ padding: 'var(--space-3xl)', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                No provisioning runs logged yet.
+              </div>
+            }
+          />
+        </Card>
       )}
 
-      {tab === 'registry' && !loading && (
-        <div style={card}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={th}>Migration</th>
-                <th style={th}>Description</th>
-                <th style={th}>Dev</th>
-                <th style={th}>Prod</th>
-                <th style={th}>Registered</th>
-              </tr>
-            </thead>
-            <tbody>
-              {registry.map((r) => (
-                <tr key={r.registry_id}>
-                  <td style={{ ...td, fontFamily: 'monospace', fontSize: 12 }}>{r.migration_name}</td>
-                  <td style={{ ...td, color: 'var(--text-secondary)' }}>{r.description}</td>
-                  <td style={{ ...td, color: r.applied_on_dev ? 'var(--status-success, #16a34a)' : 'var(--text-secondary)' }}>
-                    {r.applied_on_dev ? 'Applied' : '—'}
-                  </td>
-                  <td style={td}>
-                    <button
-                      style={{
-                        ...btn, padding: '3px 10px', fontSize: 12,
-                        color: r.applied_on_prod ? 'var(--status-success, #16a34a)' : 'var(--text-secondary)',
-                      }}
-                      onClick={() => toggleProdApplied(r)}
-                      title="Toggle prod-applied flag"
-                    >
-                      {r.applied_on_prod ? 'Applied' : 'Pending'}
-                    </button>
-                  </td>
-                  <td style={{ ...td, whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                    {r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}
-                  </td>
-                </tr>
-              ))}
-              {registry.length === 0 && (
-                <tr><td style={td} colSpan={5}>Registry is empty.</td></tr>
-              )}
-            </tbody>
-          </table>
+      {tab === 'registry' && (
+        <Stack gap="sm">
+          <Alert tone="info">
+            Migration files remain the landing mechanism — this registry is the visibility layer.
+            Toggling <strong>Prod</strong> records that a migration has been applied; it does not run anything.
+          </Alert>
+          <Card>
+            <DataTable
+              columns={registryColumns}
+              rows={registry}
+              rowKey={(r) => r.registry_id}
+              loading={loading}
+              empty={
+                <div style={{ padding: 'var(--space-3xl)', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  Registry is empty.
+                </div>
+              }
+            />
+          </Card>
+        </Stack>
+      )}
+
+      {/* ── Script editor ─────────────────────────────────────────────────── */}
+      <Modal
+        as="form"
+        onSubmit={saveScript}
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        size="lg"
+        title={form.scriptId ? 'Edit script' : 'New script'}
+        subtitle="Runs inside the tenant's schema during provisioning."
+        footer={
+          <>
+            <Button type="button" onClick={() => setShowForm(false)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={saving}>Save script</Button>
+          </>
+        }
+      >
+        <div className="ui-stack ui-stack--sm">
+          <FormGrid cols={4}>
+            <FormField label="Name" required className="ui-form-grid--span">
+              <Input
+                value={form.scriptName}
+                onChange={(e) => setForm({ ...form, scriptName: e.target.value })}
+                placeholder="seed_default_categories"
+                required
+              />
+            </FormField>
+            <FormField label="Order" hint="Ascending">
+              <Input
+                type="number"
+                value={form.scriptOrder}
+                onChange={(e) => setForm({ ...form, scriptOrder: e.target.value })}
+              />
+            </FormField>
+            <FormField label="On failure">
+              <Select
+                value={form.continueOnError ? '1' : '0'}
+                onChange={(e) => setForm({ ...form, continueOnError: e.target.value === '1' })}
+                options={[
+                  { value: '0', label: 'Stop the chain' },
+                  { value: '1', label: 'Continue to next' },
+                ]}
+              />
+            </FormField>
+          </FormGrid>
+
+          <FormField label="Description">
+            <Input
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="What this script sets up"
+            />
+          </FormField>
+
+          <FormField label="SQL" required hint={PLACEHOLDER_HINT}>
+            <Textarea
+              mono
+              rows={10}
+              value={form.scriptSql}
+              onChange={(e) => setForm({ ...form, scriptSql: e.target.value })}
+              placeholder={'INSERT INTO … VALUES (${TENANT_ID}, …)\nON CONFLICT DO NOTHING;'}
+              required
+            />
+          </FormField>
+
+          <Switch
+            checked={form.isActive}
+            onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+            label="Active — run this script for new tenants"
+          />
         </div>
-      )}
-    </div>
+      </Modal>
+    </Page>
   );
 }

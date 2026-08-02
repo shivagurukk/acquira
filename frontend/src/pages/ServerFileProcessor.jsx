@@ -5,9 +5,11 @@ import {
     Table, TableHead, TableRow, TableCell, TableBody
 } from '@mui/material';
 import {
-    PlayArrow, CheckCircle, Error as ErrorIcon, Folder, Storage, Cancel
-} from '@mui/icons-material';
-import { HardDrive, Server, FolderOpen, FileText, AlertTriangle } from 'lucide-react';
+    HardDrive, Server, FolderOpen, FileText, AlertTriangle,
+    // Aliased to the former @mui/icons-material names so usage below is unchanged.
+    Play as PlayArrow, CheckCircle2 as CheckCircle, XCircle as ErrorIcon,
+    Folder, Database as Storage, Ban as Cancel,
+} from 'lucide-react';
 import api from '../api/axios';
 
 const POLL_INTERVAL = 3000;

@@ -45,8 +45,8 @@ export default defineConfig({
           if (id.includes('react-grid-layout') || id.includes('react-resizable') || id.includes('react-draggable')) {
             return 'vendor-grid';
           }
-          // Icon sets — large but tree-shaken; group what survives.
-          if (id.includes('lucide-react') || id.includes('@heroicons') || id.includes('@mui/icons-material')) {
+          // Icon set — large but tree-shaken; group what survives.
+          if (id.includes('lucide-react')) {
             return 'vendor-icons';
           }
           // Everything else (axios, date-fns, clsx, headlessui, etc.)

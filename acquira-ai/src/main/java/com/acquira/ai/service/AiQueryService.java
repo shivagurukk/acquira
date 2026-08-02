@@ -84,7 +84,14 @@ public class AiQueryService {
 
     private static final Set<String> BLOCKED_KEYWORDS = Set.of(
         "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE",
-        "GRANT", "REVOKE", "COPY", "VACUUM", "ANALYZE"
+        "GRANT", "REVOKE", "COPY", "VACUUM", "ANALYZE",
+        // Write paths the original list missed. SELECT ... INTO creates a table;
+        // CALL/DO/EXECUTE reach procedural code that can write; SET can change
+        // role or session state. The read-only transaction in executeGuarded is
+        // the actual enforcement — these keep the failure at validation time
+        // with a clear message instead of a SQLException.
+        "MERGE", "INTO", "CALL", "DO", "EXECUTE", "PREPARE",
+        "REFRESH", "REINDEX", "LOCK", "NOTIFY", "SET", "RESET"
     );
 
     // Tokens that have no place in a governed analytics read — block outright.
@@ -501,6 +508,11 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
             boolean priorAutoCommit = conn.getAutoCommit();
             conn.setAutoCommit(false); // begin txn so SET LOCAL has scope
             try (java.sql.Statement st = conn.createStatement()) {
+                // Postgres itself refuses every write for the life of this txn
+                // (SQLSTATE 25006), including writes reached through a VOLATILE
+                // function that the keyword blocklist cannot see. This is the
+                // enforcement boundary; the Java validation is the early exit.
+                st.execute("SET TRANSACTION READ ONLY");
                 st.execute("SET LOCAL statement_timeout = " + statementTimeoutMs);
                 List<Map<String, Object>> out = new ArrayList<>();
                 try (java.sql.ResultSet rs = st.executeQuery(wrapped)) {

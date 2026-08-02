@@ -436,16 +436,12 @@ public class BusinessController {
                         out.add(m);
                 }
 
-                jakarta.persistence.Query cq = entityManager.createNativeQuery(
-                                "SELECT COUNT(*) FROM (SELECT 1 " + base + ") x");
-                cq.setParameter("tid", tenantId);
-                cq.setParameter("s", from);
-                cq.setParameter("e", to);
-                if (hasSearch) cq.setParameter("q", "%" + search.trim() + "%");
-                long totalRows = ((Number) cq.getSingleResult()).longValue();
-
+                // Row count and grand totals in ONE pass over the grouped
+                // aggregate. These were two separate queries, each re-running
+                // `base` — with the page query above, the same heavy GROUP BY
+                // executed three times per page load.
                 jakarta.persistence.Query tq = entityManager.createNativeQuery(
-                                "SELECT COALESCE(SUM(x.c1),0), COALESCE(SUM(x.c2),0), COALESCE(SUM(x.c3),0), " +
+                                "SELECT COUNT(*), COALESCE(SUM(x.c1),0), COALESCE(SUM(x.c2),0), COALESCE(SUM(x.c3),0), " +
                                 "COALESCE(SUM(x.c4),0), COALESCE(SUM(x.c5),0), COALESCE(SUM(x.c6),0), COALESCE(SUM(x.c7),0) FROM ( " +
                                 "SELECT SUM(t.total_txns) c1, SUM(t.total_base_volume) c2, SUM(t.total_msf) c3, " +
                                 "SUM(t.total_interchange) c4, SUM(t.total_scheme_fee) c5, SUM(t.total_revenue) c6, " +
@@ -455,7 +451,10 @@ public class BusinessController {
                 tq.setParameter("s", from);
                 tq.setParameter("e", to);
                 if (hasSearch) tq.setParameter("q", "%" + search.trim() + "%");
-                Object[] tot = (Object[]) tq.getSingleResult();
+                Object[] meta = (Object[]) tq.getSingleResult();
+                long totalRows = ((Number) meta[0]).longValue();
+                // Shift by one: index 0 is the row count, 1..7 are the totals.
+                Object[] tot = new Object[]{meta[1], meta[2], meta[3], meta[4], meta[5], meta[6], meta[7]};
                 BigDecimal tVol = toBigDecimal(tot[1]);
                 BigDecimal tNet = toBigDecimal(tot[5]);
                 Map<String, Object> totals = new LinkedHashMap<>();

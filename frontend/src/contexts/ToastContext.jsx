@@ -21,11 +21,12 @@ const ICONS = {
     info:    'ℹ',
 };
 
+// Resolved through the theme tokens so toasts follow light/dark like everything else.
 const COLORS = {
-    success: { bg: '#052e16', border: '#166534', text: '#86efac', icon: '#4ade80' },
-    error:   { bg: '#2d0a0a', border: '#7f1d1d', text: '#fca5a5', icon: '#f87171' },
-    warning: { bg: '#2d1a00', border: '#78350f', text: '#fcd34d', icon: '#fbbf24' },
-    info:    { bg: '#0c1a2e', border: '#1e3a5f', text: '#93c5fd', icon: '#60a5fa' },
+    success: { bg: 'var(--success-bg)', border: 'var(--success)', text: 'var(--success-text)', icon: 'var(--success)' },
+    error:   { bg: 'var(--danger-bg)',  border: 'var(--danger)',  text: 'var(--danger-text)',  icon: 'var(--danger)' },
+    warning: { bg: 'var(--warning-bg)', border: 'var(--warning)', text: 'var(--warning-text)', icon: 'var(--warning)' },
+    info:    { bg: 'var(--info-bg)',    border: 'var(--info)',    text: 'var(--info-text)',    icon: 'var(--info)' },
 };
 
 export const ToastProvider = ({ children }) => {
@@ -53,7 +54,7 @@ export const ToastProvider = ({ children }) => {
     return (
         <ToastContext.Provider value={{ show, dismiss }}>
             {children}
-            <div style={{
+            <div role="status" aria-live="polite" style={{
                 position: 'fixed',
                 bottom: 24,
                 right: 24,
@@ -84,13 +85,13 @@ export const ToastProvider = ({ children }) => {
                                 minWidth: 220,
                                 pointerEvents: 'all',
                                 animation: 'toastIn 0.22s cubic-bezier(0.34,1.56,0.64,1)',
-                                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                                boxShadow: 'var(--shadow-lg)',
                                 lineHeight: 1.4,
                             }}
                         >
                             <span style={{
                                 width: 20, height: 20, borderRadius: 5,
-                                background: c.icon + '22',
+                                background: 'color-mix(in srgb, ' + c.icon + ' 18%, transparent)',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 color: c.icon, fontWeight: 700, fontSize: 11, flexShrink: 0, marginTop: 1,
                             }}>
@@ -99,11 +100,14 @@ export const ToastProvider = ({ children }) => {
                             <span style={{ flex: 1 }}>{toast.message}</span>
                             <button
                                 onClick={() => dismiss(toast.id)}
+                                aria-label="Dismiss notification"
+                                onMouseEnter={e => { e.currentTarget.style.opacity = 1; }}
+                                onMouseLeave={e => { e.currentTarget.style.opacity = 0.5; }}
                                 style={{
                                     background: 'none', border: 'none', cursor: 'pointer',
                                     color: c.text, opacity: 0.5, fontSize: 14,
                                     padding: 0, lineHeight: 1, flexShrink: 0,
-                                    '&:hover': { opacity: 1 },
+                                    transition: 'opacity 0.15s ease',
                                 }}
                             >×</button>
                         </div>

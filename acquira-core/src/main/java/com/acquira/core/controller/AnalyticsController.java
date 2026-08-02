@@ -372,7 +372,11 @@ public class AnalyticsController {
     @GetMapping("/available-years")
     public ResponseEntity<List<Integer>> getAvailableYears() {
         Long tenantId = TenantContext.getCurrentTenant();
-        String sql = "SELECT DISTINCT EXTRACT(YEAR FROM business_date) FROM sum_daily_merchant WHERE tenant_id = :tenantId ORDER BY 1 DESC";
+        // sum_daily_bank, not sum_daily_merchant: same set of business dates
+        // (both are written per ingest day by populateSummaryStep), but bank is
+        // one row per tenant per day (~365/yr) vs merchant's per-merchant rows —
+        // a full DISTINCT scan of it stays milliseconds at any scale.
+        String sql = "SELECT DISTINCT EXTRACT(YEAR FROM business_date) FROM sum_daily_bank WHERE tenant_id = :tenantId ORDER BY 1 DESC";
         jakarta.persistence.Query query = entityManager.createNativeQuery(sql);
         query.setParameter("tenantId", tenantId);
         List<Number> results = query.getResultList();

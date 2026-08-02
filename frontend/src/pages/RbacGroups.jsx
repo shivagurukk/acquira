@@ -1,32 +1,40 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit2, Shield, Check, X, Menu } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Plus, Edit2, Shield } from 'lucide-react';
 import api from '../api/axios';
+import { showToast } from '../contexts/ToastContext';
+import {
+    Page, Card, Button, Badge, DataTable, Modal,
+    FormField, FormGrid, Input, Checkbox,
+} from '../components/ui';
+
+const emptyGroup = { id: null, groupName: '', description: '', menuIds: [] };
 
 const RbacGroups = () => {
     const [groups, setGroups] = useState([]);
     const [menus, setMenus] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [currentGroup, setCurrentGroup] = useState({ id: null, groupName: '', description: '', menuIds: [] });
+    const [currentGroup, setCurrentGroup] = useState(emptyGroup);
 
-    useEffect(() => {
-        fetchGroups();
-        fetchMenus();
-    }, []);
-
-    const fetchGroups = async () => {
+    const fetchGroups = useCallback(async () => {
         try {
             const res = await api.get('/admin/rbac/groups');
             setGroups(res.data);
         } catch (e) { console.error(e); }
-    };
+    }, []);
 
-    const fetchMenus = async () => {
+    const fetchMenus = useCallback(async () => {
         try {
             const res = await api.get('/admin/rbac/menus');
             setMenus(res.data);
         } catch (e) { console.error(e); }
-    };
+    }, []);
+
+    useEffect(() => {
+        setLoading(true);
+        Promise.all([fetchGroups(), fetchMenus()]).finally(() => setLoading(false));
+    }, [fetchGroups, fetchMenus]);
 
     const openModal = (group = null) => {
         if (group) {
@@ -37,13 +45,14 @@ const RbacGroups = () => {
                 menuIds: group.menus ? group.menus.map(m => m.menuId) : []
             });
         } else {
-            setCurrentGroup({ id: null, groupName: '', description: '', menuIds: [] });
+            setCurrentGroup(emptyGroup);
         }
         setIsModalOpen(true);
     };
 
     const handleSave = async (e) => {
         e.preventDefault();
+        setSaving(true);
         try {
             const payload = {
                 id: currentGroup.id,
@@ -53,11 +62,14 @@ const RbacGroups = () => {
             };
 
             await api.post('/admin/rbac/groups', payload);
+            showToast(currentGroup.id ? 'Group updated' : 'Group created', 'success');
             fetchGroups();
             setIsModalOpen(false);
         } catch (error) {
             console.error(error);
-            alert('Failed to save group');
+            showToast(error?.response?.data?.error || 'Failed to save group', 'error');
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -78,106 +90,177 @@ const RbacGroups = () => {
         return acc;
     }, {});
 
+    const columns = [
+        {
+            key: 'groupName',
+            header: 'Group',
+            sortable: true,
+            render: g => (
+                <span className="ui-row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                    <Shield size={15} style={{ color: 'var(--brand)', flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600 }}>{g.groupName}</span>
+                </span>
+            ),
+        },
+        {
+            key: 'description',
+            header: 'Description',
+            sortable: true,
+            muted: true,
+        },
+        {
+            key: '_menuCount',
+            header: 'Menus',
+            align: 'right',
+            numeric: true,
+            width: 90,
+            sortable: true,
+            sortValue: g => (g.menus ? g.menus.length : 0),
+            render: g => (g.menus ? g.menus.length : 0),
+        },
+        {
+            key: 'menus',
+            header: 'Permissions',
+            render: g => {
+                const assigned = g.menus || [];
+                if (assigned.length === 0) return <span className="ui-td--muted">No menu access</span>;
+                return (
+                    <span className="ui-row" style={{ gap: 6, maxWidth: 460 }}>
+                        {assigned.slice(0, 5).map(m => (
+                            <Badge key={m.menuId} tone="info">{m.menuName}</Badge>
+                        ))}
+                        {assigned.length > 5 && (
+                            <span className="ui-td--muted" style={{ fontSize: '0.75rem' }}>
+                                +{assigned.length - 5} more
+                            </span>
+                        )}
+                    </span>
+                );
+            },
+        },
+        {
+            key: '_actions',
+            header: '',
+            align: 'right',
+            width: 60,
+            render: g => (
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={Edit2}
+                    onClick={() => openModal(g)}
+                    aria-label={`Edit ${g.groupName}`}
+                />
+            ),
+        },
+    ];
+
     return (
-        <div className="page-container" style={{ padding: '40px', color: '#1e293b' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '30px' }}>
-                <h1 style={{ fontWeight: 'bold', fontSize: '24px' }}>RBAC Groups & Permissions</h1>
-                <button className="primary-btn" onClick={() => openModal()} style={{ background: '#0f172a', color: 'white', padding: '10px 20px', borderRadius: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <Plus size={18} /> New Group
-                </button>
-            </div>
+        <Page
+            title="RBAC groups and permissions"
+            subtitle="Groups bundle menu access. Every user inherits the menus of the groups assigned to them."
+            icon={Shield}
+            actions={
+                <Button variant="primary" icon={Plus} onClick={() => openModal()}>
+                    New group
+                </Button>
+            }
+        >
+            <Card>
+                <DataTable
+                    columns={columns}
+                    rows={groups}
+                    rowKey={g => g.id}
+                    loading={loading}
+                    defaultSort={{ key: 'groupName', dir: 'asc' }}
+                    emptyVariant="data"
+                />
+            </Card>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-                {groups.map(group => (
-                    <motion.div
-                        key={group.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        style={{ background: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0' }}
-                    >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                            <div>
-                                <h3 style={{ fontWeight: 'bold', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <Shield size={18} color="#3b82f6" /> {group.groupName}
-                                </h3>
-                                <p style={{ color: '#64748b', fontSize: '14px', marginTop: '4px' }}>{group.description}</p>
-                            </div>
-                            <button onClick={() => openModal(group)} style={{ color: '#3b82f6', background: 'transparent', border: 'none', cursor: 'pointer' }}>
-                                <Edit2 size={18} />
-                            </button>
-                        </div>
+            <Modal
+                as="form"
+                onSubmit={handleSave}
+                open={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                size="lg"
+                title={currentGroup.id ? 'Edit group' : 'New group'}
+                subtitle="Selected menus become visible to every user in this group."
+                footer={
+                    <>
+                        <Button type="button" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                        <Button type="submit" variant="primary" loading={saving}>Save group</Button>
+                    </>
+                }
+            >
+                <div className="ui-stack ui-stack--sm">
+                    <FormGrid cols={2}>
+                        <FormField label="Group name" required>
+                            <Input
+                                value={currentGroup.groupName}
+                                onChange={e => setCurrentGroup({ ...currentGroup, groupName: e.target.value })}
+                                required
+                            />
+                        </FormField>
+                        <FormField label="Description">
+                            <Input
+                                value={currentGroup.description}
+                                onChange={e => setCurrentGroup({ ...currentGroup, description: e.target.value })}
+                            />
+                        </FormField>
+                    </FormGrid>
 
-                        <div style={{ marginTop: '16px', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
-                            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', marginBottom: '8px' }}>PERMISSIONS ({group.menus ? group.menus.length : 0})</div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                {group.menus && group.menus.slice(0, 5).map(m => (
-                                    <span key={m.menuId} style={{ background: '#eff6ff', color: '#1d4ed8', padding: '4px 8px', borderRadius: '4px', fontSize: '11px' }}>
-                                        {m.menuName}
-                                    </span>
-                                ))}
-                                {group.menus && group.menus.length > 5 && (
-                                    <span style={{ color: '#64748b', fontSize: '11px', padding: '4px' }}>+{group.menus.length - 5} more</span>
-                                )}
-                            </div>
-                        </div>
-                    </motion.div>
-                ))}
-            </div>
-
-            <AnimatePresence>
-                {isModalOpen && (
-                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 50 }}>
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            style={{ background: 'white', padding: '30px', borderRadius: '16px', width: '100%', maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto' }}
+                    <div className="ui-field">
+                        <span className="ui-field__label">Menu access</span>
+                        <div
+                            style={{
+                                maxHeight: 400,
+                                overflowY: 'auto',
+                                border: '1px solid var(--border)',
+                                borderRadius: 'var(--radius-md)',
+                                padding: 'var(--space-lg)',
+                                background: 'var(--bg-muted)',
+                            }}
                         >
-                            <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '20px' }}>{currentGroup.id ? 'Edit Group' : 'New Group'}</h2>
-                            <form onSubmit={handleSave}>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Group Name</label>
-                                        <input value={currentGroup.groupName} onChange={e => setCurrentGroup({ ...currentGroup, groupName: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} required />
+                            {Object.keys(groupedMenus).map(category => (
+                                <div key={category} style={{ marginBottom: 'var(--space-xl)' }}>
+                                    <div
+                                        style={{
+                                            fontSize: '0.7rem',
+                                            fontWeight: 700,
+                                            letterSpacing: '0.04em',
+                                            textTransform: 'uppercase',
+                                            color: 'var(--text-secondary)',
+                                            marginBottom: 'var(--space-sm)',
+                                        }}
+                                    >
+                                        {category}
                                     </div>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Description</label>
-                                        <input value={currentGroup.description} onChange={e => setCurrentGroup({ ...currentGroup, description: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-                                    </div>
+                                    <FormGrid cols={2}>
+                                        {groupedMenus[category].map(menu => (
+                                            <Checkbox
+                                                key={menu.menuId}
+                                                checked={currentGroup.menuIds.includes(menu.menuId)}
+                                                onChange={() => toggleMenu(menu.menuId)}
+                                                label={menu.menuName}
+                                            />
+                                        ))}
+                                    </FormGrid>
                                 </div>
-
-                                <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px' }}>Menu Access</h3>
-                                <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px' }}>
-                                    {Object.keys(groupedMenus).map(category => (
-                                        <div key={category} style={{ marginBottom: '20px' }}>
-                                            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748b', marginBottom: '8px', textTransform: 'uppercase' }}>{category}</div>
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                                                {groupedMenus[category].map(menu => (
-                                                    <label key={menu.menuId} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px', borderRadius: '6px', background: currentGroup.menuIds.includes(menu.menuId) ? '#eff6ff' : 'transparent', border: currentGroup.menuIds.includes(menu.menuId) ? '1px solid #bfdbfe' : '1px solid transparent', cursor: 'pointer' }}>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={currentGroup.menuIds.includes(menu.menuId)}
-                                                            onChange={() => toggleMenu(menu.menuId)}
-                                                            style={{ width: '16px', height: '16px' }}
-                                                        />
-                                                        <span style={{ fontSize: '14px', fontWeight: currentGroup.menuIds.includes(menu.menuId) ? '600' : '400' }}>{menu.menuName}</span>
-                                                    </label>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))}
+                            ))}
+                            {menus.length === 0 && (
+                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                    No menus are registered yet.
                                 </div>
-
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
-                                    <button type="button" onClick={() => setIsModalOpen(false)} style={{ padding: '10px 20px', borderRadius: '8px', background: '#f1f5f9', border: 'none', cursor: 'pointer' }}>Cancel</button>
-                                    <button type="submit" style={{ padding: '10px 20px', borderRadius: '8px', background: '#0f172a', color: 'white', border: 'none', cursor: 'pointer' }}>Save Group</button>
-                                </div>
-                            </form>
-                        </motion.div>
+                            )}
+                        </div>
+                        <span className="ui-field__hint">
+                            Only the menus ticked here are reachable by the group.
+                        </span>
                     </div>
-                )}
-            </AnimatePresence>
-        </div>
+                </div>
+            </Modal>
+        </Page>
     );
 };
 

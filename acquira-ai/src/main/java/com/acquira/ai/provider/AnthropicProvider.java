@@ -33,16 +33,20 @@ public class AnthropicProvider implements ModelProvider {
     @Value("${ai.anthropic.api-key:}")
     private String apiKey;
 
-    @Value("${ai.anthropic.model:claude-sonnet-4-5}")
+    @Value("${ai.anthropic.model:claude-opus-5}")
     private String model;
 
     @Value("${ai.anthropic.version:2023-06-01}")
     private String anthropicVersion;
 
-    @Value("${ai.anthropic.max-tokens:600}")
+    /**
+     * Caps thinking + response text together. Current models think by default,
+     * so a budget sized only for the SQL truncates mid-answer.
+     */
+    @Value("${ai.anthropic.max-tokens:4000}")
     private int maxTokens;
 
-    @Value("${ai.anthropic.models:claude-sonnet-4-5,claude-opus-4-1,claude-haiku-4-5}")
+    @Value("${ai.anthropic.models:claude-opus-5,claude-sonnet-5,claude-haiku-4-5}")
     private String modelsCsv;
 
     public AnthropicProvider() {
@@ -77,8 +81,14 @@ public class AnthropicProvider implements ModelProvider {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", useModel);
         body.put("max_tokens", maxTokens);
-        body.put("temperature", temperature);
         body.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+        if (acceptsTemperature(useModel)) {
+            body.put("temperature", temperature);
+        } else if (acceptsEffort(useModel)) {
+            // Sampling params were removed on these models and are rejected with a
+            // 400. Low effort is the replacement lever for terse, repeatable SQL.
+            body.put("output_config", Map.of("effort", "low"));
+        }
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -99,5 +109,31 @@ public class AnthropicProvider implements ModelProvider {
             if (sb.length() > 0) return sb.toString();
         }
         throw new RuntimeException("No content in Anthropic response");
+    }
+
+    /**
+     * Whether the model still accepts {@code temperature}. It was removed on
+     * Opus 4.7 and later, on Sonnet 5, and on Fable 5, where sending it returns
+     * a 400. An unrecognised id sends neither this nor effort, which is always
+     * a valid request.
+     */
+    private static boolean acceptsTemperature(String m) {
+        String s = m.toLowerCase(Locale.ROOT);
+        return s.startsWith("claude-3")
+            || s.startsWith("claude-haiku-4-5")
+            || s.startsWith("claude-sonnet-4")
+            || s.startsWith("claude-opus-4-1")
+            || s.startsWith("claude-opus-4-5")
+            || s.startsWith("claude-opus-4-6");
+    }
+
+    /** Whether the model accepts output_config.effort. Errors on Haiku 4.5. */
+    private static boolean acceptsEffort(String m) {
+        String s = m.toLowerCase(Locale.ROOT);
+        return s.startsWith("claude-opus-5")
+            || s.startsWith("claude-fable-5")
+            || s.startsWith("claude-sonnet-5")
+            || s.startsWith("claude-opus-4-7")
+            || s.startsWith("claude-opus-4-8");
     }
 }

@@ -5,10 +5,12 @@ import {
     FormControlLabel, Switch, Dialog, DialogContent
 } from '@mui/material';
 import {
-    PlayArrow, CheckCircle, Error as ErrorIcon, Refresh,
-    AccessTime, Assessment, Bolt, AutoGraph
-} from '@mui/icons-material';
-import { FileText, Zap, Clock, FileCheck, Building2, AlertTriangle, Shield } from 'lucide-react';
+    FileText, Zap, Clock, FileCheck, Building2, AlertTriangle, Shield,
+    // Aliased to the former @mui/icons-material names so usage below is unchanged.
+    Play as PlayArrow, CheckCircle2 as CheckCircle, XCircle as ErrorIcon,
+    RefreshCw as Refresh, Clock as AccessTime, BarChart3 as Assessment,
+    Zap as Bolt, TrendingUp as AutoGraph,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';

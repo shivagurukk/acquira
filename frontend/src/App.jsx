@@ -4,6 +4,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { LoadingProvider } from './contexts/LoadingContext';
+import { ConfirmProvider } from './components/ui';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -82,6 +83,7 @@ function App() {
     <ThemeProvider>
       <LoadingProvider>
       <ToastProvider>
+      <ConfirmProvider>
       <AuthProvider>
         <Suspense fallback={<PageLoader />}>
           <Routes>
@@ -244,6 +246,7 @@ function App() {
           </Routes>
         </Suspense>
       </AuthProvider>
+      </ConfirmProvider>
       </ToastProvider>
       </LoadingProvider>
     </ThemeProvider>

@@ -610,7 +610,16 @@ public class VolumeRevenueRepository {
      * Adds sids and mids — these were previously missing from the response
      * causing the SID and MID dropdowns in BusinessFilters and DailyMerchantDashboard
      * to render empty.
+     *
+     * Cached: the destination/channel/scheme/card-type lookups are unbounded
+     * DISTINCT scans over sum_daily_insight (a tenant's full history) and run
+     * on every report-page open. The value set changes only on ingest; the
+     * batch jobs evict this cache on completion.
      */
+    @org.springframework.cache.annotation.Cacheable(
+            cacheNames = com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+            key = "'vrFilters:' + (#tenantId != null ? #tenantId : 'all')",
+            unless = "#result.isEmpty()")
     public Map<String, List<String>> getFilterOptions(Long tenantId) {
         Map<String, List<String>> options = new HashMap<>();
 
@@ -1652,7 +1661,11 @@ public class VolumeRevenueRepository {
 
         // preciseDateList handling
         if (filter.getPreciseDateList() != null && !filter.getPreciseDateList().isEmpty()) {
-            sql.append("AND TO_CHAR(s.business_date, 'YYYY-MM-DD') IN (:preciseDates) ");
+            // Compare the raw DATE column, not TO_CHAR(...) — wrapping the
+            // partition key in a function defeats both partition pruning and
+            // the (tenant_id, business_date) index. Values are parsed to
+            // LocalDate at bind time below.
+            sql.append("AND s.business_date IN (:preciseDates) ");
         }
 
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
@@ -1695,7 +1708,8 @@ public class VolumeRevenueRepository {
         if (filter.getEndDate() != null)
             query.setParameter("endDate", filter.getEndDate());
         if (filter.getPreciseDateList() != null && !filter.getPreciseDateList().isEmpty())
-            query.setParameter("preciseDates", filter.getPreciseDateList());
+            query.setParameter("preciseDates", filter.getPreciseDateList().stream()
+                    .map(java.time.LocalDate::parse).collect(java.util.stream.Collectors.toList()));
 
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());

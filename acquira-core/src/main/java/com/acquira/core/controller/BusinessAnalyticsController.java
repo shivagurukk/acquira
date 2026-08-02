@@ -21,6 +21,9 @@ public class BusinessAnalyticsController {
     @Autowired
     private com.acquira.core.service.TenantService tenantService;
 
+    @Autowired
+    private com.acquira.common.service.DataBoundsService dataBoundsService;
+
     private void resolveFilters(VolumeRevenueFilterDTO filters) {
         if (filters.getTeamLeaderList() != null && !filters.getTeamLeaderList().isEmpty()) {
             Long tenantId = tenantService.getCurrentTenantId();
@@ -187,44 +190,11 @@ public class BusinessAnalyticsController {
      */
     @GetMapping("/data-bounds")
     public Map<String, Object> getDataBounds() {
-        Long tenantId = tenantService.getCurrentTenantId();
-        Map<String, Object> response = new java.util.HashMap<>();
-        try {
-            // P2-6 FIX: previously only queried sum_daily_insight. If
-            // populateSummaryStep failed mid-run (e.g. the deadlock storm
-            // we've seen), sum_daily_insight may be sparse while
-            // fact_transaction has the real data. Use the most
-            // authoritative source (fact_transaction) and fall back to
-            // the summary tables only if fact is empty.
-            String factSql = "SELECT MIN(payment_date)::date AS earliest, MAX(payment_date)::date AS latest " +
-                             "FROM fact_transaction" +
-                             (tenantId != null ? " WHERE tenant_id = :tid" : "");
-            jakarta.persistence.Query qFact = entityManager.createNativeQuery(factSql);
-            if (tenantId != null) qFact.setParameter("tid", tenantId);
-            Object[] factRow = (Object[]) qFact.getSingleResult();
-            String earliest = factRow != null && factRow[0] != null ? factRow[0].toString() : null;
-            String latest   = factRow != null && factRow[1] != null ? factRow[1].toString() : null;
-
-            // Fallback: if fact_transaction is empty, try sum_daily_insight.
-            if (earliest == null && latest == null) {
-                String insSql = "SELECT MIN(business_date) AS earliest, MAX(business_date) AS latest " +
-                                "FROM sum_daily_insight" +
-                                (tenantId != null ? " WHERE tenant_id = :tid" : "");
-                jakarta.persistence.Query qIns = entityManager.createNativeQuery(insSql);
-                if (tenantId != null) qIns.setParameter("tid", tenantId);
-                Object[] insRow = (Object[]) qIns.getSingleResult();
-                earliest = insRow != null && insRow[0] != null ? insRow[0].toString() : null;
-                latest   = insRow != null && insRow[1] != null ? insRow[1].toString() : null;
-            }
-
-            response.put("earliest", earliest);
-            response.put("latest", latest);
-        } catch (Exception e) {
-            response.put("earliest", null);
-            response.put("latest", null);
-            response.put("error", e.getMessage());
-        }
-        return response;
+        // Delegated to DataBoundsService: same fact-first/insight-fallback
+        // logic (P2-6), now cached per tenant because this endpoint gates the
+        // first data fetch of most report pages. The cache is evicted when a
+        // batch ingest completes.
+        return dataBoundsService.getBounds(tenantService.getCurrentTenantId());
     }
 
     // @GetMapping("/daily-merchant-dashboard")

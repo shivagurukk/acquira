@@ -75,6 +75,11 @@ public class TransactionJobConfig {
     @org.springframework.beans.factory.annotation.Autowired
     private MdcStepListener mdcStepListener;
 
+    // Clears the Caffeine report caches when an ingest finishes, so dashboards
+    // pick up new data immediately instead of waiting out the cache TTL.
+    @org.springframework.beans.factory.annotation.Autowired
+    private CacheEvictionJobListener cacheEvictionJobListener;
+
     public TransactionJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate,
             MerchantMetricCalculator merchantMetricCalculator,
@@ -137,6 +142,7 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
         return new JobBuilder("transactionLoadJob", jobRepository)
+                .listener(cacheEvictionJobListener)
                 .start(ensurePartitionsStep).next(splitExcelStep).next(cleanTargetDayStep)
                 .next(masterIngestStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
@@ -165,6 +171,7 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
         return new JobBuilder("dbPullTransactionJob", jobRepository)
+                .listener(cacheEvictionJobListener)
                 .start(ensurePartitionsStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
                 .next(calculateBusinessMetricsStep).next(scoreMlStep).next(computeSegmentsStep)
@@ -937,9 +944,18 @@ public class TransactionJobConfig {
                 // scheme fee: refund => 0; else matched scheme rate * ABS(settlement); wildcard fallback guarantees a row
                 "    CASE WHEN rf.is_refund THEN 0 " +
                 "         ELSE (sfr.fee_pct * ABS(COALESCE(ft.store_base_currency_amount,0))) END AS computed_scheme, " +
-                // ecom flat fee: 0.18 on ECOM channel, else NULL (COALESCE'd to 0 in nets)
-                "    CASE WHEN ch.channel = 'ECOM' THEN 0.18 ELSE NULL END AS computed_ecom " +
+                // ecom flat fee (V2026_07_31_06): per-country config (ecom_flat_fee)
+                // resolved by home_country_code, NOT a hardcoded 0.18. On ECOM channel
+                // use the resolved fee (COALESCE to 0 when a country has no configured
+                // row, e.g. BH/OM/EG today); NULL off ECOM. AE keeps 0.18 via its seed.
+                "    CASE WHEN ch.channel = 'ECOM' THEN COALESCE(eff.fee_amount, 0) ELSE NULL END AS computed_ecom " +
                 "  FROM fact_transaction ft " +
+                // COUNTRY RESOLUTION (V2026_07_31_02, Phase 2 multi-region): a rate
+                // card is COUNTRY-LEVEL, not tenant-level. Resolve the transaction's
+                // country from its tenant's home_country_code; every rate LATERAL
+                // below then matches country_code = this value (default 'AE' if a
+                // tenant has no home country set, preserving legacy UAE behaviour).
+                "  LEFT JOIN tenant tn ON tn.tenant_id = ft.tenant_id " +
                 "  LEFT JOIN dim_store ds ON ds.store_id = ft.store_id AND ds.tenant_id = ft.tenant_id " +
                 "  LEFT JOIN dim_terminal dt ON dt.terminal_id = ft.terminal_id AND dt.tenant_id = ft.tenant_id " +
                 // SCHEME RESOLUTION FIX (2026-07-07): space-insensitive match so feed
@@ -958,11 +974,24 @@ public class TransactionJobConfig {
                 // derive channel ONCE, reused by both rate LATERALs and the ecom CASE
                 "  CROSS JOIN LATERAL (SELECT CASE WHEN UPPER(TRIM(COALESCE(dt.type,''))) " +
                 "         IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') THEN 'ECOM' ELSE 'POS' END AS channel) ch " +
-                // derive refund flag ONCE, reused by both computed_ic and computed_scheme
-                // (feed transaction_type carries exactly 'RFND' for refunds)
-                "  CROSS JOIN LATERAL (SELECT (UPPER(TRIM(COALESCE(ft.transaction_type,''))) = 'RFND') AS is_refund) rf " +
-                // derive mcc sector ONCE (was a correlated subquery inside the LATERAL)
-                "  LEFT JOIN mcc_sector_map msm ON msm.tenant_id = ft.tenant_id AND msm.mcc = ds.mcc " +
+                // derive refund flag ONCE, reused by both computed_ic and computed_scheme.
+                // MUST match the volume-signing set IN ('RFND','REFUND') used in
+                // stagingToFact (2026-07-18) — previously this checked only 'RFND', so a
+                // row typed 'REFUND' was signed as negative volume yet still charged
+                // interchange + scheme fee. Kept in sync here.
+                "  CROSS JOIN LATERAL (SELECT (UPPER(TRIM(COALESCE(ft.transaction_type,''))) IN ('RFND','REFUND')) AS is_refund) rf " +
+                // derive mcc sector ONCE (was a correlated subquery inside the LATERAL).
+                // COUNTRY-LEVEL (V2026_07_31_02): match the tenant's country card;
+                // tenant_id IS NULL is the country default, a non-null tenant_id is a
+                // per-tenant override which wins via the (tenant_id IS NOT NULL) DESC
+                // tiebreak. LATERAL+LIMIT 1 so an override never multiplies rows.
+                "  LEFT JOIN LATERAL ( " +
+                "    SELECT m.sector FROM mcc_sector_map m " +
+                "    WHERE m.country_code = COALESCE(tn.home_country_code,'AE') " +
+                "      AND (m.tenant_id IS NULL OR m.tenant_id = ft.tenant_id) " +
+                "      AND m.mcc = ds.mcc " +
+                "    ORDER BY (m.tenant_id IS NOT NULL) DESC LIMIT 1 " +
+                "  ) msm ON TRUE " +
                 // PERF (2026-07-14): lateral split into MCC-keyed + wildcard branches so
                 // the planner drives each via an index instead of scanning all ~365
                 // candidate rows per transaction (was 9.4M heap blocks / ~270s per window).
@@ -971,13 +1000,19 @@ public class TransactionJobConfig {
                 // Same candidate set, same priority pick - semantics unchanged.
                 "  LEFT JOIN LATERAL ( " +
                 "    SELECT ilr.interchange_pct, ilr.cap_amount FROM ( " +
+                // COUNTRY-LEVEL lookup (V2026_07_31_02): match country_code =
+                // tenant's home country (not tenant_id) so all tenants in a country
+                // share its card; tenant_id IS NULL = country default, non-null =
+                // per-tenant override (preferred in the ORDER BY below).
                 "      SELECT i.* FROM interchange_rate_local i " +
-                "      WHERE i.tenant_id = ft.tenant_id " +
+                "      WHERE i.country_code = COALESCE(tn.home_country_code,'AE') " +
+                "        AND (i.tenant_id IS NULL OR i.tenant_id = ft.tenant_id) " +
                 "        AND i.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
                 "        AND i.mcc = ds.mcc " +
                 "      UNION ALL " +
                 "      SELECT i.* FROM interchange_rate_local i " +
-                "      WHERE i.tenant_id = ft.tenant_id " +
+                "      WHERE i.country_code = COALESCE(tn.home_country_code,'AE') " +
+                "        AND (i.tenant_id IS NULL OR i.tenant_id = ft.tenant_id) " +
                 "        AND i.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
                 "        AND i.mcc IS NULL " +
                 "    ) ilr " +
@@ -1000,19 +1035,35 @@ public class TransactionJobConfig {
                 "      AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = msm.sector) " +
                 "      AND (ilr.min_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket_aed) " +
                 "      AND (ilr.max_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket_aed) " +
-                "    ORDER BY ilr.priority DESC, ilr.id ASC LIMIT 1 " +
+                // tenant override (tenant_id NOT NULL) wins over the country default,
+                // then highest priority, then lowest id. For AE (all rows tenant_id
+                // NULL after V2026_07_31_02) the first key is inert -> identical pick.
+                "    ORDER BY (ilr.tenant_id IS NOT NULL) DESC, ilr.priority DESC, ilr.id ASC LIMIT 1 " +
                 "  ) lr ON TRUE " +
                 // SCHEME FEE: match dest x channel; prefer scheme-specific row, then the
                 // scheme_group IS NULL wildcard (seeded 2026-07-07) so EVERY scheme -
                 // incl. Amex / MASTER CARD / unmapped - gets a rate instead of 0.
                 "  LEFT JOIN LATERAL ( " +
+                // COUNTRY-LEVEL (V2026_07_31_02): match the tenant's country card.
+                // Prefer a per-tenant override (tenant_id NOT NULL), then a
+                // scheme-specific row over the scheme_group IS NULL wildcard.
                 "    SELECT s.fee_pct FROM scheme_fee_rate s " +
-                "    WHERE s.tenant_id = ft.tenant_id " +
+                "    WHERE s.country_code = COALESCE(tn.home_country_code,'AE') " +
+                "      AND (s.tenant_id IS NULL OR s.tenant_id = ft.tenant_id) " +
                 "      AND s.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
                 "      AND s.channel = ch.channel " +
                 "      AND (s.scheme_group IS NULL OR s.scheme_group = COALESCE(rcs.group_name,'')) " +
-                "    ORDER BY (s.scheme_group IS NOT NULL) DESC LIMIT 1 " +
+                "    ORDER BY (s.tenant_id IS NOT NULL) DESC, (s.scheme_group IS NOT NULL) DESC LIMIT 1 " +
                 "  ) sfr ON TRUE " +
+                // ECOM FLAT FEE (V2026_07_31_06): resolve the per-country flat fee the
+                // same country-level way (tenant override preferred over country default).
+                // No row for a country => eff.fee_amount NULL => COALESCE'd to 0 above.
+                "  LEFT JOIN LATERAL ( " +
+                "    SELECT e.fee_amount FROM ecom_flat_fee e " +
+                "    WHERE e.country_code = COALESCE(tn.home_country_code,'AE') " +
+                "      AND (e.tenant_id IS NULL OR e.tenant_id = ft.tenant_id) " +
+                "    ORDER BY (e.tenant_id IS NOT NULL) DESC LIMIT 1 " +
+                "  ) eff ON TRUE " +
                 "  WHERE ft.tenant_id = ? AND " + dateRangeFt + " AND DATE(ft.payment_date) IN " + dateScope +
                 " ) r " +
                 "WHERE f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",

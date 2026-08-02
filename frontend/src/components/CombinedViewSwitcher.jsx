@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Menu, Transition } from '@headlessui/react';
-import { ChevronDownIcon, PlusIcon, TrashIcon } from '@heroicons/react/20/solid';
+import { ChevronDown as ChevronDownIcon, Plus as PlusIcon } from 'lucide-react';
 
 const CombinedViewSwitcher = ({ onContextChange }) => {
     const [tenants, setTenants] = useState([]);

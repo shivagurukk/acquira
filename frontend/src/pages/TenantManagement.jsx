@@ -1,207 +1,233 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, X, Building, Globe } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Plus, Edit2, Building, Globe, Building2 } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
-import './TenantManagement.css';
+import { showToast } from '../contexts/ToastContext';
+import {
+    Page, Card, Button, Badge, DataTable, Modal,
+    FormField, FormGrid, Input, Select,
+} from '../components/ui';
 
-const TenantManagement = () => {
+const emptyTenant = {
+    bankName: '',
+    bankShortCode: '',
+    country: '',
+    currencyName: '',
+    currencySymbol: '',
+    baseCurrency: '',
+};
+
+const TenantManagement = ({ embedded = false }) => {
     const { tenantVersion } = useAuth();
     const [tenants, setTenants] = useState([]);
     const [countries, setCountries] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [currentTenant, setCurrentTenant] = useState({
-        bankName: '',
-        bankShortCode: '',
-        country: '',
-        currencyName: '',
-        currencySymbol: '',
-        baseCurrency: ''
-    });
+    const [currentTenant, setCurrentTenant] = useState(emptyTenant);
 
-    useEffect(() => {
-        fetchTenants();
-        fetchCountries();
-    }, [tenantVersion]);
-
-    const fetchTenants = async () => {
+    const fetchTenants = useCallback(async () => {
         try {
             const res = await api.get('/banks');
-            setTenants(res.data);
+            setTenants(res.data || []);
         } catch (error) {
-            console.error("Failed to fetch tenants", error);
+            console.error('Failed to fetch tenants', error);
+            showToast('Could not load entities', 'error');
         }
-    };
+    }, []);
 
-    const fetchCountries = async () => {
+    const fetchCountries = useCallback(async () => {
         try {
             const res = await api.get('/admin/countries');
-            setCountries(res.data);
+            setCountries(res.data || []);
         } catch (error) {
-            console.error("Failed to fetch countries", error);
+            console.error('Failed to fetch countries', error);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        setLoading(true);
+        Promise.all([fetchTenants(), fetchCountries()]).finally(() => setLoading(false));
+    }, [tenantVersion, fetchTenants, fetchCountries]);
 
     const handleCountryChange = (e) => {
         const countryName = e.target.value;
-        const selectedCountry = countries.find(c => c.countryName === countryName);
-        if (selectedCountry) {
-            setCurrentTenant({
-                ...currentTenant,
+        const selected = countries.find(c => c.countryName === countryName);
+        setCurrentTenant(prev => selected
+            ? {
+                ...prev,
                 country: countryName,
-                baseCurrency: selectedCountry.currencyCode,
-                currencySymbol: selectedCountry.currencySymbol,
-                currencyName: selectedCountry.currencyName
-            });
-        } else {
-            setCurrentTenant({ ...currentTenant, country: countryName });
-        }
+                baseCurrency: selected.currencyCode,
+                currencySymbol: selected.currencySymbol,
+                currencyName: selected.currencyName,
+            }
+            : { ...prev, country: countryName });
     };
 
     const openModal = (tenant = null) => {
-        if (tenant) {
-            setCurrentTenant(tenant);
-        } else {
-            setCurrentTenant({ bankName: '', bankShortCode: '', country: '', currencyName: '', currencySymbol: '', baseCurrency: '' });
-        }
+        setCurrentTenant(tenant || emptyTenant);
         setIsModalOpen(true);
     };
 
     const handleSave = async (e) => {
         e.preventDefault();
+        setSaving(true);
         try {
             if (currentTenant.tenantId) {
                 await api.put(`/banks/${currentTenant.tenantId}`, currentTenant);
+                showToast(`${currentTenant.bankName} updated`, 'success');
             } else {
                 await api.post('/banks', currentTenant);
+                showToast(`${currentTenant.bankName} created`, 'success');
             }
             fetchTenants();
             setIsModalOpen(false);
         } catch (error) {
-            console.error("Failed to save tenant", error);
-            alert("Failed to save.");
+            console.error('Failed to save tenant', error);
+            showToast(error?.response?.data?.error || 'Could not save the entity', 'error');
+        } finally {
+            setSaving(false);
         }
     };
 
+    const columns = [
+        {
+            key: 'bankName',
+            header: 'Entity name',
+            sortable: true,
+            render: t => (
+                <span className="ui-row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                    <Building size={15} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600 }}>{t.bankName}</span>
+                </span>
+            ),
+        },
+        {
+            key: 'bankShortCode',
+            header: 'Short code',
+            sortable: true,
+            render: t => <Badge mono>{t.bankShortCode}</Badge>,
+        },
+        {
+            key: 'country',
+            header: 'Jurisdiction',
+            sortable: true,
+            render: t => (
+                <span className="ui-row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+                    <Globe size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                    {t.country || <span className="ui-td--muted">Global</span>}
+                </span>
+            ),
+        },
+        {
+            key: 'baseCurrency',
+            header: 'Currency',
+            sortable: true,
+            render: t => (
+                <>
+                    {t.baseCurrency}{' '}
+                    <span className="ui-td--muted">({t.currencySymbol})</span>
+                </>
+            ),
+        },
+        {
+            key: '_actions',
+            header: '',
+            align: 'right',
+            width: 60,
+            render: t => (
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={Edit2}
+                    onClick={() => openModal(t)}
+                    aria-label={`Edit ${t.bankName}`}
+                />
+            ),
+        },
+    ];
+
     return (
-        <div className="formal-page-container">
-            <div className="formal-header">
-                <div>
-                    <h1>Tenant Management</h1>
-                    <p>Manage Financial Institutions and Jurisdictions</p>
-                </div>
-                <button className="btn-primary" onClick={() => openModal()}>
-                    <Plus size={16} /> Add New Entity
-                </button>
-            </div>
+        <Page
+            flush={embedded}
+            title="Tenant management"
+            subtitle="Financial institutions and the jurisdictions they operate in."
+            icon={Building2}
+            actions={
+                <Button variant="primary" icon={Plus} onClick={() => openModal()}>
+                    Add entity
+                </Button>
+            }
+        >
+            <Card>
+                <DataTable
+                    columns={columns}
+                    rows={tenants}
+                    rowKey={t => t.tenantId}
+                    loading={loading}
+                    defaultSort={{ key: 'bankName', dir: 'asc' }}
+                    emptyVariant="data"
+                />
+            </Card>
 
-            <div className="table-container">
-                <table className="formal-table">
-                    <thead>
-                        <tr>
-                            <th>Entity Name</th>
-                            <th>Short Code</th>
-                            <th>Jurisdiction</th>
-                            <th>Currency</th>
-                            <th style={{ textAlign: 'right' }}>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {tenants.map((tenant) => (
-                            <tr key={tenant.tenantId}>
-                                <td>
-                                    <div className="cell-flex">
-                                        <Building size={16} className="text-gray" />
-                                        <span className="font-medium">{tenant.bankName}</span>
-                                    </div>
-                                </td>
-                                <td>
-                                    <span className="badge-gray">{tenant.bankShortCode}</span>
-                                </td>
-                                <td>
-                                    <div className="cell-flex">
-                                        <Globe size={14} className="text-gray" />
-                                        {tenant.country || 'Global'}
-                                    </div>
-                                </td>
-                                <td>
-                                    {tenant.baseCurrency} <span className="text-muted">({tenant.currencySymbol})</span>
-                                </td>
-                                <td style={{ textAlign: 'right' }}>
-                                    <button className="btn-icon" onClick={() => openModal(tenant)}>
-                                        <Edit2 size={16} />
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                        {tenants.length === 0 && (
-                            <tr>
-                                <td colSpan="5" className="text-center p-8 text-muted">No entities found.</td>
-                            </tr>
-                        )}
-                    </tbody>
-                </table>
-            </div>
+            <Modal
+                as="form"
+                onSubmit={handleSave}
+                open={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                title={currentTenant.tenantId ? 'Edit entity' : 'New entity'}
+                subtitle="Currency is derived from the selected jurisdiction."
+                footer={
+                    <>
+                        <Button type="button" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                        <Button type="submit" variant="primary" loading={saving}>Save entity</Button>
+                    </>
+                }
+            >
+                <div className="ui-stack ui-stack--sm">
+                    <FormField label="Entity name" required>
+                        <Input
+                            value={currentTenant.bankName}
+                            onChange={e => setCurrentTenant({ ...currentTenant, bankName: e.target.value })}
+                            placeholder="e.g. Acme Bank"
+                            required
+                        />
+                    </FormField>
 
-            {isModalOpen && (
-                <div className="modal-overlay">
-                    <div className="formal-modal">
-                        <div className="modal-header">
-                            <h2>{currentTenant.tenantId ? 'Edit Entity' : 'New Entity'}</h2>
-                            <button className="btn-close" onClick={() => setIsModalOpen(false)}>
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <form onSubmit={handleSave}>
-                            <div className="form-group">
-                                <label>Entity Name</label>
-                                <input
-                                    value={currentTenant.bankName}
-                                    onChange={e => setCurrentTenant({ ...currentTenant, bankName: e.target.value })}
-                                    placeholder="e.g. Acme Bank"
-                                    required
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label>Short Code</label>
-                                <input
-                                    value={currentTenant.bankShortCode}
-                                    onChange={e => setCurrentTenant({ ...currentTenant, bankShortCode: e.target.value })}
-                                    placeholder="e.g. AGB"
-                                    required
-                                />
-                                <small className="text-help">* Matches 'Entity Name' in uploaded files</small>
-                            </div>
-                            <div className="form-group">
-                                <label>Jurisdiction</label>
-                                <select
-                                    value={currentTenant.country}
-                                    onChange={handleCountryChange}
-                                >
-                                    <option value="">Select Territory</option>
-                                    {countries.map(c => (
-                                        <option key={c.countryCode} value={c.countryName}>{c.countryName}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="form-row">
-                                <div className="form-group">
-                                    <label>Currency</label>
-                                    <input value={currentTenant.baseCurrency} readOnly placeholder="USD" className="bg-gray" />
-                                </div>
-                                <div className="form-group">
-                                    <label>Symbol</label>
-                                    <input value={currentTenant.currencySymbol} readOnly placeholder="$" className="bg-gray" />
-                                </div>
-                            </div>
-                            <div className="modal-footer">
-                                <button type="button" className="btn-secondary" onClick={() => setIsModalOpen(false)}>Cancel</button>
-                                <button type="submit" className="btn-primary">Save Entity</button>
-                            </div>
-                        </form>
-                    </div>
+                    <FormField
+                        label="Short code"
+                        required
+                        hint="Must match the entity name used in uploaded files."
+                    >
+                        <Input
+                            value={currentTenant.bankShortCode}
+                            onChange={e => setCurrentTenant({ ...currentTenant, bankShortCode: e.target.value })}
+                            placeholder="e.g. AGB"
+                            required
+                        />
+                    </FormField>
+
+                    <FormField label="Jurisdiction">
+                        <Select
+                            value={currentTenant.country}
+                            onChange={handleCountryChange}
+                            placeholder="Select territory"
+                            options={countries.map(c => ({ value: c.countryName, label: c.countryName }))}
+                        />
+                    </FormField>
+
+                    <FormGrid cols={2}>
+                        <FormField label="Currency">
+                            <Input value={currentTenant.baseCurrency} readOnly placeholder="USD" />
+                        </FormField>
+                        <FormField label="Symbol">
+                            <Input value={currentTenant.currencySymbol} readOnly placeholder="$" />
+                        </FormField>
+                    </FormGrid>
                 </div>
-            )}
-        </div>
+            </Modal>
+        </Page>
     );
 };
 

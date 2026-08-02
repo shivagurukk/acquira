@@ -88,7 +88,25 @@ public class TenantConnectionDataSourceConfig {
     static final class TenantAwareDataSource extends DelegatingDataSource {
 
         private static final Logger log = LoggerFactory.getLogger(TenantAwareDataSource.class);
-        private static final String SET_TENANT_SQL = "SELECT set_config('app.current_tenant', ?, false)";
+
+        /**
+         * One round-trip sets both session GUCs: the tenant marker and a
+         * statement_timeout scoped to the caller's thread type.
+         *
+         * WHY the timeout lives here: hikari.connection-init-sql sets
+         * statement_timeout=0 for the batch/ingest path, but web requests share
+         * the same 30-connection pool — one runaway report query per connection
+         * and the whole app deadlocks with nothing to reap it. Stamping at
+         * checkout lets web threads get a finite ceiling while batch threads
+         * (no request context) keep 0. Like the tenant GUC, it is overwritten
+         * on EVERY checkout, so a value can never leak between borrowers.
+         */
+        private static final String SET_SESSION_SQL =
+                "SELECT set_config('app.current_tenant', ?, false), set_config('statement_timeout', ?, false)";
+
+        /** Override with -Dacquira.web.statement.timeout.ms=NNNN (0 disables). */
+        private static final String WEB_STATEMENT_TIMEOUT_MS =
+                System.getProperty("acquira.web.statement.timeout.ms", "30000");
 
         TenantAwareDataSource(DataSource target) {
             super(target);
@@ -96,12 +114,12 @@ public class TenantConnectionDataSourceConfig {
 
         @Override
         public Connection getConnection() throws SQLException {
-            return applyTenant(super.getConnection());
+            return applySessionState(super.getConnection());
         }
 
         @Override
         public Connection getConnection(String username, String password) throws SQLException {
-            return applyTenant(super.getConnection(username, password));
+            return applySessionState(super.getConnection(username, password));
         }
 
         /**
@@ -110,17 +128,25 @@ public class TenantConnectionDataSourceConfig {
          * context (startup, schema init, framework metadata writes, non-tenant
          * threads) — every subsequent checkout overwrites it, so it never leaks.
          *
+         * Additionally sets statement_timeout: finite on servlet-request threads
+         * (report/API reads must not pin a pooled connection indefinitely),
+         * '0' (unlimited) on batch/scheduler/startup threads, whose long-running
+         * ingest statements are legitimate.
+         *
          * Failure is non-fatal: we log and return the connection, since the
          * application-level {@code WHERE tenant_id = ?} clauses still enforce
          * isolation and RLS (when forced) fails closed rather than leaking.
          */
-        private Connection applyTenant(Connection conn) {
+        private Connection applySessionState(Connection conn) {
             Long tenantId = TenantContext.getCurrentTenant();
-            try (PreparedStatement ps = conn.prepareStatement(SET_TENANT_SQL)) {
+            boolean webThread = org.springframework.web.context.request.RequestContextHolder
+                    .getRequestAttributes() != null;
+            try (PreparedStatement ps = conn.prepareStatement(SET_SESSION_SQL)) {
                 ps.setString(1, tenantId != null ? String.valueOf(tenantId.longValue()) : "");
+                ps.setString(2, webThread ? WEB_STATEMENT_TIMEOUT_MS : "0");
                 ps.execute();
             } catch (SQLException e) {
-                log.warn("Could not set app.current_tenant on connection checkout: {}", e.getMessage());
+                log.warn("Could not set session state on connection checkout: {}", e.getMessage());
             }
             return conn;
         }

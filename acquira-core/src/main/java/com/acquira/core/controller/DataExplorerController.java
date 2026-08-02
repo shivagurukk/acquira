@@ -136,6 +136,12 @@ public class DataExplorerController {
     // ═══════════════════════════════════════════════════════════
 
     @GetMapping("/options")
+    // Cached per tenant: this endpoint runs ~16 DISTINCT scans (8 of them over
+    // sum_daily_explorer's full history) plus a MIN/MAX, on every Explorer
+    // open. Values change only on ingest; batch completion evicts the cache.
+    @org.springframework.cache.annotation.Cacheable(
+            cacheNames = com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+            key = "'explorerOptions:' + T(com.acquira.common.config.TenantContext).getCurrentTenant()")
     public ResponseEntity<Map<String, Object>> getFilterOptions() {
         Long tenantId = getTenantId();
         Map<String, Object> result = new HashMap<>();

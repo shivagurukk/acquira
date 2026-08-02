@@ -180,7 +180,13 @@ const CeoVolumeRevenue = ({
             const res = await api.get('/business/ceo-volume-revenue', { params: { ...base, page: 0, size: 500 } });
             let rows = res.data?.rows || [];
             const totalRows = num(res.data?.totalRows);
-            for (let p = 1; rows.length < Math.min(totalRows, 5000); p++) {
+            const exportTotals = res.data?.totals;
+            // FIX: previously capped at Math.min(totalRows, 5000), silently truncating
+            // the export for periods with >5000 MID x SID rows (sorted by volume desc,
+            // so it always dropped the long tail of smaller merchants first). That made
+            // the CSV's own column sum disagree with the server-computed KPI total shown
+            // on screen (which aggregates the FULL period, uncapped). Fetch every row now.
+            for (let p = 1; rows.length < totalRows; p++) {
                 const r2 = await api.get('/business/ceo-volume-revenue', { params: { ...base, page: p, size: 500 } });
                 const chunk = r2.data?.rows || [];
                 if (!chunk.length) break;
@@ -200,6 +206,21 @@ const CeoVolumeRevenue = ({
                 num(r.ecomFee).toFixed(2),
                 num(r.netRevenue).toFixed(2), num(r.marginPct).toFixed(2),
             ].join(',')));
+            // Always append the server's own period-total aggregate (unbounded, matches
+            // the on-screen KPI band) as a trailing TOTAL row -- so the file is
+            // self-verifying even if pagination is ever capped again, and so a plain
+            // SUM() of the Volume column by the row count above it can be sanity-checked
+            // against this line.
+            if (exportTotals) {
+                lines.push([
+                    esc('TOTAL'), ...(lossOnly ? [] : [esc('')]), esc(`${totalRows} rows (period total)`),
+                    num(exportTotals.txns),
+                    num(exportTotals.volume).toFixed(2), num(exportTotals.msf).toFixed(2),
+                    num(exportTotals.interchange).toFixed(2), num(exportTotals.schemeFee).toFixed(2),
+                    num(exportTotals.ecomFee).toFixed(2),
+                    num(exportTotals.netRevenue).toFixed(2), num(exportTotals.marginPct).toFixed(2),
+                ].join(','));
+            }
             const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);

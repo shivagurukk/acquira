@@ -1,18 +1,16 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-    Box, Typography, Paper, Grid, TextField, Button, Switch,
-    FormControlLabel, Divider, Alert, Snackbar, Slider, Chip,
-    Table, TableHead, TableRow, TableCell, TableBody,
-    IconButton, Tooltip, useTheme, Dialog, DialogTitle, DialogContent,
-    DialogActions
-} from '@mui/material';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Shield, Lock, Key, Clock, AlertTriangle, Save, RefreshCw,
     CheckCircle, Smartphone, Globe, Network, FileText, KeyRound,
-    Timer, Users, Ban
+    Timer, Users, Ban,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { showToast } from '../../contexts/ToastContext';
+import {
+    Page, Stack, Card, Button, Badge, DataTable,
+    FormField, FormGrid, Input, Textarea, Switch, useConfirm,
+} from '../../components/ui';
 
 const POLICY_DEFAULTS = {
     // password
@@ -35,19 +33,25 @@ const POLICY_DEFAULTS = {
 /* Which groups are actually enforced by the backend today vs. stored-only */
 const ENFORCED = new Set(['password', 'lockout', 'session']);
 
+const PENDING_HINT = 'Stored now. Takes effect once the backend enforcement hook is wired up.';
+
+/* Two-column card layout — collapses to one column on narrow panels. */
+const SECTION_GRID = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+    gap: 'var(--space-2xl)',
+    alignItems: 'start',
+};
+
 const SecuritySettings = () => {
     const { tenantVersion } = useAuth();
-    const theme = useTheme();
-    const isDark = theme.palette.mode === 'dark';
-    const primary = theme.palette.primary.main;
+    const confirm = useConfirm();
 
     const [policy, setPolicy] = useState(POLICY_DEFAULTS);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
     const [lockedUsers, setLockedUsers] = useState([]);
-    const [unlockDialog, setUnlockDialog] = useState(null);
-    const [revokeAllDialog, setRevokeAllDialog] = useState(false);
+    const [lockedLoading, setLockedLoading] = useState(true);
 
     const loadSettings = useCallback(async () => {
         setLoading(true);
@@ -75,10 +79,12 @@ const SecuritySettings = () => {
     }, []);
 
     const loadLockedUsers = useCallback(async () => {
+        setLockedLoading(true);
         try {
             const res = await api.get('/admin/security/locked-users');
             setLockedUsers(res.data || []);
         } catch { setLockedUsers([]); }
+        setLockedLoading(false);
     }, []);
 
     useEffect(() => { loadSettings(); loadLockedUsers(); }, [loadSettings, loadLockedUsers, tenantVersion]);
@@ -91,32 +97,44 @@ const SecuritySettings = () => {
                 settingValue: String(v)
             }));
             await Promise.all(entries.map(e => api.put('/admin/settings', e)));
-            setSnack({ open: true, msg: 'Security policy saved successfully', severity: 'success' });
+            showToast('Security policy saved successfully', 'success');
         } catch (err) {
-            setSnack({ open: true, msg: 'Failed to save: ' + (err.response?.data?.error || err.message), severity: 'error' });
+            showToast('Failed to save: ' + (err.response?.data?.error || err.message), 'error');
         }
         setSaving(false);
     };
 
-    const unlockUser = async (userId) => {
+    const unlockUser = async (user) => {
+        const ok = await confirm({
+            title: 'Unlock user account?',
+            message: `Unlock ${user.username}? This resets their failed login counter.`,
+            confirmLabel: 'Unlock',
+            tone: 'warning',
+        });
+        if (!ok) return;
         try {
-            await api.post(`/admin/security/unlock-user/${userId}`);
-            setSnack({ open: true, msg: 'User unlocked successfully', severity: 'success' });
-            setUnlockDialog(null);
+            await api.post(`/admin/security/unlock-user/${user.id}`);
+            showToast('User unlocked successfully', 'success');
             loadLockedUsers();
         } catch {
-            setSnack({ open: true, msg: 'Failed to unlock user', severity: 'error' });
+            showToast('Failed to unlock user', 'error');
         }
     };
 
     const revokeAllSessions = async () => {
+        const ok = await confirm({
+            title: 'Revoke all sessions?',
+            message: 'This signs out every user immediately, including you. Everyone will need to log in again.',
+            confirmLabel: 'Revoke all',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await api.post('/admin/security/revoke-all-sessions');
-            setSnack({ open: true, msg: 'All sessions revoked. Users must sign in again.', severity: 'success' });
+            showToast('All sessions revoked. Users must sign in again.', 'success');
         } catch {
-            setSnack({ open: true, msg: 'Revoke-all endpoint not available yet (needs backend hook).', severity: 'warning' });
+            showToast('Revoke-all endpoint not available yet (needs backend hook).', 'warning');
         }
-        setRevokeAllDialog(false);
     };
 
     const updatePolicy = (key, value) => setPolicy(p => ({ ...p, [key]: value }));
@@ -146,268 +164,312 @@ const SecuritySettings = () => {
         return Math.min(100, s);
     }, [policy]);
 
-    const grade = score >= 85 ? { label: 'A', text: 'Hardened', color: '#10B981' }
-        : score >= 70 ? { label: 'B', text: 'Strong', color: '#3B82F6' }
-        : score >= 55 ? { label: 'C', text: 'Adequate', color: '#F59E0B' }
-        : { label: 'D', text: 'Needs work', color: '#EF4444' };
+    const grade = score >= 85 ? { label: 'A', text: 'Hardened', color: 'var(--success)' }
+        : score >= 70 ? { label: 'B', text: 'Strong', color: 'var(--info)' }
+        : score >= 55 ? { label: 'C', text: 'Adequate', color: 'var(--warning)' }
+        : { label: 'D', text: 'Needs work', color: 'var(--danger)' };
 
-    const cardSx = {
-        p: 0, borderRadius: 3, overflow: 'hidden',
-        border: `1px solid ${isDark ? '#2a2a40' : '#E5E7EB'}`,
-        bgcolor: isDark ? '#1a1a2e' : '#fff',
-        transition: 'box-shadow .2s ease, transform .2s ease',
-        '&:hover': { boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.4)' : '0 8px 24px rgba(15,23,42,0.08)' },
-    };
+    /* Warning pill on the cards whose settings are stored but not yet enforced. */
+    const pendingBadge = (groupKey) => (ENFORCED.has(groupKey) ? null : (
+        <Badge tone="warning" title={PENDING_HINT}>Enforcement pending</Badge>
+    ));
 
-    // section header with accent strip + optional "enforcement pending" chip
-    const SectionHead = ({ icon: Icon, title, color, groupKey, subtitle }) => (
-        <Box sx={{ p: 2.5, pb: 1.5, position: 'relative' }}>
-            <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg, ${color}, ${color}55)` }} />
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Box sx={{ width: 38, height: 38, borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: color + '1f', color }}>
-                    <Icon size={19} />
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography variant="subtitle1" fontWeight={700}>{title}</Typography>
-                    {subtitle && <Typography variant="caption" color="text.secondary">{subtitle}</Typography>}
-                </Box>
-                {groupKey && !ENFORCED.has(groupKey) && (
-                    <Tooltip title="Stored now; takes effect once the backend enforcement hook is wired up.">
-                        <Chip size="small" label="Enforcement pending" sx={{ bgcolor: '#F59E0B22', color: '#B45309', fontWeight: 600, fontSize: 10 }} />
-                    </Tooltip>
-                )}
-            </Box>
-        </Box>
-    );
-
-    const numField = (label, key, help, min = 0, props = {}) => (
-        <TextField fullWidth type="number" size="small" label={label} helperText={help}
-            value={policy[key]} onChange={e => updatePolicy(key, Math.max(min, Number(e.target.value)))}
-            sx={{ mb: 2 }} {...props} />
+    const numField = (label, key, hint, min = 0, extra = {}) => (
+        <FormField key={key} label={label} hint={hint}>
+            <Input
+                type="number"
+                min={min}
+                value={policy[key]}
+                onChange={e => updatePolicy(key, Math.max(min, Number(e.target.value)))}
+                {...extra}
+            />
+        </FormField>
     );
 
     const toggle = (label, key) => (
-        <FormControlLabel control={<Switch checked={!!policy[key]} onChange={e => updatePolicy(key, e.target.checked)} />} label={label} />
+        <Switch
+            key={key}
+            checked={!!policy[key]}
+            onChange={e => updatePolicy(key, e.target.checked)}
+            label={label}
+        />
     );
 
-    if (loading) return <Box sx={{ p: 4, textAlign: 'center' }}><Typography>Loading security settings...</Typography></Box>;
+    const lockedColumns = [
+        { key: 'username', header: 'Username', sortable: true, render: u => <strong>{u.username}</strong> },
+        {
+            key: 'lockedUntil',
+            header: 'Locked until',
+            sortable: true,
+            nowrap: true,
+            render: u => (
+                <Badge tone="danger">
+                    {u.lockedUntil ? new Date(u.lockedUntil).toLocaleString() : 'Indefinite'}
+                </Badge>
+            ),
+        },
+        {
+            key: '_actions',
+            header: '',
+            align: 'right',
+            nowrap: true,
+            render: u => (
+                <Button size="sm" icon={CheckCircle} onClick={() => unlockUser(u)}>
+                    Unlock
+                </Button>
+            ),
+        },
+    ];
+
+    if (loading) {
+        return (
+            <Page title="Security settings" icon={Shield}>
+                <Card pad>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+                        Loading security settings…
+                    </p>
+                </Card>
+            </Page>
+        );
+    }
 
     return (
-        <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1280, mx: 'auto' }}>
-            {/* ═══ Hero: posture score + grade ═══ */}
-            <Paper sx={{
-                p: 3, mb: 3, borderRadius: 3, border: `1px solid ${isDark ? '#2a2a40' : '#E5E7EB'}`,
-                background: isDark
-                    ? `linear-gradient(135deg, #1a1a2e, #16213e)`
-                    : `linear-gradient(135deg, #ffffff, ${grade.color}0d)`,
-                display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap',
-            }}>
-                {/* score ring */}
-                <Box sx={{ position: 'relative', width: 96, height: 96, flexShrink: 0 }}>
-                    <svg width="96" height="96" viewBox="0 0 96 96">
-                        <circle cx="48" cy="48" r="42" fill="none" stroke={isDark ? '#2a2a40' : '#EEF2F7'} strokeWidth="8" />
-                        <circle cx="48" cy="48" r="42" fill="none" stroke={grade.color} strokeWidth="8" strokeLinecap="round"
-                            strokeDasharray={`${(score / 100) * 2 * Math.PI * 42} ${2 * Math.PI * 42}`}
-                            transform="rotate(-90 48 48)" style={{ transition: 'stroke-dasharray .8s ease' }} />
-                    </svg>
-                    <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                        <Typography variant="h4" fontWeight={800} sx={{ lineHeight: 1, color: grade.color }}>{grade.label}</Typography>
-                        <Typography variant="caption" color="text.secondary" fontWeight={600}>{score}/100</Typography>
-                    </Box>
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 200 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Shield size={24} color={primary} />
-                        <Typography variant="h5" fontWeight={700}>Security Settings</Typography>
-                    </Box>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                        Posture: <strong style={{ color: grade.color }}>{grade.text}</strong> — tune the policies below, then save.
-                    </Typography>
-                </Box>
-                <Box sx={{ display: 'flex', gap: 1.5 }}>
-                    <Button variant="outlined" startIcon={<RefreshCw size={16} />} onClick={() => setPolicy(POLICY_DEFAULTS)}>Reset</Button>
-                    <Button variant="contained" startIcon={<Save size={16} />} onClick={savePolicy} disabled={saving} sx={{ minWidth: 160 }}>
-                        {saving ? 'Saving...' : 'Save Policy'}
+        <Page
+            title="Security settings"
+            subtitle="Password, lockout, session, MFA and network policy for this tenant."
+            icon={Shield}
+            actions={
+                <>
+                    <Button icon={RefreshCw} onClick={() => setPolicy(POLICY_DEFAULTS)}>Reset</Button>
+                    <Button variant="primary" icon={Save} loading={saving} onClick={savePolicy}>
+                        Save policy
                     </Button>
-                </Box>
-            </Paper>
+                </>
+            }
+        >
+            <Stack gap="md">
+                {/* ── Posture score ─────────────────────────────────────────── */}
+                <Card pad>
+                    <div className="ui-row" style={{ gap: 'var(--space-2xl)' }}>
+                        <div style={{ position: 'relative', width: 96, height: 96, flexShrink: 0 }}>
+                            <svg width="96" height="96" viewBox="0 0 96 96">
+                                <circle cx="48" cy="48" r="42" fill="none" stroke="var(--border)" strokeWidth="8" />
+                                <circle
+                                    cx="48" cy="48" r="42" fill="none"
+                                    stroke={grade.color} strokeWidth="8" strokeLinecap="round"
+                                    strokeDasharray={`${(score / 100) * 2 * Math.PI * 42} ${2 * Math.PI * 42}`}
+                                    transform="rotate(-90 48 48)"
+                                    style={{ transition: 'stroke-dasharray .8s ease' }}
+                                />
+                            </svg>
+                            <div style={{
+                                position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                                alignItems: 'center', justifyContent: 'center',
+                            }}>
+                                <span style={{ fontSize: '1.7rem', fontWeight: 800, lineHeight: 1, color: grade.color }}>
+                                    {grade.label}
+                                </span>
+                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                    {score}/100
+                                </span>
+                            </div>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                            <h3 className="ui-card__title">Security posture: {grade.text}</h3>
+                            <p className="ui-card__subtitle">
+                                Scored from the policy below. Adjust the settings, then save to apply them.
+                            </p>
+                        </div>
+                    </div>
+                </Card>
 
-            <Grid container spacing={3}>
-                {/* Password Policy */}
-                <Grid item xs={12} md={6}>
-                    <Paper sx={cardSx}>
-                        <SectionHead icon={Key} title="Password Policy" color="#3B82F6" groupKey="password" subtitle="Composition & rotation rules" />
-                        <Box sx={{ p: 2.5, pt: 1 }}>
-                            <Typography variant="body2" color="text.secondary" gutterBottom>Minimum Length: <strong>{policy.minLength}</strong></Typography>
-                            <Slider value={policy.minLength} min={6} max={32} step={1}
-                                onChange={(_, v) => updatePolicy('minLength', v)}
-                                marks={[{ value: 8, label: '8' }, { value: 16, label: '16' }, { value: 32, label: '32' }]} sx={{ mt: 1, mb: 1 }} />
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                <div style={SECTION_GRID}>
+                    {/* ── Password policy ───────────────────────────────────── */}
+                    <Card
+                        pad
+                        title="Password policy"
+                        subtitle="Composition and rotation rules"
+                        actions={pendingBadge('password')}
+                    >
+                        <Stack gap="sm">
+                            <FormGrid cols={2}>
+                                {numField('Minimum length', 'minLength', 'Between 6 and 32 characters.', 6, { max: 32 })}
+                                {numField('Password history count', 'passwordHistoryCount', 'Block reuse of the last N passwords.')}
+                                {numField('Password expiry (days)', 'passwordExpiryDays', '0 means the password never expires.')}
+                                {numField('Minimum password age (hours)', 'minPasswordAgeHours', 'Stops rapid cycling to defeat history.')}
+                            </FormGrid>
+                            <Stack gap="sm">
                                 {toggle('Require uppercase (A-Z)', 'requireUppercase')}
                                 {toggle('Require lowercase (a-z)', 'requireLowercase')}
                                 {toggle('Require digit (0-9)', 'requireDigit')}
                                 {toggle('Require special character (!@#$%)', 'requireSpecialChar')}
-                                {toggle('Block common & breached passwords', 'blockBreachedPasswords')}
-                                {toggle('Block username / email inside password', 'blockUserInfoInPassword')}
-                            </Box>
-                            <Divider sx={{ my: 2 }} />
-                            {numField('Password History Count', 'passwordHistoryCount', 'Block reuse of last N passwords')}
-                            {numField('Password Expiry (days)', 'passwordExpiryDays', '0 = never expires')}
-                            {numField('Minimum Password Age (hours)', 'minPasswordAgeHours', 'Stops rapid cycling to defeat history')}
-                            {toggle('Force password change on first login', 'forceChangeOnFirstLogin')}
-                        </Box>
-                    </Paper>
-                </Grid>
+                                {toggle('Block common and breached passwords', 'blockBreachedPasswords')}
+                                {toggle('Block username or email inside password', 'blockUserInfoInPassword')}
+                                {toggle('Force password change on first login', 'forceChangeOnFirstLogin')}
+                            </Stack>
+                        </Stack>
+                    </Card>
 
-                {/* Account Lockout & Rate Limiting */}
-                <Grid item xs={12} md={6}>
-                    <Paper sx={cardSx}>
-                        <SectionHead icon={Lock} title="Lockout & Rate Limiting" color="#EF4444" groupKey="lockout" subtitle="Brute-force defenses" />
-                        <Box sx={{ p: 2.5, pt: 1 }}>
-                            {numField('Max Failed Attempts', 'maxFailedAttempts', 'Lock account after this many failures', 1)}
-                            {numField('Lockout Duration (minutes)', 'lockoutDurationMinutes', 'Auto-unlock after this many minutes', 1)}
-                            {numField('Rate Limit (requests / minute)', 'rateLimitPerMinute', 'Per (IP, username) login throttle', 1)}
-                            {numField('CAPTCHA After N Failures', 'captchaAfterFailures', '0 = disabled')}
-                            <Divider sx={{ my: 2 }} />
-                            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>Currently Locked Users ({lockedUsers.length})</Typography>
-                            {lockedUsers.length === 0 ? (
-                                <Alert severity="success" variant="outlined" sx={{ py: 0.5 }}>No locked accounts</Alert>
-                            ) : (
-                                <Box sx={{ maxHeight: 200, overflow: 'auto' }}>
-                                    <Table size="small">
-                                        <TableHead><TableRow><TableCell>Username</TableCell><TableCell>Locked Until</TableCell><TableCell align="right">Action</TableCell></TableRow></TableHead>
-                                        <TableBody>
-                                            {lockedUsers.map(u => (
-                                                <TableRow key={u.id}>
-                                                    <TableCell>{u.username}</TableCell>
-                                                    <TableCell><Chip size="small" label={u.lockedUntil ? new Date(u.lockedUntil).toLocaleString() : 'Indefinite'} color="error" variant="outlined" /></TableCell>
-                                                    <TableCell align="right">
-                                                        <Tooltip title="Unlock User">
-                                                            <IconButton size="small" onClick={() => setUnlockDialog(u)} sx={{ color: theme.palette.success.main }}>
-                                                                <CheckCircle size={16} />
-                                                            </IconButton>
-                                                        </Tooltip>
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))}
-                                        </TableBody>
-                                    </Table>
-                                </Box>
-                            )}
-                        </Box>
-                    </Paper>
-                </Grid>
+                    {/* ── Lockout and rate limiting ─────────────────────────── */}
+                    <Card
+                        pad
+                        title="Lockout and rate limiting"
+                        subtitle="Brute-force defences"
+                        actions={pendingBadge('lockout')}
+                    >
+                        <FormGrid cols={2}>
+                            {numField('Max failed attempts', 'maxFailedAttempts', 'Lock the account after this many failures.', 1)}
+                            {numField('Lockout duration (minutes)', 'lockoutDurationMinutes', 'Auto-unlock after this many minutes.', 1)}
+                            {numField('Rate limit (requests per minute)', 'rateLimitPerMinute', 'Per IP and username login throttle.', 1)}
+                            {numField('CAPTCHA after N failures', 'captchaAfterFailures', '0 disables the CAPTCHA challenge.')}
+                        </FormGrid>
+                    </Card>
 
-                {/* Sessions & Tokens */}
-                <Grid item xs={12} md={6}>
-                    <Paper sx={cardSx}>
-                        <SectionHead icon={Timer} title="Sessions & Tokens" color="#8B5CF6" groupKey="session" subtitle="JWT lifetimes & concurrency" />
-                        <Box sx={{ p: 2.5, pt: 1 }}>
-                            {numField('Session Idle Timeout (minutes)', 'sessionTimeoutMinutes', 'Auto-logout after inactivity', 5)}
-                            {numField('Access Token TTL (minutes)', 'accessTokenMinutes', 'Short-lived bearer token lifetime', 1)}
-                            {numField('Refresh Token TTL (days)', 'refreshTokenDays', 'Rotation window for refresh tokens', 1)}
-                            {numField('Max Concurrent Sessions / user', 'maxConcurrentSessions', '0 = unlimited')}
-                            <Divider sx={{ my: 2 }} />
-                            <Button fullWidth variant="outlined" color="error" startIcon={<Users size={16} />} onClick={() => setRevokeAllDialog(true)}>
+                    {/* ── Sessions and tokens ───────────────────────────────── */}
+                    <Card
+                        pad
+                        title="Sessions and tokens"
+                        subtitle="JWT lifetimes and concurrency"
+                        actions={pendingBadge('session')}
+                    >
+                        <Stack gap="sm">
+                            <FormGrid cols={2}>
+                                {numField('Session idle timeout (minutes)', 'sessionTimeoutMinutes', 'Auto-logout after inactivity.', 5)}
+                                {numField('Access token TTL (minutes)', 'accessTokenMinutes', 'Short-lived bearer token lifetime.', 1)}
+                                {numField('Refresh token TTL (days)', 'refreshTokenDays', 'Rotation window for refresh tokens.', 1)}
+                                {numField('Max concurrent sessions per user', 'maxConcurrentSessions', '0 means unlimited.')}
+                            </FormGrid>
+                            <Button variant="danger" icon={Users} block onClick={revokeAllSessions}>
                                 Revoke all active sessions
                             </Button>
-                        </Box>
-                    </Paper>
-                </Grid>
+                        </Stack>
+                    </Card>
 
-                {/* Multi-Factor Authentication */}
-                <Grid item xs={12} md={6}>
-                    <Paper sx={cardSx}>
-                        <SectionHead icon={Smartphone} title="Multi-Factor Authentication" color="#10B981" groupKey="mfa" subtitle="TOTP / authenticator app" />
-                        <Box sx={{ p: 2.5, pt: 1 }}>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, mb: 1 }}>
+                    {/* ── Multi-factor authentication ───────────────────────── */}
+                    <Card
+                        pad
+                        title="Multi-factor authentication"
+                        subtitle="TOTP and authenticator apps"
+                        actions={pendingBadge('mfa')}
+                    >
+                        <Stack gap="sm">
+                            <Stack gap="sm">
                                 {toggle('Require MFA for admins', 'requireMfaForAdmins')}
                                 {toggle('Require MFA for all users', 'requireMfaForAll')}
-                            </Box>
-                            <Divider sx={{ my: 2 }} />
-                            {numField('Enrollment Grace Period (days)', 'mfaGraceDays', 'Days a new user can sign in before MFA is mandatory')}
-                            {numField('Trusted Device Duration (days)', 'trustedDeviceDays', 'Skip MFA on a remembered device for N days')}
-                        </Box>
-                    </Paper>
-                </Grid>
+                            </Stack>
+                            <FormGrid cols={2}>
+                                {numField('Enrollment grace period (days)', 'mfaGraceDays', 'Days a new user can sign in before MFA is mandatory.')}
+                                {numField('Trusted device duration (days)', 'trustedDeviceDays', 'Skip MFA on a remembered device for N days.')}
+                            </FormGrid>
+                        </Stack>
+                    </Card>
 
-                {/* Network & Access */}
-                <Grid item xs={12} md={6}>
-                    <Paper sx={cardSx}>
-                        <SectionHead icon={Network} title="Network & Access" color="#06B6D4" groupKey="network" subtitle="Where & when logins are allowed" />
-                        <Box sx={{ p: 2.5, pt: 1 }}>
+                    {/* ── Network and access ────────────────────────────────── */}
+                    <Card
+                        pad
+                        title="Network and access"
+                        subtitle="Where and when logins are allowed"
+                        actions={pendingBadge('network')}
+                    >
+                        <Stack gap="sm">
                             {toggle('Enable IP allowlist', 'ipAllowlistEnabled')}
-                            <TextField fullWidth multiline minRows={2} size="small" label="Allowed IPs / CIDR ranges"
-                                placeholder="203.0.113.0/24, 198.51.100.42"
-                                helperText="Comma or newline separated. Empty = all IPs (when allowlist disabled)."
-                                value={policy.ipAllowlist} onChange={e => updatePolicy('ipAllowlist', e.target.value)}
-                                disabled={!policy.ipAllowlistEnabled} sx={{ my: 2 }} />
-                            <Divider sx={{ my: 1 }} />
+                            <FormField
+                                label="Allowed IPs and CIDR ranges"
+                                hint="Comma or newline separated. Empty means all IPs when the allowlist is disabled."
+                            >
+                                <Textarea
+                                    rows={2}
+                                    placeholder="203.0.113.0/24, 198.51.100.42"
+                                    value={policy.ipAllowlist}
+                                    onChange={e => updatePolicy('ipAllowlist', e.target.value)}
+                                    disabled={!policy.ipAllowlistEnabled}
+                                />
+                            </FormField>
                             {toggle('Restrict logins to business hours', 'loginBusinessHoursOnly')}
-                        </Box>
-                    </Paper>
-                </Grid>
+                        </Stack>
+                    </Card>
 
-                {/* API Keys & Audit */}
-                <Grid item xs={12} md={6}>
-                    <Paper sx={cardSx}>
-                        <SectionHead icon={KeyRound} title="API Keys & Audit" color="#F59E0B" groupKey="api" subtitle="External access & retention" />
-                        <Box sx={{ p: 2.5, pt: 1 }}>
-                            {numField('API Key Expiry (days)', 'apiKeyExpiryDays', '0 = keys never expire (not recommended)')}
-                            {numField('Audit Log Retention (days)', 'auditRetentionDays', 'Older audit entries are purged', 1)}
-                            <Divider sx={{ my: 2 }} />
+                    {/* ── API keys and audit ────────────────────────────────── */}
+                    <Card
+                        pad
+                        title="API keys and audit"
+                        subtitle="External access and retention"
+                        actions={pendingBadge('api')}
+                    >
+                        <Stack gap="sm">
+                            <FormGrid cols={2}>
+                                {numField('API key expiry (days)', 'apiKeyExpiryDays', '0 means keys never expire, which is not recommended.')}
+                                {numField('Audit log retention (days)', 'auditRetentionDays', 'Older audit entries are purged.', 1)}
+                            </FormGrid>
                             {toggle('Mask PII (card numbers, emails) in the UI', 'maskPiiInUi')}
-                        </Box>
-                    </Paper>
-                </Grid>
+                        </Stack>
+                    </Card>
+                </div>
 
-                {/* Live Preview */}
-                <Grid item xs={12}>
-                    <Paper sx={{ ...cardSx, bgcolor: isDark ? '#16162a' : '#F9FAFB' }}>
-                        <SectionHead icon={FileText} title="Active Policy Preview" color="#64748B" subtitle="What end-users will experience" />
-                        <Box sx={{ p: 2.5, pt: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                            <Chip icon={<CheckCircle size={14} />} label={`Min ${policy.minLength} chars`} color="primary" variant="outlined" size="small" />
-                            {policy.requireUppercase && <Chip icon={<CheckCircle size={14} />} label="Uppercase" color="primary" variant="outlined" size="small" />}
-                            {policy.requireLowercase && <Chip icon={<CheckCircle size={14} />} label="Lowercase" color="primary" variant="outlined" size="small" />}
-                            {policy.requireDigit && <Chip icon={<CheckCircle size={14} />} label="Digit" color="primary" variant="outlined" size="small" />}
-                            {policy.requireSpecialChar && <Chip icon={<CheckCircle size={14} />} label="Special char" color="primary" variant="outlined" size="small" />}
-                            {policy.blockBreachedPasswords && <Chip icon={<Ban size={14} />} label="No breached passwords" color="success" variant="outlined" size="small" />}
-                            {policy.passwordHistoryCount > 0 && <Chip icon={<AlertTriangle size={14} />} label={`No reuse of last ${policy.passwordHistoryCount}`} color="warning" variant="outlined" size="small" />}
-                            {policy.passwordExpiryDays > 0 && <Chip icon={<Clock size={14} />} label={`Expires every ${policy.passwordExpiryDays}d`} color="warning" variant="outlined" size="small" />}
-                            <Chip icon={<Lock size={14} />} label={`Lock after ${policy.maxFailedAttempts} fails / ${policy.lockoutDurationMinutes}min`} color="error" variant="outlined" size="small" />
-                            <Chip icon={<Timer size={14} />} label={`Idle ${policy.sessionTimeoutMinutes}min · token ${policy.accessTokenMinutes}min`} color="secondary" variant="outlined" size="small" />
-                            {(policy.requireMfaForAll || policy.requireMfaForAdmins) && <Chip icon={<Smartphone size={14} />} label={policy.requireMfaForAll ? 'MFA: all users' : 'MFA: admins'} color="success" variant="outlined" size="small" />}
-                            {policy.ipAllowlistEnabled && <Chip icon={<Globe size={14} />} label="IP allowlist on" color="info" variant="outlined" size="small" />}
-                            {policy.maskPiiInUi && <Chip icon={<Shield size={14} />} label="PII masked" color="default" variant="outlined" size="small" />}
-                        </Box>
-                    </Paper>
-                </Grid>
-            </Grid>
+                {/* ── Locked accounts ───────────────────────────────────────── */}
+                <Card
+                    title="Locked accounts"
+                    subtitle={`${lockedUsers.length} account(s) currently locked out`}
+                    actions={<Button size="sm" icon={RefreshCw} onClick={loadLockedUsers}>Refresh</Button>}
+                >
+                    <DataTable
+                        columns={lockedColumns}
+                        rows={lockedUsers}
+                        rowKey={u => u.id}
+                        loading={lockedLoading}
+                        defaultSort={{ key: 'username', dir: 'asc' }}
+                        empty={
+                            <div style={{ padding: 'var(--space-3xl)', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                No locked accounts.
+                            </div>
+                        }
+                    />
+                </Card>
 
-            {/* Unlock dialog */}
-            <Dialog open={!!unlockDialog} onClose={() => setUnlockDialog(null)}>
-                <DialogTitle>Unlock User Account</DialogTitle>
-                <DialogContent><Typography>Unlock <strong>{unlockDialog?.username}</strong>? This resets their failed login counter.</Typography></DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setUnlockDialog(null)}>Cancel</Button>
-                    <Button variant="contained" color="success" onClick={() => unlockUser(unlockDialog?.id)}>Unlock</Button>
-                </DialogActions>
-            </Dialog>
-
-            {/* Revoke-all dialog */}
-            <Dialog open={revokeAllDialog} onClose={() => setRevokeAllDialog(false)}>
-                <DialogTitle>Revoke All Sessions</DialogTitle>
-                <DialogContent><Typography>This signs out <strong>every user</strong> immediately, including you. They'll need to log in again. Continue?</Typography></DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setRevokeAllDialog(false)}>Cancel</Button>
-                    <Button variant="contained" color="error" onClick={revokeAllSessions}>Revoke All</Button>
-                </DialogActions>
-            </Dialog>
-
-            <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack(s => ({ ...s, open: false }))}>
-                <Alert severity={snack.severity} variant="filled">{snack.msg}</Alert>
-            </Snackbar>
-        </Box>
+                {/* ── Active policy preview ─────────────────────────────────── */}
+                <Card pad title="Active policy preview" subtitle="What end-users will experience">
+                    <div className="ui-row">
+                        <Badge tone="brand" icon={CheckCircle}>Min {policy.minLength} chars</Badge>
+                        {policy.requireUppercase && <Badge tone="brand" icon={CheckCircle}>Uppercase</Badge>}
+                        {policy.requireLowercase && <Badge tone="brand" icon={CheckCircle}>Lowercase</Badge>}
+                        {policy.requireDigit && <Badge tone="brand" icon={CheckCircle}>Digit</Badge>}
+                        {policy.requireSpecialChar && <Badge tone="brand" icon={CheckCircle}>Special char</Badge>}
+                        {policy.blockBreachedPasswords && <Badge tone="success" icon={Ban}>No breached passwords</Badge>}
+                        {policy.passwordHistoryCount > 0 && (
+                            <Badge tone="warning" icon={AlertTriangle}>
+                                No reuse of last {policy.passwordHistoryCount}
+                            </Badge>
+                        )}
+                        {policy.passwordExpiryDays > 0 && (
+                            <Badge tone="warning" icon={Clock}>Expires every {policy.passwordExpiryDays}d</Badge>
+                        )}
+                        <Badge tone="danger" icon={Lock}>
+                            Lock after {policy.maxFailedAttempts} fails / {policy.lockoutDurationMinutes}min
+                        </Badge>
+                        <Badge tone="info" icon={Timer}>
+                            Idle {policy.sessionTimeoutMinutes}min · token {policy.accessTokenMinutes}min
+                        </Badge>
+                        {(policy.requireMfaForAll || policy.requireMfaForAdmins) && (
+                            <Badge tone="success" icon={Smartphone}>
+                                {policy.requireMfaForAll ? 'MFA: all users' : 'MFA: admins'}
+                            </Badge>
+                        )}
+                        {policy.ipAllowlistEnabled && <Badge tone="info" icon={Globe}>IP allowlist on</Badge>}
+                        {policy.maskPiiInUi && <Badge icon={Shield}>PII masked</Badge>}
+                        {policy.apiKeyExpiryDays > 0 && (
+                            <Badge tone="warning" icon={KeyRound}>API keys expire in {policy.apiKeyExpiryDays}d</Badge>
+                        )}
+                        {policy.loginBusinessHoursOnly && (
+                            <Badge tone="info" icon={Network}>Business hours only</Badge>
+                        )}
+                        {policy.captchaAfterFailures > 0 && (
+                            <Badge tone="warning" icon={Key}>CAPTCHA after {policy.captchaAfterFailures}</Badge>
+                        )}
+                        <Badge icon={FileText}>Audit kept {policy.auditRetentionDays}d</Badge>
+                    </div>
+                </Card>
+            </Stack>
+        </Page>
     );
 };
 
