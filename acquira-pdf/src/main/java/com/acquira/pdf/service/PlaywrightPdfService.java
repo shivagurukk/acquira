@@ -59,6 +59,16 @@ public class PlaywrightPdfService {
     @Value("${pdf.batch.data.threads:8}")
     private int dataFetchThreads;
 
+    /**
+     * Max merchants allowed in the pipeline (data-fetched / HTML-rendered /
+     * awaiting a browser slot) at once. Without this cap the submission loop
+     * enqueues the ENTIRE batch up front: the data threads out-produce the
+     * 2-slot browser pool, so on a 10k+ merchant run thousands of DTOs and
+     * ~640KB HTML strings pile up in the executor queues and OOM the heap.
+     */
+    @Value("${pdf.batch.max.inflight:16}")
+    private int maxInFlight;
+
     private int POOL_SIZE;
     private BlockingQueue<BrowserSlot> browserPool;
 
@@ -733,8 +743,17 @@ public class PlaywrightPdfService {
                 status.phase = "GENERATING";
                 List<CompletableFuture<Void>> allFutures = new ArrayList<>(total);
 
+                // Backpressure: bound how many merchants are in the pipeline at
+                // once so memory stays flat no matter how large the batch is.
+                Semaphore inFlight = new Semaphore(Math.max(maxInFlight, POOL_SIZE * 2));
+
                 for (int i = 0; i < total; i++) {
                     if (status.cancelled) break;
+                    boolean acquired = false;
+                    while (!acquired && !status.cancelled) {
+                        acquired = inFlight.tryAcquire(1, TimeUnit.SECONDS);
+                    }
+                    if (!acquired) break; // cancelled while waiting for a permit
                     final long merchantId = merchantIdList.get(i)[0];
                     final long[] idContext = merchantIdList.get(i);
                     final String merchantName = merchantNames.get(i);
@@ -810,7 +829,9 @@ public class PlaywrightPdfService {
                             }
                         }, writePool);
 
-                    allFutures.add(future);
+                    // Release the permit on every completion path (success,
+                    // per-stage failure, cancellation short-circuit).
+                    allFutures.add(future.whenComplete((r, ex) -> inFlight.release()));
                 }
 
                 CompletableFuture.allOf(allFutures.toArray(new CompletableFuture[0])).join();

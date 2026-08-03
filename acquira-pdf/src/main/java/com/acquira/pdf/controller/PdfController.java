@@ -28,6 +28,7 @@ import java.nio.file.Paths;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -59,6 +60,17 @@ public class PdfController {
 
     @org.springframework.beans.factory.annotation.Value("${pdf.reports.dir:reports}")
     private String reportsBaseDir;
+
+    /**
+     * Merchants per bulk-insight pre-fetch chunk. One getBulkInsights call for an
+     * entire 10k+ merchant batch materializes millions of summary-table rows
+     * (sum_monthly_card alone can exceed 80k rows for ONE large merchant) and
+     * OOMs the heap — chunks are loaded lazily as the render pipeline consumes
+     * them and freed as soon as their last merchant is handed off. 100 matches
+     * the proven CHUNK_SIZE of the scheduled MerchantReportJobConfig path.
+     */
+    @org.springframework.beans.factory.annotation.Value("${pdf.batch.prefetch.chunk.size:100}")
+    private int prefetchChunkSize;
 
     private Path reportsRoot;
 
@@ -313,19 +325,12 @@ public class PdfController {
                 }
             }
 
-            log.info("[BATCH] Starting bulk pre-fetch for {} merchants (month:{} email:{} s3:{} selective:{})",
-                merchants.size(), targetMonth, sendEmail, s3Requested, selective);
-
             List<Long> midList = merchants.stream().map(Merchant::getMerchantId).collect(Collectors.toList());
-            Map<Long, MerchantInsightsDTO> bulkData;
-            try {
-                if (currentTenant != null) TenantContext.setCurrentTenant(currentTenant);
-                bulkData = merchantInsightService.getBulkInsights(
-                    midList, targetMonth.getYear(), targetMonth.getMonthValue());
-            } finally {
-                TenantContext.clear();
-            }
-            log.info("[BATCH] Bulk pre-fetch complete: {} DTOs ready", bulkData.size());
+            int chunkSize = Math.max(1, prefetchChunkSize);
+            ChunkedInsightPrefetcher prefetcher = new ChunkedInsightPrefetcher(
+                    midList, currentTenant, targetMonth.getYear(), targetMonth.getMonthValue(), chunkSize);
+            log.info("[BATCH] Chunked pre-fetch ready — {} merchants in {} chunks of <= {} (month:{} email:{} s3:{} selective:{})",
+                midList.size(), prefetcher.chunkCount(), chunkSize, targetMonth, sendEmail, s3Requested, selective);
 
             final Long capturedTenant    = currentTenant;
             final String capturedBankCode = bankShortCode;
@@ -335,7 +340,13 @@ public class PdfController {
             BatchJobStatus status = playwrightPdfService.generateBatch(
                     batchMerchantIds, merchantNames,
                     (mid, ctx) -> {
-                        MerchantInsightsDTO dto = bulkData.get(mid);
+                        MerchantInsightsDTO dto = null;
+                        try {
+                            dto = prefetcher.fetch(mid);
+                        } catch (Exception e) {
+                            log.warn("[BATCH] Chunk pre-fetch failed for merchant {} — falling back to single fetch: {}",
+                                    mid, e.getMessage());
+                        }
                         if (dto != null) return dto;
                         try {
                             if (capturedTenant != null) TenantContext.setCurrentTenant(capturedTenant);
@@ -502,7 +513,8 @@ public class PdfController {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("jobId",           status.jobId);
             response.put("totalMerchants",  merchants.size());
-            response.put("bulkPreFetched",  bulkData.size());
+            response.put("prefetchChunkSize", chunkSize);
+            response.put("prefetchChunks",  prefetcher.chunkCount());
             response.put("targetFolder",    folder.toString());
             response.put("targetMonth",     targetMonth.toString());
             response.put("sendEmail",       sendEmail);
@@ -536,6 +548,84 @@ public class PdfController {
         else if ( sendEmail && !sendS3) base = "EMAIL_ONLY";
         else                            base = "EMAIL_AND_S3";
         return selective ? base + "_SELECTIVE" : base;
+    }
+
+    /**
+     * Lazily pre-fetches merchant insight DTOs in fixed-size chunks instead of
+     * one getBulkInsights call for the whole batch (which OOMs on 10k+ merchant
+     * runs — see prefetchChunkSize).
+     *
+     * A chunk is loaded on the first request for any merchant in it; concurrent
+     * requests for the same chunk block on computeIfAbsent so the bulk query
+     * runs once. Each DTO is handed out exactly once (remove-on-read), and the
+     * chunk is dropped as soon as its last DTO is consumed — so combined with
+     * the render pipeline's in-flight cap, peak memory is ~1-2 chunks
+     * regardless of batch size. If a chunk load fails, callers fall back to the
+     * per-merchant fetch path in the batch data-fetcher.
+     */
+    private class ChunkedInsightPrefetcher {
+        private final List<List<Long>> chunks = new ArrayList<>();
+        private final Map<Long, Integer> chunkIndexByMerchant = new HashMap<>();
+        private final ConcurrentHashMap<Integer, ConcurrentHashMap<Long, MerchantInsightsDTO>> loadedChunks =
+                new ConcurrentHashMap<>();
+        // Fetch calls still owed per chunk; the chunk's data is dropped when this
+        // hits 0. Counting consumers (not map emptiness) means merchants that had
+        // no bulk DTO can't empty the map early and trigger a chunk reload.
+        private final ConcurrentHashMap<Integer, java.util.concurrent.atomic.AtomicInteger> remainingByChunk =
+                new ConcurrentHashMap<>();
+        private final Long tenantId;
+        private final int year;
+        private final int month;
+
+        ChunkedInsightPrefetcher(List<Long> merchantIds, Long tenantId, int year, int month, int chunkSize) {
+            this.tenantId = tenantId;
+            this.year = year;
+            this.month = month;
+            for (int i = 0; i < merchantIds.size(); i += chunkSize) {
+                List<Long> chunk = new ArrayList<>(
+                        merchantIds.subList(i, Math.min(i + chunkSize, merchantIds.size())));
+                int idx = chunks.size();
+                chunks.add(chunk);
+                remainingByChunk.put(idx, new java.util.concurrent.atomic.AtomicInteger(chunk.size()));
+                for (Long mid : chunk) chunkIndexByMerchant.put(mid, idx);
+            }
+        }
+
+        int chunkCount() { return chunks.size(); }
+
+        /**
+         * Returns this merchant's DTO, loading its chunk on first access, or null
+         * if the merchant is unknown or had no bulk data. Each batch merchant is
+         * fetched exactly once — the DTO is removed from the chunk on read.
+         */
+        MerchantInsightsDTO fetch(Long merchantId) {
+            Integer idx = chunkIndexByMerchant.get(merchantId);
+            if (idx == null) return null;
+            ConcurrentHashMap<Long, MerchantInsightsDTO> chunkData =
+                    loadedChunks.computeIfAbsent(idx, this::loadChunk);
+            MerchantInsightsDTO dto = chunkData.remove(merchantId);
+            java.util.concurrent.atomic.AtomicInteger remaining = remainingByChunk.get(idx);
+            if (remaining != null && remaining.decrementAndGet() <= 0) {
+                loadedChunks.remove(idx);
+                remainingByChunk.remove(idx);
+            }
+            return dto;
+        }
+
+        private ConcurrentHashMap<Long, MerchantInsightsDTO> loadChunk(int idx) {
+            List<Long> ids = chunks.get(idx);
+            long t0 = System.currentTimeMillis();
+            try {
+                if (tenantId != null) TenantContext.setCurrentTenant(tenantId);
+                ConcurrentHashMap<Long, MerchantInsightsDTO> data = new ConcurrentHashMap<>(
+                        merchantInsightService.getBulkInsights(ids, year, month));
+                log.info("[BATCH] Pre-fetched chunk {}/{} — {} merchants, {} DTOs in {}ms",
+                        idx + 1, chunks.size(), ids.size(), data.size(), System.currentTimeMillis() - t0);
+                return data;
+            } finally {
+                TenantContext.clear();
+            }
+        }
     }
 
     // ─── Email helper ──────────────────────────────────────────────────

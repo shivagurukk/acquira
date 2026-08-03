@@ -581,8 +581,17 @@ public class MerchantMasterJobConfig {
             // What IS updated (mutable descriptive fields): name, status, sales assignment,
             // risk level.
             // What is NEVER updated (immutable identifiers): mid, internal_id, tenant_id.
+            // FIX: mcc, contact_email, city and location were never written to
+            // dim_merchant — Business MCC only reached dim_store.mcc,
+            // PrimaryContactEmail only reached merchant_contact, and Address/City
+            // only reached dim_store. So Merchant.getMcc()/getContactEmail()/
+            // getCity()/getLocation() (used by PDF batch emailing, analytics
+            // explorer filters, etc.) stayed NULL forever. Map them here too.
+            // location ← Address (the file has no dedicated Location column).
+            // A merchant with several stores can carry several values in one file —
+            // MAX() picks one, the same convention the other multi-row fields use.
             String upsertMerchantSql = """
-                INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date, sales_user_id, sales_email, referral_partner, risk_level)
+                INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date, sales_user_id, sales_email, referral_partner, risk_level, mcc, contact_email, city, location)
                 SELECT
                     CAST(TID AS INTEGER),
                     COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)),
@@ -593,7 +602,11 @@ public class MerchantMasterJobConfig {
                     MAX(sales_user_id),
                     MAX(sales_user_email),
                     MAX(referral_partner),
-                    MAX(risk_level)
+                    MAX(risk_level),
+                    MAX(NULLIF(TRIM(business_mcc), '')),
+                    MAX(NULLIF(TRIM(primary_contact_email), '')),
+                    MAX(NULLIF(TRIM(city), '')),
+                    MAX(NULLIF(TRIM(address), ''))
                 FROM stg_merchant_master_raw
                 WHERE tenant_id = TID AND NULLIF(TRIM(mid), '') IS NOT NULL
                 GROUP BY tenant_id, COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), mid
@@ -604,7 +617,11 @@ public class MerchantMasterJobConfig {
                     sales_user_id = COALESCE(EXCLUDED.sales_user_id, dim_merchant.sales_user_id),
                     sales_email   = COALESCE(EXCLUDED.sales_email, dim_merchant.sales_email),
                     referral_partner = COALESCE(EXCLUDED.referral_partner, dim_merchant.referral_partner),
-                    risk_level    = COALESCE(EXCLUDED.risk_level, dim_merchant.risk_level)
+                    risk_level    = COALESCE(EXCLUDED.risk_level, dim_merchant.risk_level),
+                    mcc           = COALESCE(EXCLUDED.mcc, dim_merchant.mcc),
+                    contact_email = COALESCE(EXCLUDED.contact_email, dim_merchant.contact_email),
+                    city          = COALESCE(EXCLUDED.city, dim_merchant.city),
+                    location      = COALESCE(EXCLUDED.location, dim_merchant.location)
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertMerchantSql);
             log.info("Upserted Merchants for tenant {}", tId);

@@ -103,19 +103,22 @@ public class MerchantInsightService {
         List<Map<String, Object>> allTrends =
             sumDailyMerchantRepository.findMonthlyTrendsForMerchants(merchantIds, trendStart, endOfMonth);
 
-        // Q6: Card data for all merchants
+        // Q6: Card loyalty aggregates for all merchants. Aggregated in the DB
+        // (compact histograms per merchant) instead of loading one entity per
+        // card per month — a single large merchant can have 80k+ such rows,
+        // which is what OOM'd bulk PDF pre-fetch on 10k+ merchant batches.
         int startKey = Integer.parseInt(startOfMonth.format(DateTimeFormatter.ofPattern("yyyyMM")));
         int endKey = Integer.parseInt(endOfMonth.format(DateTimeFormatter.ofPattern("yyyyMM")));
         int trendStartKey = Integer.parseInt(trendStart.format(DateTimeFormatter.ofPattern("yyyyMM")));
-        List<com.acquira.common.model.SumMonthlyCard> allCards =
-            sumMonthlyCardRepository.findByMerchantsAndMonthRange(merchantIds, trendStartKey, endKey);
+        Map<Long, CardLoyaltyAggregates> cardAggById =
+            fetchCardAggregates(merchantIds, startKey, endKey, trendStartKey, endKey);
 
         long fetchMs = System.currentTimeMillis() - t0;
-        log.info("[BULK] Fetched data for {} merchants in {}ms (daily:{}/{}, attrs:{}/{}, trends:{}, cards:{})",
+        log.info("[BULK] Fetched data for {} merchants in {}ms (daily:{}/{}, attrs:{}/{}, trends:{}, cardAgg:{})",
             merchantIds.size(), fetchMs,
             allCurrentDaily.size(), allPrevDaily.size(),
             allCurrentAttrs.size(), allPrevAttrs.size(),
-            allTrends.size(), allCards.size());
+            allTrends.size(), cardAggById.size());
 
         // ===== PARTITION by merchantId in-memory =====
         Map<Long, List<com.acquira.common.model.SumDailyMerchant>> currentDailyMap =
@@ -131,8 +134,7 @@ public class MerchantInsightService {
             Long mid = ((Number) t.get("merchantId")).longValue();
             trendsMap.computeIfAbsent(mid, k -> new ArrayList<>()).add(t);
         }
-        Map<Long, List<com.acquira.common.model.SumMonthlyCard>> cardMap =
-            allCards.stream().collect(Collectors.groupingBy(com.acquira.common.model.SumMonthlyCard::getMerchantId));
+        // (card data is already partitioned per merchant by fetchCardAggregates)
 
         // ===== Bulk-resolve currency (1 merchant query + 1 tenant query) =====
         // Previously buildDtoFromPrefetched did merchantRepository.findById +
@@ -167,13 +169,7 @@ public class MerchantInsightService {
                     prevAttrMap.getOrDefault(mid, Collections.emptyList());
                 List<Map<String, Object>> trends =
                     trendsMap.getOrDefault(mid, Collections.emptyList());
-                List<com.acquira.common.model.SumMonthlyCard> cards =
-                    cardMap.getOrDefault(mid, Collections.emptyList());
-
-                // Filter card data for current month vs trend
-                List<com.acquira.common.model.SumMonthlyCard> currentCards = cards.stream()
-                    .filter(c -> c.getMonthKey() >= startKey && c.getMonthKey() <= endKey)
-                    .collect(Collectors.toList());
+                CardLoyaltyAggregates cardAgg = cardAggById.get(mid);
 
                 // Resolve this merchant's currency from the bulk-loaded maps (no DB here).
                 String ccyCode = "AED", ccySymbol = "AED";
@@ -189,7 +185,7 @@ public class MerchantInsightService {
                 // Build DTO using existing logic
                 MerchantInsightsDTO dto = buildDtoFromPrefetched(
                     mid, currentDaily, prevDaily, currentAttrs2, prevAttrs2,
-                    trends, currentCards, cards, startOfMonth, endOfMonth,
+                    trends, cardAgg, startOfMonth, endOfMonth,
                     ccyCode, ccySymbol);
                 result.put(mid, dto);
             } catch (Exception e) {
@@ -210,8 +206,7 @@ public class MerchantInsightService {
             List<com.acquira.common.model.SumDailyMerchantAttribute> currentAttributes,
             List<com.acquira.common.model.SumDailyMerchantAttribute> prevAttributes,
             List<Map<String, Object>> monthlyTrends,
-            List<com.acquira.common.model.SumMonthlyCard> cardRows,
-            List<com.acquira.common.model.SumMonthlyCard> trendCardRows,
+            CardLoyaltyAggregates cardAgg,
             LocalDate startOfMonth, LocalDate endOfMonth,
             String currencyCode, String currencySymbol) {
 
@@ -223,7 +218,7 @@ public class MerchantInsightService {
 
         dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
-        dto.setLoyalty(buildLoyalty(cardRows, trendCardRows, endOfMonth));
+        dto.setLoyalty(buildLoyalty(cardAgg, endOfMonth));
         dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends,
                 (currencyCode != null && !currencyCode.isBlank()) ? currencyCode : "AED"));
         dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
@@ -306,16 +301,14 @@ public class MerchantInsightService {
         List<java.util.Map<String, Object>> monthlyTrends = sumDailyMerchantRepository.findMonthlyTrends(merchantId,
                 trendStart, endOfMonth);
 
-        // Monthly card data for loyalty
+        // Monthly card loyalty aggregates (current month + 13-month trend),
+        // aggregated in the DB — see SumMonthlyCardRepository.aggregate* notes.
         int startKey = Integer.parseInt(startOfMonth.format(DateTimeFormatter.ofPattern("yyyyMM")));
         int endKey = Integer.parseInt(endOfMonth.format(DateTimeFormatter.ofPattern("yyyyMM")));
-        List<com.acquira.common.model.SumMonthlyCard> cardRows = sumMonthlyCardRepository
-                .findByMerchantAndMonthRange(merchantId, startKey, endKey);
-
-        // 12-month card data for loyalty trends
         int trendStartKey = Integer.parseInt(trendStart.format(DateTimeFormatter.ofPattern("yyyyMM")));
-        List<com.acquira.common.model.SumMonthlyCard> trendCardRows = sumMonthlyCardRepository
-                .findByMerchantAndMonthRange(merchantId, trendStartKey, endKey);
+        CardLoyaltyAggregates cardAgg = fetchCardAggregates(
+                Collections.singletonList(merchantId), startKey, endKey, trendStartKey, endKey)
+                .get(merchantId);
 
         // ========== COMPUTE AGGREGATES FROM DAILY ROWS (in-memory, ~30 rows)
         // ==========
@@ -330,7 +323,7 @@ public class MerchantInsightService {
 
         dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
-        dto.setLoyalty(buildLoyalty(cardRows, trendCardRows, endOfMonth));
+        dto.setLoyalty(buildLoyalty(cardAgg, endOfMonth));
 
         // Resolve currency BEFORE buildDemographics so the tenant currency can be
         // used to filter the domestic currency code out of topCountries.
@@ -1321,29 +1314,66 @@ public class MerchantInsightService {
     // LOYALTY
     // ============================================================
 
-    private ConsumerLoyalty buildLoyalty(List<com.acquira.common.model.SumMonthlyCard> cardRows,
-            List<com.acquira.common.model.SumMonthlyCard> trendCardRows, LocalDate endOfMonth) {
-        Map<String, Long> cardVisits = new HashMap<>();
-        Map<String, BigDecimal> cardSpend = new HashMap<>();
-        for (com.acquira.common.model.SumMonthlyCard r : cardRows) {
-            cardVisits.put(r.getCardNumber(), cardVisits.getOrDefault(r.getCardNumber(), 0L) + r.getVisitCount());
-            cardSpend.put(r.getCardNumber(), cardSpend.getOrDefault(r.getCardNumber(), BigDecimal.ZERO).add(r.getTotalSpend()));
-        }
+    /**
+     * Compact per-merchant card aggregates for the loyalty section. Built from
+     * the DB-side histogram queries in SumMonthlyCardRepository — the loyalty
+     * section never needs individual card rows, only these distributions.
+     */
+    static class CardLoyaltyAggregates {
+        /** current month: exact visit count → number of distinct cards */
+        final Map<Long, Long> visitHistogram = new HashMap<>();
+        /** current month: spend band label → number of distinct cards */
+        final Map<String, Long> spendBandCounts = new HashMap<>();
+        /** trend window: monthKey → {cards with 1 visit, 2-4 visits, 5+ visits} */
+        final Map<Integer, long[]> monthlyFreq = new HashMap<>();
+    }
 
-        Map<String, Long> freqBuckets = new HashMap<>();
-        for (Long visits : cardVisits.values()) {
-            String label = visits + " Visits";
-            freqBuckets.put(label, freqBuckets.getOrDefault(label, 0L) + 1);
+    /**
+     * Runs the three loyalty aggregate queries and partitions the rows by
+     * merchant. Row volume is ~tens per merchant (vs one row per card per month
+     * for the old entity fetch, 80k+ for a single large merchant).
+     */
+    private Map<Long, CardLoyaltyAggregates> fetchCardAggregates(
+            List<Long> merchantIds, int currentStartKey, int currentEndKey,
+            int trendStartKey, int trendEndKey) {
+        Map<Long, CardLoyaltyAggregates> result = new HashMap<>();
+        for (Object[] row : sumMonthlyCardRepository.aggregateVisitHistogram(
+                merchantIds, currentStartKey, currentEndKey)) {
+            result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
+                .visitHistogram.put(((Number) row[1]).longValue(), ((Number) row[2]).longValue());
         }
-        List<ChartData> freqData = freqBuckets.entrySet().stream()
-                .sorted(Comparator.comparingInt(e -> Integer.parseInt(e.getKey().split(" ")[0])))
-                .map(e -> ChartData.builder().label(e.getKey()).value(new BigDecimal(e.getValue())).build())
+        for (Object[] row : sumMonthlyCardRepository.aggregateSpendBands(
+                merchantIds, currentStartKey, currentEndKey)) {
+            result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
+                .spendBandCounts.put((String) row[1], ((Number) row[2]).longValue());
+        }
+        for (Object[] row : sumMonthlyCardRepository.aggregateMonthlyVisitFrequency(
+                merchantIds, trendStartKey, trendEndKey)) {
+            result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
+                .monthlyFreq.put(((Number) row[1]).intValue(), new long[]{
+                    ((Number) row[2]).longValue(),
+                    ((Number) row[3]).longValue(),
+                    ((Number) row[4]).longValue()});
+        }
+        return result;
+    }
+
+    private ConsumerLoyalty buildLoyalty(CardLoyaltyAggregates cardAgg, LocalDate endOfMonth) {
+        // Merchant with no card rows in the window → same empty-but-complete
+        // loyalty section the old row-based code produced from empty lists.
+        Map<Long, Long> visitHistogram = cardAgg != null ? cardAgg.visitHistogram : Collections.emptyMap();
+        Map<String, Long> spendBandCounts = cardAgg != null ? cardAgg.spendBandCounts : Collections.emptyMap();
+        Map<Integer, long[]> monthlyFreqByKey = cardAgg != null ? cardAgg.monthlyFreq : Collections.emptyMap();
+
+        List<ChartData> freqData = visitHistogram.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> ChartData.builder().label(e.getKey() + " Visits").value(new BigDecimal(e.getValue())).build())
                 .collect(Collectors.toList());
 
-        List<ChartData> bandData = buildSpendBands(cardSpend);
+        List<ChartData> bandData = buildSpendBands(spendBandCounts);
 
-        long totalCards = cardVisits.size();
-        long repeatCards = cardVisits.values().stream().filter(v -> v > 1).count();
+        long totalCards = visitHistogram.values().stream().mapToLong(Long::longValue).sum();
+        long repeatCards = sumWhere(visitHistogram, v -> v > 1);
         BigDecimal retentionRate = totalCards > 0
                 ? new BigDecimal(repeatCards * 100.0 / totalCards).setScale(0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
 
@@ -1352,11 +1382,11 @@ public class MerchantInsightService {
         //   Each expressed as a % of total unique cards so the three tiers plus the
         //   single-visit share sum to 100%. Rounded to whole percent to match the
         //   existing repeatCardPct/retentionRate display convention.
-        long tier2  = cardVisits.values().stream().filter(v -> v == 2).count();
-        long tier35 = cardVisits.values().stream().filter(v -> v >= 3 && v <= 5).count();
-        long tier6  = cardVisits.values().stream().filter(v -> v >= 6).count();
+        long tier2  = visitHistogram.getOrDefault(2L, 0L);
+        long tier35 = sumWhere(visitHistogram, v -> v >= 3 && v <= 5);
+        long tier6  = sumWhere(visitHistogram, v -> v >= 6);
 
-        List<ChartData> monthlyFreq = buildMonthlyFrequency(trendCardRows, endOfMonth);
+        List<ChartData> monthlyFreq = buildMonthlyFrequency(monthlyFreqByKey, endOfMonth);
 
         ConsumerLoyalty loyalty = ConsumerLoyalty.builder()
                 .visitFrequency(freqData).spendBands(bandData).monthlyVisitFreqTrend(monthlyFreq)
@@ -1375,39 +1405,38 @@ public class MerchantInsightService {
         return loyalty;
     }
 
-    private List<ChartData> buildSpendBands(Map<String, BigDecimal> cardSpend) {
-        String[] bands = { "0-20", "20-50", "50-100", "100-200", "200-500", "500+" };
-        Map<String, Long> counts = new LinkedHashMap<>();
-        for (String b : bands) counts.put(b, 0L);
-        for (BigDecimal spend : cardSpend.values()) {
-            double s = spend.doubleValue();
-            String band = s < 20 ? "0-20" : s < 50 ? "20-50" : s < 100 ? "50-100" : s < 200 ? "100-200" : s < 500 ? "200-500" : "500+";
-            counts.put(band, counts.get(band) + 1);
+    /** Sum of card counts for visit-count buckets matching the predicate. */
+    private long sumWhere(Map<Long, Long> visitHistogram, java.util.function.LongPredicate visitsMatch) {
+        long sum = 0;
+        for (Map.Entry<Long, Long> e : visitHistogram.entrySet()) {
+            if (visitsMatch.test(e.getKey())) sum += e.getValue();
         }
-        long total = cardSpend.size();
+        return sum;
+    }
+
+    /**
+     * Band labels/edges must stay in sync with the CASE expression in
+     * SumMonthlyCardRepository.aggregateSpendBands, which now does the bucketing.
+     */
+    private List<ChartData> buildSpendBands(Map<String, Long> bandCounts) {
+        String[] bands = { "0-20", "20-50", "50-100", "100-200", "200-500", "500+" };
+        long total = bandCounts.values().stream().mapToLong(Long::longValue).sum();
         List<ChartData> result = new ArrayList<>();
         for (String b : bands) {
-            double pct = total > 0 ? counts.get(b) * 100.0 / total : 0;
+            double pct = total > 0 ? bandCounts.getOrDefault(b, 0L) * 100.0 / total : 0;
             result.add(ChartData.builder().label(b).value(new BigDecimal(pct).setScale(1, RoundingMode.HALF_UP)).build());
         }
         return result;
     }
 
-    private List<ChartData> buildMonthlyFrequency(List<com.acquira.common.model.SumMonthlyCard> rows, LocalDate end) {
-        Map<Integer, List<com.acquira.common.model.SumMonthlyCard>> byMonth = rows.stream()
-                .collect(Collectors.groupingBy(com.acquira.common.model.SumMonthlyCard::getMonthKey));
+    private List<ChartData> buildMonthlyFrequency(Map<Integer, long[]> byMonth, LocalDate end) {
         List<ChartData> result = new ArrayList<>();
         LocalDate current = end.minusMonths(12).withDayOfMonth(1);
         while (!current.isAfter(end)) {
             int key = Integer.parseInt(current.format(DateTimeFormatter.ofPattern("yyyyMM")));
             String label = current.getMonth().name().substring(0, 3) + " " + current.getYear();
-            long c1 = 0, c2to4 = 0, c5plus = 0;
-            if (byMonth.containsKey(key)) {
-                for (com.acquira.common.model.SumMonthlyCard r : byMonth.get(key)) {
-                    long v = r.getVisitCount();
-                    if (v == 1) c1++; else if (v <= 4) c2to4++; else c5plus++;
-                }
-            }
+            long[] c = byMonth.get(key);
+            long c1 = c != null ? c[0] : 0, c2to4 = c != null ? c[1] : 0, c5plus = c != null ? c[2] : 0;
             result.add(ChartData.builder().label(label).value(new BigDecimal(c1)).value2(new BigDecimal(c2to4)).value3(new BigDecimal(c5plus)).build());
             current = current.plusMonths(1);
         }
