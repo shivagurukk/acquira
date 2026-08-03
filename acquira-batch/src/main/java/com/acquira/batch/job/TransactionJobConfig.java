@@ -30,6 +30,7 @@ import javax.sql.DataSource;
 import java.sql.PreparedStatement;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -134,6 +135,7 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("splitExcelStep") Step splitExcelStep,
             @org.springframework.beans.factory.annotation.Qualifier("cleanTargetDayStep") Step cleanTargetDayStep,
             @org.springframework.beans.factory.annotation.Qualifier("masterIngestStep") Step masterIngestStep,
+            @org.springframework.beans.factory.annotation.Qualifier("analyzeStagingStep") Step analyzeStagingStep,
             @org.springframework.beans.factory.annotation.Qualifier("autoCreateDimensionsStep") Step autoCreateDimensionsStep,
             @org.springframework.beans.factory.annotation.Qualifier("stagingToFactStep") Step stagingToFactStep,
             @org.springframework.beans.factory.annotation.Qualifier("populateSummaryStep") Step populateSummaryStep,
@@ -144,7 +146,7 @@ public class TransactionJobConfig {
         return new JobBuilder("transactionLoadJob", jobRepository)
                 .listener(cacheEvictionJobListener)
                 .start(ensurePartitionsStep).next(splitExcelStep).next(cleanTargetDayStep)
-                .next(masterIngestStep).next(autoCreateDimensionsStep)
+                .next(masterIngestStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
                 .next(calculateBusinessMetricsStep).next(scoreMlStep).next(computeSegmentsStep)
                 .next(calculateDailyDashboardMetricsStep).build();
@@ -163,6 +165,7 @@ public class TransactionJobConfig {
     @Bean
     public Job dbPullTransactionJob(
             @org.springframework.beans.factory.annotation.Qualifier("ensurePartitionsStep") Step ensurePartitionsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("analyzeStagingStep") Step analyzeStagingStep,
             @org.springframework.beans.factory.annotation.Qualifier("autoCreateDimensionsStep") Step autoCreateDimensionsStep,
             @org.springframework.beans.factory.annotation.Qualifier("stagingToFactStep") Step stagingToFactStep,
             @org.springframework.beans.factory.annotation.Qualifier("populateSummaryStep") Step populateSummaryStep,
@@ -172,7 +175,7 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
         return new JobBuilder("dbPullTransactionJob", jobRepository)
                 .listener(cacheEvictionJobListener)
-                .start(ensurePartitionsStep).next(autoCreateDimensionsStep)
+                .start(ensurePartitionsStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
                 .next(calculateBusinessMetricsStep).next(scoreMlStep).next(computeSegmentsStep)
                 .next(calculateDailyDashboardMetricsStep).build();
@@ -319,6 +322,42 @@ public class TransactionJobConfig {
 
     @Bean public Step splitExcelStep(ExcelSplitterTasklet excelSplitterTasklet) {
         return new StepBuilder("splitExcelStep", jobRepository).tasklet(excelSplitterTasklet, transactionManager).listener(mdcStepListener).build();
+    }
+
+    /**
+     * PERF: refresh planner statistics on the freshly-loaded staging table.
+     *
+     * stg_trnx_raw is emptied and re-filled on every single upload, so by the time
+     * the joins below run, PostgreSQL's stats for it describe the PREVIOUS load (or
+     * an empty table on a cold start). The planner then estimates a handful of rows
+     * where there are millions and picks nested loops for the stagingToFact insert,
+     * the two ID fix-ups, and the fee update — each of which degrades from a hash
+     * join into a per-row index probe. That is the classic "ingestion was fine last
+     * week and crawls today" shape.
+     *
+     * One ANALYZE costs a few seconds and lets every downstream step plan against
+     * the real row count. It runs outside a transaction and after staging is filled.
+     */
+    @Bean public Step analyzeStagingStep(Tasklet analyzeStagingTasklet) {
+        return new StepBuilder("analyzeStagingStep", jobRepository)
+            .tasklet(analyzeStagingTasklet, transactionManager)
+            .transactionAttribute(noTxn())
+            .listener(mdcStepListener).build();
+    }
+    @Bean @StepScope public Tasklet analyzeStagingTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+        return (contribution, chunkContext) -> {
+            long t = System.currentTimeMillis();
+            try {
+                jdbcTemplate.execute("ANALYZE stg_trnx_raw");
+                log.info(String.format("analyzeStaging completed in %.1fs",
+                    (System.currentTimeMillis() - t) / 1000.0));
+            } catch (Exception e) {
+                // Stats are an optimisation, never a correctness requirement — a
+                // permissions failure here must not fail the whole ingestion.
+                log.warn("ANALYZE stg_trnx_raw failed (non-fatal, ingestion continues): {}", e.getMessage());
+            }
+            return RepeatStatus.FINISHED;
+        };
     }
 
     @Bean public Step cleanTargetDayStep(Tasklet cleanTargetDayTasklet) {
@@ -829,12 +868,15 @@ public class TransactionJobConfig {
             int inserted = jdbcTemplate.update(sql, tenantId);
             log.info(String.format("Inserted %d fact rows in %.1fs", inserted, (System.currentTimeMillis() - tIns) / 1000.0));
 
-            Integer matched = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM fact_transaction WHERE tenant_id = ? " +
-                "AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope, Integer.class, tenantId);
-            Integer total = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM fact_transaction WHERE tenant_id = ? " +
-                "AND DATE(payment_date) IN " + dateScope, Integer.class, tenantId);
+            // PERF: one pass with FILTER instead of two separate COUNT(*) scans over
+            // the same date range — these are diagnostics, they shouldn't cost 2 scans.
+            Map<String, Object> counts = jdbcTemplate.queryForMap(
+                "SELECT COUNT(*) AS total, " +
+                "COUNT(*) FILTER (WHERE merchant_id IS NOT NULL) AS matched " +
+                "FROM fact_transaction WHERE tenant_id = ? " +
+                "AND DATE(payment_date) IN " + dateScope, tenantId);
+            Integer total   = counts.get("total")   == null ? 0 : ((Number) counts.get("total")).intValue();
+            Integer matched = counts.get("matched") == null ? 0 : ((Number) counts.get("matched")).intValue();
             if (total != null && total > 0) {
                 int unmatched = total - (matched != null ? matched : 0);
                 if (unmatched > 0) {
@@ -859,29 +901,52 @@ public class TransactionJobConfig {
             }
 
             long tFix = System.currentTimeMillis();
-            int storeFixed = jdbcTemplate.update(
-                "UPDATE fact_transaction f SET store_id = s.store_id " +
-                "FROM dim_store s, stg_trnx_raw stg " +
-                "WHERE f.tenant_id = ? AND s.tenant_id = ? AND stg.tenant_id = ? " +
+            // PERF: both fix-ups join the whole date range of fact_transaction against
+            // the whole staging table on (payment_date, arn). That join is paid in full
+            // even when it updates ZERO rows — and it usually does update zero, because
+            // the INSERT above already resolves store_id/terminal_id for well-formed
+            // feeds. Gate each one on a cheap EXISTS that stops at the first NULL,
+            // served by the (tenant_id, payment_date) index. Same idiom as the
+            // hasMissingNames / hasUnmappedMerchants guards above.
+            int storeFixed = 0, termFixed = 0;
+            Boolean anyNullStore = jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM fact_transaction f WHERE f.tenant_id = ? " +
                 "AND f.store_id IS NULL AND f.merchant_id IS NOT NULL " +
-                "AND s.merchant_id = f.merchant_id " +
-                "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
-                "AND s.internal_id = CONCAT('STORE_', stg.mid) " +
-                "AND DATE(f.payment_date) IN " + dateScope,
-                tenantId, tenantId, tenantId);
-            int termFixed = jdbcTemplate.update(
-                "UPDATE fact_transaction f SET terminal_id = t.terminal_id " +
-                "FROM dim_terminal t, stg_trnx_raw stg " +
-                "WHERE f.tenant_id = ? AND t.tenant_id = ? AND stg.tenant_id = ? " +
+                "AND DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
+            if (Boolean.TRUE.equals(anyNullStore)) {
+                storeFixed = jdbcTemplate.update(
+                    "UPDATE fact_transaction f SET store_id = s.store_id " +
+                    "FROM dim_store s, stg_trnx_raw stg " +
+                    "WHERE f.tenant_id = ? AND s.tenant_id = ? AND stg.tenant_id = ? " +
+                    "AND f.store_id IS NULL AND f.merchant_id IS NOT NULL " +
+                    "AND s.merchant_id = f.merchant_id " +
+                    "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
+                    "AND s.internal_id = CONCAT('STORE_', stg.mid) " +
+                    "AND DATE(f.payment_date) IN " + dateScope,
+                    tenantId, tenantId, tenantId);
+            }
+            Boolean anyNullTerm = jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM fact_transaction f WHERE f.tenant_id = ? " +
                 "AND f.terminal_id IS NULL AND f.store_id IS NOT NULL " +
-                "AND t.store_id = f.store_id " +
-                "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
-                "AND t.internal_id = CONCAT('TERM_', stg.mid) " +
-                "AND DATE(f.payment_date) IN " + dateScope,
-                tenantId, tenantId, tenantId);
+                "AND DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
+            if (Boolean.TRUE.equals(anyNullTerm)) {
+                termFixed = jdbcTemplate.update(
+                    "UPDATE fact_transaction f SET terminal_id = t.terminal_id " +
+                    "FROM dim_terminal t, stg_trnx_raw stg " +
+                    "WHERE f.tenant_id = ? AND t.tenant_id = ? AND stg.tenant_id = ? " +
+                    "AND f.terminal_id IS NULL AND f.store_id IS NOT NULL " +
+                    "AND t.store_id = f.store_id " +
+                    "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
+                    "AND t.internal_id = CONCAT('TERM_', stg.mid) " +
+                    "AND DATE(f.payment_date) IN " + dateScope,
+                    tenantId, tenantId, tenantId);
+            }
             if (storeFixed + termFixed > 0) {
                 log.info(String.format("Fix-up: %d store_ids, %d terminal_ids in %.1fs",
                     storeFixed, termFixed, (System.currentTimeMillis() - tFix) / 1000.0));
+            } else {
+                log.info(String.format("Fix-up: nothing to resolve, skipped in %.1fs",
+                    (System.currentTimeMillis() - tFix) / 1000.0));
             }
 
             // =================================================================
