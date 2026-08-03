@@ -12,9 +12,9 @@ import java.util.List;
 @Repository
 public interface TransactionRepository extends JpaRepository<Transaction, Long>,
                 org.springframework.data.jpa.repository.JpaSpecificationExecutor<Transaction> {
-        List<Transaction> findByPaymentDateBetween(LocalDateTime startDate, LocalDateTime endDate);
-
-        void deleteByPaymentDateBetween(LocalDateTime startDate, LocalDateTime endDate);
+        // NOTE: the derived findByPaymentDateBetween / deleteByPaymentDateBetween
+        // finders were removed — neither carried a tenant predicate, and the
+        // delete was a cross-tenant destructive write waiting for a caller.
 
         // Aggregation for Manual Ingestion
         // Volume is derived from store_base_currency_amount (settlement-currency GROSS,

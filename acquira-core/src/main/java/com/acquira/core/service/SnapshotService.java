@@ -18,12 +18,12 @@ public class SnapshotService {
         this.objectMapper = objectMapper;
     }
 
-    // Called by Batch Job at end of day — generates per-tenant snapshots
-    public void generateDailySnapshot(LocalDate businessDate) {
-        generateDailySnapshot(businessDate, null);
-    }
-
+    // Called by Batch Job at end of day — generates per-tenant snapshots.
+    // tenantId is mandatory: a null tenant would sum sum_daily_merchant across
+    // ALL tenants into one snapshot row.
     public void generateDailySnapshot(LocalDate businessDate, Long tenantId) {
+        if (tenantId == null)
+            throw new IllegalArgumentException("tenantId is required for daily snapshots");
         try {
             Map<String, Object> dashboardData = new HashMap<>();
             dashboardData.put("totalVolume", fetchTotalVolume(businessDate, tenantId));
@@ -52,14 +52,9 @@ public class SnapshotService {
 
     private Double fetchTotalVolume(LocalDate date, Long tenantId) {
         try {
-            if (tenantId != null) {
-                return jdbcTemplate.queryForObject(
-                    "SELECT COALESCE(SUM(total_volume), 0) FROM sum_daily_merchant WHERE business_date = ? AND tenant_id = ?",
-                    Double.class, date, tenantId);
-            }
             return jdbcTemplate.queryForObject(
-                "SELECT COALESCE(SUM(total_volume), 0) FROM sum_daily_merchant WHERE business_date = ?",
-                Double.class, date);
+                "SELECT COALESCE(SUM(total_volume), 0) FROM sum_daily_merchant WHERE business_date = ? AND tenant_id = ?",
+                Double.class, date, tenantId);
         } catch (Exception e) {
             return 0.0;
         }
@@ -67,24 +62,21 @@ public class SnapshotService {
 
     private Integer fetchActiveMerchants(LocalDate date, Long tenantId) {
         try {
-            if (tenantId != null) {
-                return jdbcTemplate.queryForObject(
-                    "SELECT COUNT(DISTINCT merchant_id) FROM sum_daily_merchant WHERE business_date = ? AND total_volume > 0 AND tenant_id = ?",
-                    Integer.class, date, tenantId);
-            }
             return jdbcTemplate.queryForObject(
-                "SELECT COUNT(DISTINCT merchant_id) FROM sum_daily_merchant WHERE business_date = ? AND total_volume > 0",
-                Integer.class, date);
+                "SELECT COUNT(DISTINCT merchant_id) FROM sum_daily_merchant WHERE business_date = ? AND total_volume > 0 AND tenant_id = ?",
+                Integer.class, date, tenantId);
         } catch (Exception e) {
             return 0;
         }
     }
 
-    // Called by Frontend API
-    public String getLatestSnapshot() {
-        String sql = "SELECT json_data FROM kpi_snapshot_daily ORDER BY generated_at DESC LIMIT 1";
+    // Called by Frontend API — tenant-scoped: without the predicate this
+    // returned whichever tenant happened to write last.
+    public String getLatestSnapshot(Long tenantId) {
+        if (tenantId == null) return "{}";
+        String sql = "SELECT json_data FROM kpi_snapshot_daily WHERE tenant_id = ? ORDER BY generated_at DESC LIMIT 1";
         try {
-            return jdbcTemplate.queryForObject(sql, String.class);
+            return jdbcTemplate.queryForObject(sql, String.class, tenantId);
         } catch (Exception e) {
             return "{}"; // Empty JSON if no snapshot
         }

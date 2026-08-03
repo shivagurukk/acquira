@@ -33,11 +33,13 @@ public class TenantService {
         com.acquira.common.model.User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // Admin Access: Return ALL tenants
-        // Supports both global roles (ROLE_SUPER_ADMIN) and checks against the User's
-        // primary role
-        String userRole = user.getRole();
-        if ("ROLE_SUPER_ADMIN".equals(userRole) || "ROLE_ADMIN".equals(userRole)) {
+        // Only ROLE_SUPER_ADMIN is a PLATFORM role. ROLE_ADMIN is a per-BANK admin, so
+        // including it here handed every bank admin the full tenant roster (bankName,
+        // institutionId, country, currency) via /api/auth/login, /api/auth/session and
+        // /api/banks — and silently defeated BankController's own super-admin guard.
+        // JwtRequestFilter still blocks switching into those tenants; this closes the
+        // disclosure.
+        if ("ROLE_SUPER_ADMIN".equals(user.getRole())) {
             return tenantRepository.findAll();
         }
 
@@ -143,7 +145,16 @@ public class TenantService {
         return userCombinedViewRepository.save(view);
     }
 
-    public void deleteCombinedView(Long viewId) {
+    public void deleteCombinedView(String username, Long viewId) {
+        // Ownership guard (mirrors createCombinedView's validation): view ids are
+        // global, so an unchecked deleteById could remove another user's view.
+        com.acquira.common.model.User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        com.acquira.common.model.UserCombinedView view = userCombinedViewRepository.findById(viewId)
+                .orElseThrow(() -> new RuntimeException("View not found"));
+        if (view.getUser() == null || !view.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("View does not belong to the current user");
+        }
         userCombinedViewRepository.deleteById(viewId);
     }
 }

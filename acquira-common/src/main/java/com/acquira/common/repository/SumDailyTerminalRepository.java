@@ -17,20 +17,6 @@ public interface SumDailyTerminalRepository extends JpaRepository<SumDailyTermin
     boolean existsByTenantIdAndTerminalIdAndBusinessDate(Long tenantId, Long terminalId, LocalDate businessDate);
 
     /**
-     * @deprecated UNSCOPED — leaks geo metrics across ALL tenants. Do not call.
-     * Use {@link #findGeoMetricsByDateForTenant(LocalDate, Long)} instead.
-     * Retained only so any pre-existing caller still compiles.
-     */
-    @Deprecated
-    @Query("SELECT new com.acquira.common.dto.GeoMetricDTO(" +
-            "s.name, s.latitude, s.longitude, SUM(t.totalVolume), SUM(t.totalTxns), 'LOW') " +
-            "FROM SumDailyTerminal t " +
-            "JOIN Store s ON t.storeId = s.storeId " +
-            "WHERE t.businessDate = :date " +
-            "GROUP BY s.name, s.latitude, s.longitude")
-    List<GeoMetricDTO> findGeoMetricsByDate(@Param("date") LocalDate date);
-
-    /**
      * Tenant-scoped geo metrics. Filters both the fact side (t.tenantId) and the
      * joined Store (s.tenantId) so heatmap markers cannot leak across tenants.
      */

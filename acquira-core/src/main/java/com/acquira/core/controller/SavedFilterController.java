@@ -39,6 +39,18 @@ public class SavedFilterController {
         return tenantId;
     }
 
+    /**
+     * Owner AND tenant check. findByIdAndUserId alone proves only ownership: a user with
+     * access to tenants A and B, acting in A, could otherwise edit, re-share or delete
+     * their own filter that belongs to B — including flipping isShared, which republishes
+     * it to every user of B.
+     */
+    private SavedFilter findOwnFilterInTenant(Long id) {
+        return savedFilterRepository.findByIdAndUserId(id, getCurrentUserId())
+                .filter(f -> getTenantId().equals(f.getTenantId()))
+                .orElse(null);
+    }
+
     @GetMapping("/{dashboardType}")
     public ResponseEntity<List<SavedFilter>> getViews(@PathVariable String dashboardType) {
         return ResponseEntity.ok(
@@ -81,8 +93,7 @@ public class SavedFilterController {
     @Transactional
     public ResponseEntity<?> updateView(@PathVariable Long id, @RequestBody SavedFilter update) {
         Long userId = getCurrentUserId();
-        SavedFilter existing = savedFilterRepository.findByIdAndUserId(id, userId)
-                .orElse(null);
+        SavedFilter existing = findOwnFilterInTenant(id);
         if (existing == null) {
             return ResponseEntity.status(403).body(Map.of("error", "View not found or access denied"));
         }
@@ -103,8 +114,7 @@ public class SavedFilterController {
     @DeleteMapping("/{id}")
     @Transactional
     public ResponseEntity<?> deleteView(@PathVariable Long id) {
-        Long userId = getCurrentUserId();
-        SavedFilter existing = savedFilterRepository.findByIdAndUserId(id, userId).orElse(null);
+        SavedFilter existing = findOwnFilterInTenant(id);
         if (existing == null) {
             return ResponseEntity.status(403).body(Map.of("error", "View not found or access denied"));
         }
@@ -116,7 +126,7 @@ public class SavedFilterController {
     @Transactional
     public ResponseEntity<?> setDefault(@PathVariable Long id) {
         Long userId = getCurrentUserId();
-        SavedFilter existing = savedFilterRepository.findByIdAndUserId(id, userId).orElse(null);
+        SavedFilter existing = findOwnFilterInTenant(id);
         if (existing == null) {
             return ResponseEntity.status(403).body(Map.of("error", "View not found or access denied"));
         }

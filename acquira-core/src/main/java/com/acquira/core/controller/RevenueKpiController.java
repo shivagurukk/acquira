@@ -51,10 +51,11 @@ public class RevenueKpiController {
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> getRevenueKpis(
-            @RequestHeader(value = "X-Tenant-Id", required = false) Long tenantId,
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
 
-        if (tenantId == null) tenantId = TenantContext.getCurrentTenant();
+        // SECURITY: only the filter-validated TenantContext — never the raw
+        // X-Tenant-Id header, which is attacker-controlled.
+        Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
         if (filter == null) filter = new VolumeRevenueFilterDTO();
 

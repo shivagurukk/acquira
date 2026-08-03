@@ -49,12 +49,12 @@ public class SalesCountryLeadController {
         String countryCode = (String) payload.get("countryCode");
         boolean isDefault = Boolean.TRUE.equals(payload.get("isDefault"));
         return ResponseEntity.ok(
-                salesCountryLeadService.updateCountryLead(id, name, email, countryCode, isDefault));
+                salesCountryLeadService.updateCountryLead(getTenantId(), id, name, email, countryCode, isDefault));
     }
 
     @DeleteMapping("/country-leads/{id}")
     public ResponseEntity<Void> deleteCountryLead(@PathVariable Long id) {
-        salesCountryLeadService.deleteCountryLead(id);
+        salesCountryLeadService.deleteCountryLead(getTenantId(), id);
         return ResponseEntity.ok().build();
     }
 

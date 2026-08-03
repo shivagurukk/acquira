@@ -71,8 +71,10 @@ public class ZeroTransactionRepository {
     // /summary + /page below).
     // ============================================================
 
-    public List<Map<String, Object>> getZeroTransactionList(VolumeRevenueFilterDTO filter) {
-        return getZeroTransactionList(filter, null);
+    /** Fail closed: a null tenant must never silently widen a query to every tenant. */
+    private static void requireTenant(Long tenantId) {
+        if (tenantId == null)
+            throw new IllegalStateException("Tenant context not resolved — refusing unscoped query");
     }
 
     /**
@@ -82,6 +84,7 @@ public class ZeroTransactionRepository {
      * cross-tenant rows from leaking through any path.
      */
     public List<Map<String, Object>> getZeroTransactionList(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
 
         sql.append("SELECT ");
@@ -150,11 +153,8 @@ public class ZeroTransactionRepository {
         return processResults(remapped, resolveAnchor(tenantId));
     }
 
-    public List<Map<String, Object>> getZeroTransactionListSmart(VolumeRevenueFilterDTO filter, String rangeType) {
-        return getZeroTransactionListSmart(filter, rangeType, null);
-    }
-
     public List<Map<String, Object>> getZeroTransactionListSmart(VolumeRevenueFilterDTO filter, String rangeType, Long tenantId) {
+        requireTenant(tenantId);
         // rangeType: "LAST_7", "LAST_30", "NEVER"
         LocalDate anchor = resolveAnchor(tenantId);
         final String innerTenant = (tenantId != null) ? " AND s.tenant_id = :tenantId" : "";
@@ -297,6 +297,7 @@ public class ZeroTransactionRepository {
      * Distribution days are relative to the DATA anchor, not the calendar.
      */
     public Map<String, Object> getZeroTransactionSummary(VolumeRevenueFilterDTO f, String rangeType, Long tenantId) {
+        requireTenant(tenantId);
         LocalDate anchor = resolveAnchor(tenantId);
         String cte = baseCte(f, tenantId);
         String rangeCond = rangeCondition(rangeType);
@@ -394,6 +395,7 @@ public class ZeroTransactionRepository {
      */
     public Map<String, Object> getZeroTransactionPage(VolumeRevenueFilterDTO f, String rangeType, String status,
                                                       int page, int size, Long tenantId) {
+        requireTenant(tenantId);
         LocalDate anchor = resolveAnchor(tenantId);
         String cte = baseCte(f, tenantId);
         boolean bucketed = status != null && !"ALL".equals(status) && !status.isBlank();

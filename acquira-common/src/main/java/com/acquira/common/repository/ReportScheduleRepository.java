@@ -8,6 +8,7 @@ import java.util.List;
 @Repository
 public interface ReportScheduleRepository extends JpaRepository<ReportSchedule, Long> {
     List<ReportSchedule> findByTenantIdOrderByCreatedAtDesc(Long tenantId);
+    // Cross-tenant by design: the scheduler iterates all enabled schedules and
+    // re-scopes per row via the schedule's own tenantId.
     List<ReportSchedule> findByIsEnabledTrue();
-    List<ReportSchedule> findByTemplateId(Long templateId);
 }

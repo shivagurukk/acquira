@@ -17,10 +17,21 @@ import java.util.stream.Collectors;
  * Net Revenue), Top Movers (up/down vs prior window), Top 10 New Merchants,
  * and a concentration KPI strip — all in one round trip.
  *
- * PERFORMANCE: exactly two aggregation queries total (current window + prior
- * window). Each is a single tenant-scoped, partition-pruned GROUP BY over the
- * chosen base table. Every board is derived from those two result sets in
- * memory afterwards — never re-queried per board.
+ * PERFORMANCE: three queries total — current window, prior window, and the
+ * first-transaction-date lookup backing the new-merchant board. Each is a single
+ * tenant-scoped GROUP BY over the chosen base table. Every board is derived from
+ * those result sets in memory afterwards — never re-queried per board.
+ *
+ * RANKING GRAIN: one row per dim_merchant record, which in this schema is one
+ * merchant master record (UNIQUE (tenant_id, internal_id)) carrying a single MID.
+ * A legal entity trading under several MIDs therefore ranks as several entries;
+ * there is no legal-entity or merchant-group key in dim_merchant to roll up to.
+ * Stores and terminals do NOT fan the totals out: sum_daily_merchant is unique on
+ * (tenant_id, business_date, merchant_id), so the join cannot multiply rows.
+ *
+ * ELIGIBILITY: every board except Movers ranks only merchants with volume > 0 in
+ * the window. Movers deliberately keeps merchants that fell TO zero — a merchant
+ * dropping from real volume to nothing is the most material move there is.
  *
  * GRAIN: sum_daily_merchant (settlement total_base_volume; real net revenue =
  * msf - interchange - scheme_fee) unless a card-level filter (scheme/cardType/
@@ -68,16 +79,20 @@ public class TopPerformersController {
         boolean cardGrain = usesCardFilters(filter);
 
         List<Map<String, Object>> current = runAggregate(filter, tenantId, cardGrain, curWindow[0], curWindow[1]);
-        boolean priorHasData = countRows(tenantId, cardGrain, priorWindow[0], priorWindow[1]) > 0;
-        List<Map<String, Object>> prior = priorHasData
-                ? runAggregate(filter, tenantId, cardGrain, priorWindow[0], priorWindow[1])
-                : Collections.emptyList();
+
+        // Run the prior aggregate unconditionally and derive "has data" from the RESULT.
+        // The old COUNT(*) probe ignored the active filters, so it could report data for a
+        // prior window in which the filtered set was in fact empty.
+        List<Map<String, Object>> prior = runAggregate(filter, tenantId, cardGrain, priorWindow[0], priorWindow[1]);
+        boolean priorHasData = prior.stream().anyMatch(r -> toDouble(r.get("volume")) > 0);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("grain", cardGrain ? "insight" : "merchant");
         response.put("period", period);
         response.put("from", curWindow[0].toString());
         response.put("to", curWindow[1].toString());
+        response.put("priorFrom", priorWindow[0].toString());
+        response.put("priorTo", priorWindow[1].toString());
         response.put("priorWindowHasData", priorHasData);
 
         // Only merchants with actual volume are eligible for the "top" boards —
@@ -94,7 +109,8 @@ public class TopPerformersController {
         response.put("topRmsByNetRevenue", rank(rmAgg, "netRevenue", TOP_N));
 
         response.put("topMovers", priorHasData ? computeMovers(current, prior) : null);
-        response.put("topNewMerchants", computeNewMerchants(current, curWindow[0], curWindow[1]));
+        response.put("topNewMerchants", computeNewMerchants(withVolume,
+                firstTxnDates(tenantId, cardGrain, curWindow[0], curWindow[1])));
 
         double totalVolume = current.stream().mapToDouble(r -> toDouble(r.get("volume"))).sum();
         double totalNet = current.stream().mapToDouble(r -> toDouble(r.get("netRevenue"))).sum();
@@ -131,11 +147,40 @@ public class TopPerformersController {
         };
     }
 
-    private LocalDate[] priorWindow(LocalDate[] cur) {
-        long days = ChronoUnit.DAYS.between(cur[0], cur[1]) + 1;
-        LocalDate priorTo = cur[0].minusDays(1);
-        LocalDate priorFrom = priorTo.minusDays(days - 1);
-        return new LocalDate[]{ priorFrom, priorTo };
+    /**
+     * The comparable previous period.
+     *
+     * A month-aligned window (starts on the 1st, ends in the same month) is shifted by
+     * one CALENDAR month, because a rolling N-day shift slides off the month boundary:
+     * a full July is 31 days, so shifting back 31 days gave "May 31 – Jun 30" rather
+     * than June. Month-to-date is compared with the same number of days at the start of
+     * the previous month (Aug 1–2 → Jul 1–2), not with the days immediately before it
+     * (Jul 30–31).
+     *
+     * Anything else — YTD, QTD, or an arbitrary custom range — has no calendar anchor,
+     * so it keeps the immediately-preceding window of equal length.
+     */
+    LocalDate[] priorWindow(LocalDate[] cur) { // package-private for TopPerformersWindowTest
+        LocalDate from = cur[0], to = cur[1];
+
+        boolean monthAligned = from.getDayOfMonth() == 1
+                && from.getMonthValue() == to.getMonthValue()
+                && from.getYear() == to.getYear();
+
+        if (monthAligned) {
+            LocalDate priorFrom = from.minusMonths(1);
+            LocalDate priorTo = to.getDayOfMonth() == to.lengthOfMonth()
+                    // Full month → the whole previous month, whatever its length.
+                    ? priorFrom.withDayOfMonth(priorFrom.lengthOfMonth())
+                    // Month-to-date → same day count, clamped for short months
+                    // (Mar 1–31 compares against Feb 1–28).
+                    : priorFrom.withDayOfMonth(Math.min(to.getDayOfMonth(), priorFrom.lengthOfMonth()));
+            return new LocalDate[]{ priorFrom, priorTo };
+        }
+
+        long days = ChronoUnit.DAYS.between(from, to) + 1;
+        LocalDate priorTo = from.minusDays(1);
+        return new LocalDate[]{ priorTo.minusDays(days - 1), priorTo };
     }
 
     private boolean usesCardFilters(VolumeRevenueFilterDTO f) {
@@ -148,16 +193,6 @@ public class TopPerformersController {
     // ─────────────────────────────────────────────────────────────
     // Aggregate query — ONE grouped scan per window
     // ─────────────────────────────────────────────────────────────
-
-    private long countRows(Long tenantId, boolean cardGrain, LocalDate from, LocalDate to) {
-        String table = cardGrain ? "sum_daily_insight" : "sum_daily_merchant";
-        String sql = "SELECT COUNT(*) FROM " + table + " WHERE tenant_id = :tid AND business_date BETWEEN :from AND :to";
-        Query q = entityManager.createNativeQuery(sql);
-        q.setParameter("tid", tenantId);
-        q.setParameter("from", from);
-        q.setParameter("to", to);
-        return ((Number) q.getSingleResult()).longValue();
-    }
 
     private List<Map<String, Object>> runAggregate(VolumeRevenueFilterDTO f, Long tenantId,
             boolean cardGrain, LocalDate from, LocalDate to) {
@@ -283,8 +318,8 @@ public class TopPerformersController {
     }
 
     private Map<String, Object> computeMovers(List<Map<String, Object>> current, List<Map<String, Object>> prior) {
-        Map<Object, Double> priorVolByMerchant = new HashMap<>();
-        for (Map<String, Object> r : prior) priorVolByMerchant.put(r.get("merchantId"), toDouble(r.get("volume")));
+        Map<String, Double> priorVolByMerchant = new HashMap<>();
+        for (Map<String, Object> r : prior) priorVolByMerchant.put(idKey(r.get("merchantId")), toDouble(r.get("volume")));
 
         // Noise floor: 25th percentile of current non-zero volumes, so tiny
         // merchants' wild swings don't drown out genuinely material movers.
@@ -296,12 +331,18 @@ public class TopPerformersController {
         for (Map<String, Object> r : current) {
             double curVol = toDouble(r.get("volume"));
             if (curVol < floor) continue;
-            Double prevVol = priorVolByMerchant.get(r.get("merchantId"));
-            if (prevVol == null || prevVol <= 0) continue; // need a real prior baseline for a % move
+            Double prevVol = priorVolByMerchant.get(idKey(r.get("merchantId")));
+            // A zero/absent prior baseline has no defined percentage move — division by
+            // zero would read as infinite growth, and a merchant that first traded in this
+            // window is a NEW merchant, not a mover. Excluded from both directions.
+            if (prevVol == null || prevVol <= 0) continue;
             double pct = round2((curVol - prevVol) / prevVol * 100);
             Map<String, Object> m = new LinkedHashMap<>(r);
             m.put("priorVolume", prevVol);
             m.put("volumeChangePct", pct);
+            // Absolute change alongside the percentage: a 300% jump on a tiny base and a
+            // 12% jump on the book's largest merchant are not the same event.
+            m.put("volumeChangeAbs", round2(curVol - prevVol));
             movers.add(m);
         }
         List<Map<String, Object>> up = movers.stream()
@@ -320,22 +361,67 @@ public class TopPerformersController {
         return result;
     }
 
-    private List<Map<String, Object>> computeNewMerchants(List<Map<String, Object>> current, LocalDate from, LocalDate to) {
-        List<Map<String, Object>> newOnes = current.stream()
-                .filter(r -> {
-                    String cd = (String) r.get("createdDate");
-                    if (cd == null) return false;
-                    LocalDate d = LocalDate.parse(cd.length() > 10 ? cd.substring(0, 10) : cd);
-                    return !d.isBefore(from) && !d.isAfter(to);
-                })
+    /**
+     * Merchants whose FIRST revenue-bearing business date falls inside the window.
+     *
+     * This used to key off dim_merchant.created_date, which is the merchant-master ETL
+     * row-creation timestamp, not a business onboarding date — a back-loaded master file
+     * stamps every merchant with the load date, and a re-load moves it. dim_merchant has
+     * no onboarding/activation column, so first transaction date (from the summary table,
+     * a real business_date) is the only defensible business definition available.
+     *
+     * The caller passes `withVolume`, so zero-volume merchants are already excluded: an
+     * onboarded-but-not-yet-trading merchant is not a "top new merchant", and showing it
+     * with a 0 value was why this board was the only one still populated when a window
+     * had no transactions.
+     */
+    private List<Map<String, Object>> computeNewMerchants(List<Map<String, Object>> withVolume,
+            Map<String, LocalDate> firstTxnDates) {
+        List<Map<String, Object>> newOnes = withVolume.stream()
+                .filter(r -> firstTxnDates.containsKey(idKey(r.get("merchantId"))))
                 .sorted((a, b) -> Double.compare(toDouble(b.get("volume")), toDouble(a.get("volume"))))
                 .limit(TOP_N)
                 .map(LinkedHashMap::new)
                 .collect(Collectors.toList());
         int rank = 1;
-        for (Map<String, Object> r : newOnes) r.put("rank", rank++);
+        for (Map<String, Object> r : newOnes) {
+            r.put("rank", rank++);
+            LocalDate d = firstTxnDates.get(idKey(r.get("merchantId")));
+            r.put("firstTransactionDate", d != null ? d.toString() : null);
+        }
         return newOnes;
     }
+
+    /**
+     * merchant_id → first business_date on which the merchant recorded positive volume,
+     * restricted to merchants whose first such date is inside [from, to].
+     *
+     * Scans history up to `to` (one grouped, index-assisted pass on
+     * (tenant_id, business_date)) — "first EVER" cannot be answered from the window
+     * alone, otherwise every merchant looks new in every period.
+     */
+    private Map<String, LocalDate> firstTxnDates(Long tenantId, boolean cardGrain, LocalDate from, LocalDate to) {
+        String table = cardGrain ? "sum_daily_insight" : "sum_daily_merchant";
+        String volCol = cardGrain ? "total_volume" : "total_base_volume";
+        String sql = "SELECT merchant_id, MIN(business_date) AS first_date FROM " + table +
+                     " WHERE tenant_id = :tid AND business_date <= :to AND COALESCE(" + volCol + ", 0) > 0 " +
+                     " GROUP BY merchant_id HAVING MIN(business_date) >= :from";
+        Query q = entityManager.createNativeQuery(sql);
+        q.setParameter("tid", tenantId);
+        q.setParameter("from", from);
+        q.setParameter("to", to);
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = q.getResultList();
+        Map<String, LocalDate> out = new HashMap<>();
+        for (Object[] r : rows) {
+            if (r[0] == null || r[1] == null) continue;
+            out.put(idKey(r[0]), ((java.sql.Date) r[1]).toLocalDate());
+        }
+        return out;
+    }
+
+    /** Merchant ids cross two result sets; normalise so Long vs BigInteger can't mismatch. */
+    private String idKey(Object id) { return id == null ? "" : String.valueOf(id); }
 
     private double toDouble(Object o) {
         if (o == null) return 0.0;

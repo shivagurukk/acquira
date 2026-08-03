@@ -609,6 +609,21 @@ public class MerchantMasterJobConfig {
             jdbcTemplate.execute(upsertMerchantSql);
             log.info("Upserted Merchants for tenant {}", tId);
 
+            // Re-sync the ingest-time RM snapshot on sum_daily_merchant so an RM
+            // change re-attributes ALL history, not just the dates re-ingested by a
+            // later transaction upload. dim_merchant is the single source of truth
+            // for the current RM (Type-1 overwrite above), and this upload is the
+            // only write path that changes it.
+            int rmSynced = jdbcTemplate.update(
+                "UPDATE sum_daily_merchant s SET sales_user_id = m.sales_user_id " +
+                "FROM dim_merchant m " +
+                "WHERE s.tenant_id = ? AND m.tenant_id = s.tenant_id " +
+                "  AND m.merchant_id = s.merchant_id " +
+                "  AND s.sales_user_id IS DISTINCT FROM m.sales_user_id",
+                tenantId);
+            if (rmSynced > 0)
+                log.info("Re-synced sales_user_id on {} sum_daily_merchant rows for tenant {}", rmSynced, tId);
+
             // ── 2. Upsert Stores ─────────────────────────────────────────────────────
             //
             // FIX BUG: same root cause as merchants — the conflict key

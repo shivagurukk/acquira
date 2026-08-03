@@ -22,10 +22,6 @@ public interface MerchantDailyMetricsRepository extends JpaRepository<MerchantDa
     @Query("SELECT MAX(m.reportDate) FROM MerchantDailyMetrics m WHERE m.tenantId = :tenantId")
     java.time.LocalDate findLatestReportDateByTenantId(@Param("tenantId") Long tenantId);
 
-    // Legacy un-scoped fetch — retained only for backward compat with any
-    // pre-existing callers. New callers should use findByReportDateAndTenant.
-    List<MerchantDailyMetrics> findByReportDate(LocalDate reportDate);
-
     /**
      * Tenant-scoped fetch. Closes the cross-tenant leak that existed in the
      * findByReportDate variant (which the DailyMerchantDashboard endpoint was
@@ -51,9 +47,12 @@ public interface MerchantDailyMetricsRepository extends JpaRepository<MerchantDa
     List<MerchantDailyMetrics> findByTenantIdAndReportDate(
             Long tenantId, LocalDate reportDate);
 
-    // Efficient Deletion for re-runs
+    // Efficient Deletion for re-runs. Tenant-scoped: the previous variant had no
+    // tenant predicate, so one tenant's re-run would have wiped the report date
+    // for EVERY tenant.
     @Modifying
     @Transactional
-    @Query("DELETE FROM MerchantDailyMetrics m WHERE m.reportDate = :reportDate AND m.sourceType = :sourceType")
-    void deleteByReportDateAndSourceType(LocalDate reportDate, MerchantDailyMetrics.SourceType sourceType);
+    @Query("DELETE FROM MerchantDailyMetrics m WHERE m.tenantId = :tenantId AND m.reportDate = :reportDate AND m.sourceType = :sourceType")
+    void deleteByTenantIdAndReportDateAndSourceType(Long tenantId, LocalDate reportDate,
+            MerchantDailyMetrics.SourceType sourceType);
 }

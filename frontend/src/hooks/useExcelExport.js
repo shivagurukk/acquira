@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import axios from 'axios';
+import api from '../api/axios';
 
 const useExcelExport = () => {
     const [isExporting, setIsExporting] = useState(false);
@@ -9,7 +9,6 @@ const useExcelExport = () => {
         setIsExporting(true);
         setError(null);
         try {
-            const token = localStorage.getItem('token');
             const params = { type };
 
             if (optionsOrStartDate && typeof optionsOrStartDate === 'object') {
@@ -21,9 +20,12 @@ const useExcelExport = () => {
                 if (endDate) params.endDate = endDate;
             }
 
-            const response = await axios.get('/api/export/excel', {
+            // Shared client, not bare axios: the interceptor attaches X-Tenant-Id.
+            // Without it the download silently used the user's DEFAULT tenant, so
+            // after a tenant switch the on-screen table and its export disagreed.
+            // baseURL is already '/api'.
+            const response = await api.get('/export/excel', {
                 params,
-                headers: { 'Authorization': `Bearer ${token}` },
                 responseType: 'blob', // Important for binary data
             });
 

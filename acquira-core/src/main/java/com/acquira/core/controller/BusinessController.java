@@ -38,10 +38,19 @@ public class BusinessController {
                 this.dailyBankRepository = dailyBankRepository;
         }
 
+        // SECURITY: use only the filter-validated TenantContext, never the raw
+        // X-Tenant-Id header — the raw header is attacker-controlled and reading it
+        // directly bypasses the UserTenantAccess check in JwtRequestFilter.
+        private Long resolveTenant() {
+                return com.acquira.common.config.TenantContext.getCurrentTenant();
+        }
+
         // 1. Dashboard KPIs (Simplistic aggregation for now)
         @GetMapping("/dashboard/kpis")
-        public ResponseEntity<Map<String, Object>> getDashboardKpis(@RequestHeader("X-Tenant-Id") Long tenantId,
+        public ResponseEntity<Map<String, Object>> getDashboardKpis(
                         @RequestParam(required = false) LocalDate endDate) {
+                Long tenantId = resolveTenant();
+                if (tenantId == null) return ResponseEntity.status(403).build();
 
                 // Determine effective date: User provided OR Max available
                 LocalDate effectiveDate = endDate;
@@ -122,7 +131,9 @@ public class BusinessController {
          * msf − interchange − scheme_fee figure.
          */
         @GetMapping("/ceo-summary")
-        public ResponseEntity<Map<String, Object>> getCeoSummary(@RequestHeader("X-Tenant-Id") Long tenantId) {
+        public ResponseEntity<Map<String, Object>> getCeoSummary() {
+                Long tenantId = resolveTenant();
+                if (tenantId == null) return ResponseEntity.status(403).build();
 
                 // Anchor on latest available data.
                 Object maxD = entityManager
@@ -302,7 +313,6 @@ public class BusinessController {
          */
         @GetMapping("/ceo-volume-revenue")
         public ResponseEntity<Map<String, Object>> getCeoVolumeRevenue(
-                        @RequestHeader("X-Tenant-Id") Long tenantId,
                         @RequestParam(defaultValue = "MTD") String mode,
                         @RequestParam(defaultValue = "0") int page,
                         @RequestParam(defaultValue = "50") int size,
@@ -311,6 +321,8 @@ public class BusinessController {
                         @RequestParam(required = false) String search,
                         @RequestParam(defaultValue = "false") boolean lossOnly,
                         @RequestParam(required = false) String month) {
+                Long tenantId = resolveTenant();
+                if (tenantId == null) return ResponseEntity.status(403).build();
 
                 Object maxD = entityManager
                                 .createNativeQuery("SELECT MAX(business_date) FROM sum_daily_bank WHERE tenant_id = :tid")
@@ -549,8 +561,9 @@ public class BusinessController {
          */
         @PostMapping("/dashboard/kpis-filtered")
         public ResponseEntity<Map<String, Object>> getDashboardKpisFiltered(
-                        @RequestHeader("X-Tenant-Id") Long tenantId,
                         @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+                Long tenantId = resolveTenant();
+                if (tenantId == null) return ResponseEntity.status(403).build();
 
                 if (filter == null) filter = new VolumeRevenueFilterDTO();
 
@@ -837,14 +850,8 @@ public class BusinessController {
 
         // 4. Opportunities
         @GetMapping("/opportunity")
-        public ResponseEntity<List<MerchantOpportunityScore>> getOpportunities(
-                        @RequestHeader(value = "X-Tenant-Id", required = false) Long tenantId) {
-                // Fall back to the thread-local tenant context if the header is
-                // absent, instead of returning HTTP 400 (which the frontend showed
-                // as a silent empty screen).
-                if (tenantId == null) {
-                        tenantId = com.acquira.common.config.TenantContext.getCurrentTenant();
-                }
+        public ResponseEntity<List<MerchantOpportunityScore>> getOpportunities() {
+                Long tenantId = resolveTenant();
                 if (tenantId == null) {
                         return ResponseEntity.status(403).build();
                 }

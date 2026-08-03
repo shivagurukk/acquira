@@ -70,9 +70,14 @@ public class ExternalReportApiController {
     }
 
     /**
-     * Resolve folder: reports/{tenantCode}/{YYYY-MM}, fallback to reports/{YYYY-MM}.
-     * tenantCode comes from the key's own tenant (validated bankShortCode), so it cannot
-     * contain path-traversal sequences.
+     * Resolve folder: reports/{tenantCode}/{YYYY-MM}. tenantCode comes from the
+     * key's own tenant (validated bankShortCode), so it cannot contain
+     * path-traversal sequences.
+     *
+     * SECURITY: no fallback to the shared reports/{YYYY-MM} root — that folder
+     * mixes tenants, so a key without a tenant code must see nothing rather
+     * than everyone's reports. Returns null when the code is absent; callers
+     * treat that as an empty folder.
      */
     private Path resolveFolder(YearMonth ym, String tenantCode) {
         Path root = getReportsRoot();
@@ -80,7 +85,7 @@ public class ExternalReportApiController {
             Path tenantPath = root.resolve(tenantCode).resolve(ym.toString()).normalize();
             if (tenantPath.startsWith(root)) return tenantPath;
         }
-        return root.resolve(ym.toString()).normalize();
+        return null;
     }
 
     // ─── List Available Reports ────────────────────────────────────────
@@ -98,7 +103,7 @@ public class ExternalReportApiController {
         Path folder = resolveFolder(targetMonth, effectiveTenant);
 
         List<Map<String, Object>> reports = new ArrayList<>();
-        if (Files.exists(folder)) {
+        if (folder != null && Files.exists(folder)) {
             try (Stream<Path> files = Files.list(folder)) {
                 files.filter(p -> p.toString().endsWith(".pdf"))
                      .sorted()
@@ -156,6 +161,10 @@ public class ExternalReportApiController {
         }
 
         Path folder = resolveFolder(targetMonth, effectiveTenant);
+        if (folder == null) {
+            response.sendError(404, "No reports available");
+            return;
+        }
         Path filePath = folder.resolve(safeName).normalize();
         // Defence in depth: the resolved file must stay under the intended folder.
         if (!filePath.startsWith(folder)) {
@@ -197,7 +206,7 @@ public class ExternalReportApiController {
         YearMonth targetMonth = resolveMonth(year, month);
         Path folder = resolveFolder(targetMonth, effectiveTenant);
 
-        if (!Files.exists(folder)) {
+        if (folder == null || !Files.exists(folder)) {
             response.sendError(404, "No reports found for " + targetMonth);
             return;
         }
@@ -244,7 +253,7 @@ public class ExternalReportApiController {
         YearMonth targetMonth = resolveMonth(year, month);
         Path folder = resolveFolder(targetMonth, effectiveTenant);
 
-        if (!Files.exists(folder)) {
+        if (folder == null || !Files.exists(folder)) {
             response.sendError(404, "No reports folder for " + targetMonth);
             return;
         }
@@ -309,7 +318,7 @@ public class ExternalReportApiController {
 
         int count = 0;
         long totalSizeBytes = 0;
-        if (Files.exists(folder)) {
+        if (folder != null && Files.exists(folder)) {
             try (Stream<Path> files = Files.list(folder)) {
                 var pdfList = files.filter(p -> p.toString().endsWith(".pdf")).toList();
                 count = pdfList.size();

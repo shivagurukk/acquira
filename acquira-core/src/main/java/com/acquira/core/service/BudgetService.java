@@ -16,7 +16,10 @@ public class BudgetService {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public List<Map<String, Object>> getBudgetVsActual(Integer institutionId, Integer monthKey) {
+    public List<Map<String, Object>> getBudgetVsActual(Long tenantId, Integer institutionId, Integer monthKey) {
+        // Tenant-scoped: institution_id alone is not unique across tenants, so
+        // targets and actuals must both be pinned to the caller's tenant.
+        if (tenantId == null) throw new IllegalArgumentException("tenantId is required");
         // SQL to join Actuals (sum_monthly_bank) with Targets (bank_budget_target)
         String sql = """
                     SELECT
@@ -34,10 +37,11 @@ public class BudgetService {
                         END as status
                     FROM bank_budget_target t
                     LEFT JOIN sum_monthly_bank s ON s.institution_id = t.institution_id AND s.month_key = t.month_key
-                    WHERE t.institution_id = ? AND t.month_key = ?
+                        AND s.tenant_id = t.tenant_id
+                    WHERE t.tenant_id = ? AND t.institution_id = ? AND t.month_key = ?
                 """;
 
-        return jdbcTemplate.queryForList(sql, institutionId, monthKey);
+        return jdbcTemplate.queryForList(sql, tenantId, institutionId, monthKey);
     }
 
     // Function to auto-generate default budget if missing (Strategy: Last Year +

@@ -41,12 +41,12 @@ public class SalesTeamController {
         String name = (String) payload.get("name");
         String email = (String) payload.get("email");
         boolean isDefault = Boolean.TRUE.equals(payload.get("isDefault"));
-        return ResponseEntity.ok(salesTeamService.updateTeamLead(id, name, email, isDefault));
+        return ResponseEntity.ok(salesTeamService.updateTeamLead(getTenantId(), id, name, email, isDefault));
     }
 
     @DeleteMapping("/team-leads/{id}")
     public ResponseEntity<Void> deleteTeamLead(@PathVariable Long id) {
-        salesTeamService.deleteTeamLead(id);
+        salesTeamService.deleteTeamLead(getTenantId(), id);
         return ResponseEntity.ok().build();
     }
 

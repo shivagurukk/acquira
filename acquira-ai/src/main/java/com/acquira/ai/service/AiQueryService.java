@@ -143,7 +143,7 @@ sum_daily_merchant  -- per-merchant per-day (leaderboards, per-merchant views)
   tenant_id, business_date DATE, merchant_id, total_txns,
   total_volume (cardholder ccy), total_base_volume (SETTLEMENT, single-ccy — USE THIS FOR RANKING),
   total_msf, total_interchange, total_scheme_fee, total_margin,
-  total_credit_volume, total_debit_prepaid_volume, sales_user_id,
+  total_credit_volume, total_debit_prepaid_volume, sales_user_id (for RM attribution prefer joining dim_merchant.sales_user_id — the authoritative current assignment),
   dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume
 
 sum_daily_merchant_destination  -- per-merchant per-day DOMESTIC/INTERNATIONAL split WITH real fees (settlement ccy)
@@ -235,7 +235,7 @@ Q: Card type breakdown
 SELECT card_type, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_insight WHERE tenant_id = {TENANT_ID} AND card_type IS NOT NULL GROUP BY card_type ORDER BY total_volume DESC
 
 Q: Top sales reps by volume
-SELECT d.sales_user_id, COALESCE(SUM(d.total_base_volume),0) AS total_volume, COALESCE(SUM(d.total_msf),0) AS total_msf FROM sum_daily_merchant d WHERE d.tenant_id = {TENANT_ID} AND d.sales_user_id IS NOT NULL GROUP BY d.sales_user_id ORDER BY total_volume DESC LIMIT 20
+SELECT m.sales_user_id, COALESCE(SUM(d.total_base_volume),0) AS total_volume, COALESCE(SUM(d.total_msf),0) AS total_msf FROM sum_daily_merchant d JOIN dim_merchant m ON m.merchant_id = d.merchant_id AND m.tenant_id = d.tenant_id WHERE d.tenant_id = {TENANT_ID} AND m.sales_user_id IS NOT NULL GROUP BY m.sales_user_id ORDER BY total_volume DESC LIMIT 20
 
 Q: How many merchants by status
 SELECT status, COUNT(*) AS merchant_count FROM dim_merchant WHERE tenant_id = {TENANT_ID} GROUP BY status ORDER BY merchant_count DESC
@@ -431,7 +431,7 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
                 finalSql = sql;
                 result.put("generatedSql", sql);
 
-                String valErr = validateSql(sql);
+                String valErr = validateSql(sql, tenantId);
                 if (valErr != null) {
                     lastError = valErr;
                     logger.warn("[AI attempt {}] validation failed: {}", attempt, valErr);
@@ -484,7 +484,7 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
             String prompt = buildPrompt(tenantId) + "Q: " + question;
             String sql = ensureTenant(cleanSql(provider.generate(prompt, modelName, 0.05)), tenantId);
             return Map.of("question", question, "generatedSql", sql,
-                "provider", provider.id(), "safe", validateSql(sql) == null);
+                "provider", provider.id(), "safe", validateSql(sql, tenantId) == null);
         } catch (Exception e) {
             return Map.of("error", String.valueOf(e.getMessage()));
         }
@@ -563,7 +563,12 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
     private String ensureTenant(String sql, Long tenantId) {
         if (sql == null || sql.isEmpty()) return sql;
         String upper = sql.toUpperCase();
-        if (upper.contains("TENANT_ID")) return sql; // model included it
+        // Only skip injection when a CORRECT caller-tenant predicate is already
+        // present. A mere mention of tenant_id (in the SELECT list, GROUP BY, or
+        // compared to some OTHER tenant's id) must not suppress it — the old
+        // substring test let "break down volume by tenant_id" or "tenant_id = 3"
+        // run unscoped. validateSql() additionally rejects foreign-tenant literals.
+        if (upper.matches("(?s).*\\bTENANT_ID\\s*=\\s*" + tenantId + "\\b.*")) return sql;
 
         String qualifier = firstFromQualifier(sql);
         String predicate = (qualifier != null ? qualifier + "." : "") + "tenant_id = " + tenantId;
@@ -592,11 +597,15 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
         return table;
     }
 
-    private String validateSql(String sql) {
+    private String validateSql(String sql, Long tenantId) {
         if (sql == null || sql.isEmpty()) return "No SQL generated";
         String upper = sql.toUpperCase().replaceAll("\\s+", " ");
         if (!upper.startsWith("SELECT")) return "Only SELECT queries are allowed";
         if (upper.contains(";")) return "Multiple statements are not allowed";
+        // UNION would let a second SELECT ride along without the injected tenant
+        // predicate (ensureTenant only scopes the first). The schema prompt never
+        // emits UNION, so this only blocks adversarial/hallucinated SQL.
+        if (upper.matches(".*\\bUNION\\b.*")) return "UNION is not allowed";
         for (String b : BLOCKED_KEYWORDS) {
             if (upper.matches(".*\\b" + b + "\\b.*")) return "Blocked keyword: " + b;
         }
@@ -605,7 +614,50 @@ SELECT TO_CHAR(business_date, 'YYYY-MM') AS month, COALESCE(SUM(total_volume),0)
         }
         String tblErr = validateTableReferences(sql);
         if (tblErr != null) return tblErr;
+        String tenantErr = validateTenantPredicates(upper, tenantId);
+        if (tenantErr != null) return tenantErr;
+        return null;
+    }
+
+    /**
+     * Value-based tenant check — presence of the string "tenant_id" is NOT
+     * isolation. Every comparison involving tenant_id must either pin the
+     * CALLER's tenant (`tenant_id = <callerId>`) or be a tenant-equality join
+     * between two tables (`a.tenant_id = b.tenant_id`). Any other operator
+     * (IN/BETWEEN/!=/<...) or any other literal is a cross-tenant probe
+     * ("show tenant 3's totals") and is rejected outright. ensureTenant() has
+     * already injected the caller predicate when the model omitted it.
+     *
+     * @param upper the SQL upper-cased with whitespace collapsed
+     */
+    private String validateTenantPredicates(String upper, Long tenantId) {
         if (!upper.contains("TENANT_ID")) return "Missing tenant isolation";
+        // tenant_id with any non-equality operator
+        if (Pattern.compile("\\bTENANT_ID\\s+(NOT\\s+IN|IN|BETWEEN|LIKE|IS)\\b").matcher(upper).find()
+                || Pattern.compile("\\bTENANT_ID\\s*(!=|<>|<=|>=|<|>)").matcher(upper).find()) {
+            return "tenant_id may only be compared with '=' to the caller's tenant";
+        }
+        // tenant_id = <rhs> — rhs must be the caller's id or another tenant_id column
+        Matcher m = Pattern.compile("\\bTENANT_ID\\s*=\\s*([A-Z0-9_]+(?:\\.[A-Z0-9_]+)?|'[^']*')").matcher(upper);
+        boolean callerPredicateSeen = false;
+        while (m.find()) {
+            String rhs = m.group(1);
+            if (rhs.matches("\\d+")) {
+                if (!rhs.equals(String.valueOf(tenantId)))
+                    return "Query pins a different tenant_id — not allowed";
+                callerPredicateSeen = true;
+            } else if (!rhs.matches("(?:[A-Z_][A-Z0-9_]*\\.)?TENANT_ID")) {
+                return "tenant_id may only be compared to the caller's tenant";
+            }
+        }
+        // reversed literal form: <n> = tenant_id
+        Matcher r = Pattern.compile("(\\d+)\\s*=\\s*(?:[A-Z_][A-Z0-9_]*\\.)?TENANT_ID\\b").matcher(upper);
+        while (r.find()) {
+            if (!r.group(1).equals(String.valueOf(tenantId)))
+                return "Query pins a different tenant_id — not allowed";
+            callerPredicateSeen = true;
+        }
+        if (!callerPredicateSeen) return "Missing tenant isolation";
         return null;
     }
 

@@ -47,9 +47,12 @@ public class SalesCountryLeadService {
         return countryLeadRepository.save(lead);
     }
 
-    public SalesCountryLead updateCountryLead(Long id, String name, String email,
+    public SalesCountryLead updateCountryLead(Long tenantId, Long id, String name, String email,
             String countryCode, boolean isDefault) {
+        // IDOR guard: ids are global sequences — the row must belong to the caller's
+        // tenant, same check as assignTeamLeadToCountry.
         SalesCountryLead lead = countryLeadRepository.findById(id)
+                .filter(l -> java.util.Objects.equals(l.getTenantId(), tenantId))
                 .orElseThrow(() -> new RuntimeException("Country Lead not found"));
 
         if (isDefault && !lead.isDefault()) {
@@ -73,8 +76,10 @@ public class SalesCountryLeadService {
      * sales users.
      */
     @Transactional
-    public void deleteCountryLead(Long id) {
+    public void deleteCountryLead(Long tenantId, Long id) {
+        // IDOR guard: verify tenant ownership before unmapping teams and deleting.
         SalesCountryLead lead = countryLeadRepository.findById(id)
+                .filter(l -> java.util.Objects.equals(l.getTenantId(), tenantId))
                 .orElseThrow(() -> new RuntimeException("Country Lead not found"));
         List<SalesTeamMapping> teams = teamMappingRepository
                 .findAllByTenantIdAndCountryLeadId(lead.getTenantId(), id);

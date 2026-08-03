@@ -467,6 +467,12 @@ public class AuthController {
         if (tenantId != null) {
             Optional<com.acquira.common.model.UserTenantAccess> access = userTenantAccessRepository
                     .findByUserAndTenant_TenantId(user, tenantId);
+            // Tenant-isolation guard: without this, a caller could pass any
+            // tenantId and read that tenant's session-timeout setting below even
+            // with no access row.
+            if (access.isEmpty() && !"ROLE_SUPER_ADMIN".equals(user.getRole())) {
+                return ResponseEntity.status(403).body(Map.of("error", "No access to tenant " + tenantId));
+            }
             if (access.isPresent() && access.get().getSysUserGroup() != null) {
                 menus = access.get().getSysUserGroup().getMenus();
             }

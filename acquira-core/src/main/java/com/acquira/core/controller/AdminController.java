@@ -121,6 +121,15 @@ public class AdminController {
             user.setRole("ROLE_BANK_USER");
         }
 
+        // SECURITY: users.role is read by JwtRequestFilter:137 to decide whether to skip
+        // the UserTenantAccess check on X-Tenant-Id. A bank admin who can write
+        // ROLE_SUPER_ADMIN here mints an account with access to every tenant, so the
+        // role must be authorised, not merely defaulted.
+        if ("ROLE_SUPER_ADMIN".equals(user.getRole().trim()) && !isSuperAdmin()) {
+            return ResponseEntity.status(403).body(java.util.Map.of(
+                    "error", "Only a super admin may assign the SUPER_ADMIN role"));
+        }
+
         User savedUser = userRepository.save(user);
 
         // Record initial password in history (prevents immediate reuse)
@@ -262,10 +271,31 @@ public class AdminController {
     // ===== Security: Locked Users + Unlock =====
     // ==========================================
 
+    /**
+     * User ids belonging to the caller's active tenant, or null for a
+     * SUPER_ADMIN (meaning: no filtering). A bank ADMIN must not see or act on
+     * users of other tenants.
+     */
+    private java.util.Set<Long> tenantUserIdScope() {
+        if (isSuperAdmin()) return null;
+        Long tenantId = com.acquira.common.config.TenantContext.getCurrentTenant();
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        if (tenantId != null) {
+            for (var access : userTenantAccessRepository.findByTenant_TenantId(tenantId)) {
+                if (access.getUser() != null) ids.add(access.getUser().getId());
+            }
+        }
+        return ids;
+    }
+
     @GetMapping("/security/locked-users")
     public ResponseEntity<?> getLockedUsers() {
         // Efficient DB query instead of scanning all users in Java
         java.util.List<User> lockedUsers = userRepository.findByLockedUntilAfter(java.time.LocalDateTime.now());
+        java.util.Set<Long> scope = tenantUserIdScope();
+        if (scope != null) {
+            lockedUsers = lockedUsers.stream().filter(u -> scope.contains(u.getId())).toList();
+        }
         java.util.List<java.util.Map<String, Object>> locked = new java.util.ArrayList<>();
         for (User u : lockedUsers) {
             java.util.Map<String, Object> m = new java.util.HashMap<>();
@@ -282,6 +312,10 @@ public class AdminController {
 
     @PostMapping("/security/unlock-user/{userId}")
     public ResponseEntity<?> unlockUser(@PathVariable Long userId) {
+        java.util.Set<Long> scope = tenantUserIdScope();
+        if (scope != null && !scope.contains(userId)) {
+            return ResponseEntity.status(404).body(java.util.Map.of("error", "User not found"));
+        }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
         user.setFailedLoginAttempts(0);

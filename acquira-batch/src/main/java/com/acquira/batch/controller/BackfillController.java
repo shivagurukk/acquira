@@ -5,6 +5,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+// SUPER_ADMIN only: the request body carries an arbitrary tenantId and the job
+// destructively rebuilds that tenant's staging/fact/summary tables — a bank
+// ADMIN must not be able to point it at another tenant. Mirrors the guard on
+// MigrationController's equivalent arbitrary-tenant endpoints.
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
 @RestController
 @RequestMapping("/api/batch/backfill")
 @RequiredArgsConstructor

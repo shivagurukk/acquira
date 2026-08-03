@@ -92,9 +92,12 @@ public class FinanceController {
         filter.setStartDate(start);
         filter.setEndDate(end);
 
-        // 4. Delegate to existing repository method
+        // 4. Delegate to existing repository method. Tenant-scoped: without the
+        // explicit tenant_id predicate the (tenant_id, business_date) indexes on
+        // sum_daily_insight are unusable and other tenants' rows count into the totals.
+        Long tenantId = TenantContext.getCurrentTenant();
         List<Map<String, Object>> rawData = volumeRevenueRepository.getPerformanceDashboardData(
-                filter, effectiveGroupBy, null, null);
+                filter, effectiveGroupBy, null, null, tenantId);
 
         // 5. Remap keys for frontend compatibility (row_label → month_label)
         List<Map<String, Object>> result = new ArrayList<>();

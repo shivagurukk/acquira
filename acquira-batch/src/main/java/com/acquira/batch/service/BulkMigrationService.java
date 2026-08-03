@@ -469,7 +469,7 @@ public class BulkMigrationService {
             "SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.txn_currency_amount ELSE 0 END), " +
             "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN 1 END), " +
             "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END) " +
-            "FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id " +
+            "FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id AND m.tenant_id = f.tenant_id " +
             "WHERE f.tenant_id = ? AND DATE(f.payment_date) BETWEEN ? AND ? AND f.merchant_id IS NOT NULL " +
             "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, m.sales_user_id " +
             "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET " +
@@ -553,7 +553,7 @@ public class BulkMigrationService {
             "total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue) " +
             "SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*), SUM(f.txn_currency_amount), " +
             "SUM(f.msf), SUM(f.interchange_fee), 0, SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)) " +
-            "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
+            "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
             "WHERE f.tenant_id=? AND DATE(f.payment_date) BETWEEN ? AND ? " +
             "GROUP BY f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS') " +
             "ON CONFLICT (tenant_id, business_date, channel) DO UPDATE SET " +
@@ -613,7 +613,7 @@ public class BulkMigrationService {
             "card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf) " +
             "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
             "f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf) " +
-            "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
+            "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
             "WHERE f.tenant_id=? AND DATE(f.payment_date) BETWEEN ? AND ? " +
             "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
             "f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc " +
@@ -628,7 +628,7 @@ public class BulkMigrationService {
             "total_volume, total_msf, total_scheme_fee, total_net_revenue) " +
             "SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf), 0, " +
             "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)) " +
-            "FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id " +
+            "FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id AND s.tenant_id=f.tenant_id " +
             "WHERE f.tenant_id=? AND DATE(f.payment_date) BETWEEN ? AND ? " +
             "GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme " +
             "ON CONFLICT (tenant_id, business_date, mcc, card_scheme) DO UPDATE SET " +

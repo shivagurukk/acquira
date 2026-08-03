@@ -151,7 +151,12 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                             if (hasAccess) {
                                 targetTenantId = reqTenantId;
                             } else {
-                                logger.warn("User " + username + " attempted unauthorized tenant " + reqTenantId);
+                                // SECURITY: reject, don't fall back. Silently ignoring a
+                                // spoofed X-Tenant-Id left controllers that read the raw
+                                // header trusting an unvalidated value (cross-tenant IDOR).
+                                logger.warn("User " + username + " attempted unauthorized tenant " + reqTenantId + " — rejected");
+                                response.sendError(HttpServletResponse.SC_FORBIDDEN, "Unauthorized tenant");
+                                return;
                             }
                         } catch (NumberFormatException e) {
                             logger.warn("Invalid X-Tenant-Id header: " + tenantIdHeader);

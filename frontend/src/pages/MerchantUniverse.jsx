@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import Loader from '../components/Loader';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../api/axios';
 
 import MerchantHierarchy from '../components/MerchantHierarchy';
 import TransactionList from '../components/TransactionList';
@@ -180,27 +181,19 @@ const MerchantUniverse = () => {
         const formData = new FormData();
         formData.append('file', uploadFile);
 
-        const token = localStorage.getItem('token');
-        const endpoint = uploadType === 'transaction' ? '/api/upload/transaction' :
-            uploadType === 'merchant' ? '/api/upload/merchant' : '/api/upload'; // Unified default
+        const endpoint = uploadType === 'transaction' ? '/upload/transaction' :
+            uploadType === 'merchant' ? '/upload/merchant' : '/upload'; // Unified default
 
         try {
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` },
-                body: formData
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                setUploadJobId(data.jobId);
-                startPolling(data.jobId);
-            } else {
-                alert('Upload failed');
-                setIsUploading(false);
-            }
+            // Shared client so the X-Tenant-Id header is attached. A raw fetch here
+            // ingested merchant/transaction rows into the user's DEFAULT tenant rather
+            // than the active one — silent, and awkward to undo once summaries are built.
+            const { data } = await api.post(endpoint, formData);
+            setUploadJobId(data.jobId);
+            startPolling(data.jobId);
         } catch (error) {
             console.error(error);
+            alert('Upload failed');
             setIsUploading(false);
         }
     };
@@ -209,20 +202,14 @@ const MerchantUniverse = () => {
         if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
 
         pollingIntervalRef.current = setInterval(async () => {
-            const token = localStorage.getItem('token');
             try {
-                const res = await fetch(`/api/batch/jobs/${jobId}`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (res.ok) {
-                    const statusData = await res.json();
-                    setJobStatus(statusData);
-                    if (statusData.status === 'COMPLETED' || statusData.status === 'FAILED') {
-                        stopPolling();
-                        setIsUploading(false);
-                        if (statusData.status === 'COMPLETED') {
-                            setRefreshKey(prev => prev + 1); // Refresh list
-                        }
+                const { data: statusData } = await api.get(`/batch/jobs/${jobId}`);
+                setJobStatus(statusData);
+                if (statusData.status === 'COMPLETED' || statusData.status === 'FAILED') {
+                    stopPolling();
+                    setIsUploading(false);
+                    if (statusData.status === 'COMPLETED') {
+                        setRefreshKey(prev => prev + 1); // Refresh list
                     }
                 }
             } catch (e) {
@@ -652,15 +639,9 @@ const MerchantProfileView = ({ merchant, onBack }) => {
 
     useEffect(() => {
         const fetchData = async () => {
-            const token = localStorage.getItem('token');
             try {
-                const res = await fetch(`/api/merchants/${merchant.merchantId}/360`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (res.ok) {
-                    const json = await res.json();
-                    setData(json);
-                }
+                const { data: json } = await api.get(`/merchants/${merchant.merchantId}/360`);
+                setData(json);
             } catch (e) { console.error(e); }
             finally { setLoading(false); }
         };

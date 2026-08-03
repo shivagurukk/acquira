@@ -82,7 +82,8 @@ public class BudgetTargetController {
     }
 
     private Long resolveTenant(Long headerTenant) {
-        if (headerTenant != null) return headerTenant;
+        // SECURITY: the raw X-Tenant-Id header is attacker-controlled; use only the
+        // filter-validated TenantContext (JwtRequestFilter rejects spoofed headers).
         return TenantContext.getCurrentTenant();
     }
 

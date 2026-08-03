@@ -40,8 +40,11 @@ public class SalesTeamService {
         return salesTeamMappingRepository.save(mapping);
     }
 
-    public SalesTeamMapping updateTeamLead(Long id, String name, String email, boolean isDefault) {
+    public SalesTeamMapping updateTeamLead(Long tenantId, Long id, String name, String email, boolean isDefault) {
+        // IDOR guard: ids are global sequences — the row must belong to the caller's
+        // tenant, same check as assignSalesUser below.
         SalesTeamMapping mapping = salesTeamMappingRepository.findById(id)
+                .filter(m -> Objects.equals(m.getTenantId(), tenantId))
                 .orElseThrow(() -> new RuntimeException("Team Lead not found"));
 
         if (isDefault && !mapping.isDefault()) {
@@ -58,7 +61,11 @@ public class SalesTeamService {
     }
 
     @Transactional
-    public void deleteTeamLead(Long id) {
+    public void deleteTeamLead(Long tenantId, Long id) {
+        // IDOR guard: verify tenant ownership before the destructive delete.
+        salesTeamMappingRepository.findById(id)
+                .filter(m -> Objects.equals(m.getTenantId(), tenantId))
+                .orElseThrow(() -> new RuntimeException("Team Lead not found"));
         salesUserAssignmentRepository.deleteByTeamLeadId(id);
         salesTeamMappingRepository.deleteById(id);
     }

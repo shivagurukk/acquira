@@ -1066,8 +1066,8 @@ public class TransactionJobConfig {
                 "  ) eff ON TRUE " +
                 "  WHERE ft.tenant_id = ? AND " + dateRangeFt + " AND DATE(ft.payment_date) IN " + dateScope +
                 " ) r " +
-                "WHERE f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
-                tenantId);
+                "WHERE f.tenant_id = ? AND f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
+                tenantId, tenantId);
             log.info(String.format("Fee computation (single-pass): %d rows in %.1fs",
                 feeRows, (System.currentTimeMillis() - tFee) / 1000.0));
 
@@ -1201,7 +1201,7 @@ public class TransactionJobConfig {
                         "SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.store_base_currency_amount ELSE 0 END), " +
                         "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN 1 END), " +
                         "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END) " +
-                        "FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id " +
+                        "FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id AND m.tenant_id = f.tenant_id " +
                         "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, m.sales_user_id " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET " +
@@ -1221,7 +1221,7 @@ public class TransactionJobConfig {
                         "SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), " +
                         "SUM(COALESCE(f.scheme_fee,0)), " +
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
-                        "FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id " +
+                        "FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id AND s.tenant_id=f.tenant_id " +
                         "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme " +
                         "ON CONFLICT (tenant_id, business_date, mcc, card_scheme) DO UPDATE SET " +
@@ -1254,7 +1254,7 @@ public class TransactionJobConfig {
                         "SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*), SUM(f.store_base_currency_amount), " +
                         "SUM(f.msf), SUM(f.interchange_fee), SUM(COALESCE(f.scheme_fee,0)), " +
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
-                        "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
+                        "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
                         "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS') " +
                         "ON CONFLICT (tenant_id, business_date, channel) DO UPDATE SET " +
@@ -1313,7 +1313,7 @@ public class TransactionJobConfig {
                         "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
                         "     ELSE f.card_scheme END, " +
                         "f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc, COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf) " +
-                        "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
+                        "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
                         "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
                         "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
@@ -1349,8 +1349,8 @@ public class TransactionJobConfig {
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)), " +
                         "COUNT(CASE WHEN f.dcc IS TRUE THEN 1 END) " +
                         "FROM fact_transaction f " +
-                        "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
-                        "LEFT JOIN dim_store st ON f.store_id=st.store_id " +
+                        "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
+                        "LEFT JOIN dim_store st ON f.store_id=st.store_id AND st.tenant_id=f.tenant_id " +
                         "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
                         "COALESCE(t.type,'POS'), f.destination, " +
@@ -1393,7 +1393,7 @@ public class TransactionJobConfig {
                         "SUM(COALESCE(f.msf,0)), SUM(COALESCE(f.vat,0)), SUM(COALESCE(f.total_amount_settled,0)), " +
                         "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)) " +
                         "FROM fact_transaction f " +
-                        "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id " +
+                        "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
                         "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
                         "f.transaction_type, " +

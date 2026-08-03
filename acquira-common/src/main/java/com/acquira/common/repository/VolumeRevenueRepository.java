@@ -16,8 +16,10 @@ public class VolumeRevenueRepository {
     @PersistenceContext
     private EntityManager entityManager;
 
-    public List<Map<String, Object>> getSummary(VolumeRevenueFilterDTO filter) {
-        return getSummary(filter, null);
+    /** Fail closed: a null tenant must never silently widen a query to every tenant. */
+    private static void requireTenant(Long tenantId) {
+        if (tenantId == null)
+            throw new IllegalStateException("Tenant context not resolved — refusing unscoped query");
     }
 
     /**
@@ -26,6 +28,7 @@ public class VolumeRevenueRepository {
      * the volume/revenue summary.
      */
     public List<Map<String, Object>> getSummary(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
 
         // ── Monthly pre-aggregate routing ──────────────────────────────────
@@ -196,15 +199,12 @@ public class VolumeRevenueRepository {
         return result;
     }
 
-    public List<Map<String, Object>> getMerchantFinancialSummary(VolumeRevenueFilterDTO filter) {
-        return getMerchantFinancialSummary(filter, null);
-    }
-
     /**
      * Tenant-scoped variant. Adds `AND s.tenant_id = :tenantId` so the per-MID/SID
      * financial summary cannot show rows belonging to other tenants.
      */
     public List<Map<String, Object>> getMerchantFinancialSummary(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
 
         sql.append("SELECT ");
@@ -318,16 +318,64 @@ public class VolumeRevenueRepository {
         return result;
     }
 
-    public List<Map<String, Object>> getPerformanceDashboardData(VolumeRevenueFilterDTO filter, String groupBy,
-            String parentValue, String grandParentValue) {
-        return getPerformanceDashboardData(filter, groupBy, parentValue, grandParentValue, null);
-    }
-
     /**
      * Tenant-scoped variant. Adds `AND s.tenant_id = :tenantId` so drill-down
      * tables across MONTH/DAY/MERCHANT/STORE granularities never mix tenants.
+     *
+     * Month-grain routing: for groupBy=MONTH the complete calendar months of
+     * the range are served from the pre-aggregate sum_monthly_insight (~30x
+     * fewer rows than sum_daily_insight; additive SUMs so monthly = SUM(daily)
+     * reconciles exactly), and only a partial head/tail month falls back to the
+     * daily table. The legs produce disjoint month buckets, so their results
+     * are concatenated and re-sorted — no cross-leg merging needed.
      */
     public List<Map<String, Object>> getPerformanceDashboardData(VolumeRevenueFilterDTO filter, String groupBy,
+            String parentValue, String grandParentValue, Long tenantId) {
+        requireTenant(tenantId);
+        if ("MONTH".equals(groupBy) && filter.getStartDate() != null && filter.getEndDate() != null
+                && !filter.getStartDate().isAfter(filter.getEndDate())) {
+            java.time.LocalDate start = filter.getStartDate();
+            java.time.LocalDate end = filter.getEndDate();
+            java.time.LocalDate mStart = start.getDayOfMonth() == 1 ? start
+                    : start.plusMonths(1).withDayOfMonth(1);
+            java.time.LocalDate mEnd = end.getDayOfMonth() == end.lengthOfMonth() ? end
+                    : end.withDayOfMonth(1).minusDays(1);
+            if (!mStart.isAfter(mEnd)) {
+                List<Map<String, Object>> result = new ArrayList<>(
+                        getMonthPivotFromMonthly(filter, monthKey(mStart), monthKey(mEnd), tenantId));
+                if (start.isBefore(mStart))
+                    result.addAll(runDailyMonthPivot(filter, start, mStart.minusDays(1), tenantId));
+                if (end.isAfter(mEnd))
+                    result.addAll(runDailyMonthPivot(filter, mEnd.plusDays(1), end, tenantId));
+                // Match the daily path's ORDER BY row_label DESC ('YYYY-MM' sorts chronologically)
+                result.sort((a, b) -> String.valueOf(b.get("row_label"))
+                        .compareTo(String.valueOf(a.get("row_label"))));
+                return result;
+            }
+        }
+        return getPerformanceDashboardDataDaily(filter, groupBy, parentValue, grandParentValue, tenantId);
+    }
+
+    /**
+     * Daily-table pivot for a partial-month sub-range of the MONTH routing.
+     * Swaps the filter's dates in place for the call and restores them after
+     * (the DTO is request-scoped but shared across the legs of one request).
+     */
+    private List<Map<String, Object>> runDailyMonthPivot(VolumeRevenueFilterDTO filter,
+            java.time.LocalDate start, java.time.LocalDate end, Long tenantId) {
+        java.time.LocalDate origStart = filter.getStartDate();
+        java.time.LocalDate origEnd = filter.getEndDate();
+        try {
+            filter.setStartDate(start);
+            filter.setEndDate(end);
+            return getPerformanceDashboardDataDaily(filter, "MONTH", null, null, tenantId);
+        } finally {
+            filter.setStartDate(origStart);
+            filter.setEndDate(origEnd);
+        }
+    }
+
+    private List<Map<String, Object>> getPerformanceDashboardDataDaily(VolumeRevenueFilterDTO filter, String groupBy,
             String parentValue, String grandParentValue, Long tenantId) {
         // groupBy: MONTH, DAY, MERCHANT, STORE
         StringBuilder sql = new StringBuilder();
@@ -544,13 +592,18 @@ public class VolumeRevenueRepository {
         }
 
         List<Object[]> rows = query.getResultList();
-        List<Map<String, Object>> result = new ArrayList<>();
 
         // Debug: log column count from first row to catch index mismatches early
         if (!rows.isEmpty()) {
             System.out.println("[PerformanceDashboard] groupBy=" + groupBy + ", columns=" + rows.get(0).length);
         }
 
+        return mapPivotRows(rows, groupBy);
+    }
+
+    /** Maps pivot result rows to the API shape — shared by the daily and monthly legs. */
+    private static List<Map<String, Object>> mapPivotRows(List<Object[]> rows, String groupBy) {
+        List<Map<String, Object>> result = new ArrayList<>();
         for (Object[] row : rows) {
             Map<String, Object> map = new HashMap<>();
             int col = 0;
@@ -597,8 +650,101 @@ public class VolumeRevenueRepository {
         return result;
     }
 
-    public Map<String, List<String>> getFilterOptions() {
-        return getFilterOptions(null);
+    /**
+     * groupBy=MONTH pivot served from the month-grain pre-aggregate
+     * sum_monthly_insight. Identical bucket expressions and result shape to the
+     * daily pivot; the range is whole months expressed as YYYYMM keys.
+     */
+    private List<Map<String, Object>> getMonthPivotFromMonthly(VolumeRevenueFilterDTO filter,
+            Integer startMonthKey, Integer endMonthKey, Long tenantId) {
+        // Same exhaustive bucket partition as the daily pivot (see comment there).
+        final String DOM_DEBIT = "UPPER(COALESCE(s.destination,'')) = 'DOMESTIC' AND UPPER(COALESCE(s.card_type,'')) IN ('DEBIT','PREPAID')";
+        final String DOM_CREDIT = "UPPER(COALESCE(s.destination,'')) = 'DOMESTIC' AND UPPER(COALESCE(s.card_type,'')) NOT IN ('DEBIT','PREPAID')";
+        final String INTL = "UPPER(COALESCE(s.destination,'')) <> 'DOMESTIC'";
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT ");
+        sql.append(" TO_CHAR(TO_DATE(s.month_key::text, 'YYYYMM'), 'YYYY-MM') as row_label, ");
+        sql.append(" TO_DATE(s.month_key::text, 'YYYYMM') as sort_key, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_txns ELSE 0 END) as dom_debit_cnt, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_volume ELSE 0 END) as dom_debit_vol, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_msf ELSE 0 END) as dom_debit_msf, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dom_debit_optin, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_CREDIT).append(" THEN s.total_txns ELSE 0 END) as dom_credit_cnt, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_CREDIT).append(" THEN s.total_volume ELSE 0 END) as dom_credit_vol, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_CREDIT).append(" THEN s.total_msf ELSE 0 END) as dom_credit_msf, ");
+        sql.append(" SUM(CASE WHEN ").append(DOM_CREDIT).append(" AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dom_credit_optin, ");
+        sql.append(" SUM(CASE WHEN ").append(INTL).append(" THEN s.total_txns ELSE 0 END) as int_cnt, ");
+        sql.append(" SUM(CASE WHEN ").append(INTL).append(" THEN s.total_volume ELSE 0 END) as int_vol, ");
+        sql.append(" SUM(CASE WHEN ").append(INTL).append(" THEN s.total_msf ELSE 0 END) as int_msf, ");
+        sql.append(" SUM(CASE WHEN ").append(INTL).append(" AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as int_optin, ");
+        sql.append(" SUM(s.total_volume) as total_vol, ");
+        sql.append(" SUM(s.total_msf) as total_msf, ");
+        sql.append(" CAST(NULL as text) as merchant_name ");
+        sql.append("FROM sum_monthly_insight s ");
+
+        boolean needMerchant = (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty()) ||
+                (filter.getRmList() != null && !filter.getRmList().isEmpty()) ||
+                (filter.getMerchantName() != null && !filter.getMerchantName().isBlank()) ||
+                (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty());
+        boolean needStore = filter.getMccList() != null && !filter.getMccList().isEmpty();
+
+        if (needMerchant)
+            sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        if (needStore)
+            sql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+
+        sql.append("WHERE s.month_key BETWEEN :startMonthKey AND :endMonthKey ");
+        if (tenantId != null)
+            sql.append("AND s.tenant_id = :tenantId ");
+        if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
+            sql.append("AND m.referral_partner IN (:partners) ");
+        if (filter.getRmList() != null && !filter.getRmList().isEmpty())
+            sql.append("AND m.sales_email IN (:rms) ");
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            sql.append("AND m.name ILIKE :merchName ");
+        if (filter.getSchemeList() != null && !filter.getSchemeList().isEmpty())
+            sql.append("AND s.card_scheme IN (:schemes) ");
+        if (filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty())
+            sql.append("AND s.card_type IN (:cardTypes) ");
+        if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+            sql.append("AND s.destination IN (:destinations) ");
+        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
+            sql.append("AND st.mcc IN (:mccs) ");
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
+            sql.append("AND m.sales_user_id IN (:teamLeaders) ");
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+            sql.append("AND s.channel IN (:channels) ");
+
+        sql.append("GROUP BY s.month_key ");
+        sql.append("ORDER BY s.month_key DESC");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("startMonthKey", startMonthKey);
+        query.setParameter("endMonthKey", endMonthKey);
+        if (tenantId != null)
+            query.setParameter("tenantId", tenantId);
+        if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
+            query.setParameter("partners", filter.getPartnerList());
+        if (filter.getRmList() != null && !filter.getRmList().isEmpty())
+            query.setParameter("rms", filter.getRmList());
+        if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+            query.setParameter("merchName", "%" + filter.getMerchantName() + "%");
+        if (filter.getSchemeList() != null && !filter.getSchemeList().isEmpty())
+            query.setParameter("schemes", filter.getSchemeList());
+        if (filter.getCardTypeList() != null && !filter.getCardTypeList().isEmpty())
+            query.setParameter("cardTypes", filter.getCardTypeList());
+        if (filter.getDestinationList() != null && !filter.getDestinationList().isEmpty())
+            query.setParameter("destinations", filter.getDestinationList());
+        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
+            query.setParameter("mccs", filter.getMccList());
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
+            query.setParameter("teamLeaders", filter.getTeamLeaderList());
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
+            query.setParameter("channels", filter.getChannelList());
+
+        List<Object[]> rows = query.getResultList();
+        return mapPivotRows(rows, "MONTH");
     }
 
     /**
@@ -621,6 +767,7 @@ public class VolumeRevenueRepository {
             key = "'vrFilters:' + (#tenantId != null ? #tenantId : 'all')",
             unless = "#result.isEmpty()")
     public Map<String, List<String>> getFilterOptions(Long tenantId) {
+        requireTenant(tenantId);
         Map<String, List<String>> options = new HashMap<>();
 
         try {
@@ -746,10 +893,6 @@ public class VolumeRevenueRepository {
         return options;
     }
 
-    public List<Map<String, Object>> getDebitPrepaidMetrics(VolumeRevenueFilterDTO filter) {
-        return getDebitPrepaidMetrics(filter, null);
-    }
-
     /**
      * Tenant-scoped variant. Adds `AND s.tenant_id = :tenantId` so debit/prepaid
      * metrics never include rows from other tenants.
@@ -766,6 +909,7 @@ public class VolumeRevenueRepository {
      * the drawer instead, which is the correct behaviour.
      */
     public List<Map<String, Object>> getDebitPrepaidMetrics(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
 
         sql.append("SELECT ");
@@ -969,11 +1113,8 @@ public class VolumeRevenueRepository {
         return "( " + debitBucketMatcherSql() + " OR " + prepaidBucketMatcherSql() + " ) ";
     }
 
-    public Map<String, Object> getDebitPrepaidSummary(VolumeRevenueFilterDTO filter) {
-        return getDebitPrepaidSummary(filter, null);
-    }
-
     public Map<String, Object> getDebitPrepaidSummary(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         boolean userPickedCardTypes = listNonEmpty(filter.getCardTypeList());
         String segmentLabel = userPickedCardTypes ? "CUSTOM" : "DEBIT_PREPAID";
         String cardMatcher = userPickedCardTypes ? "s.card_type IN (:cardTypes) " : debitPrepaidMatcherSql();
@@ -1170,10 +1311,6 @@ public class VolumeRevenueRepository {
         return num.divide(den, 2, java.math.RoundingMode.HALF_UP);
     }
 
-    public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter) {
-        return getAttritionReport(filter, null);
-    }
-
     /**
      * Coverage check for the attrition report's three auto-computed
      * comparison windows (MoM prior month, YoY prior-period, YoY YTD-prior),
@@ -1188,6 +1325,7 @@ public class VolumeRevenueRepository {
      * Mirrors its window math — must stay in sync with it.
      */
     public Map<String, Object> getAttritionReportMeta(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
         java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
 
@@ -1270,6 +1408,7 @@ public class VolumeRevenueRepository {
      * comparisons never include other tenants' merchants.
      */
     public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         // ── Window definitions (all equal-length so comparisons are apples-to-apples) ──
         // Current period  : [start, end]              (the selected range)
         // YoY prev period : [start-1y, end-1y]        (same range, one year earlier)
@@ -1462,15 +1601,12 @@ public class VolumeRevenueRepository {
         return Long.parseLong(o.toString());
     }
 
-    public Map<String, Object> getExecutiveMetrics(VolumeRevenueFilterDTO filter) {
-        return getExecutiveMetrics(filter, null);
-    }
-
     /**
      * Tenant-scoped variant. Adds `AND tenant_id = :tenantId` so executive
      * KPIs (volume, txns, active merchants) are scoped to the requesting tenant.
      */
     public Map<String, Object> getExecutiveMetrics(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         Map<String, Object> metrics = new HashMap<>();
 
         // Dates
@@ -1597,16 +1733,13 @@ public class VolumeRevenueRepository {
         return startIsMonthStart && endIsMonthEnd && !start.isAfter(end);
     }
 
-    public Map<String, Object> getMerchantAnalyticsReport(VolumeRevenueFilterDTO filter, int page, int size) {
-        return getMerchantAnalyticsReport(filter, page, size, null);
-    }
-
     /**
      * Tenant-scoped variant. When tenantId is non-null, the SQL adds
      * `AND s.tenant_id = :tenantId` so cross-tenant rows can never leak.
      * In single-tenant deployments this is a no-op.
      */
     public Map<String, Object> getMerchantAnalyticsReport(VolumeRevenueFilterDTO filter, int page, int size, Long tenantId) {
+        requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
 
         // Select columns matching frontend expectation:
@@ -1770,10 +1903,6 @@ public class VolumeRevenueRepository {
     // ════════════════════════════════════════════════════════════════════════
     //  RETENTION REPORT  (Merchant Churn + Revenue-Weighted Churn + Reactivation)
     // ════════════════════════════════════════════════════════════════════════
-    public List<Map<String, Object>> getRetentionReport(VolumeRevenueFilterDTO filter) {
-        return getRetentionReport(filter, null);
-    }
-
     /**
      * Cheap coverage check for the retention report's auto-computed prior
      * window, so the frontend can tell "0 churn because nothing changed"
@@ -1792,6 +1921,7 @@ public class VolumeRevenueRepository {
      * getRetentionReport() — must stay in sync with it.
      */
     public Map<String, Object> getRetentionReportMeta(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
         java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
         long lenDays = java.time.temporal.ChronoUnit.DAYS.between(start, end);
@@ -1967,6 +2097,7 @@ public class VolumeRevenueRepository {
      * used across this repository.
      */
     public List<Map<String, Object>> getRetentionReport(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
         java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
 

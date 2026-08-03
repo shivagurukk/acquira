@@ -173,7 +173,7 @@ public class LeaderboardController {
         String sql = "WITH team_agents AS ("
             + " SELECT stm.team_lead_name, stm.team_lead_email, sua.sales_user_id"
             + " FROM sales_team_mapping stm"
-            + " JOIN sales_user_assignment sua ON stm.id = sua.team_lead_id"
+            + " JOIN sales_user_assignment sua ON stm.id = sua.team_lead_id AND sua.tenant_id = stm.tenant_id"
             + " WHERE stm.tenant_id = ?"
             + "), team_onboarding AS ("
             + " SELECT ta.team_lead_name, ta.team_lead_email,"

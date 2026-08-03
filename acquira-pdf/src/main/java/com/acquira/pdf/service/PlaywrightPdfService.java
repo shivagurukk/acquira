@@ -282,6 +282,10 @@ public class PlaywrightPdfService {
         public final List<String> errors = Collections.synchronizedList(new ArrayList<>());
         public volatile String phase = "INITIALIZING";
         public volatile boolean cancelled = false;
+        // Owning tenant, captured from the request thread that started the batch.
+        // Monitoring endpoints filter on it so one tenant can neither observe nor
+        // cancel another tenant's report run.
+        public volatile Long tenantId;
 
         public BatchJobStatus(String jobId, int totalMerchants) {
             this.jobId = jobId; this.startTime = Instant.now(); this.totalMerchants = totalMerchants;
@@ -711,6 +715,7 @@ public class PlaywrightPdfService {
         String jobId = "batch-" + System.currentTimeMillis();
         int total = merchantIdList.size();
         BatchJobStatus status = new BatchJobStatus(jobId, total);
+        status.tenantId = com.acquira.common.config.TenantContext.getCurrentTenant();
         activeJobs.put(jobId, status);
 
         Thread pipelineThread = new Thread(() -> {

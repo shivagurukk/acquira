@@ -32,6 +32,30 @@ public class AccessRequestController {
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
 
+    private boolean isSuperAdmin() {
+        org.springframework.security.core.Authentication auth =
+                SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
+    }
+
+    /**
+     * SECURITY: access requests carry requested_tenant_id, but this controller is
+     * gated on hasAnyRole('ADMIN','SUPER_ADMIN') — and ADMIN is a per-BANK role, not
+     * a platform one. Without a tenant predicate a bank admin read (and approved,
+     * and rejected) every other bank's pending requests. A super admin is genuinely
+     * platform-wide and keeps the unfiltered view.
+     *
+     * Returns true when the caller may act on this request.
+     */
+    private boolean canAccessRequest(AccessRequest r) {
+        if (isSuperAdmin()) return true;
+        Long active = com.acquira.common.config.TenantContext.getCurrentTenant();
+        if (active == null || r.getRequestedTenantId() == null) return false;
+        return active.equals(Long.valueOf(r.getRequestedTenantId()));
+    }
+
     /**
      * GET /api/admin/access-requests — list all requests (with optional status filter)
      */
@@ -43,6 +67,7 @@ public class AccessRequestController {
         } else {
             requests = accessRequestRepo.findByStatusOrderByCreatedAtDesc(status);
         }
+        requests = requests.stream().filter(this::canAccessRequest).toList();
 
         // Enrich with tenant name
         List<Map<String, Object>> result = new ArrayList<>();
@@ -73,7 +98,9 @@ public class AccessRequestController {
      */
     @GetMapping("/count")
     public ResponseEntity<?> pendingCount() {
-        long count = accessRequestRepo.findByStatus("PENDING").size();
+        long count = accessRequestRepo.findByStatus("PENDING").stream()
+            .filter(this::canAccessRequest)
+            .count();
         return ResponseEntity.ok(Map.of("pending", count));
     }
 
@@ -88,6 +115,12 @@ public class AccessRequestController {
 
         AccessRequest request = accessRequestRepo.findById(id)
             .orElseThrow(() -> new RuntimeException("Request not found"));
+
+        // SECURITY: 404 (not 403) so a bank admin cannot probe which request ids exist
+        // in other tenants.
+        if (!canAccessRequest(request)) {
+            return ResponseEntity.status(404).body(Map.of("error", "Request not found"));
+        }
 
         if (!"PENDING".equals(request.getStatus())) {
             return ResponseEntity.badRequest().body(Map.of("error", "Request is not pending"));
@@ -105,6 +138,18 @@ public class AccessRequestController {
 
         if (tenantId == null || groupId == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "Tenant and Group are required for approval"));
+        }
+
+        // SECURITY: tenantId arrives in the request BODY, so JwtRequestFilter (which only
+        // validates the X-Tenant-Id header) never sees it. Without this guard a bank admin
+        // could approve a request and mint a UserTenantAccess row granting the new account
+        // access to ANY tenant on the platform. Mirrors AdminController.createUser:97-103.
+        if (!isSuperAdmin()) {
+            Long activeTenant = com.acquira.common.config.TenantContext.getCurrentTenant();
+            if (activeTenant == null || !activeTenant.equals(tenantId)) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "error", "You may only approve requests into your active tenant"));
+            }
         }
 
         // Create user
@@ -174,6 +219,10 @@ public class AccessRequestController {
     public ResponseEntity<?> rejectRequest(@PathVariable Long id, @RequestBody Map<String, String> payload) {
         AccessRequest request = accessRequestRepo.findById(id)
             .orElseThrow(() -> new RuntimeException("Request not found"));
+
+        if (!canAccessRequest(request)) {
+            return ResponseEntity.status(404).body(Map.of("error", "Request not found"));
+        }
 
         if (!"PENDING".equals(request.getStatus())) {
             return ResponseEntity.badRequest().body(Map.of("error", "Request is not pending"));

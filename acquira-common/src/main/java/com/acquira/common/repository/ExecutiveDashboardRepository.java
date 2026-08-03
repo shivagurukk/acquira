@@ -22,10 +22,6 @@ public class ExecutiveDashboardRepository {
     @PersistenceContext
     private EntityManager entityManager;
 
-    public ExecutiveDashboardDTO getDashboardData(String dataset, LocalDate asOfDate) {
-        return getDashboardData(dataset, asOfDate, null);
-    }
-
     /**
      * Tenant-scoped variant. When tenantId is non-null every query in this method
      * appends an `AND <alias>.tenant_id = :tenantId` clause so cross-tenant rows
@@ -40,6 +36,9 @@ public class ExecutiveDashboardRepository {
             cacheNames = com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
             key = "'execDash:' + #tenantId + ':' + #dataset + ':' + #asOfDate")
     public ExecutiveDashboardDTO getDashboardData(String dataset, LocalDate asOfDate, Long tenantId) {
+        // Fail closed: a null tenant must never silently widen the dashboard to every tenant.
+        if (tenantId == null)
+            throw new IllegalStateException("Tenant context not resolved — refusing unscoped query");
         if (asOfDate == null)
             asOfDate = LocalDate.now();
         // Tenant clauses appended to each query when tenantId is non-null. Kept as

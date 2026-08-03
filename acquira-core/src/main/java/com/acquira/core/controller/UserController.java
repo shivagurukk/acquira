@@ -95,6 +95,19 @@ public class UserController {
         return current != null && current.equals(targetTenantId);
     }
 
+    /**
+     * SECURITY: the users.role column is not just a UI hint — JwtRequestFilter:137
+     * reads it and, when it equals ROLE_SUPER_ADMIN, SKIPS the UserTenantAccess check
+     * for the X-Tenant-Id header. Letting a bank admin write that value through a
+     * request body is therefore a full tenant-isolation bypass, not a cosmetic
+     * privilege bump. Only a super admin may assign a super-admin role.
+     */
+    private boolean mayAssignRole(String role) {
+        if (role == null || role.isBlank()) return true;
+        if (isSuperAdmin()) return true;
+        return !"ROLE_SUPER_ADMIN".equals(role.trim());
+    }
+
     // ===== CREATE USER (with username + email duplicate check) =====
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
@@ -120,6 +133,11 @@ public class UserController {
             user.setEmail(email);
         } else {
             user.setEmail(null);
+        }
+
+        if (!mayAssignRole(user.getRole())) {
+            return ResponseEntity.status(403)
+                    .body(Map.of("error", "Only a super admin may assign the SUPER_ADMIN role"));
         }
 
         // Validate password
@@ -190,6 +208,10 @@ public class UserController {
 
         // GAP-4: Update role (only if provided and caller is SUPER_ADMIN)
         if (userDetails.getRole() != null && !userDetails.getRole().isBlank()) {
+            if (!mayAssignRole(userDetails.getRole())) {
+                return ResponseEntity.status(403)
+                        .body(Map.of("error", "Only a super admin may assign the SUPER_ADMIN role"));
+            }
             user.setRole(userDetails.getRole());
         }
 
@@ -331,6 +353,16 @@ public class UserController {
 
     @GetMapping("/{username}/banks")
     public ResponseEntity<List<com.acquira.common.model.Tenant>> getUserTenants(@PathVariable String username) {
+        // Self-or-admin guard: previously ANY authenticated user could enumerate
+        // any other user's tenant/bank assignments by username.
+        String caller = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication().getName();
+        if (!caller.equals(username)) {
+            Long targetId = userRepository.findByUsername(username).map(User::getId).orElse(null);
+            if (targetId == null || !canActOnUser(targetId)) {
+                return ResponseEntity.status(403).build();
+            }
+        }
         return ResponseEntity.ok(tenantService.getAllowedTenantsForUser(username));
     }
 

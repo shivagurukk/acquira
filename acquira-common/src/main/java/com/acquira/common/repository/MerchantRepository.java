@@ -9,9 +9,10 @@ import java.util.Optional;
 @Repository
 public interface MerchantRepository extends JpaRepository<Merchant, Long>,
                 org.springframework.data.jpa.repository.JpaSpecificationExecutor<Merchant> {
-        Optional<Merchant> findByInternalId(String internalId);
-
-        Optional<Merchant> findByMid(String mid);
+        // NOTE: unscoped findByInternalId / findByMid / findByName were removed —
+        // internal_id, mid and name are bank-assigned and NOT unique across
+        // tenants, so each returned an arbitrary tenant's row. Use the
+        // findByTenantIdAnd... variants instead.
 
         // Tenant-scoped batch lookup by bank MID — used by the "generate PDF by MID / file"
         // option so a tenant can only ever resolve its OWN merchants from a supplied MID list.
@@ -28,8 +29,6 @@ public interface MerchantRepository extends JpaRepository<Merchant, Long>,
                         org.springframework.data.domain.Pageable pageable);
 
         long countByTenantIdAndStatus(Long tenantId, String status);
-
-        Optional<Merchant> findByName(String name);
 
         public interface SalesUserProjection {
                 String getSalesUserId();

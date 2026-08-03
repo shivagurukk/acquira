@@ -97,6 +97,12 @@ public class MigrationController {
     }
 
     @GetMapping("/progress")
+    // SECURITY: BulkMigrationService keeps ONE global progress object, not one per
+    // tenant — so this leaks the target tenant, month and row counts of whatever
+    // migration is running. /start and /delete-day are SUPER_ADMIN-gated for the same
+    // reason; this endpoint was the only one in the controller left on the URL rule
+    // (ADMIN), which every bank admin satisfies.
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<Map<String, Object>> getProgress() {
         return ResponseEntity.ok(migrationService.getProgress());
     }

@@ -85,6 +85,12 @@ public class PdfController {
         if (code != null) {
             return reportsRoot.resolve(code).resolve(ym.toString());
         }
+        // No bank short code — still keep the folder tenant-discriminated so two
+        // tenants' PDFs can never land in (or be served from) one shared folder.
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId != null) {
+            return reportsRoot.resolve("tenant-" + tenantId).resolve(ym.toString());
+        }
         return reportsRoot.resolve(ym.toString());
     }
 
@@ -136,6 +142,12 @@ public class PdfController {
         // coreClient.fetchInsights(id, year, month) with no tenant guard (null
         // expectedTenantId), which is an IDOR on a globally-sequential BIGSERIAL key.
         Long tenantId = TenantContext.getCurrentTenant();
+        // Fail closed like /overview: a null tenant would make fetchInsights skip
+        // its ownership check and serve any merchant's data.
+        if (tenantId == null) {
+            response.sendError(403, "No tenant context");
+            return;
+        }
         MerchantInsightsDTO data;
         try {
             data = coreClient.fetchInsights(merchantId, targetMonth.getYear(),
@@ -211,6 +223,11 @@ public class PdfController {
         try {
             YearMonth targetMonth  = resolveTargetMonth(year, month);
             Long currentTenant     = TenantContext.getCurrentTenant();
+            // Without a tenant this batch would run for EVERY tenant's merchants and
+            // write their PDFs — same guard /generate-by-mid already has.
+            if (currentTenant == null) {
+                return ResponseEntity.status(403).body(Map.of("error", "No tenant context"));
+            }
             String bankShortCode   = resolveBankShortCode();
             Path   folder          = monthFolder(targetMonth, bankShortCode);
             String monthYear       = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
@@ -278,9 +295,7 @@ public class PdfController {
                 // Tenant-scoped ALL + PDF generate-flag filter. Only merchants whose
                 // generate_report_flag = 1 are loaded (filtered in the DB, so flagged-off
                 // merchants never reach memory). Set a merchant's flag to 0 to exclude it.
-                merchants = (currentTenant != null)
-                        ? merchantRepository.findByTenantIdAndGenerateReportFlag(currentTenant, 1)
-                        : merchantRepository.findAll();
+                merchants = merchantRepository.findByTenantIdAndGenerateReportFlag(currentTenant, 1);
                 log.info("[BATCH] Full mode — running for {} merchants with generate_report_flag=1 (tenant={})",
                         merchants.size(), currentTenant);
             }
@@ -840,22 +855,32 @@ public class PdfController {
 
     // ─── Batch Monitoring ──────────────────────────────────────────────
 
+    /** A batch job is visible/cancellable only within the tenant that started it. */
+    private boolean ownsBatchJob(BatchJobStatus status) {
+        return status != null && Objects.equals(status.tenantId, TenantContext.getCurrentTenant());
+    }
+
     @GetMapping("/batch-status/{jobId}")
     public ResponseEntity<Map<String, Object>> getBatchStatus(@PathVariable String jobId) {
         BatchJobStatus status = playwrightPdfService.getJobStatus(jobId);
-        if (status == null) return ResponseEntity.notFound().build();
+        if (!ownsBatchJob(status)) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(status.toMap());
     }
 
     @GetMapping("/batch-jobs")
     public ResponseEntity<List<Map<String, Object>>> listBatchJobs() {
         List<Map<String, Object>> jobs = new ArrayList<>();
-        playwrightPdfService.getActiveJobs().values().forEach(s -> jobs.add(s.toMap()));
+        playwrightPdfService.getActiveJobs().values().forEach(s -> {
+            if (ownsBatchJob(s)) jobs.add(s.toMap());
+        });
         return ResponseEntity.ok(jobs);
     }
 
     @PostMapping("/batch-cancel/{jobId}")
     public ResponseEntity<Map<String, Object>> cancelBatch(@PathVariable String jobId) {
+        if (!ownsBatchJob(playwrightPdfService.getJobStatus(jobId))) {
+            return ResponseEntity.notFound().build();
+        }
         boolean cancelled = playwrightPdfService.cancelJob(jobId);
         return ResponseEntity.ok(Map.of("jobId", jobId, "cancelled", cancelled));
     }
@@ -1100,20 +1125,16 @@ public class PdfController {
 
     // ─── Private helpers ───────────────────────────────────────────────
 
+    // SECURITY: no fallback to the legacy shared reports/{YYYY-MM} folder. That
+    // folder mixes tenants (pre-bankShortCode writes landed there), so falling
+    // back let any authenticated user list/download other tenants' merchant PDFs.
+    // Legacy files must be migrated into the per-tenant folder instead.
     private Path resolveReportFile(String filename, YearMonth targetMonth) {
-        Path tenantPath = monthFolder(targetMonth).resolve(filename);
-        if (Files.exists(tenantPath)) return tenantPath;
-        Path legacyPath = reportsRoot.resolve(targetMonth.toString()).resolve(filename);
-        if (Files.exists(legacyPath)) return legacyPath;
-        return tenantPath;
+        return monthFolder(targetMonth).resolve(filename);
     }
 
     private Path resolveReportFolder(YearMonth targetMonth) {
-        Path tenantFolder = monthFolder(targetMonth);
-        if (Files.exists(tenantFolder)) return tenantFolder;
-        Path legacyFolder = reportsRoot.resolve(targetMonth.toString());
-        if (Files.exists(legacyFolder)) return legacyFolder;
-        return tenantFolder;
+        return monthFolder(targetMonth);
     }
 
     private void logBatchRun(String jobId, Long tenantId, String targetMonth, int merchantCount, String status) {
@@ -1205,13 +1226,14 @@ public class PdfController {
     }
 
     private void persistMerchantName(Long merchantId, Long tenantId, String name) {
+        // Fail closed: without a tenant this UPDATE could write another tenant's
+        // dim_merchant row (merchant_id is a global sequence). Skip instead.
+        if (tenantId == null) return;
         try {
             String sql = "UPDATE dim_merchant SET name = ? WHERE merchant_id = ? "
-                + (tenantId != null ? "AND tenant_id = ? " : "")
+                + "AND tenant_id = ? "
                 + "AND (name IS NULL OR TRIM(name) = '')";
-            int updated = (tenantId != null)
-                ? jdbcTemplate.update(sql, name, merchantId, tenantId)
-                : jdbcTemplate.update(sql, name, merchantId);
+            int updated = jdbcTemplate.update(sql, name, merchantId, tenantId);
             if (updated > 0) log.info("Persisted merchant name '{}' for id={}", name, merchantId);
         } catch (Exception e) {
             log.debug("Could not persist merchant name: {}", e.getMessage());

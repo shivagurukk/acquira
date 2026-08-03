@@ -120,7 +120,10 @@ public class ReportBuilderController {
     @PostMapping("/templates/{templateId}/schedule")
     public ResponseEntity<?> createSchedule(@PathVariable Long templateId, @RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
+        // Same tenant guard as update/delete above — without it a foreign template
+        // gets attached to the schedule and its config_json leaks in the response.
         ReportTemplate template = templateRepo.findById(templateId)
+            .filter(t -> t.getTenantId().equals(tenantId))
             .orElseThrow(() -> new RuntimeException("Template not found"));
 
         ReportSchedule s = new ReportSchedule();

@@ -100,10 +100,17 @@ public class DestinationDashboardRepository {
         if (listNonEmpty(filter.getCardTypeList()))   query.setParameter("cardTypes", filter.getCardTypeList());
     }
 
+    /** Fail closed: a null tenant must never silently widen a query to every tenant. */
+    private static void requireTenant(Long tenantId) {
+        if (tenantId == null)
+            throw new IllegalStateException("Tenant context not resolved — refusing unscoped query");
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // 1) KPIs — current vs. prior window, split domestic/international
     // ─────────────────────────────────────────────────────────────────
     public Map<String, Object> getKpis(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         LocalDate end = filter.getEndDate() != null ? filter.getEndDate() : LocalDate.now();
         LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.minusDays(30);
 
@@ -215,6 +222,7 @@ public class DestinationDashboardRepository {
     // 2) Monthly trend — domestic + international columns in one row
     // ─────────────────────────────────────────────────────────────────
     public List<Map<String, Object>> getTrend(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT TO_CHAR(s.business_date, 'YYYY-MM') as month_label, ");
         sql.append("SUM(CASE WHEN ").append(DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_volume, ");
@@ -258,6 +266,7 @@ public class DestinationDashboardRepository {
     // 3) Breakdown by scheme / cardType / channel / mcc — dom+intl split
     // ─────────────────────────────────────────────────────────────────
     public List<Map<String, Object>> getBreakdown(VolumeRevenueFilterDTO filter, String dimension, Long tenantId) {
+        requireTenant(tenantId);
         String groupCol;
         boolean needStoreForGroup = false;
         switch (dimension) {
@@ -314,6 +323,7 @@ public class DestinationDashboardRepository {
     //    (flags travel/FX/DCC-opportunity merchants).
     // ─────────────────────────────────────────────────────────────────
     public List<Map<String, Object>> getTopMerchants(VolumeRevenueFilterDTO filter, Long tenantId, int limit) {
+        requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT m.mid as mid, m.name as merchant_name, ");
         sql.append("SUM(CASE WHEN ").append(DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_volume, ");

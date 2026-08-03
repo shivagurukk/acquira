@@ -135,8 +135,14 @@ const TopPerformers = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
 
+    // Re-running the report (header button, filter apply, date preset) can leave two
+    // requests in flight. Without a guard the slower one wins whenever it lands last,
+    // so the board could show results for a window the user had already moved off.
+    const reqSeq = React.useRef(0);
+
     const fetchData = async (explicitFilters) => {
         const f = explicitFilters || filters;
+        const seq = ++reqSeq.current;
         setLoading(true);
         try {
             const params = new URLSearchParams();
@@ -144,11 +150,11 @@ const TopPerformers = () => {
             if (f.endDate) params.set('to', f.endDate);
             const body = { ...f, startDate: undefined, endDate: undefined, datePreset: undefined };
             const res = await api.post(`/business/top-performers-filtered?${params.toString()}`, body);
-            setData(res.data);
+            if (seq === reqSeq.current) setData(res.data);
         } catch (e) {
             console.error('Failed to fetch top performers', e);
         } finally {
-            setLoading(false);
+            if (seq === reqSeq.current) setLoading(false);
         }
     };
 
@@ -270,6 +276,11 @@ const TopPerformers = () => {
                                 </Box>
                                 <Typography fontWeight={700} fontSize="0.88rem" color={T.text}>Top Movers</Typography>
                             </Stack>
+                            {data?.priorFrom && (
+                                <Typography fontSize="0.68rem" color={T.textMut} sx={{ mt: 0.4 }}>
+                                    vs {data.priorFrom} → {data.priorTo}
+                                </Typography>
+                            )}
                         </Box>
                         {!movers ? (
                             <Box sx={{ p: 3 }}>

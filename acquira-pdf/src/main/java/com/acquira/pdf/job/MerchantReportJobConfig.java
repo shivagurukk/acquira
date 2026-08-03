@@ -209,9 +209,18 @@ public class MerchantReportJobConfig {
      */
     private void writeReport(String bankCode, YearMonth target, Merchant merchant,
                              byte[] pdfBytes, Long tenantId) throws java.io.IOException {
-        Path folder = bankCode != null
-                ? Paths.get(reportsBaseDir).resolve(bankCode).resolve(target.toString())
-                : Paths.get(reportsBaseDir).resolve(target.toString());
+        // Never write into the shared reports/{YYYY-MM} root: it mixes tenants
+        // (same-named merchants overwrite each other) and download endpoints must
+        // not serve it. Fall back to a tenant-discriminated folder instead.
+        String folderCode = (bankCode != null && !bankCode.isBlank())
+                ? bankCode
+                : (tenantId != null ? "tenant-" + tenantId : null);
+        if (folderCode == null) {
+            log.warn("[JOB] Skipping report for merchant {} — no bank code and no tenant id, "
+                    + "refusing to write into the shared reports folder", merchant.getMerchantId());
+            return;
+        }
+        Path folder = Paths.get(reportsBaseDir).resolve(folderCode).resolve(target.toString());
         Files.createDirectories(folder);
 
         String rawName = merchant.getName() != null ? merchant.getName() : merchant.getMid();

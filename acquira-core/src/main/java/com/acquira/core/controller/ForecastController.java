@@ -80,7 +80,8 @@ public class ForecastController {
             List.of("VOLUME", "NET_REVENUE", "MSF", "TXNS");
 
     private Long resolveTenant(Long headerTenant) {
-        if (headerTenant != null) return headerTenant;
+        // SECURITY: the raw X-Tenant-Id header is attacker-controlled; use only the
+        // filter-validated TenantContext (JwtRequestFilter rejects spoofed headers).
         return TenantContext.getCurrentTenant();
     }
 
