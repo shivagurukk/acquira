@@ -3,7 +3,7 @@ import api from '../api/axios';
 import {
     RefreshCw, TrendingUp, TrendingDown, Receipt, Wallet,
     Percent, Coins, BarChart3, CalendarRange, ArrowDownRight, Layers, Globe,
-    Sigma, Scale, Divide, Zap, Award, AlertTriangle, Download, X, SlidersHorizontal,
+    Sigma, Scale, Zap, Award, AlertTriangle, Download, X, SlidersHorizontal,
 } from 'lucide-react';
 import {
     ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
@@ -24,7 +24,8 @@ import { createFmt } from '../utils/formatters';
      from the existing /business/ceo-summary payload (no backend change):
        Effective MSF rate  = msf / volume  (blended take rate, %)
        Total fees          = interchange + scheme + ecom
-       Cost-to-MSF ratio   = fees / msf   (how much of MSF the schemes eat)
+       Fee rates           = each fee / volume, %  (same basis as MSF rate,
+                             so cost lines compare directly against take rate)
        Margin / txn        = netRevenue / txns
      NOTE: the `netRevenue` field name is the /business/ceo-summary payload
      key and stays as-is; only the user-facing label reads "Net Margin".
@@ -152,7 +153,7 @@ const HeroTile = ({ label, value, fullValue, deltaPct: dp, deltaSuffix, compareL
 );
 
 /* ─── Secondary metric cell (hairline rail) ─── */
-const RailMetric = ({ label, value, fullValue, deltaPct: dp, compareLabel, invertDelta, icon: Icon, hint }) => (
+const RailMetric = ({ label, value, fullValue, sub, subTitle, deltaPct: dp, compareLabel, invertDelta, icon: Icon, hint }) => (
     <div style={{ padding: '14px 18px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em',
             textTransform: 'uppercase', color: 'var(--text-secondary)',
@@ -162,6 +163,11 @@ const RailMetric = ({ label, value, fullValue, deltaPct: dp, compareLabel, inver
         <span title={fullValue} style={{ fontSize: 17.5, fontWeight: 700, color: 'var(--text)',
             fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+        {sub && (
+            <span title={subTitle} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)',
+                fontVariantNumeric: 'tabular-nums', marginTop: -3,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</span>
+        )}
         <div style={{ minHeight: 18 }}>
             <DeltaChip pct={dp} compareLabel={compareLabel} invert={invertDelta} />
         </div>
@@ -355,14 +361,18 @@ const Dashboard = () => {
         const prevFees = prev ? num(prev.interchange) + num(prev.schemeFee) + num(prev.ecomFee) : null;
         const msfRate = safeDiv(totals.msf, totals.volume) * 100;                 // blended take rate %
         const prevMsfRate = prev ? safeDiv(prev.msf, prev.volume) * 100 : null;
-        const costRatio = safeDiv(fees, totals.msf) * 100;                        // % of MSF eaten by fees
-        const prevCostRatio = prev && num(prev.msf) ? safeDiv(prevFees, prev.msf) * 100 : null;
+        // Each fee as a rate on volume, on the same basis as msfRate, so the
+        // cost lines are directly comparable against the blended take rate.
+        const interchangeRate = safeDiv(totals.interchange, totals.volume) * 100;
+        const schemeRate = safeDiv(totals.schemeFee, totals.volume) * 100;
+        const ecomRate = safeDiv(totals.ecomFee, totals.volume) * 100;
+        const feesRate = safeDiv(fees, totals.volume) * 100;
         const revPerTxn = safeDiv(totals.netRevenue, totals.txns);
         const prevRevPerTxn = prev ? safeDiv(prev.netRevenue, prev.txns) : null;
         return {
             fees, prevFees,
             msfRate, prevMsfRate,
-            costRatio, prevCostRatio,
+            interchangeRate, schemeRate, ecomRate, feesRate,
             revPerTxn, prevRevPerTxn,
         };
     }, [viewTotals, prev]);
@@ -412,8 +422,11 @@ const Dashboard = () => {
         if (derived) {
             lines.push('');
             lines.push(['MSF Rate %', derived.msfRate.toFixed(4)].map(esc).join(','));
+            lines.push(['Interchange % of Volume', derived.interchangeRate.toFixed(4)].map(esc).join(','));
+            lines.push(['Scheme Fee % of Volume', derived.schemeRate.toFixed(4)].map(esc).join(','));
+            lines.push(['ECOM Fee % of Volume', derived.ecomRate.toFixed(4)].map(esc).join(','));
             lines.push(['Total Fees', derived.fees.toFixed(2)].map(esc).join(','));
-            lines.push(['Cost / MSF %', derived.costRatio.toFixed(2)].map(esc).join(','));
+            lines.push(['Total Fees % of Volume', derived.feesRate.toFixed(4)].map(esc).join(','));
             lines.push(['Margin / Txn', derived.revPerTxn.toFixed(4)].map(esc).join(','));
         }
         const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -602,36 +615,36 @@ const Dashboard = () => {
                             <RailMetric label="Interchange" icon={ArrowDownRight}
                                 value={fmt.currency(num(vt.interchange))}
                                 fullValue={fullNum(vt.interchange, currencySymbol)}
+                                sub={`${derived.interchangeRate.toFixed(3)}% of volume`}
+                                subTitle={`${derived.interchangeRate.toFixed(4)}% — interchange / volume`}
                                 deltaPct={dpg(vt.interchange, prev?.interchange)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Paid to issuers" />
                             <RailMetric label="Scheme Fee" icon={Layers}
                                 value={fmt.currency(num(vt.schemeFee))}
                                 fullValue={fullNum(vt.schemeFee, currencySymbol)}
+                                sub={`${derived.schemeRate.toFixed(3)}% of volume`}
+                                subTitle={`${derived.schemeRate.toFixed(4)}% — scheme fee / volume`}
                                 deltaPct={dpg(vt.schemeFee, prev?.schemeFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Paid to card schemes" />
                             <RailMetric label="ECOM Fee" icon={Globe}
                                 value={fmt.currency(num(vt.ecomFee))}
                                 fullValue={fullNum(vt.ecomFee, currencySymbol)}
+                                sub={`${derived.ecomRate.toFixed(3)}% of volume`}
+                                subTitle={`${derived.ecomRate.toFixed(4)}% — ECOM fee / volume`}
                                 deltaPct={dpg(vt.ecomFee, prev?.ecomFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="E-commerce gateway fees" />
                             <RailMetric label="Total Fees" icon={Scale}
                                 value={fmt.currency(derived.fees)}
                                 fullValue={fullNum(derived.fees, currencySymbol)}
+                                sub={`${derived.feesRate.toFixed(3)}% of volume`}
+                                subTitle={`${derived.feesRate.toFixed(4)}% — total fees / volume`}
                                 deltaPct={isFiltered ? null
                                     : (derived.prevFees ? deltaPct(derived.fees, derived.prevFees) : undefined)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Interchange + scheme + ECOM" />
-                            <RailMetric label="Cost / MSF" icon={Divide}
-                                value={`${derived.costRatio.toFixed(1)}%`}
-                                fullValue={`${derived.costRatio.toFixed(2)}% of MSF consumed by scheme costs`}
-                                deltaPct={isFiltered ? null
-                                    : (derived.prevCostRatio != null
-                                        ? derived.costRatio - derived.prevCostRatio : undefined)}
-                                compareLabel={`${compareLabel} (pp change) · lower is better`} invertDelta
-                                hint="Share of MSF consumed by fees" />
                             <RailMetric label="Rev / Txn" icon={Coins}
                                 value={fmt.currency(derived.revPerTxn)}
                                 fullValue={fullNum(derived.revPerTxn, currencySymbol) + ' net margin per transaction'}

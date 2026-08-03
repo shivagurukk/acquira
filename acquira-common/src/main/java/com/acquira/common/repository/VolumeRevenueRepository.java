@@ -1429,8 +1429,25 @@ public class VolumeRevenueRepository {
         java.time.LocalDate momStart  = start.minusMonths(1);
         java.time.LocalDate momEnd    = end.minusMonths(1);
 
+        // ── Attrition classification windows (calendar months, independent of the
+        //    selected range) ──
+        // "Current month" is the calendar month containing `end`, read month-to-date.
+        // The three prior months are each truncated to the SAME day-of-month, so a
+        // partial current month is never compared against full prior months — the
+        // same apples-to-apples rule the MoM window above already follows. Without
+        // this, every merchant looks churned on the 2nd of the month.
+        int dayCut = end.getDayOfMonth();
+        java.time.LocalDate curMonStart = end.withDayOfMonth(1);
+        java.time.LocalDate m1Start = curMonStart.minusMonths(1);
+        java.time.LocalDate m2Start = curMonStart.minusMonths(2);
+        java.time.LocalDate m3Start = curMonStart.minusMonths(3);
+        java.time.LocalDate m1End = m1Start.withDayOfMonth(Math.min(dayCut, m1Start.lengthOfMonth()));
+        java.time.LocalDate m2End = m2Start.withDayOfMonth(Math.min(dayCut, m2Start.lengthOfMonth()));
+        java.time.LocalDate m3End = m3Start.withDayOfMonth(Math.min(dayCut, m3Start.lengthOfMonth()));
+
         // Earliest date any window reads — used as the WHERE lower bound for partition pruning.
         java.time.LocalDate globalLowerBound = prevYtdStart.isBefore(momStart) ? prevYtdStart : momStart;
+        if (m3Start.isBefore(globalLowerBound)) globalLowerBound = m3Start;
 
         boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
 
@@ -1442,6 +1459,12 @@ public class VolumeRevenueRepository {
         appendWindowMeasures(sql, "ytdcur", ":ytdStartDate",    ":endDate");
         appendWindowMeasures(sql, "ytdprev", ":prevYtdStartDate", ":prevEndDate");
         appendWindowMeasures(sql, "momprev", ":momStartDate",   ":momEndDate");
+        // Volume-only windows for the attrition classifier. Appended LAST so the
+        // hard-coded row[] indices of the five windows above stay valid.
+        appendVolumeMeasure(sql, "curmon", ":curMonStart", ":endDate");
+        appendVolumeMeasure(sql, "m1",     ":m1Start",     ":m1End");
+        appendVolumeMeasure(sql, "m2",     ":m2Start",     ":m2End");
+        appendVolumeMeasure(sql, "m3",     ":m3Start",     ":m3End");
         // strip trailing comma
         sql.setLength(sql.length() - 2);
         sql.append(" FROM sum_daily_insight s ");
@@ -1483,6 +1506,13 @@ public class VolumeRevenueRepository {
         query.setParameter("prevYtdStartDate", prevYtdStart);
         query.setParameter("momStartDate", momStart);
         query.setParameter("momEndDate", momEnd);
+        query.setParameter("curMonStart", curMonStart);
+        query.setParameter("m1Start", m1Start);
+        query.setParameter("m1End", m1End);
+        query.setParameter("m2Start", m2Start);
+        query.setParameter("m2End", m2End);
+        query.setParameter("m3Start", m3Start);
+        query.setParameter("m3End", m3End);
         query.setParameter("globalLowerBound", globalLowerBound);
         if (tenantId != null) query.setParameter("tenantId", tenantId);
 
@@ -1512,9 +1542,16 @@ public class VolumeRevenueRepository {
             long mtdTxnP = lng(row[6]),  ytdTxnP = lng(row[12]);
             java.math.BigDecimal mtdMsf  = bd(row[4]),  ytdMsf  = bd(row[10]), momMsf  = bd(row[16]);
             java.math.BigDecimal mtdMsfP = bd(row[7]),  ytdMsfP = bd(row[13]);
+            // Attrition classifier inputs: current month-to-date + the three prior
+            // months truncated to the same day-of-month.
+            java.math.BigDecimal curMonVol = bd(row[17]);
+            java.math.BigDecimal m1Vol = bd(row[18]), m2Vol = bd(row[19]), m3Vol = bd(row[20]);
 
             // Drop merchants with no activity in ANY window — pure noise, never attrition.
-            if (isZero(mtdVol) && isZero(mtdVolP) && isZero(ytdVol) && isZero(ytdVolP) && isZero(momVol))
+            // The rolling-month windows are included so a merchant whose only activity
+            // sits in the trailing 3 months is still classified rather than silently dropped.
+            if (isZero(mtdVol) && isZero(mtdVolP) && isZero(ytdVol) && isZero(ytdVolP) && isZero(momVol)
+                    && isZero(curMonVol) && isZero(m1Vol) && isZero(m2Vol) && isZero(m3Vol))
                 continue;
 
             Map<String, Object> map = new HashMap<>();
@@ -1555,16 +1592,38 @@ public class VolumeRevenueRepository {
             map.put("mom_current_msf", mtdMsf);
             map.put("mom_pct_msf", calculateGrowth(mtdMsf.doubleValue(), momMsf.doubleValue()));
 
-            // ── Attrition status (classified on YTD volume, the most stable signal) ──
-            map.put("status", classifyAttrition(ytdVol, ytdVolP, ytdPctVol));
+            // ── Attrition status: current month vs the trailing 3-month average ──
+            double avg3 = (m1Vol.doubleValue() + m2Vol.doubleValue() + m3Vol.doubleValue()) / 3.0;
+            double curMon = curMonVol.doubleValue();
+            // Ratio of current month to the 3-month average, as a %. Null-safe: with no
+            // trailing history the ratio is undefined, reported as null rather than 0 or
+            // infinity so the UI can show "—" instead of a misleading number.
+            Double ratioPct = avg3 > 0 ? (curMon / avg3) * 100.0 : null;
+
+            map.put("avg_3m", java.math.BigDecimal.valueOf(avg3));
+            map.put("cur_month", curMonVol);
+            map.put("prev_m1", m1Vol);
+            map.put("prev_m2", m2Vol);
+            map.put("prev_m3", m3Vol);
+            map.put("avg_3m_ratio_pct", ratioPct);
+            map.put("status", classifyAttrition(curMon, m1Vol.doubleValue(), m2Vol.doubleValue(), avg3));
 
             result.add(map);
         }
 
-        // Worst decliners (and churned, at ~ -100%) first — the point of an attrition report.
-        result.sort((a, b) -> Double.compare(
-                ((Number) a.getOrDefault("ytd_pct", 0d)).doubleValue(),
-                ((Number) b.getOrDefault("ytd_pct", 0d)).doubleValue()));
+        // Worst first — churned at the top, then the weakest ratio to the 3-month
+        // average. Merchants with no trailing history (null ratio) sort last: they
+        // are new, not attriting. Ties fall back to YTD % so the order stays stable.
+        result.sort((a, b) -> {
+            Object ra = a.get("avg_3m_ratio_pct"), rb = b.get("avg_3m_ratio_pct");
+            double da = ra == null ? Double.MAX_VALUE : ((Number) ra).doubleValue();
+            double db = rb == null ? Double.MAX_VALUE : ((Number) rb).doubleValue();
+            int c = Double.compare(da, db);
+            if (c != 0) return c;
+            return Double.compare(
+                    ((Number) a.getOrDefault("ytd_pct", 0d)).doubleValue(),
+                    ((Number) b.getOrDefault("ytd_pct", 0d)).doubleValue());
+        });
 
         return result;
     }
@@ -1577,15 +1636,39 @@ public class VolumeRevenueRepository {
         sql.append("SUM(").append(when).append("s.total_msf    ELSE 0 END) AS ").append(alias).append("_msf, ");
     }
 
-    /** CHURNED / AT_RISK / DECLINING / STABLE / GROWING based on YTD volume trend. */
-    private String classifyAttrition(java.math.BigDecimal cur, java.math.BigDecimal prev, double pct) {
-        boolean hadHistory = prev != null && prev.signum() > 0;
-        boolean activeNow  = cur  != null && cur.signum()  > 0;
-        if (hadHistory && !activeNow) return "CHURNED";   // was trading last year, nothing this year
-        if (pct <= -50.0) return "AT_RISK";
-        if (pct <= -10.0) return "DECLINING";
-        if (pct <=  10.0) return "STABLE";
-        return "GROWING";
+    /** Volume-only variant of appendWindowMeasures — one column, for the attrition classifier. */
+    private void appendVolumeMeasure(StringBuilder sql, String alias, String from, String to) {
+        sql.append("SUM(CASE WHEN s.business_date >= ").append(from)
+           .append(" AND s.business_date <= ").append(to)
+           .append(" THEN s.total_volume ELSE 0 END) AS ").append(alias).append("_vol, ");
+    }
+
+    /**
+     * Attrition status from the rolling monthly volumes.
+     *
+     * All comparisons are against avg3 — the mean of the three months preceding the
+     * current one, each truncated to the same day-of-month as the current partial month.
+     *
+     *   CHURNED    current month is zero, OR below 30% of avg3
+     *   DECLINING  the last three months are constantly dropping (m2 > m1 > current)
+     *   PERFORMING current month is at least 90% of avg3. Zero months inside the
+     *              trailing window do NOT disqualify — a merchant returning from
+     *              dormancy at >=90% of its (correspondingly lower) average counts
+     *              as performing.
+     *   STABLE     matches none of the above — e.g. running at 60% of avg3 without a
+     *              monotonic decline.
+     *
+     * Evaluated in that order, so the most severe status wins when several apply.
+     *
+     * With no trailing history (avg3 == 0) a merchant that traded this month falls
+     * through to PERFORMING: it is new, not attriting. One that did not trade at all
+     * is caught by the zero check and never reaches here (filtered as noise upstream).
+     */
+    private String classifyAttrition(double curMonth, double m1, double m2, double avg3) {
+        if (curMonth <= 0 || (avg3 > 0 && curMonth < 0.30 * avg3)) return "CHURNED";
+        if (m2 > m1 && m1 > curMonth) return "DECLINING";
+        if (curMonth >= 0.90 * avg3) return "PERFORMING";
+        return "STABLE";
     }
 
     private static boolean listNonEmpty(List<?> l) { return l != null && !l.isEmpty(); }

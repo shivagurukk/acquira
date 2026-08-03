@@ -523,6 +523,114 @@ const DeleteDayPanel = ({ activeTenantId }) => {
 };
 
 // ═══════════════════════════════════════════════════════════════
+//  REBUILD SUMMARIES — re-derive all summaries from fact_transaction
+// ═══════════════════════════════════════════════════════════════
+const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing, onStart, starting, isRunning }) => {
+  const confirmDialog = useConfirm();
+  const [dates, setDates] = useState({ start: '', end: '' });
+  const [armed, setArmed] = useState(false);
+
+  // Summaries are rebuilt a whole month at a time (monthly rollups have to be
+  // re-derived from every day in the month), so a picked date widens to the
+  // month that contains it. The label below says so explicitly.
+  const monthOf = (d) => (d ? d.slice(0, 7) : '');
+
+  const rangeLabel = (dates.start || dates.end)
+    ? `${monthOf(dates.start) || 'the first transaction'} → ${monthOf(dates.end) || 'the last transaction'}`
+    : 'the full transaction history';
+
+  const handleStart = async () => {
+    if (dates.start && dates.end && dates.start > dates.end) {
+      showToast('Start date must be before or equal to end date.', 'error');
+      setArmed(false);
+      return;
+    }
+    // Danger confirmation naming the tenant and the exact range.
+    const ok = await confirmDialog({
+      title: 'Rebuild every summary table now?',
+      message: `All 13 summary tables and the dashboard metrics in tenant ${activeTenantId || 'unknown'} will be deleted and recalculated from fact_transaction for ${rangeLabel}. Transactions themselves are not modified. Dashboards may show partial numbers while the rebuild is running.`,
+      confirmLabel: 'Rebuild summaries',
+      tone: 'danger',
+    });
+    setArmed(false);
+    if (!ok) return;
+    onStart({ start: monthOf(dates.start), end: monthOf(dates.end) });
+  };
+
+  return (
+    <Stack gap="md">
+      <Alert tone="info" title="How it works">
+        Recalculates every summary table (<code>sum_daily_*</code>, <code>sum_monthly_*</code>) and
+        the dashboard metrics directly from <code>fact_transaction</code> for the current tenant,
+        month by month. Pick the start and end dates you want covered — because the monthly
+        rollups are re-derived from every day in a month, the rebuild always runs over the whole
+        months containing those dates. Nothing is ingested and no transactions are changed — use this after
+        correcting transaction data directly in the database, so every dashboard replicates the
+        change end to end without re-uploading files.
+      </Alert>
+
+      {progress && progress.phase !== 'IDLE' && (
+        <ProgressMonitor progress={progress} onRefresh={onRefresh} refreshing={refreshing} />
+      )}
+
+      <Card
+        title={<span className="ui-row" style={{ gap: 8 }}><RefreshCw size={16} /> Rebuild summaries</span>}
+        subtitle={`Target tenant: ${activeTenantId || 'none selected'}`}
+        pad
+      >
+        <Stack gap="sm">
+          <FormGrid cols={4}>
+            <FormField label="Start date" hint="Leave blank to start from the first transaction.">
+              <Input
+                type="date"
+                value={dates.start}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={e => { const v = e.target.value; setDates(d => ({ ...d, start: v })); setArmed(false); }}
+              />
+            </FormField>
+            <FormField label="End date" hint="Leave blank to end at the last transaction.">
+              <Input
+                type="date"
+                value={dates.end}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={e => { const v = e.target.value; setDates(d => ({ ...d, end: v })); setArmed(false); }}
+              />
+            </FormField>
+          </FormGrid>
+
+          {(dates.start || dates.end) && (
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Rebuilds whole months: <strong>{rangeLabel}</strong>
+            </span>
+          )}
+
+          {/* Guard 1: explicit arming step before the danger dialog. */}
+          {!armed ? (
+            <Row>
+              <Button variant="danger" icon={RefreshCw} disabled={isRunning || starting} onClick={() => setArmed(true)}>
+                Rebuild summaries
+              </Button>
+              {isRunning && <Badge tone="warning" dot>A migration or rebuild is already running</Badge>}
+            </Row>
+          ) : (
+            <Row>
+              <AlertTriangle size={16} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.82rem', color: 'var(--danger)', fontWeight: 600 }}>
+                Recalculate {rangeLabel} for tenant {activeTenantId || 'unknown'}?
+              </span>
+              <Button variant="danger" icon={Play} loading={starting} onClick={handleStart}>
+                Yes, rebuild now
+              </Button>
+              <Button onClick={() => setArmed(false)}>Cancel</Button>
+            </Row>
+          )}
+        </Stack>
+      </Card>
+    </Stack>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════
 const DataMigration = () => {
@@ -636,6 +744,33 @@ const DataMigration = () => {
     } finally { setStarting(false); }
   };
 
+  // Start summary rebuild — recalculates all summaries from fact_transaction.
+  // The backend takes the tenant from X-Tenant-Id (the shared api client sends
+  // it), so no tenantId goes in the body.
+  const [rebuildStarting, setRebuildStarting] = useState(false);
+  const handleRebuildStart = async ({ start, end }) => {
+    if (!activeTenantId) {
+      showToast('No active tenant. Please re-login or pick a tenant.', 'error');
+      return;
+    }
+    if (start && end && start > end) {
+      showToast('Start month must be before or equal to end month.', 'error');
+      return;
+    }
+    setRebuildStarting(true);
+    try {
+      const body = { confirm: true };
+      if (start) body.startMonth = start;
+      if (end) body.endMonth = end;
+      await api.post('/admin/migration/rebuild-summaries', body);
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(fetchProgress, 5000);
+      setTimeout(fetchProgress, 1000); // Quick first fetch
+    } catch (e) {
+      showToast('Failed to start rebuild: ' + (e.response?.data?.error || e.message), 'error');
+    } finally { setRebuildStarting(false); }
+  };
+
   const isRunning = progress?.phase && !['IDLE', 'COMPLETED'].includes(progress.phase) && !progress.phase?.startsWith('FAILED');
   const canStart = config.sourceTable && config.startMonth && config.endMonth
     && config.columnMapping.mid && config.columnMapping.payment_date && config.columnMapping.txn_currency_amount
@@ -645,6 +780,7 @@ const DataMigration = () => {
 
   const tabs = [
     { key: 'migration', label: 'Bulk migration', icon: DatabaseZap },
+    { key: 'rebuild', label: 'Rebuild summaries', icon: RefreshCw },
     { key: 'day', label: 'Day correction', icon: Trash2 },
   ];
 
@@ -727,6 +863,18 @@ const DataMigration = () => {
             </Stack>
           </Card>
         </Stack>
+      )}
+
+      {tab === 'rebuild' && (
+        <RebuildSummariesPanel
+          activeTenantId={activeTenantId}
+          progress={progress}
+          onRefresh={fetchProgress}
+          refreshing={progressLoading}
+          onStart={handleRebuildStart}
+          starting={rebuildStarting}
+          isRunning={isRunning}
+        />
       )}
 
       {tab === 'day' && <DeleteDayPanel activeTenantId={activeTenantId} />}

@@ -157,6 +157,85 @@ public class MigrationController {
         }
     }
 
+    /**
+     * SUPER-ADMIN ONLY: rebuild every summary table from fact_transaction for the
+     * CURRENT tenant — the one the caller is switched into via X-Tenant-Id. The
+     * tenant is deliberately NOT accepted in the body: the rebuild always targets
+     * the active tenant, so what you see in the tenant switcher is what you rebuild.
+     *
+     * Nothing is ingested and no transactions are modified; the summary tables and
+     * dashboard metrics are deleted month by month and recalculated from fact rows.
+     * Use after correcting fact data directly (e.g. a SQL fix) so the dashboards
+     * replicate the change end to end.
+     *
+     * Body: { "startMonth": "YYYY-MM", "endMonth": "YYYY-MM", "confirm": true }
+     * Both months are optional — omitted bounds are auto-detected from the tenant's
+     * first/last transaction.
+     */
+    @PostMapping("/rebuild-summaries")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<Map<String, Object>> rebuildSummaries(@RequestBody(required = false) Map<String, Object> request) {
+        Map<String, Object> body = request == null ? Map.of() : request;
+
+        Long tenantId = com.acquira.common.config.TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "No active tenant. Switch into the tenant you want to rebuild first."));
+        }
+
+        String startMonth = body.get("startMonth") == null ? null : body.get("startMonth").toString().trim();
+        String endMonth = body.get("endMonth") == null ? null : body.get("endMonth").toString().trim();
+        if (startMonth != null && startMonth.isEmpty()) startMonth = null;
+        if (endMonth != null && endMonth.isEmpty()) endMonth = null;
+        if (startMonth != null && !MONTH_PATTERN.matcher(startMonth).matches()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "startMonth must be in YYYY-MM format"));
+        }
+        if (endMonth != null && !MONTH_PATTERN.matcher(endMonth).matches()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "endMonth must be in YYYY-MM format"));
+        }
+        if (startMonth != null && endMonth != null && startMonth.compareTo(endMonth) > 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", "startMonth must be before or equal to endMonth"));
+        }
+
+        Object confirm = body.get("confirm");
+        boolean confirmed = Boolean.TRUE.equals(confirm) || "true".equalsIgnoreCase(String.valueOf(confirm));
+        if (!confirmed) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "This deletes and recalculates every summary table for the current tenant. Resend with \"confirm\": true."));
+        }
+
+        if (migrationService.isRunning()) {
+            return ResponseEntity.status(409).body(Map.of(
+                "error", "Another migration or summary rebuild is already running. Wait for it to finish."));
+        }
+
+        String rangeLabel = (startMonth == null ? "auto" : startMonth) + " to " + (endMonth == null ? "auto" : endMonth);
+        if (auditService != null) {
+            auditService.log("SUMMARY_REBUILD",
+                "Super-admin summary rebuild from fact_transaction: tenant=" + tenantId + " range=" + rangeLabel);
+        }
+
+        final java.time.YearMonth start = startMonth == null ? null : java.time.YearMonth.parse(startMonth);
+        final java.time.YearMonth end = endMonth == null ? null : java.time.YearMonth.parse(endMonth);
+        final Long targetTenant = tenantId;
+        Thread rebuildThread = new Thread(() -> {
+            try {
+                migrationService.rebuildSummaries(targetTenant, start, end);
+            } catch (Exception e) {
+                // Progress already carries the FAILED phase; the thread must not die noisily.
+            }
+        }, "summary-rebuild");
+        rebuildThread.setDaemon(true);
+        rebuildThread.start();
+
+        return ResponseEntity.ok(Map.of(
+            "status", "STARTED",
+            "tenantId", tenantId,
+            "range", rangeLabel,
+            "message", "Summary rebuild started in background. Poll /api/admin/migration/progress for updates."
+        ));
+    }
+
     @PostMapping("/dry-run")
     // SECURITY: reads an arbitrary source table for an arbitrary tenantId — SA-only,
     // matching /start and /delete-day.

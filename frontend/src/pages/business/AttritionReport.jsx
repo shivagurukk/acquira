@@ -41,16 +41,17 @@ const METRICS = {
     revenue: { label: 'Revenue (MSF)',suffix: '_msf',  kind: 'currency' },
 };
 
-// Attrition status → colour + label. Mirrors classifyAttrition() in the backend.
+// Attrition status → colour + label. Mirrors classifyAttrition() in the backend,
+// which classifies on the current month against the trailing 3-month average:
+// churned <30% or zero, declining = 3 months constantly dropping, performing >=90%.
 // Foreground/background both routed through CSS vars so dark mode can retint.
 const STATUS_META = {
-    CHURNED:   { label: 'Churned',   color: 'var(--attr-churned, #7c3aed)',   bg: 'var(--attr-churned-bg, #f3e8ff)' },
-    AT_RISK:   { label: 'At Risk',   color: 'var(--attr-atrisk, #dc2626)',    bg: 'var(--attr-atrisk-bg, #fee2e2)' },
-    DECLINING: { label: 'Declining', color: 'var(--attr-declining, #ea580c)', bg: 'var(--attr-declining-bg, #ffedd5)' },
-    STABLE:    { label: 'Stable',    color: 'var(--attr-stable, #475569)',    bg: 'var(--attr-stable-bg, #f1f5f9)' },
-    GROWING:   { label: 'Growing',   color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #d1fae5)' },
+    CHURNED:    { label: 'Churned',    color: 'var(--attr-churned, #7c3aed)',   bg: 'var(--attr-churned-bg, #f3e8ff)' },
+    DECLINING:  { label: 'Declining',  color: 'var(--attr-declining, #ea580c)', bg: 'var(--attr-declining-bg, #ffedd5)' },
+    STABLE:     { label: 'Stable',     color: 'var(--attr-stable, #475569)',    bg: 'var(--attr-stable-bg, #f1f5f9)' },
+    PERFORMING: { label: 'Performing', color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #d1fae5)' },
 };
-const STATUS_ORDER = ['ALL', 'CHURNED', 'AT_RISK', 'DECLINING', 'STABLE', 'GROWING'];
+const STATUS_ORDER = ['ALL', 'CHURNED', 'DECLINING', 'STABLE', 'PERFORMING'];
 
 // Predicted churn-risk band → colour. These are the ML forward-looking scores,
 // distinct from the backward-looking attrition STATUS above.
@@ -191,7 +192,7 @@ const AttritionReport = () => {
 
     // Status counts come from the whole portfolio (not the status-filtered view).
     const statusCounts = useMemo(() => {
-        const c = { CHURNED: 0, AT_RISK: 0, DECLINING: 0, STABLE: 0, GROWING: 0 };
+        const c = { CHURNED: 0, DECLINING: 0, STABLE: 0, PERFORMING: 0 };
         data.forEach(d => { if (c[d.status] != null) c[d.status]++; });
         return c;
     }, [data]);
@@ -211,16 +212,20 @@ const AttritionReport = () => {
         // +100% for the same numbers — two answers for one dataset.
         const ytdChange = totalPrev > 0 ? ((totalCur - totalPrev) / totalPrev) * 100 : (totalCur > 0 ? 100 : 0);
         const ytdIsNew = totalPrev === 0 && totalCur > 0;
-        const atRisk = statusCounts.CHURNED + statusCounts.AT_RISK;
+        // "At risk" = the two adverse statuses under the rolling-month rules.
+        const atRisk = statusCounts.CHURNED + statusCounts.DECLINING;
         const atRiskValue = data.reduce((s, d) =>
-            (d.status === 'CHURNED' || d.status === 'AT_RISK') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
+            (d.status === 'CHURNED' || d.status === 'DECLINING') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
         const cards = [
             { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: 'var(--accent-indigo, #6366f1)' },
             { title: 'Churned', value: statusCounts.CHURNED.toString(), icon: UserMinus, color: 'var(--attr-churned, #7c3aed)',
               subtitle: `${data.length ? ((statusCounts.CHURNED / data.length) * 100).toFixed(0) : 0}% of portfolio` },
             { title: 'At Risk', value: atRisk.toString(), icon: AlertTriangle, color: 'var(--attr-atrisk, #dc2626)',
-              subtitle: 'churned + steep decline' },
-            { title: 'Declining (YTD)', value: statusCounts.DECLINING.toString(), icon: TrendingDown, color: 'var(--attr-declining, #ea580c)' },
+              subtitle: 'churned + declining' },
+            { title: 'Declining', value: statusCounts.DECLINING.toString(), icon: TrendingDown, color: 'var(--attr-declining, #ea580c)',
+              subtitle: '3 months constantly dropping' },
+            { title: 'Performing', value: statusCounts.PERFORMING.toString(), icon: TrendingUp, color: 'var(--attr-growing, #059669)',
+              subtitle: '≥90% of 3-month average' },
             { title: `YTD ${METRICS[metric].label} Change`, value: ytdIsNew ? 'New (+100%)' : `${ytdChange >= 0 ? '+' : ''}${ytdChange.toFixed(1)}%`,
               icon: DollarSign, color: ytdChange >= 0 ? 'var(--success, #10b981)' : 'var(--danger, #ef4444)', trend: ytdChange,
               trendLabel: ytdIsNew ? `no ${prevYear} baseline` : `${prevYear} vs ${selectedYear}` },
@@ -261,7 +266,7 @@ const AttritionReport = () => {
     }, [rows, statusFilter, bucketFilter, metric]);
 
     // ── Churn analytics (all from the rows already returned) ──
-    const STATUS_BARS = ['CHURNED', 'AT_RISK', 'DECLINING', 'STABLE', 'GROWING'];
+    const STATUS_BARS = ['CHURNED', 'DECLINING', 'STABLE', 'PERFORMING'];
     const analytics = useMemo(() => {
         const total = data.length || 1;
         const breakdown = STATUS_BARS.map(s => ({

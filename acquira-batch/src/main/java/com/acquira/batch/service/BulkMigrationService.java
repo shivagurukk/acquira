@@ -49,6 +49,15 @@ public class BulkMigrationService {
     private volatile String currentMonth = "";
     private volatile long startTimeMs = 0;
 
+    // One bulk run (migration OR summary rebuild) at a time — both share the
+    // progress fields above, so a second concurrent run would corrupt them and
+    // interleave month-scoped DELETE+INSERT on the same summary tables.
+    private final java.util.concurrent.atomic.AtomicBoolean runActive = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    public boolean isRunning() {
+        return runActive.get();
+    }
+
     // Report caches must be dropped after any bulk write outside the batch
     // jobs (migration, day deletion) — same reason CacheEvictionJobListener
     // exists for the ingest jobs.
@@ -142,6 +151,9 @@ public class BulkMigrationService {
     public void startMigration(Long tenantId, String sourceTable, String startMonth,
                                String endMonth, Map<String, String> columnMapping) {
 
+        if (!runActive.compareAndSet(false, true)) {
+            throw new IllegalStateException("Another migration or summary rebuild is already running");
+        }
         startTimeMs = System.currentTimeMillis();
         currentPhase = "INITIALIZING";
         completedMonths = 0;
@@ -217,8 +229,87 @@ public class BulkMigrationService {
             log.error("[MIGRATION] Failed: {}", e.getMessage(), e);
             throw new RuntimeException("Migration failed: " + e.getMessage(), e);
         } finally {
+            runActive.set(false);
             // Evict on success AND failure — a failed run may still have
             // written months of data before dying.
+            evictReportCaches();
+        }
+    }
+
+    /**
+     * SUPER-ADMIN SUMMARY REBUILD (correction tool).
+     *
+     * Re-derives every summary table and the dashboard metrics from the rows already
+     * in fact_transaction for one tenant, month by month — the same
+     * populateSummariesForMonth / calculateMetricsForRange pipeline the migration
+     * uses, minus the ingestion. Nothing is ingested and no transactions are touched:
+     * use this after correcting fact data directly (e.g. a SQL fix) so every
+     * dashboard replicates the change end to end.
+     *
+     * Passing null for either month bound auto-detects it from the tenant's
+     * first/last transaction.
+     */
+    public void rebuildSummaries(Long tenantId, YearMonth startMonth, YearMonth endMonth) {
+        if (!runActive.compareAndSet(false, true)) {
+            throw new IllegalStateException("Another migration or summary rebuild is already running");
+        }
+        startTimeMs = System.currentTimeMillis();
+        currentPhase = "INITIALIZING";
+        completedMonths = 0;
+        totalMonths = 0;
+        totalRowsMigrated = 0;
+        currentMonth = "";
+
+        try {
+            if (startMonth == null || endMonth == null) {
+                LocalDate minDate = jdbcTemplate.queryForObject(
+                    "SELECT MIN(DATE(payment_date)) FROM fact_transaction WHERE tenant_id = ?",
+                    LocalDate.class, tenantId);
+                LocalDate maxDate = jdbcTemplate.queryForObject(
+                    "SELECT MAX(DATE(payment_date)) FROM fact_transaction WHERE tenant_id = ?",
+                    LocalDate.class, tenantId);
+                if (minDate == null || maxDate == null) {
+                    throw new IllegalStateException("No transaction data found for this tenant — nothing to rebuild");
+                }
+                if (startMonth == null) startMonth = YearMonth.from(minDate);
+                if (endMonth == null) endMonth = YearMonth.from(maxDate);
+            }
+            if (startMonth.isAfter(endMonth)) {
+                throw new IllegalArgumentException("startMonth must be before or equal to endMonth");
+            }
+
+            List<YearMonth> months = new ArrayList<>();
+            for (YearMonth cursor = startMonth; !cursor.isAfter(endMonth); cursor = cursor.plusMonths(1)) {
+                months.add(cursor);
+            }
+            totalMonths = months.size();
+            log.info("[REBUILD] Rebuilding summaries from fact_transaction: {} months ({} to {}), tenant={}",
+                totalMonths, startMonth, endMonth, tenantId);
+
+            for (int i = 0; i < months.size(); i++) {
+                YearMonth ym = months.get(i);
+                currentMonth = ym.toString();
+                currentPhase = "REBUILDING_" + currentMonth;
+                populateSummariesForMonth(tenantId, ym);
+                completedMonths = i + 1;
+            }
+
+            currentPhase = "CALCULATING_METRICS";
+            calculateMetricsForRange(tenantId, startMonth, endMonth);
+
+            currentPhase = "COMPLETED";
+            long totalMs = System.currentTimeMillis() - startTimeMs;
+            log.info("[REBUILD] COMPLETE: {} months for tenant {} in {}s",
+                totalMonths, tenantId, String.format("%.1f", totalMs / 1000.0));
+
+        } catch (Exception e) {
+            currentPhase = "FAILED: " + e.getMessage();
+            log.error("[REBUILD] Failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Summary rebuild failed: " + e.getMessage(), e);
+        } finally {
+            runActive.set(false);
+            // Same posture as startMigration: a failed run may still have
+            // rewritten months of summaries before dying.
             evictReportCaches();
         }
     }
