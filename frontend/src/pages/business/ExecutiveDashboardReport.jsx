@@ -137,7 +137,7 @@ const ExecutiveDashboardReport = () => {
         { title: 'YTD MID', value: formatNumber(data.kpis.ytdMid), subtitle: 'Merchants Created', icon: CreditCard, color: '#3b82f6' },
         { title: 'MTD SID', value: formatNumber(data.kpis.mtdSid), subtitle: 'This Month', icon: TrendingUp, color: '#10b981' },
         { title: 'WTD SID', value: formatNumber(data.kpis.wtdSid), subtitle: 'This Week', icon: BarChart3, color: '#f59e0b' },
-        { title: 'MTD MSF Revenue', value: formatCurrency(data.kpis.mtdMsfUsd), subtitle: 'Net Revenue', icon: DollarSign, color: '#8b5cf6' },
+        { title: 'MTD MSF Revenue', value: formatCurrency(data.kpis.mtdMsfUsd), subtitle: 'Net Margin', icon: DollarSign, color: '#8b5cf6' },
     ], [data.kpis]);
 
     // Diagnostic: every KPI is zero AND every chart is empty. This almost always

@@ -88,7 +88,7 @@ function NodeCard({ tier, name, photoUrl, volume, txns, net, sub, width = 170, d
       <div style={{ fontSize: 9.5, color: T.textMut, marginBottom: 7 }}>volume</div>
       <div style={{ display: 'flex', justifyContent: 'center', gap: 10, borderTop: `1px solid ${T.borderLt}`, paddingTop: 7 }}>
         <span title="Transactions" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: T.textSec, fontWeight: 600 }}><Hash size={10} />{fmt(txns)}</span>
-        <span title="Net revenue (MSF − interchange − scheme fee)" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: Number(net) < 0 ? T.danger : T.textSec, fontWeight: 600 }}><Percent size={10} />{fmtM(net)}</span>
+        <span title="Net margin (MSF − interchange − scheme fee)" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: Number(net) < 0 ? T.danger : T.textSec, fontWeight: 600 }}><Percent size={10} />{fmtM(net)}</span>
       </div>
       {sub && <div style={{ fontSize: 10, color: T.textMut, marginTop: 5 }}>{sub}</div>}
     </div>
@@ -252,7 +252,7 @@ export default function SalesHierarchyTree() {
         <Kpi label="Teams" value={fmt(totals.teams)} icon={Users} color={T.brand} />
         <Kpi label="Volume" value={fmtM(totals.vol)} icon={DollarSign} color="var(--tier-agent, #0891b2)" />
         <Kpi label="Transactions" value={fmt(totals.txns)} icon={Hash} color="var(--accent-purple, #7c3aed)" />
-        <Kpi label="Net Revenue" value={fmtM(totals.net)} icon={Percent} color={T.successDk} />
+        <Kpi label="Net Margin" value={fmtM(totals.net)} icon={Percent} color={T.successDk} />
       </div>
 
       {/* country-lead selector chips */}

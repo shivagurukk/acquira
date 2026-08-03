@@ -78,7 +78,7 @@ public class OpenApiController {
                 param("endDate", "query", false, "string", "YYYY-MM-DD"))));
 
         paths.put("/api/v1/finance/summary", jsonOp(
-                "Financial summary (MSF, interchange, scheme fee, VAT, net revenue)", "read:finance", List.of(
+                "Financial summary (MSF, interchange, scheme fee, VAT, net margin)", "read:finance", List.of(
                 param("startDate", "query", false, "string", "YYYY-MM-DD"),
                 param("endDate", "query", false, "string", "YYYY-MM-DD"))));
 

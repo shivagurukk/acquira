@@ -13,7 +13,7 @@ import { createFmt } from '../utils/formatters';
 /* ════════════════════════════════════════════════════════════════════
    CEO Volume & Revenue — MID x SID detail with the full fee stack:
    MID, SID, Name, Count, Volume (settlement), MSF, Interchange, Scheme
-   Fee, Net Revenue, Net Margin %. Period: MTD / YTD / This Month / pick
+   Fee, Net Margin, Net Margin %. Period: MTD / YTD / This Month / pick
    any month. Search, sortable columns, server pagination, CSV export.
    Data: /api/business/ceo-volume-revenue (sum_daily_terminal — summary
    read only, never fact_transaction).

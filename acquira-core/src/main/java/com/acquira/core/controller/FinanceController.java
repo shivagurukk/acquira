@@ -259,7 +259,7 @@ public class FinanceController {
      *   [2] total_interchange
      *   [3] total_scheme_fee
      *   [4] total_vat (assumed 0 — sum_daily_insight may not have it; safe default)
-     *   [5] computed net revenue = msf - interchange - scheme_fee
+     *   [5] computed net margin = msf - interchange - scheme_fee
      */
     private java.math.BigDecimal[] aggregateInsight(Long tenantId, LocalDate start, LocalDate end,
                                                     VolumeRevenueFilterDTO filter) {
@@ -589,7 +589,7 @@ public class FinanceController {
         response.setHeader("Content-Disposition", "attachment; filename=\"profitability.csv\"");
 
         try (java.io.PrintWriter writer = response.getWriter()) {
-            writer.println("Name,Txn Count,Volume,Net Revenue,Margin %");
+            writer.println("Name,Txn Count,Volume,Net Margin,Margin %");
             for (Map<String, Object> row : data) {
                 String name = String.valueOf(row.get("name") != null ? row.get("name") : row.get("key"));
                 BigDecimal vol = (BigDecimal) row.get("totalVolume");

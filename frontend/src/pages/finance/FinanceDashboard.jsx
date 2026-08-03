@@ -53,12 +53,12 @@ const GROUPS = [
 ];
 const PROF_METRICS = [
   { key: 'totalVolume', label: 'Volume', kind: 'cur' },
-  { key: 'totalNetRevenue', label: 'Net Revenue', kind: 'cur' },
+  { key: 'totalNetRevenue', label: 'Net Margin', kind: 'cur' },
   { key: 'totalTxns', label: 'Transactions', kind: 'int' },
   { key: 'marginPct', label: 'Margin %', kind: 'pct' },
 ];
 const TREND_METRICS = [
-  { key: 'netRevenue', label: 'Net Revenue', color: '#16a34a' },
+  { key: 'netRevenue', label: 'Net Margin', color: '#16a34a' },
   { key: 'msf', label: 'MSF', color: '#2563eb' },
   { key: 'interchange', label: 'Interchange', color: '#f97316' },
   { key: 'marginPct', label: 'Margin %', color: '#7c3aed', pct: true },
@@ -219,7 +219,7 @@ export default function FinanceDashboard() {
 
       {/* hero KPIs — selected period cost analysis */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 14 }}>
-        <Kpi label="Net Revenue" value={cur(bridge.net)} sub="MSF − costs" icon={TrendingUp} color="#16a34a" />
+        <Kpi label="Net Margin" value={cur(bridge.net)} sub="MSF − costs" icon={TrendingUp} color="#16a34a" />
         <Kpi label="MSF Revenue" value={cur(bridge.msf)} sub="Gross fees" icon={DollarSign} color="#2563eb" />
         <Kpi label="Interchange" value={cur(bridge.ic)} sub="Network cost" icon={CreditCard} color="#f97316" />
         <Kpi label="Scheme Fees" value={cur(bridge.sc)} sub="Card scheme" icon={Activity} color="#ef4444" />
@@ -235,7 +235,7 @@ export default function FinanceDashboard() {
         </div>
         <div style={CARD}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 12 }}>At a glance</div>
-          <Bucket label="Net Revenue" today={kpis?.dailyNetRevenue} mtd={kpis?.mtdNetRevenue} ytd={kpis?.ytdNetRevenue} cur={cur} />
+          <Bucket label="Net Margin" today={kpis?.dailyNetRevenue} mtd={kpis?.mtdNetRevenue} ytd={kpis?.ytdNetRevenue} cur={cur} />
           <div style={{ height: 10 }} />
           <Bucket label="Volume" today={kpis?.dailyVolume} mtd={kpis?.mtdVolume} ytd={kpis?.ytdVolume} cur={cur} />
         </div>
@@ -392,7 +392,7 @@ export default function FinanceDashboard() {
               <tr style={{ color: '#94a3b8', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.03em' }}>
                 <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 700 }}>Merchant</th>
                 <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 700 }}>Volume</th>
-                <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 700 }}>Net Revenue</th>
+                <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 700 }}>Net Margin</th>
                 <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 700 }}>Margin</th>
               </tr>
             </thead>

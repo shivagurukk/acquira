@@ -166,7 +166,7 @@ const TopPerformers = () => {
             icon: Sparkles, color: 'var(--brand, #2563eb)',
         },
         {
-            title: 'Total Net Revenue', value: fmt.currency(data.concentration.totalNetRevenue),
+            title: 'Total Net Margin', value: fmt.currency(data.concentration.totalNetRevenue),
             icon: TrendingUp, color: 'var(--success, #059669)',
         },
         {
@@ -182,7 +182,7 @@ const TopPerformers = () => {
 
     const movers = data?.topMovers;
     const grainNote = data?.grain === 'insight'
-        ? 'Card-level filters active — showing cardholder-currency volume; net revenue approximated as MSF.'
+        ? 'Card-level filters active — showing cardholder-currency volume; net margin approximated as MSF.'
         : null;
 
     return (
@@ -238,7 +238,7 @@ const TopPerformers = () => {
                         onExport={() => exportToCSV(data.topMerchantsByVolume, 'top_merchants_by_volume')}
                     />
                     <LeaderboardCard
-                        title="Top 10 Merchants — Net Revenue" icon={TrendingUp} color="var(--success, #059669)"
+                        title="Top 10 Merchants — Net Margin" icon={TrendingUp} color="var(--success, #059669)"
                         rows={data.topMerchantsByNetRevenue} primaryKey="name" secondaryKey="mid"
                         valueKey="netRevenue" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topMerchantsByNetRevenue, 'top_merchants_by_net_revenue')}
@@ -250,7 +250,7 @@ const TopPerformers = () => {
                         onExport={() => exportToCSV(data.topRmsByVolume, 'top_rms_by_volume')}
                     />
                     <LeaderboardCard
-                        title="Top 10 RMs — Net Revenue" icon={Trophy} color="var(--warning, #d97706)"
+                        title="Top 10 RMs — Net Margin" icon={Trophy} color="var(--warning, #d97706)"
                         rows={data.topRmsByNetRevenue} primaryKey="salesEmail" secondaryKey={null}
                         valueKey="netRevenue" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topRmsByNetRevenue, 'top_rms_by_net_revenue')}

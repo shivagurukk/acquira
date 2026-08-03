@@ -13,8 +13,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Top Performers — Top 10 Merchants (Volume + Net Revenue), Top RMs (Volume +
- * Net Revenue), Top Movers (up/down vs prior window), Top 10 New Merchants,
+ * Top Performers — Top 10 Merchants (Volume + Net Margin), Top RMs (Volume +
+ * Net Margin), Top Movers (up/down vs prior window), Top 10 New Merchants,
  * and a concentration KPI strip — all in one round trip.
  *
  * PERFORMANCE: three queries total — current window, prior window, and the
@@ -33,10 +33,10 @@ import java.util.stream.Collectors;
  * the window. Movers deliberately keeps merchants that fell TO zero — a merchant
  * dropping from real volume to nothing is the most material move there is.
  *
- * GRAIN: sum_daily_merchant (settlement total_base_volume; real net revenue =
+ * GRAIN: sum_daily_merchant (settlement total_base_volume; real net margin =
  * msf - interchange - scheme_fee) unless a card-level filter (scheme/cardType/
  * destination/channel) is set, in which case we switch to sum_daily_insight
- * (cardholder total_volume; net revenue there is approximated as MSF since
+ * (cardholder total_volume; net margin there is approximated as MSF since
  * interchange/scheme are always 0 on that table) — the same dual-grain
  * convention used by AnalyticsController#heatmap-filtered.
  */

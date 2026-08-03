@@ -99,9 +99,9 @@ const SUGGESTIONS = [
    ═══════════════════════════════════════ */
 const getFollowUps = (question) => {
     const q = (question||'').toLowerCase();
-    if (q.includes('card scheme'))   return ['Net revenue by scheme this year','Card type breakdown','Volume by card scheme'];
+    if (q.includes('card scheme'))   return ['Net margin by scheme this year','Card type breakdown','Volume by card scheme'];
     if (q.includes('merchant'))      return ['High risk merchants','Top sales reps by volume','How many merchants by status'];
-    if (q.includes('revenue')||q.includes('msf')) return ['Net revenue by scheme this year','Monthly volume trend last 6 months','Volume by card scheme'];
+    if (q.includes('revenue')||q.includes('msf')) return ['Net margin by scheme this year','Monthly volume trend last 6 months','Volume by card scheme'];
     if (q.includes('volume'))        return ['Card type breakdown','Local vs international volume','Top 10 merchants by volume'];
     if (q.includes('city'))          return ['Active merchants by city','How many merchants by status','Top 10 merchants by volume'];
     if (q.includes('month')||q.includes('trend')) return ['Daily volume last 30 days','Volume by card scheme','Total volume and revenue this month'];

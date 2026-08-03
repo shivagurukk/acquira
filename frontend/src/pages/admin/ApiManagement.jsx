@@ -46,7 +46,7 @@ const API_DOCS = [
         { method: 'GET', path: '/api/v1/analytics/scheme-breakdown', desc: 'Scheme × card-type breakdown', params: 'startDate, endDate' },
     ]},
     { group: 'Finance', scope: 'read:finance', rows: [
-        { method: 'GET', path: '/api/v1/finance/summary', desc: 'MSF, interchange, scheme fee, VAT, net revenue', params: 'startDate, endDate' },
+        { method: 'GET', path: '/api/v1/finance/summary', desc: 'MSF, interchange, scheme fee, VAT, net margin', params: 'startDate, endDate' },
     ]},
     { group: 'Reports (PDF)', scope: 'read:reports', rows: [
         { method: 'GET', path: '/api/external/reports/list', desc: 'List statement PDFs for a month', params: 'year, month' },

@@ -547,7 +547,7 @@ public class ForecastController {
             double marginCol = dbl(r[7]);
             long txns = lng(r[8]);
 
-            // Net revenue: prefer stored total_margin when present, else derive.
+            // Net margin: prefer stored total_margin when present, else derive.
             double net = marginCol != 0 ? marginCol : (msf - interchange - scheme);
             double gross = msf != 0 ? msf : (net); // revenue base
             double marginPct = gross != 0 ? net / gross * 100.0 : 0.0;

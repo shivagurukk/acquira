@@ -30,7 +30,7 @@ import {
 const METRICS = [
     { key: 'VOLUME',      label: 'Volume',            basis: 'cardholder' },
     { key: 'BASE_VOLUME', label: 'Settlement Volume',  basis: 'settlement' },
-    { key: 'NET_REVENUE', label: 'Net Revenue',        basis: 'cardholder' },
+    { key: 'NET_REVENUE', label: 'Net Margin',        basis: 'cardholder' },
     { key: 'MSF',         label: 'MSF',                basis: 'cardholder' },
     { key: 'TXNS',        label: 'Transactions',       basis: 'cardholder' },
 ];

@@ -7,7 +7,7 @@ import { explorerApi } from '../../api/explorer';
  * -------------------------
  * Pick a cohort (whole bank, or by MCC / RM / referral partner / card scheme /
  * merchant MID), then drag three levers — MSF rate, scheme mix, DCC opt-in —
- * and watch projected net revenue and a modeled churn-risk delta update live.
+ * and watch projected net margin and a modeled churn-risk delta update live.
  *
  * Data sourcing (SUMMARY GRAIN ONLY — no fact_transaction scan):
  *   - Cohort headline + per-scheme mix: POST /analytics/explorer/query with
@@ -241,7 +241,7 @@ export default function PricingSimulator() {
     const churnFrac = clamp((elasticity / 100) * (priceUpBps / 10), 0, 0.30);
     const churnedVol = V * churnFrac;
     const scenarioNetBps = base.netBps + msfDeltaBps + mixNetDeltaBps;
-    const churnDrag = churnedVol * scenarioNetBps / 10000;   // net revenue lost with the departing volume
+    const churnDrag = churnedVol * scenarioNetBps / 10000;   // net margin lost with the departing volume
 
     const baselineNet = base.net;
     const scenarioNet = baselineNet + repricingDelta + mixDelta + dccDelta - churnDrag;
@@ -294,7 +294,7 @@ export default function PricingSimulator() {
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>What-If Pricing Simulator</h1>
           <p style={{ fontSize: 13, color: T.muted, margin: '4px 0 0' }}>
-            Model MSF repricing, scheme-mix shifts and DCC capture against projected net revenue and churn.
+            Model MSF repricing, scheme-mix shifts and DCC capture against projected net margin and churn.
           </p>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: T.muted, cursor: 'pointer' }}>

@@ -30,7 +30,7 @@ const T = {
 // Metric registry — maps the backend metricType to label + how to format it.
 const METRICS = {
     VOLUME:      { label: 'Volume',       kind: 'currency', icon: TrendingUp, color: 'var(--accent-indigo, #6366f1)' },
-    NET_REVENUE: { label: 'Net Revenue',  kind: 'currency', icon: DollarSign, color: 'var(--success, #10b981)' },
+    NET_REVENUE: { label: 'Net Margin',  kind: 'currency', icon: DollarSign, color: 'var(--success, #10b981)' },
     MSF:         { label: 'MSF Revenue',  kind: 'currency', icon: DollarSign, color: 'var(--accent-blue, #2563eb)' },
     TXNS:        { label: 'Transactions', kind: 'count',    icon: Hash,       color: 'var(--accent-cyan, #0891b2)' },
 };

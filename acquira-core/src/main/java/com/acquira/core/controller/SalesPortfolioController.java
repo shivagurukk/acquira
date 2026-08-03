@@ -30,7 +30,7 @@ import java.util.*;
  *               single-currency figure, matching the leaderboard. total_volume is
  *               the cardholder-currency figure and is intentionally NOT used.)
  *   - msf     = SUM(total_msf)
- *   - net     = SUM(total_msf - total_interchange - total_scheme_fee)  (NET REVENUE
+ *   - net     = SUM(total_msf - total_interchange - total_scheme_fee)  (NET MARGIN
  *               = MSF - interchange - scheme fee; the primary ranking metric,
  *               matching the leaderboard)
  *   - txns    = SUM(total_txns)

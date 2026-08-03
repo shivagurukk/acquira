@@ -13,13 +13,13 @@ import java.util.*;
  * Leaderboard & Gamification API (Phase 2 Enhanced)
  *
  * Rankings for sales agents and team leads based on:
- * - NET REVENUE = MSF - interchange - scheme fee (the primary ranking metric;
+ * - NET MARGIN = MSF - interchange - scheme fee (the primary ranking metric;
  *   read from sum_daily_merchant's per-fee columns, populated by the batch
  *   fee-computation step V2026_07_05_01)
  * - Merchants onboarded (dim_merchant.created_date within period)
  * - Transaction volume, count, MSF revenue
  * - Active merchant ratio
- * - MSF Rate and Net Rate (net revenue as % of volume)
+ * - MSF Rate and Net Rate (net margin as % of volume)
  * - Period-over-period change (net-revenue based)
  */
 @RestController
@@ -101,7 +101,7 @@ public class LeaderboardController {
 
         List<Map<String, Object>> results = jdbcTemplate.queryForList(sql, params.toArray());
 
-        // Previous period volumes + net revenue for change calculation
+        // Previous period volumes + net margin for change calculation
         Map<String, Double> prevVolumes = new HashMap<>();
         Map<String, Double> prevNets = new HashMap<>();
         if (!prevDateFilter.isEmpty()) {
@@ -410,7 +410,7 @@ public class LeaderboardController {
             overview.put("totalMsf", jdbcTemplate.queryForObject(msfSql, Double.class, msfParams.toArray()));
         } catch (Exception e) { overview.put("totalMsf", 0); }
 
-        // Net revenue = MSF - interchange - scheme fee (the leaderboard's ranking metric)
+        // Net margin = MSF - interchange - scheme fee (the leaderboard's ranking metric)
         String netSql = "SELECT COALESCE(SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)), 0)"
             + " FROM sum_daily_merchant WHERE tenant_id = ?";
         List<Object> netParams = new ArrayList<>();

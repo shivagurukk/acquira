@@ -36,7 +36,7 @@ public class SumDailyBank {
     private BigDecimal totalSchemeFee;
 
     // Flat per-transaction ECOM fee (0.18 settlement ccy on ECOM terminals).
-    // Added 2026-07-06 alongside the fact ecom_fee column; net revenue is
+    // Added 2026-07-06 alongside the fact ecom_fee column; net margin is
     // msf - interchange - scheme_fee - ecom_fee.
     @Column(name = "total_ecom_fee")
     private BigDecimal totalEcomFee;

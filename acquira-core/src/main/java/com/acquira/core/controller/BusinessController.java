@@ -115,7 +115,7 @@ public class BusinessController {
         /**
          * CEO landing-dashboard summary (V-CEO-1): MTD week-by-week + YTD
          * month-by-month, each bucket carrying count / volume / avg ticket /
-         * MSF / net revenue / net-margin %, plus prior-period comparison
+         * MSF / net margin / net-margin %, plus prior-period comparison
          * totals and an MTD run-rate projection.
          *
          * Data sourcing (per project rules — bank-level unfiltered):
@@ -127,7 +127,7 @@ public class BusinessController {
          *
          * Everything is anchored on the LATEST business_date in
          * sum_daily_bank — not calendar today — so a data lag never renders
-         * fake-zero weeks. Net revenue is the corrected
+         * fake-zero weeks. Net margin is the corrected
          * msf − interchange − scheme_fee figure.
          */
         @GetMapping("/ceo-summary")
@@ -304,7 +304,7 @@ public class BusinessController {
 
         /**
          * CEO Volume & Revenue detail (V-CEO-2): MID x SID rows with count /
-         * settlement volume / MSF / interchange / scheme fee / net revenue /
+         * settlement volume / MSF / interchange / scheme fee / net margin /
          * net-margin %, for MTD or YTD. Reads sum_daily_terminal ONLY (store
          * grain summary carrying the fee columns since V2026_07_05_02) —
          * never fact_transaction — so it loads in the same speed class as
@@ -379,7 +379,7 @@ public class BusinessController {
                 String orderDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
 
                 boolean hasSearch = search != null && !search.isBlank();
-                // lossOnly -> only merchants whose net revenue over the window is
+                // lossOnly -> only merchants whose net margin over the window is
                 // negative (a loss). Applied as HAVING on the grouped aggregate so
                 // it flows identically into the page, count, and totals queries.
                 String havingLoss = lossOnly ? "HAVING SUM(t.total_revenue) < 0 " : "";
@@ -509,7 +509,7 @@ public class BusinessController {
                 return (Object[]) res;
         }
 
-        /** Bucket map: count / volume / msf / interchange / scheme fee / ecom fee / net revenue + derived avgTicket / marginPct. */
+        /** Bucket map: count / volume / msf / interchange / scheme fee / ecom fee / net margin + derived avgTicket / marginPct. */
         private static Map<String, Object> buildMetricBucket(String label, long txns,
                         BigDecimal vol, BigDecimal msf, BigDecimal interchange, BigDecimal schemeFee, BigDecimal ecomFee, BigDecimal net) {
                 Map<String, Object> m = new LinkedHashMap<>();

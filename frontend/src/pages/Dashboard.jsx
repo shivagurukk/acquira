@@ -18,14 +18,16 @@ import { createFmt } from '../utils/formatters';
 /* ════════════════════════════════════════════════════════════════════
    CEO Landing Dashboard — MTD (weeks 1–5) / YTD (month-wise).
    Redesign v2:
-   • 4 primary hero tiles (Volume, Net Revenue, Net Margin, Transactions)
+   • 4 primary hero tiles (Volume, Net Margin, Net Margin %, Transactions)
      each with an inline sparkline of the period's bucket shape.
    • Secondary metric rail with derived KPIs — all computed client-side
      from the existing /business/ceo-summary payload (no backend change):
        Effective MSF rate  = msf / volume  (blended take rate, %)
        Total fees          = interchange + scheme + ecom
        Cost-to-MSF ratio   = fees / msf   (how much of MSF the schemes eat)
-       Revenue / txn       = netRevenue / txns
+       Margin / txn        = netRevenue / txns
+     NOTE: the `netRevenue` field name is the /business/ceo-summary payload
+     key and stays as-is; only the user-facing label reads "Net Margin".
    • Client-side bucket-range filter (From–To week/month) — totals,
      charts, insights, and table recompute over the selected window;
      prior-period delta chips are suppressed while filtered because the
@@ -33,8 +35,8 @@ import { createFmt } from '../utils/formatters';
    • CSV export of the visible range (KPIs + bucket rows).
    • Insight strip: best & worst bucket by margin, momentum (last two
      complete buckets).
-   • Two charts: Volume vs Net Margin % (composed) + Revenue composition
-     (stacked: net revenue / interchange / scheme / ecom = MSF).
+   • Two charts: Volume vs Net Margin % (composed) + MSF composition
+     (stacked: net margin / interchange / scheme / ecom = MSF).
    • Breakdown table with inline margin bars, best/worst tint.
    Data: sum_daily_bank weekly buckets + sum_monthly_bank month rows,
    settlement currency. Tenant currency via createFmt(currencySymbol).
@@ -211,8 +213,8 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
                 ['Interchange', fmt.currency(d.interchange)],
                 ['Scheme Fee', fmt.currency(d.schemeFee)],
                 ['ECOM Fee', fmt.currency(d.ecomFee)],
-                ['Net Revenue', fmt.currency(d.netRevenue)],
-                ['Net Margin', `${num(d.marginPct).toFixed(2)}%`],
+                ['Net Margin', fmt.currency(d.netRevenue)],
+                ['Net Margin %', `${num(d.marginPct).toFixed(2)}%`],
             ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, padding: '1.5px 0' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>{k}</span>
@@ -399,7 +401,7 @@ const Dashboard = () => {
         lines.push(['Currency', currencySymbol].map(esc).join(','));
         lines.push('');
         const heads = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume', 'Avg Ticket',
-            'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
+            'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
         lines.push(heads.map(esc).join(','));
         const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(2), num(b.avgTicket).toFixed(2),
             num(b.msf).toFixed(2), num(b.interchange).toFixed(2), num(b.schemeFee).toFixed(2),
@@ -412,7 +414,7 @@ const Dashboard = () => {
             lines.push(['MSF Rate %', derived.msfRate.toFixed(4)].map(esc).join(','));
             lines.push(['Total Fees', derived.fees.toFixed(2)].map(esc).join(','));
             lines.push(['Cost / MSF %', derived.costRatio.toFixed(2)].map(esc).join(','));
-            lines.push(['Revenue / Txn', derived.revPerTxn.toFixed(4)].map(esc).join(','));
+            lines.push(['Margin / Txn', derived.revPerTxn.toFixed(4)].map(esc).join(','));
         }
         const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
         const a = document.createElement('a');
@@ -435,7 +437,7 @@ const Dashboard = () => {
     const vt = viewTotals || totals;
 
     const TABLE_HEADS = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume',
-        'Avg Ticket', 'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Revenue', 'Net Margin %'];
+        'Avg Ticket', 'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
 
     const maxAbsMargin = Math.max(...viewData.map(b => Math.abs(b.marginPct)), 0.0001);
 
@@ -554,13 +556,13 @@ const Dashboard = () => {
                             deltaPct={dpg(vt.volume, prev?.volume)} compareLabel={compareLabel}
                             spark={sparks.volume}
                             sub={`${num(vt.txns).toLocaleString()} transactions`} />
-                        <HeroTile label="Net Revenue" icon={TrendingUp} accent="#10b981"
+                        <HeroTile label="Net Margin" icon={TrendingUp} accent="#10b981"
                             value={fmt.currency(num(vt.netRevenue))}
                             fullValue={fullNum(vt.netRevenue, currencySymbol)}
                             deltaPct={dpg(vt.netRevenue, prev?.netRevenue)} compareLabel={compareLabel}
                             spark={sparks.netRevenue}
                             sub={derived ? `${fmt.currency(derived.revPerTxn)} per txn` : null} />
-                        <HeroTile label="Net Margin" icon={Percent} accent="#ef4444"
+                        <HeroTile label="Net Margin %" icon={Percent} accent="#ef4444"
                             value={`${num(vt.marginPct).toFixed(2)}%`}
                             fullValue={`${num(vt.marginPct).toFixed(4)}% of volume`}
                             deltaPct={isFiltered ? null
@@ -568,7 +570,7 @@ const Dashboard = () => {
                                     ? num(vt.marginPct) - num(prev.marginPct) : undefined)}
                             deltaSuffix="pp" compareLabel={`${compareLabel} (pp change)`}
                             spark={sparks.marginPct}
-                            sub="net revenue / volume" />
+                            sub="net margin / volume" />
                         <HeroTile label="Transactions" icon={Receipt} accent="#8b5cf6"
                             value={fmt.number(num(vt.txns))}
                             fullValue={fullNum(vt.txns)}
@@ -632,11 +634,11 @@ const Dashboard = () => {
                                 hint="Share of MSF consumed by fees" />
                             <RailMetric label="Rev / Txn" icon={Coins}
                                 value={fmt.currency(derived.revPerTxn)}
-                                fullValue={fullNum(derived.revPerTxn, currencySymbol) + ' net revenue per transaction'}
+                                fullValue={fullNum(derived.revPerTxn, currencySymbol) + ' net margin per transaction'}
                                 deltaPct={isFiltered ? null
                                     : (derived.prevRevPerTxn ? deltaPct(derived.revPerTxn, derived.prevRevPerTxn) : undefined)}
                                 compareLabel={compareLabel}
-                                hint="Net revenue per transaction" />
+                                hint="Net margin per transaction" />
                         </div>
                     )}
 
@@ -660,7 +662,7 @@ const Dashboard = () => {
                             {mode === 'MTD' && runRate && num(runRate.elapsedDays) > 0 && (
                                 <InsightPill icon={CalendarRange} tone="info"
                                     title={`Run-rate · day ${runRate.elapsedDays}/${runRate.daysInMonth}`}
-                                    value={`${fmt.currency(num(runRate.projectedVolume))} vol · ${fmt.currency(num(runRate.projectedNetRevenue))} rev`} />
+                                    value={`${fmt.currency(num(runRate.projectedVolume))} vol · ${fmt.currency(num(runRate.projectedNetRevenue))} margin`} />
                             )}
                         </div>
                     )}
@@ -717,7 +719,7 @@ const Dashboard = () => {
                             </ResponsiveContainer>
                         </ChartCard>
 
-                        <ChartCard title="Revenue composition"
+                        <ChartCard title="MSF composition"
                             subtitle="Where each period's MSF goes">
                             <ResponsiveContainer width="100%" height={280}>
                                 <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -730,7 +732,7 @@ const Dashboard = () => {
                                     <ReTooltip content={<CompositionTooltip fmt={fmt} />}
                                         cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
                                     <Legend wrapperStyle={{ fontSize: 11.5 }} iconType="circle" iconSize={8} />
-                                    <Bar dataKey="netRevenue" name="Net Revenue" stackId="c"
+                                    <Bar dataKey="netRevenue" name="Net Margin" stackId="c"
                                         fill="#10b981" maxBarSize={44} />
                                     <Bar dataKey="interchange" name="Interchange" stackId="c"
                                         fill="#94a3b8" maxBarSize={44} />

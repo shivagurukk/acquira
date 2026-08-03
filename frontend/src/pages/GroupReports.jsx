@@ -193,7 +193,7 @@ const GroupReports = () => {
 
     /* ── KPI tiles ──────────────────────────────────────────────────── */
     // Two conceptual rows: scale (groups/volume/txns/merchants) and economics
-    // (net revenue, MSF, blended take rate, avg ticket). Blended bps and avg
+    // (net margin, MSF, blended take rate, avg ticket). Blended bps and avg
     // ticket are recomputed from the totals (volume-weighted), NOT averaged
     // across rows — a simple average of per-row bps would over-weight small
     // groups and misstate the book's real take rate.
@@ -214,7 +214,7 @@ const GroupReports = () => {
               subtitle: 'settlement basis' },
             { title: 'Transactions',       value: formatCompact(totalTxns),                      icon: Hash,       color: '#10b981' },
             { title: 'Merchants',          value: formatNumber(totalMerch),                      icon: Users,      color: '#f59e0b' },
-            { title: 'Net Revenue',        value: `${currencyCode} ${formatCompact(totalNetRev)}`, icon: TrendingUp, color: '#059669',
+            { title: 'Net Margin',        value: `${currencyCode} ${formatCompact(totalNetRev)}`, icon: TrendingUp, color: '#059669',
               subtitle: `${marginPct.toFixed(1)}% margin on MSF` },
             { title: 'MSF',                value: `${currencyCode} ${formatCompact(totalMsf)}`,  icon: Receipt,    color: '#8b5cf6' },
             { title: 'Blended MSF Rate',   value: `${blendedBps.toFixed(1)} bps`,                icon: Percent,    color: '#0891b2',
@@ -321,7 +321,7 @@ const GroupReports = () => {
             )
         },
         {
-            field: 'netRevenue', headerName: 'NET REVENUE', type: 'number', flex: 1, minWidth: 130, align: 'right', headerAlign: 'right',
+            field: 'netRevenue', headerName: 'NET MARGIN', type: 'number', flex: 1, minWidth: 130, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
                 <Typography variant="body2" fontWeight="700"
                     sx={{ color: Number(params.value) < 0 ? T.bad : T.text, fontVariantNumeric: 'tabular-nums' }}>
@@ -330,7 +330,7 @@ const GroupReports = () => {
             )
         },
         {
-            // Net revenue as % of MSF — colour-banded chip (>=40 healthy,
+            // Net margin as % of MSF — colour-banded chip (>=40 healthy,
             // 15–40 watch, <15 thin/negative). Negative margin = fees exceed
             // MSF: the pricing-review flag.
             field: 'marginPct', headerName: 'MARGIN', type: 'number', flex: 0.7, minWidth: 95, align: 'right', headerAlign: 'right',

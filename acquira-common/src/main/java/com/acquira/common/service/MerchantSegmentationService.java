@@ -17,19 +17,19 @@ import java.util.Map;
  * Runs in the transaction batch after business metrics are fresh. For each tenant it
  * computes, over a trailing 90-day window from sum_daily_merchant (settlement
  * total_base_volume) joined to dim_merchant:
- *   - volume, net revenue (total_margin), txns, effective & net-take bps, margin %,
- *   - per-tenant percentile ranks of volume and net revenue (PERCENT_RANK),
+ *   - volume, net margin (total_margin), txns, effective & net-take bps, margin %,
+ *   - per-tenant percentile ranks of volume and net margin (PERCENT_RANK),
  *   - volume growth (recent 30d vs prior 30d),
  *   - days since last transaction, days since onboarding.
  * Then applies priority rules to assign ONE primary segment + secondary tags.
  *
  * Six segments (spec Phase 1), priority order (highest wins the primary slot):
  *   1 AT_RISK        steep decline OR long dormancy
- *   2 STRATEGIC      volume ≥ p80 AND net revenue ≥ p80
+ *   2 STRATEGIC      volume ≥ p80 AND net margin ≥ p80
  *   3 VOLUME_DRIVER  volume ≥ p80 AND low margin
  *   4 PROFIT_DRIVER  volume p40–p80 AND high margin
  *   5 NEW            onboarded ≤ 90 days
- *   6 LONG_TAIL      volume ≤ p30 AND net revenue ≤ p30
+ *   6 LONG_TAIL      volume ≤ p30 AND net margin ≤ p30
  * Any other segment a merchant also qualifies for becomes a secondary tag.
  *
  * Thresholds are per-tenant percentiles computed over the tenant's own active
@@ -166,8 +166,8 @@ public class MerchantSegmentationService {
         final LocalDate priorEnd    = asOf.minusDays(30);
 
         // Aggregate per merchant over the window, compute growth windows, then rank
-        // by volume and net revenue with PERCENT_RANK across the tenant's merchants.
-        // Volume = settlement total_base_volume; net revenue = total_margin.
+        // by volume and net margin with PERCENT_RANK across the tenant's merchants.
+        // Volume = settlement total_base_volume; net margin = total_margin.
         String sql =
             "WITH agg AS ( " +
             "  SELECT s.merchant_id, " +

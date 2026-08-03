@@ -1199,7 +1199,7 @@ public class AnalyticsExplorerController {
             case "avg_txn_value" -> "Avg Txn Value";
             case "distinct_merchants" -> "Distinct Merchants";
             case "distinct_cards" -> "Distinct Cards";
-            case "net_revenue" -> "Net Revenue";
+            case "net_revenue" -> "Net Margin";
             case "effective_msf_rate" -> "Effective MSF Rate (bps)";
             case "avg_msf_per_txn" -> "Avg MSF / Txn";
             case "interchange_rate" -> "Interchange Rate (bps)";

@@ -70,7 +70,7 @@ const OverviewStats = ({ data }) => {
     { icon: Crown, label: 'Team Leads', value: fmt(data.totalTeams), color: T.warning, bg: T.warningBg },
     { icon: UserPlus, label: 'Onboarded', value: fmt(data.merchantsOnboarded), color: T.purple, bg: T.purpleBg },
     { icon: DollarSign, label: 'Total Volume', value: fmtM(data.totalVolume), color: T.success, bg: T.successBg },
-    { icon: TrendingUp, label: 'Net Revenue', value: fmtM(data.totalNetRevenue != null ? data.totalNetRevenue : data.totalMsf), color: '#f97316', bg: 'var(--orange-bg, #fff7ed)' },
+    { icon: TrendingUp, label: 'Net Margin', value: fmtM(data.totalNetRevenue != null ? data.totalNetRevenue : data.totalMsf), color: '#f97316', bg: 'var(--orange-bg, #fff7ed)' },
     { icon: Percent, label: 'Avg Net Rate', value: data.totalVolume > 0 ? fmtPct((data.totalNetRevenue != null ? data.totalNetRevenue : data.totalMsf) / data.totalVolume * 100) : '—', color: '#ec4899', bg: 'var(--pink-bg, #fdf2f8)' },
   ];
   return (
@@ -157,7 +157,7 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
               <th style={{ ...th, textAlign: 'center' }}>Onboarded</th>
               <th style={{ ...th, textAlign: 'center' }}>Active</th>
               <th style={{ ...th, textAlign: 'right' }}>Volume</th>
-              <th style={{ ...th, textAlign: 'right' }}>Net Revenue</th>
+              <th style={{ ...th, textAlign: 'right' }}>Net Margin</th>
               <th style={{ ...th, textAlign: 'right' }}>Net Rate</th>
               <th style={{ ...th, textAlign: 'right' }}>Txns</th>
               <th style={{ ...th, textAlign: 'center' }}>Active %</th>
@@ -275,7 +275,7 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
           <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
             <span style={{ fontSize: 12, color: T.textSec }}><strong>{merchants.length}</strong> merchants</span>
             <span style={{ fontSize: 12, color: T.textSec }}><strong>{fmtM(totalVol)}</strong> volume</span>
-            <span style={{ fontSize: 12, color: T.warning }}><strong>{fmtM(totalNet)}</strong> net revenue</span>
+            <span style={{ fontSize: 12, color: T.warning }}><strong>{fmtM(totalNet)}</strong> net margin</span>
             <span style={{ fontSize: 12, color: T.success }}><strong>{totalVol > 0 ? fmtPct(totalNet/totalVol*100) : '—'}</strong> net rate</span>
           </div>
         </div>
@@ -291,7 +291,7 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
               <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted, #94a3b8)' }} tickFormatter={fmtM} />
               <Tooltip formatter={(v) => fmtM(v)} contentStyle={chartTooltipStyle} />
               <Bar dataKey="volume" fill={T.brandAlt} radius={[4, 4, 0, 0]} name="Volume" />
-              <Bar dataKey="net" fill={T.warning} radius={[4, 4, 0, 0]} name="Net Revenue" />
+              <Bar dataKey="net" fill={T.warning} radius={[4, 4, 0, 0]} name="Net Margin" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -383,8 +383,8 @@ const SalesLeaderboard = () => {
   const handleExportCSV = () => {
     const isTeam = activeTab === 'teams' || activeTab === 'countries';
     const headers = isTeam
-      ? ['Rank', 'Team Lead', 'Agents', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Revenue', 'Net Rate', 'Txns', 'Active %']
-      : ['Rank', 'Agent', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Revenue', 'Net Rate', 'Txns', 'Active %', 'Net Change %'];
+      ? ['Rank', 'Team Lead', 'Agents', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Margin', 'Net Rate', 'Txns', 'Active %']
+      : ['Rank', 'Agent', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Margin', 'Net Rate', 'Txns', 'Active %', 'Net Change %'];
     const rows = data.map((item, i) => {
       const name = isTeam ? item.team_lead : item.agent;
       const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
@@ -409,7 +409,7 @@ const SalesLeaderboard = () => {
             <Trophy size={22} color={T.warning} />
             Sales Leaderboard
           </h1>
-          <p style={{ fontSize: 13, color: T.textSec, margin: 0 }}>Ranked by net revenue (MSF − interchange − scheme fee), with onboarding, volume, and margin</p>
+          <p style={{ fontSize: 13, color: T.textSec, margin: 0 }}>Ranked by net margin (MSF − interchange − scheme fee), with onboarding, volume, and margin</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button style={BTN(T.subtle, T.textSec)} onClick={handleExportCSV}>

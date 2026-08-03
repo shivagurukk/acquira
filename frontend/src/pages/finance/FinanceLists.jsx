@@ -76,7 +76,7 @@ const FinanceLists = () => {
                         <tr>
                             <th className="p-4">Merchant ID</th>
                             <th className="p-4">Total Volume</th>
-                            <th className="p-4">Net Revenue</th>
+                            <th className="p-4">Net Margin</th>
                             <th className="p-4">Margin %</th>
                             <th className="p-4">Action</th>
                         </tr>

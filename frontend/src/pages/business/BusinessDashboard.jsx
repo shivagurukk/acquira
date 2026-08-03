@@ -330,7 +330,7 @@ const BusinessDashboard = () => {
                       sub: `${fmt.currency(revenue.totalMsf)} MSF on ${fmt.currency(revenue.totalVolume)}` },
                     { span: 4, label: 'Net Take Rate', value: netTakeAvail ? fmtBps(revenue.netTakeRateBps) : '—', icon: TrendingUp, accent: '#6366f1',
                       sub: netTakeAvail
-                          ? `${fmt.currency(revenue.netRevenue)} net revenue after interchange, scheme fees & VAT`
+                          ? `${fmt.currency(revenue.netRevenue)} net margin after interchange, scheme fees & VAT`
                           : 'Bank-grain metric — unavailable while filters are applied' },
                     { span: 4, label: 'Average Ticket', value: fmt.currency(revenue.avgTicket), icon: Receipt, accent: '#8b5cf6',
                       sub: `${fmt.number(revenue.totalTxns)} transactions` },

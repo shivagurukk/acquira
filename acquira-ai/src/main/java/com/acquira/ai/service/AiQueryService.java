@@ -178,7 +178,7 @@ dim_terminal  -- terminal_id, tenant_id, store_id, tid, status
 1. ALWAYS include WHERE tenant_id = {TENANT_ID} (on the base table; if joining dims, also dX.tenant_id = base.tenant_id).
 2. SELECT only. Never write. Only the tables above.
 3. Volume/amount -> total_volume; ranking/leaderboard/settlement -> total_base_volume (sum_daily_merchant / sum_daily_bank).
-4. Revenue/fees -> total_msf; net revenue -> total_net_revenue (bank/scheme/channel/mcc/destination tables).
+4. Revenue/fees -> total_msf; net margin (also called net revenue) -> total_net_revenue (bank/scheme/channel/mcc/destination tables).
 5. Count of transactions -> SUM(total_txns) (rows are pre-aggregated; do NOT COUNT(*)).
 6. Distinct merchants -> COUNT(DISTINCT merchant_id).
 7. Wrap sums in COALESCE(SUM(x),0).
@@ -216,7 +216,7 @@ SELECT card_scheme, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(
 Q: Volume by MCC this year
 SELECT mcc, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(total_msf),0) AS total_msf, COALESCE(SUM(total_txns),0) AS txn_count FROM sum_daily_mcc WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('year', {ANCHOR})::date GROUP BY mcc ORDER BY total_volume DESC
 
-Q: Domestic vs international volume and net revenue by merchant last month
+Q: Domestic vs international volume and net margin by merchant last month
 SELECT d.merchant_id, m.name AS merchant_name, d.destination, COALESCE(SUM(d.total_volume),0) AS total_volume, COALESCE(SUM(d.total_net_revenue),0) AS net_revenue FROM sum_daily_merchant_destination d JOIN dim_merchant m ON d.merchant_id = m.merchant_id AND d.tenant_id = m.tenant_id WHERE d.tenant_id = {TENANT_ID} AND d.business_date >= DATE_TRUNC('month', {ANCHOR} - INTERVAL '1 month')::date AND d.business_date < DATE_TRUNC('month', {ANCHOR})::date GROUP BY d.merchant_id, m.name, d.destination ORDER BY total_volume DESC LIMIT 50
 
 Q: Local vs international volume
@@ -225,7 +225,7 @@ SELECT destination, COALESCE(SUM(total_volume),0) AS total_volume, COALESCE(SUM(
 Q: Active merchants by city
 SELECT city, COUNT(DISTINCT merchant_id) AS merchant_count FROM dim_merchant WHERE tenant_id = {TENANT_ID} AND status = 'Active' AND city IS NOT NULL GROUP BY city ORDER BY merchant_count DESC
 
-Q: Net revenue by scheme this year
+Q: Net margin by scheme this year
 SELECT card_scheme, COALESCE(SUM(total_net_revenue),0) AS net_revenue, COALESCE(SUM(total_volume),0) AS total_volume FROM sum_daily_scheme WHERE tenant_id = {TENANT_ID} AND business_date >= DATE_TRUNC('year', {ANCHOR})::date GROUP BY card_scheme ORDER BY net_revenue DESC
 
 Q: Daily volume last 30 days
