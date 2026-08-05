@@ -24,7 +24,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(RateLimitFilter.class);
     private static final int REGULAR_LIMIT = 200; // per minute
     private static final int EXTERNAL_LIMIT = 20; // per minute for /api/external/*
-    private static final int MIGRATION_LIMIT = 5; // per minute for /api/admin/migration/*
+    private static final int MIGRATION_LIMIT = 5; // per minute for /api/admin/migration/* (destructive)
+    // /api/admin/migration/progress is a read-only status poll, not a destructive
+    // action, and the Data Migration screen polls it every 5s (=12/min) for the
+    // whole duration of a job. Under the shared 5/min migration budget it started
+    // 429-ing about 25 seconds into every long run, so the progress bar froze and
+    // a running rebuild looked dead. It also burned the same budget the START
+    // endpoints need — polling progress could lock you out of launching a job.
+    // Own bucket, own limit: generous enough for polling (plus a second browser
+    // tab and the quick first fetch) while still bounded.
+    private static final int MIGRATION_PROGRESS_LIMIT = 60; // per minute
+    private static final String MIGRATION_PROGRESS_PATH = "/api/admin/migration/progress";
     private static final long WINDOW_MS = 60_000;
 
     // IP -> [count, windowStart]
@@ -70,14 +80,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
+    // NOTE: the progress check must come BEFORE the general migration prefix in
+    // both methods — it is a more specific match on the same prefix.
     private int getLimit(String path) {
         if (path.startsWith("/api/external/")) return EXTERNAL_LIMIT;
+        if (path.startsWith(MIGRATION_PROGRESS_PATH)) return MIGRATION_PROGRESS_LIMIT;
         if (path.startsWith("/api/admin/migration/")) return MIGRATION_LIMIT;
         return REGULAR_LIMIT;
     }
 
     private String getBucket(String path) {
         if (path.startsWith("/api/external/")) return "external";
+        if (path.startsWith(MIGRATION_PROGRESS_PATH)) return "migration-progress";
         if (path.startsWith("/api/admin/migration/")) return "migration";
         return "api";
     }

@@ -297,6 +297,16 @@ public class BulkMigrationService {
             currentPhase = "CALCULATING_METRICS";
             calculateMetricsForRange(tenantId, startMonth, endMonth);
 
+            // Final stats refresh across every table the rebuild rewrote, so all
+            // dashboard queries plan against the finished shape rather than
+            // whatever autovacuum has caught up with so far.
+            currentPhase = "ANALYZING";
+            analyzeQuietly(
+                "sum_daily_merchant", "sum_daily_merchant_attribute", "sum_daily_bank",
+                "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
+                "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc",
+                "sum_monthly_bank", "sum_monthly_card", "merchant_activity_summary");
+
             currentPhase = "COMPLETED";
             long totalMs = System.currentTimeMillis() - startTimeMs;
             log.info("[REBUILD] COMPLETE: {} months for tenant {} in {}s",
@@ -752,6 +762,26 @@ public class BulkMigrationService {
             tenantId, monthStart, monthEnd, tenantId);
 
         // 13. merchant_activity_summary (business metrics per month)
+        //
+        // The join is bounded to payment_date < monthEnd+1day. Two reasons, and the
+        // first is correctness, not speed:
+        //
+        //  1. This row is a SNAPSHOT as at monthEnd (calc_date = monthEnd, and the
+        //     7d/30d windows and ACTIVE/DORMANT status are all measured back from
+        //     it). Unbounded, rebuilding an OLD month pulled in transactions that
+        //     happened AFTER it — so a merchant dormant in May 2026 was written as
+        //     ACTIVE because it traded in July. Rebuilding history rewrote it with
+        //     facts from the future.
+        //  2. Unbounded, this was the only statement here with no date filter on
+        //     fact_transaction: a full scan of every partition of the tenant's
+        //     entire history, repeated ONCE PER MONTH of the rebuild range. A
+        //     12-month rebuild did 12 full-history scans of the largest table in
+        //     the database, which is what saturates I/O and makes dashboards
+        //     time out while a rebuild runs.
+        //
+        // The bound stays in the ON clause, not WHERE, so merchants with no
+        // transactions still produce an ONBOARDED row exactly as before. Compared
+        // on the raw payment_date column (not DATE(...)) so partition pruning works.
         jdbcTemplate.update("INSERT INTO merchant_activity_summary (tenant_id, merchant_id, calc_date, " +
             "first_txn_date, last_txn_date, last_7d_cnt, last_7d_value, last_30d_cnt, last_30d_value, status, status_change_date) " +
             "SELECT m.tenant_id, m.merchant_id, ?, MIN(f.payment_date), MAX(f.payment_date), " +
@@ -761,16 +791,44 @@ public class BulkMigrationService {
             "COALESCE(SUM(CASE WHEN f.payment_date >= ? - INTERVAL '30 days' THEN f.txn_currency_amount ELSE 0 END), 0), " +
             "CASE WHEN MAX(f.payment_date) >= ? - INTERVAL '30 days' THEN 'ACTIVE' " +
             "WHEN MAX(f.payment_date) < ? - INTERVAL '30 days' THEN 'DORMANT' ELSE 'ONBOARDED' END, ? " +
-            "FROM dim_merchant m LEFT JOIN fact_transaction f ON m.merchant_id = f.merchant_id AND f.tenant_id = m.tenant_id " +
+            "FROM dim_merchant m LEFT JOIN fact_transaction f ON m.merchant_id = f.merchant_id " +
+            "  AND f.tenant_id = m.tenant_id AND f.payment_date < ? " +
             "WHERE m.tenant_id = ? GROUP BY m.tenant_id, m.merchant_id " +
             "ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET " +
             "first_txn_date=EXCLUDED.first_txn_date, last_txn_date=EXCLUDED.last_txn_date, " +
             "last_7d_cnt=EXCLUDED.last_7d_cnt, last_7d_value=EXCLUDED.last_7d_value, " +
             "last_30d_cnt=EXCLUDED.last_30d_cnt, last_30d_value=EXCLUDED.last_30d_value, " +
             "status=EXCLUDED.status, status_change_date=EXCLUDED.status_change_date",
-            monthEnd, monthEnd, monthEnd, monthEnd, monthEnd, monthEnd, monthEnd, monthEnd, tenantId);
+            monthEnd, monthEnd, monthEnd, monthEnd, monthEnd, monthEnd, monthEnd, monthEnd,
+            monthEnd.plusDays(1), tenantId);
+
+        // Refresh planner statistics on the two summary tables the dashboards read
+        // most. Every month of the rebuild deletes and reinserts their whole month
+        // grain, which leaves the row estimates describing the pre-rebuild shape.
+        // Dashboard queries then pick plans for the wrong table size, run long, and
+        // hit the 30s statement_timeout that TenantAwareDataSource stamps on web
+        // connections — the "screen times out while a rebuild is running" symptom.
+        // ANALYZE samples rather than scans, so this is cheap per month.
+        analyzeQuietly("sum_daily_merchant", "sum_daily_insight");
 
         log.info("[MIGRATION] Summaries complete for {}", ym);
+    }
+
+    /**
+     * ANALYZE the named tables, ignoring failures.
+     *
+     * Statistics are an optimisation, never a correctness requirement — a
+     * permissions error or a lock conflict here must not abort a rebuild that has
+     * already rewritten months of summaries.
+     */
+    private void analyzeQuietly(String... tables) {
+        for (String table : tables) {
+            try {
+                jdbcTemplate.execute("ANALYZE " + table);
+            } catch (Exception e) {
+                log.warn("[MIGRATION] ANALYZE {} failed (non-fatal): {}", table, e.getMessage());
+            }
+        }
     }
 
     /**

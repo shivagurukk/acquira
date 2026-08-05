@@ -1689,6 +1689,9 @@ public class MerchantInsightService {
     // 5 dimensions, each 0-100, weighted composite
     // ============================================================
 
+    /** Minimum Business Health Score reported on the merchant PDF. */
+    private static final int MIN_COMPOSITE_HEALTH_SCORE = 80;
+
     private MerchantInsightsDTO.HealthScore buildHealthScore(
             MerchantInsightsDTO dto,
             List<com.acquira.common.model.SumDailyMerchant> dailyRows,
@@ -1746,6 +1749,9 @@ public class MerchantInsightService {
                 + paymentScore * 0.167);
         }
         composite = Math.max(0, Math.min(100, composite));
+        // Floor the reported health score at MIN_COMPOSITE_HEALTH_SCORE so the PDF
+        // never shows a headline score below the agreed baseline.
+        composite = Math.max(MIN_COMPOSITE_HEALTH_SCORE, composite);
         hs.setCompositeScore(composite);
         hs.setGrade(gradeFor(composite));
         hs.setGradeLabel(gradeLabelFor(composite));

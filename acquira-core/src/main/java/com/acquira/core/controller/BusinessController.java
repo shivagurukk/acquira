@@ -26,16 +26,20 @@ public class BusinessController {
         private final MerchantActivitySummaryRepository activityRepository;
         private final MerchantOpportunityScoreRepository opportunityRepository;
         private final com.acquira.common.repository.SumDailyBankRepository dailyBankRepository;
+        /** Server-side check of the DB-driven sys_group_menu screen grants. */
+        private final com.acquira.common.security.MenuAccessEvaluator menuAccess;
 
         @PersistenceContext
         private EntityManager entityManager;
 
         public BusinessController(MerchantActivitySummaryRepository activityRepository,
                         MerchantOpportunityScoreRepository opportunityRepository,
-                        com.acquira.common.repository.SumDailyBankRepository dailyBankRepository) {
+                        com.acquira.common.repository.SumDailyBankRepository dailyBankRepository,
+                        com.acquira.common.security.MenuAccessEvaluator menuAccess) {
                 this.activityRepository = activityRepository;
                 this.opportunityRepository = opportunityRepository;
                 this.dailyBankRepository = dailyBankRepository;
+                this.menuAccess = menuAccess;
         }
 
         // SECURITY: use only the filter-validated TenantContext, never the raw
@@ -310,6 +314,20 @@ public class BusinessController {
          * never fact_transaction — so it loads in the same speed class as
          * every other summary-backed page. Volume here is SETTLEMENT
          * (total_base_volume), the figure the fees are computed against.
+         *
+         * AUTHORIZATION: see the menuAccess check at the top of the body. This one
+         * endpoint backs TWO screens with separate menu grants — lossOnly=true is
+         * Loss-Making Merchants, lossOnly=false is Volume & Revenue — so it
+         * enforces whichever grant the caller is actually exercising. Before this
+         * check the migrations' group grants were UI-only: the sidebar hid the
+         * link, the API served anyone authenticated.
+         *
+         * The check is in the body rather than a @PreAuthorize SpEL expression on
+         * purpose. Referencing a method argument (#lossOnly) requires parameter
+         * names in the class file, and this build does not compile with
+         * -parameters (verified: no MethodParameters attribute on this class), so
+         * the expression would fail at runtime. The explicit form also returns a
+         * useful JSON body instead of a bare 403.
          */
         @GetMapping("/ceo-volume-revenue")
         public ResponseEntity<Map<String, Object>> getCeoVolumeRevenue(
@@ -322,13 +340,43 @@ public class BusinessController {
                         @RequestParam(defaultValue = "false") boolean lossOnly,
                         @RequestParam(required = false) String month) {
                 Long tenantId = resolveTenant();
-                if (tenantId == null) return ResponseEntity.status(403).build();
+                if (tenantId == null)
+                        return ResponseEntity.status(403).body(Map.of("message",
+                                        "No tenant selected, or you do not have access to this tenant."));
 
+                // Enforce the sys_group_menu grant for whichever screen is being
+                // served. Without this the grants in V2026_07_05_02 / _04 were
+                // decorative — /api/business/** falls through to
+                // anyRequest().authenticated() in SecurityConfig.
+                String menuPath = lossOnly ? "/business/loss-making" : "/business/ceo-volume-revenue";
+                if (!menuAccess.canAccess(menuPath))
+                        return ResponseEntity.status(403).body(Map.of("message",
+                                        "You do not have access to this report."));
+
+                // Anchor the period windows to the table this report actually READS.
+                // This used to come from sum_daily_bank while every figure below is
+                // read from sum_daily_terminal. Those are two independent, concurrent
+                // steps of the rollup (TransactionJobConfig.populateSummaryStep), so
+                // if the bank step finished and the terminal step lagged or failed,
+                // the screen advertised a window (from -> to is printed in the
+                // subtitle) whose last days had no terminal rows — quietly reporting
+                // a partial period as a complete one, which on the Loss-Making view
+                // systematically UNDERSTATES losses.
                 Object maxD = entityManager
-                                .createNativeQuery("SELECT MAX(business_date) FROM sum_daily_bank WHERE tenant_id = :tid")
+                                .createNativeQuery("SELECT MAX(business_date) FROM sum_daily_terminal WHERE tenant_id = :tid")
                                 .setParameter("tid", tenantId)
                                 .getSingleResult();
                 LocalDate eff = toLocalDate(maxD);
+                if (eff == null) {
+                        // No terminal-grain data at all — fall back to the bank summary so
+                        // the screen still resolves a sensible period instead of jumping to
+                        // today and rendering an empty month.
+                        Object bankMaxD = entityManager
+                                        .createNativeQuery("SELECT MAX(business_date) FROM sum_daily_bank WHERE tenant_id = :tid")
+                                        .setParameter("tid", tenantId)
+                                        .getSingleResult();
+                        eff = toLocalDate(bankMaxD);
+                }
                 if (eff == null) eff = LocalDate.now();
 
                 // Period resolution:
@@ -371,14 +419,38 @@ public class BusinessController {
                 sortCols.put("msf",         "SUM(t.total_msf)");
                 sortCols.put("interchange", "SUM(t.total_interchange)");
                 sortCols.put("schemeFee",   "SUM(t.total_scheme_fee)");
-                sortCols.put("ecomFee",     "SUM(t.total_ecom_fee)");
+                // COALESCE mirrors the SELECT below: a merchant with no ECOM fee
+                // DISPLAYS 0.00, so it must SORT as 0 too. Sorting the raw column
+                // let NULLS LAST park those merchants at the bottom in BOTH
+                // directions — ascending should have put them first.
+                sortCols.put("ecomFee",     "SUM(COALESCE(t.total_ecom_fee,0))");
                 sortCols.put("net",         "SUM(t.total_revenue)");
+                // Net margin % — the most useful ordering on the Loss-Making view
+                // (a large merchant losing 0.1% and a small one losing 40% are very
+                // different problems, and absolute net margin cannot separate them).
+                // NULL when volume is zero, so those rows land under NULLS LAST
+                // rather than being treated as 0% — consistent with marginPct below.
+                sortCols.put("margin",      "CASE WHEN SUM(t.total_base_volume) <> 0 " +
+                                            "THEN SUM(t.total_revenue) / SUM(t.total_base_volume) END");
                 sortCols.put("name",        "m.name");
                 sortCols.put("mid",         "m.mid");
                 String orderExpr = sortCols.getOrDefault(sort, "SUM(t.total_base_volume)");
                 String orderDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
+                // Every sort expression above is non-unique, and ties under a plain
+                // LIMIT/OFFSET pager are ordered arbitrarily AND unstably between
+                // statements — so a tied row could appear on two pages or on none,
+                // and a paged CSV export could duplicate merchants while its
+                // server-computed TOTAL row stayed correct. MID is unique at the
+                // lossOnly (merchant) grain; MID + SID is unique at MID x SID grain.
+                String tieBreak = lossOnly ? ", m.mid ASC" : ", m.mid ASC, s.sid ASC";
 
                 boolean hasSearch = search != null && !search.isBlank();
+                // Escape LIKE metacharacters so a merchant searching "50%" or "a_b"
+                // gets a literal match instead of wildcard semantics. Backslash first,
+                // or it would double-escape the escapes added after it.
+                String searchTerm = hasSearch
+                                ? search.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                                : null;
                 // lossOnly -> only merchants whose net margin over the window is
                 // negative (a loss). Applied as HAVING on the grouped aggregate so
                 // it flows identically into the page, count, and totals queries.
@@ -400,8 +472,9 @@ public class BusinessController {
                                 "WHERE t.tenant_id = :tid AND t.business_date BETWEEN :s AND :e " +
                                 (hasSearch
                                                 ? (lossOnly
-                                                                ? "AND (m.name ILIKE :q OR m.mid ILIKE :q) "
-                                                                : "AND (m.name ILIKE :q OR m.mid ILIKE :q OR s.sid ILIKE :q) ")
+                                                                ? "AND (m.name ILIKE :q ESCAPE '\\' OR m.mid ILIKE :q ESCAPE '\\') "
+                                                                : "AND (m.name ILIKE :q ESCAPE '\\' OR m.mid ILIKE :q ESCAPE '\\' " +
+                                                                  "OR s.sid ILIKE :q ESCAPE '\\') ")
                                                 : "") +
                                 groupBy + havingLoss;
 
@@ -411,12 +484,12 @@ public class BusinessController {
                                 "SUM(t.total_txns), SUM(t.total_base_volume), SUM(t.total_msf), " +
                                 "SUM(t.total_interchange), SUM(t.total_scheme_fee), SUM(COALESCE(t.total_ecom_fee,0)), SUM(t.total_revenue) " +
                                 base +
-                                "ORDER BY " + orderExpr + " " + orderDir + " NULLS LAST " +
+                                "ORDER BY " + orderExpr + " " + orderDir + " NULLS LAST" + tieBreak + " " +
                                 "LIMIT :lim OFFSET :off");
                 rq.setParameter("tid", tenantId);
                 rq.setParameter("s", from);
                 rq.setParameter("e", to);
-                if (hasSearch) rq.setParameter("q", "%" + search.trim() + "%");
+                if (hasSearch) rq.setParameter("q", "%" + searchTerm + "%");
                 rq.setParameter("lim", size);
                 rq.setParameter("off", (long) page * size);
 
@@ -442,9 +515,17 @@ public class BusinessController {
                         m.put("schemeFee", sf);
                         m.put("ecomFee", ec);
                         m.put("netRevenue", net);
-                        m.put("marginPct", vol.compareTo(BigDecimal.ZERO) > 0
+                        // NULL — not ZERO — when the ratio is undefined. The old
+                        // `vol > 0 ? ... : ZERO` reported 0.00% for a merchant whose
+                        // period was refunds only (volume 0, net negative) — a textbook
+                        // loss-maker — and the UI colours on `marginPct >= 0`, so it
+                        // rendered GREEN on a success background next to a red
+                        // six-figure loss. The client renders null as an em-dash.
+                        // signum() != 0 also lets net-refund merchants (negative volume)
+                        // report their real ratio instead of being flattened to zero.
+                        m.put("marginPct", vol.signum() != 0
                                         ? net.multiply(BigDecimal.valueOf(100)).divide(vol, 2, RoundingMode.HALF_UP)
-                                        : BigDecimal.ZERO);
+                                        : null);
                         out.add(m);
                 }
 
@@ -462,7 +543,7 @@ public class BusinessController {
                 tq.setParameter("tid", tenantId);
                 tq.setParameter("s", from);
                 tq.setParameter("e", to);
-                if (hasSearch) tq.setParameter("q", "%" + search.trim() + "%");
+                if (hasSearch) tq.setParameter("q", "%" + searchTerm + "%");
                 Object[] meta = (Object[]) tq.getSingleResult();
                 long totalRows = ((Number) meta[0]).longValue();
                 // Shift by one: index 0 is the row count, 1..7 are the totals.
@@ -477,12 +558,19 @@ public class BusinessController {
                 totals.put("schemeFee", toBigDecimal(tot[4]));
                 totals.put("ecomFee", toBigDecimal(tot[6]));
                 totals.put("netRevenue", tNet);
-                totals.put("marginPct", tVol.compareTo(BigDecimal.ZERO) > 0
+                // Same null-vs-zero rule as the per-row marginPct above.
+                totals.put("marginPct", tVol.signum() != 0
                                 ? tNet.multiply(BigDecimal.valueOf(100)).divide(tVol, 2, RoundingMode.HALF_UP)
-                                : BigDecimal.ZERO);
+                                : null);
 
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("effectiveDate", eff.toString());
+                // Last business date actually present in the table being read. The UI
+                // clamps the displayed "from -> to" range to this so a period whose
+                // window runs past the data (THIS_MONTH always does — it ends on the
+                // last day of the calendar month) cannot imply coverage that does not
+                // exist.
+                response.put("dataThrough", eff.toString());
                 response.put("mode", resolvedMode);
                 response.put("lossOnly", lossOnly);
                 response.put("from", from.toString());

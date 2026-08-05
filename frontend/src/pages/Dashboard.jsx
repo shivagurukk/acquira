@@ -2,17 +2,18 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../api/axios';
 import {
     RefreshCw, TrendingUp, TrendingDown, Receipt, Wallet,
-    Percent, Coins, BarChart3, CalendarRange, ArrowDownRight, Layers, Globe,
+    Percent, BarChart3, CalendarRange, ArrowDownRight, Layers, Globe,
     Sigma, Scale, Zap, Award, AlertTriangle, Download, X, SlidersHorizontal,
 } from 'lucide-react';
 import {
-    ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
+    Bar, Line, XAxis, YAxis, CartesianGrid,
     Tooltip as ReTooltip, ResponsiveContainer, ReferenceLine, Cell,
-    BarChart, Legend,
+    BarChart, ComposedChart, Legend,
 } from 'recharts';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { createFmt } from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
@@ -26,7 +27,6 @@ import { createFmt } from '../utils/formatters';
        Total fees          = interchange + scheme + ecom
        Fee rates           = each fee / volume, %  (same basis as MSF rate,
                              so cost lines compare directly against take rate)
-       Margin / txn        = netRevenue / txns
      NOTE: the `netRevenue` field name is the /business/ceo-summary payload
      key and stays as-is; only the user-facing label reads "Net Margin".
    • Client-side bucket-range filter (From–To week/month) — totals,
@@ -36,14 +36,36 @@ import { createFmt } from '../utils/formatters';
    • CSV export of the visible range (KPIs + bucket rows).
    • Insight strip: best & worst bucket by margin, momentum (last two
      complete buckets).
-   • Two charts: Volume vs Net Margin % (composed) + MSF composition
-     (stacked: net margin / interchange / scheme / ecom = MSF).
+   • Two charts: Volume and Net Margin % as small multiples — two panels on a
+     shared x-axis rather than one plot with two y-scales, so the crossing of
+     bars and line can't imply a relationship the data doesn't contain — plus
+     MSF composition (stacked: net margin / interchange / scheme / ecom = MSF).
    • Breakdown table with inline margin bars, best/worst tint.
    Data: sum_daily_bank weekly buckets + sum_monthly_bank month rows,
    settlement currency. Tenant currency via createFmt(currencySymbol).
    ════════════════════════════════════════════════════════════════════ */
 
 const num = (v) => (v == null ? 0 : Number(v));
+
+/* ─── Chart palette ───
+   Each mode is stepped for the surface it renders on (--bg-card: #FFFFFF light,
+   #1E293B dark) and validated as a set: lightness band, chroma floor, adjacent
+   colour-vision-deficiency separation, and contrast. The MSF-composition keys
+   are listed in stacking order — validation covers *adjacent* pairs only, so
+   reordering the stack invalidates it. On the light surface schemeFee and
+   ecomFee fall below 3:1 against white; the breakdown table below the charts
+   carries those values in text, which is what makes that legal. */
+const CHART_COLORS = {
+    light: { volume: '#2a78d6', marginPct: '#1baf7a',
+        netRevenue: '#2a78d6', interchange: '#eb6834', schemeFee: '#1baf7a', ecomFee: '#eda100' },
+    dark: { volume: '#3987e5', marginPct: '#199e70',
+        netRevenue: '#3987e5', interchange: '#d95926', schemeFee: '#199e70', ecomFee: '#c98500' },
+};
+
+/* Both panels of the small-multiple chart must share these so the volume bars
+   and the margin line sit on the same x positions. */
+const PANEL_MARGIN = { top: 8, right: 12, left: 0, bottom: 0 };
+const PANEL_Y_WIDTH = 56;
 
 const deltaPct = (cur, prev) => {
     const c = num(cur), p = num(prev);
@@ -267,7 +289,9 @@ const ChartCard = ({ title, subtitle, children, footer }) => (
 
 const Dashboard = () => {
     const { currencySymbol, tenantVersion } = useAuth();
+    const { isDark } = useTheme();
     const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const C = CHART_COLORS[isDark ? 'dark' : 'light'];
 
     const [mode, setMode] = useState('MTD');
     // Bucket-range filter (client-side): indices into the loaded buckets.
@@ -367,13 +391,10 @@ const Dashboard = () => {
         const schemeRate = safeDiv(totals.schemeFee, totals.volume) * 100;
         const ecomRate = safeDiv(totals.ecomFee, totals.volume) * 100;
         const feesRate = safeDiv(fees, totals.volume) * 100;
-        const revPerTxn = safeDiv(totals.netRevenue, totals.txns);
-        const prevRevPerTxn = prev ? safeDiv(prev.netRevenue, prev.txns) : null;
         return {
             fees, prevFees,
             msfRate, prevMsfRate,
             interchangeRate, schemeRate, ecomRate, feesRate,
-            revPerTxn, prevRevPerTxn,
         };
     }, [viewTotals, prev]);
 
@@ -427,7 +448,6 @@ const Dashboard = () => {
             lines.push(['ECOM Fee % of Volume', derived.ecomRate.toFixed(4)].map(esc).join(','));
             lines.push(['Total Fees', derived.fees.toFixed(2)].map(esc).join(','));
             lines.push(['Total Fees % of Volume', derived.feesRate.toFixed(4)].map(esc).join(','));
-            lines.push(['Margin / Txn', derived.revPerTxn.toFixed(4)].map(esc).join(','));
         }
         const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
         const a = document.createElement('a');
@@ -573,15 +593,14 @@ const Dashboard = () => {
                             value={fmt.currency(num(vt.netRevenue))}
                             fullValue={fullNum(vt.netRevenue, currencySymbol)}
                             deltaPct={dpg(vt.netRevenue, prev?.netRevenue)} compareLabel={compareLabel}
-                            spark={sparks.netRevenue}
-                            sub={derived ? `${fmt.currency(derived.revPerTxn)} per txn` : null} />
+                            spark={sparks.netRevenue} />
                         <HeroTile label="Net Margin %" icon={Percent} accent="#ef4444"
                             value={`${num(vt.marginPct).toFixed(2)}%`}
                             fullValue={`${num(vt.marginPct).toFixed(4)}% of volume`}
                             deltaPct={isFiltered ? null
                                 : (prev && num(prev.marginPct) !== 0
                                     ? num(vt.marginPct) - num(prev.marginPct) : undefined)}
-                            deltaSuffix="pp" compareLabel={`${compareLabel} (pp change)`}
+                            deltaSuffix="" compareLabel={compareLabel}
                             spark={sparks.marginPct}
                             sub="net margin / volume" />
                         <HeroTile label="Transactions" icon={Receipt} accent="#8b5cf6"
@@ -615,7 +634,7 @@ const Dashboard = () => {
                             <RailMetric label="Interchange" icon={ArrowDownRight}
                                 value={fmt.currency(num(vt.interchange))}
                                 fullValue={fullNum(vt.interchange, currencySymbol)}
-                                sub={`${derived.interchangeRate.toFixed(3)}% of volume`}
+                                sub={`${derived.interchangeRate.toFixed(3)}%`}
                                 subTitle={`${derived.interchangeRate.toFixed(4)}% — interchange / volume`}
                                 deltaPct={dpg(vt.interchange, prev?.interchange)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
@@ -623,7 +642,7 @@ const Dashboard = () => {
                             <RailMetric label="Scheme Fee" icon={Layers}
                                 value={fmt.currency(num(vt.schemeFee))}
                                 fullValue={fullNum(vt.schemeFee, currencySymbol)}
-                                sub={`${derived.schemeRate.toFixed(3)}% of volume`}
+                                sub={`${derived.schemeRate.toFixed(3)}%`}
                                 subTitle={`${derived.schemeRate.toFixed(4)}% — scheme fee / volume`}
                                 deltaPct={dpg(vt.schemeFee, prev?.schemeFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
@@ -631,27 +650,20 @@ const Dashboard = () => {
                             <RailMetric label="ECOM Fee" icon={Globe}
                                 value={fmt.currency(num(vt.ecomFee))}
                                 fullValue={fullNum(vt.ecomFee, currencySymbol)}
-                                sub={`${derived.ecomRate.toFixed(3)}% of volume`}
+                                sub={`${derived.ecomRate.toFixed(3)}%`}
                                 subTitle={`${derived.ecomRate.toFixed(4)}% — ECOM fee / volume`}
                                 deltaPct={dpg(vt.ecomFee, prev?.ecomFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="E-commerce gateway fees" />
-                            <RailMetric label="Total Fees" icon={Scale}
+                            <RailMetric label="Total Charges" icon={Scale}
                                 value={fmt.currency(derived.fees)}
                                 fullValue={fullNum(derived.fees, currencySymbol)}
-                                sub={`${derived.feesRate.toFixed(3)}% of volume`}
+                                sub={`${derived.feesRate.toFixed(3)}%`}
                                 subTitle={`${derived.feesRate.toFixed(4)}% — total fees / volume`}
                                 deltaPct={isFiltered ? null
                                     : (derived.prevFees ? deltaPct(derived.fees, derived.prevFees) : undefined)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Interchange + scheme + ECOM" />
-                            <RailMetric label="Rev / Txn" icon={Coins}
-                                value={fmt.currency(derived.revPerTxn)}
-                                fullValue={fullNum(derived.revPerTxn, currencySymbol) + ' net margin per transaction'}
-                                deltaPct={isFiltered ? null
-                                    : (derived.prevRevPerTxn ? deltaPct(derived.revPerTxn, derived.prevRevPerTxn) : undefined)}
-                                compareLabel={compareLabel}
-                                hint="Net margin per transaction" />
                         </div>
                     )}
 
@@ -685,58 +697,81 @@ const Dashboard = () => {
                         gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))' }}>
                         <ChartCard
                             title={mode === 'MTD' ? 'Week-by-week' : 'Month-by-month'}
-                            subtitle="Volume vs Net Margin %"
+                            subtitle="Volume and Net Margin %"
                             footer={mode === 'MTD' && viewData.some(b => b.partial) && (
                                 <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', padding: '4px 2px 8px' }}>
                                     Lighter bar = week in progress.
                                 </div>
                             )}>
-                            <ResponsiveContainer width="100%" height={280}>
-                                <ComposedChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                                    <defs>
-                                        <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.95} />
-                                            <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.55} />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
-                                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} />
-                                    <YAxis yAxisId="vol" tickFormatter={(v) => fmt.number(v)}
+                            {/* Upper panel — volume. The x-axis lives on the lower
+                                panel and is shared; both use PANEL_MARGIN and
+                                PANEL_Y_WIDTH so the columns line up. */}
+                            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
+                                textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 2 }}>
+                                Volume
+                            </div>
+                            <ResponsiveContainer width="100%" height={186}>
+                                <BarChart data={viewData} margin={PANEL_MARGIN}>
+                                    <CartesianGrid stroke="var(--border)" vertical={false} />
+                                    <XAxis dataKey="label" hide />
+                                    <YAxis tickFormatter={(v) => fmt.number(v)}
                                         tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} width={56} />
-                                    <YAxis yAxisId="pct" orientation="right"
-                                        tickFormatter={(v) => `${v.toFixed(1)}%`}
-                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} width={50} />
+                                        axisLine={false} tickLine={false} width={PANEL_Y_WIDTH} />
                                     <ReTooltip content={<BucketTooltip fmt={fmt} />}
                                         cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
-                                    <Bar yAxisId="vol" dataKey="volume" name="Volume"
-                                        radius={[6, 6, 0, 0]} maxBarSize={44}>
+                                    <Bar dataKey="volume" name="Volume"
+                                        radius={[4, 4, 0, 0]} maxBarSize={28}>
                                         {viewData.map((b, i) => (
-                                            <Cell key={i} fill="url(#volGrad)"
+                                            <Cell key={i} fill={C.volume}
                                                 fillOpacity={b.partial ? 0.45 : 1} />
                                         ))}
                                     </Bar>
-                                    <Line yAxisId="pct" type="monotone" dataKey="marginPct" name="Net Margin %"
-                                        stroke="#10b981" strokeWidth={2.2}
-                                        dot={{ r: 3.5, strokeWidth: 0, fill: '#10b981' }} />
                                     {mode === 'MTD' && runRate && num(runRate.projectedVolume) > 0 && (
-                                        <ReferenceLine yAxisId="vol"
+                                        <ReferenceLine
                                             y={num(runRate.projectedVolume) / Math.max(viewData.length, 1)}
-                                            stroke="#94a3b8" strokeDasharray="5 4"
+                                            stroke="var(--text-secondary)" strokeDasharray="5 4"
                                             label={{ value: 'avg pace', position: 'insideTopRight',
                                                 fontSize: 10, fill: 'var(--text-secondary)' }} />
                                     )}
+                                </BarChart>
+                            </ResponsiveContainer>
+
+                            {/* Lower panel — margin %, on its own scale and carrying
+                                the shared x-axis labels. */}
+                            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
+                                textTransform: 'uppercase', color: 'var(--text-secondary)', marginTop: 6 }}>
+                                Net Margin %
+                            </div>
+                            <ResponsiveContainer width="100%" height={124}>
+                                <ComposedChart data={viewData} margin={PANEL_MARGIN}>
+                                    <CartesianGrid stroke="var(--border)" vertical={false} />
+                                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} />
+                                    <YAxis tickFormatter={(v) => `${v.toFixed(1)}%`}
+                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} width={PANEL_Y_WIDTH} />
+                                    <ReTooltip content={<BucketTooltip fmt={fmt} />}
+                                        cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
+                                    {/* Unpainted, and not removable: a bar puts this panel on the
+                                        same band scale as the volume panel, which is what lands the
+                                        points and tick labels on the bar centres above. Without it
+                                        Recharts spaces a line edge-to-edge and the panels disagree.
+                                        Same dataKey as the line, so the y-domain is unchanged. */}
+                                    <Bar dataKey="marginPct" fill="none" legendType="none" />
+                                    <Line type="monotone" dataKey="marginPct" name="Net Margin %"
+                                        stroke={C.marginPct} strokeWidth={2}
+                                        dot={{ r: 4, strokeWidth: 2, stroke: 'var(--bg-card)', fill: C.marginPct }}
+                                        activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--bg-card)' }} />
                                 </ComposedChart>
                             </ResponsiveContainer>
                         </ChartCard>
 
                         <ChartCard title="MSF composition"
                             subtitle="Where each period's MSF goes">
-                            <ResponsiveContainer width="100%" height={280}>
+                            {/* height matches the two panels + their labels next door */}
+                            <ResponsiveContainer width="100%" height={344}>
                                 <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                                    <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
+                                    <CartesianGrid stroke="var(--border)" vertical={false} />
                                     <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
                                         axisLine={false} tickLine={false} />
                                     <YAxis tickFormatter={(v) => fmt.number(v)}
@@ -745,14 +780,20 @@ const Dashboard = () => {
                                     <ReTooltip content={<CompositionTooltip fmt={fmt} />}
                                         cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
                                     <Legend wrapperStyle={{ fontSize: 11.5 }} iconType="circle" iconSize={8} />
+                                    {/* stroke is the surface colour: it reads as a 2px gap
+                                        between segments, not as an outline. */}
                                     <Bar dataKey="netRevenue" name="Net Margin" stackId="c"
-                                        fill="#10b981" maxBarSize={44} />
+                                        fill={C.netRevenue} maxBarSize={30}
+                                        stroke="var(--bg-card)" strokeWidth={2} />
                                     <Bar dataKey="interchange" name="Interchange" stackId="c"
-                                        fill="#94a3b8" maxBarSize={44} />
+                                        fill={C.interchange} maxBarSize={30}
+                                        stroke="var(--bg-card)" strokeWidth={2} />
                                     <Bar dataKey="schemeFee" name="Scheme Fee" stackId="c"
-                                        fill="#c4b5fd" maxBarSize={44} />
+                                        fill={C.schemeFee} maxBarSize={30}
+                                        stroke="var(--bg-card)" strokeWidth={2} />
                                     <Bar dataKey="ecomFee" name="ECOM Fee" stackId="c"
-                                        fill="#f9a8d4" maxBarSize={44} radius={[6, 6, 0, 0]} />
+                                        fill={C.ecomFee} maxBarSize={30} radius={[4, 4, 0, 0]}
+                                        stroke="var(--bg-card)" strokeWidth={2} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </ChartCard>

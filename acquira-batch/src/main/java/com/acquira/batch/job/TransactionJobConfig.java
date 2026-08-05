@@ -356,6 +356,35 @@ public class TransactionJobConfig {
                 // permissions failure here must not fail the whole ingestion.
                 log.warn("ANALYZE stg_trnx_raw failed (non-fatal, ingestion continues): {}", e.getMessage());
             }
+
+            // PARTITION COVERAGE for the years this file actually contains.
+            //
+            // ensurePartitionsStep runs FIRST — before the file has even been read — so it
+            // can only guess, and it guesses `current year + next year`. Any backdated
+            // upload (a historical backload, or a multi-month file reaching into a prior
+            // year) therefore had no matching monthly partition and every such row fell
+            // into fact_transaction_default. No error, but those rows lose partition
+            // pruning permanently, and the default partition grows without bound.
+            //
+            // Here staging IS loaded, so the real range is known. Provisioning is
+            // idempotent (CREATE TABLE IF NOT EXISTS) and the service caches verified
+            // years, so re-provisioning the current year costs nothing.
+            if (tenantId != null) {
+                try {
+                    java.util.List<Integer> years = jdbcTemplate.queryForList(
+                        "SELECT DISTINCT EXTRACT(YEAR FROM payment_date)::int AS y FROM stg_trnx_raw " +
+                        "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY y",
+                        Integer.class, tenantId);
+                    for (Integer y : years) {
+                        if (y != null) partitionMaintenanceService.ensurePartitionsForYear(y);
+                    }
+                    if (!years.isEmpty()) {
+                        log.info("ensurePartitions(staging range): provisioned year(s) {}", years);
+                    }
+                } catch (Exception e) {
+                    log.warn("Partition provisioning for staging range failed (non-fatal): {}", e.getMessage());
+                }
+            }
             return RepeatStatus.FINISHED;
         };
     }
@@ -744,7 +773,25 @@ public class TransactionJobConfig {
                 java.sql.Date.class, tenantId);
             String dateScope;
             if (distinctDates.isEmpty()) {
-                log.info("stagingToFact: no dates in staging - skipping");
+                // DATA-QUALITY GATE. "No usable dates" has two very different causes and
+                // they must not look the same to an operator:
+                //   (a) staging is genuinely empty -> nothing was uploaded, benign skip.
+                //   (b) staging has rows but EVERY payment_date is NULL -> the file's date
+                //       column was missing, renamed, or in a format parseDate() does not
+                //       support (it accepts 12 patterns; e.g. "2026/08/03" and "03-Aug-2026"
+                //       both yield null). Previously this returned FINISHED, so the job went
+                //       green having loaded ZERO transactions — indistinguishable from a
+                //       successful upload. Fail loudly instead; a totally unparseable file is
+                //       an error, not a no-op.
+                Integer stagedRows = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ?", Integer.class, tenantId);
+                if (stagedRows != null && stagedRows > 0) {
+                    throw new IllegalStateException(
+                        "Upload rejected: " + stagedRows + " row(s) reached staging but NONE has a usable "
+                        + "payment_date. The date column is missing, renamed, or in an unsupported format. "
+                        + "No transactions were written. Check the file's date column and re-upload.");
+                }
+                log.info("stagingToFact: staging is empty - nothing to do");
                 return RepeatStatus.FINISHED;
             } else {
                 dateScope = buildSafeDateInList(distinctDates);
@@ -815,19 +862,45 @@ public class TransactionJobConfig {
 
             long tDel = System.currentTimeMillis();
             if (appendMode) {
-                if (uploadSchemes.isEmpty()) {
-                    log.warn("APPEND mode: no card_scheme values in staging - skipping fact delete.");
-                } else {
+                // IDEMPOTENCY: the delete below must cover EXACTLY the set of rows the
+                // INSERT further down will add, or a re-upload duplicates whatever it
+                // missed. fact_transaction has no unique constraint on any business key
+                // (PK is the surrogate transaction_id + payment_date), so this delete is
+                // the ONLY thing preventing duplicates — the database will not catch them.
+                //
+                // uploadSchemes is built with `NULLIF(TRIM(card_scheme),'') IS NOT NULL`,
+                // so it silently omits staging rows whose card_scheme is NULL or blank.
+                // Those rows were still INSERTed, but never deleted — so every re-upload
+                // of a file containing any blank-scheme row duplicated those rows, and a
+                // file with NO scheme values at all duplicated in full (the old
+                // "skipping fact delete" branch). Delete blank-scheme rows explicitly.
+                int deleted = 0;
+                if (!uploadSchemes.isEmpty()) {
                     String placeholders = uploadSchemes.stream().map(x -> "?")
                         .collect(java.util.stream.Collectors.joining(","));
                     Object[] args = new Object[uploadSchemes.size() + 1];
                     args[0] = tenantId;
                     for (int i = 0; i < uploadSchemes.size(); i++) args[i + 1] = uploadSchemes.get(i);
-                    int deleted = jdbcTemplate.update(
+                    deleted += jdbcTemplate.update(
                         "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
                         " AND UPPER(TRIM(card_scheme)) IN (" + placeholders + ")", args);
-                    log.info(String.format("APPEND mode: deleted %d fact rows for scheme(s) %s in %.1fs",
-                        deleted, uploadSchemes, (System.currentTimeMillis() - tDel) / 1000.0));
+                }
+                Boolean stagingHasBlankScheme = jdbcTemplate.queryForObject(
+                    "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw WHERE tenant_id = ? " +
+                    "AND payment_date IS NOT NULL AND NULLIF(TRIM(card_scheme), '') IS NULL LIMIT 1)",
+                    Boolean.class, tenantId);
+                if (Boolean.TRUE.equals(stagingHasBlankScheme)) {
+                    deleted += jdbcTemplate.update(
+                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
+                        " AND NULLIF(TRIM(card_scheme), '') IS NULL", tenantId);
+                }
+                if (uploadSchemes.isEmpty() && !Boolean.TRUE.equals(stagingHasBlankScheme)) {
+                    log.warn("APPEND mode: staging has no rows in scope - nothing to delete.");
+                } else {
+                    log.info(String.format("APPEND mode: deleted %d fact rows for scheme(s) %s%s in %.1fs",
+                        deleted, uploadSchemes,
+                        Boolean.TRUE.equals(stagingHasBlankScheme) ? " + blank-scheme rows" : "",
+                        (System.currentTimeMillis() - tDel) / 1000.0));
                 }
             } else {
                 jdbcTemplate.update(
@@ -867,6 +940,31 @@ public class TransactionJobConfig {
                 "WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL";
             int inserted = jdbcTemplate.update(sql, tenantId);
             log.info(String.format("Inserted %d fact rows in %.1fs", inserted, (System.currentTimeMillis() - tIns) / 1000.0));
+
+            // RECONCILIATION: staging rows with a usable date must equal fact rows inserted.
+            // The INSERT's only filter is `payment_date IS NOT NULL`, so these two numbers
+            // are expected to match exactly; a gap means rows were silently lost (or the
+            // LEFT JOINs to dim_store/dim_terminal fanned out and DUPLICATED rows, which is
+            // possible because those joins are not guaranteed one-to-one and there is no
+            // unique constraint on fact_transaction to catch it). Either way the operator
+            // must know — this used to be invisible.
+            Integer stagedUsable = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL",
+                Integer.class, tenantId);
+            if (stagedUsable != null && stagedUsable != inserted) {
+                String detail = String.format(
+                    "Row-count mismatch: %d staging row(s) with a usable payment_date produced %d fact row(s) (delta %+d).",
+                    stagedUsable, inserted, inserted - stagedUsable);
+                if (inserted > stagedUsable) {
+                    // Fan-out duplicates corrupt every downstream summary. Never let this pass.
+                    throw new IllegalStateException(detail
+                        + " More rows were written than staged, which means a dimension join duplicated rows. "
+                        + "Summaries would be inflated, so the load has been failed deliberately.");
+                }
+                log.warn("[RECONCILE] {} Rows were dropped between staging and fact.", detail);
+            } else {
+                log.info("[RECONCILE] staging({}) == fact({}) - row counts reconcile", stagedUsable, inserted);
+            }
 
             // PERF: one pass with FILTER instead of two separate COUNT(*) scans over
             // the same date range — these are diagnostics, they shouldn't cost 2 scans.
@@ -1666,7 +1764,19 @@ public class TransactionJobConfig {
                 "FROM dim_merchant m " +
                 "JOIN (VALUES " + distinctDates.stream().map(d -> "(DATE '" + d + "')").collect(java.util.stream.Collectors.joining(",")) + ") d(target_date) ON TRUE " +
                 "LEFT JOIN fact_transaction f ON m.merchant_id = f.merchant_id AND f.tenant_id = m.tenant_id " +
-                "  AND f.payment_date >= (CURRENT_DATE - INTERVAL '60 days') " +
+                // The window must be relative to d.target_date, NOT CURRENT_DATE.
+                // Every aggregate above already measures from d.target_date (7d/30d
+                // windows, ACTIVE/DORMANT cutoff), but this join used to be pinned to
+                // `CURRENT_DATE - INTERVAL '60 days'`. For any BACKDATED upload — a
+                // historical backload, or a multi-month file whose earlier dates are
+                // more than 60 days old — the join matched nothing, so every merchant
+                // was written with last_7d/last_30d = 0, NULL first/last txn dates and
+                // status 'ONBOARDED' (the CASE falls through to ELSE when MAX is NULL).
+                // The upper bound matters too: without it a backdated snapshot pulled in
+                // transactions that happened AFTER its own calc_date, so last_txn_date
+                // and status were computed from the future.
+                "  AND f.payment_date >= d.target_date - INTERVAL '60 days' " +
+                "  AND f.payment_date <  d.target_date + INTERVAL '1 day' " +
                 "WHERE m.tenant_id = ? " +
                 "AND m.merchant_id IN (SELECT DISTINCT merchant_id FROM fact_transaction WHERE tenant_id = ? " +
                 "  AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope + ") " +
