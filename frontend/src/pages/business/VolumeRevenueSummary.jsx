@@ -11,6 +11,7 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
+import { formatMsf } from '../../utils/formatters';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer, chartTooltipStyle } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
@@ -90,7 +91,7 @@ const VolumeRevenueChart = ({ data, currencySymbol, formatCurrency }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 18, marginTop: 2 }}>
                     <span style={{ color: 'var(--text-secondary, #64748b)' }}>MSF revenue</span>
                     <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: row.msf < 0 ? 'var(--danger, #ef4444)' : 'var(--success, #10b981)' }}>
-                        {formatCurrency(row.msf)}
+                        {formatMsf(row.msf, currencySymbol)}
                     </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 18, marginTop: 2 }}>
@@ -309,7 +310,7 @@ const VolumeRevenueSummary = () => {
         { field: 'momVol', headerName: 'Trend', flex: 0.8, align: 'center', headerAlign: 'center', renderCell: (params) => <TrendPill val={params.value} /> },
         {
             field: 'msf', headerName: 'MSF', flex: 1.2, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" fontWeight="600" color={params.value < 0 ? 'var(--danger, #ef4444)' : 'var(--text, #334155)'} sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" fontWeight="600" color={params.value < 0 ? 'var(--danger, #ef4444)' : 'var(--text, #334155)'} sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatMsf(params.value, currencySymbol)}</Typography>
         },
         {
             field: 'intl_volume', headerName: 'Intl Volume', flex: 1.1, align: 'right', headerAlign: 'right',
