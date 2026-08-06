@@ -32,6 +32,15 @@ public class AccessRequestController {
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
 
+    /** Lenient numeric id from a JSON body value (browsers send select values as strings). */
+    private static Long parseId(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.longValue();
+        String s = v.toString().trim();
+        if (s.isEmpty()) return null;
+        try { return Long.valueOf(s); } catch (NumberFormatException e) { return null; }
+    }
+
     private boolean isSuperAdmin() {
         org.springframework.security.core.Authentication auth =
                 SecurityContextHolder.getContext().getAuthentication();
@@ -126,15 +135,18 @@ public class AccessRequestController {
             return ResponseEntity.badRequest().body(Map.of("error", "Request is not pending"));
         }
 
-        // Extract admin-provided values
-        Number groupIdNum = (Number) payload.get("groupId");
-        Number tenantIdNum = (Number) payload.get("tenantId");
-        String roleInTenant = (String) payload.get("roleInTenant");
-        String reviewNotes = (String) payload.get("reviewNotes");
-
-        Long groupId = groupIdNum != null ? groupIdNum.longValue() : null;
-        Long tenantId = tenantIdNum != null ? tenantIdNum.longValue()
-            : (request.getRequestedTenantId() != null ? Long.valueOf(request.getRequestedTenantId()) : null);
+        // Extract admin-provided values.
+        // These arrive from HTML <select> elements, so the UI sends them as JSON
+        // STRINGS ("3"), not numbers. The previous `(Number) payload.get(...)`
+        // cast threw ClassCastException on every approval from the Users screen
+        // and surfaced as a bare 500. Parse leniently instead.
+        Long groupId = parseId(payload.get("groupId"));
+        Long tenantId = parseId(payload.get("tenantId"));
+        if (tenantId == null && request.getRequestedTenantId() != null) {
+            tenantId = Long.valueOf(request.getRequestedTenantId());
+        }
+        String roleInTenant = payload.get("roleInTenant") != null ? payload.get("roleInTenant").toString() : null;
+        String reviewNotes = payload.get("reviewNotes") != null ? payload.get("reviewNotes").toString() : null;
 
         if (tenantId == null || groupId == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "Tenant and Group are required for approval"));
@@ -153,8 +165,23 @@ public class AccessRequestController {
         }
 
         // Create user
-        String email = request.getEmail();
+        String email = request.getEmail() != null ? request.getEmail().trim() : "";
+        if (email.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "This request has no email address and cannot be approved"));
+        }
+
+        // An address that already has an account must not get a second one:
+        // duplicate accounts split a person's tenant grants and make the SSO
+        // lookup (findByEmailAndSsoProviderIsNotNull) ambiguous.
+        if (userRepository.existsByEmail(email)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "A user with email '" + email + "' already exists. "
+                       + "Grant that account tenant access instead of approving a duplicate."));
+        }
+
         String username = email.contains("@") ? email.substring(0, email.indexOf("@")) : email;
+        if (username.isBlank()) username = "user";
 
         // Handle username collision
         int suffix = 1;

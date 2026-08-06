@@ -8,28 +8,63 @@ import React from 'react';
  *                        and anywhere a whole screen is still resolving.
  *   <SectionLoader />    Full centered branded loader that REPLACES a
  *                        section's content while its data is (re)fetching —
- *                        the "in-between" state loader. Orbiting-dots motion.
+ *                        the "in-between" state loader.
  *   <Spinner size={…}/>  Small inline spinner for buttons / sections.
  *   <ContentLoader />    Skeleton-shimmer placeholder a page can render
  *                        while its own data fetch is in flight.
+ *
+ * Signature mark: the "data pulse" — equalizer-style chart bars breathing
+ * behind an ECG pulse line that continuously draws itself across the tile.
+ * Reads as live transaction data arriving, not a generic spinner.
  *
  * The global top progress bar (every API call, all pages) lives in
  * contexts/LoadingContext.jsx and is wired through the axios interceptors —
  * pages do not need to render anything for that one.
  *
  * All colours come from the CSS custom properties published by
- * ThemeContext, so these react to dark mode automatically.
+ * ThemeContext, so these react to dark mode automatically. Every animation
+ * is disabled under prefers-reduced-motion.
  */
 
 /* Injected once — keyframes shared by every loader below. */
 const LoaderKeyframes = () => (
   <style>{`
-    @keyframes acq-spin   { to { transform: rotate(360deg); } }
-    @keyframes acq-pulse  { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
-    @keyframes acq-shimmer{ 0% { background-position: -468px 0; } 100% { background-position: 468px 0; } }
-    @keyframes acq-fade   { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes acq-orbit  { to { transform: rotate(360deg); } }
-    @keyframes acq-dot    { 0%,100% { transform: scale(0.55); opacity: 0.45; } 50% { transform: scale(1); opacity: 1; } }
+    @keyframes acq-spin    { to { transform: rotate(360deg); } }
+    @keyframes acq-pulse   { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+    @keyframes acq-shimmer { 0% { background-position: -468px 0; } 100% { background-position: 468px 0; } }
+    @keyframes acq-fade    { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes acq-bar {
+      0%, 100% { transform: scaleY(0.35); opacity: 0.45; }
+      50%      { transform: scaleY(1);    opacity: 1; }
+    }
+    @keyframes acq-trace {
+      0%   { stroke-dashoffset: 180; opacity: 0; }
+      8%   { opacity: 1; }
+      55%  { stroke-dashoffset: 0;   opacity: 1; }
+      75%  { stroke-dashoffset: 0;   opacity: 1; }
+      100% { stroke-dashoffset: -180; opacity: 0; }
+    }
+    @keyframes acq-tile-glow {
+      0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #1E3A8A) 0%, transparent); }
+      50%      { box-shadow: 0 0 24px 2px color-mix(in srgb, var(--accent, #1E3A8A) 22%, transparent); }
+    }
+    @keyframes acq-ellipsis {
+      0%   { content: ''; }
+      25%  { content: '.'; }
+      50%  { content: '..'; }
+      75%  { content: '...'; }
+    }
+    .acq-loader-label::after {
+      display: inline-block;
+      width: 1.2em;
+      text-align: left;
+      content: '';
+      animation: acq-ellipsis 1.6s steps(1) infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .acq-anim, .acq-anim * { animation: none !important; }
+      .acq-loader-label::after { content: '…'; animation: none; }
+    }
   `}</style>
 );
 
@@ -37,6 +72,7 @@ const LoaderKeyframes = () => (
 export const Spinner = ({ size = 20, stroke = 2.5, color }) => (
   <span
     aria-hidden="true"
+    className="acq-anim"
     style={{
       display: 'inline-block',
       width: size,
@@ -53,47 +89,89 @@ export const Spinner = ({ size = 20, stroke = 2.5, color }) => (
 );
 
 /**
- * Orbiting-dots mark. A ring of dots rotates as a group while each dot
- * pulses on a staggered delay — reads as an intentional branded loader
- * rather than a generic spinner. Colour + size are token-driven.
+ * The "data pulse" mark.
+ *
+ * A rounded tile framing five equalizer bars that breathe on a staggered
+ * rhythm, while an ECG-style pulse line repeatedly draws itself across the
+ * tile with a soft glow. Colour + size are token-driven.
  */
-const OrbitDots = ({ size = 56, dots = 8, color }) => {
-  const c = color || 'var(--accent, #1E3A8A)';
-  const r = size / 2;
-  const dotSize = Math.max(5, Math.round(size * 0.12));
+export const PulseMark = ({ size = 64, color }) => {
+  const accent = color || 'var(--accent, #1E3A8A)';
+  const barXs = [10, 21, 32, 43, 54];
+  const barHs = [22, 34, 44, 30, 38]; // full heights; scaleY animates them
   return (
     <div
+      className="acq-anim"
+      aria-hidden="true"
       style={{
-        position: 'relative',
         width: size,
         height: size,
-        animation: 'acq-orbit 1.6s linear infinite',
+        borderRadius: Math.round(size * 0.22),
+        border: '1px solid var(--border, #E5E7EB)',
+        background: 'var(--bg-card, #FFFFFF)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        animation: 'acq-tile-glow 2.4s ease-in-out infinite',
       }}
     >
-      {Array.from({ length: dots }).map((_, i) => {
-        const angle = (i / dots) * 2 * Math.PI;
-        const x = r + (r - dotSize) * Math.cos(angle) - dotSize / 2;
-        const y = r + (r - dotSize) * Math.sin(angle) - dotSize / 2;
-        return (
-          <span
+      <LoaderKeyframes />
+      <svg width={size * 0.82} height={size * 0.82} viewBox="0 0 64 64" fill="none">
+        {/* breathing chart bars */}
+        {barXs.map((x, i) => (
+          <rect
             key={i}
+            className="acq-anim"
+            x={x - 3}
+            y={54 - barHs[i]}
+            width={6}
+            height={barHs[i]}
+            rx={3}
+            fill={accent}
+            opacity={0.35}
             style={{
-              position: 'absolute',
-              left: x,
-              top: y,
-              width: dotSize,
-              height: dotSize,
-              borderRadius: '50%',
-              background: c,
-              animation: 'acq-dot 1.1s ease-in-out infinite',
-              animationDelay: `${(i / dots) * 1.1}s`,
+              transformOrigin: `${x}px 54px`,
+              animation: 'acq-bar 1.5s ease-in-out infinite',
+              animationDelay: `${i * 0.14}s`,
             }}
           />
-        );
-      })}
+        ))}
+        {/* ECG pulse line drawing itself across the bars */}
+        <polyline
+          className="acq-anim"
+          points="2,34 16,34 22,20 30,46 38,12 46,38 50,30 62,30"
+          stroke={accent}
+          strokeWidth="2.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{
+            strokeDasharray: 180,
+            strokeDashoffset: 180,
+            animation: 'acq-trace 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite',
+            filter: 'drop-shadow(0 0 4px color-mix(in srgb, var(--accent, #1E3A8A) 60%, transparent))',
+          }}
+        />
+      </svg>
     </div>
   );
 };
+
+/** Shared label under the marks — pulsing text with animated ellipsis. */
+const LoaderLabel = ({ children }) => (
+  <div
+    className="acq-anim acq-loader-label"
+    style={{
+      fontSize: 13,
+      fontWeight: 500,
+      letterSpacing: 0.2,
+      color: 'var(--text-secondary, #6B7280)',
+      fontFamily: 'var(--font-sans, Inter, system-ui, sans-serif)',
+      animation: 'acq-pulse 1.6s ease-in-out infinite',
+    }}
+  >
+    {children}
+  </div>
+);
 
 /**
  * Full centered branded loader — the "in-between" state loader.
@@ -101,20 +179,21 @@ const OrbitDots = ({ size = 56, dots = 8, color }) => {
  *
  *   if (loading) return <SectionLoader label="Loading merchants…" />;
  *
- * Fills its container (minHeight default), centers an orbiting-dots mark
+ * Fills its container (minHeight default), centers the data-pulse mark
  * over a pulsing label. Card-framed by default so it reads as a deliberate
  * loading panel; pass framed={false} to drop the border/background.
  */
 export const SectionLoader = ({
   label = 'Loading',
   minHeight = '52vh',
-  size = 56,
+  size = 64,
   framed = true,
 }) => (
   <div
     role="status"
     aria-live="polite"
     aria-busy="true"
+    className="acq-anim"
     style={{
       display: 'flex',
       alignItems: 'center',
@@ -135,86 +214,44 @@ export const SectionLoader = ({
     <LoaderKeyframes />
     <div style={{ textAlign: 'center' }}>
       <div style={{ margin: '0 auto 18px', width: size, height: size }}>
-        <OrbitDots size={size} />
+        <PulseMark size={size} />
       </div>
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 500,
-          letterSpacing: 0.2,
-          color: 'var(--text-secondary, #6B7280)',
-          fontFamily: 'var(--font-sans, Inter, system-ui, sans-serif)',
-          animation: 'acq-pulse 1.4s ease-in-out infinite',
-        }}
-      >
-        {label}
-      </div>
+      <LoaderLabel>{label}</LoaderLabel>
     </div>
   </div>
 );
 
 /**
- * Full-area branded loader.
- * Concentric ring + spinning accent arc + pulsing label.
+ * Full-area branded loader — the data-pulse mark over a pulsing label.
+ * Pass overlay to cover the whole viewport (route-level boots).
  */
-export const PageLoader = ({ label = 'Loading', minHeight = '60vh' }) => (
+export const PageLoader = ({ label = 'Loading', minHeight = '60vh', overlay = false }) => (
   <div
     role="status"
     aria-live="polite"
+    className="acq-anim"
     style={{
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight,
       width: '100%',
       animation: 'acq-fade 0.2s ease',
+      ...(overlay
+        ? {
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            background: 'var(--bg, #F9FAFB)',
+          }
+        : { minHeight }),
     }}
   >
     <LoaderKeyframes />
     <div style={{ textAlign: 'center' }}>
-      <div style={{ position: 'relative', width: 52, height: 52, margin: '0 auto 16px' }}>
-        {/* track */}
-        <div
-          style={{
-            position: 'absolute', inset: 0,
-            border: '4px solid var(--border-light, #F3F4F6)',
-            borderRadius: '50%',
-          }}
-        />
-        {/* spinning arc */}
-        <div
-          style={{
-            position: 'absolute', inset: 0,
-            border: '4px solid transparent',
-            borderTopColor: 'var(--accent, #1E3A8A)',
-            borderRightColor: 'var(--accent, #1E3A8A)',
-            borderRadius: '50%',
-            animation: 'acq-spin 0.85s cubic-bezier(0.5,0.1,0.5,0.9) infinite',
-          }}
-        />
-        {/* centre dot */}
-        <div
-          style={{
-            position: 'absolute', top: '50%', left: '50%',
-            width: 8, height: 8, marginTop: -4, marginLeft: -4,
-            background: 'var(--accent, #1E3A8A)',
-            borderRadius: '50%',
-            animation: 'acq-pulse 1.2s ease-in-out infinite',
-          }}
-        />
+      <div style={{ margin: '0 auto 16px', width: 64, height: 64 }}>
+        <PulseMark size={64} />
       </div>
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 500,
-          letterSpacing: 0.2,
-          color: 'var(--text-secondary, #6B7280)',
-          fontFamily: 'var(--font-sans, Inter, system-ui, sans-serif)',
-          animation: 'acq-pulse 1.4s ease-in-out infinite',
-        }}
-      >
-        {label}
-      </div>
+      <LoaderLabel>{label}</LoaderLabel>
     </div>
   </div>
 );
@@ -222,6 +259,7 @@ export const PageLoader = ({ label = 'Loading', minHeight = '60vh' }) => (
 /** One shimmer line. */
 const SkeletonLine = ({ width = '100%', height = 14, radius = 6 }) => (
   <div
+    className="acq-anim"
     style={{
       width,
       height,
@@ -240,7 +278,7 @@ const SkeletonLine = ({ width = '100%', height = 14, radius = 6 }) => (
  * Looks like content arriving rather than a blank card.
  */
 export const ContentLoader = ({ rows = 5, cards = 0 }) => (
-  <div style={{ width: '100%', animation: 'acq-fade 0.2s ease' }}>
+  <div className="acq-anim" style={{ width: '100%', animation: 'acq-fade 0.2s ease' }}>
     <LoaderKeyframes />
     {cards > 0 && (
       <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>

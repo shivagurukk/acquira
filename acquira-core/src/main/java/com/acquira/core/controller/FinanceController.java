@@ -27,6 +27,7 @@ public class FinanceController {
     private final SumDailySchemeRepository schemeRepository;
     private final SumDailyChannelRepository channelRepository;
     private final VolumeRevenueRepository volumeRevenueRepository;
+    private final com.acquira.core.service.TenantService tenantService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -37,7 +38,8 @@ public class FinanceController {
             SumDailyMccRepository mccRepository,
             SumDailySchemeRepository schemeRepository,
             SumDailyChannelRepository channelRepository,
-            VolumeRevenueRepository volumeRevenueRepository) {
+            VolumeRevenueRepository volumeRevenueRepository,
+            com.acquira.core.service.TenantService tenantService) {
         this.bankRepository = bankRepository;
         this.monthlyBankRepository = monthlyBankRepository;
         this.merchantRepository = merchantRepository;
@@ -45,11 +47,31 @@ public class FinanceController {
         this.schemeRepository = schemeRepository;
         this.channelRepository = channelRepository;
         this.volumeRevenueRepository = volumeRevenueRepository;
+        this.tenantService = tenantService;
+    }
+
+    /**
+     * Active tenant for the request.
+     * <p>
+     * Reading {@code TenantContext.getCurrentTenant()} directly (as every method
+     * here used to) returns null whenever the request arrives without a usable
+     * X-Tenant-Id header — a fresh session before the frontend has stored
+     * defaultTenantId, a non-browser client, an internal call. The repository
+     * then fails closed with IllegalStateException and the caller gets a bare
+     * 500, which the report screens render as an empty table. TenantService
+     * applies the same context-first rule but falls back to the authenticated
+     * user's default tenant, which is what every other analytics controller
+     * (BusinessAnalyticsController et al.) already does.
+     */
+    private Long resolveTenantId() {
+        Long ctx = TenantContext.getCurrentTenant();
+        if (ctx != null) return ctx;
+        try { return tenantService.getCurrentTenantId(); } catch (Exception e) { return null; }
     }
 
     // ── Finance Summary (drill-down: Month → Day → Merchant) ──────────────
     @GetMapping("/summary")
-    public ResponseEntity<List<Map<String, Object>>> getFinanceSummary(
+    public ResponseEntity<?> getFinanceSummary(
             @RequestParam(defaultValue = "MONTH") String period,
             @RequestParam(required = false) String groupBy,
             @RequestParam(required = false) String startDate,
@@ -60,8 +82,19 @@ public class FinanceController {
         LocalDate start, end;
 
         if (startDate != null && endDate != null && !startDate.isBlank() && !endDate.isBlank()) {
-            start = LocalDate.parse(startDate);
-            end = LocalDate.parse(endDate);
+            // A malformed date used to escape as DateTimeParseException → 500,
+            // which the report screen renders as a blank table.
+            try {
+                start = LocalDate.parse(startDate);
+                end = LocalDate.parse(endDate);
+            } catch (java.time.format.DateTimeParseException e) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", "startDate and endDate must be ISO dates (YYYY-MM-DD)"));
+            }
+            if (start.isAfter(end)) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", "startDate must not be after endDate"));
+            }
         } else {
             switch (period.toUpperCase()) {
                 case "TODAY":
@@ -95,7 +128,11 @@ public class FinanceController {
         // 4. Delegate to existing repository method. Tenant-scoped: without the
         // explicit tenant_id predicate the (tenant_id, business_date) indexes on
         // sum_daily_insight are unusable and other tenants' rows count into the totals.
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
+        if (tenantId == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "No active tenant for this session. Select a bank and retry."));
+        }
         List<Map<String, Object>> rawData = volumeRevenueRepository.getPerformanceDashboardData(
                 filter, effectiveGroupBy, null, null, tenantId);
 
@@ -122,7 +159,7 @@ public class FinanceController {
             @RequestParam(required = false) LocalDate from,
             @RequestParam(required = false) LocalDate to) {
 
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
         LocalDate end = (to != null) ? to : LocalDate.now();
         LocalDate start = (from != null) ? from : end.withDayOfMonth(1); // Default MTD
         // 1. Daily (For specific "Today" tile, regardless of filter, or should it be
@@ -204,7 +241,7 @@ public class FinanceController {
     public ResponseEntity<Map<String, Object>> getDashboardKpisFiltered(
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
 
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
         if (filter == null) filter = new VolumeRevenueFilterDTO();
 
         LocalDate now = LocalDate.now();
@@ -352,7 +389,7 @@ public class FinanceController {
             @RequestParam(required = false) String mode,
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
 
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
         if (filter == null) filter = new VolumeRevenueFilterDTO();
 
         LocalDate end = (filter.getEndDate() != null) ? filter.getEndDate() : LocalDate.now();
@@ -457,7 +494,7 @@ public class FinanceController {
             @RequestParam(required = false) LocalDate from,
             @RequestParam(required = false) LocalDate to) {
 
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
 
         List<Map<String, Object>> response = new ArrayList<>();
         LocalDate end = (to != null) ? to : LocalDate.now();
@@ -553,7 +590,7 @@ public class FinanceController {
             @RequestParam(required = false) LocalDate to,
             jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
 
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
 
         LocalDate endDate = (to != null) ? to : LocalDate.now();
         LocalDate startDate = (from != null) ? from : endDate.minusDays(30);
@@ -613,7 +650,7 @@ public class FinanceController {
             @RequestParam(required = false) LocalDate to,
             Pageable pageable) {
 
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
 
         if (from == null)
             from = LocalDate.now().minusDays(30);
@@ -657,7 +694,7 @@ public class FinanceController {
             @RequestParam(required = false) LocalDate from,
             @RequestParam(required = false) LocalDate to,
             Pageable pageable) {
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
         if (from == null)
             from = LocalDate.now().minusDays(30);
         if (to == null)
@@ -672,7 +709,7 @@ public class FinanceController {
             @RequestParam(defaultValue = "10000") BigDecimal minVolume,
             @RequestParam(defaultValue = "1.0") BigDecimal maxMarginPct,
             Pageable pageable) {
-        Long tenantId = TenantContext.getCurrentTenant();
+        Long tenantId = resolveTenantId();
         if (from == null)
             from = LocalDate.now().minusDays(30);
         if (to == null)

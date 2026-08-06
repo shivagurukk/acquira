@@ -71,6 +71,8 @@ const AttritionReport = () => {
     const { currencySymbol, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
     const [data, setData] = useState([]);
+    const [meta, setMeta] = useState(null);      // comparison-window coverage flags
+    const [error, setError] = useState(null);
     const [churnByMid, setChurnByMid] = useState({});
     const [churnAvailable, setChurnAvailable] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -102,10 +104,23 @@ const AttritionReport = () => {
     const fetchData = async (override) => {
         const body = (override && override.startDate !== undefined) ? override : filters;
         setLoading(true);
+        setError(null);
         try {
-            const res = await api.post('/business/attrition-report', body);
-            setData(res.data.map((r, i) => ({ id: r.mid || i, ...r })));
-        } catch (error) { console.error(error); }
+            // …-with-meta also returns the comparison-window flags, so an empty
+            // prior-year window can be called out instead of silently rendering
+            // as +100% growth for every merchant.
+            const res = await api.post('/business/attrition-report-with-meta', body);
+            const rows = Array.isArray(res.data) ? res.data : (res.data?.rows || []);
+            setData(rows.map((r, i) => ({ id: r.mid ?? `row-${i}`, ...r })));
+            setMeta(Array.isArray(res.data) ? null : (res.data?.meta || null));
+        } catch (e) {
+            // Previously console.error only — a 500/403 left an empty grid that
+            // looked exactly like a portfolio with no merchants.
+            console.error(e);
+            setData([]);
+            setMeta(null);
+            setError(e?.response?.data?.error || e?.response?.statusText || e?.message || 'Could not load the attrition report.');
+        }
         finally { setLoading(false); }
     };
 
@@ -159,7 +174,11 @@ const AttritionReport = () => {
         else setFilters(prev => ({ ...prev, [keyOrObj]: val }));
     };
 
-    const selectedYear = filters.endDate ? new Date(filters.endDate).getFullYear() : new Date().getFullYear();
+    // Read the year off the ISO STRING. `new Date('2026-01-01')` parses as UTC
+    // midnight, so in any timezone behind UTC .getFullYear() returned 2025 — every
+    // year column header, and the YoY group labels, were off by one whenever the
+    // window ended on 1 January.
+    const selectedYear = filters.endDate ? Number(String(filters.endDate).slice(0, 4)) : new Date().getFullYear();
     const prevYear = selectedYear - 1;
     const { suffix, kind } = METRICS[metric];
 
@@ -172,6 +191,18 @@ const AttritionReport = () => {
     // letting the grid mislead.
     const latestYmd = latest ? String(latest).slice(0, 10) : '';
     const windowBeyondData = boundsLoaded && latestYmd && filters.startDate && filters.startDate > latestYmd;
+
+    // Comparison windows the backend reported as containing no data at all.
+    // Only meaningful once rows exist — with an empty portfolio every window is
+    // trivially empty and the banner would be noise.
+    const emptyWindows = useMemo(() => {
+        if (!meta || data.length === 0) return [];
+        const out = [];
+        if (meta.momWindowHasData === false) out.push(`previous month (${meta.momPrevStart} → ${meta.momPrevEnd})`);
+        if (meta.yoyWindowHasData === false) out.push(`prior year (${meta.yoyPrevStart} → ${meta.yoyPrevEnd})`);
+        if (meta.ytdPrevWindowHasData === false) out.push(`prior YTD (${meta.ytdPrevStart} → ${meta.ytdPrevEnd})`);
+        return out;
+    }, [meta, data.length]);
 
     // Helpers that read the active-metric value off a row.
     const val = (row, base) => row[`${base}${suffix}`];
@@ -455,6 +486,47 @@ const AttritionReport = () => {
                     >
                         Use latest data month <ArrowRight size={13} />
                     </Box>
+                </Box>
+            )}
+
+            {/* Request failure — was console-only, so a broken endpoint rendered
+                as "no merchants" and read as a real (catastrophic) result. */}
+            {error && (
+                <Box role="alert" sx={{
+                    display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap',
+                    px: 1.75, py: 1, mb: 1.5, borderRadius: 'var(--radius-md, 10px)',
+                    border: '1px solid var(--danger-border, #fecaca)',
+                    bgcolor: 'var(--danger-bg, #fef2f2)', color: 'var(--danger-text, #991b1b)',
+                }}>
+                    <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                    <Typography sx={{ fontSize: '0.82rem', fontWeight: 600, color: 'inherit' }}>
+                        Could not load the attrition report. {error}
+                    </Typography>
+                    <Box onClick={() => fetchData()} sx={{
+                        ml: 'auto', px: 1.25, py: 0.5, borderRadius: 'var(--radius-sm, 6px)', cursor: 'pointer',
+                        fontSize: '0.78rem', fontWeight: 700, color: 'var(--brand, #2563eb)',
+                        bgcolor: 'var(--bg-card, #ffffff)', border: '1px solid var(--border, #e2e8f0)',
+                    }}>Retry</Box>
+                </Box>
+            )}
+
+            {/* ── Empty comparison-window banner ──
+                A window with NO data at all makes every merchant in it read as
+                +100% / "New". That is an artifact of missing history, not growth,
+                so name the specific window rather than letting the % columns imply
+                a result they cannot support. */}
+            {emptyWindows.length > 0 && !loading && (
+                <Box role="status" sx={{
+                    display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap',
+                    px: 1.75, py: 1, mb: 1.5, borderRadius: 'var(--radius-md, 10px)',
+                    border: '1px solid var(--warning-border, #fed7aa)',
+                    bgcolor: 'var(--warning-bg, #fffbeb)', color: 'var(--warning-text, #92400e)',
+                }}>
+                    <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                    <Typography sx={{ fontSize: '0.82rem', fontWeight: 600, color: 'inherit' }}>
+                        No data in the {emptyWindows.join(' or ')} comparison {emptyWindows.length > 1 ? 'windows' : 'window'} —
+                        those % columns show +100% because there is nothing to compare against, not because of growth.
+                    </Typography>
                 </Box>
             )}
 

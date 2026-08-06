@@ -24,6 +24,7 @@ import {
     ReferenceLine, LabelList, FunnelChart, Funnel, Sankey, Layer, Rectangle
 } from 'recharts';
 import { explorerApi, reportApi, savedViewsApi } from '../../api/explorer';
+import { SectionLoader } from '../../components/Loaders';
 import { useAuth } from '../../contexts/AuthContext';
 import RGL, { WidthProvider } from 'react-grid-layout';
 
@@ -1450,10 +1451,7 @@ export default function DataExplorer() {
     const SEL = '#009845';
 
     if (loading) return (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh', flexDirection: 'column', gap: 2 }}>
-            <CircularProgress size={40} thickness={3} sx={{ color: T.primary }} />
-            <Typography sx={{ fontSize: 14, color: T.td3, fontWeight: 600 }}>Loading Explorer…</Typography>
-        </Box>
+        <SectionLoader label="Loading Explorer" minHeight="80vh" framed={false} />
     );
 
     const renderCat = (ck, fields, pfx) => {

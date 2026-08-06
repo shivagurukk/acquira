@@ -1446,7 +1446,17 @@ public class VolumeRevenueRepository {
         java.time.LocalDate m3End = m3Start.withDayOfMonth(Math.min(dayCut, m3Start.lengthOfMonth()));
 
         // Earliest date any window reads — used as the WHERE lower bound for partition pruning.
-        java.time.LocalDate globalLowerBound = prevYtdStart.isBefore(momStart) ? prevYtdStart : momStart;
+        //
+        // [FIX] prevStart was missing from this minimum. prevYtdStart is Jan 1 of the
+        // previous year, so it only dominates prevStart when the SELECTED range sits
+        // inside one calendar year. As soon as the range spans a year boundary
+        // (e.g. 2025-11-01 → 2026-02-28) prevStart is 2024-11-01, which is BEFORE
+        // prevYtdStart (2025-01-01) — and the WHERE clause silently cut those months
+        // out of the YoY "previous" window. The prior-year column came back
+        // understated and every YoY % change was inflated, with no error anywhere.
+        java.time.LocalDate globalLowerBound = prevYtdStart;
+        if (prevStart.isBefore(globalLowerBound)) globalLowerBound = prevStart;
+        if (momStart.isBefore(globalLowerBound)) globalLowerBound = momStart;
         if (m3Start.isBefore(globalLowerBound)) globalLowerBound = m3Start;
 
         boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());

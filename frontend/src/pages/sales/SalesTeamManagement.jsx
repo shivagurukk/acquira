@@ -11,6 +11,7 @@ import {
     ChevronDown, ChevronUp, Download, Filter, Building2
 } from 'lucide-react';
 import api from '../../api/axios';
+import { SectionLoader } from '../../components/Loaders';
 import { useAuth } from '../../contexts/AuthContext';
 import { T, cardSx } from '../../theme/salesTokens';
 
@@ -219,7 +220,7 @@ const SalesTeamManagement = () => {
                             </Stack>
 
                             <Stack spacing={1.5}>
-                                {loading ? <CircularProgress size={24} sx={{ mx: 'auto', my: 4 }} /> : teamLeads.map(lead => {
+                                {loading ? <SectionLoader label="Loading team leads" minHeight="180px" size={48} framed={false} /> : teamLeads.map(lead => {
                                     const members = getLeadMembers(lead.id);
                                     const isExpanded = expandedLead === lead.id;
                                     return (
@@ -339,7 +340,7 @@ const SalesTeamManagement = () => {
                                 {/* Table Body */}
                                 <Box sx={{ maxHeight: 520, overflowY: 'auto' }}>
                                     {loading ? (
-                                        <Box sx={{ textAlign: 'center', py: 8 }}><CircularProgress size={28} /></Box>
+                                        <SectionLoader label="Loading users" minHeight="220px" size={48} framed={false} />
                                     ) : filteredUsers.length === 0 ? (
                                         <Box sx={{ textAlign: 'center', py: 6, color: T.textMut }}>
                                             <Typography variant="body2">No users match your search</Typography>

@@ -129,11 +129,34 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getDebitPrepaidSummary(filters, tenantId);
     }
 
+    /**
+     * Attrition rows only — the original response shape, kept so any existing
+     * caller keeps working unchanged.
+     */
     @PostMapping("/attrition-report")
     public List<Map<String, Object>> getAttritionReport(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
         Long tenantId = tenantService.getCurrentTenantId();
         return volumeRevenueRepository.getAttritionReport(filters, tenantId);
+    }
+
+    /**
+     * Attrition rows PLUS the comparison-window metadata.
+     * <p>
+     * getAttritionReportMeta() was fully implemented but no endpoint ever exposed
+     * it, so the signal it exists to carry — "this comparison window has no data
+     * at all" — never reached the UI. Without it a merchant with an empty
+     * prior-year window is indistinguishable from real explosive growth: both
+     * render as +100%. Mirrors the {rows, meta} shape of /retention-report.
+     */
+    @PostMapping("/attrition-report-with-meta")
+    public Map<String, Object> getAttritionReportWithMeta(@RequestBody VolumeRevenueFilterDTO filters) {
+        resolveFilters(filters);
+        Long tenantId = tenantService.getCurrentTenantId();
+        Map<String, Object> response = new java.util.HashMap<>();
+        response.put("rows", volumeRevenueRepository.getAttritionReport(filters, tenantId));
+        response.put("meta", volumeRevenueRepository.getAttritionReportMeta(filters, tenantId));
+        return response;
     }
 
     @PostMapping("/retention-report")

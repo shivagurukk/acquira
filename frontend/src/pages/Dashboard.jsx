@@ -435,7 +435,7 @@ const Dashboard = () => {
             'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
         lines.push(heads.map(esc).join(','));
         const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(2), num(b.avgTicket).toFixed(2),
-            num(b.msf).toFixed(2), num(b.interchange).toFixed(2), num(b.schemeFee).toFixed(2),
+            num(b.msf).toFixed(4), num(b.interchange).toFixed(2), num(b.schemeFee).toFixed(2),
             num(b.ecomFee).toFixed(2), num(b.netRevenue).toFixed(2), num(b.marginPct).toFixed(2)]
             .map(esc).join(',');
         viewData.forEach(b => lines.push(row(b.label + (b.partial ? ' (partial)' : ''), b)));

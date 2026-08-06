@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS sum_monthly_insight (
     is_opt_in    BOOLEAN,
     total_txns   BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf    DECIMAL(19, 2) DEFAULT 0,
+    total_msf    DECIMAL(21, 4) DEFAULT 0,
     PRIMARY KEY (summary_id),
     UNIQUE (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
 );

@@ -11,6 +11,7 @@ import {
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import SalesPortfolioPanel from '../../components/SalesPortfolioPanel';
+import { SectionLoader } from '../../components/Loaders';
 import { T, cardSx } from '../../theme/salesTokens';
 
 const fmtM = (v) => {
@@ -160,7 +161,7 @@ const SalesAgentDirectory = () => {
                     </Stack>
 
                     {loading ? (
-                        <Box sx={{ textAlign: 'center', py: 8 }}><CircularProgress size={28} /></Box>
+                        <SectionLoader label="Loading agents" minHeight="220px" size={48} framed={false} />
                     ) : agents.length === 0 ? (
                         <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
                             No agent profiles yet. Click <strong>Sync from Merchants</strong> to populate the directory from your merchant data.

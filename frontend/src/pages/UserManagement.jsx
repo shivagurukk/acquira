@@ -51,7 +51,7 @@ const AffixField = ({ id, invalid, action, 'aria-describedby': describedBy, 'ari
 const affixButtonStyle = { position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)' };
 
 const UserManagement = ({ embedded = false }) => {
-  const { tenantVersion } = useAuth();
+  const { tenantVersion, username: currentUsername } = useAuth();
   const confirm = useConfirm();
 
   const [users, setUsers] = useState([]);
@@ -131,9 +131,13 @@ const UserManagement = ({ embedded = false }) => {
   });
 
   const pendingCount = requests.filter(r => r.status === 'PENDING').length;
-  const totalPages = Math.ceil(filteredUsers.length / PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  // Clamp: the result set can shrink under the current page (a user is
+  // deactivated out of the filter, a refetch returns fewer rows) and the page
+  // would render empty with no way back except changing the filter.
+  const safePage = Math.min(currentPage, totalPages);
   // DataTable only sorts — filtering and paging stay here.
-  const pagedUsers = filteredUsers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pagedUsers = filteredUsers.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const isFiltered = !!searchQuery || statusFilter !== 'ALL';
 
@@ -198,8 +202,12 @@ const UserManagement = ({ embedded = false }) => {
 
     setSavingUser(true);
     try {
-      // datetime-local (no timezone) → ISO for the backend; blank → null (no expiry).
-      const payloadExpiry = formData.accountExpiresAt ? new Date(formData.accountExpiresAt).toISOString() : null;
+      // The backend column is a zone-less LocalDateTime compared against the
+      // server clock, so send the wall-clock value the picker produced
+      // ("2026-08-05T14:00") as-is. Converting with toISOString() shifted it by
+      // the browser's UTC offset, so a saved expiry came back displayed — and
+      // enforced — hours away from what the admin typed. Blank → null (no expiry).
+      const payloadExpiry = formData.accountExpiresAt || null;
       if (modalUser) {
         await api.put(`/users/${modalUser.id}`, { ...formData, id: modalUser.id, accountExpiresAt: payloadExpiry });
         showToast('User updated', 'success');
@@ -254,10 +262,10 @@ const UserManagement = ({ embedded = false }) => {
     try {
       await api.put(`/users/${user.id}`, {
         id: user.id, username: user.username, email: user.email,
-        displayName: user.displayName, active: !user.active, password: '',
-        // Preserve expiry — the controller applies it unconditionally, so omitting
-        // it here would wipe the stored date on a simple activate/deactivate.
-        accountExpiresAt: user.accountExpiresAt || null
+        displayName: user.displayName, active: !user.active, password: ''
+        // accountExpiresAt is deliberately omitted: the controller now applies
+        // only the fields actually present in the payload, so an activate /
+        // deactivate leaves the stored expiry untouched.
       });
       showToast(user.active ? 'User deactivated' : 'User activated', 'success');
       fetchAll();
@@ -338,12 +346,22 @@ const UserManagement = ({ embedded = false }) => {
       await api.post(`/users/${resetModal.id}/reset-password`, { newPassword: resetPw });
       showToast('Password reset', 'success');
       setResetModal(null); setResetPw('');
+      // A reset sets must_change_password and clears any lockout, so the row's
+      // badges are now stale — reload rather than leave the table lying.
+      fetchAll();
     } catch (e) { showToast(e.response?.data?.error || 'Failed', 'error'); }
     finally { setResetting(false); }
   };
 
   const handleUnlock = async (user) => {
-    try { await api.post(`/users/${user.id}/unlock`); showToast('Account unlocked', 'success'); fetchAll(); } catch (e) { console.error(e); }
+    try {
+      await api.post(`/users/${user.id}/unlock`);
+      showToast('Account unlocked', 'success');
+      fetchAll();
+    } catch (e) {
+      // Was swallowed to the console: a failed unlock looked like nothing happened.
+      showToast(e.response?.data?.error || 'Failed to unlock account', 'error');
+    }
   };
 
   // ─── Access Requests ───────────────────────────────────
@@ -384,6 +402,7 @@ const UserManagement = ({ embedded = false }) => {
     finally { setRejecting(false); }
   };
 
+  const isSelf = (u) => !!currentUsername && u.username === currentUsername;
   const isLocked = (u) => u.lockedUntil && new Date(u.lockedUntil) > new Date();
   const isExpired = (u) => u.accountExpiresAt && new Date(u.accountExpiresAt) <= new Date();
   // ISO/string → value for <input type="datetime-local"> (local time, no seconds/zone).
@@ -479,6 +498,9 @@ const UserManagement = ({ embedded = false }) => {
         <Switch
           checked={!!user.active}
           onChange={() => requestToggleActive(user)}
+          // Deactivating yourself is rejected by the server; don't offer it.
+          disabled={isSelf(user)}
+          title={isSelf(user) ? 'You cannot deactivate your own account' : undefined}
           label={user.active ? 'Active' : 'Inactive'}
           aria-label={user.active ? `Deactivate ${user.username}` : `Activate ${user.username}`}
         />
@@ -691,13 +713,13 @@ const UserManagement = ({ embedded = false }) => {
           {/* GAP-20: Pagination — kept on the page, DataTable does not paginate. */}
           {!loading && filteredUsers.length > PAGE_SIZE && (
             <div className="ui-row" style={{ justifyContent: 'center' }}>
-              <Button size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
+              <Button size="sm" onClick={() => setCurrentPage(Math.max(1, safePage - 1))} disabled={safePage === 1}>
                 Previous
               </Button>
               <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                Page {currentPage} of {totalPages} ({filteredUsers.length} users)
+                Page {safePage} of {totalPages} ({filteredUsers.length} users)
               </span>
-              <Button size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>
+              <Button size="sm" onClick={() => setCurrentPage(Math.min(totalPages, safePage + 1))} disabled={safePage >= totalPages}>
                 Next
               </Button>
             </div>

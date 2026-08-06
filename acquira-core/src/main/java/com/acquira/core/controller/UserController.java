@@ -29,6 +29,7 @@ public class UserController {
     private final com.acquira.common.repository.TenantRepository tenantRepository;
     private final PasswordEncoder passwordEncoder;
     private final PasswordService passwordService;
+    private final com.acquira.common.service.AuditService auditService;
 
     public UserController(UserRepository userRepository,
             TenantService tenantService,
@@ -36,7 +37,8 @@ public class UserController {
             com.acquira.common.repository.SysUserGroupRepository groupRepository,
             com.acquira.common.repository.TenantRepository tenantRepository,
             PasswordEncoder passwordEncoder,
-            PasswordService passwordService) {
+            PasswordService passwordService,
+            com.acquira.common.service.AuditService auditService) {
         this.userRepository = userRepository;
         this.tenantService = tenantService;
         this.accessRepository = accessRepository;
@@ -44,6 +46,17 @@ public class UserController {
         this.tenantRepository = tenantRepository;
         this.passwordEncoder = passwordEncoder;
         this.passwordService = passwordService;
+        this.auditService = auditService;
+    }
+
+    /** Audit without ever failing the caller's operation because logging broke. */
+    private void audit(String action, String details) {
+        try { auditService.log(action, details); } catch (Exception ignored) { }
+    }
+
+    /** 404 body helper — replaces the RuntimeExceptions that surfaced as 500s. */
+    private static ResponseEntity<?> notFound(String what) {
+        return ResponseEntity.status(404).body(Map.of("error", what + " not found"));
     }
 
     // ============================================================
@@ -112,11 +125,28 @@ public class UserController {
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> createUser(@RequestBody User user) {
+        // SECURITY: the request body is bound straight onto the entity, so a
+        // client-supplied "id" would turn this INSERT into a merge — overwriting
+        // an arbitrary existing account (including its password) while passing
+        // every uniqueness check below. A create never targets an existing row.
+        user.setId(null);
+        // Likewise, these are server-managed and must never be settable by the
+        // caller: SSO linkage would let a local account impersonate a federated
+        // identity, and the lockout counters are security state.
+        user.setSsoProvider(null);
+        user.setSsoId(null);
+        user.setApprovalStatus("APPROVED");
+        user.setFailedLoginAttempts(0);
+        user.setLockedUntil(null);
+        user.setLastFailedLogin(null);
+        user.setCreatedAt(LocalDateTime.now());
+
         // Validate username
         if (user.getUsername() == null || user.getUsername().trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Username is required"));
         }
-        if (userRepository.existsByUsername(user.getUsername().trim())) {
+        user.setUsername(user.getUsername().trim());
+        if (userRepository.existsByUsername(user.getUsername())) {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "Username '" + user.getUsername() + "' already exists"));
         }
@@ -158,6 +188,7 @@ public class UserController {
 
         // Record initial password in history
         passwordService.recordPasswordInHistory(saved, saved.getPassword());
+        audit("CREATE_USER", "Created user: " + saved.getUsername());
 
         return ResponseEntity.ok(saved);
     }
@@ -177,56 +208,134 @@ public class UserController {
     }
 
     // ===== UPDATE USER (email, active status, role) =====
+    //
+    // The body is read as a Map rather than bound onto a User so that "field
+    // absent" and "field explicitly null" stay distinguishable. Binding to the
+    // entity made that impossible and produced two silent data bugs:
+    //   * `active` is a primitive boolean, so a payload that omitted it
+    //     deserialised as false — every partial update silently DEACTIVATED the
+    //     user (or activated them, depending on the default).
+    //   * accountExpiresAt had to be applied unconditionally to remain clearable,
+    //     so any caller that omitted it wiped the stored expiry date.
+    // Now each field is applied only when its key is actually present.
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
-    public ResponseEntity<?> updateUser(@PathVariable Long id, @RequestBody User userDetails) {
+    public ResponseEntity<?> updateUser(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         // Tenant-isolation fix: a bank admin may only modify users in their tenant.
         if (!canActOnUser(id)) {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
         }
-        User user = userRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        User user = userRepository.findById(id).orElse(null);
+        if (user == null) return notFound("User");
 
-        // Update email (with duplicate check if changed)
-        if (userDetails.getEmail() != null && !userDetails.getEmail().equals(user.getEmail())) {
-            if (userRepository.existsByEmail(userDetails.getEmail().trim())) {
-                return ResponseEntity.badRequest()
-                        .body(Map.of("error", "Email '" + userDetails.getEmail() + "' is already registered"));
+        // Update email (with duplicate check if changed). Blank clears the address:
+        // storing "" would collide on the uniqueness check for the next email-less
+        // user, so an empty value becomes null — matching createUser.
+        if (body.containsKey("email")) {
+            String email = str(body.get("email"));
+            if (email == null || email.isEmpty()) {
+                user.setEmail(null);
+            } else if (!email.equalsIgnoreCase(user.getEmail())) {
+                // The equalsIgnoreCase guard above means we only get here when the
+                // address genuinely differs from the user's own, so any hit belongs
+                // to somebody else. The old check compared the RAW submitted value
+                // against the stored one, so re-saving your own address with stray
+                // whitespace or different casing was rejected as a duplicate.
+                if (userRepository.existsByEmail(email)) {
+                    return ResponseEntity.badRequest()
+                            .body(Map.of("error", "Email '" + email + "' is already registered"));
+                }
+                user.setEmail(email);
             }
-            user.setEmail(userDetails.getEmail().trim());
         }
 
         // GAP-3: Update displayName
-        if (userDetails.getDisplayName() != null) {
-            user.setDisplayName(userDetails.getDisplayName());
+        if (body.containsKey("displayName")) {
+            String dn = str(body.get("displayName"));
+            user.setDisplayName(dn == null || dn.isEmpty() ? null : dn);
         }
 
-        // Account expiry — always applied from the edit payload so it can be both
-        // set and cleared (null = no expiry). The frontend sends the current value
-        // on every save, so an unchanged edit is a harmless no-op.
-        user.setAccountExpiresAt(userDetails.getAccountExpiresAt());
+        // Account expiry — settable and clearable (null/blank = no expiry).
+        if (body.containsKey("accountExpiresAt")) {
+            user.setAccountExpiresAt(parseDateTime(body.get("accountExpiresAt")));
+        }
 
-        // GAP-4: Update role (only if provided and caller is SUPER_ADMIN)
-        if (userDetails.getRole() != null && !userDetails.getRole().isBlank()) {
-            if (!mayAssignRole(userDetails.getRole())) {
+        // GAP-4: Update role. mayAssignRole() still blocks a bank admin from
+        // granting SUPER_ADMIN (which JwtRequestFilter treats as a tenant bypass).
+        String role = str(body.get("role"));
+        if (role != null && !role.isEmpty()) {
+            if (!mayAssignRole(role)) {
                 return ResponseEntity.status(403)
                         .body(Map.of("error", "Only a super admin may assign the SUPER_ADMIN role"));
             }
-            user.setRole(userDetails.getRole());
+            user.setRole(role);
         }
 
-        user.setActive(userDetails.isActive());
+        if (body.containsKey("active")) {
+            Boolean active = bool(body.get("active"));
+            if (active == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "'active' must be true or false"));
+            }
+            // Locking yourself out of the platform is never the intent, and with a
+            // single admin it is unrecoverable through the UI.
+            if (!active && isSelf(user)) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "You cannot deactivate your own account"));
+            }
+            user.setActive(active);
+        }
 
         // If password is provided in update, use admin reset flow
-        if (userDetails.getPassword() != null && !userDetails.getPassword().isEmpty()) {
-            String error = passwordService.adminResetPassword(user, userDetails.getPassword());
+        String newPassword = str(body.get("password"));
+        if (newPassword != null && !newPassword.isEmpty()) {
+            String error = passwordService.adminResetPassword(user, newPassword);
             if (error != null) {
                 return ResponseEntity.badRequest().body(Map.of("error", error));
             }
+            audit("RESET_PASSWORD", "Password reset for user: " + user.getUsername());
             // adminResetPassword already saves — but we still need to save email/active changes
         }
 
-        return ResponseEntity.ok(userRepository.save(user));
+        User saved = userRepository.save(user);
+        audit("UPDATE_USER", "Updated user: " + saved.getUsername());
+        return ResponseEntity.ok(saved);
+    }
+
+    /** Is the given user the caller themselves? */
+    private boolean isSelf(User user) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && user.getUsername() != null && user.getUsername().equals(auth.getName());
+    }
+
+    private static String str(Object v) {
+        return v == null ? null : v.toString().trim();
+    }
+
+    private static Boolean bool(Object v) {
+        if (v instanceof Boolean b) return b;
+        if (v == null) return null;
+        String s = v.toString().trim();
+        if ("true".equalsIgnoreCase(s)) return Boolean.TRUE;
+        if ("false".equalsIgnoreCase(s)) return Boolean.FALSE;
+        return null;
+    }
+
+    /**
+     * Accepts the wall-clock form the date picker produces ("2026-08-05T14:00")
+     * as well as zoned/instant ISO strings from older clients, which are
+     * converted to server-local time so the stored LocalDateTime compares
+     * correctly against {@code LocalDateTime.now()}.
+     */
+    private static LocalDateTime parseDateTime(Object v) {
+        String s = str(v);
+        if (s == null || s.isEmpty() || "null".equalsIgnoreCase(s)) return null;
+        try { return LocalDateTime.parse(s); } catch (Exception ignored) { }
+        try { return java.time.OffsetDateTime.parse(s)
+                .atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDateTime(); } catch (Exception ignored) { }
+        try { return java.time.Instant.parse(s)
+                .atZone(java.time.ZoneId.systemDefault()).toLocalDateTime(); } catch (Exception ignored) { }
+        try { return java.time.LocalDate.parse(s).atStartOfDay(); } catch (Exception ignored) { }
+        return null;
     }
 
     // ===== ADMIN RESET PASSWORD (dedicated endpoint) =====
@@ -243,13 +352,14 @@ public class UserController {
             return ResponseEntity.badRequest().body(Map.of("error", "New password is required"));
         }
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) return notFound("User");
 
         String error = passwordService.adminResetPassword(user, newPassword);
         if (error != null) {
             return ResponseEntity.badRequest().body(Map.of("error", error));
         }
+        audit("RESET_PASSWORD", "Password reset for user: " + user.getUsername());
 
         return ResponseEntity.ok(Map.of(
                 "message", "Password for '" + user.getUsername()
@@ -264,13 +374,14 @@ public class UserController {
         if (!canActOnUser(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
         }
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) return notFound("User");
 
         user.setFailedLoginAttempts(0);
         user.setLockedUntil(null);
         user.setLastFailedLogin(null);
         userRepository.save(user);
+        audit("UNLOCK_USER", "Unlocked account: " + user.getUsername());
 
         return ResponseEntity.ok(Map.of("message",
                 "Account '" + user.getUsername() + "' has been unlocked successfully."));
@@ -287,14 +398,16 @@ public class UserController {
                     .body(Map.of("error", "Both currentPassword and newPassword are required"));
         }
 
-        String username = SecurityContextHolder.getContext().getAuthentication().getName();
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return ResponseEntity.status(401).body(Map.of("error", "Not authenticated"));
+        User user = userRepository.findByUsername(auth.getName()).orElse(null);
+        if (user == null) return notFound("User");
 
         String error = passwordService.changePassword(user, currentPassword, newPassword);
         if (error != null) {
             return ResponseEntity.badRequest().body(Map.of("error", error));
         }
+        audit("CHANGE_PASSWORD", "User '" + user.getUsername() + "' changed their own password");
 
         return ResponseEntity.ok(Map.of("message", "Password changed successfully"));
     }
@@ -319,11 +432,9 @@ public class UserController {
     @PostMapping("/{userId}/assign")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> assignTenant(@PathVariable Long userId, @RequestBody Map<String, Object> payload) {
-        Object bankIdObj = payload.get("bankId");
-        Object groupIdObj = payload.get("groupId");
-
-        Long tenantId = bankIdObj != null ? Long.valueOf(bankIdObj.toString()) : null;
-        Long groupId = groupIdObj != null ? Long.valueOf(groupIdObj.toString()) : null;
+        // Non-numeric ids used to escape as a NumberFormatException → 500.
+        Long tenantId = parseId(payload.get("bankId"));
+        Long groupId = parseId(payload.get("groupId"));
 
         if (tenantId == null || groupId == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "TenantId and GroupId are required"));
@@ -335,31 +446,62 @@ public class UserController {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user or tenant"));
         }
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-        com.acquira.common.model.Tenant tenant = tenantRepository.findById(tenantId)
-                .orElseThrow(() -> new RuntimeException("Tenant not found"));
-        com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId)
-                .orElseThrow(() -> new RuntimeException("Group not found"));
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) return notFound("User");
+
+        // Same duplicate guard as POST /tenant-access. Without it this endpoint
+        // happily inserted a second access row for a tenant the user already had,
+        // which then shows up twice everywhere and makes the default-tenant and
+        // role-in-tenant resolution order-dependent.
+        if (accessRepository.findByUserAndTenant_TenantId(user, tenantId).isPresent()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "User already has access to this tenant"));
+        }
+
+        com.acquira.common.model.Tenant tenant = tenantRepository.findById(tenantId).orElse(null);
+        if (tenant == null) return notFound("Tenant");
+        com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId).orElse(null);
+        if (group == null) return notFound("Group");
 
         com.acquira.common.model.UserTenantAccess access = new com.acquira.common.model.UserTenantAccess();
         access.setUser(user);
         access.setTenant(tenant);
         access.setSysUserGroup(group);
+        // First grant becomes the default, otherwise the user logs in with no
+        // active tenant resolved.
+        access.setIsDefaultTenant(accessRepository.findAllByUser(user).isEmpty());
 
         accessRepository.save(access);
+        audit("ASSIGN_TENANT", "Assigned user " + user.getUsername() + " to tenant " + tenant.getBankName());
         return ResponseEntity.ok(Map.of("message", "Tenant and Group assigned successfully"));
+    }
+
+    /** Lenient numeric id from a JSON body value (accepts numbers and strings). */
+    private static Long parseId(Object v) {
+        String s = str(v);
+        if (s == null || s.isEmpty()) return null;
+        try { return Long.valueOf(s); }
+        catch (NumberFormatException e) {
+            try { return (long) Double.parseDouble(s); } catch (NumberFormatException e2) { return null; }
+        }
     }
 
     @GetMapping("/{username}/banks")
     public ResponseEntity<List<com.acquira.common.model.Tenant>> getUserTenants(@PathVariable String username) {
         // Self-or-admin guard: previously ANY authenticated user could enumerate
         // any other user's tenant/bank assignments by username.
-        String caller = org.springframework.security.core.context.SecurityContextHolder
-                .getContext().getAuthentication().getName();
-        if (!caller.equals(username)) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return ResponseEntity.status(401).build();
+        if (!auth.getName().equals(username)) {
+            // canActOnUser() alone was NOT enough here: for a non-super-admin it
+            // only asks "is the target in my active tenant?", which every ordinary
+            // colleague in the same tenant satisfies — so any plain user could
+            // still enumerate a co-worker's bank assignments. Reading someone
+            // else's grants requires an admin role as well.
+            boolean isAdmin = auth.getAuthorities().stream()
+                    .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority())
+                            || "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
             Long targetId = userRepository.findByUsername(username).map(User::getId).orElse(null);
-            if (targetId == null || !canActOnUser(targetId)) {
+            if (!isAdmin || targetId == null || !canActOnUser(targetId)) {
                 return ResponseEntity.status(403).build();
             }
         }
@@ -374,8 +516,8 @@ public class UserController {
         if (!canActOnUser(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
         }
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) return notFound("User");
 
         List<com.acquira.common.model.UserTenantAccess> accesses = accessRepository.findAllByUser(user);
         List<Map<String, Object>> result = new java.util.ArrayList<>();
@@ -397,8 +539,13 @@ public class UserController {
     @PostMapping("/{userId}/tenant-access")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<?> addTenantAccess(@PathVariable Long userId, @RequestBody Map<String, Object> payload) {
-        Long tenantId = Long.valueOf(payload.get("tenantId").toString());
-        Long groupId = Long.valueOf(payload.get("groupId").toString());
+        // A missing or non-numeric tenantId/groupId used to throw
+        // NullPointerException / NumberFormatException and surface as a 500.
+        Long tenantId = parseId(payload.get("tenantId"));
+        Long groupId = parseId(payload.get("groupId"));
+        if (tenantId == null || groupId == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "tenantId and groupId are required"));
+        }
 
         // Tenant-isolation fix: bank admins may only add access within their own
         // tenant and only to users in their tenant.
@@ -406,25 +553,33 @@ public class UserController {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user or tenant"));
         }
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) return notFound("User");
 
-        String roleInTenant = (String) payload.get("roleInTenant");
-        Boolean isDefault = Boolean.TRUE.equals(payload.get("isDefault"));
+        String roleInTenant = str(payload.get("roleInTenant"));
+        boolean isDefault = Boolean.TRUE.equals(bool(payload.get("isDefault")));
 
         // Check for duplicate
         if (accessRepository.findByUserAndTenant_TenantId(user, tenantId).isPresent()) {
             return ResponseEntity.badRequest().body(Map.of("error", "User already has access to this tenant"));
         }
 
-        com.acquira.common.model.Tenant tenant = tenantRepository.findById(tenantId)
-                .orElseThrow(() -> new RuntimeException("Tenant not found"));
-        com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId)
-                .orElseThrow(() -> new RuntimeException("Group not found"));
+        com.acquira.common.model.Tenant tenant = tenantRepository.findById(tenantId).orElse(null);
+        if (tenant == null) return notFound("Tenant");
+        com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId).orElse(null);
+        if (group == null) return notFound("Group");
+
+        List<com.acquira.common.model.UserTenantAccess> existing = accessRepository.findAllByUser(user);
+
+        // The very first grant must be the default — otherwise login resolves no
+        // active tenant and the user lands on an empty app.
+        if (existing.isEmpty()) {
+            isDefault = true;
+        }
 
         // If setting as default, unset others
         if (isDefault) {
-            accessRepository.findAllByUser(user).forEach(a -> {
+            existing.forEach(a -> {
                 a.setIsDefaultTenant(false);
                 accessRepository.save(a);
             });
@@ -434,9 +589,11 @@ public class UserController {
         access.setUser(user);
         access.setTenant(tenant);
         access.setSysUserGroup(group);
-        access.setRoleInTenant(roleInTenant);
+        access.setRoleInTenant(roleInTenant == null || roleInTenant.isEmpty() ? null : roleInTenant);
         access.setIsDefaultTenant(isDefault);
         accessRepository.save(access);
+        audit("ASSIGN_TENANT",
+                "Granted " + user.getUsername() + " access to tenant " + tenant.getBankName());
 
         return ResponseEntity.ok(Map.of("message", "Tenant access added"));
     }
@@ -451,8 +608,8 @@ public class UserController {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
         }
 
-        com.acquira.common.model.UserTenantAccess access = accessRepository.findById(accessId)
-                .orElseThrow(() -> new RuntimeException("Access not found"));
+        com.acquira.common.model.UserTenantAccess access = accessRepository.findById(accessId).orElse(null);
+        if (access == null) return notFound("Access record");
 
         // Tenant-isolation fix: the access row must belong to the user named in the
         // path (prevents acting on another user's access by guessing accessId), and
@@ -462,24 +619,35 @@ public class UserController {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this access record"));
         }
 
-        Long groupId = Long.valueOf(payload.get("groupId").toString());
-        String roleInTenant = (String) payload.get("roleInTenant");
-        Boolean isDefault = Boolean.TRUE.equals(payload.get("isDefault"));
+        Long groupId = parseId(payload.get("groupId"));
+        if (groupId == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "groupId is required"));
+        }
+        String roleInTenant = str(payload.get("roleInTenant"));
+        boolean isDefault = Boolean.TRUE.equals(bool(payload.get("isDefault")));
 
-        com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId)
-                .orElseThrow(() -> new RuntimeException("Group not found"));
+        com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId).orElse(null);
+        if (group == null) return notFound("Group");
 
         access.setSysUserGroup(group);
-        access.setRoleInTenant(roleInTenant);
+        access.setRoleInTenant(roleInTenant == null || roleInTenant.isEmpty() ? null : roleInTenant);
 
         if (isDefault) {
+            // Unset the others, but skip THIS row — the loop below re-saves every
+            // access of the user, and re-fetched instances of the row we are
+            // holding would fight over is_default_tenant.
             accessRepository.findAllByUser(access.getUser()).forEach(a -> {
-                a.setIsDefaultTenant(false);
-                accessRepository.save(a);
+                if (!a.getAccessId().equals(access.getAccessId())) {
+                    a.setIsDefaultTenant(false);
+                    accessRepository.save(a);
+                }
             });
         }
         access.setIsDefaultTenant(isDefault);
         accessRepository.save(access);
+        audit("UPDATE_TENANT_ACCESS",
+                "Updated tenant access for " + access.getUser().getUsername()
+                        + " on " + access.getTenant().getBankName());
 
         return ResponseEntity.ok(Map.of("message", "Tenant access updated"));
     }
@@ -492,8 +660,8 @@ public class UserController {
         if (!canActOnUser(userId)) {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this user"));
         }
-        com.acquira.common.model.UserTenantAccess access = accessRepository.findById(accessId)
-                .orElseThrow(() -> new RuntimeException("Access not found"));
+        com.acquira.common.model.UserTenantAccess access = accessRepository.findById(accessId).orElse(null);
+        if (access == null) return notFound("Access record");
         // The access row must belong to the path user, and a bank admin may only
         // remove an access row for a tenant they administer (prevents cross-tenant
         // deletes by guessing accessId).
@@ -501,7 +669,25 @@ public class UserController {
                 || !canAssignTenant(access.getTenant().getTenantId())) {
             return ResponseEntity.status(403).body(Map.of("error", "You do not have access to this access record"));
         }
+
+        User target = access.getUser();
+        boolean wasDefault = Boolean.TRUE.equals(access.getIsDefaultTenant());
+        String tenantName = access.getTenant().getBankName();
         accessRepository.delete(access);
+
+        // Removing the default grant left the user with tenants but no default:
+        // JwtRequestFilter then falls back to an arbitrary "first" row and the
+        // login response resolves no default tenant. Promote a remaining grant.
+        if (wasDefault) {
+            List<com.acquira.common.model.UserTenantAccess> remaining = accessRepository.findAllByUser(target);
+            if (!remaining.isEmpty()) {
+                com.acquira.common.model.UserTenantAccess promoted = remaining.get(0);
+                promoted.setIsDefaultTenant(true);
+                accessRepository.save(promoted);
+            }
+        }
+        audit("REVOKE_TENANT_ACCESS",
+                "Removed " + target.getUsername() + "'s access to tenant " + tenantName);
         return ResponseEntity.ok(Map.of("message", "Tenant access removed"));
     }
 
@@ -515,6 +701,10 @@ public class UserController {
                 ? userRepository.findAll()
                 : userRepository.findAllById(userIdsInCurrentTenant());
         List<Map<String, Object>> result = new java.util.ArrayList<>();
+
+        // One batched query instead of one per user (the old loop issued
+        // findAllByUser() per row, plus a lazy tenant/group load inside it).
+        Map<Long, List<com.acquira.common.model.UserTenantAccess>> accessByUser = accessesByUser(users);
 
         for (User u : users) {
             Map<String, Object> map = new java.util.HashMap<>();
@@ -532,7 +722,8 @@ public class UserController {
             map.put("createdAt", u.getCreatedAt());
 
             // Tenant assignments
-            List<com.acquira.common.model.UserTenantAccess> accesses = accessRepository.findAllByUser(u);
+            List<com.acquira.common.model.UserTenantAccess> accesses =
+                    accessByUser.getOrDefault(u.getId(), java.util.List.of());
             List<Map<String, Object>> tenantList = new java.util.ArrayList<>();
             for (com.acquira.common.model.UserTenantAccess a : accesses) {
                 Map<String, Object> ta = new java.util.HashMap<>();
@@ -562,6 +753,7 @@ public class UserController {
         List<User> users = isSuperAdmin()
                 ? userRepository.findAll()
                 : userRepository.findAllById(userIdsInCurrentTenant());
+        Map<Long, List<com.acquira.common.model.UserTenantAccess>> accessByUser = accessesByUser(users);
 
         StringBuilder sb = new StringBuilder();
         // Excel-friendly UTF-8 BOM so accented names render correctly.
@@ -574,7 +766,8 @@ public class UserController {
         sb.append(String.join(",", header)).append("\r\n");
 
         for (User u : users) {
-            List<com.acquira.common.model.UserTenantAccess> accesses = accessRepository.findAllByUser(u);
+            List<com.acquira.common.model.UserTenantAccess> accesses =
+                    accessByUser.getOrDefault(u.getId(), java.util.List.of());
             String tenants = accesses.stream()
                     .map(a -> a.getTenant().getBankName()
                             + (Boolean.TRUE.equals(a.getIsDefaultTenant()) ? " *" : ""))
@@ -610,14 +803,34 @@ public class UserController {
                 .body(bytes);
     }
 
+    /**
+     * Access rows for a batch of users, keyed by user id. Uses the batched
+     * JOIN FETCH query so rendering N users costs one query rather than N
+     * (plus N lazy tenant/group loads).
+     */
+    private Map<Long, List<com.acquira.common.model.UserTenantAccess>> accessesByUser(List<User> users) {
+        if (users == null || users.isEmpty()) return java.util.Map.of();
+        return accessRepository.findAllByUserIn(users).stream()
+                .collect(Collectors.groupingBy(a -> a.getUser().getId()));
+    }
+
     private static String nz(String s) { return s == null ? "" : s; }
 
     /** RFC-4180 CSV escaping: wrap in quotes and double internal quotes when the
-        value contains a comma, quote, or newline. */
+        value contains a comma, quote, or newline.
+        <p>Also neutralises CSV/formula injection: a field that starts with =, +,
+        -, @, tab or CR is executed as a formula when the export is opened in
+        Excel/Sheets, and these fields carry user-controlled text (display name,
+        email, bank name). Prefixing a single quote makes the cell inert while
+        still showing the original text. */
     private static String csv(String v) {
         if (v == null) return "";
-        boolean needsQuote = v.contains(",") || v.contains("\"") || v.contains("\n") || v.contains("\r");
-        String out = v.replace("\"", "\"\"");
+        String out = v;
+        if (!out.isEmpty() && "=+-@\t\r".indexOf(out.charAt(0)) >= 0) {
+            out = "'" + out;
+        }
+        boolean needsQuote = out.contains(",") || out.contains("\"") || out.contains("\n") || out.contains("\r");
+        out = out.replace("\"", "\"\"");
         return needsQuote ? "\"" + out + "\"" : out;
     }
 }

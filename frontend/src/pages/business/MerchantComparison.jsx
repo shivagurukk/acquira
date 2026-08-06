@@ -12,6 +12,7 @@ import {
     XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, Cell,
 } from 'recharts';
 import { merchantApi } from '../../api/merchants';
+import { SectionLoader } from '../../components/Loaders';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import { pageContainer } from '../../theme/dataGridStyles';
@@ -364,10 +365,7 @@ const MerchantComparison = () => {
 
             {/* ── Loading spinner ── */}
             {loading && (
-                <Box sx={{ display:'flex', justifyContent:'center', alignItems:'center', py:10, gap:1.5 }}>
-                    <CircularProgress size={24} sx={{ color:'#3b82f6' }} />
-                    <Typography sx={{ fontSize:'13px', color:'var(--color-text-secondary)' }}>Fetching merchant data…</Typography>
-                </Box>
+                <SectionLoader label="Fetching merchant data" minHeight="260px" framed={false} />
             )}
 
             {/* ── Empty state ── */}

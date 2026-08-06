@@ -1,23 +1,12 @@
 import React from 'react';
-import './FinancialLoader.css';
+import { SectionLoader } from './Loaders';
 
-const FinancialLoader = () => {
-    return (
-        <div className="financial-loader-container">
-            <div className="financial-loader">
-                <div className="coin"></div>
-                <div className="coin"></div>
-                <div className="coin"></div>
-                <div className="bar-graph">
-                    <div className="bar"></div>
-                    <div className="bar"></div>
-                    <div className="bar"></div>
-                    <div className="bar"></div>
-                </div>
-            </div>
-            <div className="loader-text">Processing Financial Data...</div>
-        </div>
-    );
-};
+/**
+ * Legacy entry point — now renders the shared Acquira data-pulse loader
+ * from Loaders.jsx. Kept so existing imports keep working.
+ */
+const FinancialLoader = ({ label = 'Processing financial data' }) => (
+    <SectionLoader label={label} framed={false} minHeight="200px" />
+);
 
 export default FinancialLoader;

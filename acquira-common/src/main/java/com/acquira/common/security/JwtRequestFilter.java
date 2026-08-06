@@ -123,6 +123,20 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                     chain.doFilter(request, response);
                     return;
                 }
+                // Account expiry was enforced ONLY at login, so a session that was
+                // already open when the expiry passed kept working for the full
+                // life of its access token (and could be renewed by refresh).
+                // Enforce it per-request, and auto-deactivate exactly as the login
+                // path does so the account also shows as Inactive in User Management.
+                if (dbUser.isAccountExpired()) {
+                    logger.warn("Rejected token for expired account: " + username);
+                    if (dbUser.isActive()) {
+                        dbUser.setActive(false);
+                        userRepository.save(dbUser);
+                    }
+                    chain.doFilter(request, response);
+                    return;
+                }
 
                 UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                         userDetails, null, userDetails.getAuthorities());

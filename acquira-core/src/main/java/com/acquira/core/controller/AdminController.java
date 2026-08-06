@@ -101,11 +101,39 @@ public class AdminController {
                         "error", "You may only create users within your active tenant"));
             }
         }
+        // A create must never carry a client-supplied id: JPA would merge onto the
+        // existing row, silently overwriting another account's credentials.
+        user.setId(null);
+
+        // Uniqueness — without these the unique index on username threw a
+        // DataIntegrityViolationException that surfaced as an opaque 500.
+        if (user.getUsername() == null || user.getUsername().trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", "Username is required"));
+        }
+        user.setUsername(user.getUsername().trim());
+        if (userRepository.existsByUsername(user.getUsername())) {
+            return ResponseEntity.badRequest().body(java.util.Map.of(
+                    "error", "Username '" + user.getUsername() + "' already exists"));
+        }
+        // Blank email is stored as null so multiple email-less users can coexist.
+        if (user.getEmail() != null && !user.getEmail().trim().isEmpty()) {
+            user.setEmail(user.getEmail().trim());
+            if (userRepository.existsByEmail(user.getEmail())) {
+                return ResponseEntity.badRequest().body(java.util.Map.of(
+                        "error", "Email '" + user.getEmail() + "' is already registered"));
+            }
+        } else {
+            user.setEmail(null);
+        }
+
         // Validate password strength before encoding
         if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
             return ResponseEntity.badRequest().body(java.util.Map.of("error", "Password is required"));
         }
-        String strengthError = passwordService.validatePasswordStrength(user.getPassword());
+        // Use the user-aware overload so a password derived from the new account's
+        // own username/email/display name is rejected here too, exactly as it is
+        // on POST /api/users and on every later password change.
+        String strengthError = passwordService.validatePasswordStrength(user.getPassword(), user);
         if (strengthError != null) {
             return ResponseEntity.badRequest().body(java.util.Map.of("error", strengthError));
         }
@@ -142,6 +170,9 @@ public class AdminController {
             UserTenantAccess access = new UserTenantAccess();
             access.setUser(savedUser);
             access.setTenant(tenant);
+            // First (and only) grant for a brand-new user — mark it default, or
+            // login resolves no active tenant and the app opens empty.
+            access.setIsDefaultTenant(true);
             userTenantAccessRepository.save(access);
             auditService.log("ASSIGN_TENANT",
                     "Assigned user " + savedUser.getUsername() + " to tenant " + tenant.getBankName());

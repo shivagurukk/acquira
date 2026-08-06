@@ -71,6 +71,16 @@ export const formatCurrency = (val, currency = DEFAULT_CCY) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(val || 0);
 
 /**
+ * MSF amounts — exact figure, up to 4 decimal places, never compacted.
+ * MSF is stored at 4-dp precision (DECIMAL(21,4)) so finance can reconcile
+ * against source files to the fils/paisa; K/M compaction or 2-dp rounding
+ * would hide exactly the digits they need.
+ */
+export const formatMsf = (val, sym = '') =>
+    (sym ? sym + ' ' : '') + new Intl.NumberFormat('en-US',
+        { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(val || 0);
+
+/**
  * Format a number with thousand separators.
  */
 export const formatNumber = (val) =>

@@ -33,10 +33,25 @@ public class ChurnRiskController {
     @PersistenceContext
     private EntityManager entityManager;
 
-    private Long resolveTenant(Long headerTenant) {
-        // SECURITY: the raw X-Tenant-Id header is attacker-controlled; use only the
-        // filter-validated TenantContext (JwtRequestFilter rejects spoofed headers).
-        return TenantContext.getCurrentTenant();
+    private final com.acquira.core.service.TenantService tenantService;
+
+    public ChurnRiskController(com.acquira.core.service.TenantService tenantService) {
+        this.tenantService = tenantService;
+    }
+
+    /**
+     * SECURITY: the raw X-Tenant-Id header is attacker-controlled and is never
+     * read here. TenantContext is the filter-validated value (JwtRequestFilter
+     * rejects spoofed headers); when it is unset we fall back to the
+     * authenticated user's OWN default tenant, resolved from the database — also
+     * not caller-controlled. Without that fallback this endpoint 403'd while the
+     * Attrition Report beside it (which uses TenantService) loaded fine, so the
+     * Churn Risk column simply disappeared with no explanation.
+     */
+    private Long resolveTenant() {
+        Long ctx = TenantContext.getCurrentTenant();
+        if (ctx != null) return ctx;
+        try { return tenantService.getCurrentTenantId(); } catch (Exception e) { return null; }
     }
 
     /**
@@ -45,10 +60,12 @@ public class ChurnRiskController {
      * topReason, scoredBy, calcDate.
      */
     @GetMapping
-    public ResponseEntity<?> getChurnRisk(
-            @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant) {
-
-        Long tenantId = resolveTenant(headerTenant);
+    public ResponseEntity<?> getChurnRisk() {
+        // The X-Tenant-Id header parameter this method used to declare was never
+        // read, but binding it as a Long meant a non-numeric value ("null",
+        // "undefined" — both of which JwtRequestFilter tolerates) failed request
+        // binding with a 400 before any of this ran.
+        Long tenantId = resolveTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
 
         // One row per merchant = the most recent calc_date for that merchant.

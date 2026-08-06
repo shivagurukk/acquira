@@ -849,7 +849,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_merchant (
     
     total_txns INT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2), 
     total_margin DECIMAL(19, 2),
@@ -900,7 +900,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_scheme (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -925,7 +925,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_channel (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -952,7 +952,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_terminal (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_revenue DECIMAL(19, 2) DEFAULT 0, 
     
     PRIMARY KEY (summary_id, business_date),
@@ -1002,7 +1002,7 @@ CREATE TABLE IF NOT EXISTS sum_monthly_bank (
     
     total_txns BIGINT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2),
@@ -1020,7 +1020,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_bank (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2) DEFAULT 0,
@@ -1046,24 +1046,24 @@ CREATE TABLE IF NOT EXISTS sum_daily_finance (
     -- Domestic Debit & Prepaid
     dom_debit_cnt BIGINT DEFAULT 0,
     dom_debit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_debit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_debit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_debit_optin DECIMAL(19, 2) DEFAULT 0, -- Opt-in Volume (DCC)
 
     -- Domestic Credit
     dom_credit_cnt BIGINT DEFAULT 0,
     dom_credit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_credit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_credit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_credit_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- International
     int_cnt BIGINT DEFAULT 0,
     int_vol DECIMAL(19, 2) DEFAULT 0,
-    int_msf DECIMAL(19, 2) DEFAULT 0,
+    int_msf DECIMAL(21, 4) DEFAULT 0,
     int_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- Totals
     total_vol DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
 
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date)
@@ -1094,7 +1094,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_insight (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
@@ -1118,7 +1118,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_mcc (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0, -- New
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
     
@@ -2728,7 +2728,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_merchant (
     
     total_txns INT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2), 
     total_margin DECIMAL(19, 2),
@@ -2779,7 +2779,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_scheme (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -2804,7 +2804,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_channel (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -2831,7 +2831,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_terminal (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_revenue DECIMAL(19, 2) DEFAULT 0, 
     
     PRIMARY KEY (summary_id, business_date),
@@ -2881,7 +2881,7 @@ CREATE TABLE IF NOT EXISTS sum_monthly_bank (
     
     total_txns BIGINT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2),
@@ -2899,7 +2899,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_bank (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2) DEFAULT 0,
@@ -2925,24 +2925,24 @@ CREATE TABLE IF NOT EXISTS sum_daily_finance (
     -- Domestic Debit & Prepaid
     dom_debit_cnt BIGINT DEFAULT 0,
     dom_debit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_debit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_debit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_debit_optin DECIMAL(19, 2) DEFAULT 0, -- Opt-in Volume (DCC)
 
     -- Domestic Credit
     dom_credit_cnt BIGINT DEFAULT 0,
     dom_credit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_credit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_credit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_credit_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- International
     int_cnt BIGINT DEFAULT 0,
     int_vol DECIMAL(19, 2) DEFAULT 0,
-    int_msf DECIMAL(19, 2) DEFAULT 0,
+    int_msf DECIMAL(21, 4) DEFAULT 0,
     int_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- Totals
     total_vol DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
 
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date)
@@ -2973,7 +2973,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_insight (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
@@ -2997,7 +2997,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_mcc (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0, -- New
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
     
@@ -4608,7 +4608,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_merchant (
     
     total_txns INT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2), 
     total_margin DECIMAL(19, 2),
@@ -4659,7 +4659,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_scheme (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -4684,7 +4684,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_channel (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -4711,7 +4711,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_terminal (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_revenue DECIMAL(19, 2) DEFAULT 0, 
     
     PRIMARY KEY (summary_id, business_date),
@@ -4761,7 +4761,7 @@ CREATE TABLE IF NOT EXISTS sum_monthly_bank (
     
     total_txns BIGINT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2),
@@ -4779,7 +4779,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_bank (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2) DEFAULT 0,
@@ -4805,24 +4805,24 @@ CREATE TABLE IF NOT EXISTS sum_daily_finance (
     -- Domestic Debit & Prepaid
     dom_debit_cnt BIGINT DEFAULT 0,
     dom_debit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_debit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_debit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_debit_optin DECIMAL(19, 2) DEFAULT 0, -- Opt-in Volume (DCC)
 
     -- Domestic Credit
     dom_credit_cnt BIGINT DEFAULT 0,
     dom_credit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_credit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_credit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_credit_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- International
     int_cnt BIGINT DEFAULT 0,
     int_vol DECIMAL(19, 2) DEFAULT 0,
-    int_msf DECIMAL(19, 2) DEFAULT 0,
+    int_msf DECIMAL(21, 4) DEFAULT 0,
     int_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- Totals
     total_vol DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
 
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date)
@@ -4853,7 +4853,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_insight (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
@@ -4877,7 +4877,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_mcc (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0, -- New
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
     
@@ -6488,7 +6488,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_merchant (
     
     total_txns INT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2), 
     total_margin DECIMAL(19, 2),
@@ -6539,7 +6539,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_scheme (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -6564,7 +6564,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_channel (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -6591,7 +6591,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_terminal (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_revenue DECIMAL(19, 2) DEFAULT 0, 
     
     PRIMARY KEY (summary_id, business_date),
@@ -6641,7 +6641,7 @@ CREATE TABLE IF NOT EXISTS sum_monthly_bank (
     
     total_txns BIGINT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2),
@@ -6659,7 +6659,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_bank (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2) DEFAULT 0,
@@ -6685,24 +6685,24 @@ CREATE TABLE IF NOT EXISTS sum_daily_finance (
     -- Domestic Debit & Prepaid
     dom_debit_cnt BIGINT DEFAULT 0,
     dom_debit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_debit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_debit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_debit_optin DECIMAL(19, 2) DEFAULT 0, -- Opt-in Volume (DCC)
 
     -- Domestic Credit
     dom_credit_cnt BIGINT DEFAULT 0,
     dom_credit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_credit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_credit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_credit_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- International
     int_cnt BIGINT DEFAULT 0,
     int_vol DECIMAL(19, 2) DEFAULT 0,
-    int_msf DECIMAL(19, 2) DEFAULT 0,
+    int_msf DECIMAL(21, 4) DEFAULT 0,
     int_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- Totals
     total_vol DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
 
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date)
@@ -6733,7 +6733,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_insight (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
@@ -6757,7 +6757,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_mcc (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0, -- New
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
     
@@ -8369,7 +8369,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_merchant (
     
     total_txns INT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2), 
     total_margin DECIMAL(19, 2),
@@ -8420,7 +8420,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_scheme (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -8445,7 +8445,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_channel (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
@@ -8472,7 +8472,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_terminal (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_revenue DECIMAL(19, 2) DEFAULT 0, 
     
     PRIMARY KEY (summary_id, business_date),
@@ -8522,7 +8522,7 @@ CREATE TABLE IF NOT EXISTS sum_monthly_bank (
     
     total_txns BIGINT,
     total_volume DECIMAL(19, 2),
-    total_msf DECIMAL(19, 2),
+    total_msf DECIMAL(21, 4),
     total_interchange DECIMAL(19, 2),
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2),
@@ -8540,7 +8540,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_bank (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_interchange DECIMAL(19, 2) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0,
     total_vat DECIMAL(19, 2) DEFAULT 0,
@@ -8566,24 +8566,24 @@ CREATE TABLE IF NOT EXISTS sum_daily_finance (
     -- Domestic Debit & Prepaid
     dom_debit_cnt BIGINT DEFAULT 0,
     dom_debit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_debit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_debit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_debit_optin DECIMAL(19, 2) DEFAULT 0, -- Opt-in Volume (DCC)
 
     -- Domestic Credit
     dom_credit_cnt BIGINT DEFAULT 0,
     dom_credit_vol DECIMAL(19, 2) DEFAULT 0,
-    dom_credit_msf DECIMAL(19, 2) DEFAULT 0,
+    dom_credit_msf DECIMAL(21, 4) DEFAULT 0,
     dom_credit_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- International
     int_cnt BIGINT DEFAULT 0,
     int_vol DECIMAL(19, 2) DEFAULT 0,
-    int_msf DECIMAL(19, 2) DEFAULT 0,
+    int_msf DECIMAL(21, 4) DEFAULT 0,
     int_optin DECIMAL(19, 2) DEFAULT 0,
 
     -- Totals
     total_vol DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
 
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date)
@@ -8614,7 +8614,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_insight (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     
     PRIMARY KEY (summary_id, business_date),
     UNIQUE (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
@@ -8638,7 +8638,7 @@ CREATE TABLE IF NOT EXISTS sum_daily_mcc (
     
     total_txns BIGINT DEFAULT 0,
     total_volume DECIMAL(19, 2) DEFAULT 0,
-    total_msf DECIMAL(19, 2) DEFAULT 0,
+    total_msf DECIMAL(21, 4) DEFAULT 0,
     total_scheme_fee DECIMAL(19, 2) DEFAULT 0, -- New
     total_net_revenue DECIMAL(19, 2) DEFAULT 0,
     

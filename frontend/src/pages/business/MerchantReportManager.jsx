@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
+import { PulseMark } from '../../components/Loaders';
 import KpiCards from '../../components/KpiCards';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
@@ -504,7 +505,7 @@ const MerchantReportManager = () => {
                                 {(status === 'checking' || status === 'confirming') && (
                                     <motion.div key="check" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} style={{ width: '100%', textAlign: 'center' }}>
                                         {status === 'checking' ? (
-                                            <Box py={8}><CircularProgress size={60} thickness={4} /><Typography variant="h6" mt={3} color="text.secondary">Verifying existing artifacts...</Typography></Box>
+                                            <Box py={8}><Box display="inline-block"><PulseMark size={64} /></Box><Typography variant="h6" mt={3} color="text.secondary">Verifying existing artifacts...</Typography></Box>
                                         ) : (
                                             <Box py={4} maxWidth={500} mx="auto">
                                                 <Avatar sx={{ width: 80, height: 80, bgcolor: 'warning.50', color: 'warning.main', mx: 'auto', mb: 3 }}><ErrorIcon sx={{ fontSize: 40 }} /></Avatar>
