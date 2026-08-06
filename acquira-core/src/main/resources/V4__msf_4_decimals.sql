@@ -36,3 +36,27 @@ ALTER TABLE IF EXISTS sum_daily_explorer  ALTER COLUMN total_msf TYPE DECIMAL(21
 -- Monthly rollups.
 ALTER TABLE IF EXISTS sum_monthly_bank    ALTER COLUMN total_msf TYPE DECIMAL(21, 4);
 ALTER TABLE IF EXISTS sum_monthly_insight ALTER COLUMN total_msf TYPE DECIMAL(21, 4);
+
+-- The type change rewrites each table, which clears the altered column's
+-- planner statistics. Refresh them now (sampling only — seconds, not a scan)
+-- so dashboard queries don't run on missing stats until autovacuum catches up.
+-- The super-admin Summary Rebuild also ANALYZEs afterwards, but its list does
+-- not include sum_daily_full / sum_daily_explorer / sum_monthly_insight.
+-- Guarded like the ALTERs above: a table that doesn't exist in this
+-- database (e.g. sum_daily_full/sum_daily_explorer before the partition
+-- migration) is skipped instead of aborting the whole script.
+DO $$
+DECLARE
+    t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'sum_daily_bank', 'sum_daily_merchant', 'sum_daily_mcc',
+        'sum_daily_scheme', 'sum_daily_channel', 'sum_daily_terminal',
+        'sum_daily_insight', 'sum_daily_finance', 'sum_daily_full',
+        'sum_daily_explorer', 'sum_monthly_bank', 'sum_monthly_insight']
+    LOOP
+        IF to_regclass(t) IS NOT NULL THEN
+            EXECUTE 'ANALYZE ' || quote_ident(t);
+        END IF;
+    END LOOP;
+END $$;

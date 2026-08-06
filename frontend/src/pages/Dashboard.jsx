@@ -14,7 +14,7 @@ import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { createFmt } from '../utils/formatters';
+import { createFmt, formatMsf } from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Landing Dashboard — MTD (weeks 1–5) / YTD (month-wise).
@@ -620,7 +620,7 @@ const Dashboard = () => {
                         }}>
                             <RailMetric label="MSF" icon={Wallet}
                                 value={fmt.currency(num(vt.msf))}
-                                fullValue={fullNum(vt.msf, currencySymbol)}
+                                fullValue={formatMsf(vt.msf, currencySymbol)}
                                 deltaPct={dpg(vt.msf, prev?.msf)} compareLabel={compareLabel}
                                 hint="Merchant service fee billed" />
                             <RailMetric label="MSF Rate" icon={Sigma}
@@ -842,7 +842,7 @@ const Dashboard = () => {
                                                 <td style={tdNum} title={fullNum(b.txns)}>{num(b.txns).toLocaleString()}</td>
                                                 <td style={tdNum} title={fullNum(b.volume, currencySymbol)}>{fmt.currency(b.volume)}</td>
                                                 <td style={tdNum} title={fullNum(b.avgTicket, currencySymbol)}>{fmt.currency(b.avgTicket)}</td>
-                                                <td style={tdNum} title={fullNum(b.msf, currencySymbol)}>{fmt.currency(b.msf)}</td>
+                                                <td style={tdNum} title={formatMsf(b.msf, currencySymbol)}>{fmt.currency(b.msf)}</td>
                                                 <td style={tdNum} title={fullNum(b.interchange, currencySymbol)}>{fmt.currency(b.interchange)}</td>
                                                 <td style={tdNum} title={fullNum(b.schemeFee, currencySymbol)}>{fmt.currency(b.schemeFee)}</td>
                                                 <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.currency(b.ecomFee)}</td>
@@ -873,7 +873,7 @@ const Dashboard = () => {
                                         <td style={tdTotal} title={fullNum(vt.txns)}>{num(vt.txns).toLocaleString()}</td>
                                         <td style={tdTotal} title={fullNum(vt.volume, currencySymbol)}>{fmt.currency(num(vt.volume))}</td>
                                         <td style={tdTotal} title={fullNum(vt.avgTicket, currencySymbol)}>{fmt.currency(num(vt.avgTicket))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.msf, currencySymbol)}>{fmt.currency(num(vt.msf))}</td>
+                                        <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.currency(num(vt.msf))}</td>
                                         <td style={tdTotal} title={fullNum(vt.interchange, currencySymbol)}>{fmt.currency(num(vt.interchange))}</td>
                                         <td style={tdTotal} title={fullNum(vt.schemeFee, currencySymbol)}>{fmt.currency(num(vt.schemeFee))}</td>
                                         <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.currency(num(vt.ecomFee))}</td>

@@ -305,6 +305,7 @@ public class BulkMigrationService {
                 "sum_daily_merchant", "sum_daily_merchant_attribute", "sum_daily_bank",
                 "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                 "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc",
+                "sum_daily_full", "sum_daily_explorer", "sum_monthly_insight",
                 "sum_monthly_bank", "sum_monthly_card", "merchant_activity_summary");
 
             currentPhase = "COMPLETED";
@@ -751,6 +752,105 @@ public class BulkMigrationService {
             "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
             "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue",
             monthKey, tenantId, monthStart, monthEnd);
+
+        // 11b-11d. sum_daily_full / sum_daily_explorer / sum_monthly_insight.
+        // These three were previously ONLY rebuilt by the upload job's
+        // populateSummary step, so a screen-triggered Summary Rebuild left them
+        // stale — the Data Explorer and Volume & Revenue screens kept serving
+        // pre-correction numbers unless the month's files were re-uploaded.
+        // SQL mirrors TransactionJobConfig's populateSummary (same grain, same
+        // scheme normalization), scoped to this month. Wrapped defensively:
+        // deployments that predate the partition migration lack these tables,
+        // and their absence must not fail the whole rebuild.
+        try {
+            jdbcTemplate.update("DELETE FROM sum_daily_full WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
+                tenantId, monthStart, monthEnd);
+            jdbcTemplate.update("INSERT INTO sum_daily_full (tenant_id, business_date, merchant_id, store_id, mcc, " +
+                "channel, destination, card_scheme, card_type, is_opt_in, " +
+                "total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, " +
+                "total_net_revenue, dcc_optin_count) " +
+                "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
+                "COALESCE(t.type,'POS'), f.destination, " +
+                "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
+                "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
+                "     ELSE f.card_scheme END, " +
+                "f.card_type, f.dcc, " +
+                "COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), " +
+                "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
+                "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)), " +
+                "COUNT(CASE WHEN f.dcc IS TRUE THEN 1 END) " +
+                "FROM fact_transaction f " +
+                "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
+                "LEFT JOIN dim_store st ON f.store_id=st.store_id AND st.tenant_id=f.tenant_id " +
+                "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) BETWEEN ? AND ? " +
+                "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
+                "COALESCE(t.type,'POS'), f.destination, " +
+                "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
+                "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END, " +
+                "f.card_type, f.dcc " +
+                "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, mcc, channel, destination, card_scheme, card_type, is_opt_in) " +
+                "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
+                "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
+                "total_ecom_fee=EXCLUDED.total_ecom_fee, total_net_revenue=EXCLUDED.total_net_revenue, " +
+                "dcc_optin_count=EXCLUDED.dcc_optin_count",
+                tenantId, monthStart, monthEnd);
+        } catch (Exception e) {
+            log.warn("[REBUILD] sum_daily_full rebuild skipped (non-fatal): {}", e.getMessage());
+        }
+
+        try {
+            jdbcTemplate.update("DELETE FROM sum_daily_explorer WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
+                tenantId, monthStart, monthEnd);
+            jdbcTemplate.update("INSERT INTO sum_daily_explorer (tenant_id, business_date, merchant_id, store_id, terminal_id, " +
+                "transaction_type, card_scheme, card_type, destination, channel, txn_currency, store_base_currency, is_opt_in, " +
+                "total_txns, total_txn_currency_amount, total_base_volume, total_msf, total_vat, total_settled, " +
+                "total_interchange, total_scheme_fee) " +
+                "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
+                "f.transaction_type, " +
+                "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
+                "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
+                "     ELSE f.card_scheme END, " +
+                "f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc, " +
+                "COUNT(*), SUM(COALESCE(f.txn_currency_amount,0)), SUM(COALESCE(f.store_base_currency_amount,0)), " +
+                "SUM(COALESCE(f.msf,0)), SUM(COALESCE(f.vat,0)), SUM(COALESCE(f.total_amount_settled,0)), " +
+                "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)) " +
+                "FROM fact_transaction f " +
+                "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
+                "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) BETWEEN ? AND ? " +
+                "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
+                "f.transaction_type, " +
+                "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
+                "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END, " +
+                "f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc " +
+                "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, transaction_type, card_scheme, card_type, destination, channel, txn_currency, is_opt_in) " +
+                "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_txn_currency_amount=EXCLUDED.total_txn_currency_amount, " +
+                "total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, total_vat=EXCLUDED.total_vat, " +
+                "total_settled=EXCLUDED.total_settled, total_interchange=EXCLUDED.total_interchange, " +
+                "total_scheme_fee=EXCLUDED.total_scheme_fee, store_base_currency=EXCLUDED.store_base_currency",
+                tenantId, monthStart, monthEnd);
+        } catch (Exception e) {
+            log.warn("[REBUILD] sum_daily_explorer rebuild skipped (non-fatal): {}", e.getMessage());
+        }
+
+        // Month rollup of the freshly rebuilt sum_daily_insight (step 9 above),
+        // so monthly = SUM(daily) reconciles exactly — same as the upload job.
+        try {
+            jdbcTemplate.update("DELETE FROM sum_monthly_insight WHERE tenant_id = ? AND month_key = ?",
+                tenantId, monthKey);
+            jdbcTemplate.update("INSERT INTO sum_monthly_insight (tenant_id, month_key, merchant_id, store_id, terminal_id, " +
+                "card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf) " +
+                "SELECT tenant_id, ?, merchant_id, store_id, terminal_id, " +
+                "card_scheme, card_type, destination, channel, is_opt_in, " +
+                "SUM(total_txns), SUM(total_volume), SUM(total_msf) " +
+                "FROM sum_daily_insight WHERE tenant_id=? AND business_date BETWEEN ? AND ? " +
+                "GROUP BY tenant_id, merchant_id, store_id, terminal_id, " +
+                "card_scheme, card_type, destination, channel, is_opt_in " +
+                "ON CONFLICT (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +
+                "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf",
+                monthKey, tenantId, monthStart, monthEnd);
+        } catch (Exception e) {
+            log.warn("[REBUILD] sum_monthly_insight rebuild skipped (non-fatal): {}", e.getMessage());
+        }
 
         // 12. Top spending customer per merchant per day
         jdbcTemplate.update("WITH DailyCustSpend AS (SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number, " +
