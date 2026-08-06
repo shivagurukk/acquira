@@ -9,7 +9,7 @@ import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { showToast } from '../contexts/ToastContext';
-import { createFmt } from '../utils/formatters';
+import { createFmt, formatMsf } from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Volume & Revenue — MID x SID detail with the full fee stack:
@@ -245,7 +245,7 @@ const CeoVolumeRevenue = ({
             const lines = [header.join(',')];
             rows.forEach(r => lines.push([
                 esc(r.mid), ...(lossOnly ? [] : [esc(r.sid)]), esc(r.name), num(r.txns),
-                num(r.volume).toFixed(2), num(r.msf).toFixed(2),
+                num(r.volume).toFixed(2), num(r.msf).toFixed(4),
                 num(r.interchange).toFixed(2), num(r.schemeFee).toFixed(2),
                 num(r.ecomFee).toFixed(2),
                 num(r.netRevenue).toFixed(2), pctCell(r.marginPct),
@@ -259,7 +259,7 @@ const CeoVolumeRevenue = ({
                 lines.push([
                     esc('TOTAL'), ...(lossOnly ? [] : [esc('')]), esc(`${totalRows} rows (period total)`),
                     num(exportTotals.txns),
-                    num(exportTotals.volume).toFixed(2), num(exportTotals.msf).toFixed(2),
+                    num(exportTotals.volume).toFixed(2), num(exportTotals.msf).toFixed(4),
                     num(exportTotals.interchange).toFixed(2), num(exportTotals.schemeFee).toFixed(2),
                     num(exportTotals.ecomFee).toFixed(2),
                     num(exportTotals.netRevenue).toFixed(2), pctCell(exportTotals.marginPct),
@@ -464,7 +464,7 @@ const CeoVolumeRevenue = ({
                                 <StatTile icon={Receipt} label="MSF"
                                     value={fmt.currency(num(totals.msf))}
                                     caption="gross fee revenue"
-                                    title={fullNum(totals.msf, currencySymbol)} />
+                                    title={formatMsf(totals.msf, currencySymbol)} />
                             </div>
                             <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
                                 <StatTile icon={Landmark} label="Costs"
@@ -534,7 +534,7 @@ const CeoVolumeRevenue = ({
                                                 title={r.name}>{r.name || '—'}</td>
                                             <td style={tdNum} title={fullNum(r.txns)}>{num(r.txns).toLocaleString()}</td>
                                             <td style={tdNum} title={fullNum(r.volume, currencySymbol)}>{fmt.currency(num(r.volume))}</td>
-                                            <td style={tdNum} title={fullNum(r.msf, currencySymbol)}>{fmt.currency(num(r.msf))}</td>
+                                            <td style={tdNum} title={formatMsf(r.msf, currencySymbol)}>{fmt.currency(num(r.msf))}</td>
                                             <td style={tdNum} title={fullNum(r.interchange, currencySymbol)}>{fmt.currency(num(r.interchange))}</td>
                                             <td style={tdNum} title={fullNum(r.schemeFee, currencySymbol)}>{fmt.currency(num(r.schemeFee))}</td>
                                             <td style={tdNum} title={fullNum(r.ecomFee, currencySymbol)}>{fmt.currency(num(r.ecomFee))}</td>
@@ -570,7 +570,7 @@ const CeoVolumeRevenue = ({
                                             </td>
                                             <td style={tdTotal} title={fullNum(totals.txns)}>{num(totals.txns).toLocaleString()}</td>
                                             <td style={tdTotal} title={fullNum(totals.volume, currencySymbol)}>{fmt.currency(num(totals.volume))}</td>
-                                            <td style={tdTotal} title={fullNum(totals.msf, currencySymbol)}>{fmt.currency(num(totals.msf))}</td>
+                                            <td style={tdTotal} title={formatMsf(totals.msf, currencySymbol)}>{fmt.currency(num(totals.msf))}</td>
                                             <td style={tdTotal} title={fullNum(totals.interchange, currencySymbol)}>{fmt.currency(num(totals.interchange))}</td>
                                             <td style={tdTotal} title={fullNum(totals.schemeFee, currencySymbol)}>{fmt.currency(num(totals.schemeFee))}</td>
                                             <td style={tdTotal} title={fullNum(totals.ecomFee, currencySymbol)}>{fmt.currency(num(totals.ecomFee))}</td>

@@ -14,6 +14,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatMsf } from '../../utils/formatters';
 import { useDataBounds } from '../../hooks/useDataBounds';
 import DataBoundsBanner from '../../components/DataBoundsBanner';
 
@@ -493,7 +494,7 @@ const DebitPrepaidMetrics = () => {
         },
         {
             field: 'msf', headerName: 'MSF', type: 'number', width: 130, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" color="var(--text-secondary, #64748b)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" color="var(--text-secondary, #64748b)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatMsf(params.value)}</Typography>
         },
         {
             field: 'msfRateBps', headerName: 'MSF BPS', type: 'number', width: 110, align: 'right', headerAlign: 'right',

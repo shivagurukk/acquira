@@ -111,14 +111,16 @@ const BASE_FMT = {
     distinct_merchants: { unit: 'number', decimals: 0 },
     distinct_cards: { unit: 'number', decimals: 0 },
     total_volume: { unit: 'currency', decimals: 2 },
-    total_msf: { unit: 'currency', decimals: 2 },
+    // MSF is stored at 4-dp precision so finance can reconcile to the fils;
+    // 2 dp here would hide exactly the digits they check against source files.
+    total_msf: { unit: 'currency', decimals: 4 },
     total_vat: { unit: 'currency', decimals: 2 },
     total_settled: { unit: 'currency', decimals: 2 },
     total_interchange: { unit: 'currency', decimals: 2 },
     total_txn_currency_amount: { unit: 'currency', decimals: 2 },
     avg_txn_value: { unit: 'currency', decimals: 2 },
     net_revenue: { unit: 'currency', decimals: 2 },
-    avg_msf_per_txn: { unit: 'currency', decimals: 2 },
+    avg_msf_per_txn: { unit: 'currency', decimals: 4 },
     effective_msf_rate: { unit: 'number', decimals: 1, suffix: ' bps' },
     interchange_rate: { unit: 'number', decimals: 1, suffix: ' bps' },
     settlement_ratio: { unit: 'number', decimals: 1, suffix: '%' },

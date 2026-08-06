@@ -3,7 +3,7 @@ import { Download, Filter, Search, Calendar, ChevronRight, ChevronDown, Loader2 
 import { SmartEmptyState } from '../../components/CockpitControls';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatCurrency as fmt } from '../../utils/formatters';
+import { formatCurrency as fmt, formatMsf } from '../../utils/formatters';
 
 // --- Preset Values ---
 const PRESETS = [
@@ -294,7 +294,7 @@ const MerchantInsightHub = () => {
                                     <td style={{ padding: '10px', color: '#64748b' }}>{row.card_type}</td>
                                     <td style={{ padding: '10px', textAlign: 'right', fontFamily: 'monospace' }}>{fmtInt(row.total_txns)}</td>
                                     <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{fmt(row.total_volume)}</td>
-                                    <td style={{ padding: '10px', textAlign: 'right', color: '#059669', background: '#ecfdf550' }}>{fmt(row.total_msf)}</td>
+                                    <td style={{ padding: '10px', textAlign: 'right', color: '#059669', background: '#ecfdf550' }}>{formatMsf(row.total_msf)}</td>
                                 </tr>
                             ))
                         )}

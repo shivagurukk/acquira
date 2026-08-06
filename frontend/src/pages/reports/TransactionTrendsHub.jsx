@@ -3,6 +3,7 @@ import { Download, Filter, Search, Calendar, ChevronRight, Loader2, PieChart } f
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatMsf } from '../../utils/formatters';
 
 const TransactionTrendsHub = () => {
     const { tenantVersion, currencyCode } = useAuth();
@@ -198,7 +199,7 @@ const TransactionTrendsHub = () => {
                                         </td>
                                         <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{fmtInt(row.count)}</td>
                                         <td style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>{fmt(row.volume)}</td>
-                                        <td style={{ padding: '12px', textAlign: 'right', color: 'green' }}>{fmt(row.msf)}</td>
+                                        <td style={{ padding: '12px', textAlign: 'right', color: 'green' }}>{formatMsf(row.msf, currencyCode)}</td>
                                         <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{fmt(row.opt_in_volume)}</td>
                                     </tr>
 
@@ -220,7 +221,7 @@ const TransactionTrendsHub = () => {
                                                         </td>
                                                         <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px' }}>{fmtInt(day.count)}</td>
                                                         <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px' }}>{fmt(day.volume)}</td>
-                                                        <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px' }}>{fmt(day.msf)}</td>
+                                                        <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px' }}>{formatMsf(day.msf, currencyCode)}</td>
                                                         <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px' }}>{fmt(day.opt_in_volume)}</td>
                                                     </tr>
 

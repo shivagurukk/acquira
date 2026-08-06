@@ -246,7 +246,7 @@ const TransactionList = () => {
                                                 <td>
                                                     <span style={{ fontWeight: 600, color: 'var(--text)' }}>{t.txnCurrency} {t.txnCurrencyAmount?.toFixed(3)}</span>
                                                 </td>
-                                                <td style={{ color: 'var(--danger)', fontWeight: 600 }}>{t.msf?.toFixed(3)}</td>
+                                                <td style={{ color: 'var(--danger)', fontWeight: 600 }}>{t.msf == null ? '' : Number(t.msf).toFixed(4)}</td>
                                                 <td style={{ color: 'var(--text-secondary)' }}>{t.dcc ? 'Yes' : 'No'}</td>
                                                 <td>
                                                     <span className="tx-pill" style={{

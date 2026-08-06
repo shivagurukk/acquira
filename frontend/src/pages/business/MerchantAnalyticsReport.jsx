@@ -9,6 +9,7 @@ import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatMsf } from '../../utils/formatters';
 import api from '../../api/axios';
 
 const formatCurrency = (val) =>
@@ -234,7 +235,7 @@ const MerchantAnalyticsReport = () => {
         cols.push(
             { field: 'volume',       headerName: 'Volume',      width: 140, type: 'number', valueFormatter: (v) => formatCurrency(v) },
             { field: 'count',        headerName: 'Trnx Count',  width: 120, type: 'number', valueFormatter: (v) => formatNumber(v) },
-            { field: 'msf',          headerName: 'MSF',         width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
+            { field: 'msf',          headerName: 'MSF',         width: 130, type: 'number', valueFormatter: (v) => formatMsf(v) },
             { field: 'interchange',  headerName: 'Interchange', width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
             { field: 'mcc',          headerName: 'MCC',         width: 90 },
             { field: 'industry',     headerName: 'Industry',    width: 160 },

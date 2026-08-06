@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { X, Loader2, DollarSign, TrendingUp, Building2, Users, Target, Percent } from 'lucide-react';
 import api from '../api/axios';
+import { formatMsf } from '../utils/formatters';
 
 // ── formatters ───────────────────────────────────────────────
 const fmt = (v) => v == null ? '0' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -202,7 +203,7 @@ const ChildrenTable = ({ level, rows, onDrill }) => {
                     <td style={{ padding: '7px 10px', textAlign: 'right' }}>{fmt(r.merchants)}</td>
                   </>}
                   <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtM(r.volume)}</td>
-                  <td style={{ padding: '7px 10px', textAlign: 'right', color: '#f59e0b', fontWeight: 600 }}>{fmtM(r.msf)}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', color: '#f59e0b', fontWeight: 600 }} title={formatMsf(r.msf)}>{fmtM(r.msf)}</td>
                   <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 600, color: rate >= 2 ? '#10b981' : '#6b7280' }}>{fmtPct(rate)}</td>
                   <td style={{ padding: '7px 10px', textAlign: 'right', color: '#6b7280' }}>{fmt(r.txn_count)}</td>
                 </tr>

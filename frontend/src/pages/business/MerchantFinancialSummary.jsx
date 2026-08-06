@@ -9,6 +9,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer, chartTooltipStyle } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatMsf } from '../../utils/formatters';
 import { useDataBounds } from '../../hooks/useDataBounds';
 
 /* ── Date Preset Resolver ──────────────────────────────────────── */
@@ -245,7 +246,7 @@ const MerchantFinancialSummary = () => {
         },
         {
             field: 'msf', headerName: 'MSF (AED)', flex: 1.2, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" fontWeight="600" color="var(--text, #334155)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" fontWeight="600" color="var(--text, #334155)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatMsf(params.value)}</Typography>
         },
         {
             field: 'msfRate', headerName: 'MSF RATE', flex: 0.9, align: 'right', headerAlign: 'right', sortable: false,

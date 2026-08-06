@@ -9,6 +9,7 @@ import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatMsf } from '../../utils/formatters';
 
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
@@ -211,17 +212,17 @@ const TransactionPerformanceDashboard = () => {
         },
         { field: 'dom_debit_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
         { field: 'dom_debit_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value), cellClassName: negClass },
-        { field: 'dom_debit_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'dom_debit_msf', headerName: 'MSF', type: 'number', width: 130, valueFormatter: (value) => formatMsf(value) },
         { field: 'dom_debit_pct', headerName: '%', width: 70, valueGetter: (value, row) => pctOfTotal(row.dom_debit_vol, row.total_vol) },
         { field: 'dom_debit_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
         { field: 'dom_credit_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
         { field: 'dom_credit_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value), cellClassName: negClass },
-        { field: 'dom_credit_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'dom_credit_msf', headerName: 'MSF', type: 'number', width: 130, valueFormatter: (value) => formatMsf(value) },
         { field: 'dom_credit_pct', headerName: '%', width: 70, valueGetter: (value, row) => pctOfTotal(row.dom_credit_vol, row.total_vol) },
         { field: 'dom_credit_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
         { field: 'int_cnt', headerName: 'Count', type: 'number', width: 90, valueFormatter: (value) => formatNumber(value) },
         { field: 'int_vol', headerName: 'Vol', type: 'number', width: 120, valueFormatter: (value) => formatCurrency(value), cellClassName: negClass },
-        { field: 'int_msf', headerName: 'MSF', type: 'number', width: 100, valueFormatter: (value) => formatCurrency(value) },
+        { field: 'int_msf', headerName: 'MSF', type: 'number', width: 130, valueFormatter: (value) => formatMsf(value) },
         { field: 'int_pct', headerName: '%', width: 70, valueGetter: (value, row) => pctOfTotal(row.int_vol, row.total_vol) },
         { field: 'int_optin', headerName: 'Opt-In', type: 'number', width: 110, valueFormatter: (value) => formatCurrency(value) },
         {

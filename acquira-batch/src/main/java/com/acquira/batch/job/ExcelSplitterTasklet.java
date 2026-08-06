@@ -53,6 +53,21 @@ public class ExcelSplitterTasklet implements Tasklet {
     private static final int IDX_TRANSACTION_DATE = 18;
     private static final int IDX_TRANSACTION_TIME = 19;
 
+    /**
+     * Money columns, by index into TARGET_HEADERS: Txn Currency Amount (26),
+     * Store Base Currency Amount (28), MSF (29), VAT (30), Total Amount
+     * Settled (31), Interchange Fee (32).
+     *
+     * These MUST be read as the cell's underlying number, never as its
+     * displayed text — see safeMoneyText(). Everything else (dates, ids,
+     * codes) still goes through safeCellText(), which needs the formatted
+     * form: a date cell's raw value is an Excel serial number, not a date.
+     */
+    private static final boolean[] IS_MONEY_COL = new boolean[TARGET_HEADERS.length];
+    static {
+        for (int i : new int[]{26, 28, 29, 30, 31, 32}) IS_MONEY_COL[i] = true;
+    }
+
     private static final int CHUNK_SIZE = 50_000;
     private static final int BUFFER_SIZE = 256 * 1024; // 256KB
 
@@ -189,6 +204,30 @@ public class ExcelSplitterTasklet implements Tasklet {
         if (val == null || val.isEmpty()) {
             val = cell.getRawValue();
         }
+        return val != null ? val : "";
+    }
+
+    /**
+     * Read a MONEY cell at full stored precision.
+     *
+     * getText() returns what Excel DISPLAYS, which applies the cell's number
+     * format. A cell holding 12.3456 but formatted to 2 decimals returns
+     * "12.35" — so a workbook that merely displays 2 dp silently rounded every
+     * amount at the very first step of ingestion, before staging and before
+     * fact_transaction. MSF is the visible casualty because, unlike volume, it
+     * is never re-derived downstream: whatever lands here IS the number every
+     * report sums. getRawValue() returns the underlying stored value verbatim.
+     *
+     * Falls back to getText() for non-numeric cells (a text-typed amount column
+     * has no raw numeric form) so a malformed sheet degrades rather than blanks.
+     */
+    private static String safeMoneyText(Row row, int idx, int maxCell) {
+        if (idx < 0 || idx >= maxCell) return "";
+        Cell cell = row.getCell(idx);
+        if (cell == null) return "";
+        String raw = cell.getRawValue();
+        if (raw != null && !raw.isEmpty()) return raw;
+        String val = cell.getText();
         return val != null ? val : "";
     }
 
@@ -407,6 +446,8 @@ public class ExcelSplitterTasklet implements Tasklet {
                             val = splitDate != null ? splitDate : "";
                         } else if (combinedDateTime && i == IDX_TRANSACTION_TIME) {
                             val = splitTime != null ? splitTime : "";
+                        } else if (IS_MONEY_COL[i]) {
+                            val = safeMoneyText(row, sourceIndexes[i], maxCell);
                         } else {
                             val = safeCellText(row, sourceIndexes[i], maxCell);
                         }
