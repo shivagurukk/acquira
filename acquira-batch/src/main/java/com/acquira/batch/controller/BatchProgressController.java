@@ -324,6 +324,25 @@ public class BatchProgressController {
             }
         } catch (Exception ignored) { /* context not populated yet — fine */ }
 
+        // Sales-agent reassignment summary (written by upsertDimensionsTasklet).
+        // Tells the uploader how many merchants changed hands and flags the rows
+        // whose agent could not be applied — conflicting duplicates — or that named
+        // an agent code the tenant has never seen.
+        try {
+            org.springframework.batch.item.ExecutionContext ctx = jobExec.getExecutionContext();
+            if (ctx.containsKey("reassign.count")) {
+                Map<String, Object> ra = new HashMap<>();
+                ra.put("reassigned", ctx.getInt("reassign.count", 0));
+                ra.put("conflicts", ctx.getInt("reassign.conflicts", 0));
+                ra.put("unknownAgents", ctx.getInt("reassign.unknownAgents", 0));
+                String warnings = ctx.getString("reassign.warnings", "");
+                ra.put("warnings", warnings.isEmpty()
+                    ? java.util.Collections.emptyList()
+                    : java.util.Arrays.asList(warnings.split(" \\| ")));
+                payload.put("salesReassignment", ra);
+            }
+        } catch (Exception ignored) { /* context not populated yet — fine */ }
+
         // Total rows from execution context
         long totalRows = 0;
         try {

@@ -33,6 +33,7 @@ public class MerchantController {
     private final MerchantContactRepository contactRepository;
     private final MerchantDocumentRepository documentRepository;
     private final MerchantRiskProfileRepository riskRepository;
+    private final MerchantSalesAssignmentHistoryRepository salesHistoryRepository;
     private final JdbcTemplate jdbcTemplate;
 
     public MerchantController(MerchantRepository merchantRepository,
@@ -41,6 +42,7 @@ public class MerchantController {
             MerchantContactRepository contactRepository,
             MerchantDocumentRepository documentRepository,
             MerchantRiskProfileRepository riskRepository,
+            MerchantSalesAssignmentHistoryRepository salesHistoryRepository,
             JdbcTemplate jdbcTemplate) {
         this.merchantRepository = merchantRepository;
         this.storeRepository = storeRepository;
@@ -48,6 +50,7 @@ public class MerchantController {
         this.contactRepository = contactRepository;
         this.documentRepository = documentRepository;
         this.riskRepository = riskRepository;
+        this.salesHistoryRepository = salesHistoryRepository;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -132,6 +135,22 @@ public class MerchantController {
     public ResponseEntity<List<MerchantContact>> getMerchantContacts(@PathVariable Long id) {
         if (findOwnMerchant(id).isEmpty()) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(contactRepository.findByMerchantId(id));
+    }
+
+    /**
+     * Who this merchant's sales agent has been, newest change first.
+     *
+     * Each row carries the previous and new agent, when the change happened, what
+     * caused it (UPLOAD / MANUAL / API), and — for an upload — which file and batch
+     * run performed it. The merchant's FIRST agent is not listed: it was assigned as
+     * part of creating the merchant, so there is no previous holder to audit.
+     */
+    @GetMapping("/{id}/assignment-history")
+    public ResponseEntity<List<MerchantSalesAssignmentHistory>> getSalesAssignmentHistory(@PathVariable Long id) {
+        if (findOwnMerchant(id).isEmpty()) return ResponseEntity.notFound().build();
+        Long tenantId = TenantContext.getCurrentTenant();
+        return ResponseEntity.ok(
+                salesHistoryRepository.findByTenantIdAndMerchantIdOrderByChangedAtDesc(tenantId, id));
     }
 
     // ── Merchant Comparison Endpoint ──────────────────────────────────────────

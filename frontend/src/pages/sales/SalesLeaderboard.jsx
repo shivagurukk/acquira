@@ -102,7 +102,7 @@ const Podium = ({ items, isTeam }) => {
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 16, marginBottom: 32, padding: '40px 0 0' }}>
       {order.map((item, idx) => {
         const origRank = indexMap[idx];
-        const name = isTeam ? item.team_lead : item.agent;
+        const name = isTeam ? item.team_lead : (item.agent_email || item.agent);
         const shortName = name?.includes('@') ? name.split('@')[0] : name;
         const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
         const netRate = item.total_volume > 0 ? (net / item.total_volume * 100) : 0;
@@ -167,7 +167,7 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
           </thead>
           <tbody>
             {items.map((item, i) => {
-              const name = isTeam ? item.team_lead : item.agent;
+              const name = isTeam ? item.team_lead : (item.agent_email || item.agent);
               const shortName = name?.includes('@') ? name.split('@')[0] : name;
               const rank = item.rank || i + 1;
               const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
@@ -243,19 +243,22 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
 };
 
 // ─── Agent Detail Panel ──────────────────────────────────────
-const AgentDetail = ({ agentEmail, period, onClose }) => {
+// salesUserId is the sales rep CODE (dim_merchant.sales_user_id) — the key the
+// leaderboard rows and the whole sales hierarchy are grouped by. The rep's email
+// is a display attribute the detail response carries back.
+const AgentDetail = ({ salesUserId, period, onClose }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
-      try { const r = await api.get(`/leaderboard/agents/${encodeURIComponent(agentEmail)}?period=${period}`); setData(r.data); }
+      try { const r = await api.get(`/leaderboard/agents/${encodeURIComponent(salesUserId)}?period=${period}`); setData(r.data); }
       catch (e) { console.error(e); }
       finally { setLoading(false); }
     };
     load();
-  }, [agentEmail, period]);
+  }, [salesUserId, period]);
 
   if (loading) return <div style={{ ...CARD, textAlign: 'center', padding: 40 }}><Loader2 size={24} className="spin" /></div>;
   if (!data) return null;
@@ -270,8 +273,10 @@ const AgentDetail = ({ agentEmail, period, onClose }) => {
     <div style={{ ...CARD, marginBottom: 24, border: `2px solid ${T.brandAlt}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: T.text }}>{agentEmail.split('@')[0]}</h3>
-          <div style={{ fontSize: 12, color: T.textSec }}>{agentEmail}</div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: T.text }}>
+            {data.agentEmail ? data.agentEmail.split('@')[0] : salesUserId}
+          </h3>
+          <div style={{ fontSize: 12, color: T.textSec }}>{data.agentEmail || salesUserId}</div>
           <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
             <span style={{ fontSize: 12, color: T.textSec }}><strong>{merchants.length}</strong> merchants</span>
             <span style={{ fontSize: 12, color: T.textSec }}><strong>{fmtM(totalVol)}</strong> volume</span>
@@ -386,7 +391,7 @@ const SalesLeaderboard = () => {
       ? ['Rank', 'Team Lead', 'Agents', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Margin', 'Net Rate', 'Txns', 'Active %']
       : ['Rank', 'Agent', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Margin', 'Net Rate', 'Txns', 'Active %', 'Net Change %'];
     const rows = data.map((item, i) => {
-      const name = isTeam ? item.team_lead : item.agent;
+      const name = isTeam ? item.team_lead : (item.agent_email || item.agent);
       const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
       const netRate = item.total_volume > 0 ? (net / item.total_volume * 100).toFixed(2) + '%' : '0%';
       const base = [item.rank || i+1, name, item.merchants_onboarded, item.active_merchants, item.total_merchants, item.total_volume, item.total_msf, net, netRate, item.txn_count, (item.active_rate || 0) + '%'];
@@ -456,7 +461,7 @@ const SalesLeaderboard = () => {
           <Podium items={data} isTeam={isTeamTab} />
 
           {/* Agent Detail */}
-          {selectedAgent && <AgentDetail agentEmail={selectedAgent} period={period} onClose={() => setSelectedAgent(null)} />}
+          {selectedAgent && <AgentDetail salesUserId={selectedAgent} period={period} onClose={() => setSelectedAgent(null)} />}
 
           {/* Volume Distribution Chart */}
           {data.length > 1 && (

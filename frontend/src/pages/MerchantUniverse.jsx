@@ -635,15 +635,22 @@ const Panel = ({ title, count, children }) => (
 
 const MerchantProfileView = ({ merchant, onBack }) => {
     const [data, setData] = useState(null);
+    const [salesHistory, setSalesHistory] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const { data: json } = await api.get(`/merchants/${merchant.merchantId}/360`);
-                setData(json);
-            } catch (e) { console.error(e); }
-            finally { setLoading(false); }
+                // The assignment history is supplementary — a failure there (an older
+                // backend, say) must not blank out the whole profile.
+                const [profileRes, historyRes] = await Promise.allSettled([
+                    api.get(`/merchants/${merchant.merchantId}/360`),
+                    api.get(`/merchants/${merchant.merchantId}/assignment-history`),
+                ]);
+                if (profileRes.status === 'fulfilled') setData(profileRes.value.data);
+                else console.error(profileRes.reason);
+                if (historyRes.status === 'fulfilled') setSalesHistory(historyRes.value.data || []);
+            } finally { setLoading(false); }
         };
         fetchData();
     }, [merchant]);
@@ -760,6 +767,49 @@ const MerchantProfileView = ({ merchant, onBack }) => {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    <Panel title="Sales Agent">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: 4 }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>Current agent</span>
+                            <strong style={{ color: 'var(--text)' }}>{m.salesUserId || '—'}</strong>
+                        </div>
+                        {m.salesEmail && (
+                            <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', textAlign: 'right', marginBottom: 10 }}>
+                                {m.salesEmail}
+                            </div>
+                        )}
+
+                        <div style={{
+                            fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em',
+                            color: 'var(--text-muted)', marginTop: 14, marginBottom: 8,
+                            paddingTop: 12, borderTop: '1px solid var(--border-light)',
+                        }}>
+                            Assignment history
+                        </div>
+
+                        {salesHistory.length === 0 ? (
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0 }}>
+                                This merchant has never changed sales agent.
+                            </p>
+                        ) : salesHistory.map(h => (
+                            <div key={h.historyId} style={{
+                                padding: '10px 12px', marginBottom: 8, borderRadius: 'var(--radius-md)',
+                                background: 'var(--bg-subtle)', border: '1px solid var(--border-light)',
+                            }}>
+                                <div style={{ fontSize: '0.84rem', color: 'var(--text)', fontWeight: 600 }}>
+                                    {h.oldSalesUserId || 'Unassigned'} → {h.newSalesUserId}
+                                </div>
+                                <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                                    {h.changedAt ? String(h.changedAt).replace('T', ' ').slice(0, 19) : '—'}
+                                    {' · '}{h.source}
+                                    {h.uploadFileName ? ` · ${h.uploadFileName}` : ''}
+                                </div>
+                                <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                                    by {h.changedBy || 'unknown'}
+                                </div>
+                            </div>
+                        ))}
+                    </Panel>
+
                     <Panel title="Risk Profile">
                         {riskProfile ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>

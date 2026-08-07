@@ -544,10 +544,17 @@ public class MerchantMasterJobConfig {
     @Bean
     @StepScope
     public Tasklet upsertDimensionsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId,
-                                            @Value("#{jobParameters['startedAt']}") Long startedAt) {
+                                            @Value("#{jobParameters['startedAt']}") Long startedAt,
+                                            @Value("#{jobParameters['fullPath']}") String fullPath) {
         return (contribution, chunkContext) -> {
             String tId = String.valueOf(tenantId);
             long stepStart = System.currentTimeMillis();
+            org.springframework.batch.core.JobExecution jobExecution =
+                chunkContext.getStepContext().getStepExecution().getJobExecution();
+            // dbPullMerchantJob runs this same step without a file, so fullPath
+            // is legitimately null there.
+            String uploadFileName = fullPath == null ? null
+                : java.nio.file.Paths.get(fullPath).getFileName().toString();
 
             // Purge stale staging rows from previous uploads (keep only this run's rows)
             long t0 = System.currentTimeMillis();
@@ -590,6 +597,115 @@ public class MerchantMasterJobConfig {
             // location ← Address (the file has no dedicated Location column).
             // A merchant with several stores can carry several values in one file —
             // MAX() picks one, the same convention the other multi-row fields use.
+
+            // ── 1a. Sales-agent reassignment: validate, then record ──────────────────
+            //
+            // The upsert below changes a merchant's sales agent by a Type-1 overwrite
+            // and the re-sync after it re-attributes ALL of that merchant's history to
+            // the new agent. Both are intended, but the previous agent used to vanish
+            // without trace. Everything in this block runs BEFORE the upsert, in the
+            // same transaction, so what it records is exactly what the upsert then does.
+            //
+            // `merchant_key` reproduces the upsert's conflict key verbatim
+            // (COALESCE(merchant_internal_id, 'MID_' || mid)). If the two ever drift,
+            // the history joins to the wrong merchant — keep them in step.
+            String stagingAgentCte = """
+                WITH file_agent AS (
+                    SELECT COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)) AS merchant_key,
+                           MAX(NULLIF(TRIM(sales_user_id), ''))    AS new_sales_user_id,
+                           MAX(NULLIF(TRIM(sales_user_email), '')) AS new_sales_email,
+                           COUNT(DISTINCT NULLIF(TRIM(sales_user_id), '')) AS distinct_agents
+                    FROM stg_merchant_master_raw
+                    WHERE tenant_id = TID AND NULLIF(TRIM(mid), '') IS NOT NULL
+                    GROUP BY COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid))
+                )
+                """.replace("TID", tId);
+
+            java.util.List<String> reassignWarnings = new java.util.ArrayList<>();
+
+            // (i) DUPLICATE / CONFLICTING ASSIGNMENT — the same merchant appears on
+            // several rows of the file naming DIFFERENT agents. MAX() would silently
+            // pick the alphabetically-last one, so instead we blank the sales columns
+            // for those merchants: the upsert's COALESCE then preserves whatever agent
+            // they already have, and the conflict is reported rather than guessed at.
+            java.util.List<java.util.Map<String, Object>> conflicts = jdbcTemplate.queryForList(
+                stagingAgentCte + " SELECT merchant_key FROM file_agent WHERE distinct_agents > 1 ORDER BY merchant_key");
+            if (!conflicts.isEmpty()) {
+                jdbcTemplate.update(
+                    "UPDATE stg_merchant_master_raw SET sales_user_id = NULL, sales_user_email = NULL"
+                    + " WHERE tenant_id = ?"
+                    + " AND COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)) IN ("
+                    + "   SELECT COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid))"
+                    + "   FROM stg_merchant_master_raw WHERE tenant_id = ?"
+                    + "   GROUP BY COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid))"
+                    + "   HAVING COUNT(DISTINCT NULLIF(TRIM(sales_user_id), '')) > 1)",
+                    tenantId, tenantId);
+                for (java.util.Map<String, Object> c : conflicts) {
+                    reassignWarnings.add("CONFLICT: merchant " + c.get("merchant_key")
+                        + " names more than one sales agent in this file — assignment left unchanged");
+                }
+                log.warn("{} merchant(s) had conflicting sales agents in the upload for tenant {}; "
+                    + "their assignment was left unchanged", conflicts.size(), tId);
+            }
+
+            // (ii) UNMATCHED AGENT — a sales_user_id the tenant has never seen. This is
+            // reported, NOT rejected: sales_agent_profile is itself populated from these
+            // uploads (step 8 below), so a genuinely new rep always looks "unmatched" on
+            // their first file. The warning is what lets someone spot a typo'd code
+            // before it quietly becomes a real agent.
+            java.util.List<java.util.Map<String, Object>> unmatched = jdbcTemplate.queryForList(
+                "SELECT DISTINCT TRIM(s.sales_user_id) AS agent FROM stg_merchant_master_raw s"
+                + " WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sales_user_id), '') IS NOT NULL"
+                + " AND NOT EXISTS (SELECT 1 FROM sales_agent_profile p"
+                + "   WHERE p.tenant_id = s.tenant_id AND p.sales_user_id = TRIM(s.sales_user_id))"
+                + " ORDER BY 1", tenantId);
+            for (java.util.Map<String, Object> u : unmatched) {
+                reassignWarnings.add("UNKNOWN AGENT: '" + u.get("agent")
+                    + "' is not an existing sales agent for this tenant — created as new");
+            }
+
+            // (iii) Record the reassignments. Only merchants that ALREADY exist can be
+            // reassigned; a brand-new merchant's first agent is part of its creation,
+            // not a change of hands, and has no "previous" to record.
+            // `IS DISTINCT FROM` is what makes this a no-op for an unchanged re-upload.
+            int reassigned = jdbcTemplate.update(
+                stagingAgentCte
+                + " INSERT INTO merchant_sales_assignment_history"
+                + " (tenant_id, merchant_id, old_sales_user_id, old_sales_email,"
+                + "  new_sales_user_id, new_sales_email, changed_at, changed_by, source,"
+                + "  job_execution_id, upload_file_name)"
+                + " SELECT m.tenant_id, m.merchant_id, m.sales_user_id, m.sales_email,"
+                + "        f.new_sales_user_id, COALESCE(f.new_sales_email, m.sales_email),"
+                + "        NOW(), ?, 'UPLOAD', ?, ?"
+                + " FROM file_agent f"
+                + " JOIN dim_merchant m ON m.tenant_id = " + tId + " AND m.internal_id = f.merchant_key"
+                + " WHERE f.new_sales_user_id IS NOT NULL"
+                + "   AND f.distinct_agents <= 1"
+                + "   AND f.new_sales_user_id IS DISTINCT FROM m.sales_user_id",
+                "BATCH:" + jobExecution.getId(), jobExecution.getId(), uploadFileName);
+            if (reassigned > 0) {
+                log.info("Recorded {} sales-agent reassignment(s) for tenant {} from {}",
+                    reassigned, tId, uploadFileName != null ? uploadFileName : "db-pull");
+            }
+
+            // Surface counts + warnings on the job's ExecutionContext so the upload UI
+            // can show them once the (async) job finishes — same mechanism the
+            // data-quality banner uses (see BatchProgressController.buildProgressPayload).
+            var execCtx = jobExecution.getExecutionContext();
+            execCtx.putInt("reassign.count", reassigned);
+            execCtx.putInt("reassign.conflicts", conflicts.size());
+            execCtx.putInt("reassign.unknownAgents", unmatched.size());
+            if (!reassignWarnings.isEmpty()) {
+                // Cap the stored text: the execution context is persisted to
+                // BATCH_JOB_EXECUTION_CONTEXT, whose SHORT_CONTEXT column is bounded.
+                java.util.List<String> capped = reassignWarnings.size() > 20
+                    ? new java.util.ArrayList<>(reassignWarnings.subList(0, 20)) : reassignWarnings;
+                if (reassignWarnings.size() > 20) {
+                    capped.add("... and " + (reassignWarnings.size() - 20) + " more");
+                }
+                execCtx.putString("reassign.warnings", String.join(" | ", capped));
+            }
+
             String upsertMerchantSql = """
                 INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date, sales_user_id, sales_email, referral_partner, risk_level, mcc, contact_email, city, location)
                 SELECT

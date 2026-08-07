@@ -252,7 +252,12 @@ public class BackfillIngestionService {
                                 stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type,
                                 stg.card_scheme, stg.card_type, stg.dcc,
                                 stg.txn_currency, ABS(stg.txn_currency_amount), stg.store_base_currency, ABS(stg.store_base_currency_amount),
-                                ABS(stg.msf), ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination
+                                -- SIGNED MSF (2026-08-07): refunds net out, same rule as the
+                                -- upload path in TransactionJobConfig — see the comment there.
+                                -- MSF ONLY: vat/interchange stay ABS.
+                                CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND')
+                                     THEN -ABS(stg.msf) ELSE ABS(stg.msf) END,
+                                ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination
                             FROM stg_trnx_raw stg
                             LEFT JOIN dim_merchant m ON stg.mid = m.mid AND m.tenant_id = ?
                             LEFT JOIN dim_store s ON s.merchant_id = m.merchant_id

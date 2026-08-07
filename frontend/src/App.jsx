@@ -46,6 +46,7 @@ const SalesCountryLeadManagement = lazy(() => import('./pages/sales/SalesCountry
 const SalesAgentDirectory = lazy(() => import('./pages/sales/SalesAgentDirectory'));
 const SalesLeaderboard = lazy(() => import('./pages/sales/SalesLeaderboard'));
 const SalesHierarchyTree = lazy(() => import('./pages/sales/SalesHierarchyTree'));
+const SalesExecutiveDashboard = lazy(() => import('./pages/sales/SalesExecutiveDashboard'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const TenantManagement = lazy(() => import('./pages/TenantManagement'));
 const RbacGroups = lazy(() => import('./pages/RbacGroups'));
@@ -134,6 +135,7 @@ function App() {
               <Route path="/ai-assistant" element={<AiAssistant />} />
 
               {/* Sales */}
+              <Route path="/sales/executive" element={<SalesExecutiveDashboard />} />
               <Route path="/sales/team-management" element={<SalesTeamManagement />} />
               <Route path="/sales/country-management" element={<SalesCountryLeadManagement />} />
               <Route path="/sales/agents" element={<SalesAgentDirectory />} />

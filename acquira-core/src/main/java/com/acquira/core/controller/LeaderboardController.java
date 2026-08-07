@@ -50,16 +50,25 @@ public class LeaderboardController {
         String dateFilter = buildDateFilter(period, dateFrom, dateTo);
         String prevDateFilter = buildPreviousPeriodDateFilter(period);
 
-        // Current period stats
+        // Current period stats.
+        //
+        // AGENT IDENTITY: grouped by dim_merchant.sales_user_id (the rep CODE) —
+        // the same key sales_user_assignment, the team/country rollups and
+        // SalesPortfolioController use. An earlier version grouped by
+        // m.sales_email here while the team CTEs joined on sales_user_id, so an
+        // agent's own row and their team's rollup could disagree whenever the two
+        // columns were not 1:1 (a rep with two email spellings split into two
+        // leaderboard rows; a rep with a blank email vanished entirely).
+        // sales_email is still returned, as a display attribute only.
         String sql = "WITH agent_onboarding AS ("
-            + " SELECT m.sales_email AS agent,"
+            + " SELECT m.sales_user_id AS agent,"
             + "   COUNT(DISTINCT m.merchant_id) AS merchants_onboarded"
             + " FROM dim_merchant m"
-            + " WHERE m.tenant_id = ? AND m.sales_email IS NOT NULL AND m.created_date IS NOT NULL"
+            + " WHERE m.tenant_id = ? AND m.sales_user_id IS NOT NULL AND m.created_date IS NOT NULL"
             + (dateFilter.isEmpty() ? "" : " AND m.created_date " + dateFilter)
-            + " GROUP BY m.sales_email"
+            + " GROUP BY m.sales_user_id"
             + "), agent_volume AS ("
-            + " SELECT m.sales_email AS agent,"
+            + " SELECT m.sales_user_id AS agent,"
             + "   COUNT(DISTINCT sdm.merchant_id) AS active_merchants,"
             + "   COALESCE(SUM(sdm.total_txns), 0) AS txn_count,"
             + "   COALESCE(SUM(sdm.total_base_volume), 0) AS total_volume,"
@@ -67,16 +76,18 @@ public class LeaderboardController {
             + "   COALESCE(SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)), 0) AS net_revenue"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
-            + " WHERE sdm.tenant_id = ? AND m.sales_email IS NOT NULL"
+            + " WHERE sdm.tenant_id = ? AND m.sales_user_id IS NOT NULL"
             + (dateFilter.isEmpty() ? "" : " AND sdm.business_date " + dateFilter)
-            + " GROUP BY m.sales_email"
+            + " GROUP BY m.sales_user_id"
             + "), agent_total AS ("
-            + " SELECT m.sales_email AS agent, COUNT(DISTINCT m.merchant_id) AS total_merchants"
+            + " SELECT m.sales_user_id AS agent, COUNT(DISTINCT m.merchant_id) AS total_merchants,"
+            + "   MAX(m.sales_email) AS agent_email"
             + " FROM dim_merchant m"
-            + " WHERE m.tenant_id = ? AND m.sales_email IS NOT NULL"
-            + " GROUP BY m.sales_email"
+            + " WHERE m.tenant_id = ? AND m.sales_user_id IS NOT NULL"
+            + " GROUP BY m.sales_user_id"
             + ")"
             + " SELECT COALESCE(ao.agent, av.agent, at.agent) AS agent,"
+            + "   at.agent_email,"
             + "   COALESCE(ao.merchants_onboarded, 0) AS merchants_onboarded,"
             + "   COALESCE(av.active_merchants, 0) AS active_merchants,"
             + "   COALESCE(at.total_merchants, 0) AS total_merchants,"
@@ -106,13 +117,13 @@ public class LeaderboardController {
         Map<String, Double> prevNets = new HashMap<>();
         if (!prevDateFilter.isEmpty()) {
             try {
-                String prevSql = "SELECT m.sales_email AS agent, COALESCE(SUM(sdm.total_base_volume), 0) AS prev_volume,"
+                String prevSql = "SELECT m.sales_user_id AS agent, COALESCE(SUM(sdm.total_base_volume), 0) AS prev_volume,"
                     + " COALESCE(SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)), 0) AS prev_net"
                     + " FROM sum_daily_merchant sdm"
                     + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
-                    + " WHERE sdm.tenant_id = ? AND m.sales_email IS NOT NULL"
+                    + " WHERE sdm.tenant_id = ? AND m.sales_user_id IS NOT NULL"
                     + " AND sdm.business_date " + prevDateFilter
-                    + " GROUP BY m.sales_email";
+                    + " GROUP BY m.sales_user_id";
                 List<Map<String, Object>> prevResults = jdbcTemplate.queryForList(prevSql, tenantId);
                 for (Map<String, Object> row : prevResults) {
                     prevVolumes.put((String) row.get("agent"), ((Number) row.get("prev_volume")).doubleValue());
@@ -363,7 +374,7 @@ public class LeaderboardController {
 
         try {
             Integer agentCount = jdbcTemplate.queryForObject(
-                "SELECT COUNT(DISTINCT sales_email) FROM dim_merchant WHERE tenant_id = ? AND sales_email IS NOT NULL",
+                "SELECT COUNT(DISTINCT sales_user_id) FROM dim_merchant WHERE tenant_id = ? AND sales_user_id IS NOT NULL",
                 Integer.class, tenantId);
             overview.put("totalAgents", agentCount != null ? agentCount : 0);
         } catch (Exception e) { overview.put("totalAgents", 0); }
@@ -430,9 +441,13 @@ public class LeaderboardController {
     //  AGENT DETAIL
     // ═══════════════════════════════════════════════════════════
 
-    @GetMapping("/agents/{agentEmail}")
+    // Path variable is the sales rep CODE (dim_merchant.sales_user_id), matching
+    // the `agent` key returned by /agents. It used to be the rep's email; both
+    // this endpoint and its caller changed together when agent identity was
+    // unified on sales_user_id.
+    @GetMapping("/agents/{salesUserId}")
     public ResponseEntity<?> getAgentDetail(
-            @PathVariable String agentEmail,
+            @PathVariable String salesUserId,
             @RequestParam(defaultValue = "") String period,
             @RequestParam(defaultValue = "") String dateFrom,
             @RequestParam(defaultValue = "") String dateTo) {
@@ -441,7 +456,10 @@ public class LeaderboardController {
         String dateFilter = buildDateFilter(period, dateFrom, dateTo);
 
         Map<String, Object> detail = new HashMap<>();
-        detail.put("agent", agentEmail);
+        detail.put("agent", salesUserId);
+        detail.put("agentEmail", jdbcTemplate.query(
+            "SELECT MAX(sales_email) FROM dim_merchant WHERE tenant_id = ? AND sales_user_id = ?",
+            rs -> rs.next() ? rs.getString(1) : null, tenantId, salesUserId));
 
         String merchSql = "SELECT m.merchant_id, m.mid, m.name, m.status, m.city, m.created_date,"
             + " COALESCE(v.total_volume, 0) AS volume,"
@@ -457,14 +475,14 @@ public class LeaderboardController {
             + (dateFilter.isEmpty() ? "" : " AND business_date " + dateFilter)
             + "   GROUP BY merchant_id"
             + " ) v ON m.merchant_id = v.merchant_id"
-            + " WHERE m.tenant_id = ? AND m.sales_email = ?"
+            + " WHERE m.tenant_id = ? AND m.sales_user_id = ?"
             + " ORDER BY net DESC, volume DESC";
 
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
         if (!dateFilter.isEmpty()) addDateParams(params, period, dateFrom, dateTo);
         params.add(tenantId);
-        params.add(agentEmail);
+        params.add(salesUserId);
 
         detail.put("merchants", jdbcTemplate.queryForList(merchSql, params.toArray()));
 
@@ -475,10 +493,10 @@ public class LeaderboardController {
             + " SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)) AS net"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
-            + " WHERE sdm.tenant_id = ? AND m.sales_email = ?"
+            + " WHERE sdm.tenant_id = ? AND m.sales_user_id = ?"
             + " GROUP BY TO_CHAR(sdm.business_date, 'YYYY-MM')"
             + " ORDER BY month DESC LIMIT 12";
-        detail.put("monthlyTrend", jdbcTemplate.queryForList(trendSql, tenantId, agentEmail));
+        detail.put("monthlyTrend", jdbcTemplate.queryForList(trendSql, tenantId, salesUserId));
 
         return ResponseEntity.ok(detail);
     }

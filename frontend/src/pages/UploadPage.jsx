@@ -382,6 +382,12 @@ const SummaryModal = ({ jobDetails, onClose }) => {
         ? Math.round((dq.unresolvedMerchant / dq.total) * 100)
         : 0;
 
+    // Sales-agent reassignment summary from a merchant master upload. Only shown
+    // when the file actually moved merchants or raised a warning — an upload that
+    // changed no assignments has nothing to report here.
+    const ra = jobDetails.salesReassignment;
+    const raHasNews = ra && (ra.reassigned > 0 || ra.conflicts > 0 || ra.unknownAgents > 0);
+
     const stats = [
         { label: 'Rows read',   value: (jobDetails.readCount  || 0).toLocaleString(), color: '#2563eb' },
         { label: 'Rows written',value: (jobDetails.writeCount || 0).toLocaleString(), color: '#059669' },
@@ -487,6 +493,44 @@ const SummaryModal = ({ jobDetails, onClose }) => {
                                     {dqUnresolvedPct}% of rows couldn't be matched to a merchant (SID not in the master data).
                                     Upload the merchant master file for these stores, then re-run, or check for an SID format mismatch.
                                 </span>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {raHasNews && (
+                    <div style={{
+                        padding: '14px 16px', borderRadius: '12px', marginBottom: 16,
+                        background: 'var(--bg-subtle,#f9fafb)',
+                        border: '1px solid var(--border,#e5e7eb)',
+                    }}>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text,#111827)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                            Sales agent changes
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: '0.8rem', color: 'var(--text-secondary,#6b7280)' }}>
+                            <span><strong style={{ color: 'var(--text,#111827)' }}>{(ra.reassigned || 0).toLocaleString()}</strong> merchant{ra.reassigned === 1 ? '' : 's'} reassigned</span>
+                            {ra.conflicts > 0 && (
+                                <span><strong style={{ color: '#b45309' }}>{ra.conflicts}</strong> conflicting</span>
+                            )}
+                            {ra.unknownAgents > 0 && (
+                                <span><strong style={{ color: '#b45309' }}>{ra.unknownAgents}</strong> new agent{ra.unknownAgents === 1 ? '' : 's'}</span>
+                            )}
+                        </div>
+
+                        {ra.reassigned > 0 && (
+                            <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary,#6b7280)', marginTop: 10, lineHeight: 1.45 }}>
+                                Each merchant's full transaction history now counts towards its new agent. The previous
+                                assignment is kept in the merchant's assignment history.
+                            </div>
+                        )}
+
+                        {Array.isArray(ra.warnings) && ra.warnings.length > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, padding: '10px 12px', borderRadius: 8, background: '#fffbeb', border: '1px solid rgba(180,83,9,0.15)' }}>
+                                <AlertCircle size={15} color="#b45309" style={{ flexShrink: 0, marginTop: 1 }} />
+                                <ul style={{ margin: 0, paddingLeft: 16, fontSize: '0.76rem', color: '#92400e', lineHeight: 1.5 }}>
+                                    {ra.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                                </ul>
                             </div>
                         )}
                     </div>

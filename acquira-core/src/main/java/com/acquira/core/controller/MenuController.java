@@ -96,6 +96,7 @@ public class MenuController {
                 // Hierarchy Explorer were unreachable from the sidebar. Register
                 // the full set here, idempotently, so every environment gets
                 // the complete Sales group on next startup.
+                {"Sales Executive",        "/sales/executive",           "LayoutDashboard", "SALES",       0},
                 {"Sales Team Management",  "/sales/team-management",     "Users",        "SALES",          1},
                 {"Country Leads",          "/sales/country-management",  "Globe",        "SALES",          2},
                 {"Agent Directory",        "/sales/agents",              "Contact",      "SALES",          3},

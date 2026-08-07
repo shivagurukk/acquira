@@ -923,14 +923,22 @@ public class TransactionJobConfig {
                 // are stored NEGATIVE so fact + all summaries net refunds out of volume,
                 // matching the raw feed / MIS reconciliation basis. Sign is forced from
                 // transaction_type (not trusted from the feed): purchases +ABS, refunds -ABS.
-                // msf/vat/interchange remain ABS; total_amount_settled stays raw SIGNED.
+                //
+                // SIGNED MSF (2026-08-07): MSF follows the SAME sign rule as volume.
+                // Verified against July 2026 (10,180,989 rows): file signed sum
+                // 16,566,159.6713 == finance == fact netted; the old ABS basis ran
+                // exactly 2x refund MSF higher (16,583,044.4293). Refund fees must
+                // net out to reconcile with the raw feed / finance pivot.
+                // vat/interchange remain ABS; total_amount_settled stays raw SIGNED.
                 "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, stg.txn_currency, " +
                 "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
                 "     THEN -ABS(stg.txn_currency_amount) ELSE ABS(stg.txn_currency_amount) END, " +
                 "stg.store_base_currency, " +
                 "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
                 "     THEN -ABS(stg.store_base_currency_amount) ELSE ABS(stg.store_base_currency_amount) END, " +
-                "ABS(stg.msf), ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination " +
+                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
+                "     THEN -ABS(stg.msf) ELSE ABS(stg.msf) END, " +
+                "ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination " +
                 "FROM stg_trnx_raw stg " +
                 "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '') " +
                 "LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '') " +
