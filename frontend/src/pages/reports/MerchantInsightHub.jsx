@@ -72,13 +72,24 @@ const MerchantInsightHub = () => {
         fetchMasters();
     }, [tenantVersion]);
 
-    // Effect to refetch when page changes (but not when filters change, that's manual Run Report)
+    // Refetch on ANY page change after the initial mount. The old `> 1` guard
+    // meant Prev back to page 1 never refetched — the table kept page 2's rows
+    // while the footer said "Page 1".
+    const pageMountedRef = React.useRef(false);
     useEffect(() => {
-        if (currentPage > 1) fetchReport(currentPage);
+        if (!pageMountedRef.current) { pageMountedRef.current = true; return; }
+        fetchReport(currentPage);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentPage]);
 
+    // Discard out-of-order responses (rapid Next clicks over a slow query).
+    const reqIdRef = React.useRef(0);
+    const [error, setError] = useState(null);
+
     const fetchReport = async (pageOverride) => {
+        const reqId = ++reqIdRef.current;
         setLoading(true);
+        setError(null);
         const pageToFetch = pageOverride || currentPage;
         // If override provided (e.g. Run Report clicked), update state
         if (pageOverride && pageOverride !== currentPage) setCurrentPage(pageOverride);
@@ -89,12 +100,57 @@ const MerchantInsightHub = () => {
                 page: pageToFetch - 1,  // Backend is 0-indexed
                 size: itemsPerPage
             });
+            if (reqId !== reqIdRef.current) return;
             const json = res.data || {};
             setData(json.content || []); // Handle new wrapper
             setTotalElements(json.totalElements || 0);
             setPageCount(json.totalPages || 0);
-        } catch (err) { console.error(err); }
-        finally { setLoading(false); }
+        } catch (err) {
+            if (reqId !== reqIdRef.current) return;
+            console.error(err);
+            // A failure used to leave the PREVIOUS report on screen under the
+            // NEW filters — stale numbers reading as a fresh result.
+            setData([]);
+            setTotalElements(0);
+            setPageCount(0);
+            setError(err?.response?.data?.error || err?.response?.statusText || 'Could not generate the report.');
+        }
+        finally { if (reqId === reqIdRef.current) setLoading(false); }
+    };
+
+    // Export the CURRENT filters as CSV — fetches up to 5000 rows in one call.
+    // (The button previously had no handler at all: it did nothing, silently.)
+    const [exporting, setExporting] = useState(false);
+    const handleExport = async () => {
+        setExporting(true);
+        setError(null);
+        try {
+            const res = await api.post('/reports/insight/generate', { ...filters, page: 0, size: 5000 });
+            const rows = res.data?.content || [];
+            const total = res.data?.totalElements || rows.length;
+            const esc = (v) => {
+                const s = String(v ?? '');
+                return `"${(/^[=+\-@]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
+            };
+            const lines = [['Date', 'Merchant', 'MID', 'RM', 'MCC', 'Intl/Local', 'POS/ECOM', 'SID', 'TID', 'Card Type', 'Opt Status', 'Txns', 'Volume', 'MSF'].join(',')];
+            rows.forEach(r => lines.push([
+                esc(r.business_date), esc(r.merchant_name), esc(r.mid), esc(r.rm), esc(r.mcc),
+                esc(r.intl_local), esc(r.pos_ecom), esc(r.sid), esc(r.tid), esc(r.card_type), esc(r.opt_status),
+                r.total_txns ?? 0, Number(r.total_volume || 0).toFixed(2), Number(r.total_msf || 0).toFixed(4),
+            ].join(',')));
+            if (total > rows.length) {
+                lines.push(esc(`TRUNCATED — first ${rows.length} of ${total} rows; narrow the filters for a complete file`));
+            }
+            const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'merchant-insight-report.csv';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        } catch (err) {
+            console.error(err);
+            setError('Export failed. Please try again.');
+        } finally { setExporting(false); }
     };
 
     const handleRunReport = () => {
@@ -172,8 +228,11 @@ const MerchantInsightHub = () => {
                     <button onClick={handleRunReport} style={{ padding: '8px 16px', background: '#3b82f6', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
                         Run Report
                     </button>
-                    <button style={{ padding: '8px 16px', background: '#0f172a', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-                        <Download size={16} /> Export
+                    <button onClick={handleExport} disabled={exporting}
+                        style={{ padding: '8px 16px', background: '#0f172a', color: 'white', borderRadius: '8px', border: 'none',
+                            cursor: exporting ? 'default' : 'pointer', opacity: exporting ? 0.6 : 1,
+                            display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                        <Download size={16} /> {exporting ? 'Exporting…' : 'Export'}
                     </button>
                 </div>
             </div>
@@ -272,10 +331,15 @@ const MerchantInsightHub = () => {
                         {loading ? (
                             <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}><Loader2 className="animate-spin inline" /> Loading Market Data...</td></tr>
                         ) : data.length === 0 ? (
-                            <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No records found.</td></tr>
+                            <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: error ? '#b91c1c' : '#94a3b8' }}>
+                                {error ? `${error} ` : 'No records found.'}
+                                {error && <button onClick={() => fetchReport(currentPage)}
+                                    style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: '#2563eb', background: 'white', border: '1px solid #e2e8f0', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>Retry</button>}
+                            </td></tr>
                         ) : (
                             data.map((row, i) => (
-                                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                                <tr key={`${row.mid}-${row.sid}-${row.tid}-${row.business_date}-${row.card_type}-${i}`}
+                                    style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                                     <td style={{ padding: '10px', color: '#334155', whiteSpace: 'nowrap' }}>{row.business_date}</td>
                                     <td style={{ padding: '10px', fontWeight: '600', color: '#1e293b' }}>
                                         <div>{row.merchant_name}</div>

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Filter, Store, CreditCard, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { Search, Filter, Store, CreditCard, ChevronDown, ChevronRight, X, AlertTriangle } from 'lucide-react';
 import Loader from '../components/Loader';
 import DateRangePicker from './DateRangePicker';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../api/axios';
 
 const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
     // tenantVersion bumps on every super-admin tenant switch. This tree is
@@ -61,51 +62,53 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tenantVersion]);
 
+    // Failures used to be console-only, so a 403/500/expired token looked like
+    // an empty tenant; the raw fetch also bypassed the axios 401-refresh flow.
+    const [error, setError] = useState(null);
+    // Discard out-of-order responses — the numbered page buttons could fire two
+    // overlapping fetches and the slower one won.
+    const reqIdRef = useRef(0);
+
     const fetchHierarchy = async (pageIdx = 0, reset = false, clear = false) => {
+        const reqId = ++reqIdRef.current;
         setLoading(true);
+        setError(null);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
-
             const currentFilters = clear ? {} : filters;
-            const queryParams = new URLSearchParams();
-            queryParams.append('page', pageIdx);
-            queryParams.append('size', 20);
+            const params = { page: pageIdx, size: 20 };
 
-            if (currentFilters.search) queryParams.append('search', currentFilters.search);
-            if (currentFilters.sid) queryParams.append('sid', currentFilters.sid);
-            if (currentFilters.tid) queryParams.append('tid', currentFilters.tid);
-            if (currentFilters.storeName) queryParams.append('storeName', currentFilters.storeName);
+            if (currentFilters.search) params.search = currentFilters.search;
+            if (currentFilters.sid) params.sid = currentFilters.sid;
+            if (currentFilters.tid) params.tid = currentFilters.tid;
+            if (currentFilters.storeName) params.storeName = currentFilters.storeName;
 
-            if (currentFilters.merchantOnboardingFrom) queryParams.append('mFrom', currentFilters.merchantOnboardingFrom);
-            if (currentFilters.merchantOnboardingTo) queryParams.append('mTo', currentFilters.merchantOnboardingTo);
-            if (currentFilters.storeCreatedFrom) queryParams.append('sFrom', currentFilters.storeCreatedFrom);
-            if (currentFilters.storeCreatedTo) queryParams.append('sTo', currentFilters.storeCreatedTo);
-            if (currentFilters.terminalCreatedFrom) queryParams.append('tFrom', currentFilters.terminalCreatedFrom);
-            if (currentFilters.terminalCreatedTo) queryParams.append('tTo', currentFilters.terminalCreatedTo);
+            if (currentFilters.merchantOnboardingFrom) params.mFrom = currentFilters.merchantOnboardingFrom;
+            if (currentFilters.merchantOnboardingTo) params.mTo = currentFilters.merchantOnboardingTo;
+            if (currentFilters.storeCreatedFrom) params.sFrom = currentFilters.storeCreatedFrom;
+            if (currentFilters.storeCreatedTo) params.sTo = currentFilters.storeCreatedTo;
+            if (currentFilters.terminalCreatedFrom) params.tFrom = currentFilters.terminalCreatedFrom;
+            if (currentFilters.terminalCreatedTo) params.tTo = currentFilters.terminalCreatedTo;
 
-            const res = await fetch(`/api/merchants/hierarchy?${queryParams.toString()}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'X-Tenant-Id': tenantId
-                }
-            });
+            const res = await api.get('/merchants/hierarchy', { params });
+            if (reqId !== reqIdRef.current) return;
+            const data = res.data || {};
+            setMerchants(data.content || []);
+            setHasMore(!data.last);
+            setTotalPages(data.totalPages || 0);
+            setTotalElements(data.totalElements || 0);
 
-            if (res.ok) {
-                const data = await res.json();
-                setMerchants(data.content || []);
-                setHasMore(!data.last);
-                setTotalPages(data.totalPages || 0);
-                setTotalElements(data.totalElements || 0);
-
-                if (data.content.length > 0 && (data.content[0].stores && data.content[0].stores.length > 0)) {
-                    autoExpand(data.content);
-                }
+            if ((data.content || []).length > 0 && (data.content[0].stores && data.content[0].stores.length > 0)) {
+                autoExpand(data.content);
             }
-        } catch (error) {
-            console.error("Failed to fetch hierarchy", error);
+        } catch (e) {
+            if (reqId !== reqIdRef.current) return;
+            console.error("Failed to fetch hierarchy", e);
+            setMerchants([]);
+            setTotalPages(0);
+            setTotalElements(0);
+            setError(e?.response?.data?.error || e?.response?.statusText || 'Could not load the merchant hierarchy.');
         } finally {
-            setLoading(false);
+            if (reqId === reqIdRef.current) setLoading(false);
         }
     };
 
@@ -163,6 +166,13 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
 
     const toggleStore = async (storeId, merchantId) => {
         setExpandedStores(prev => ({ ...prev, [storeId]: !prev[storeId] }));
+        // Skip the fetch when the hierarchy response already delivered this
+        // store's terminals: those are FILTERED (TID / created-date), and the
+        // /stores/{id}/terminals endpoint returns ALL terminals — expanding
+        // used to overwrite the filtered list with unfiltered rows.
+        const m = merchants.find(mm => mm.merchantId === merchantId);
+        const s = m?.stores?.find(ss => ss.storeId === storeId);
+        if (s?.terminals?.length > 0) return;
         if (!fetchedStores.has(storeId)) {
             await fetchTerminalsForStore(storeId, merchantId);
         }
@@ -219,7 +229,8 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
         setPage(0);
         setFetchedMerchants(new Set());
         setFetchedStores(new Set());
-        setTimeout(() => fetchHierarchy(0, true, true), 50);
+        // clear=true bypasses stale filter state directly — no deferral needed.
+        fetchHierarchy(0, true, true);
     };
 
     const GRID = '40px 2fr 1fr 1fr 1fr';
@@ -313,9 +324,29 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
                     <div>Created Date</div>
                 </div>
 
-                {merchants.length === 0 ? (
+                {error && (
+                    <div role="alert" style={{
+                        display: 'flex', alignItems: 'center', gap: 8, margin: 16, padding: '10px 14px',
+                        borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--danger-border, #fecaca)',
+                        background: 'var(--danger-bg, #fef2f2)', color: 'var(--danger-text, #991b1b)',
+                        fontSize: '0.82rem', fontWeight: 600,
+                    }}>
+                        <AlertTriangle size={15} /> {error}
+                        <button onClick={() => fetchHierarchy(page, true)}
+                            style={{ marginLeft: 'auto', fontSize: '0.78rem', fontWeight: 700, color: 'var(--brand, #2563eb)',
+                                background: 'var(--bg-card, #fff)', border: '1px solid var(--border, #e2e8f0)',
+                                borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>Retry</button>
+                    </div>
+                )}
+                {loading ? (
+                    // Loading covers EVERY fetch, not just the first: page changes
+                    // and filter applies used to leave stale rows with no signal.
                     <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                        {loading ? 'Loading…' : 'No data found matching your filters.'}
+                        Loading…
+                    </div>
+                ) : merchants.length === 0 ? (
+                    <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        {error ? 'The merchant list could not be loaded.' : 'No data found matching your filters.'}
                     </div>
                 ) : (
                     merchants.map(m => (
@@ -396,14 +427,14 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
                             >← Prev</button>
                             {totalPages <= 7 ? (
                                 Array.from({ length: totalPages }, (_, i) => (
-                                    <button key={i} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
+                                    <button key={i} disabled={loading} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
                                         className={`mh-page-num${page === i ? ' active' : ''}`}
                                     >{i + 1}</button>
                                 ))
                             ) : (
                                 <>
                                     {[0, 1, 2].filter(i => i < totalPages).map(i => (
-                                        <button key={i} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
+                                        <button key={i} disabled={loading} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
                                             className={`mh-page-num${page === i ? ' active' : ''}`}
                                         >{i + 1}</button>
                                     ))}
@@ -413,7 +444,7 @@ const MerchantHierarchy = ({ viewMode = 'LIST' }) => {
                                     )}
                                     {page < totalPages - 4 && <span style={{ padding: '8px 4px', color: 'var(--text-muted)' }}>…</span>}
                                     {[totalPages - 3, totalPages - 2, totalPages - 1].filter(i => i >= 3 && i < totalPages).map(i => (
-                                        <button key={i} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
+                                        <button key={i} disabled={loading} onClick={() => { setPage(i); fetchHierarchy(i, true); }}
                                             className={`mh-page-num${page === i ? ' active' : ''}`}
                                         >{i + 1}</button>
                                     ))}

@@ -2,10 +2,17 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "frontend-dev",
+      "name": "backend",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run", "-pl", "acquira-core"],
+      "port": 8081
+    },
+    {
+      "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
-      "port": 5173
+      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

@@ -169,7 +169,7 @@ public class CampaignExecutionService {
                     // configured for STATEMENT_PDF attachments. Generated per
                     // merchant for the campaign's statement month.
                     if (campaign.getAttachmentType() == EmailCampaign.AttachmentType.STATEMENT_PDF) {
-                        byte[] pdf = generateStatementPdf(merchantId, merchantName,
+                        byte[] pdf = generateStatementPdf(merchantId, tenantId, merchantName,
                                 campaign.getStatementMonth());
                         if (pdf != null && pdf.length > 0) {
                             String fileName = "Statement_"
@@ -274,7 +274,7 @@ public class CampaignExecutionService {
      * Returns null on any failure so the caller can still send the email body
      * without the attachment rather than failing the whole recipient.
      */
-    private byte[] generateStatementPdf(Long merchantId, String merchantName, String statementMonth) {
+    private byte[] generateStatementPdf(Long merchantId, Long tenantId, String merchantName, String statementMonth) {
         try {
             YearMonth ym;
             try {
@@ -287,7 +287,7 @@ public class CampaignExecutionService {
             }
 
             MerchantInsightsDTO dto = merchantInsightService.getInsights(
-                    merchantId, ym.getYear(), ym.getMonthValue());
+                    merchantId, ym.getYear(), ym.getMonthValue(), tenantId);
             if (dto == null) {
                 log.warn("[Campaign] No insight data for merchant {} ({})", merchantName, merchantId);
                 return null;

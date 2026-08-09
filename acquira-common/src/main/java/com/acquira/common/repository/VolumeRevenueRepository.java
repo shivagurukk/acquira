@@ -26,9 +26,77 @@ public class VolumeRevenueRepository {
      * Tenant-scoped variant. When tenantId is non-null we add
      * `AND s.tenant_id = :tenantId` so cross-tenant rows can never appear in
      * the volume/revenue summary.
+     *
+     * Month-grain routing: the complete calendar months of the range are served
+     * from the pre-aggregate sum_monthly_insight and only a partial head/tail
+     * month falls back to sum_daily_insight — the same leg split as
+     * getPerformanceDashboardData(groupBy=MONTH).
+     *
+     * WHY the split rather than the all-or-nothing check alone: the screen's
+     * default preset is "this year", i.e. Jan 1 → TODAY, whose tail month is
+     * partial. Requiring the WHOLE range to be month-aligned therefore sent
+     * every default page load down the daily path, where it exceeded the 30s
+     * web statement_timeout (TenantAwareDataSource). Only LAST_MONTH/LAST_YEAR
+     * ever qualified.
+     *
+     * EXACTNESS: the legs produce disjoint month buckets by construction (the
+     * head/tail months are excluded from [mStart, mEnd]), so the per-month
+     * COUNT(DISTINCT merchant_id) is never split across two legs and the rows
+     * can simply be concatenated and re-sorted — no cross-leg merging.
      */
     public List<Map<String, Object>> getSummary(VolumeRevenueFilterDTO filter, Long tenantId) {
         requireTenant(tenantId);
+
+        java.time.LocalDate start = filter.getStartDate();
+        java.time.LocalDate end = filter.getEndDate();
+        if (start != null && end != null && !start.isAfter(end)) {
+            java.time.LocalDate mStart = start.getDayOfMonth() == 1 ? start
+                    : start.plusMonths(1).withDayOfMonth(1);
+            java.time.LocalDate mEnd = end.getDayOfMonth() == end.lengthOfMonth() ? end
+                    : end.withDayOfMonth(1).minusDays(1);
+            if (!mStart.isAfter(mEnd)) {
+                // At least one whole month → monthly leg, plus any partial head/tail.
+                List<Map<String, Object>> result = new ArrayList<>(runSummaryLeg(filter, mStart, mEnd, tenantId));
+                if (start.isBefore(mStart))
+                    result.addAll(runSummaryLeg(filter, start, mStart.minusDays(1), tenantId));
+                if (end.isAfter(mEnd))
+                    result.addAll(runSummaryLeg(filter, mEnd.plusDays(1), end, tenantId));
+                // Match the single-leg ORDER BY month_label DESC ('YYYY-MM' sorts chronologically)
+                result.sort((a, b) -> String.valueOf(b.get("month")).compareTo(String.valueOf(a.get("month"))));
+                return result;
+            }
+        }
+        // Range sits inside a single calendar month (or has an open bound) —
+        // nothing to route, run it as-is against the daily table.
+        return getSummaryLeg(filter, tenantId);
+    }
+
+    /**
+     * Runs one leg of {@link #getSummary} over a sub-range. Swaps the filter's
+     * dates in place for the call and restores them after (the DTO is
+     * request-scoped but shared across the legs of one request) — same
+     * convention as {@link #runDailyMonthPivot}.
+     */
+    private List<Map<String, Object>> runSummaryLeg(VolumeRevenueFilterDTO filter,
+            java.time.LocalDate start, java.time.LocalDate end, Long tenantId) {
+        java.time.LocalDate origStart = filter.getStartDate();
+        java.time.LocalDate origEnd = filter.getEndDate();
+        try {
+            filter.setStartDate(start);
+            filter.setEndDate(end);
+            return getSummaryLeg(filter, tenantId);
+        } finally {
+            filter.setStartDate(origStart);
+            filter.setEndDate(origEnd);
+        }
+    }
+
+    /**
+     * One grouped scan for the volume/revenue summary. Reads the month-grain
+     * pre-aggregate when the leg's range is whole months, the daily table
+     * otherwise; callers above guarantee at most one partial month per leg.
+     */
+    private List<Map<String, Object>> getSummaryLeg(VolumeRevenueFilterDTO filter, Long tenantId) {
         StringBuilder sql = new StringBuilder();
 
         // ── Monthly pre-aggregate routing ──────────────────────────────────
@@ -68,7 +136,19 @@ public class VolumeRevenueRepository {
         sql.append("  SUM(CASE WHEN UPPER(COALESCE(s.destination,'')) <> 'DOMESTIC' THEN s.total_volume ELSE 0 END) as intl_volume, ");
         sql.append("  COUNT(DISTINCT s.merchant_id) as active_merchants ");
         sql.append("FROM ").append(BASE_TABLE).append(" ");
-        sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+
+        // dim_merchant is only needed when a merchant-attribute filter is set.
+        // It used to be joined unconditionally: no column of it is selected and
+        // merchant_id is dim_merchant's PK (so the join can never fan rows out),
+        // making it pure cost on every unfiltered run over the daily table.
+        boolean needMerchant = (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
+                || (filter.getRmList() != null && !filter.getRmList().isEmpty())
+                || (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
+                || (filter.getMidList() != null && !filter.getMidList().isEmpty())
+                || (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty());
+        if (needMerchant) {
+            sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        }
 
         // dim_store is needed whenever we filter on MCC or SID.
         boolean needStore = (filter.getMccList() != null && !filter.getMccList().isEmpty())
@@ -1336,10 +1416,17 @@ public class VolumeRevenueRepository {
         java.time.LocalDate momEnd     = end.minusMonths(1);
 
         boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
+        // Same base-table routing as getAttritionReport — see the comment there.
+        boolean canUseMerchantGrain = !needStore
+                && !listNonEmpty(filter.getChannelList())
+                && !listNonEmpty(filter.getSchemeList())
+                && !listNonEmpty(filter.getCardTypeList())
+                && !listNonEmpty(filter.getDestinationList());
 
         java.util.function.BiFunction<java.time.LocalDate, java.time.LocalDate, Boolean> windowHasData = (wStart, wEnd) -> {
             StringBuilder sql = new StringBuilder();
-            sql.append("SELECT EXISTS(SELECT 1 FROM sum_daily_insight s ");
+            sql.append("SELECT EXISTS(SELECT 1 FROM ")
+               .append(canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight").append(" s ");
             sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
             if (needStore) {
                 sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
@@ -1461,6 +1548,22 @@ public class VolumeRevenueRepository {
 
         boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
 
+        // ── Base-table routing ─────────────────────────────────────────────
+        // This report is merchant-grained: it only ever reads business_date,
+        // merchant_id and the three measures. sum_daily_insight is the
+        // merchant x store x scheme x type x destination x channel cross-tab —
+        // 10-50x more rows than the merchant-grain sum_daily_merchant carrying
+        // the same totals. The insight table is only NEEDED when a card-dimension
+        // filter (scheme/type/destination/channel) has to cut rows before the
+        // SUM, or when a store filter needs s.store_id (always NULL on
+        // sum_daily_merchant). Everything else — including the default unfiltered
+        // load, the slow case in practice — routes to the small table.
+        boolean canUseMerchantGrain = !needStore
+                && !listNonEmpty(filter.getChannelList())
+                && !listNonEmpty(filter.getSchemeList())
+                && !listNonEmpty(filter.getCardTypeList())
+                && !listNonEmpty(filter.getDestinationList());
+
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT m.mid AS mid, m.name AS merchant_name, ");
         // For each window emit volume / txns / msf so the UI can toggle metric without re-querying.
@@ -1477,7 +1580,7 @@ public class VolumeRevenueRepository {
         appendVolumeMeasure(sql, "m3",     ":m3Start",     ":m3End");
         // strip trailing comma
         sql.setLength(sql.length() - 2);
-        sql.append(" FROM sum_daily_insight s ");
+        sql.append(" FROM ").append(canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight").append(" s ");
         // [TENANCY] Join is tenant-scoped (s.tenant_id = m.tenant_id) — the old version
         // joined on merchant_id alone, the [P2-1] cross-tenant time-bomb pattern.
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");

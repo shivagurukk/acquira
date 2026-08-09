@@ -146,6 +146,33 @@ public class FileUploadService {
     }
 
     /**
+     * TENANT-DRIVEN amount format (2026-08-08): the divide/don't-divide decision
+     * is now a property of the TENANT (tenant.input_format, set in Tenant
+     * Management), not a filename convention. CMM = minor units, divide at
+     * ingest; AMS = final decimals, no division. This is what a new-country
+     * tenant (e.g. Bahrain/BHD, 3-decimal) configures ONCE instead of relying
+     * on operators naming every file correctly.
+     *
+     * The legacy 'AMS_' filename prefix is kept ONLY as an explicit per-file
+     * override (a CMM tenant can still receive the occasional final-decimal
+     * AMS extract without misloading it). It never forces division — it can
+     * only skip it, which is the safe direction.
+     */
+    String inputTypeForTenant(Long tenantId, String fileName) {
+        if ("AMS".equals(inputTypeFor(fileName))) return "AMS"; // explicit per-file override
+        if (tenantId != null) {
+            try {
+                return tenantRepository.findById(tenantId)
+                        .map(t -> "AMS".equalsIgnoreCase(t.getInputFormat()) ? "AMS" : "CMM")
+                        .orElse("CMM");
+            } catch (Exception e) {
+                // Never block an upload on a lookup failure — CMM is the legacy default.
+            }
+        }
+        return "CMM";
+    }
+
+    /**
      * Load mode for a TRANSACTION file:
      *   - JCB* files are ALWAYS APPEND (preserves existing behaviour, independent of config).
      *   - otherwise the TENANT's tenant_setting 'load.mode' wins if set (REPLACE|APPEND),
@@ -389,7 +416,7 @@ public class FileUploadService {
                         .addLong("tenantId", targetTenantId)
                         .addString("fullPath", filePath)
                         .addString("loadMode", loadModeFor(file.getOriginalFilename(), targetTenantId))
-                        .addString("inputType", inputTypeFor(file.getOriginalFilename()))
+                        .addString("inputType", inputTypeForTenant(targetTenantId, file.getOriginalFilename()))
                         .addLong("startedAt", System.currentTimeMillis())
                         .toJobParameters();
                 org.springframework.batch.core.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
@@ -834,7 +861,7 @@ public class FileUploadService {
                     .addLong("tenantId", targetTenantId)
                     .addString("fullPath", filePath)
                     .addString("loadMode", loadModeFor(file.getName(), targetTenantId))
-                    .addString("inputType", inputTypeFor(file.getName()))
+                    .addString("inputType", inputTypeForTenant(targetTenantId, file.getName()))
                     .addLong("startedAt", System.currentTimeMillis())
                     .toJobParameters();
 

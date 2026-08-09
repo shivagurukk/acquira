@@ -1,8 +1,8 @@
 # Acquira — End-to-End Developer Guide
 
 **Audience:** Developers joining the project / handover documentation
-**Last updated:** 2026-05-08 (audit pass applied — see Appendix D)
-**Stack:** Java 21, Spring Boot 3.2, Spring Batch 5.1, PostgreSQL (RDS), React 19 + Vite + MUI, deployed on AWS EC2 + RDS (same AZ)
+**Last updated:** 2026-08-07 (post-audit refresh — see Appendix E for everything added since the 2026-05-08 audit pass)
+**Stack:** Java 21, Spring Boot 3.2, Spring Batch 5.1, PostgreSQL (RDS), React 19 + Vite + MUI, Playwright (PDF rendering), deployed on AWS EC2 + RDS (same AZ)
 
 > **Recent audit pass (2026-05-08):** A code audit was applied that fixed
 > several P0/P1/P2 issues across security, tenancy, and batch reliability.
@@ -39,7 +39,9 @@
 18. [Operations Runbook](#18-operations-runbook)
 19. [Troubleshooting](#19-troubleshooting)
 20. [Performance Notes](#20-performance-notes)
-21. [Appendix D — Audit Pass Changelog (2026-05-08)](#appendix-d-audit-pass-changelog-2026-05-08)
+21. [Business Analytics Reports & the Monthly Pre-Aggregate Layer](#21-business-analytics-reports--the-monthly-pre-aggregate-layer)
+22. [Appendix D — Audit Pass Changelog (2026-05-08)](#appendix-d-audit-pass-changelog-2026-05-08)
+23. [Appendix E — Changes Since the Audit (2026-05-08 → 2026-08-07)](#appendix-e-changes-since-the-audit-2026-05-08--2026-08-07)
 
 ---
 
@@ -254,7 +256,8 @@ These are pre-aggregated for dashboard speed. All have `(tenant_id, business_dat
 | `sum_daily_merchant_attribute` | per (tenant, merchant, date, attribute_type, attribute_value) | Generic key-value: card_scheme, card_type, destination, transaction_type, hour, txn_size_bucket |
 | `sum_daily_terminal` | per (tenant, date, merchant, store, terminal) | Terminal-level totals |
 | `sum_daily_finance` | per (tenant, date) | Finance dashboard: domestic/international × debit/credit splits |
-| `sum_daily_insight` | per (tenant, date, merchant, store, terminal, scheme, type, destination, channel, opt_in) | Cross-tab for analytics explorer |
+| `sum_daily_insight` | per (tenant, date, merchant, store, terminal, scheme, type, destination, channel, opt_in) | Cross-tab for analytics explorer. **Partitioned by year** (`sum_daily_insight_y2024`, `_y2025`, `_default`) since the 2026-06 pre-aggregate work. |
+| `sum_monthly_insight` | per (tenant, `month_key` YYYYMM, merchant, store, terminal, scheme, type, destination, channel, opt_in) | **Month-grain pre-aggregate of `sum_daily_insight`** (~30× fewer rows). Added by `V2026_06_29_02`. Month-grained reads route here — see §21. All measures are additive SUMs so monthly = SUM(daily) reconciles exactly for whole months. |
 | `sum_daily_scheme` | per (tenant, date, scheme) | VISA/MCRD/AMEX volumes |
 | `sum_daily_channel` | per (tenant, date, channel) | POS / ECOM / MOTO volumes |
 | `sum_daily_mcc` | per (tenant, date, mcc, scheme) | Industry breakdown |
@@ -282,10 +285,11 @@ These are pre-aggregated for dashboard speed. All have `(tenant_id, business_dat
 
 | Table | Purpose |
 |---|---|
-| `email_template_config` | Reusable email templates |
+| `email_template_config` | Reusable email templates. `template_type` values: `STATEMENT`, `WELCOME`, `ALERT`, `PROMOTION`, `CUSTOM`, and **`REPORT_PDF`** (the covering email for the monthly PDF report batch — resolved per tenant via `isDefaultForType`, see §14.4). Unique on `(tenant_id, name)`; one default per `(tenant_id, template_type)` enforced by migration. |
 | `email_campaign` | Campaign definition (target merchants + template) |
 | `email_campaign_log` | Per-recipient send log |
-| `email_queue` | Pending emails waiting on SMTP |
+| `email_queue` | Pending emails waiting on SMTP. Columns `merchant_id`, `merchant_name`, `is_html`, `statement_month`, `attachment_path` added by `V2026_07_10_04` — the Email Manager stats page filters on `statement_month`. Drained by `EmailQueueProcessor` (§14.3). |
+| `email_smtp_config` | **Per-tenant SMTP server config.** Password AES-256-GCM encrypted at rest via `CryptoService`, decrypted only in-memory when building a `JavaMailSender`, and never returned to API clients (masked onto a detached copy — mutating the managed entity caused the 2026-07 "test works before save, 535 after" bug). Single active config per tenant. |
 
 ### 4.10 Integration Hub
 
@@ -473,6 +477,30 @@ that didn't propagate context, or a `@Scheduled` job), the method now
 throws `IllegalStateException` instead of silently returning an empty list.
 An empty `WHERE tenant_id IN (?)` would have returned zero rows — masking
 a real bug as "no data".
+
+### 7.3 TenantAwareDataSource — per-checkout GUCs + web statement timeout
+
+`TenantConnectionDataSourceConfig.TenantAwareDataSource` wraps the Hikari
+datasource. On **every connection checkout** it runs one round-trip:
+
+```sql
+SELECT set_config('app.current_tenant', ?, false),
+       set_config('statement_timeout', ?, false)
+```
+
+- `app.current_tenant` — from `TenantContext` (blank when none), overwritten
+  on every checkout so it can never leak between borrowers.
+- `statement_timeout` — **finite (default 30 000 ms) on servlet-request
+  threads, `0` (unlimited) on batch/scheduler/startup threads.** The
+  `hikari.connection-init-sql` sets `statement_timeout=0` for ingest, but web
+  requests share the same 30-connection pool; one runaway report query per
+  connection would deadlock the app with nothing to reap it. Override with
+  `-Dacquira.web.statement.timeout.ms=NNNN` (0 disables).
+
+Practical consequence: any dashboard query that cannot finish in 30 s
+surfaces as `QueryTimeoutException: canceling statement due to statement
+timeout`. The fix is to make the query cheap (pre-aggregates, §21), not to
+raise the ceiling.
 
 ---
 
@@ -682,7 +710,6 @@ Mirrors the pattern already used by `calculateDailyDashboardMetricsStep`.
 
 | Dashboard | Path | Backend |
 |---|---|---|
-| Executive Dashboard | `/dashboard/executive` | `ExecutiveDashboardController` reads `sum_daily_bank`, `sum_monthly_bank` |
 | Finance Dashboard | `/dashboard/finance` | `FinanceController` reads `sum_daily_finance`, `sum_daily_insight` |
 | Transaction Performance | `/dashboard/transactions` | `TransactionController` + `AnalyticsController` |
 | Merchant Insight | `/merchants/:id/insight` | `MerchantInsightController` reads sum_daily_merchant_attribute |
@@ -739,49 +766,105 @@ inline aggregation subqueries** — push the tenant filter as deep as possible.
 ## 13. PDF Reports
 
 **Module:** `acquira-pdf`
-**Library:** Apache PDFBox + JFreeChart for charts
+**Rendering:** Microsoft **Playwright** (headless Chromium) printing **Thymeleaf** HTML templates to PDF. OpenPDF + JFreeChart are on the classpath for legacy/simple outputs, but the merchant report is HTML-first: each page is a Thymeleaf template under `acquira-pdf/src/main/resources/templates/pages/` (`p01-cover.html` … `p13-glossary.html`, `p99-closing.html`) with shared `partials/header.html` / `partials/footer.html`. Editing report layout = editing HTML/CSS, not Java drawing code.
 
 ### Report types
 
-| Report | Pages | Notes |
+| Report | Source templates | Notes |
 |---|---|---|
-| Merchant Performance Report | 10 pages | Cover, summary, charts, transaction breakdowns, DCC analysis (pages 9-10) |
-| Bank Daily/Monthly Report | 5 pages | Aggregated bank-level KPIs |
-| Group Report | varies | Multi-merchant comparison |
+| Merchant Business Insight Report | `pages/p01…p99` | Cover, TOC, exec summary, scorecard, MoM compare, sales trends, heatmap, revenue, store leaderboard, card analytics, customer intel/loyalty, monthly trends, transactions, DCC, glossary |
+| Basic report | `basic-report.html` | Single-page fallback |
+
+### Generation pipeline (batch)
+
+```
+POST /api/business/insights/generate-all?year&month&sendEmail&sendS3[&merchantIds]
+  1. Resolve tenant + month; list merchants (optionally selective)
+  2. Chunked pre-fetch (pdf.batch.prefetch.chunk.size=100 merchants/chunk) —
+     one getBulkInsights per chunk, freed after render, or the heap OOMs on 10k+ merchants
+  3. PlaywrightPdfService renders each merchant's report → PDF file in
+     <reports.dir>/<bank_short_code>/<YYYY-MM>/Insight_<name>_<YYYY-MM>.pdf
+  4. Post-batch thread (only if sendEmail or sendS3):
+       sendEmail  → queue one row per merchant into email_queue (§14.3)
+       sendS3     → archive PDF to S3, INDEPENDENT of email outcome
+```
+
+`sendEmail`/`sendS3` combinations behave as a 2×2 matrix; S3 archival is not gated on email success (the PDF exists either way).
 
 ### Pool & threading
 
 ```
 pdf.pool.size=2              # max concurrent PDF generations (memory-bound)
-pdf.chart.wait.ms=800        # JFreeChart wait between draws
+pdf.chart.wait.ms=800        # chart settle wait between draws
 pdf.batch.data.threads=4     # SQL fetch threads per PDF
+pdf.batch.prefetch.chunk.size=100
 ```
 
 ### Storage
 
-Generated PDFs go to `app.reports.dir` (default `/opt/acquira/reports`). Logged in `pdf_batch_log`. Optionally uploaded to S3 (configured via `S3SettingsController`).
+Generated PDFs go to `pdf.reports.dir` (default `/opt/acquira/reports`), tenant-discriminated by `bank_short_code` (or `tenant-<id>` when no short code — two tenants' PDFs can never land in one shared folder). Logged in `pdf_batch_log`. Optionally archived to S3 (configured via `S3SettingsController`).
 
 ---
 
 ## 14. Email & Campaigns
 
-### Tables
+### 14.1 Tables
 
-`email_template_config`, `email_campaign`, `email_campaign_log`, `email_queue`.
+`email_template_config`, `email_campaign`, `email_campaign_log`, `email_queue`, `email_smtp_config` (see §4.9).
 
-### Flow
+### 14.2 Campaign flow
 
 ```
-1. Bank Admin creates email_template_config (subject, body, variables)
+1. Bank Admin creates email_template_config (subject, body with {{variable}} merge tags)
+   — Admin > Email campaign hub > Templates tab
 2. Creates email_campaign (target merchants + template)
-3. Background scheduler picks up due campaigns
-4. For each merchant: render template → enqueue in email_queue
-5. SMTP sender drains email_queue, logs to email_campaign_log
+3. CampaignExecutionService renders per merchant (TemplateRendererService
+   supplies merchant/txn variables) → enqueues into email_queue
+4. EmailQueueProcessor drains the queue (14.3); results log to email_campaign_log
 ```
 
-### SMTP config
+### 14.3 email_queue — the single outbound mail path
 
-Stored in `tenant_setting` per tenant (so each bank uses its own SMTP). Configurable via `/admin/smtp-settings`.
+**ALL outbound merchant mail goes through `email_queue`**, never inline SMTP.
+`EmailQueueProcessor` polls every 60 s (`@Scheduled(fixedDelay=60000)`), picks
+`PENDING` rows under the retry cap, builds a `JavaMailSender` from the row's
+tenant's **active `email_smtp_config`** (AES-decrypted password), sends (with
+`attachment_path` if present, HTML body when `is_html`), then marks `SENT` or
+bumps `retry_count` with the error message. This is why a slow SMTP server
+cannot stall a PDF batch: the batch only inserts rows.
+
+### 14.4 PDF report covering email — tenant templates (added 2026-08-07)
+
+The email a merchant receives with their monthly PDF report used to be
+hardcoded in `PdfController`. It is now resolved per tenant by
+**`ReportEmailTemplateService`** (`acquira-common`):
+
+```
+resolve(tenantId, vars):
+  1. tenant's ACTIVE email_template_config with template_type = REPORT_PDF
+     and is_default_for_type = TRUE          → use its subject + bodyHtml
+  2. otherwise → built-in template (the previous hardcoded email, verbatim,
+     with {{placeholders}}) — behaviour unchanged for tenants without one
+```
+
+Merge variables (the batch supplies exactly these — nothing else renders):
+`{{merchant_name}}`, `{{mid}}`, `{{month_year}}`, `{{statement_month}}`, `{{pdf_filename}}`.
+
+Admin UI: Email campaign hub → Templates → type **"PDF report email"**. A
+*Load the built-in email* button pre-fills the form with the real current email
+(`GET /api/email-campaigns/templates/builtin/REPORT_PDF`) so customisation
+starts from the working Outlook-safe layout. Mark the template *default for
+type* or the batch ignores it. A malformed tenant template falls back to the
+built-in rather than failing the batch loop.
+
+The service lives in `acquira-common` because `acquira-pdf` depends only on
+common — core's `TemplateRendererService` is unreachable from the PDF module.
+
+### 14.5 SMTP config
+
+Per-tenant rows in `email_smtp_config` (NOT `tenant_setting`), managed by
+`SmtpConfigService` via the Settings screens. One active config per tenant;
+password encrypted at rest; reads return a masked detached copy.
 
 ---
 
@@ -1124,6 +1207,64 @@ Without `-Xmx`, JVM defaults to 25% of RAM which on a t3.medium = ~1 GB → OutO
 
 ---
 
+## 21. Business Analytics Reports & the Monthly Pre-Aggregate Layer
+
+The `/business/*` report family (added/expanded after the audit) reads the
+insight summaries, never `fact_transaction`.
+
+### 21.1 Endpoints (BusinessAnalyticsController + friends)
+
+| Endpoint | Page | Base table(s) |
+|---|---|---|
+| `POST /business/volume-revenue-summary` | Volume & Revenue Summary | `sum_monthly_insight` / `sum_daily_insight` (routed, 21.2) |
+| `POST /business/merchant-financial-summary` | Merchant Financial Summary | `sum_daily_insight` + dims |
+| `POST /business/performance-dashboard?groupBy=` | drill-down MONTH/DAY/MERCHANT/STORE | routed for `groupBy=MONTH` |
+| `POST /business/debit-prepaid-metrics`, `/debit-prepaid-summary` | Debit & Prepaid | `sum_daily_insight` (permissive card_type matcher + `ref_card_scheme` fallback; user-picked card types override the matcher) |
+| `POST /business/top-performers-filtered` | Top Performers | dual-grain: `sum_daily_merchant` (settlement volume, real net margin = MSF − interchange − scheme fee) unless a card-level filter forces `sum_daily_insight` (cardholder volume, net margin ≈ MSF) |
+| `GET /business/data-bounds` | all report pages | earliest/latest business_date for the tenant |
+
+**Filter conventions shared by all of them:**
+- Industry picks resolve to MCC lists via `ref_mcc_category` server-side
+  (`resolveFilters`), because `dim_merchant.industry` carries raw feed text
+  that never matches the category sheet.
+- Team-leader picks resolve to `sales_user_id` lists via `SalesTeamService`;
+  an unmatched name becomes the `__NO_MATCH__` sentinel (zero rows, never
+  silently unfiltered).
+- Frontend pages default their date range from `/business/data-bounds`
+  (`useDataBounds` hook) — the full data window, NOT the current calendar
+  month, so a feed whose latest date is in an earlier month still shows data
+  on first load.
+
+### 21.2 Monthly routing (the 30s-timeout fix)
+
+Month-grained queries are served from `sum_monthly_insight` wherever the range
+allows, because a year of `sum_daily_insight` at scale exceeds the 30 s web
+statement timeout (§7.3):
+
+```
+[start, end]
+  mStart = first whole-month boundary ≥ start
+  mEnd   = last  whole-month boundary ≤ end
+  if mStart ≤ mEnd:
+      leg 1: sum_monthly_insight  month_key BETWEEN yyyymm(mStart)..yyyymm(mEnd)
+      leg 2: sum_daily_insight    [start, mStart-1]   (partial head month, if any)
+      leg 3: sum_daily_insight    [mEnd+1, end]       (partial tail month, if any)
+      concatenate + re-sort — legs produce DISJOINT month buckets by
+      construction, so no cross-leg merging and COUNT(DISTINCT merchant_id)
+      is never split across legs
+  else: single-month / open-bound range → daily table as-is
+```
+
+Used by `VolumeRevenueRepository.getSummary` and
+`getPerformanceDashboardData(groupBy=MONTH)`. EXACTNESS RULE: the monthly
+table may only serve WHOLE months — a partial month read from `month_key`
+would include days outside the range and over-count vs daily.
+
+**When adding a new month-grained report, route it the same way.** The daily
+table is for day-grain or partial-month legs only.
+
+---
+
 ## Appendix A: Useful SQL Queries
 
 ### Tenant data overview
@@ -1401,6 +1542,71 @@ ops, or larger refactors:
 7. **Bulk transaction upload (>100 MB, multi-month):** must complete with
    `Manual Ingestion Completed for all dates.` in the log. No
    `Connection is closed` errors in the dashboard step (P0-5).
+
+---
+
+## Appendix E: Changes Since the Audit (2026-05-08 → 2026-08-07)
+
+The ordered ledger of every schema change is
+`acquira-core/src/main/resources/application.properties` →
+`spring.sql.init.schema-locations` (schema.sql, schema_extras.sql, then every
+`db/migration/V*` in execution order). Highlights by area:
+
+### Schema / migrations
+- **`sum_monthly_insight`** (`V2026_06_29_02`) — month-grain pre-aggregate of
+  `sum_daily_insight`; `sum_daily_insight` itself became year-partitioned.
+  Monthly routing described in §21.2.
+- **Interchange & scheme-fee engine** (`V2026_07_05_01`,
+  `V2026_07_31_02..06`) — `sum_daily_terminal` fee columns, multi-country
+  interchange engine, rate cards for UAE, Bahrain, Oman, Egypt, e-com flat-fee
+  config, intl debit interchange, domestic POS scheme fee.
+- **`ref_mcc_category`** (`V2026_07_10_01`) — the bank's MCC sector sheet;
+  feeds the Industry filter resolution (§21.1).
+- **`email_queue` completion** (`V2026_07_10_04`) — merchant_id /
+  merchant_name / is_html / statement_month columns the queue processor and
+  Email Manager stats page require.
+- **Tenant provisioning + partition provisioning** (`V2026_07_11_03`,
+  `V2026_07_12_01`) — self-service tenant creation incl. per-tenant partition
+  setup.
+- **Sales team build-out** (`V2026_07_10_05`, `V2026_07_11_04..05`,
+  `V2026_08_06_01`) — /sales/* screens, country-lead hierarchy,
+  `merchant_sales_assignment_history` audit trail (written set-based by the
+  merchant-master upload when reassignments happen).
+- **Password reset via OTP** (`V2026_07_11_01`), **account expiry**
+  (`V2026_07_04_02`), **API management foundation** (`V2026_07_04_01`),
+  **budget targets** (`V2026_07_02_01`), **DB maintenance screens**
+  (`V2026_06_26_01..02`), **integration pull flags / schedule precondition**
+  (`V2026_07_14_01`, `V2026_08_07_01`).
+
+### Backend behavior
+- **Web statement timeout** — `TenantAwareDataSource` stamps
+  `statement_timeout=30s` on servlet threads, `0` on batch threads, at every
+  connection checkout (§7.3).
+- **Monthly pre-aggregate routing** in `VolumeRevenueRepository` (§21.2);
+  `getSummary` also drops its `dim_merchant` join unless a merchant-attribute
+  filter needs it (the join selected nothing and could not fan rows out —
+  merchant_id is the PK).
+- **All outbound mail through `email_queue`** with per-tenant
+  `email_smtp_config` (AES-256-GCM at rest) drained by `EmailQueueProcessor`
+  every 60 s (§14.3).
+- **Tenant-templated PDF covering email** — `REPORT_PDF` template type +
+  `ReportEmailTemplateService` with built-in fallback (§14.4).
+- **Top Performers** — single-endpoint report (3 queries: current window,
+  prior window, first-txn dates) with month-aligned prior-window comparison,
+  25th-percentile noise floor on movers, first-revenue-date definition of
+  "new merchant" (NOT `dim_merchant.created_date`, which is an ETL load
+  timestamp).
+
+### Frontend conventions
+- **`useDataBounds`** — shared default-date-range hook; report pages seed
+  filters from the tenant's actual data window and pass the seeded object
+  explicitly to the first fetch (two-effect stale-closure bug fixed 2026-08-07
+  on DebitPrepaidMetrics / MerchantFinancialSummary / GroupReports).
+- **`PremiumReportHeader`** — shared report chrome: date-preset chips that
+  pass the fully-resolved next-filters object to `onApplyAfterDatePreset`
+  (never a stale closure), filters drawer, Run Report.
+- Request-sequence guards (`reqSeq` ref) on pages where two in-flight report
+  runs could land out of order.
 
 ---
 

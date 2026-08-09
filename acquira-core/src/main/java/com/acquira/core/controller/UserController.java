@@ -761,16 +761,26 @@ public class UserController {
         String[] header = {
                 "Username", "Display Name", "Email", "Role", "Active", "Approval Status",
                 "SSO Provider", "Must Change Password", "Locked Until", "Account Expires At",
-                "Tenants", "Created At"
+                "Tenants", "Groups", "Created At"
         };
         sb.append(String.join(",", header)).append("\r\n");
 
         for (User u : users) {
             List<com.acquira.common.model.UserTenantAccess> accesses =
                     accessByUser.getOrDefault(u.getId(), java.util.List.of());
+            // One entry per tenant access, group in brackets since the group
+            // grant is PER TENANT: "Bank A [Bank Admin] *; Bank B [Business User]".
+            // The * still marks the default tenant.
             String tenants = accesses.stream()
                     .map(a -> a.getTenant().getBankName()
+                            + (a.getSysUserGroup() != null ? " [" + a.getSysUserGroup().getGroupName() + "]" : "")
                             + (Boolean.TRUE.equals(a.getIsDefaultTenant()) ? " *" : ""))
+                    .collect(Collectors.joining("; "));
+            // Distinct group names across all tenant accesses, for flat filtering.
+            String groups = accesses.stream()
+                    .map(a -> a.getSysUserGroup() != null ? a.getSysUserGroup().getGroupName() : null)
+                    .filter(g -> g != null && !g.isBlank())
+                    .distinct()
                     .collect(Collectors.joining("; "));
 
             String[] row = {
@@ -785,6 +795,7 @@ public class UserController {
                     u.getLockedUntil() != null ? u.getLockedUntil().toString() : "",
                     u.getAccountExpiresAt() != null ? u.getAccountExpiresAt().toString() : "",
                     tenants,
+                    groups,
                     u.getCreatedAt() != null ? u.getCreatedAt().toString() : ""
             };
             for (int i = 0; i < row.length; i++) {

@@ -1,5 +1,6 @@
 package com.acquira.common.service;
 
+import com.acquira.common.config.TenantContext;
 import com.acquira.common.dto.MerchantInsightsDTO;
 import com.acquira.common.dto.MerchantInsightsDTO.*;
 import jakarta.persistence.EntityManager;
@@ -71,12 +72,41 @@ public class MerchantInsightService {
     private MerchantInsightEnhancer insightEnhancer;
 
     /**
+     * Fail closed: merchant-keyed summary queries must never run without a
+     * tenant. merchant_id is a global BIGSERIAL, so an unscoped query would
+     * happily return another tenant's financials for a guessed id.
+     */
+    private static Long requireTenant(Long tenantId) {
+        if (tenantId == null) {
+            throw new IllegalStateException(
+                "Tenant context not resolved — refusing unscoped merchant insight query");
+        }
+        return tenantId;
+    }
+
+    /**
      * BULK PRE-FETCH: Load all data for multiple merchants in 6 queries total,
      * then partition in-memory. Returns Map<merchantId, DTO>.
      * This is 10-100x faster than calling getInsights() per merchant.
+     *
+     * Resolves the tenant from {@link TenantContext}; both batch callers already
+     * set it around the call. Use the 4-arg overload to pass one explicitly.
      */
     public Map<Long, MerchantInsightsDTO> getBulkInsights(List<Long> merchantIds, int year, int month) {
+        return getBulkInsights(merchantIds, year, month, TenantContext.getCurrentTenant());
+    }
+
+    /**
+     * Tenant-scoped bulk pre-fetch. Every underlying query pins
+     * {@code tenant_id = tenantId}, so merchant ids belonging to another tenant
+     * simply yield no rows (and hence no DTO) instead of leaking that tenant's
+     * data. {@code tenantId} must be the CALLER's tenant, never one derived from
+     * the merchant records being fetched.
+     */
+    public Map<Long, MerchantInsightsDTO> getBulkInsights(
+            List<Long> merchantIds, int year, int month, Long tenantId) {
         if (merchantIds == null || merchantIds.isEmpty()) return Collections.emptyMap();
+        requireTenant(tenantId);
 
         LocalDate startOfMonth = LocalDate.of(year, month, 1);
         LocalDate endOfMonth = startOfMonth.plusMonths(1).minusDays(1);
@@ -89,19 +119,19 @@ public class MerchantInsightService {
 
         // Q1+Q2: Daily rows (current + prev month) for all merchants
         List<com.acquira.common.model.SumDailyMerchant> allCurrentDaily =
-            sumDailyMerchantRepository.findDailyStatsForMerchants(merchantIds, startOfMonth, endOfMonth);
+            sumDailyMerchantRepository.findDailyStatsForMerchants(tenantId, merchantIds, startOfMonth, endOfMonth);
         List<com.acquira.common.model.SumDailyMerchant> allPrevDaily =
-            sumDailyMerchantRepository.findDailyStatsForMerchants(merchantIds, startOfLastMonth, endOfLastMonth);
+            sumDailyMerchantRepository.findDailyStatsForMerchants(tenantId, merchantIds, startOfLastMonth, endOfLastMonth);
 
         // Q3+Q4: Attributes (current + prev month) for all merchants
         List<com.acquira.common.model.SumDailyMerchantAttribute> allCurrentAttrs =
-            sumDailyMerchantAttributeRepository.findByMerchantsAndDateRange(merchantIds, startOfMonth, endOfMonth);
+            sumDailyMerchantAttributeRepository.findByMerchantsAndDateRange(tenantId, merchantIds, startOfMonth, endOfMonth);
         List<com.acquira.common.model.SumDailyMerchantAttribute> allPrevAttrs =
-            sumDailyMerchantAttributeRepository.findByMerchantsAndDateRange(merchantIds, startOfLastMonth, endOfLastMonth);
+            sumDailyMerchantAttributeRepository.findByMerchantsAndDateRange(tenantId, merchantIds, startOfLastMonth, endOfLastMonth);
 
         // Q5: 13-month trends for all merchants
         List<Map<String, Object>> allTrends =
-            sumDailyMerchantRepository.findMonthlyTrendsForMerchants(merchantIds, trendStart, endOfMonth);
+            sumDailyMerchantRepository.findMonthlyTrendsForMerchants(tenantId, merchantIds, trendStart, endOfMonth);
 
         // Q6: Card loyalty aggregates for all merchants. Aggregated in the DB
         // (compact histograms per merchant) instead of loading one entity per
@@ -111,7 +141,7 @@ public class MerchantInsightService {
         int endKey = Integer.parseInt(endOfMonth.format(DateTimeFormatter.ofPattern("yyyyMM")));
         int trendStartKey = Integer.parseInt(trendStart.format(DateTimeFormatter.ofPattern("yyyyMM")));
         Map<Long, CardLoyaltyAggregates> cardAggById =
-            fetchCardAggregates(merchantIds, startKey, endKey, trendStartKey, endKey);
+            fetchCardAggregates(tenantId, merchantIds, startKey, endKey, trendStartKey, endKey);
 
         long fetchMs = System.currentTimeMillis() - t0;
         log.info("[BULK] Fetched data for {} merchants in {}ms (daily:{}/{}, attrs:{}/{}, trends:{}, cardAgg:{})",
@@ -248,8 +278,14 @@ public class MerchantInsightService {
         return dto;
     }
 
+    /**
+     * Resolves the tenant from {@link TenantContext}. Previously this passed
+     * null, which both skipped the ownership check AND left the underlying
+     * queries unscoped — the two together were a cross-tenant read for any
+     * caller that reached here with a merchantId it hadn't validated.
+     */
     public MerchantInsightsDTO getInsights(Long merchantId, int year, int month) {
-        return getInsights(merchantId, year, month, null);
+        return getInsights(merchantId, year, month, TenantContext.getCurrentTenant());
     }
 
     /**
@@ -259,23 +295,22 @@ public class MerchantInsightService {
      * arbitrary (guessable, global BIGSERIAL) merchantId and pull another
      * tenant's full sales / card / loyalty data.
      *
-     * Passing null preserves the old unscoped behaviour for trusted internal
-     * batch callers (e.g. bulk PDF generation that has already constrained the
-     * merchant list to one tenant).
+     * {@code expectedTenantId} is now REQUIRED — it is both the ownership check
+     * and the tenant predicate carried into every underlying query, so null is
+     * rejected rather than treated as "trusted internal caller".
      */
     public MerchantInsightsDTO getInsights(Long merchantId, int year, int month, Long expectedTenantId) {
-        if (expectedTenantId != null) {
-            com.acquira.common.model.Merchant m = merchantRepository.findById(merchantId).orElse(null);
-            if (m == null || m.getTenantId() == null
-                    || !expectedTenantId.equals(m.getTenantId())) {
-                throw new SecurityException(
-                    "Merchant " + merchantId + " is not accessible for tenant " + expectedTenantId);
-            }
+        requireTenant(expectedTenantId);
+        com.acquira.common.model.Merchant m = merchantRepository.findById(merchantId).orElse(null);
+        if (m == null || m.getTenantId() == null
+                || !expectedTenantId.equals(m.getTenantId())) {
+            throw new SecurityException(
+                "Merchant " + merchantId + " is not accessible for tenant " + expectedTenantId);
         }
-        return getInsightsInternal(merchantId, year, month);
+        return getInsightsInternal(merchantId, year, month, expectedTenantId);
     }
 
-    private MerchantInsightsDTO getInsightsInternal(Long merchantId, int year, int month) {
+    private MerchantInsightsDTO getInsightsInternal(Long merchantId, int year, int month, Long tenantId) {
         LocalDate startOfMonth = LocalDate.of(year, month, 1);
         LocalDate endOfMonth = startOfMonth.plusMonths(1).minusDays(1);
         LocalDate startOfLastMonth = startOfMonth.minusMonths(1);
@@ -284,22 +319,22 @@ public class MerchantInsightService {
         // ========== FETCH ALL DATA ONCE ==========
         // Current month daily rows (~30 rows)
         List<com.acquira.common.model.SumDailyMerchant> currentDailyRows = sumDailyMerchantRepository
-                .findDailyStats(merchantId, startOfMonth, endOfMonth);
+                .findDailyStats(tenantId, merchantId, startOfMonth, endOfMonth);
         // Previous month daily rows (~30 rows)
-        List<com.acquira.common.model.SumDailyMerchant> prevDailyRows = sumDailyMerchantRepository.findDailyStats(merchantId,
-                startOfLastMonth, endOfLastMonth);
+        List<com.acquira.common.model.SumDailyMerchant> prevDailyRows = sumDailyMerchantRepository.findDailyStats(tenantId,
+                merchantId, startOfLastMonth, endOfLastMonth);
 
         // Current month attributes (~200 rows: hours, card schemes, card types, etc.)
         List<com.acquira.common.model.SumDailyMerchantAttribute> currentAttributes = sumDailyMerchantAttributeRepository
-                .findByMerchantAndDateRange(merchantId, startOfMonth, endOfMonth);
+                .findByMerchantAndDateRange(tenantId, merchantId, startOfMonth, endOfMonth);
         // Previous month attributes
         List<com.acquira.common.model.SumDailyMerchantAttribute> prevAttributes = sumDailyMerchantAttributeRepository
-                .findByMerchantAndDateRange(merchantId, startOfLastMonth, endOfLastMonth);
+                .findByMerchantAndDateRange(tenantId, merchantId, startOfLastMonth, endOfLastMonth);
 
         // 13-month trend data (single query)
         LocalDate trendStart = endOfMonth.minusMonths(12).withDayOfMonth(1);
-        List<java.util.Map<String, Object>> monthlyTrends = sumDailyMerchantRepository.findMonthlyTrends(merchantId,
-                trendStart, endOfMonth);
+        List<java.util.Map<String, Object>> monthlyTrends = sumDailyMerchantRepository.findMonthlyTrends(tenantId,
+                merchantId, trendStart, endOfMonth);
 
         // Monthly card loyalty aggregates (current month + 13-month trend),
         // aggregated in the DB — see SumMonthlyCardRepository.aggregate* notes.
@@ -307,7 +342,7 @@ public class MerchantInsightService {
         int endKey = Integer.parseInt(endOfMonth.format(DateTimeFormatter.ofPattern("yyyyMM")));
         int trendStartKey = Integer.parseInt(trendStart.format(DateTimeFormatter.ofPattern("yyyyMM")));
         CardLoyaltyAggregates cardAgg = fetchCardAggregates(
-                Collections.singletonList(merchantId), startKey, endKey, trendStartKey, endKey)
+                tenantId, Collections.singletonList(merchantId), startKey, endKey, trendStartKey, endKey)
                 .get(merchantId);
 
         // ========== COMPUTE AGGREGATES FROM DAILY ROWS (in-memory, ~30 rows)
@@ -1334,21 +1369,22 @@ public class MerchantInsightService {
      * for the old entity fetch, 80k+ for a single large merchant).
      */
     private Map<Long, CardLoyaltyAggregates> fetchCardAggregates(
-            List<Long> merchantIds, int currentStartKey, int currentEndKey,
+            Long tenantId, List<Long> merchantIds, int currentStartKey, int currentEndKey,
             int trendStartKey, int trendEndKey) {
+        requireTenant(tenantId);
         Map<Long, CardLoyaltyAggregates> result = new HashMap<>();
         for (Object[] row : sumMonthlyCardRepository.aggregateVisitHistogram(
-                merchantIds, currentStartKey, currentEndKey)) {
+                tenantId, merchantIds, currentStartKey, currentEndKey)) {
             result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
                 .visitHistogram.put(((Number) row[1]).longValue(), ((Number) row[2]).longValue());
         }
         for (Object[] row : sumMonthlyCardRepository.aggregateSpendBands(
-                merchantIds, currentStartKey, currentEndKey)) {
+                tenantId, merchantIds, currentStartKey, currentEndKey)) {
             result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
                 .spendBandCounts.put((String) row[1], ((Number) row[2]).longValue());
         }
         for (Object[] row : sumMonthlyCardRepository.aggregateMonthlyVisitFrequency(
-                merchantIds, trendStartKey, trendEndKey)) {
+                tenantId, merchantIds, trendStartKey, trendEndKey)) {
             result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
                 .monthlyFreq.put(((Number) row[1]).intValue(), new long[]{
                     ((Number) row[2]).longValue(),

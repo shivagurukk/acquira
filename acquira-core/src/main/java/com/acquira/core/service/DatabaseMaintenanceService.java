@@ -50,7 +50,16 @@ public class DatabaseMaintenanceService {
         // as much as the originals'.
         "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
         "sum_monthly_insight", "merchant_daily_metrics",
-        "stg_trnx_raw", "stg_merchant_master_raw"
+        "stg_trnx_raw", "stg_merchant_master_raw",
+        // Snapshot tables: rewritten per upload (~rows-per-merchant each run) and
+        // pruned by the 90-day retention pass — delete churn needs vacuuming.
+        "merchant_activity_summary", "merchant_opportunity_score",
+        // Rewritten per ingest by calculateDailyDashboardMetricsTasklet (saveAll
+        // upsert of the affected months).
+        "sum_monthly_merchant_metrics",
+        // High insert volume + daily bulk retention deletes (ApiRequestLog /
+        // EmailQueueProcessor) — classic dead-tuple accumulators.
+        "api_request_log", "email_queue"
     );
 
     // Identifier whitelist — defends the VACUUM string-built statement.

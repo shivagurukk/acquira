@@ -199,6 +199,13 @@ public class TopPerformersController {
 
         boolean needMcc = notEmpty(f.getMccList());
         boolean needSid = notEmpty(f.getSidList());
+        // Industry (MCC sector) — resolved against ref_mcc_category, the bank's
+        // MCC sector sheet, exactly as RevenueKpiController does. Without this
+        // the drawer's Industry picker was accepted, echoed back as an active
+        // filter chip, and then silently dropped: every board ignored it.
+        // Kept as its own EXISTS so Industry AND explicit MCCs intersect rather
+        // than one overwriting the other.
+        boolean needIndustry = notEmpty(f.getIndustryList());
 
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT m.merchant_id AS merchantId, m.name AS name, m.mid AS mid, ");
@@ -233,6 +240,8 @@ public class TopPerformersController {
         if (notEmpty(f.getMidList())) sql.append("  AND m.mid IN (:mids) ");
         if (needMcc) sql.append("  AND EXISTS (SELECT 1 FROM dim_store st WHERE st.merchant_id = m.merchant_id AND st.tenant_id = m.tenant_id AND st.mcc IN (:mccs)) ");
         if (needSid) sql.append("  AND EXISTS (SELECT 1 FROM dim_store st2 WHERE st2.merchant_id = m.merchant_id AND st2.tenant_id = m.tenant_id AND st2.sid IN (:sids)) ");
+        if (needIndustry) sql.append("  AND EXISTS (SELECT 1 FROM dim_store st3 WHERE st3.merchant_id = m.merchant_id AND st3.tenant_id = m.tenant_id "
+                + "AND st3.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries))) ");
         sql.append("GROUP BY m.merchant_id, m.name, m.mid, m.sales_email, m.sales_user_id, m.referral_partner, m.created_date");
 
         Query q = entityManager.createNativeQuery(sql.toString());
@@ -252,6 +261,7 @@ public class TopPerformersController {
         if (notEmpty(f.getMidList())) q.setParameter("mids", f.getMidList());
         if (needMcc) q.setParameter("mccs", f.getMccList());
         if (needSid) q.setParameter("sids", f.getSidList());
+        if (needIndustry) q.setParameter("industries", f.getIndustryList());
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = q.getResultList();
@@ -291,20 +301,41 @@ public class TopPerformersController {
         return sorted;
     }
 
+    /**
+     * AGENT IDENTITY: grouped by dim_merchant.sales_user_id (the rep CODE), the
+     * same key LeaderboardController uses; sales_email is carried alongside as a
+     * DISPLAY attribute only.
+     *
+     * This used to group by sales_email and skip rows with a blank one — the
+     * exact mix-up already fixed once in LeaderboardController. Two consequences,
+     * both making this board disagree with the Sales Leaderboard: an agent with a
+     * code but no email address vanished from the RM ranking entirely (while
+     * their volume still counted in the concentration totals below, so the boards
+     * did not reconcile), and two rep codes sharing a mailbox collapsed into one
+     * row. Merchants with no sales_user_id at all are genuinely unassigned and
+     * remain excluded.
+     */
     private List<Map<String, Object>> groupByRm(List<Map<String, Object>> merchantRows) {
         Map<String, Map<String, Object>> byRm = new LinkedHashMap<>();
         for (Map<String, Object> r : merchantRows) {
-            String rm = (String) r.get("salesEmail");
+            String rm = (String) r.get("salesUserId");
             if (rm == null || rm.isBlank()) continue;
             Map<String, Object> agg = byRm.computeIfAbsent(rm, k -> {
                 Map<String, Object> a = new LinkedHashMap<>();
-                a.put("salesEmail", k);
+                a.put("salesUserId", k);
+                a.put("salesEmail", null);
                 a.put("volume", 0.0);
                 a.put("netRevenue", 0.0);
                 a.put("msf", 0.0);
                 a.put("merchantCount", 0);
                 return a;
             });
+            // First non-blank email seen for the code wins — display only, never
+            // the grouping key, so a missing one cannot drop the agent.
+            if (agg.get("salesEmail") == null) {
+                String email = (String) r.get("salesEmail");
+                if (email != null && !email.isBlank()) agg.put("salesEmail", email);
+            }
             agg.put("volume", toDouble(agg.get("volume")) + toDouble(r.get("volume")));
             agg.put("netRevenue", toDouble(agg.get("netRevenue")) + toDouble(r.get("netRevenue")));
             agg.put("msf", toDouble(agg.get("msf")) + toDouble(r.get("msf")));

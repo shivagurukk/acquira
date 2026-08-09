@@ -18,6 +18,7 @@ import com.acquira.common.model.Merchant;
 import com.acquira.common.model.Tenant;
 import com.acquira.common.repository.TenantRepository;
 import com.acquira.common.service.MerchantInsightService;
+import com.acquira.common.service.ReportEmailTemplateService;
 import com.acquira.common.service.ReportStorageService;
 import com.acquira.common.service.S3Uploader;
 
@@ -49,6 +50,15 @@ public class PdfController {
     /** Optional: only available if spring-boot-starter-mail is on classpath */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.mail.javamail.JavaMailSender javaMailSender;
+
+    /**
+     * Resolves the covering email (subject + HTML body) for each report from the
+     * tenant's REPORT_PDF template, falling back to the built-in one. Field
+     * injection rather than constructor injection to leave the existing
+     * seven-arg constructor — and every test that calls it — untouched.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private ReportEmailTemplateService reportEmailTemplateService;
 
     /**
      * S3 upload service — injected via S3Uploader interface (acquira-common).
@@ -446,10 +456,14 @@ public class PdfController {
                             for (Map.Entry<Long, String> entry : merchantEmailMap.entrySet()) {
                                 Long   mid   = entry.getKey();
                                 String email = entry.getValue();
-                                String mName = capturedMerchants.stream()
+                                Merchant merchant = capturedMerchants.stream()
                                     .filter(m -> m.getMerchantId().equals(mid))
-                                    .map(Merchant::getName)
-                                    .findFirst().orElse("Merchant");
+                                    .findFirst().orElse(null);
+                                String mName = merchant != null && merchant.getName() != null
+                                    ? merchant.getName() : "Merchant";
+                                // The merchant's real MID, exposed to the email template as {{mid}}
+                                // (the `mid` local above is the surrogate merchant_id, not the MID).
+                                String mMid  = merchant != null ? merchant.getMid() : null;
 
                                 String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
                                 Path   pdfFile  = batchFolder.resolve("Insight_" + safeName + "_" + capturedYearMonth + ".pdf");
@@ -462,7 +476,7 @@ public class PdfController {
 
                                 // Queue the email (delivery is async via email_queue, with retries).
                                 try {
-                                    sendReportEmail(email, mid, mName, batchMonthYear, capturedYearMonth, pdfFile);
+                                    sendReportEmail(email, mid, mName, mMid, batchMonthYear, capturedYearMonth, pdfFile);
                                     emailSent++;
                                     log.info("[EMAIL] Queued for {} ({})", mName, email);
                                 } catch (Exception e) {
@@ -630,7 +644,7 @@ public class PdfController {
 
     // ─── Email helper ──────────────────────────────────────────────────
 
-    private void sendReportEmail(String toEmail, Long merchantId, String merchantName,
+    private void sendReportEmail(String toEmail, Long merchantId, String merchantName, String merchantMid,
                                  String monthYear, String statementMonth, Path pdfFile) {
         // Enqueue into email_queue rather than sending inline. EmailQueueProcessor
         // (polls every 60s) picks the row up, builds the sender from the tenant's
@@ -642,17 +656,27 @@ public class PdfController {
         // tenant's SMTP config (not just "any active config"). merchant_id /
         // merchant_name / statement_month are populated so the Email Manager
         // stats & logs page (which filters by statement_month) shows these rows.
-        // is_html=TRUE — the body below is branded HTML (see buildReportEmailHtml).
+        // is_html=TRUE — the body below is branded HTML (see ReportEmailTemplateService).
         Long tenantId = null;
         try {
             tenantId = TenantContext.getCurrentTenant();
         } catch (Exception ignored) { /* no tenant context - leave null */ }
 
-        String subject = "Your Business Insight Report — " + monthYear;
-        // Branded HTML body (Stripe/Linear-register: light, restrained, table-based
-        // so it survives Outlook/Gmail — no flexbox, no <style> head, no web fonts).
+        // Subject + body come from the tenant's default REPORT_PDF template
+        // (Admin > Email campaign hub > Templates) when one exists, otherwise
+        // from the built-in template — which is this email's previous hardcoded
+        // form, so tenants that haven't authored one see no change.
         // is_html=TRUE below; EmailQueueProcessor renders it via helper.setText(body,true).
-        String body = buildReportEmailHtml(merchantName, monthYear);
+        Map<String, String> vars = new HashMap<>();
+        vars.put("merchant_name", merchantName != null ? merchantName : "Merchant");
+        vars.put("mid", merchantMid != null ? merchantMid : "");
+        vars.put("month_year", monthYear != null ? monthYear : "");
+        vars.put("statement_month", statementMonth != null ? statementMonth : "");
+        vars.put("pdf_filename", pdfFile.getFileName().toString());
+
+        ReportEmailTemplateService.Rendered mail = reportEmailTemplateService.resolve(tenantId, vars);
+        String subject = mail.subject();
+        String body = mail.bodyHtml();
         try {
             jdbcTemplate.update(
                 "INSERT INTO email_queue " +
@@ -666,99 +690,6 @@ public class PdfController {
             // Re-thrown so the post-batch loop records this merchant as failed.
             throw new RuntimeException("Failed to queue email for " + merchantName + ": " + e.getMessage(), e);
         }
-    }
-
-    /**
-     * Branded HTML body for the monthly statement email.
-     *
-     * EMAIL-CLIENT SAFE by construction: table layout (no flexbox/grid), all CSS
-     * inline (no &lt;style&gt; block, which Gmail strips), a system font stack (no
-     * web fonts), hex colours only, and a max-width wrapper centred with an outer
-     * table. Register matches the app: light background, restrained navy accent,
-     * no gradients or glow. {@code name} and {@code monthYear} are the only
-     * dynamic values; both are plain text we control (merchant name + "March 2026").
-     *
-     * Copy matches the approved Business Insight Report template (subject,
-     * greeting, body, sign-off, unsubscribe instructions, and confidentiality
-     * notice) — {{MONTH_YEAR}} / {{MERCHANT_NAME}} placeholders are filled in
-     * with {@code period} / {@code safeName} below.
-     */
-    private String buildReportEmailHtml(String name, String monthYear) {
-        String safeName = name != null ? name : "Merchant";
-        String period = monthYear != null ? monthYear : "";
-        return ""
-            + "<!DOCTYPE html>"
-            + "<html lang=\"en\"><head><meta charset=\"utf-8\">"
-            + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            + "<title>Business Insight Report</title></head>"
-            + "<body style=\"margin:0;padding:0;background:#f4f5f7;\">"
-            + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
-            +   "style=\"background:#f4f5f7;padding:32px 12px;\"><tr><td align=\"center\">"
-
-            +   "<table role=\"presentation\" width=\"560\" cellpadding=\"0\" cellspacing=\"0\" "
-            +     "style=\"width:560px;max-width:560px;background:#ffffff;border:1px solid #e6e8eb;"
-            +     "border-radius:12px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"
-            +     "'Segoe UI',Roboto,Helvetica,Arial,sans-serif;\">"
-
-            +     "<tr><td style=\"padding:20px 32px;border-bottom:1px solid #eef0f2;\">"
-            +       "<span style=\"font-size:15px;font-weight:700;letter-spacing:.02em;color:#0b1f3a;\">"
-            +         "AFS&nbsp;NEXUS</span>"
-            +       "<span style=\"float:right;font-size:12px;color:#8a94a6;\">Monthly Statement</span>"
-            +     "</td></tr>"
-
-            +     "<tr><td style=\"padding:32px;\">"
-            +       "<div style=\"font-size:12px;text-transform:uppercase;letter-spacing:.08em;"
-            +         "color:#6b7688;margin-bottom:6px;\">Business Insight Report</div>"
-            +       "<div style=\"font-size:22px;font-weight:700;color:#0b1f3a;margin-bottom:2px;\">"
-            +         period + "</div>"
-            +       "<div style=\"height:3px;width:44px;background:#2f5fe0;border-radius:2px;"
-            +         "margin:14px 0 22px;\"></div>"
-
-            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 14px;\">"
-            +         "Dear " + safeName + ",</p>"
-            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 14px;\">"
-            +         "We are pleased to share your Business Insight Report for <strong>" + period + "</strong>, "
-            +         "prepared exclusively for your business. The full report is attached to this email "
-            +         "as a PDF.</p>"
-            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 14px;\">"
-            +         "We hope these insights help you better understand your business performance and "
-            +         "support your decision-making.</p>"
-            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0 0 22px;\">"
-            +         "If you have any questions about this report, simply reply to this email and our "
-            +         "team will be happy to assist you.</p>"
-
-            +       "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" "
-            +         "style=\"margin:0 0 26px;\"><tr>"
-            +         "<td style=\"background:#f6f8fc;border:1px solid #e2e8f4;border-radius:8px;"
-            +           "padding:12px 16px;font-size:13px;color:#33415a;\">"
-            +           "&#128196;&nbsp; Business_Insight_Report_" + period.replace(" ", "_") + ".pdf"
-            +         "</td></tr></table>"
-
-            +       "<p style=\"font-size:14px;line-height:1.6;color:#1f2733;margin:0;\">"
-            +         "Best regards,<br>"
-            +         "The AFS NEXUS Team<br>"
-            +         "Arab Financial Services</p>"
-            +     "</td></tr>"
-
-            +     "<tr><td style=\"padding:18px 32px;background:#fafbfc;border-top:1px solid #eef0f2;\">"
-            +       "<div style=\"font-size:11px;color:#8a94a6;line-height:1.6;\">"
-            +         "This is an automated message from AFS NEXUS, the merchant intelligence platform "
-            +         "by Arab Financial Services.<br>"
-            +         "If you prefer not to receive these monthly reports, simply email to "
-            +         "<a href=\"mailto:uaemerchants@afs.com.bh\" style=\"color:#6b7688;\">uaemerchants@afs.com.bh</a> "
-            +         "or contact our call center +971 4312 4848 and we will remove you from future mailings."
-            +       "</div>"
-            +     "</td></tr>"
-
-            +     "</table>"
-
-            +     "<div style=\"font-size:11px;color:#aab2c0;margin-top:16px;line-height:1.6;max-width:560px;\">"
-            +       "This email and its attachment are confidential and intended solely for the named "
-            +       "recipient. If you have received this message in error, please notify the sender and "
-            +       "delete it. &copy; Arab Financial Services B.S.C.(c). All rights reserved.</div>"
-
-            +   "</td></tr></table>"
-            + "</body></html>";
     }
 
     // ─── Generate by MID — one / all / file (tenant-scoped) ──────────────

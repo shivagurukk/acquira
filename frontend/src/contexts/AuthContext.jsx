@@ -36,6 +36,10 @@ export const AuthProvider = ({ children }) => {
             token, refreshToken, username, userRole, roles, tenants, activeTenantId, menus,
             sessionTimeoutMinutes,
             isAuthenticated: !!token,
+            // Restored from storage so a page refresh cannot clear the
+            // force-change-password redirect (it previously lived only in
+            // React state, so F5 silently bypassed it).
+            mustChangePassword: localStorage.getItem('mustChangePassword') === 'true',
             tenantVersion: 0, // Incremented on switch to trigger data re-fetches
         };
     });
@@ -51,6 +55,7 @@ export const AuthProvider = ({ children }) => {
             localStorage.setItem('allowedTenants', JSON.stringify(auth.tenants || []));
             localStorage.setItem('roles', JSON.stringify(auth.roles || []));
             localStorage.setItem('sessionTimeoutMinutes', String(auth.sessionTimeoutMinutes || 30));
+            localStorage.setItem('mustChangePassword', String(!!auth.mustChangePassword));
         }
     }, [auth]);
 
@@ -76,6 +81,7 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const clearMustChangePassword = useCallback(() => {
+        localStorage.setItem('mustChangePassword', 'false');
         setAuth(prev => ({ ...prev, mustChangePassword: false }));
     }, []);
 

@@ -34,7 +34,6 @@ const RetentionReport = lazy(() => import('./pages/business/RetentionReport'));
 const ForecastingBenchmarking = lazy(() => import('./pages/business/ForecastingBenchmarking'));
 const TopPerformers = lazy(() => import('./pages/business/TopPerformers'));
 const ZeroTransactionReport = lazy(() => import('./pages/business/ZeroTransactionReport'));
-const ExecutiveDashboardReport = lazy(() => import('./pages/business/ExecutiveDashboardReport'));
 const MerchantReportManager = lazy(() => import('./pages/business/MerchantReportManager'));
 const MerchantHeatmap = lazy(() => import('./pages/business/MerchantHeatmap'));
 const DailyMerchantDashboard = lazy(() => import('./pages/business/DailyMerchantDashboard'));
@@ -70,6 +69,7 @@ const DataMigration = lazy(() => import('./pages/admin/DataMigration'));
 const TenantProvisioning = lazy(() => import('./pages/admin/TenantProvisioning'));
 const SecuritySettings = lazy(() => import('./pages/admin/SecuritySettings'));
 const DatabaseMaintenance = lazy(() => import('./pages/admin/DatabaseMaintenance'));
+const BinManagement = lazy(() => import('./pages/admin/BinManagement'));
 const AlertsNotifications = lazy(() => import('./pages/admin/AlertsNotifications'));
 const ApiManagement = lazy(() => import('./pages/admin/ApiManagement'));
 const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
@@ -103,7 +103,6 @@ function App() {
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/business/ceo-volume-revenue" element={<CeoVolumeRevenue />} />
               <Route path="/business/loss-making" element={<LossMakingMerchants />} />
-              <Route path="/business/executive-dashboard-v2" element={<ExecutiveDashboardReport />} />
 
               {/* Merchant MGT */}
               <Route path="/merchants" element={<MerchantHierarchy />} />
@@ -234,6 +233,10 @@ function App() {
               } />
               <Route path="/admin/maintenance" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><DatabaseMaintenance /></RoleGuard>
+              } />
+              {/* SA-only: BIN reference data is platform-wide, shared by every tenant. */}
+              <Route path="/admin/bin-management" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><BinManagement /></RoleGuard>
               } />
               <Route path="/admin/alerts" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><AlertsNotifications /></RoleGuard>

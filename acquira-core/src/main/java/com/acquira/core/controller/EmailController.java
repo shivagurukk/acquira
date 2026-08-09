@@ -297,7 +297,7 @@ public class EmailController {
         byte[] pdf;
         try {
             MerchantInsightsDTO dto = merchantInsightService.getInsights(
-                    merchantId, ym.getYear(), ym.getMonthValue());
+                    merchantId, ym.getYear(), ym.getMonthValue(), tenantId);
             if (dto == null) {
                 log.warn("[EMAIL] No insight data for merchant {} ({})", merchantName, merchantId);
                 return 0;

@@ -112,8 +112,19 @@ api.interceptors.response.use(
 
         // 403 — forbidden (not token expiry)
         if (error.response && error.response.status === 403) {
-            // Don't logout on 403, just let the UI handle it
-            console.warn('Access denied:', error.response.config.url);
+            // Server-side forced-password-change gate: re-arm the flag and send
+            // the user to the change-password screen (covers the case where the
+            // client-side flag was lost or tampered with).
+            if (error.response.data?.code === 'PASSWORD_CHANGE_REQUIRED') {
+                localStorage.setItem('mustChangePassword', 'true');
+                if (window.location.pathname !== '/change-password') {
+                    showToast('You must change your password before continuing.', 'warning', 5000);
+                    setTimeout(() => { window.location.href = '/change-password'; }, 800);
+                }
+            } else {
+                // Don't logout on 403, just let the UI handle it
+                console.warn('Access denied:', error.response.config.url);
+            }
         }
 
         return Promise.reject(error);

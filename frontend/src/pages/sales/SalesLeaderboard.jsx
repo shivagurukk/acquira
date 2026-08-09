@@ -1,77 +1,89 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Trophy, Users, UserPlus, TrendingUp, DollarSign, Loader2, Crown,
-  BarChart3, ArrowUpRight, ArrowDownRight, Download, Percent, Globe
+  BarChart3, ArrowUpRight, ArrowDownRight, Download, Percent, Globe, CalendarClock, AlertCircle
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { T, CARD, BTN } from '../../theme/salesTokens';
 import { chartTooltipStyle } from '../../theme/dataGridStyles';
 
+// ─── Constants ───────────────────────────────────────────────
 const MEDAL_COLORS = ['#FFD700', '#C0C0C0', '#CD7F32'];
+
+// Periods are data-anchored server-side (resolved against the latest
+// business_date), so MTD is always populated and can be the default.
 const PERIODS = [
   { label: 'MTD', value: 'MTD' }, { label: 'QTD', value: 'QTD' },
   { label: 'YTD', value: 'YTD' }, { label: 'Last Month', value: 'LAST_MONTH' },
   { label: 'Last Quarter', value: 'LAST_QUARTER' }, { label: 'All Time', value: '' }
 ];
 
+const TABS = [
+  { key: 'agents', label: 'Sales Agents', icon: Users, nameKey: 'agent', tierLabel: 'Sales Agent' },
+  { key: 'teams', label: 'Team Leads', icon: Crown, nameKey: 'team_lead', tierLabel: 'Team Lead' },
+  { key: 'countries', label: 'Country Leads', icon: Globe, nameKey: 'country_lead', tierLabel: 'Country Lead' },
+];
+
 const fmt = (v) => v == null ? '0' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
-const fmtM = (v) => { const n = Number(v); if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(1)+'K'; return n.toFixed(0); };
+const fmtM = (v) => { const n = Number(v) || 0; const a = Math.abs(n); if (a >= 1e6) return (n/1e6).toFixed(1)+'M'; if (a >= 1e3) return (n/1e3).toFixed(1)+'K'; return n.toFixed(0); };
 const fmtPct = (v) => v == null ? '0%' : Number(v).toFixed(2) + '%';
 
-// Badge config: icon + token-driven bg/text so badges re-theme in dark mode.
+// Backend sends stable badge KEYS; icon/label/colors are owned here.
 const BADGE_CONFIG = {
-  'top_performer': { icon: '🥇', label: 'Top Performer', bg: T.warningCh, color: T.warningTx },
-  'runner_up': { icon: '🥈', label: 'Runner Up', bg: T.borderLt, color: T.textSec },
-  'bronze': { icon: '🥉', label: 'Bronze', bg: 'var(--bronze-bg, #fed7aa)', color: 'var(--bronze-text, #9a3412)' },
-  'onboarding_star': { icon: '🚀', label: 'Onboarding Star', bg: T.indigoBg, color: T.indigoTx },
-  'growing': { icon: '⭐', label: 'Growing Portfolio', bg: T.warningCh, color: T.warningTx },
-  'high_activation': { icon: '🔥', label: 'High Activation', bg: 'var(--pink-bg, #fce7f3)', color: 'var(--pink-text, #9d174d)' },
-  'million_club': { icon: '💎', label: 'Million Club', bg: T.purpleBg, color: 'var(--purple-text, #5b21b6)' },
-  'half_m': { icon: '🏆', label: '500K+ Club', bg: T.infoCh, color: T.infoTx },
-  'top_team': { icon: '🏆', label: '#1 Team', bg: T.warningCh, color: T.warningTx },
-  'large_team': { icon: '👥', label: 'Large Team', bg: T.successBg, color: T.successTx },
+  top_performer: { icon: '🥇', label: 'Top Performer', bg: T.warningCh, color: T.warningTx },
+  runner_up: { icon: '🥈', label: 'Runner Up', bg: T.borderLt, color: T.textSec },
+  bronze: { icon: '🥉', label: 'Bronze', bg: 'var(--bronze-bg, #fed7aa)', color: 'var(--bronze-text, #9a3412)' },
+  onboarding_star: { icon: '🚀', label: 'Onboarding Star', bg: T.indigoBg, color: T.indigoTx },
+  growing: { icon: '⭐', label: 'Growing Portfolio', bg: T.warningCh, color: T.warningTx },
+  high_activation: { icon: '🔥', label: 'High Activation', bg: 'var(--pink-bg, #fce7f3)', color: 'var(--pink-text, #9d174d)' },
+  million_club: { icon: '💎', label: 'Million Club', bg: T.purpleBg, color: 'var(--purple-text, #5b21b6)' },
+  half_m: { icon: '🏆', label: '500K+ Club', bg: T.infoCh, color: T.infoTx },
+  top_team: { icon: '🏆', label: '#1 Team', bg: T.warningCh, color: T.warningTx },
+  large_team: { icon: '👥', label: 'Large Team', bg: T.successBg, color: T.successTx },
   '5m_club': { icon: '💎', label: '5M Club', bg: T.purpleBg, color: 'var(--purple-text, #5b21b6)' },
-  'million_team': { icon: '🏅', label: 'Million Team', bg: T.infoCh, color: T.infoTx },
+  million_team: { icon: '🏅', label: 'Million Team', bg: T.infoCh, color: T.infoTx },
+  top_country: { icon: '👑', label: '#1 Country', bg: T.warningCh, color: T.warningTx },
+  multi_team: { icon: '🌐', label: 'Multi-Team', bg: T.successBg, color: T.successTx },
+  '10m_club': { icon: '💎', label: '10M Club', bg: T.purpleBg, color: 'var(--purple-text, #5b21b6)' },
+  '5m_country': { icon: '🏅', label: '5M Country', bg: T.infoCh, color: T.infoTx },
 };
 
-const StyledBadge = ({ badgeKey, label }) => {
-  const config = BADGE_CONFIG[badgeKey] || { icon: '🏷️', label: label || badgeKey, bg: T.borderLt, color: T.textSec };
+const displayName = (name) => name?.includes('@') ? name.split('@')[0] : name;
+const rowName = (item, nameKey) => nameKey === 'agent' ? (item.agent_email || item.agent) : item[nameKey];
+const netOf = (item) => Number(item.net_revenue != null ? item.net_revenue : item.total_msf) || 0;
+
+// ─── Small building blocks ───────────────────────────────────
+const Badge = ({ badgeKey }) => {
+  const c = BADGE_CONFIG[badgeKey] || { icon: '🏷️', label: badgeKey, bg: T.borderLt, color: T.textSec };
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, fontSize: 10.5, fontWeight: 600, background: config.bg, color: config.color, whiteSpace: 'nowrap' }}>
-      {config.icon} {config.label}
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, fontSize: 10.5, fontWeight: 600, background: c.bg, color: c.color, whiteSpace: 'nowrap' }}>
+      {c.icon} {c.label}
     </span>
   );
 };
 
-// Map raw badge strings to keys
-const mapBadge = (raw) => {
-  if (raw.includes('Top Performer')) return 'top_performer';
-  if (raw.includes('Runner Up')) return 'runner_up';
-  if (raw.includes('Bronze')) return 'bronze';
-  if (raw.includes('Onboarding Star')) return 'onboarding_star';
-  if (raw.includes('Growing')) return 'growing';
-  if (raw.includes('High Activation')) return 'high_activation';
-  if (raw.includes('Million Club')) return 'million_club';
-  if (raw.includes('Half-M') || raw.includes('500K')) return 'half_m';
-  if (raw.includes('#1 Team')) return 'top_team';
-  if (raw.includes('Large Team')) return 'large_team';
-  if (raw.includes('5M Club')) return '5m_club';
-  if (raw.includes('Million Team')) return 'million_team';
-  return null;
-};
+const DeltaChip = ({ value }) => value == null
+  ? <span style={{ fontSize: 11, color: T.textMut }}>—</span>
+  : (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, fontWeight: 700, color: value >= 0 ? T.success : T.danger }}>
+      {value >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+      {Math.abs(value)}%
+    </span>
+  );
 
 // ─── Overview Stats ──────────────────────────────────────────
 const OverviewStats = ({ data }) => {
   if (!data) return null;
+  const net = data.totalNetRevenue != null ? data.totalNetRevenue : data.totalMsf;
   const stats = [
     { icon: Users, label: 'Sales Agents', value: fmt(data.totalAgents), color: T.info, bg: T.infoBg },
     { icon: Crown, label: 'Team Leads', value: fmt(data.totalTeams), color: T.warning, bg: T.warningBg },
     { icon: UserPlus, label: 'Onboarded', value: fmt(data.merchantsOnboarded), color: T.purple, bg: T.purpleBg },
     { icon: DollarSign, label: 'Total Volume', value: fmtM(data.totalVolume), color: T.success, bg: T.successBg },
-    { icon: TrendingUp, label: 'Net Margin', value: fmtM(data.totalNetRevenue != null ? data.totalNetRevenue : data.totalMsf), color: '#f97316', bg: 'var(--orange-bg, #fff7ed)' },
-    { icon: Percent, label: 'Avg Net Rate', value: data.totalVolume > 0 ? fmtPct((data.totalNetRevenue != null ? data.totalNetRevenue : data.totalMsf) / data.totalVolume * 100) : '—', color: '#ec4899', bg: 'var(--pink-bg, #fdf2f8)' },
+    { icon: TrendingUp, label: 'Net Margin', value: fmtM(net), color: '#f97316', bg: 'var(--orange-bg, #fff7ed)' },
+    { icon: Percent, label: 'Avg Net Rate', value: data.totalVolume > 0 ? fmtPct(net / data.totalVolume * 100) : '—', color: '#ec4899', bg: 'var(--pink-bg, #fdf2f8)' },
   ];
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 12, marginBottom: 24 }}>
@@ -91,7 +103,7 @@ const OverviewStats = ({ data }) => {
 };
 
 // ─── Podium (Top 3) ──────────────────────────────────────────
-const Podium = ({ items, isTeam }) => {
+const Podium = ({ items, nameKey }) => {
   if (!items || items.length < 1) return null;
   const top3 = items.slice(0, 3);
   const order = top3.length >= 3 ? [top3[1], top3[0], top3[2]] : top3;
@@ -102,10 +114,7 @@ const Podium = ({ items, isTeam }) => {
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 16, marginBottom: 32, padding: '40px 0 0' }}>
       {order.map((item, idx) => {
         const origRank = indexMap[idx];
-        const name = isTeam ? item.team_lead : (item.agent_email || item.agent);
-        const shortName = name?.includes('@') ? name.split('@')[0] : name;
-        const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
-        const netRate = item.total_volume > 0 ? (net / item.total_volume * 100) : 0;
+        const net = netOf(item);
         return (
           <div key={idx} style={{ textAlign: 'center', width: 170 }}>
             <div style={{
@@ -117,12 +126,14 @@ const Podium = ({ items, isTeam }) => {
             }}>
               <span style={{ fontSize: origRank === 0 ? 28 : 22 }}>{origRank === 0 ? '👑' : origRank === 1 ? '🥈' : '🥉'}</span>
             </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shortName}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {displayName(rowName(item, nameKey))}
+            </div>
             <div style={{ fontSize: 11, color: T.textSec, marginBottom: 4 }}>
               {fmtM(item.total_volume)} vol • {fmtM(net)} net
             </div>
             <div style={{ fontSize: 10, color: T.textMut, marginBottom: 8 }}>
-              {fmt(item.merchants_onboarded)} onboarded • {fmtPct(netRate)} net rate
+              {fmt(item.merchants_onboarded)} onboarded • {fmtPct(item.net_rate)} net rate
             </div>
             <div style={{
               height: heights[idx], borderRadius: '12px 12px 0 0',
@@ -139,11 +150,12 @@ const Podium = ({ items, isTeam }) => {
   );
 };
 
-// ─── Leaderboard Table ───────────────────────────────────────
+// ─── Ranking Table ───────────────────────────────────────────
 const th = { padding: '10px 8px', color: T.textSec, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' };
 
-const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
+const LeaderTable = ({ items, tab, onAgentClick }) => {
   if (!items || items.length === 0) return <div style={{ ...CARD, textAlign: 'center', padding: 60, color: T.textMut }}>No data available for this period</div>;
+  const isAgents = tab.key === 'agents';
 
   return (
     <div style={CARD}>
@@ -152,8 +164,9 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
           <thead>
             <tr style={{ borderBottom: `2px solid ${T.borderLt}` }}>
               <th style={{ ...th, textAlign: 'left', width: 50 }}>Rank</th>
-              <th style={{ ...th, textAlign: 'left' }}>{tierLabel || (isTeam ? 'Team Lead' : 'Sales Agent')}</th>
-              {isTeam && <th style={{ ...th, textAlign: 'center' }}>Agents</th>}
+              <th style={{ ...th, textAlign: 'left' }}>{tab.tierLabel}</th>
+              {tab.key === 'countries' && <th style={{ ...th, textAlign: 'center' }}>Teams</th>}
+              {!isAgents && <th style={{ ...th, textAlign: 'center' }}>Agents</th>}
               <th style={{ ...th, textAlign: 'center' }}>Onboarded</th>
               <th style={{ ...th, textAlign: 'center' }}>Active</th>
               <th style={{ ...th, textAlign: 'right' }}>Volume</th>
@@ -161,25 +174,24 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
               <th style={{ ...th, textAlign: 'right' }}>Net Rate</th>
               <th style={{ ...th, textAlign: 'right' }}>Txns</th>
               <th style={{ ...th, textAlign: 'center' }}>Active %</th>
-              {!isTeam && <th style={{ ...th, textAlign: 'center' }}>Δ Net</th>}
+              <th style={{ ...th, textAlign: 'center' }}>Δ Net</th>
               <th style={{ ...th, textAlign: 'left' }}>Badges</th>
             </tr>
           </thead>
           <tbody>
             {items.map((item, i) => {
-              const name = isTeam ? item.team_lead : (item.agent_email || item.agent);
-              const shortName = name?.includes('@') ? name.split('@')[0] : name;
+              const name = rowName(item, tab.nameKey);
+              const shortName = displayName(name);
               const rank = item.rank || i + 1;
-              const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
+              const net = netOf(item);
               const netRate = item.net_rate != null ? Number(item.net_rate)
                 : (item.total_volume > 0 ? (net / item.total_volume * 100) : 0);
-              const changePct = item.net_change_pct != null ? item.net_change_pct : item.volume_change_pct;
 
               return (
-                <tr key={i} style={{ borderBottom: `1px solid ${T.borderLt}`, cursor: !isTeam ? 'pointer' : 'default', transition: 'background .15s' }}
+                <tr key={i} style={{ borderBottom: `1px solid ${T.borderLt}`, cursor: isAgents ? 'pointer' : 'default', transition: 'background .15s' }}
                     onMouseOver={e => e.currentTarget.style.background = T.hover}
                     onMouseOut={e => e.currentTarget.style.background = ''}
-                    onClick={() => !isTeam && onAgentClick && onAgentClick(item.agent)}>
+                    onClick={() => isAgents && onAgentClick && onAgentClick(item.agent)}>
                   <td style={{ padding: '12px 8px' }}>
                     {rank <= 3 ? (
                       <div style={{ width: 30, height: 30, borderRadius: '50%', background: MEDAL_COLORS[rank-1] + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, color: MEDAL_COLORS[rank-1] }}>
@@ -191,7 +203,8 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
                     <div style={{ color: T.text }}>{shortName}</div>
                     {name !== shortName && <div style={{ fontSize: 11, color: T.textMut, fontWeight: 400 }}>{name}</div>}
                   </td>
-                  {isTeam && <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: 600, color: T.text }}>{item.agent_count}</td>}
+                  {tab.key === 'countries' && <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: 600, color: T.text }}>{item.team_count}</td>}
+                  {!isAgents && <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: 600, color: T.text }}>{item.agent_count}</td>}
                   <td style={{ padding: '12px 8px', textAlign: 'center' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: T.indigoBg, color: T.indigoTx }}>
                       <UserPlus size={11} /> {item.merchants_onboarded}
@@ -214,22 +227,12 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
                       <span style={{ fontSize: 12, fontWeight: 600, color: item.active_rate >= 80 ? T.success : T.textSec }}>{item.active_rate || 0}%</span>
                     </div>
                   </td>
-                  {!isTeam && (
-                    <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                      {changePct != null ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, fontWeight: 700, color: changePct >= 0 ? T.success : T.danger }}>
-                          {changePct >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                          {Math.abs(changePct)}%
-                        </span>
-                      ) : <span style={{ fontSize: 11, color: T.textMut }}>—</span>}
-                    </td>
-                  )}
+                  <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                    <DeltaChip value={item.net_change_pct != null ? item.net_change_pct : item.volume_change_pct} />
+                  </td>
                   <td style={{ padding: '12px 8px' }}>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      {(item.badges || []).map((b, bi) => {
-                        const key = mapBadge(b);
-                        return key ? <StyledBadge key={bi} badgeKey={key} /> : <span key={bi} style={{ fontSize: 11, color: T.textSec }}>{b}</span>;
-                      })}
+                      {(item.badges || []).map((b, bi) => <Badge key={bi} badgeKey={b} />)}
                     </div>
                   </td>
                 </tr>
@@ -244,8 +247,7 @@ const LeaderTable = ({ items, isTeam, tierLabel, onAgentClick }) => {
 
 // ─── Agent Detail Panel ──────────────────────────────────────
 // salesUserId is the sales rep CODE (dim_merchant.sales_user_id) — the key the
-// leaderboard rows and the whole sales hierarchy are grouped by. The rep's email
-// is a display attribute the detail response carries back.
+// leaderboard rows and the whole sales hierarchy are grouped by.
 const AgentDetail = ({ salesUserId, period, onClose }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -263,10 +265,9 @@ const AgentDetail = ({ salesUserId, period, onClose }) => {
   if (loading) return <div style={{ ...CARD, textAlign: 'center', padding: 40 }}><Loader2 size={24} className="spin" /></div>;
   if (!data) return null;
 
-  const trendData = (data.monthlyTrend || []).reverse();
+  const trendData = [...(data.monthlyTrend || [])].reverse();
   const merchants = data.merchants || [];
   const totalVol = merchants.reduce((s, m) => s + Number(m.volume || 0), 0);
-  const totalMsf = merchants.reduce((s, m) => s + Number(m.msf || 0), 0);
   const totalNet = merchants.reduce((s, m) => s + Number(m.net != null ? m.net : m.msf || 0), 0);
 
   return (
@@ -340,29 +341,18 @@ const AgentDetail = ({ salesUserId, period, onClose }) => {
 // ═══════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════
-const TABS = [
-  { key: 'agents', label: 'Sales Agents', icon: Users },
-  { key: 'teams', label: 'Team Leads', icon: Crown },
-  { key: 'countries', label: 'Country Leads', icon: Globe },
-];
-
 const SalesLeaderboard = () => {
   const { tenantVersion } = useAuth();
   const [activeTab, setActiveTab] = useState('agents');
-  // Default to LAST_MONTH instead of MTD: in environments where transaction
-  // data lags real-time (e.g. it's May but data ends in April), MTD will
-  // render an empty leaderboard on first load. LAST_MONTH always reaches
-  // back to a complete month and is much more likely to have data.
-  const [period, setPeriod] = useState('LAST_MONTH');
+  const [period, setPeriod] = useState('MTD');
   const [overview, setOverview] = useState(null);
-  const [agents, setAgents] = useState([]);
-  const [teams, setTeams] = useState([]);
-  const [countries, setCountries] = useState([]);
+  const [boards, setBoards] = useState({ agents: [], teams: [], countries: [] });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [selectedAgent, setSelectedAgent] = useState(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    setLoading(true); setError('');
     try {
       const p = `period=${period}`;
       const [ov, ag, tm, co] = await Promise.all([
@@ -371,38 +361,40 @@ const SalesLeaderboard = () => {
         api.get(`/leaderboard/teams?${p}`),
         api.get(`/leaderboard/countries?${p}`)
       ]);
-      // Country rows expose `country_lead`; alias it to `team_lead` so the shared
-      // Podium/LeaderTable (built around team_lead) render them without a refactor.
-      const countriesData = (co.data || []).map(r => ({ ...r, team_lead: r.country_lead }));
-      setOverview(ov.data); setAgents(ag.data); setTeams(tm.data); setCountries(countriesData);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+      setOverview(ov.data);
+      setBoards({ agents: ag.data || [], teams: tm.data || [], countries: co.data || [] });
+    } catch (e) {
+      console.error(e);
+      setError(e?.response?.data?.error || e.message || 'Failed to load leaderboard');
+    } finally { setLoading(false); }
   }, [period]);
 
   useEffect(() => { load(); }, [load, tenantVersion]);
 
-  const data = activeTab === 'agents' ? agents : activeTab === 'teams' ? teams : countries;
-  const isTeamTab = activeTab === 'teams' || activeTab === 'countries';
-  const tierLabel = activeTab === 'agents' ? 'Sales Agent' : activeTab === 'teams' ? 'Team Lead' : 'Country Lead';
+  const tab = TABS.find(t => t.key === activeTab) || TABS[0];
+  const data = boards[tab.key];
 
   const handleExportCSV = () => {
-    const isTeam = activeTab === 'teams' || activeTab === 'countries';
-    const headers = isTeam
-      ? ['Rank', 'Team Lead', 'Agents', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Margin', 'Net Rate', 'Txns', 'Active %']
-      : ['Rank', 'Agent', 'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Margin', 'Net Rate', 'Txns', 'Active %', 'Net Change %'];
+    const isAgents = tab.key === 'agents';
+    const headers = ['Rank', tab.tierLabel,
+      ...(tab.key === 'countries' ? ['Teams'] : []), ...(!isAgents ? ['Agents'] : []),
+      'Onboarded', 'Active', 'Total', 'Volume', 'MSF', 'Net Margin', 'Net Rate', 'Txns', 'Active %', 'Net Change %'];
     const rows = data.map((item, i) => {
-      const name = isTeam ? item.team_lead : (item.agent_email || item.agent);
-      const net = Number(item.net_revenue != null ? item.net_revenue : item.total_msf);
-      const netRate = item.total_volume > 0 ? (net / item.total_volume * 100).toFixed(2) + '%' : '0%';
-      const base = [item.rank || i+1, name, item.merchants_onboarded, item.active_merchants, item.total_merchants, item.total_volume, item.total_msf, net, netRate, item.txn_count, (item.active_rate || 0) + '%'];
-      if (isTeam) base.splice(2, 0, item.agent_count);
-      else base.push(item.net_change_pct != null ? item.net_change_pct + '%' : (item.volume_change_pct != null ? item.volume_change_pct + '%' : 'N/A'));
-      return base;
+      const net = netOf(item);
+      return [
+        item.rank || i + 1, rowName(item, tab.nameKey),
+        ...(tab.key === 'countries' ? [item.team_count] : []), ...(!isAgents ? [item.agent_count] : []),
+        item.merchants_onboarded, item.active_merchants, item.total_merchants,
+        item.total_volume, item.total_msf, net,
+        item.net_rate != null ? item.net_rate + '%' : '0%',
+        item.txn_count, (item.active_rate || 0) + '%',
+        item.net_change_pct != null ? item.net_change_pct + '%' : 'N/A'
+      ];
     });
     const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `leaderboard_${activeTab}_${period || 'all'}.csv`; a.click();
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a'); a.href = url; a.download = `leaderboard_${tab.key}_${period || 'all'}.csv`; a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -415,6 +407,13 @@ const SalesLeaderboard = () => {
             Sales Leaderboard
           </h1>
           <p style={{ fontSize: 13, color: T.textSec, margin: 0 }}>Ranked by net margin (MSF − interchange − scheme fee), with onboarding, volume, and margin</p>
+          {overview?.dataThrough && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 6, padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: T.infoCh, color: T.infoTx }}>
+              <CalendarClock size={12} />
+              Data through {overview.dataThrough}
+              {overview.periodFrom && overview.periodTo && ` • ${overview.periodFrom} → ${overview.periodTo}`}
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button style={BTN(T.subtle, T.textSec)} onClick={handleExportCSV}>
@@ -432,6 +431,12 @@ const SalesLeaderboard = () => {
         </div>
       </div>
 
+      {error && (
+        <div style={{ ...CARD, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, borderColor: T.danger, color: T.dangerTx, background: T.dangerBg }}>
+          <AlertCircle size={18} color={T.danger} /> {error}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ textAlign: 'center', padding: 80 }}><Loader2 size={32} className="spin" color={T.brand} /></div>
       ) : (
@@ -440,45 +445,45 @@ const SalesLeaderboard = () => {
 
           {/* Tab Bar */}
           <div style={{ display: 'flex', gap: 2, marginBottom: 24, background: T.subtle, borderRadius: 12, padding: 4 }}>
-            {TABS.map(tab => {
-              const Icon = tab.icon;
-              const active = activeTab === tab.key;
-              const count = tab.key === 'agents' ? agents.length : tab.key === 'teams' ? teams.length : countries.length;
+            {TABS.map(t => {
+              const Icon = t.icon;
+              const active = activeTab === t.key;
               return (
-                <button key={tab.key} onClick={() => { setActiveTab(tab.key); setSelectedAgent(null); }} style={{
+                <button key={t.key} onClick={() => { setActiveTab(t.key); setSelectedAgent(null); }} style={{
                   flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                   padding: '10px 16px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
                   background: active ? T.card : 'transparent', color: active ? T.brand : T.textSec,
                   boxShadow: active ? T.shadowXs : 'none', transition: 'background .2s, color .2s'
                 }}>
-                  <Icon size={16} /> {tab.label} ({count})
+                  <Icon size={16} /> {t.label} ({boards[t.key].length})
                 </button>
               );
             })}
           </div>
 
           {/* Podium */}
-          <Podium items={data} isTeam={isTeamTab} />
+          <Podium items={data} nameKey={tab.nameKey} />
 
           {/* Agent Detail */}
           {selectedAgent && <AgentDetail salesUserId={selectedAgent} period={period} onClose={() => setSelectedAgent(null)} />}
 
-          {/* Volume Distribution Chart */}
+          {/* Volume vs Net Margin — top 15, matches the ranking metric */}
           {data.length > 1 && (
             <div style={{ ...CARD, marginBottom: 24, padding: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6, color: T.text }}>
-                <BarChart3 size={16} /> Volume & MSF Distribution
+                <BarChart3 size={16} /> Volume & Net Margin Distribution
               </div>
               <div style={{ height: 220 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={data.slice(0, 15)} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border-light, #f3f4f6)" />
                     <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--text-muted, #94a3b8)' }} tickFormatter={fmtM} />
-                    <YAxis dataKey={activeTab === 'agents' ? 'agent' : 'team_lead'} type="category" width={120} tick={{ fontSize: 11, fill: 'var(--text-muted, #94a3b8)' }}
+                    <YAxis dataKey={tab.nameKey} type="category" width={120} tick={{ fontSize: 11, fill: 'var(--text-muted, #94a3b8)' }}
                       tickFormatter={v => v?.includes('@') ? v.split('@')[0] : v?.substring(0, 15)} />
                     <Tooltip formatter={v => fmtM(v)} contentStyle={chartTooltipStyle} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="total_volume" fill={T.brandAlt} radius={[0, 6, 6, 0]} name="Volume" />
-                    <Bar dataKey="total_msf" fill={T.warning} radius={[0, 6, 6, 0]} name="MSF" />
+                    <Bar dataKey="net_revenue" fill={T.warning} radius={[0, 6, 6, 0]} name="Net Margin" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -486,7 +491,7 @@ const SalesLeaderboard = () => {
           )}
 
           {/* Full Ranking Table */}
-          <LeaderTable items={data} isTeam={isTeamTab} tierLabel={tierLabel} onAgentClick={(email) => setSelectedAgent(email)} />
+          <LeaderTable items={data} tab={tab} onAgentClick={setSelectedAgent} />
         </>
       )}
 

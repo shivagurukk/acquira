@@ -48,14 +48,17 @@ public class InsightController {
         if (hasItems(request.getMid())) {
             whereClause.append(" AND m.mid IN (").append(placeholders(request.getMid().size())).append(")");
             params.addAll(request.getMid());
-            if (hasItems(request.getSid())) {
-                whereClause.append(" AND st.sid IN (").append(placeholders(request.getSid().size())).append(")");
-                params.addAll(request.getSid());
-            }
-            if (hasItems(request.getTid())) {
-                whereClause.append(" AND t.tid IN (").append(placeholders(request.getTid().size())).append(")");
-                params.addAll(request.getTid());
-            }
+        }
+        // SID/TID are independent predicates. They used to be nested inside the
+        // MID block, so a SID or TID filter sent WITHOUT a MID was silently
+        // dropped and the report came back unfiltered.
+        if (hasItems(request.getSid())) {
+            whereClause.append(" AND st.sid IN (").append(placeholders(request.getSid().size())).append(")");
+            params.addAll(request.getSid());
+        }
+        if (hasItems(request.getTid())) {
+            whereClause.append(" AND t.tid IN (").append(placeholders(request.getTid().size())).append(")");
+            params.addAll(request.getTid());
         }
         if (hasItems(request.getIntlLocal())) {
             whereClause.append(" AND UPPER(s.destination) IN (").append(placeholders(request.getIntlLocal().size())).append(")");
@@ -81,8 +84,8 @@ public class InsightController {
                 SELECT 1
                 FROM sum_daily_insight s
                 JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id
-                JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id
-                JOIN dim_terminal t ON s.terminal_id = t.terminal_id AND t.tenant_id = s.tenant_id
+                LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id
+                LEFT JOIN dim_terminal t ON s.terminal_id = t.terminal_id AND t.tenant_id = s.tenant_id
                 REQ_WHERE
                 GROUP BY m.mid, m.name, st.sid, t.tid, st.mcc, s.destination, s.card_type, s.channel, m.sales_email, s.is_opt_in, s.business_date
             ) as cnt
@@ -109,8 +112,11 @@ public class InsightController {
                 SUM(s.total_msf) as total_msf
             FROM sum_daily_insight s
             JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id
-            JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id
-            JOIN dim_terminal t ON s.terminal_id = t.terminal_id AND t.tenant_id = s.tenant_id
+            -- LEFT joins: store_id/terminal_id are NULLABLE on sum_daily_insight.
+            -- Inner joins silently dropped e-com/aggregate lines with no store or
+            -- terminal, under-reporting the Hub versus merchant-grain screens.
+            LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id
+            LEFT JOIN dim_terminal t ON s.terminal_id = t.terminal_id AND t.tenant_id = s.tenant_id
             REQ_WHERE
             GROUP BY
                 m.mid, m.name, st.sid, t.tid, st.mcc,

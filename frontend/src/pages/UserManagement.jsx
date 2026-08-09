@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Plus, Edit2, X, Unlock, KeyRound, User as UserIcon,
   Eye, EyeOff, Building2, Trash2, Star, Globe, Clock,
-  CheckCircle, XCircle, Users, Inbox, Download,
+  CheckCircle, XCircle, Users, Inbox, Download, ShieldCheck, Check,
 } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -49,6 +49,67 @@ const AffixField = ({ id, invalid, action, 'aria-describedby': describedBy, 'ari
 );
 
 const affixButtonStyle = { position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)' };
+
+/**
+ * Titled section inside the user modal: icon + label eyebrow, hairline rule,
+ * then the fields. Gives the form a scannable Identity / Access / Security
+ * structure instead of one undifferentiated stack.
+ */
+const FormSection = ({ icon: Icon, title, action, children }) => (
+  <div>
+    <div className="ui-row ui-row--between" style={{ marginBottom: 10 }}>
+      <div className="ui-row" style={{ gap: 7 }}>
+        <Icon size={13} style={{ color: 'var(--brand)' }} />
+        <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+          {title}
+        </span>
+      </div>
+      {action}
+    </div>
+    <div className="ui-stack ui-stack--sm">{children}</div>
+  </div>
+);
+
+const sectionDividerStyle = { height: 1, background: 'var(--border)', margin: '18px 0 16px', border: 'none' };
+
+/**
+ * Segmented password-strength meter: one segment per rule, a verdict label,
+ * and the rule checklist. Shared by the create-user and reset-password
+ * modals so strength always looks the same.
+ */
+const PasswordStrength = ({ checks }) => {
+  const ok = checks.filter(c => c.ok).length;
+  const level = ok === checks.length
+    ? { label: 'Strong', color: 'var(--success)' }
+    : ok >= 3
+      ? { label: 'Medium', color: 'var(--warning)' }
+      : { label: 'Weak', color: 'var(--danger)' };
+  return (
+    <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
+        <div style={{ display: 'flex', gap: 3, flex: 1 }}>
+          {checks.map((_, i) => (
+            <div key={i} style={{
+              flex: 1, height: 4, borderRadius: 2,
+              background: i < ok ? level.color : 'var(--border)',
+              transition: 'background 0.25s ease',
+            }} />
+          ))}
+        </div>
+        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: level.color, minWidth: 46, textAlign: 'right' }}>
+          {level.label}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '3px 10px' }}>
+        {checks.map((c, i) => (
+          <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: c.ok ? 'var(--success)' : 'var(--text-muted)' }}>
+            {c.ok ? <Check size={11} /> : <X size={11} />} {c.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 const UserManagement = ({ embedded = false }) => {
   const { tenantVersion, username: currentUsername } = useAuth();
@@ -193,6 +254,9 @@ const UserManagement = ({ embedded = false }) => {
     // Email is optional; only validate format when something was entered.
     if (formData.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) errors.email = 'Invalid email';
     if (!modalUser && !formData.password?.trim()) errors.password = 'Required for new user';
+    // Pre-validate strength so the user sees the problem next to the badges
+    // instead of a server rejection after submit.
+    else if (!modalUser && !pwChecks.every(c => c.ok)) errors.password = 'Password does not meet all requirements';
     if (!modalUser) {
       const validAssignments = (formData.tenantAssignments || []).filter(a => a.tenantId && a.groupId);
       if (validAssignments.length === 0) errors.tenants = 'At least one tenant assignment is required';
@@ -340,7 +404,7 @@ const UserManagement = ({ embedded = false }) => {
   // ─── Password Reset ────────────────────────────────────
   const handleResetPassword = async (e) => {
     e?.preventDefault();
-    if (!resetPw) return;
+    if (!resetPwValid) return;
     setResetting(true);
     try {
       await api.post(`/users/${resetModal.id}/reset-password`, { newPassword: resetPw });
@@ -415,12 +479,18 @@ const UserManagement = ({ embedded = false }) => {
   };
 
   // ─── Password strength ─────────────────────────────────
-  const pw = formData.password || '';
-  const pwChecks = [
-    { label: '8+ chars', ok: pw.length >= 8 }, { label: 'Upper', ok: /[A-Z]/.test(pw) },
-    { label: 'Lower', ok: /[a-z]/.test(pw) }, { label: 'Number', ok: /[0-9]/.test(pw) },
-    { label: 'Special', ok: /[^A-Za-z0-9]/.test(pw) },
+  // The "Special" set mirrors the backend policy exactly. The old check
+  // accepted ANY non-alphanumeric, so characters like ~ or € showed a green
+  // badge and were then rejected by the server.
+  const passwordChecks = (value) => [
+    { label: '8+ chars', ok: value.length >= 8 }, { label: 'Upper', ok: /[A-Z]/.test(value) },
+    { label: 'Lower', ok: /[a-z]/.test(value) }, { label: 'Number', ok: /[0-9]/.test(value) },
+    { label: 'Special', ok: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(value) },
   ];
+  const pw = formData.password || '';
+  const pwChecks = passwordChecks(pw);
+  const resetChecks = passwordChecks(resetPw);
+  const resetPwValid = resetChecks.every(c => c.ok);
 
   const tenantOptions = banks.map(b => ({ value: b.tenantId, label: b.bankName }));
   const groupOptions = groups.map(g => ({ value: g.groupId || g.id, label: g.groupName }));
@@ -752,168 +822,192 @@ const UserManagement = ({ embedded = false }) => {
         onSubmit={handleSaveUser}
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
+        size="lg"
         title={modalUser ? 'Edit user' : 'Create user'}
+        subtitle={modalUser
+          ? `Editing ${modalUser.displayName || modalUser.username}`
+          : 'New users must change their password at first sign-in.'}
         footer={
           <>
             <Button type="button" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-            <Button type="submit" variant="primary" loading={savingUser}>Save</Button>
+            <Button type="submit" variant="primary" loading={savingUser}>
+              {modalUser ? 'Save changes' : 'Create user'}
+            </Button>
           </>
         }
       >
-        <div className="ui-stack ui-stack--sm">
-          {formErrors._ && <Alert tone="danger">{formErrors._}</Alert>}
+        <div>
+          {formErrors._ && <div style={{ marginBottom: 14 }}><Alert tone="danger">{formErrors._}</Alert></div>}
 
-          <FormField label="Username" required error={formErrors.username}>
-            <Input
-              value={formData.username}
-              disabled={!!modalUser}
-              onChange={e => setFormData({ ...formData, username: e.target.value })}
-            />
-          </FormField>
-
-          <FormGrid cols={2}>
+          {/* ── Identity ── */}
+          <FormSection icon={UserIcon} title="Identity">
+            <FormGrid cols={2}>
+              <FormField label="Username" required error={formErrors.username}>
+                <Input
+                  value={formData.username}
+                  disabled={!!modalUser}
+                  autoComplete="off"
+                  placeholder="e.g. j.haddad"
+                  onChange={e => setFormData({ ...formData, username: e.target.value })}
+                />
+              </FormField>
+              <FormField label="Display name">
+                <Input
+                  value={formData.displayName}
+                  onChange={e => setFormData({ ...formData, displayName: e.target.value })}
+                  placeholder="Optional"
+                />
+              </FormField>
+            </FormGrid>
             <FormField label="Email" error={formErrors.email}>
               <Input
                 type="email"
                 value={formData.email}
+                autoComplete="off"
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
-                placeholder="Optional"
+                placeholder="name@bank.com (optional)"
               />
             </FormField>
-            <FormField label="Display name">
-              <Input
-                value={formData.displayName}
-                onChange={e => setFormData({ ...formData, displayName: e.target.value })}
-                placeholder="Optional"
-              />
-            </FormField>
-          </FormGrid>
+          </FormSection>
 
-          {/* Account expiry — optional. After this moment the user is blocked
-              at login and auto-deactivated. Empty = never expires. */}
-          <FormField
-            label="Account expiry"
-            hint="Optional. Leave empty for no expiry. After this time the account is blocked and deactivated."
-          >
-            <AffixField
-              type="datetime-local"
-              value={formData.accountExpiresAt || ''}
-              onChange={e => setFormData({ ...formData, accountExpiresAt: e.target.value })}
-              action={formData.accountExpiresAt ? (
-                <Button
-                  type="button" variant="ghost" size="sm" iconOnly icon={X}
-                  onClick={() => setFormData({ ...formData, accountExpiresAt: '' })}
-                  aria-label="Clear expiry" title="Clear expiry"
-                  style={affixButtonStyle}
-                />
-              ) : null}
-            />
-          </FormField>
-
-          {/* Multi-tenant assignment for new users. The tenant list is exactly
-              what /banks returned for this admin — never widened here. */}
+          {/* ── Tenant access (create only) ── */}
           {!modalUser && (
-            <div className="ui-stack ui-stack--sm">
-              {formErrors.tenants && <Alert tone="danger">{formErrors.tenants}</Alert>}
-              <div className="ui-row ui-row--between">
-                <span className="ui-field__label" style={{ marginBottom: 0 }}>Tenant assignments</span>
-                <Button
-                  type="button" variant="ghost" size="sm" icon={Plus}
-                  onClick={() => setFormData({ ...formData, tenantAssignments: [...formData.tenantAssignments, { tenantId: '', groupId: '', isDefault: false }] })}
-                >
-                  Add tenant
-                </Button>
-              </div>
-              {formData.tenantAssignments.map((assignment, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    display: 'grid', gridTemplateColumns: '1fr 1fr auto auto',
-                    gap: 8, alignItems: 'center',
-                    padding: '8px 10px', background: 'var(--bg-subtle)',
-                    borderRadius: 'var(--radius-md)', border: '1px solid var(--border)',
-                  }}
-                >
-                  <Select
-                    aria-label="Tenant"
-                    value={assignment.tenantId}
-                    onChange={e => {
-                      const updated = [...formData.tenantAssignments];
-                      updated[idx] = { ...updated[idx], tenantId: e.target.value };
-                      setFormData({ ...formData, tenantAssignments: updated });
-                    }}
-                    placeholder="Select tenant"
-                    options={banks
-                      .filter(b => !formData.tenantAssignments.some((a, i) => i !== idx && a.tenantId === String(b.tenantId)))
-                      .map(b => ({ value: b.tenantId, label: b.bankName }))}
-                  />
-                  <Select
-                    aria-label="Group"
-                    value={assignment.groupId}
-                    onChange={e => {
-                      const updated = [...formData.tenantAssignments];
-                      updated[idx] = { ...updated[idx], groupId: e.target.value };
-                      setFormData({ ...formData, tenantAssignments: updated });
-                    }}
-                    placeholder="Select group"
-                    options={groupOptions}
-                  />
-                  <label style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                    <input
-                      type="radio"
-                      name="defaultTenant"
-                      checked={assignment.isDefault}
-                      onChange={() => {
+            <>
+              <hr style={sectionDividerStyle} />
+              <FormSection
+                icon={Building2}
+                title="Tenant access"
+                action={
+                  <Button
+                    type="button" variant="ghost" size="sm" icon={Plus}
+                    onClick={() => setFormData({ ...formData, tenantAssignments: [...formData.tenantAssignments, { tenantId: '', groupId: '', isDefault: false }] })}
+                  >
+                    Add tenant
+                  </Button>
+                }
+              >
+                {formErrors.tenants && <Alert tone="danger">{formErrors.tenants}</Alert>}
+                {/* Column header row — labels once, not repeated per row. */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 64px 32px', gap: 8, padding: '0 2px' }}>
+                  <span className="ui-field__hint">Tenant</span>
+                  <span className="ui-field__hint">Group</span>
+                  <span className="ui-field__hint" style={{ textAlign: 'center' }}>Default</span>
+                  <span />
+                </div>
+                {formData.tenantAssignments.map((assignment, idx) => (
+                  <div
+                    key={idx}
+                    style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 64px 32px', gap: 8, alignItems: 'center' }}
+                  >
+                    <Select
+                      aria-label="Tenant"
+                      value={assignment.tenantId}
+                      onChange={e => {
+                        const updated = [...formData.tenantAssignments];
+                        updated[idx] = { ...updated[idx], tenantId: e.target.value };
+                        setFormData({ ...formData, tenantAssignments: updated });
+                      }}
+                      placeholder="Select tenant"
+                      options={banks
+                        .filter(b => !formData.tenantAssignments.some((a, i) => i !== idx && a.tenantId === String(b.tenantId)))
+                        .map(b => ({ value: b.tenantId, label: b.bankName }))}
+                    />
+                    <Select
+                      aria-label="Group"
+                      value={assignment.groupId}
+                      onChange={e => {
+                        const updated = [...formData.tenantAssignments];
+                        updated[idx] = { ...updated[idx], groupId: e.target.value };
+                        setFormData({ ...formData, tenantAssignments: updated });
+                      }}
+                      placeholder="Select group"
+                      options={groupOptions}
+                    />
+                    {/* Default-tenant picker: one star per row, radio semantics. */}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={assignment.isDefault}
+                      aria-label={`Make row ${idx + 1} the default tenant`}
+                      title={assignment.isDefault ? 'Default tenant' : 'Make default'}
+                      onClick={() => {
                         const updated = formData.tenantAssignments.map((a, i) => ({ ...a, isDefault: i === idx }));
                         setFormData({ ...formData, tenantAssignments: updated });
                       }}
-                    /> Default
-                  </label>
-                  {formData.tenantAssignments.length > 1 && (
-                    <Button
-                      type="button" variant="danger-ghost" size="sm" iconOnly icon={Trash2}
-                      aria-label="Remove tenant assignment"
-                      onClick={() => {
-                        const updated = formData.tenantAssignments.filter((_, i) => i !== idx);
-                        if (assignment.isDefault && updated.length > 0) updated[0].isDefault = true;
-                        setFormData({ ...formData, tenantAssignments: updated });
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        display: 'flex', justifyContent: 'center', padding: 6,
                       }}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
+                    >
+                      <Star
+                        size={16}
+                        fill={assignment.isDefault ? 'var(--warning)' : 'none'}
+                        color={assignment.isDefault ? 'var(--warning)' : 'var(--text-muted)'}
+                      />
+                    </button>
+                    {formData.tenantAssignments.length > 1 ? (
+                      <Button
+                        type="button" variant="danger-ghost" size="sm" iconOnly icon={Trash2}
+                        aria-label="Remove tenant assignment"
+                        onClick={() => {
+                          const updated = formData.tenantAssignments.filter((_, i) => i !== idx);
+                          if (assignment.isDefault && updated.length > 0) updated[0].isDefault = true;
+                          setFormData({ ...formData, tenantAssignments: updated });
+                        }}
+                      />
+                    ) : <span />}
+                  </div>
+                ))}
+              </FormSection>
+            </>
           )}
 
-          {!modalUser && (
-            <FormField label="Password" required error={formErrors.password}>
+          {/* ── Security ── */}
+          <hr style={sectionDividerStyle} />
+          <FormSection icon={ShieldCheck} title="Security">
+            {!modalUser && (
+              <FormField label="Temporary password" required error={formErrors.password}>
+                <AffixField
+                  type={showPassword ? 'text' : 'password'}
+                  value={formData.password}
+                  autoComplete="new-password"
+                  onChange={e => setFormData({ ...formData, password: e.target.value })}
+                  placeholder="Set a strong temporary password"
+                  action={
+                    <Button
+                      type="button" variant="ghost" size="sm" iconOnly
+                      icon={showPassword ? EyeOff : Eye}
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      style={affixButtonStyle}
+                    />
+                  }
+                />
+              </FormField>
+            )}
+
+            {/* Strength meter + checklist (replaces the old badge row). */}
+            {!modalUser && pw.length > 0 && <PasswordStrength checks={pwChecks} />}
+
+            <FormField
+              label="Account expiry"
+              hint="Optional — after this time the account is blocked and deactivated."
+            >
               <AffixField
-                type={showPassword ? 'text' : 'password'}
-                value={formData.password}
-                onChange={e => setFormData({ ...formData, password: e.target.value })}
-                placeholder="Enter password"
-                action={
+                type="datetime-local"
+                value={formData.accountExpiresAt || ''}
+                onChange={e => setFormData({ ...formData, accountExpiresAt: e.target.value })}
+                action={formData.accountExpiresAt ? (
                   <Button
-                    type="button" variant="ghost" size="sm" iconOnly
-                    icon={showPassword ? EyeOff : Eye}
-                    onClick={() => setShowPassword(!showPassword)}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    type="button" variant="ghost" size="sm" iconOnly icon={X}
+                    onClick={() => setFormData({ ...formData, accountExpiresAt: '' })}
+                    aria-label="Clear expiry" title="Clear expiry"
                     style={affixButtonStyle}
                   />
-                }
+                ) : null}
               />
             </FormField>
-          )}
-
-          {!modalUser && pw.length > 0 && (
-            <div className="ui-row" style={{ gap: 5 }}>
-              {pwChecks.map((c, i) => (
-                <Badge key={i} tone={c.ok ? 'success' : 'neutral'}>
-                  {c.ok ? '✓' : '○'} {c.label}
-                </Badge>
-              ))}
-            </div>
-          )}
+          </FormSection>
         </div>
       </Modal>
 
@@ -985,7 +1079,7 @@ const UserManagement = ({ embedded = false }) => {
         footer={
           <>
             <Button type="button" onClick={() => setResetModal(null)}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={!resetPw} loading={resetting}>Reset</Button>
+            <Button type="submit" variant="primary" disabled={!resetPwValid} loading={resetting}>Reset</Button>
           </>
         }
       >
@@ -997,6 +1091,7 @@ const UserManagement = ({ embedded = false }) => {
             <AffixField
               type={showResetPw ? 'text' : 'password'}
               value={resetPw}
+              autoComplete="new-password"
               onChange={e => setResetPw(e.target.value)}
               placeholder="New password"
               autoFocus
@@ -1011,6 +1106,7 @@ const UserManagement = ({ embedded = false }) => {
               }
             />
           </FormField>
+          {resetPw.length > 0 && <PasswordStrength checks={resetChecks} />}
         </div>
       </Modal>
 

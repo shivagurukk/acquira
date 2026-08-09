@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Box, Paper, Typography, Grid } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import {
@@ -72,7 +72,7 @@ const CustomTooltip = ({ active, payload, label, formatCurrency, formatNumber })
     );
 };
 
-/* Chart card shell — matches ExecutiveDashboardReport's ChartCard conventions
+/* Chart card shell — follows the shared dashboard ChartCard conventions
    so this page sits visually consistent with the rest of Business Analytics. */
 const ChartCard = ({ title, subtitle, accent = '#6366f1', empty, children }) => (
     <Paper sx={{
@@ -268,10 +268,11 @@ const DebitPrepaidMetrics = () => {
 
     const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded, latest } = useDataBounds(tenantVersion);
 
-    useEffect(() => {
-        if (!boundsLoaded) return;
-        setFilters(prev => ({ ...prev, datePreset: 'CUSTOM', startDate: boundsStart, endDate: boundsEnd }));
-    }, [boundsLoaded, boundsStart, boundsEnd]);
+    // Latest filters, readable from an effect without making that effect depend
+    // on `filters` (which would re-fire the report on every drawer keystroke —
+    // this page runs on an explicit Run Report action).
+    const filtersRef = useRef(filters);
+    filtersRef.current = filters;
 
     const resolveBody = (payload) => {
         const body = { ...payload };
@@ -346,10 +347,29 @@ const DebitPrepaidMetrics = () => {
         }
     }, [filters]);
 
+    // Adopt the resolved data bounds AND run the first report with them, in one
+    // effect and from one object.
+    //
+    // These used to be two effects: one that setFilters(...bounds) and one that
+    // called fetchData() with no argument. Both fire in the same commit when
+    // boundsLoaded flips, so the fetch ran BEFORE the state update landed and
+    // read `filters` from its own stale closure — still the initial
+    // { datePreset: 'MONTH' }. resolveBody then recomputed that preset into the
+    // CURRENT CALENDAR MONTH, so the page always opened on this month rather
+    // than the data window, and showed "No data found" whenever the feed's
+    // latest business_date was in an earlier month. The fetch effect keyed only
+    // on [boundsLoaded], so the corrected filters never triggered a re-run.
+    // Passing `next` explicitly is what fetchData's override parameter is for.
+    // (Same stale-closure shape already fixed for the date-preset chips in
+    // PremiumReportHeader.)
     useEffect(() => {
-        if (boundsLoaded) { fetchData(); fetchSummary(); }
+        if (!boundsLoaded) return;
+        const next = { ...filtersRef.current, datePreset: 'CUSTOM', startDate: boundsStart, endDate: boundsEnd };
+        setFilters(next);
+        fetchData(next);
+        fetchSummary(next);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [boundsLoaded]);
+    }, [boundsLoaded, boundsStart, boundsEnd, tenantVersion]);
 
     const handleFilterChange = (keyOrObj, val) => {
         if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));

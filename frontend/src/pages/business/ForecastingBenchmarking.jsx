@@ -288,7 +288,7 @@ const ForecastingBenchmarking = () => {
                         <CalendarClock size={18} style={{ color: 'var(--text-secondary, #475569)' }} />
                         <Typography variant="body2" color={T.textSec}>
                             Forecasting <b>{summary.monthLabel}</b> as of <b>{summary.asOfDate}</b> —{' '}
-                            {summary.elapsedBusinessDays} of {summary.totalBusinessDays} business days elapsed,
+                            {summary.elapsedBusinessDays} of {summary.totalBusinessDays} days elapsed,
                             {' '}{summary.remainingBusinessDays} remaining
                         </Typography>
                     </Stack>

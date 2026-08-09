@@ -197,6 +197,87 @@ public class TrendsController {
         return ResponseEntity.ok(out);
     }
 
+    /**
+     * Merchant rollup for ONE business date — the page's level-3 drill.
+     * <p>
+     * This replaces the page's previous call to /api/finance/profitability,
+     * which (a) read sum_daily_merchant — settlement grain — so merchant rows
+     * never summed to the sum_daily_insight day row above them, (b) accepted
+     * none of the page's filters, and (c) returned an unordered, silently
+     * truncated 100 rows. Reading the SAME table with the SAME filter builder
+     * makes children reconcile with their parent by construction.
+     * <p>
+     * Body carries dateFrom = dateTo = the drilled date. Returns
+     * { totalMerchants, rows: [{ mid, name, count, volume, msf, opt_in_volume }] }
+     * with rows = top 100 by volume desc.
+     */
+    @PostMapping("/merchants")
+    public ResponseEntity<?> merchants(
+            @RequestHeader(value = "X-Tenant-Id", required = false) Long headerTenant,
+            @RequestBody(required = false) TrendFilter filter) {
+
+        Long tenantId = resolveTenant(headerTenant);
+        if (tenantId == null) return ResponseEntity.status(403).build();
+        if (filter == null) filter = new TrendFilter();
+        LocalDate day = parse(filter.getDateFrom());
+        if (day == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "dateFrom (yyyy-MM-dd) is required for merchant trend"));
+        }
+
+        List<Object> params = new ArrayList<>();
+        boolean needStore = listNonEmpty(filter.getMcc());
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT m.mid, m.name, ");
+        sql.append("       COALESCE(SUM(s.total_txns),0) AS cnt, ");
+        sql.append("       COALESCE(SUM(s.total_volume),0) AS vol, ");
+        sql.append("       COALESCE(SUM(s.total_msf),0) AS msf, ");
+        sql.append("       COALESCE(SUM(CASE WHEN s.is_opt_in THEN s.total_volume ELSE 0 END),0) AS optin_vol ");
+        sql.append("FROM sum_daily_insight s ");
+        // dim_merchant is always needed here (name/mid are selected).
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        if (needStore) sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        sql.append("WHERE s.tenant_id = ? AND s.business_date = ? ");
+        params.add(tenantId); params.add(day);
+        appendFilters(sql, params, filter);
+        sql.append("GROUP BY m.mid, m.name ORDER BY vol DESC LIMIT 100");
+
+        Query q = entityManager.createNativeQuery(sql.toString());
+        bind(q, params);
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = q.getResultList();
+
+        // Total distinct merchants for the day under the same filters, so the UI
+        // can say "top 100 of N" instead of implying completeness.
+        StringBuilder cSql = new StringBuilder();
+        List<Object> cParams = new ArrayList<>();
+        cSql.append("SELECT COUNT(DISTINCT s.merchant_id) FROM sum_daily_insight s ");
+        cSql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        if (needStore) cSql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        cSql.append("WHERE s.tenant_id = ? AND s.business_date = ? ");
+        cParams.add(tenantId); cParams.add(day);
+        appendFilters(cSql, cParams, filter);
+        Query cq = entityManager.createNativeQuery(cSql.toString());
+        bind(cq, cParams);
+        long totalMerchants = ((Number) cq.getSingleResult()).longValue();
+
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+        for (Object[] r : rows) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("mid", r[0]);
+            m.put("name", r[1]);
+            m.put("count", ((Number) r[2]).longValue());
+            m.put("volume", bd(r[3]));
+            m.put("msf", bd(r[4]));
+            m.put("opt_in_volume", bd(r[5]));
+            out.add(m);
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("totalMerchants", totalMerchants);
+        resp.put("rows", out);
+        return ResponseEntity.ok(resp);
+    }
+
     // ── Range resolution ──
     // For /monthly: honours datePreset (CURRENT_YEAR / PREVIOUS_YEAR / CUSTOM),
     //   else falls back to the whole of filter.year (or current year).
@@ -221,6 +302,16 @@ public class TrendsController {
             int mo = Math.max(1, Math.min(12, monthOverride));
             LocalDate start = LocalDate.of(yr, mo, 1);
             LocalDate end = start.plusMonths(1).minusDays(1);
+            // CUSTOM range: intersect the month window with [dateFrom, dateTo].
+            // Without this, drilling a month inside a custom range (e.g. Mar 5–20)
+            // listed the WHOLE calendar month, so the children summed to more
+            // than their parent row.
+            if ("CUSTOM".equalsIgnoreCase(preset)) {
+                LocalDate from = parse(f.getDateFrom());
+                LocalDate to = parse(f.getDateTo());
+                if (from != null && from.isAfter(start)) start = from;
+                if (to != null && to.isBefore(end)) end = to;
+            }
             return new LocalDate[]{start, end};
         }
         return new LocalDate[]{ LocalDate.of(yr, 1, 1), LocalDate.of(yr, 12, 31) };

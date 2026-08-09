@@ -63,6 +63,9 @@ export default defineConfig({
     css: true,
   },
   server: {
+    // Honor an assigned port (e.g. from a preview harness) so two dev
+    // servers can run side by side; defaults to Vite's usual 5173.
+    port: Number(process.env.PORT) || 5173,
     proxy: {
       '/api': {
         target: 'http://localhost:8081',

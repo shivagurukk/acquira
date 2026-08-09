@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Box, Paper, Typography, Chip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import {
@@ -163,7 +163,6 @@ const VolumeRevenueSummary = () => {
     const [filters, setFilters] = useState({ datePreset: 'YEAR', ...initialRange });
 
     const [filterVersion, setFilterVersion] = useState(0);
-    const isFirstRun = useRef(true);
 
     const fetchReport = useCallback(async (filtersToSend) => {
         setLoading(true);
@@ -174,21 +173,15 @@ const VolumeRevenueSummary = () => {
         finally { setLoading(false); }
     }, []);
 
+    // ONE fetch effect: mount, filter apply (filterVersion), and tenant switch
+    // (tenantVersion) all funnel through it. This used to be three separate
+    // effects — a [filterVersion] one that also runs on mount, an isFirstRun
+    // one, and a [tenantVersion] one gated on isFirstRun having just been
+    // cleared by the second — so a single page open fired three identical
+    // reports, each holding a pooled connection for the full statement timeout.
     useEffect(() => {
         fetchReport(filters);
-    }, [filterVersion]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        if (isFirstRun.current) {
-            isFirstRun.current = false;
-            fetchReport(filters);
-        }
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Re-fetch when the active tenant changes
-    useEffect(() => {
-        if (!isFirstRun.current) fetchReport(filters);
-    }, [tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [filterVersion, tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleFilterChange = useCallback((keyOrObj, val) => {
         setFilters(prev => {

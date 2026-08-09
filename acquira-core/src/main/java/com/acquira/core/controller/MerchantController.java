@@ -380,17 +380,40 @@ public class MerchantController {
                 preds.add(root.get("merchantId").in(sub));
             }
 
-            // Terminal Level Filters (Subquery)
-            if (tid != null && !tid.trim().isEmpty()) {
+            // Store created-date window. These params were read but applied only
+            // to the CHILD fetch below, so "Store created in Jan" returned the
+            // same unfiltered merchant page (mostly with empty store arrays).
+            if (sFrom != null || sTo != null) {
+                Subquery<Long> sub = query.subquery(Long.class);
+                Root<Store> subRoot = sub.from(Store.class);
+                sub.select(subRoot.get("merchantId")).distinct(true);
+                List<Predicate> subPreds = new ArrayList<>();
+                if (sFrom != null)
+                    subPreds.add(cb.greaterThanOrEqualTo(subRoot.get("createdDate"), sFrom.atStartOfDay()));
+                if (sTo != null)
+                    subPreds.add(cb.lessThanOrEqualTo(subRoot.get("createdDate"), sTo.atTime(23, 59, 59)));
+                sub.where(cb.and(subPreds.toArray(new Predicate[0])));
+                preds.add(root.get("merchantId").in(sub));
+            }
+
+            // Terminal Level Filters (Subquery) — TID and/or created-date window.
+            boolean tidSet = tid != null && !tid.trim().isEmpty();
+            if (tidSet || tFrom != null || tTo != null) {
                 Subquery<Long> sub = query.subquery(Long.class);
                 Root<Terminal> tRoot = sub.from(Terminal.class);
                 Root<Store> sRoot = sub.from(Store.class); // Join needed to get merchantId
 
                 // Join condition: Terminal.storeId = Store.storeId
                 sub.select(sRoot.get("merchantId")).distinct(true);
-                sub.where(cb.and(
-                        cb.equal(tRoot.get("storeId"), sRoot.get("storeId")),
-                        cb.like(cb.lower(tRoot.get("tid")), "%" + tid.toLowerCase() + "%")));
+                List<Predicate> subPreds = new ArrayList<>();
+                subPreds.add(cb.equal(tRoot.get("storeId"), sRoot.get("storeId")));
+                if (tidSet)
+                    subPreds.add(cb.like(cb.lower(tRoot.get("tid")), "%" + tid.toLowerCase() + "%"));
+                if (tFrom != null)
+                    subPreds.add(cb.greaterThanOrEqualTo(tRoot.get("createdDate"), tFrom.atStartOfDay()));
+                if (tTo != null)
+                    subPreds.add(cb.lessThanOrEqualTo(tRoot.get("createdDate"), tTo.atTime(23, 59, 59)));
+                sub.where(cb.and(subPreds.toArray(new Predicate[0])));
                 preds.add(root.get("merchantId").in(sub));
             }
 
@@ -403,7 +426,13 @@ public class MerchantController {
 
         List<Merchant> merchants = merchantPage.getContent();
         if (merchants.isEmpty())
-            return ResponseEntity.ok(org.springframework.data.domain.Page.empty());
+            // Keep the REAL total: Page.empty() reported totalPages=0, which made
+            // the frontend hide the pager entirely — stranding the user on an
+            // out-of-range page with no way back.
+            return ResponseEntity.ok(new org.springframework.data.domain.PageImpl<>(
+                    java.util.List.of(),
+                    org.springframework.data.domain.PageRequest.of(page, size),
+                    merchantPage.getTotalElements()));
 
         // Optimize: Only fetch children if child-specific filters are active
         Map<Long, List<Store>> storesByMerchantId = new HashMap<>();

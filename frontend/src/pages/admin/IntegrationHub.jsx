@@ -9,7 +9,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
 import {
   Page, Stack, Row, Card, Button, Badge, StatusBadge, Alert, Tabs, DataTable, Modal,
-  FormField, FormGrid, Input, Textarea, Select, useConfirm,
+  FormField, FormGrid, Input, Textarea, Select, Checkbox, useConfirm,
 } from '../../components/ui';
 
 /**
@@ -772,7 +772,10 @@ const ReportsTab = () => {
 };
 
 // ─── Schedules tab ───────────────────────────────────────────
-const emptySchedule = { reportId: '', frequencyLabel: 'DAILY', cronExpression: '0 0 2 * * *', timezone: 'UTC', isEnabled: true };
+const emptySchedule = {
+  reportId: '', frequencyLabel: 'DAILY', cronExpression: '0 0 2 * * *', timezone: 'UTC', isEnabled: true,
+  preconditionEnabled: false, preconditionSql: '',
+};
 
 const SchedulesTab = () => {
   const { tenantVersion } = useAuth();
@@ -870,6 +873,14 @@ const SchedulesTab = () => {
       render: (s) => <StatusBadge status={s.isEnabled ? 'Active' : 'Paused'} />,
     },
     { key: 'cronExpression', header: 'Cron', mono: true, nowrap: true },
+    {
+      key: 'preconditionEnabled',
+      header: 'Gate',
+      nowrap: true,
+      render: (s) => (s.preconditionEnabled
+        ? <Badge tone="info" title={s.preconditionSql || ''}>Upstream check</Badge>
+        : '—'),
+    },
     { key: 'frequencyLabel', header: 'Frequency', muted: true, render: (s) => s.frequencyLabel || 'Custom' },
     { key: 'timezone', header: 'Timezone', muted: true, render: (s) => s.timezone || 'UTC' },
     {
@@ -987,6 +998,28 @@ const SchedulesTab = () => {
               options={TIMEZONES}
             />
           </FormField>
+
+          <Checkbox
+            checked={!!form.preconditionEnabled}
+            onChange={(e) => setForm({ ...form, preconditionEnabled: e.target.checked })}
+            label="Wait for upstream batch to complete"
+            hint="Runs a check query on the same connection before each scheduled pull. If it is not ready, the pull is deferred and re-checked on the retry backoff. Run now ignores this."
+          />
+
+          {form.preconditionEnabled && (
+            <FormField
+              label="Check query"
+              hint="Single SELECT. Proceeds when the first cell of the first row is true, a non-zero number, or Y / YES / 1 / COMPLETED / SUCCESS / DONE."
+            >
+              <Textarea
+                mono
+                rows={3}
+                value={form.preconditionSql || ''}
+                onChange={(e) => setForm({ ...form, preconditionSql: e.target.value })}
+                placeholder="SELECT COUNT(*) FROM batch_control WHERE business_date = CURRENT_DATE AND status = 'COMPLETED'"
+              />
+            </FormField>
+          )}
         </div>
       </Modal>
 

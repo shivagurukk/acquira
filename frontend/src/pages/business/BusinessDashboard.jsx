@@ -406,13 +406,6 @@ const BusinessDashboard = () => {
                     }}>
                         <RefreshCw size={15} color="var(--text-secondary)" className={loading ? 'spin' : ''} />
                     </button>
-                    <button onClick={() => navigate('/business/executive-dashboard-v2')} style={{
-                        display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
-                        background: 'var(--text)', color: 'var(--bg-card)',
-                        border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
-                    }}>
-                        <TrendingUp size={14} /> Executive View
-                    </button>
                 </div>
             </div>
 

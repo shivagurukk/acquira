@@ -11,6 +11,11 @@ import java.util.List;
 public interface SumMonthlyCardRepository extends JpaRepository<SumMonthlyCard, Long> {
 
     // ─── DB-side aggregation for the loyalty section ────────────────────────
+    //
+    // [TENANCY] merchant_id is a global BIGSERIAL — unique, but not tenant-unique.
+    // Each aggregate pins tenant_id (inside the inner per-card subquery, so the
+    // bucketing itself can never see another tenant's cards). The tenant must
+    // come from the CALLER's context, not from the merchant record.
     // The loyalty section only ever consumes HISTOGRAMS of per-card aggregates,
     // never individual card rows — but the entity queries above return one row
     // per card per month (80k+ rows for a single large merchant), which is what
@@ -27,11 +32,13 @@ public interface SumMonthlyCardRepository extends JpaRepository<SumMonthlyCard, 
             SELECT t.merchant_id, t.visits, COUNT(*) AS cards
             FROM (SELECT merchant_id, card_number, SUM(visit_count) AS visits
                   FROM sum_monthly_card
-                  WHERE merchant_id IN (:merchantIds) AND month_key BETWEEN :startMonth AND :endMonth
+                  WHERE tenant_id = :tenantId
+                    AND merchant_id IN (:merchantIds) AND month_key BETWEEN :startMonth AND :endMonth
                   GROUP BY merchant_id, card_number) t
             GROUP BY t.merchant_id, t.visits
             """, nativeQuery = true)
     List<Object[]> aggregateVisitHistogram(
+            @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
             @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
             @org.springframework.data.repository.query.Param("startMonth") Integer startMonth,
             @org.springframework.data.repository.query.Param("endMonth") Integer endMonth);
@@ -49,11 +56,13 @@ public interface SumMonthlyCardRepository extends JpaRepository<SumMonthlyCard, 
                    COUNT(*) AS cards
             FROM (SELECT merchant_id, card_number, SUM(total_spend) AS spend
                   FROM sum_monthly_card
-                  WHERE merchant_id IN (:merchantIds) AND month_key BETWEEN :startMonth AND :endMonth
+                  WHERE tenant_id = :tenantId
+                    AND merchant_id IN (:merchantIds) AND month_key BETWEEN :startMonth AND :endMonth
                   GROUP BY merchant_id, card_number) t
             GROUP BY 1, 2
             """, nativeQuery = true)
     List<Object[]> aggregateSpendBands(
+            @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
             @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
             @org.springframework.data.repository.query.Param("startMonth") Integer startMonth,
             @org.springframework.data.repository.query.Param("endMonth") Integer endMonth);
@@ -69,10 +78,12 @@ public interface SumMonthlyCardRepository extends JpaRepository<SumMonthlyCard, 
                    COUNT(*) FILTER (WHERE visit_count <> 1 AND visit_count <= 4) AS c2to4,
                    COUNT(*) FILTER (WHERE visit_count > 4)                       AS c5plus
             FROM sum_monthly_card
-            WHERE merchant_id IN (:merchantIds) AND month_key BETWEEN :startMonth AND :endMonth
+            WHERE tenant_id = :tenantId
+              AND merchant_id IN (:merchantIds) AND month_key BETWEEN :startMonth AND :endMonth
             GROUP BY merchant_id, month_key
             """, nativeQuery = true)
     List<Object[]> aggregateMonthlyVisitFrequency(
+            @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
             @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
             @org.springframework.data.repository.query.Param("startMonth") Integer startMonth,
             @org.springframework.data.repository.query.Param("endMonth") Integer endMonth);

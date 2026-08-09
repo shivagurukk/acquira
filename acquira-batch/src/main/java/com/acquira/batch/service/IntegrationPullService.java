@@ -165,6 +165,41 @@ public class IntegrationPullService {
             // 2. Build params
             Map<String, Object> params = buildParams(dateFrom, dateTo);
 
+            // 2b. Optional upstream-readiness gate: run the schedule's precondition
+            //     query against the SAME external connection and only pull when it
+            //     returns a truthy first cell — i.e. the upstream batch has
+            //     completed. Not ready => defer via the normal retry backoff so we
+            //     keep polling instead of ingesting a half-loaded day. Manual
+            //     "Run Now" bypasses the gate (the operator is forcing the pull).
+            if (triggerType != IntegrationRunLog.TriggerType.MANUAL
+                    && schedule != null
+                    && Boolean.TRUE.equals(schedule.getPreconditionEnabled())
+                    && schedule.getPreconditionSql() != null
+                    && !schedule.getPreconditionSql().isBlank()) {
+                List<Map<String, Object>> check =
+                        executeExternalQuery(conn, schedule.getPreconditionSql(), params);
+                Object cell = check.isEmpty() ? null
+                        : check.get(0).values().stream().findFirst().orElse(null);
+                if (!isTruthy(cell)) {
+                    log.info("[Integration] Precondition NOT met for '{}' (tenant {}) — upstream returned {} (attempt {}/{})",
+                            report.getName(), tenantId, cell, attemptNumber, runLog.getMaxRetries());
+                    if (attemptNumber < runLog.getMaxRetries()) {
+                        runLog.setStatus(IntegrationRunLog.Status.RETRYING);
+                        runLog.setErrorMessage("Upstream batch not complete yet (precondition returned "
+                                + cell + ") — pull deferred, will re-check.");
+                        scheduleRetry(report, schedule, dateFrom, dateTo, attemptNumber + 1);
+                    } else {
+                        runLog.setStatus(IntegrationRunLog.Status.FAILED);
+                        runLog.setErrorMessage("Upstream batch never reported complete after "
+                                + attemptNumber + " checks (precondition returned " + cell + ").");
+                    }
+                    org.slf4j.MDC.clear();
+                    return; // finally still unlocks + persists the run log
+                }
+                log.info("[Integration] Precondition met for '{}' (tenant {}) — proceeding with pull.",
+                        report.getName(), tenantId);
+            }
+
             // 3. Fetch from external DB
             log.info("[Integration] Pulling {} report '{}' for tenant {} (attempt {}/{})",
                     report.getReportType(), report.getName(), tenantId, attemptNumber, runLog.getMaxRetries());
@@ -194,7 +229,15 @@ public class IntegrationPullService {
                 //     produces: granular card_product_code preserved, card_type
                 //     coarsened to DEBIT/CREDIT/PREPAID, ISO-numeric currency tokens
                 //     translated to codes, optional minor-unit division.
-                normalizeStagedTransactions(tenantId, Boolean.TRUE.equals(report.getAmountsMinorUnits()));
+                // TENANT-DRIVEN amount format (2026-08-08): tenant.input_format is the
+                // primary switch (CMM = minor units -> divide, AMS = final decimals ->
+                // no division), same rule as the file path. The per-report
+                // amounts_minor_units flag, when explicitly set, still overrides —
+                // existing configured reports keep their behaviour exactly.
+                boolean minorUnits = report.getAmountsMinorUnits() != null
+                        ? report.getAmountsMinorUnits()
+                        : isCmmTenant(tenantId);
+                normalizeStagedTransactions(tenantId, minorUnits);
             }
 
             runLog.setRowsProcessed(processed);
@@ -520,6 +563,21 @@ public class IntegrationPullService {
      *     currency's decimal_notation_value (default 100 when unknown, same
      *     as the file path) and interchange by 10000 — mirrors CMM handling.
      */
+    /**
+     * tenant.input_format = 'CMM' (or anything but 'AMS') -> amounts are minor
+     * units and need the decimal_notation_value division. 'AMS' -> final
+     * decimals, no division. Mirrors FileUploadService.inputTypeForTenant.
+     */
+    private boolean isCmmTenant(Long tenantId) {
+        try {
+            String fmt = jdbcTemplate.queryForObject(
+                "SELECT input_format FROM tenant WHERE tenant_id = ?", String.class, tenantId);
+            return !"AMS".equalsIgnoreCase(fmt == null ? "" : fmt.trim());
+        } catch (Exception e) {
+            return true; // legacy default: CMM (divide)
+        }
+    }
+
     private void normalizeStagedTransactions(Long tenantId, boolean minorUnits) {
         long t0 = System.currentTimeMillis();
 
@@ -645,6 +703,21 @@ public class IntegrationPullService {
     }
 
     // ─── Helpers ──────────────────────────────────────────────
+
+    /**
+     * Truthiness for the precondition gate's single result cell. Upstream batch
+     * trackers signal completion in many shapes — boolean flags, row counts,
+     * status strings — so accept the common ones rather than forcing one schema.
+     */
+    static boolean isTruthy(Object v) {
+        if (v == null) return false;
+        if (v instanceof Boolean b) return b;
+        if (v instanceof Number n) return n.longValue() != 0;
+        String s = v.toString().trim().toUpperCase();
+        return s.equals("TRUE") || s.equals("T") || s.equals("Y") || s.equals("YES")
+                || s.equals("1") || s.equals("COMPLETED") || s.equals("COMPLETE")
+                || s.equals("SUCCESS") || s.equals("DONE");
+    }
 
     private Map<String, Object> buildParams(LocalDate dateFrom, LocalDate dateTo) {
         Map<String, Object> params = new HashMap<>();

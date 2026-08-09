@@ -322,6 +322,9 @@ public class IntegrationController {
         schedule.setFrequencyLabel((String) body.get("frequencyLabel"));
         schedule.setTimezone(body.getOrDefault("timezone", "UTC").toString());
         schedule.setIsEnabled(body.get("isEnabled") != null ? (Boolean) body.get("isEnabled") : true);
+        schedule.setPreconditionEnabled(body.get("preconditionEnabled") != null
+                ? (Boolean) body.get("preconditionEnabled") : false);
+        schedule.setPreconditionSql((String) body.get("preconditionSql"));
         schedule.setCreatedAt(LocalDateTime.now());
 
         // Validate the cron up front so an invalid expression fails the request
@@ -366,6 +369,8 @@ public class IntegrationController {
                     if (body.containsKey("frequencyLabel")) existing.setFrequencyLabel((String) body.get("frequencyLabel"));
                     if (body.containsKey("timezone")) existing.setTimezone((String) body.get("timezone"));
                     if (body.containsKey("isEnabled")) existing.setIsEnabled((Boolean) body.get("isEnabled"));
+                    if (body.containsKey("preconditionEnabled")) existing.setPreconditionEnabled((Boolean) body.get("preconditionEnabled"));
+                    if (body.containsKey("preconditionSql")) existing.setPreconditionSql((String) body.get("preconditionSql"));
                     existing.setUpdatedAt(LocalDateTime.now());
 
                     IntegrationSchedule saved = scheduleRepo.save(existing);

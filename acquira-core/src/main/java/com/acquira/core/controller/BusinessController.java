@@ -338,7 +338,8 @@ public class BusinessController {
                         @RequestParam(defaultValue = "desc") String dir,
                         @RequestParam(required = false) String search,
                         @RequestParam(defaultValue = "false") boolean lossOnly,
-                        @RequestParam(required = false) String month) {
+                        @RequestParam(required = false) String month,
+                        @RequestParam(defaultValue = "false") boolean export) {
                 Long tenantId = resolveTenant();
                 if (tenantId == null)
                         return ResponseEntity.status(403).body(Map.of("message",
@@ -410,6 +411,13 @@ public class BusinessController {
                 if (page < 0) page = 0;
                 if (size < 1) size = 50;
                 if (size > 500) size = 500;
+                // export=true returns the FULL result set in one response (no
+                // LIMIT/OFFSET). The CSV export used to page through this endpoint
+                // 500 rows at a time; each page re-ran the whole grouped aggregate
+                // (and OFFSET re-sorted everything it skipped), so a large period
+                // meant dozens of sequential round trips each costing more than the
+                // last. One unpaged query is strictly cheaper than two paged ones.
+                if (export) page = 0;
 
                 // Sort key -> aggregate expression (whitelist; user text never
                 // becomes a SQL identifier).
@@ -484,14 +492,16 @@ public class BusinessController {
                                 "SUM(t.total_txns), SUM(t.total_base_volume), SUM(t.total_msf), " +
                                 "SUM(t.total_interchange), SUM(t.total_scheme_fee), SUM(COALESCE(t.total_ecom_fee,0)), SUM(t.total_revenue) " +
                                 base +
-                                "ORDER BY " + orderExpr + " " + orderDir + " NULLS LAST" + tieBreak + " " +
-                                "LIMIT :lim OFFSET :off");
+                                "ORDER BY " + orderExpr + " " + orderDir + " NULLS LAST" + tieBreak +
+                                (export ? "" : " LIMIT :lim OFFSET :off"));
                 rq.setParameter("tid", tenantId);
                 rq.setParameter("s", from);
                 rq.setParameter("e", to);
                 if (hasSearch) rq.setParameter("q", "%" + searchTerm + "%");
-                rq.setParameter("lim", size);
-                rq.setParameter("off", (long) page * size);
+                if (!export) {
+                        rq.setParameter("lim", size);
+                        rq.setParameter("off", (long) page * size);
+                }
 
                 @SuppressWarnings("unchecked")
                 List<Object[]> rows = rq.getResultList();
@@ -576,7 +586,7 @@ public class BusinessController {
                 response.put("from", from.toString());
                 response.put("to", to.toString());
                 response.put("page", page);
-                response.put("size", size);
+                response.put("size", export ? out.size() : size);
                 response.put("totalRows", totalRows);
                 response.put("totals", totals);
                 response.put("rows", out);

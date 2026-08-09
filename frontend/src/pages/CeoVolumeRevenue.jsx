@@ -212,21 +212,14 @@ const CeoVolumeRevenue = ({
         setExporting(true);
         try {
             const base = { ...periodParams, lossOnly: lossOnly || undefined, sort, dir, search: query || undefined };
-            const res = await api.get('/business/ceo-volume-revenue', { params: { ...base, page: 0, size: 500 } });
-            let rows = res.data?.rows || [];
+            // export=true returns the FULL result set in one response. Paging
+            // through in 500-row chunks re-ran the grouped aggregate per chunk
+            // (twice: rows + totals) and OFFSET re-sorted all skipped rows, so
+            // large periods took dozens of sequential round trips to download.
+            const res = await api.get('/business/ceo-volume-revenue', { params: { ...base, export: true } });
+            const rows = res.data?.rows || [];
             const totalRows = num(res.data?.totalRows);
             const exportTotals = res.data?.totals;
-            // FIX: previously capped at Math.min(totalRows, 5000), silently truncating
-            // the export for periods with >5000 MID x SID rows (sorted by volume desc,
-            // so it always dropped the long tail of smaller merchants first). That made
-            // the CSV's own column sum disagree with the server-computed KPI total shown
-            // on screen (which aggregates the FULL period, uncapped). Fetch every row now.
-            for (let p = 1; rows.length < totalRows; p++) {
-                const r2 = await api.get('/business/ceo-volume-revenue', { params: { ...base, page: p, size: 500 } });
-                const chunk = r2.data?.rows || [];
-                if (!chunk.length) break;
-                rows = rows.concat(chunk);
-            }
             // Quoting is correct for CSV parsing, but Excel still evaluates a field
             // that begins =, +, - or @ once unquoted, and merchant names come from
             // ingested master data. Prefix an apostrophe to force text.

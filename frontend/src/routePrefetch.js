@@ -30,7 +30,6 @@
 // Route path -> dynamic import thunk. Mirror of the lazy() specifiers in App.jsx.
 const ROUTE_IMPORTS = {
     '/dashboard': () => import('./pages/Dashboard'),
-    '/business/executive-dashboard-v2': () => import('./pages/business/ExecutiveDashboardReport'),
 
     '/merchants': () => import('./components/MerchantHierarchy'),
     '/transactions': () => import('./components/TransactionList'),
@@ -89,6 +88,7 @@ const ROUTE_IMPORTS = {
     '/admin/data-migration': () => import('./pages/admin/DataMigration'),
     '/admin/security-settings': () => import('./pages/admin/SecuritySettings'),
     '/admin/maintenance': () => import('./pages/admin/DatabaseMaintenance'),
+    '/admin/bin-management': () => import('./pages/admin/BinManagement'),
     '/admin/alerts': () => import('./pages/admin/AlertsNotifications'),
     '/admin/api-management': () => import('./pages/admin/ApiManagement'),
 };

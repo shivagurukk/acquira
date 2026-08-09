@@ -60,7 +60,6 @@ The sidebar itself is **not** hardcoded — it is built from `GET /api/users/me/
 | Category | Route | Component | Role guard |
 |---|---|---|---|
 | Executive | `/dashboard` | `Dashboard` | any |
-| Executive | `/business/executive-dashboard-v2` | `ExecutiveDashboardReport` | any |
 | Merchant | `/merchants` | `MerchantHierarchy` | any |
 | Merchant | `/transactions` | `TransactionList` | any |
 | Merchant | `/merchant-summary` | `MerchantSummary` | any |
@@ -131,7 +130,7 @@ These live in `frontend/src/contexts/` and `frontend/src/api/` and apply to **ev
 - On `403`, it logs a warning but does **not** log out (the UI handles forbidden inline).
 - The refresh token is primarily an HttpOnly cookie; the `localStorage` copy is a plain-HTTP dev fallback only.
 
-**`components/Loaders.jsx`** — `PageLoader` (route-level Suspense fallback), `Spinner`, and `ContentLoader` (skeletons). Skeleton loaders are wired into the heavier dashboards (`ExecutiveDashboardReport`, `DailyMerchantDashboard`, `TransactionPerformanceDashboard`, `VolumeRevenueSummary`, `FinanceLists`).
+**`components/Loaders.jsx`** — `PageLoader` (route-level Suspense fallback), `Spinner`, and `ContentLoader` (skeletons). Skeleton loaders are wired into the heavier dashboards (`DailyMerchantDashboard`, `TransactionPerformanceDashboard`, `VolumeRevenueSummary`, `FinanceLists`).
 
 **API client modules** (`frontend/src/api/`):
 - `explorer.js` — `explorerApi` (fields/distinct/query/queryMerchants/associative + master-items + alerts), `reportApi` (excel/csv export, templates, schedules), `savedViewsApi` (filter views CRUD + set-default).
@@ -175,11 +174,6 @@ Each entry lists: **Route**, **What it does**, **Key features**, **Backend** (co
 - **What it does:** Top-line tenant snapshot — KPI tiles, scheme donut, ranked merchants.
 - **Backend:** `BusinessController` → `GET /api/business/dashboard/kpis` (header `X-Tenant-Id`, optional `endDate`) and `POST /api/business/dashboard/kpis-filtered` (BusinessFilters body). KPIs: daily/MTD/YTD volume+count, active/dormant/new merchant counts. `AnalyticsController` → `POST /api/analytics/scheme-breakdown` for the donut.
 - **Tables:** `sum_daily_bank` (unfiltered KPIs), `sum_daily_insight` (filtered KPIs + active-merchant count), `merchant_activity_summary` (active/dormant/onboarded counts), `sum_daily_scheme` (donut).
-
-#### Executive Dashboard v2
-- **Route:** `/business/executive-dashboard-v2` (`ExecutiveDashboardReport.jsx`). Enhanced with toggleable chart series (Volume / MSF / Transactions), a hover scrubber, Recharts `Brush` zoom, and click-to-pin donut slices; switched from `AreaChart` to `ComposedChart`.
-- **Backend:** `ExecutiveDashboardController` → `GET /api/dashboard/v2/data?dataset=&asOfDate=` and `GET /api/dashboard/v2/datasets`. The repository runs 9 tenant-scoped queries to assemble the DTO. Also `BusinessAnalyticsController` → `POST /api/business/executive-metrics`.
-- **Tables:** `sum_daily_bank`, `sum_monthly_bank` (and the dimension/summary tables the repository rolls up).
 
 ### 5.2 Merchant Management
 
@@ -509,8 +503,6 @@ Grouped by controller. All are tenant-scoped unless noted; `[A]` = ADMIN/SUPER_A
 **BusinessAnalyticsController** `/api/business` — `POST /volume-revenue-summary`, `POST /merchant-financial-summary`, `POST /performance-dashboard`, `POST /debit-prepaid-metrics`, `POST /attrition-report`, `POST /executive-metrics`, `POST /merchant-analytics`, `GET /filter-options`, `GET /data-bounds`.
 
 **DailyMerchantDashboardController** `/api/business` — `GET /daily-merchant-dashboard`, `POST /daily-merchant-dashboard-filtered`.
-
-**ExecutiveDashboardController** `/api/dashboard/v2` — `GET /data`, `GET /datasets`.
 
 **FinanceController** `/api/finance` — `GET /summary`, `GET /dashboard/kpis`, `POST /dashboard/kpis-filtered`, `GET /dashboard/trends/{mode}`, `POST /dashboard/trends-filtered`, `GET /profitability`, `GET /export/profitability`, `GET /loss-making-merchants`, `GET /high-volume-low-margin`.
 
@@ -951,7 +943,7 @@ Source: `acquira-core/src/main/resources/schema.sql` (canonical, de-duplicated) 
 | `dim_merchant` / `dim_store` / `dim_terminal` | MerchantController, StoreController, ReportFilterController | Merchant Hierarchy, filters everywhere |
 | `dim_bank_account` | (merchant 360 / settlement) | Merchant detail |
 | `fact_transaction` | TransactionController, MigrationController, data-bounds | Transactions, Data Migration |
-| `sum_daily_bank` / `sum_monthly_bank` | BusinessController, ExecutiveDashboardController, FinanceController | Dashboards, Finance |
+| `sum_daily_bank` / `sum_monthly_bank` | BusinessController, FinanceController | Dashboards, Finance |
 | `sum_daily_insight` | AnalyticsExplorerController, CrossFilterController, InsightController, MerchantController(compare), filtered KPIs | Interactive Explorer, Insight Hub, Comparison |
 | `sum_daily_merchant` | DailyMerchantDashboardController, LeaderboardController, SalesPortfolioController, GroupAnalyticsController, AnalyticsController(heatmap) | Daily Dashboard, Leaderboard, Hierarchy, Group Reports, Heatmap |
 | `sum_daily_scheme` / `sum_daily_channel` / `sum_daily_mcc` | AnalyticsController, FinanceController, TransactionTrendsHub | Trends, Finance profitability |

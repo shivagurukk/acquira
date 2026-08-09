@@ -48,6 +48,16 @@ public class EmailTemplateConfig {
     private LocalDateTime updatedAt;
 
     public enum TemplateType {
-        STATEMENT, WELCOME, ALERT, PROMOTION, CUSTOM
+        STATEMENT, WELCOME, ALERT, PROMOTION, CUSTOM,
+        /**
+         * Covering email for a generated PDF report — the message a merchant
+         * receives with their Business Insight Report attached. Resolved per
+         * tenant by ReportEmailTemplateService; the tenant's template flagged
+         * isDefaultForType is the one the PDF batch uses.
+         *
+         * template_type is VARCHAR(50) with no CHECK constraint, so adding this
+         * value needs no migration.
+         */
+        REPORT_PDF
     }
 }

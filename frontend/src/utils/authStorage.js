@@ -16,6 +16,7 @@ const AUTH_KEYS = [
   'allowedTenants',
   'roles',
   'sessionTimeoutMinutes',
+  'mustChangePassword',
 ];
 
 export function clearAuthStorage() {

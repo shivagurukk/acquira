@@ -54,7 +54,13 @@ public class AnalyticsController {
 
         LocalDate targetDate;
         if (year > 0 && month > 0 && day > 0) {
-            targetDate = LocalDate.of(year, month, day);
+            // Invalid combinations (Feb 30) used to throw DateTimeException →
+            // 500, which the grid rendered as "no data". Clamp to a 400.
+            try {
+                targetDate = LocalDate.of(year, month, day);
+            } catch (java.time.DateTimeException e) {
+                return ResponseEntity.badRequest().build();
+            }
         } else {
             targetDate = LocalDate.now();
         }
@@ -145,7 +151,12 @@ public class AnalyticsController {
 
         LocalDate targetDate;
         if (year > 0 && month > 0 && day > 0) {
-            targetDate = LocalDate.of(year, month, day);
+            try {
+                targetDate = LocalDate.of(year, month, day);
+            } catch (java.time.DateTimeException e) {
+                response.sendError(jakarta.servlet.http.HttpServletResponse.SC_BAD_REQUEST, "Invalid date");
+                return;
+            }
         } else {
             targetDate = LocalDate.now();
         }
@@ -199,11 +210,15 @@ public class AnalyticsController {
         query.setParameter("startOfYear", startOfYear);
         query.setParameter("tenantId", tenantId);
 
-        // Limit export for safety (or stream properly, but list is fine for MVP < 100k
-        // rows)
-        query.setMaxResults(10000);
+        // Fetch cap+1 so truncation can be DETECTED and marked in the file
+        // instead of silently shipping a short export that finance would
+        // reconcile against as if complete.
+        final int EXPORT_CAP = 10000;
+        query.setMaxResults(EXPORT_CAP + 1);
 
         List<Object[]> results = query.getResultList();
+        boolean truncated = results.size() > EXPORT_CAP;
+        if (truncated) results = results.subList(0, EXPORT_CAP);
 
         response.setContentType("text/csv");
         response.setHeader("Content-Disposition", "attachment; filename=\"merchant_summary_" + targetDate + ".csv\"");
@@ -214,13 +229,27 @@ public class AnalyticsController {
             for (Object[] row : results) {
                 // row: 0=Name, 1=MID, 2=Store, 3=SID, 4=TID, 5=DevNum, 6=DC, 7=DV, 8=MC, 9=MV,
                 // 10=YC, 11=YV, 12=Credit, 13=Debit, 14=SalesUser
-                writer.printf("\"%s\",\"%s\",%s,%s,\"%s\",%d,%s,%d,%s,%d,%s%n",
-                        row[0], row[1], row[12], row[13], row[14],
+                // Text fields are RFC-4180 escaped + formula-neutralised: a
+                // merchant named ACME "Holdings" used to break every row after
+                // it, and =/+/-/@ prefixes execute as formulas in Excel.
+                writer.printf("%s,%s,%s,%s,%s,%d,%s,%d,%s,%d,%s%n",
+                        csvCell(row[0]), csvCell(row[1]), row[12], row[13], csvCell(row[14]),
                         ((Number) row[6]).longValue(), row[7],
                         ((Number) row[8]).longValue(), row[9],
                         ((Number) row[10]).longValue(), row[11]);
             }
+            if (truncated) {
+                writer.println(csvCell("TRUNCATED — first " + EXPORT_CAP
+                        + " merchants by name; refine the export or contact support for a full extract"));
+            }
         }
+    }
+
+    /** RFC-4180 CSV cell: quote, double internal quotes, neutralise leading =+-@ (formula injection). */
+    private static String csvCell(Object v) {
+        String s = v == null ? "" : v.toString();
+        if (!s.isEmpty() && "=+-@\t\r".indexOf(s.charAt(0)) >= 0) s = "'" + s;
+        return "\"" + s.replace("\"", "\"\"") + "\"";
     }
 
     @GetMapping("/heatmap")

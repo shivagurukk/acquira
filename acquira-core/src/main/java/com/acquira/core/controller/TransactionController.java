@@ -21,8 +21,10 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -99,6 +101,8 @@ public class TransactionController {
             @RequestParam(required = false) String tid,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate paymentDateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate paymentDateTo,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate transactionDateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate transactionDateTo,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime cursorPaymentDate,
             @RequestParam(required = false) Long cursorTxnId) {
 
@@ -116,31 +120,84 @@ public class TransactionController {
         boolean hasIdFilter = (mid != null && !mid.isBlank())
                 || (sid != null && !sid.isBlank())
                 || (tid != null && !tid.isBlank());
+        // Transaction-date filters take the spec path too (the keyset query
+        // paginates on payment_date and doesn't carry them). They used to be
+        // dropped entirely: the screen's inputs were a silent no-op while the
+        // export honoured them — screen and export disagreed by design.
+        boolean hasSpecFilter = hasIdFilter || transactionDateFrom != null || transactionDateTo != null;
 
         // Fetch one extra row to detect "has more" without a COUNT.
         Pageable limitPlusOne = PageRequest.of(0, pageSize + 1);
 
-        if (!hasIdFilter) {
+        if (!hasSpecFilter) {
             // Fast path: pure keyset over the (tenant_id, payment_date) index.
             rows = transactionRepository.findKeyset(tenantId, from, to, cursorPaymentDate, cursorTxnId, limitPlusOne);
         } else {
-            // ID-filter path: build the bounded spec and fetch a SLICE (limit+1),
-            // ordered the same way, applying the keyset cursor as an extra predicate.
-            // This still avoids the global COUNT (we use findAll(spec, pageable) with a
-            // single page and never call getTotalElements()).
+            // Filter path: bounded spec + keyset cursor predicate, fetched as a
+            // true SLICE via the fluent API. findAll(spec, PageRequest) returned
+            // a Page, and because limit+1 rows come back whenever more data
+            // exists, Spring ran the full COUNT(*) on every page — the exact
+            // query keyset paging exists to avoid.
             Specification<Transaction> spec = createSpecification(tenantId, mid, sid, tid,
-                    paymentDateFrom, paymentDateTo, null, null);
-            spec = spec.and(keysetSpec(cursorPaymentDate, cursorTxnId));
-            Pageable sortedSlice = PageRequest.of(0, pageSize + 1,
-                    Sort.by(Sort.Direction.DESC, "paymentDate").and(Sort.by(Sort.Direction.DESC, "transactionId")));
-            rows = transactionRepository.findAll(spec, sortedSlice).getContent();
+                    paymentDateFrom, paymentDateTo, transactionDateFrom, transactionDateTo)
+                    .and(keysetSpec(cursorPaymentDate, cursorTxnId));
+            rows = transactionRepository.findBy(spec, q -> q
+                    .sortBy(Sort.by(Sort.Direction.DESC, "paymentDate")
+                            .and(Sort.by(Sort.Direction.DESC, "transactionId")))
+                    .limit(pageSize + 1)
+                    .all());
         }
 
         boolean hasMore = rows.size() > pageSize;
         List<Transaction> content = hasMore ? rows.subList(0, pageSize) : rows;
 
+        // ── DTO mapping ──
+        // The endpoint used to serialize the ENTITY: (a) Jackson touched the
+        // three lazy @ManyToOnes per row → up to 3×pageSize extra queries under
+        // open-in-view, and (b) card_number went out RAW — the CSV path masked
+        // it but the JSON path did not. Names are now resolved with three
+        // batched lookups and the PAN is masked here.
+        Map<Long, Merchant> merchantsById = new HashMap<>();
+        Map<Long, Store> storesById = new HashMap<>();
+        Map<Long, Terminal> terminalsById = new HashMap<>();
+        merchantRepository.findAllById(content.stream().map(Transaction::getMerchantId)
+                .filter(java.util.Objects::nonNull).collect(Collectors.toSet()))
+                .forEach(m -> merchantsById.put(m.getMerchantId(), m));
+        storeRepository.findAllById(content.stream().map(Transaction::getStoreId)
+                .filter(java.util.Objects::nonNull).collect(Collectors.toSet()))
+                .forEach(s -> storesById.put(s.getStoreId(), s));
+        terminalRepository.findAllById(content.stream().map(Transaction::getTerminalId)
+                .filter(java.util.Objects::nonNull).collect(Collectors.toSet()))
+                .forEach(t -> terminalsById.put(t.getTerminalId(), t));
+
+        List<Map<String, Object>> dtos = new ArrayList<>(content.size());
+        for (Transaction t : content) {
+            Merchant m = t.getMerchantId() != null ? merchantsById.get(t.getMerchantId()) : null;
+            Store s = t.getStoreId() != null ? storesById.get(t.getStoreId()) : null;
+            Terminal term = t.getTerminalId() != null ? terminalsById.get(t.getTerminalId()) : null;
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("transactionId", t.getTransactionId());
+            d.put("paymentDate", t.getPaymentDate());
+            d.put("transactionDate", t.getTransactionDate());
+            d.put("arn", t.getArn());
+            d.put("merchantId", t.getMerchantId());
+            d.put("storeId", t.getStoreId());
+            d.put("terminalId", t.getTerminalId());
+            d.put("merchant", m != null ? Map.of("mid", nzs(m.getMid()), "name", nzs(m.getName())) : null);
+            d.put("store", s != null ? Map.of("sid", nzs(s.getSid()), "name", nzs(s.getName())) : null);
+            d.put("terminal", term != null ? Map.of("tid", nzs(term.getTid())) : null);
+            d.put("cardNumber", maskCardNumber(t.getCardNumber()));
+            d.put("txnCurrency", t.getTxnCurrency());
+            d.put("txnCurrencyAmount", t.getTxnCurrencyAmount());
+            d.put("msf", t.getMsf());
+            d.put("dcc", t.getDcc());
+            d.put("transactionType", t.getTransactionType());
+            d.put("destination", t.getDestination());
+            dtos.add(d);
+        }
+
         Map<String, Object> body = new HashMap<>();
-        body.put("content", content);
+        body.put("content", dtos);
         body.put("hasMore", hasMore);
         if (!content.isEmpty()) {
             Transaction last = content.get(content.size() - 1);
@@ -152,6 +209,8 @@ public class TransactionController {
         }
         return ResponseEntity.ok(body);
     }
+
+    private static String nzs(String s) { return s == null ? "" : s; }
 
     /** Keyset predicate: rows strictly older than (cursorDate, cursorId) in DESC order. */
     private Specification<Transaction> keysetSpec(LocalDateTime cursorDate, Long cursorId) {
@@ -271,13 +330,19 @@ public class TransactionController {
         return spec;
     }
 
+    // Resolution cap: a one-character filter used to expand to EVERY matching
+    // dim row and drop thousands of literals into an IN (...) clause. 1000 ids
+    // is far beyond any real lookup; past it the filter is too vague to be
+    // meaningful anyway.
+    private static final int ID_RESOLUTION_CAP = 1000;
+
     private List<Long> resolveMerchantIds(Long tenantId, String mid) {
         // Find merchants where MID contains the search string — scoped to tenant.
         Specification<Merchant> spec = (root, query, cb) -> cb.and(
                 cb.equal(root.get("tenantId"), tenantId),
                 cb.like(root.get("mid"), "%" + mid + "%"));
-        List<Merchant> merchants = merchantRepository.findAll(spec);
-        return merchants.stream().map(Merchant::getMerchantId).collect(Collectors.toList());
+        return merchantRepository.findBy(spec, q -> q.limit(ID_RESOLUTION_CAP).all())
+                .stream().map(Merchant::getMerchantId).collect(Collectors.toList());
     }
 
     private List<Long> resolveStoreIds(Long tenantId, String sid) {
@@ -285,8 +350,8 @@ public class TransactionController {
         Specification<Store> spec = (root, query, cb) -> cb.and(
                 cb.equal(root.get("tenantId"), tenantId),
                 cb.like(root.get("sid"), "%" + sid + "%"));
-        List<Store> stores = storeRepository.findAll(spec);
-        return stores.stream().map(Store::getStoreId).collect(Collectors.toList());
+        return storeRepository.findBy(spec, q -> q.limit(ID_RESOLUTION_CAP).all())
+                .stream().map(Store::getStoreId).collect(Collectors.toList());
     }
 
     /** Mask card number to show only last 4 digits (PCI-DSS compliant) */
@@ -302,7 +367,7 @@ public class TransactionController {
         Specification<Terminal> spec = (root, query, cb) -> cb.and(
                 cb.equal(root.get("tenantId"), tenantId),
                 cb.like(root.get("tid"), "%" + tid + "%"));
-        List<Terminal> terminals = terminalRepository.findAll(spec);
-        return terminals.stream().map(Terminal::getTerminalId).collect(Collectors.toList());
+        return terminalRepository.findBy(spec, q -> q.limit(ID_RESOLUTION_CAP).all())
+                .stream().map(Terminal::getTerminalId).collect(Collectors.toList());
     }
 }

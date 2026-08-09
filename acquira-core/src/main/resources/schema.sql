@@ -202,7 +202,6 @@ ON CONFLICT (group_name) DO NOTHING;
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
 ('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
-('Executive Dashboard',      '/business/executive-dashboard-v2',  'Presentation',    'EXECUTIVE',      2),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -519,7 +518,7 @@ CREATE TABLE IF NOT EXISTS stg_trnx_raw (
     txn_currency_amount DECIMAL(19, 2),
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -804,7 +803,7 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
     
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -2081,7 +2080,6 @@ ON CONFLICT (group_name) DO NOTHING;
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
 ('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
-('Executive Dashboard',      '/business/executive-dashboard-v2',  'Presentation',    'EXECUTIVE',      2),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -2398,7 +2396,7 @@ CREATE TABLE IF NOT EXISTS stg_trnx_raw (
     txn_currency_amount DECIMAL(19, 2),
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -2683,7 +2681,7 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
     
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -3961,7 +3959,6 @@ ON CONFLICT (group_name) DO NOTHING;
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
 ('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
-('Executive Dashboard',      '/business/executive-dashboard-v2',  'Presentation',    'EXECUTIVE',      2),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -4278,7 +4275,7 @@ CREATE TABLE IF NOT EXISTS stg_trnx_raw (
     txn_currency_amount DECIMAL(19, 2),
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -4563,7 +4560,7 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
     
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -5841,7 +5838,6 @@ ON CONFLICT (group_name) DO NOTHING;
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
 ('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
-('Executive Dashboard',      '/business/executive-dashboard-v2',  'Presentation',    'EXECUTIVE',      2),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -6158,7 +6154,7 @@ CREATE TABLE IF NOT EXISTS stg_trnx_raw (
     txn_currency_amount DECIMAL(19, 2),
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -6443,7 +6439,7 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
     
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -7722,7 +7718,6 @@ ON CONFLICT (group_name) DO NOTHING;
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
 ('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
-('Executive Dashboard',      '/business/executive-dashboard-v2',  'Presentation',    'EXECUTIVE',      2),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -8039,7 +8034,7 @@ CREATE TABLE IF NOT EXISTS stg_trnx_raw (
     txn_currency_amount DECIMAL(19, 2),
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -8324,7 +8319,7 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     store_base_currency VARCHAR(10),
     store_base_currency_amount DECIMAL(19, 2),
     
-    msf DECIMAL(21, 6),
+    msf DECIMAL(19, 4),
     vat DECIMAL(19, 4),
     total_amount_settled DECIMAL(19, 2),
     interchange_fee DECIMAL(19, 4),
@@ -10206,3 +10201,87 @@ ALTER TABLE batch_job_execution_context     OWNER TO postgres;
 ALTER SEQUENCE batch_step_execution_seq     OWNER TO postgres;
 ALTER SEQUENCE batch_job_execution_seq      OWNER TO postgres;
 ALTER SEQUENCE batch_job_seq                OWNER TO postgres;
+-- ============================================================================
+-- TENANT PROVISIONING REGISTRY (Admin > Tenant Provisioning)
+-- These tables back TenantProvisioningService / TenantProvisionController.
+-- Previously referenced by code but never created, so auto-provisioning on
+-- tenant creation failed silently and the admin page errored on every tab.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS tenant_provision_script (
+    script_id BIGSERIAL PRIMARY KEY,
+    script_name VARCHAR(150) NOT NULL UNIQUE,
+    script_order INT NOT NULL DEFAULT 100,
+    description TEXT,
+    script_sql TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    continue_on_error BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tenant_provision_log (
+    log_id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT,
+    script_id BIGINT,
+    script_name VARCHAR(150),
+    status VARCHAR(20),
+    error_message TEXT,
+    duration_ms BIGINT,
+    executed_by VARCHAR(100),
+    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_provision_log_tenant ON tenant_provision_log(tenant_id);
+
+CREATE TABLE IF NOT EXISTS schema_migration_registry (
+    registry_id BIGSERIAL PRIMARY KEY,
+    migration_name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    applied_on_dev BOOLEAN DEFAULT FALSE,
+    applied_on_prod BOOLEAN DEFAULT FALSE,
+    applied_at TIMESTAMP,
+    applied_by VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Starter provisioning scripts. Idempotent (ON CONFLICT DO NOTHING) both at
+-- this seed level and inside each script body, so restarts and re-runs are
+-- safe. ${TENANT_ID} is substituted by TenantProvisioningService at run time.
+
+INSERT INTO tenant_provision_script (script_name, script_order, description, script_sql, is_active, continue_on_error, created_by)
+VALUES (
+    'Default tenant settings', 10,
+    'Seeds the SSO, password-policy and session settings a new bank needs. Mirrors the schema.sql startup seeds but runs immediately at tenant creation.',
+    'INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type) VALUES
+(${TENANT_ID}, ''sso_enabled'', ''false'', ''BOOLEAN''),
+(${TENANT_ID}, ''sso_provider'', ''MICROSOFT'', ''STRING''),
+(${TENANT_ID}, ''sso_client_id'', '''', ''STRING''),
+(${TENANT_ID}, ''sso_tenant_id'', '''', ''STRING''),
+(${TENANT_ID}, ''sso_client_secret'', '''', ''STRING''),
+(${TENANT_ID}, ''password_history_count'', ''5'', ''NUMBER''),
+(${TENANT_ID}, ''password_min_length'', ''8'', ''NUMBER''),
+(${TENANT_ID}, ''max_failed_logins'', ''5'', ''NUMBER''),
+(${TENANT_ID}, ''lockout_duration_minutes'', ''15'', ''NUMBER''),
+(${TENANT_ID}, ''password_reset_token_expiry_hours'', ''1'', ''NUMBER''),
+(${TENANT_ID}, ''security.session_timeout_minutes'', ''30'', ''NUMBER'')
+ON CONFLICT (tenant_id, setting_key) DO NOTHING',
+    TRUE, FALSE, 'schema.sql'
+)
+ON CONFLICT (script_name) DO NOTHING;
+
+INSERT INTO tenant_provision_script (script_name, script_order, description, script_sql, is_active, continue_on_error, created_by)
+VALUES (
+    'Default email templates', 20,
+    'Copies the seed tenant''s active email templates (statements, reports, campaigns) to the new bank so Email Manager works out of the box.',
+    'INSERT INTO email_template_config (tenant_id, name, template_type, subject_template, body_html, body_text, is_active, is_default_for_type, created_by)
+SELECT ${TENANT_ID}, s.name, s.template_type, s.subject_template, s.body_html, s.body_text, TRUE, s.is_default_for_type, ''provisioning''
+FROM email_template_config s
+WHERE s.tenant_id = 1 AND s.is_active = TRUE AND ${TENANT_ID} <> 1
+AND NOT EXISTS (
+    SELECT 1 FROM email_template_config e
+    WHERE e.tenant_id = ${TENANT_ID} AND e.template_type = s.template_type AND e.name = s.name
+)',
+    TRUE, TRUE, 'schema.sql'
+)
+ON CONFLICT (script_name) DO NOTHING;

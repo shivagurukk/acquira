@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Box, Paper, Typography, Stack, Tabs, Tab, Chip, Tooltip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { Layers, AlertCircle, Users, Hash, DollarSign, TrendingUp, Inbox, Receipt, Percent, Coins } from 'lucide-react';
@@ -108,15 +108,13 @@ const GroupReports = () => {
     /* ── Default date range ─────────────────────────────────────── */
     const { startDate: boundsStart, endDate: boundsEnd, boundsLoaded } = useDataBounds(tenantVersion);
 
-    useEffect(() => {
-        if (!boundsLoaded) return;
-        setFilters(prev => ({
-            ...prev,
-            datePreset: 'CUSTOM',
-            startDate: boundsStart,
-            endDate:   boundsEnd,
-        }));
-    }, [boundsLoaded, boundsStart, boundsEnd]);
+    // Latest filters, readable from the fetch effect below without making it
+    // depend on `filters` (which would re-run the report on every drawer edit).
+    const filtersRef = useRef(filters);
+    filtersRef.current = filters;
+    // Bounds signature already seeded into filter state, so a tab switch re-runs
+    // the report without clobbering a date range the user has since chosen.
+    const seededRef = useRef('');
 
     /* ── Fetch report data ──────────────────────────────────────────── */
     const fetchData = useCallback(async (overrideFilters) => {
@@ -181,10 +179,27 @@ const GroupReports = () => {
         }
     }, [filters, activeTab]);
 
-    // Don't fire the first request until data-bounds resolved.
+    // Don't fire the first request until data-bounds resolved — and post an
+    // explicit filter object rather than relying on fetchData's closure.
+    //
+    // Seeding the bounds into state and firing the fetch used to live in two
+    // separate effects that both run in the same commit when boundsLoaded flips.
+    // The fetch therefore read `filters` from its stale closure — still the
+    // initial { datePreset: 'MONTH' } — and the body resolver expanded that into
+    // the CURRENT CALENDAR MONTH, so the page opened on this month instead of
+    // the data window and came back empty whenever the feed's latest
+    // business_date was in an earlier month.
     useEffect(() => {
-        if (boundsLoaded) fetchData();
-    }, [boundsLoaded, activeTab, tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (!boundsLoaded) return;
+        const sig = `${boundsStart}|${boundsEnd}|${tenantVersion}`;
+        let next = filtersRef.current;
+        if (seededRef.current !== sig) {
+            seededRef.current = sig;
+            next = { ...filtersRef.current, datePreset: 'CUSTOM', startDate: boundsStart, endDate: boundsEnd };
+            setFilters(next);
+        }
+        fetchData(next);
+    }, [boundsLoaded, boundsStart, boundsEnd, tenantVersion, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleFilterChange = (keyOrObj, val) => {
         if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));

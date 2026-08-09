@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Filter, ChevronLeft, ChevronRight, X, Download } from 'lucide-react';
-import useExcelExport from '../hooks/useExcelExport';
+import { Filter, ChevronLeft, ChevronRight, X, Download, AlertTriangle } from 'lucide-react';
+import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
 import Loader from './Loader';
 
@@ -35,7 +35,8 @@ const TransactionList = () => {
     // produced page i (null for page 0). Lets us walk back.
     const cursorStackRef = useRef([null]);
 
-    const { exportExcel, isExporting } = useExcelExport();
+    const [isExporting, setIsExporting] = useState(false);
+    const [error, setError] = useState(null);
 
     // Filters
     const [filters, setFilters] = useState({ ...EMPTY_FILTERS });
@@ -43,49 +44,46 @@ const TransactionList = () => {
     filtersRef.current = filters;
 
     // Fetch one page given a starting cursor ({date,id} or null for the first page).
+    // Uses the shared api client: Authorization + X-Tenant-Id + the 401
+    // refresh-token flow all come from the interceptor (the old raw fetch
+    // bypassed it, so an expired token rendered as "No transactions found").
     const fetchPage = useCallback(async (startCursor, overrideFilters) => {
         setLoading(true);
+        setError(null);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId');
             const activeFilters = overrideFilters || filtersRef.current;
 
-            const params = new URLSearchParams();
-            params.append('size', size);
-
-            if (activeFilters.mid) params.append('mid', activeFilters.mid);
-            if (activeFilters.sid) params.append('sid', activeFilters.sid);
-            if (activeFilters.tid) params.append('tid', activeFilters.tid);
-            if (activeFilters.paymentDateFrom) params.append('paymentDateFrom', activeFilters.paymentDateFrom);
-            if (activeFilters.paymentDateTo) params.append('paymentDateTo', activeFilters.paymentDateTo);
-            // NOTE: the keyset endpoint paginates on payment_date. Transaction-date
-            // filters are not part of the cursor; they are intentionally omitted here
-            // to keep the cursor monotonic. (Payment-date range is the primary filter.)
+            const params = { size };
+            if (activeFilters.mid) params.mid = activeFilters.mid;
+            if (activeFilters.sid) params.sid = activeFilters.sid;
+            if (activeFilters.tid) params.tid = activeFilters.tid;
+            if (activeFilters.paymentDateFrom) params.paymentDateFrom = activeFilters.paymentDateFrom;
+            if (activeFilters.paymentDateTo) params.paymentDateTo = activeFilters.paymentDateTo;
+            // Transaction-date filters route the backend onto its bounded
+            // spec path (they can't ride the payment-date cursor index). They
+            // used to be silently dropped while the export honoured them.
+            if (activeFilters.transactionDateFrom) params.transactionDateFrom = activeFilters.transactionDateFrom;
+            if (activeFilters.transactionDateTo) params.transactionDateTo = activeFilters.transactionDateTo;
 
             if (startCursor && startCursor.date) {
-                params.append('cursorPaymentDate', startCursor.date);
-                if (startCursor.id != null) params.append('cursorTxnId', startCursor.id);
+                params.cursorPaymentDate = startCursor.date;
+                if (startCursor.id != null) params.cursorTxnId = startCursor.id;
             }
 
-            const res = await fetch(`/api/transactions/keyset?${params.toString()}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    ...(tenantId ? { 'X-Tenant-Id': tenantId } : {})
-                }
-            });
-
-            if (res.ok) {
-                const data = await res.json();
-                setTransactions(data.content || []);
-                setHasMore(!!data.hasMore);
-                setNextCursor(
-                    data.nextCursorDate != null
-                        ? { date: data.nextCursorDate, id: data.nextCursorId }
-                        : null
-                );
-            }
-        } catch (error) {
-            console.error("Failed to fetch transactions", error);
+            const res = await api.get('/transactions/keyset', { params });
+            const data = res.data || {};
+            setTransactions(data.content || []);
+            setHasMore(!!data.hasMore);
+            setNextCursor(
+                data.nextCursorDate != null
+                    ? { date: data.nextCursorDate, id: data.nextCursorId }
+                    : null
+            );
+        } catch (e) {
+            console.error("Failed to fetch transactions", e);
+            setTransactions([]);
+            setHasMore(false);
+            setError(e?.response?.data?.error || e?.response?.statusText || 'Could not load transactions.');
         } finally {
             setLoading(false);
         }
@@ -148,8 +146,32 @@ const TransactionList = () => {
         resetToFirstPage(cleared);
     };
 
-    const handleExport = () => {
-        exportExcel('TRANSACTIONS', filters);
+    // Export CSV from the transactions endpoint that actually exists. The old
+    // handler called /api/export/excel — a controller that is not part of any
+    // deployed module — so the button 404'd silently on every click.
+    const handleExport = async () => {
+        setIsExporting(true);
+        setError(null);
+        try {
+            const params = {};
+            for (const k of ['mid', 'sid', 'tid', 'paymentDateFrom', 'paymentDateTo', 'transactionDateFrom', 'transactionDateTo']) {
+                if (filters[k]) params[k] = filters[k];
+            }
+            const res = await api.get('/transactions/export/csv', { params, responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error("Export failed", e);
+            setError(e?.response?.status === 403
+                ? 'Export requires an admin role.'
+                : 'Export failed. Please try again.');
+        } finally {
+            setIsExporting(false);
+        }
     };
 
     return (
@@ -208,6 +230,23 @@ const TransactionList = () => {
                     </button>
                 </div>
             </div>
+
+            {/* Request failure — was console-only, so a 403/500/expired session
+                looked identical to a tenant with no transactions. */}
+            {error && (
+                <div role="alert" style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+                    borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--danger-border, #fecaca)',
+                    background: 'var(--danger-bg, #fef2f2)', color: 'var(--danger-text, #991b1b)',
+                    fontSize: '0.82rem', fontWeight: 600,
+                }}>
+                    <AlertTriangle size={15} /> {error}
+                    <button onClick={() => fetchPage(cursorStackRef.current[cursorStackRef.current.length - 1])}
+                        style={{ marginLeft: 'auto', fontSize: '0.78rem', fontWeight: 700, color: 'var(--brand, #2563eb)',
+                            background: 'var(--bg-card, #fff)', border: '1px solid var(--border, #e2e8f0)',
+                            borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>Retry</button>
+                </div>
+            )}
 
             {/* ── Data table ── */}
             <div className="tx-card" style={{ overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', padding: 0 }}>

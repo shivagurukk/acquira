@@ -124,6 +124,13 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         java.math.BigDecimal minVolume, java.math.BigDecimal maxMarginPct, Pageable pageable);
 
         // --- New Aggregation Methods for PDF Service Refactor ---
+        //
+        // [TENANCY] merchant_id is a global BIGSERIAL — unique, but not
+        // tenant-unique — so every merchant-keyed finder below also pins
+        // m.tenantId. A merchant id belonging to another tenant returns empty
+        // rather than that tenant's financials. The tenant must come from the
+        // CALLER's context (TenantContext / job parameter); deriving it from the
+        // merchant record would defeat the point.
 
         @Query("SELECT new map(" +
                         "SUM(m.totalTxns) as total_txns, " +
@@ -131,32 +138,37 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         "SUM(COALESCE(m.uniqueCustomerCount, 0)) as unique_customers " +
                         ") " +
                         "FROM SumDailyMerchant m " +
-                        "WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
+                        "WHERE m.tenantId = :tenantId AND m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
         java.util.Map<String, Object> getAggregates(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
                         @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
 
-        @Query("SELECT MAX(m.totalVolume) FROM SumDailyMerchant m WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
+        @Query("SELECT MAX(m.totalVolume) FROM SumDailyMerchant m WHERE m.tenantId = :tenantId AND m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
         java.math.BigDecimal findMaxDailySales(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
                         @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
 
-        @Query("SELECT MAX(m.totalTxns) FROM SumDailyMerchant m WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
-        Long findMaxDailyTxns(@org.springframework.data.repository.query.Param("merchantId") Long merchantId,
+        @Query("SELECT MAX(m.totalTxns) FROM SumDailyMerchant m WHERE m.tenantId = :tenantId AND m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
+        Long findMaxDailyTxns(@org.springframework.data.repository.query.Param("tenantId") Long tenantId,
+                        @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
 
-        @Query("SELECT MAX(m.topSpendingAmount) FROM SumDailyMerchant m WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
+        @Query("SELECT MAX(m.topSpendingAmount) FROM SumDailyMerchant m WHERE m.tenantId = :tenantId AND m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate")
         java.math.BigDecimal findMaxTopSpendingAmount(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
                         @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
 
         // Daily Listing for Charts
-        @Query("SELECT m FROM SumDailyMerchant m WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.businessDate")
+        @Query("SELECT m FROM SumDailyMerchant m WHERE m.tenantId = :tenantId AND m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.businessDate")
         java.util.List<SumDailyMerchant> findDailyStats(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
                         @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
@@ -175,10 +187,11 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         "SUM(COALESCE(m.dccOptoutVolume, 0)) as dccOptoutVolume " +
                         ") " +
                         "FROM SumDailyMerchant m " +
-                        "WHERE m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate " +
+                        "WHERE m.tenantId = :tenantId AND m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate " +
                         "GROUP BY EXTRACT(YEAR FROM m.businessDate), EXTRACT(MONTH FROM m.businessDate) " +
                         "ORDER BY 1, 2")
         java.util.List<java.util.Map<String, Object>> findMonthlyTrends(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
                         @org.springframework.data.repository.query.Param("merchantId") Long merchantId,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
@@ -239,8 +252,9 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
 
         // ── BULK QUERIES for batch PDF pre-fetch ──
 
-        @Query("SELECT m FROM SumDailyMerchant m WHERE m.merchantId IN :merchantIds AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.merchantId, m.businessDate")
+        @Query("SELECT m FROM SumDailyMerchant m WHERE m.tenantId = :tenantId AND m.merchantId IN :merchantIds AND m.businessDate BETWEEN :startDate AND :endDate ORDER BY m.merchantId, m.businessDate")
         java.util.List<SumDailyMerchant> findDailyStatsForMerchants(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
                         @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);
@@ -258,10 +272,11 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         "SUM(COALESCE(m.dccOptoutVolume, 0)) as dccOptoutVolume " +
                         ") " +
                         "FROM SumDailyMerchant m " +
-                        "WHERE m.merchantId IN :merchantIds AND m.businessDate BETWEEN :startDate AND :endDate " +
+                        "WHERE m.tenantId = :tenantId AND m.merchantId IN :merchantIds AND m.businessDate BETWEEN :startDate AND :endDate " +
                         "GROUP BY m.merchantId, EXTRACT(YEAR FROM m.businessDate), EXTRACT(MONTH FROM m.businessDate) " +
                         "ORDER BY m.merchantId, 2, 3")
         java.util.List<java.util.Map<String, Object>> findMonthlyTrendsForMerchants(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
                         @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
                         @org.springframework.data.repository.query.Param("startDate") LocalDate startDate,
                         @org.springframework.data.repository.query.Param("endDate") LocalDate endDate);

@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Box, Paper, Typography, FormControl, InputLabel, Select, MenuItem, Grid, Button } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
-import { Download, LayoutGrid, RotateCcw, Calendar, Inbox } from 'lucide-react';
+import { Download, LayoutGrid, RotateCcw, Calendar, Inbox, AlertTriangle } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../theme/dataGridStyles';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../api/axios';
 
 // ─── Local design tokens ─────────────────────────────────────────
 // Every colour routes through a CSS variable with a light-mode fallback so the
@@ -38,6 +39,9 @@ const MerchantSummary = () => {
 
     const [summaries, setSummaries] = useState([]);
     const [loading, setLoading] = useState(false);
+    // A failed request used to render exactly like an empty result set —
+    // a 500/network drop looked like "no merchants traded that day".
+    const [error, setError] = useState(null);
 
     // Date filters
     const [year, setYear] = useState(new Date().getFullYear());
@@ -48,77 +52,86 @@ const MerchantSummary = () => {
     const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 20 });
     const [totalElements, setTotalElements] = useState(0);
 
+    // Discard out-of-order responses (year→month rapid changes raced).
+    const reqIdRef = useRef(0);
+
     const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
     const months = Array.from({ length: 12 }, (_, i) => i + 1);
-    const days = Array.from({ length: 31 }, (_, i) => i + 1);
+    // Day list clamped to the selected month — "Feb 30" used to be selectable,
+    // which made the backend's LocalDate.of() throw and the grid silently blank.
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+    // If the current day no longer exists in the newly selected month
+    // (e.g. Jan 31 → February), snap to the month's last day.
+    useEffect(() => {
+        if (day > daysInMonth) setDay(daysInMonth);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [daysInMonth]);
+
+    // A date/tenant change resets to page 0 — staying on page 12 of a shorter
+    // result set rendered an empty grid captioned "Page 12".
+    useEffect(() => {
+        setPaginationModel(p => (p.page === 0 ? p : { ...p, page: 0 }));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [year, month, day, tenantVersion]);
 
     useEffect(() => {
+        if (day > daysInMonth) return; // wait for the clamp effect to settle
         fetchSummaries();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [paginationModel, year, month, day, tenantVersion]);
 
     const fetchSummaries = async () => {
+        const reqId = ++reqIdRef.current;
         setLoading(true);
+        setError(null);
         try {
-            const token = localStorage.getItem('token');
-            // FIX: the whole app scopes on `defaultTenantId` (axios interceptor +
-            // every dashboard). This page previously read the legacy `tenantId`
-            // key, so after a tenant switch it could query the wrong tenant.
-            const tenantId = localStorage.getItem('defaultTenantId') || localStorage.getItem('tenantId');
-            const params = new URLSearchParams();
-            params.append('year', year);
-            params.append('month', month);
-            params.append('day', day);
-            params.append('page', paginationModel.page);
-            params.append('size', paginationModel.pageSize);
-
-            const res = await fetch(`/api/analytics/merchant-summaries?${params.toString()}`, {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
+            // api/axios owns auth: Authorization + X-Tenant-Id headers and the
+            // 401 → refresh-token → retry flow. The old raw fetch bypassed all
+            // of that, so an expired token showed a permanently empty grid.
+            const res = await api.get('/analytics/merchant-summaries', {
+                params: { year, month, day, page: paginationModel.page, size: paginationModel.pageSize },
             });
-
-            if (res.ok) {
-                const data = await res.json();
-                const rowsWithId = (data.content || []).map((row, index) => ({
-                    ...row,
-                    id: row.merchantId || row.mid || index
-                }));
-                setSummaries(rowsWithId);
-                setTotalElements(data.totalElements || 0);
-            } else {
-                setSummaries([]);
-                setTotalElements(0);
-            }
-        } catch (error) {
-            console.error("Failed to fetch merchant summaries", error);
+            if (reqId !== reqIdRef.current) return;
+            const data = res.data || {};
+            const rowsWithId = (data.content || []).map((row, index) => ({
+                ...row,
+                // mid is the natural id; the fallback is a string so it can never
+                // collide with a real numeric MID on the same page.
+                id: row.mid ?? `row-${index}`
+            }));
+            setSummaries(rowsWithId);
+            setTotalElements(data.totalElements || 0);
+        } catch (e) {
+            if (reqId !== reqIdRef.current) return;
+            console.error("Failed to fetch merchant summaries", e);
             setSummaries([]);
             setTotalElements(0);
-        } finally { setLoading(false); }
+            setError(e?.response?.data?.error || e?.response?.statusText || 'Could not load merchant summaries.');
+        } finally {
+            if (reqId === reqIdRef.current) setLoading(false);
+        }
     };
 
     const handleExport = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('defaultTenantId') || localStorage.getItem('tenantId');
-            const params = new URLSearchParams();
-            params.append('year', year);
-            params.append('month', month);
-            params.append('day', day);
-
-            const res = await fetch(`/api/analytics/merchant-summaries/export?${params.toString()}`, {
-                headers: { 'Authorization': `Bearer ${token}`, ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}) }
+            const res = await api.get('/analytics/merchant-summaries/export', {
+                params: { year, month, day },
+                responseType: 'blob',
             });
-
-            if (res.ok) {
-                const blob = await res.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `Merchant_Summary_${year}-${month}-${day}.csv`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-            } else { console.error("Export request failed"); }
-        } catch (error) { console.error("Export failed", error); }
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Merchant_Summary_${year}-${month}-${day}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error("Export failed", e);
+            setError('Export failed. Please try again.');
+        }
     };
 
     const columns = useMemo(() => [
@@ -238,6 +251,20 @@ const MerchantSummary = () => {
                 </Grid>
             </Paper>
 
+            {/* Request failure — distinct from a genuinely empty day */}
+            {error && (
+                <Paper elevation={0} role="alert" sx={{
+                    p: 1.5, px: 2, borderRadius: T.radiusMd, display: 'flex', alignItems: 'center', gap: 1.25,
+                    border: '1px solid var(--danger-border, #fecaca)', bgcolor: 'var(--danger-bg, #fef2f2)',
+                    color: 'var(--danger-text, #991b1b)',
+                }}>
+                    <AlertTriangle size={15} />
+                    <Typography sx={{ fontSize: '0.82rem', fontWeight: 600, color: 'inherit' }}>{error}</Typography>
+                    <Button size="small" onClick={fetchSummaries}
+                        sx={{ ml: 'auto', textTransform: 'none', fontWeight: 700, color: T.brand }}>Retry</Button>
+                </Paper>
+            )}
+
             {/* DataGrid */}
             <Paper elevation={0} sx={{ ...premiumTableWrapper, minHeight: 500 }}>
                 <DataGrid
@@ -258,12 +285,27 @@ const MerchantSummary = () => {
                                 <Box sx={{ width: 48, height: 48, borderRadius: T.radiusMd, bgcolor: T.subtle, color: T.textMut, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <Inbox size={22} />
                                 </Box>
-                                <Typography variant="body2" fontWeight={600} color={T.text}>No merchant summaries</Typography>
-                                <Typography variant="caption" color={T.textMut}>No data for {new Date(year, month - 1, day).toDateString()}. Try another reference date.</Typography>
+                                <Typography variant="body2" fontWeight={600} color={T.text}>
+                                    {error ? 'Could not load merchant summaries' : 'No merchant summaries'}
+                                </Typography>
+                                <Typography variant="caption" color={T.textMut}>
+                                    {error ? 'See the error above and retry.' : `No data for ${new Date(year, month - 1, day).toDateString()}. Try another reference date.`}
+                                </Typography>
                             </Box>
                         ),
                     }}
-                    slotProps={{ toolbar: { showQuickFilter: true, quickFilterProps: { debounceMs: 500 } } }}
+                    // Pagination is server-side but the toolbar quick filter and
+                    // column sorting were CLIENT-side — they silently operated on
+                    // the 20 loaded rows while claiming the full count. Disabled
+                    // until the endpoint supports server search/sort. The
+                    // toolbar's own CSV button is also disabled: it exported the
+                    // current page only, sitting next to the real Export CSV.
+                    disableColumnSorting
+                    slotProps={{ toolbar: {
+                        showQuickFilter: false,
+                        csvOptions: { disableToolbarButton: true },
+                        printOptions: { disableToolbarButton: true },
+                    } }}
                     sx={premiumDataGridStyles}
                 />
             </Paper>

@@ -97,9 +97,14 @@ public class ReportFilterController {
 
     @GetMapping("/channels")
     public List<Map<String, Object>> getChannels() {
-        // Querying summary table for active channels
+        // Distinct channels from the trailing 90 days ONLY. The unbounded
+        // DISTINCT was a full tenant-partition scan of the largest table in the
+        // schema, run on every Insight Hub mount, to return ~2 values. Channels
+        // are a stable dimension — 90 days of history names them all.
         return jdbcTemplate.queryForList(
-                "SELECT DISTINCT channel as value, channel as label FROM sum_daily_insight WHERE tenant_id = ? AND channel IS NOT NULL ORDER BY channel",
+                "SELECT DISTINCT channel as value, channel as label FROM sum_daily_insight " +
+                "WHERE tenant_id = ? AND business_date >= CURRENT_DATE - INTERVAL '90 days' " +
+                "AND channel IS NOT NULL ORDER BY channel",
                 getTenantId());
     }
 

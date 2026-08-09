@@ -3,6 +3,7 @@ package com.acquira.core.controller;
 import com.acquira.common.config.TenantContext;
 import com.acquira.common.model.*;
 import com.acquira.common.repository.*;
+import com.acquira.common.service.ReportEmailTemplateService;
 import com.acquira.core.service.CampaignExecutionService;
 import com.acquira.core.service.TemplateRendererService;
 import lombok.RequiredArgsConstructor;
@@ -103,6 +104,36 @@ public class EmailCampaignController {
     @GetMapping("/templates/variables")
     public ResponseEntity<?> getAvailableVariables() {
         return ResponseEntity.ok(TemplateRendererService.AVAILABLE_VARIABLES);
+    }
+
+    /**
+     * Starter content for a template type — the built-in email the platform
+     * sends when a tenant has authored no template of that type.
+     *
+     * Only REPORT_PDF (the covering email for a generated PDF report) has one:
+     * it is the email that path has always sent, so a tenant customising it
+     * starts from the real thing and edits copy or branding, rather than
+     * recreating an Outlook-safe layout in an empty box. Campaign types have no
+     * built-in — they are authored from scratch by design.
+     */
+    @GetMapping("/templates/builtin/{type}")
+    public ResponseEntity<?> getBuiltInTemplate(@PathVariable String type) {
+        EmailTemplateConfig.TemplateType t;
+        try {
+            t = EmailTemplateConfig.TemplateType.valueOf(type.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Unknown template type: " + type));
+        }
+        if (t != EmailTemplateConfig.TemplateType.REPORT_PDF) {
+            return ResponseEntity.ok(Map.of(
+                "hasBuiltIn", false,
+                "variables", Map.of()));
+        }
+        return ResponseEntity.ok(Map.of(
+            "hasBuiltIn", true,
+            "subjectTemplate", ReportEmailTemplateService.builtInSubject(),
+            "bodyHtml", ReportEmailTemplateService.builtInBodyHtml(),
+            "variables", ReportEmailTemplateService.REPORT_VARIABLES));
     }
 
     // ═══════════════════════════════════════════════════════════

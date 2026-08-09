@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, Tooltip, Drawer, IconButton, Divider } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
-import { Activity, TrendingDown, TrendingUp, Users, DollarSign, AlertTriangle, UserMinus, ShieldAlert, Brain, X, CalendarClock, ArrowRight } from 'lucide-react';
+import { Activity, TrendingUp, Users, DollarSign, AlertTriangle, ShieldAlert, Brain, X, CalendarClock, ArrowRight } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
@@ -45,20 +45,23 @@ const METRICS = {
 // which classifies on the current month against the trailing 3-month average:
 // churned <30% or zero, declining = 3 months constantly dropping, performing >=90%.
 // Foreground/background both routed through CSS vars so dark mode can retint.
+// Severity maps onto the app's status semantics: churned = danger (red),
+// declining = warning (amber), stable = neutral ink, performing = success —
+// the previous purple/orange pairing made the most severe state read as a
+// brand accent instead of a problem.
 const STATUS_META = {
-    CHURNED:    { label: 'Churned',    color: 'var(--attr-churned, #7c3aed)',   bg: 'var(--attr-churned-bg, #f3e8ff)' },
-    DECLINING:  { label: 'Declining',  color: 'var(--attr-declining, #ea580c)', bg: 'var(--attr-declining-bg, #ffedd5)' },
-    STABLE:     { label: 'Stable',     color: 'var(--attr-stable, #475569)',    bg: 'var(--attr-stable-bg, #f1f5f9)' },
-    PERFORMING: { label: 'Performing', color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #d1fae5)' },
+    CHURNED:    { label: 'Churned',    color: 'var(--attr-churned, #dc2626)',   bg: 'var(--attr-churned-bg, #fef2f2)' },
+    DECLINING:  { label: 'Declining',  color: 'var(--attr-declining, #d97706)', bg: 'var(--attr-declining-bg, #fffbeb)' },
+    STABLE:     { label: 'Stable',     color: 'var(--attr-stable, #64748b)',    bg: 'var(--attr-stable-bg, #f1f5f9)' },
+    PERFORMING: { label: 'Performing', color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #ecfdf5)' },
 };
-const STATUS_ORDER = ['ALL', 'CHURNED', 'DECLINING', 'STABLE', 'PERFORMING'];
 
 // Predicted churn-risk band → colour. These are the ML forward-looking scores,
 // distinct from the backward-looking attrition STATUS above.
 const RISK_META = {
-    HIGH:   { label: 'High',   color: 'var(--attr-atrisk, #dc2626)',    bg: 'var(--attr-atrisk-bg, #fee2e2)' },
-    MEDIUM: { label: 'Medium', color: 'var(--attr-declining, #ea580c)', bg: 'var(--attr-declining-bg, #ffedd5)' },
-    LOW:    { label: 'Low',    color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #d1fae5)' },
+    HIGH:   { label: 'High',   color: 'var(--attr-atrisk, #dc2626)',    bg: 'var(--attr-atrisk-bg, #fef2f2)' },
+    MEDIUM: { label: 'Medium', color: 'var(--attr-declining, #d97706)', bg: 'var(--attr-declining-bg, #fffbeb)' },
+    LOW:    { label: 'Low',    color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #ecfdf5)' },
 };
 
 // The attrition backend anchors ALL comparison windows on [startDate, endDate]:
@@ -247,18 +250,19 @@ const AttritionReport = () => {
         const atRisk = statusCounts.CHURNED + statusCounts.DECLINING;
         const atRiskValue = data.reduce((s, d) =>
             (d.status === 'CHURNED' || d.status === 'DECLINING') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
+        // Five tiles, scannable left-to-right as a sentence: how big is the
+        // book, what's at risk, what's the money exposure, how is the year
+        // going — plus the forward-looking score when the batch provides one.
+        // Per-status counts live in the Portfolio Health band below, so the
+        // cards don't repeat them.
         const cards = [
-            { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: 'var(--accent-indigo, #6366f1)' },
-            { title: 'Churned', value: statusCounts.CHURNED.toString(), icon: UserMinus, color: 'var(--attr-churned, #7c3aed)',
-              subtitle: `${data.length ? ((statusCounts.CHURNED / data.length) * 100).toFixed(0) : 0}% of portfolio` },
+            { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: 'var(--brand, #2563eb)' },
             { title: 'At Risk', value: atRisk.toString(), icon: AlertTriangle, color: 'var(--attr-atrisk, #dc2626)',
-              subtitle: 'churned + declining' },
-            { title: 'Declining', value: statusCounts.DECLINING.toString(), icon: TrendingDown, color: 'var(--attr-declining, #ea580c)',
-              subtitle: '3 months constantly dropping' },
-            { title: 'Performing', value: statusCounts.PERFORMING.toString(), icon: TrendingUp, color: 'var(--attr-growing, #059669)',
-              subtitle: '≥90% of 3-month average' },
+              subtitle: `${statusCounts.CHURNED} churned · ${statusCounts.DECLINING} declining` },
+            { title: `${METRICS[metric].label} at Risk`, value: fmtMeasure(atRiskValue), icon: ShieldAlert,
+              color: 'var(--attr-atrisk, #dc2626)', subtitle: 'held by churned + declining' },
             { title: `YTD ${METRICS[metric].label} Change`, value: ytdIsNew ? 'New (+100%)' : `${ytdChange >= 0 ? '+' : ''}${ytdChange.toFixed(1)}%`,
-              icon: DollarSign, color: ytdChange >= 0 ? 'var(--success, #10b981)' : 'var(--danger, #ef4444)', trend: ytdChange,
+              icon: DollarSign, color: ytdChange >= 0 ? 'var(--success, #059669)' : 'var(--danger, #dc2626)', trend: ytdChange,
               trendLabel: ytdIsNew ? `no ${prevYear} baseline` : `${prevYear} vs ${selectedYear}` },
         ];
         // Forward-looking ML tile only when scores are present.
@@ -266,8 +270,8 @@ const AttritionReport = () => {
             cards.push({ title: 'High Churn Risk', value: highChurnCount.toString(), icon: Brain,
                 color: 'var(--attr-atrisk, #dc2626)', subtitle: 'predicted next 30–60 days' });
         } else {
-            cards.push({ title: `${METRICS[metric].label} at Risk`, value: fmtMeasure(atRiskValue), icon: ShieldAlert,
-                color: 'var(--attr-atrisk, #dc2626)', subtitle: `${atRisk} churned + at-risk` });
+            cards.push({ title: 'Performing', value: statusCounts.PERFORMING.toString(), icon: TrendingUp,
+                color: 'var(--attr-growing, #059669)', subtitle: '≥90% of 3-month average' });
         }
         return cards;
     }, [data, metric, statusCounts, selectedYear, prevYear, churnAvailable, highChurnCount]);
@@ -532,45 +536,55 @@ const AttritionReport = () => {
 
             <KpiCards cards={kpis} />
 
-            {/* ═══ Churn analytics band ═══ */}
+            {/* ═══ Portfolio health band — the page's centrepiece ═══
+                One full-width composition strip: the whole book, divided by
+                attrition status, worst-first. Click a segment or legend chip to
+                filter the grid below; the same control is the filter indicator. */}
             {data.length > 0 && (
-                <Box sx={{ display: 'grid', gap: 2, mb: 2, gridTemplateColumns: { xs: '1fr', md: '1.1fr 1fr', lg: '1.2fr 1fr 1fr' } }}>
-                    {/* Portfolio health — click a segment or legend row to filter the grid */}
-                    <Paper sx={panelSx}>
+                <Paper sx={{ ...panelSx, mb: 2, height: 'auto' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
                         {panelTitle('Portfolio Health')}
-                        <Box sx={{ display: 'flex', height: 14, borderRadius: 999, overflow: 'hidden', mb: 2, bgcolor: T.subtle }}>
-                            {analytics.breakdown.map(s => s.count > 0 && (
-                                <Box key={s.key} title={`${s.label}: ${s.count} — click to filter`}
-                                    onClick={() => setStatusFilter(prev => prev === s.key ? 'ALL' : s.key)}
-                                    sx={{ width: `${s.pct}%`, bgcolor: s.color, transition: 'width .5s ease, opacity .15s', cursor: 'pointer',
-                                        opacity: statusFilter === 'ALL' || statusFilter === s.key ? 1 : 0.35,
-                                        '&:hover': { opacity: 1 } }} />
-                            ))}
-                        </Box>
-                        <Stack spacing={0.75}>
-                            {analytics.breakdown.map(s => {
-                                const active = statusFilter === s.key;
-                                return (
-                                    <Box key={s.key}
-                                        onClick={() => setStatusFilter(active ? 'ALL' : s.key)}
-                                        sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer',
-                                            px: 0.75, py: 0.25, mx: -0.75, borderRadius: '6px',
-                                            bgcolor: active ? s.bg : 'transparent',
-                                            '&:hover': { bgcolor: s.bg } }}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <Box sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: s.color }} />
-                                            <Typography variant="body2" color={active ? s.color : T.textSec} fontWeight={active ? 700 : 400}>{s.label}</Typography>
-                                        </Box>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                            <Typography variant="body2" fontWeight={700} color={T.textStr} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.count.toLocaleString()}</Typography>
-                                            <Typography variant="caption" color={T.textMut} sx={{ width: 42, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{s.pct.toFixed(1)}%</Typography>
-                                        </Box>
-                                    </Box>
-                                );
-                            })}
-                        </Stack>
-                    </Paper>
+                        {statusFilter !== 'ALL' && (
+                            <Typography variant="caption" onClick={() => setStatusFilter('ALL')}
+                                sx={{ cursor: 'pointer', color: 'var(--brand, #2563eb)', fontWeight: 700 }}>
+                                Showing {STATUS_META[statusFilter]?.label} — clear ✕
+                            </Typography>
+                        )}
+                    </Box>
+                    <Box sx={{ display: 'flex', gap: '2px', height: 18, borderRadius: '6px', overflow: 'hidden', mb: 1.5, bgcolor: T.subtle }}>
+                        {analytics.breakdown.map(s => s.count > 0 && (
+                            <Box key={s.key} title={`${s.label}: ${s.count} — click to filter`}
+                                onClick={() => setStatusFilter(prev => prev === s.key ? 'ALL' : s.key)}
+                                sx={{ width: `${s.pct}%`, bgcolor: s.color, transition: 'width .5s ease, opacity .15s', cursor: 'pointer',
+                                    opacity: statusFilter === 'ALL' || statusFilter === s.key ? 1 : 0.3,
+                                    '&:hover': { opacity: 1 } }} />
+                        ))}
+                    </Box>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 3, rowGap: 0.75 }}>
+                        {analytics.breakdown.map(s => {
+                            const active = statusFilter === s.key;
+                            return (
+                                <Box key={s.key}
+                                    onClick={() => setStatusFilter(active ? 'ALL' : s.key)}
+                                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, cursor: 'pointer',
+                                        px: 1, py: 0.5, borderRadius: '8px',
+                                        border: `1px solid ${active ? s.color : 'transparent'}`,
+                                        bgcolor: active ? s.bg : 'transparent',
+                                        '&:hover': { bgcolor: s.bg } }}>
+                                    <Box sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: s.color }} />
+                                    <Typography variant="body2" color={active ? s.color : T.textSec} fontWeight={active ? 700 : 500}>{s.label}</Typography>
+                                    <Typography variant="body2" fontWeight={700} color={T.textStr} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.count.toLocaleString()}</Typography>
+                                    <Typography variant="caption" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.pct.toFixed(1)}%</Typography>
+                                </Box>
+                            );
+                        })}
+                    </Box>
+                </Paper>
+            )}
 
+            {/* ═══ Churn analytics panels ═══ */}
+            {data.length > 0 && (
+                <Box sx={{ display: 'grid', gap: 2, mb: 2, gridTemplateColumns: { xs: '1fr', md: '1.4fr 1fr' } }}>
                     {/* YTD % change distribution — click a bar to filter the grid to that bucket */}
                     <Paper sx={panelSx}>
                         <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
@@ -636,6 +650,8 @@ const AttritionReport = () => {
                         <ToggleButton key={k} value={k} sx={{ textTransform: 'none', fontWeight: 600 }}>{m.label}</ToggleButton>
                     ))}
                 </ToggleButtonGroup>
+                {/* Active narrowings only — the Portfolio Health band above is the
+                    status filter control, so no duplicate chip row here. */}
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
                     {bucketFilter != null && BUCKETS[bucketFilter] && (
                         <Chip size="small" onDelete={() => setBucketFilter(null)}
@@ -643,33 +659,37 @@ const AttritionReport = () => {
                             sx={{ fontWeight: 700, color: 'var(--on-accent, #fff)', bgcolor: BUCKETS[bucketFilter].color,
                                 '& .MuiChip-deleteIcon': { color: 'var(--on-accent, #fff)', opacity: 0.8 } }} />
                     )}
-                    {STATUS_ORDER.map(s => {
-                        const meta = s === 'ALL' ? { label: 'All', color: T.textStr, bg: T.border } : STATUS_META[s];
-                        const count = s === 'ALL' ? data.length : (statusCounts[s] || 0);
-                        const active = statusFilter === s;
-                        return (
-                            <Chip key={s} label={`${meta.label} (${count})`} size="small" clickable
-                                onClick={() => setStatusFilter(active && s !== 'ALL' ? 'ALL' : s)}
-                                sx={{
-                                    fontWeight: 700,
-                                    color: active ? 'var(--on-accent, #fff)' : meta.color,
-                                    bgcolor: active ? meta.color : meta.bg,
-                                    border: active ? `1px solid ${meta.color}` : '1px solid transparent',
-                                }} />
-                        );
-                    })}
+                    {statusFilter !== 'ALL' && STATUS_META[statusFilter] && (
+                        <Chip size="small" onDelete={() => setStatusFilter('ALL')}
+                            label={STATUS_META[statusFilter].label}
+                            sx={{ fontWeight: 700, color: STATUS_META[statusFilter].color, bgcolor: STATUS_META[statusFilter].bg,
+                                '& .MuiChip-deleteIcon': { color: STATUS_META[statusFilter].color, opacity: 0.7 } }} />
+                    )}
+                    <Typography variant="caption" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                        {filteredData.length.toLocaleString()} of {data.length.toLocaleString()} merchants
+                    </Typography>
                 </Stack>
             </Stack>
 
             <Paper sx={{
                 ...premiumTableWrapper,
-                '& .mom-header-group': { bgcolor: 'var(--attr-hdr-mom-bg, #fef3c7)', color: 'var(--attr-hdr-mom-tx, #92400e)', fontWeight: 'bold' },
-                '& .mtd-header-group': { bgcolor: 'var(--attr-hdr-mtd-bg, #eff6ff)', color: 'var(--attr-hdr-mtd-tx, #1e40af)', fontWeight: 'bold' },
-                '& .ytd-header-group': { bgcolor: 'var(--attr-hdr-ytd-bg, #f8fafc)', color: 'var(--attr-hdr-ytd-tx, #334155)', fontWeight: 'bold' }
+                // Window groups: quiet uppercase labels with a hairline accent
+                // underline instead of the pastel banner fills — the accent
+                // encodes "which window", the surface stays calm.
+                '& .mom-header-group, & .mtd-header-group, & .ytd-header-group': {
+                    bgcolor: 'var(--bg-subtle, #f8fafc)',
+                    '& .MuiDataGrid-columnHeaderTitle': {
+                        fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
+                        textTransform: 'uppercase', color: 'var(--text-secondary, #6b7280)',
+                    },
+                },
+                '& .mom-header-group': { boxShadow: 'inset 0 -2px 0 var(--warning, #d97706)' },
+                '& .mtd-header-group': { boxShadow: 'inset 0 -2px 0 var(--brand, #2563eb)' },
+                '& .ytd-header-group': { boxShadow: 'inset 0 -2px 0 var(--text-muted, #9ca3af)' },
             }}>
                 <DataGrid
                     rows={filteredData} columns={columns} columnGroupingModel={columnGroupingModel}
-                    loading={loading} disableRowSelectionOnClick rowHeight={60}
+                    loading={loading} disableRowSelectionOnClick rowHeight={52}
                     onRowClick={(params) => setDetailRow(params.row)}
                     initialState={{
                         pagination: { paginationModel: { pageSize: 25 } },

@@ -170,7 +170,7 @@ public class MerchantReportJobConfig {
 
                     long t0 = System.currentTimeMillis();
                     Map<Long, MerchantInsightsDTO> insightsById =
-                            insightService.getBulkInsights(merchantIds, target.getYear(), target.getMonthValue());
+                            insightService.getBulkInsights(merchantIds, target.getYear(), target.getMonthValue(), tenantId);
                     log.info("[JOB] Bulk insights fetched for {} merchants (tenant:{}) in {}ms",
                             merchantIds.size(), tenantId, System.currentTimeMillis() - t0);
 

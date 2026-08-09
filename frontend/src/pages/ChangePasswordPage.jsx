@@ -143,6 +143,7 @@ const ChangePasswordPage = ({ embedded = false }) => {
                         <div style={{ position: 'relative' }}>
                             <Lock size={16} style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                             <input name="currentPassword" type={showCurrent ? 'text' : 'password'} value={form.currentPassword}
+                                autoComplete="current-password"
                                 onChange={handleChange} style={inputStyle()} placeholder="Enter current password" required autoFocus={!embedded} />
                             <button type="button" onClick={() => setShowCurrent(!showCurrent)}
                                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 4 }}>
@@ -157,6 +158,7 @@ const ChangePasswordPage = ({ embedded = false }) => {
                         <div style={{ position: 'relative' }}>
                             <Lock size={16} style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                             <input name="newPassword" type={showNew ? 'text' : 'password'} value={form.newPassword}
+                                autoComplete="new-password"
                                 onChange={handleChange} style={inputStyle()} placeholder="Create a strong password" required />
                             <button type="button" onClick={() => setShowNew(!showNew)}
                                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 4 }}>
@@ -193,6 +195,7 @@ const ChangePasswordPage = ({ embedded = false }) => {
                         <div style={{ position: 'relative' }}>
                             <Lock size={16} style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                             <input name="confirmPassword" type={showConfirm ? 'text' : 'password'} value={form.confirmPassword}
+                                autoComplete="new-password"
                                 onChange={handleChange} required placeholder="Re-enter new password"
                                 style={{
                                     ...inputStyle(),

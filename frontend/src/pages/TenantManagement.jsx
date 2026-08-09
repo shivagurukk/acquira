@@ -15,7 +15,20 @@ const emptyTenant = {
     currencyName: '',
     currencySymbol: '',
     baseCurrency: '',
+    inputFormat: 'CMM',
+    homeCountryCode: '',
+    cardTypeSource: 'FILE',
 };
+
+const INPUT_FORMATS = [
+    { value: 'CMM', label: 'CMM — amounts in minor units (divided at ingest)' },
+    { value: 'AMS', label: 'AMS — amounts already final decimals (no division)' },
+];
+
+const CARD_TYPE_SOURCES = [
+    { value: 'FILE', label: 'Transaction file — card type/product from uploaded file columns' },
+    { value: 'BIN', label: 'BIN mapping — 8-digit BIN table (Super Admin > BIN Management)' },
+];
 
 const TenantManagement = ({ embedded = false }) => {
     const { tenantVersion } = useAuth();
@@ -60,12 +73,16 @@ const TenantManagement = ({ embedded = false }) => {
                 baseCurrency: selected.currencyCode,
                 currencySymbol: selected.currencySymbol,
                 currencyName: selected.currencyName,
+                // Drives which country's interchange/scheme-fee rate card the
+                // fee engine uses for this tenant's transactions.
+                homeCountryCode: selected.countryCode,
             }
             : { ...prev, country: countryName });
     };
 
     const openModal = (tenant = null) => {
-        setCurrentTenant(tenant || emptyTenant);
+        // Older rows may predate input_format / card_type_source — default to legacy.
+        setCurrentTenant(tenant ? { inputFormat: 'CMM', cardTypeSource: 'FILE', ...tenant } : emptyTenant);
         setIsModalOpen(true);
     };
 
@@ -225,6 +242,29 @@ const TenantManagement = ({ embedded = false }) => {
                             <Input value={currentTenant.currencySymbol} readOnly placeholder="$" />
                         </FormField>
                     </FormGrid>
+
+                    <FormField
+                        label="Feed amount format"
+                        required
+                        hint="CMM: feed sends minor units (e.g. fils/cents) and amounts are divided at ingest. AMS: feed sends final decimal amounts — no division. Applies to file uploads and scheduled pulls."
+                    >
+                        <Select
+                            value={currentTenant.inputFormat || 'CMM'}
+                            onChange={e => setCurrentTenant({ ...currentTenant, inputFormat: e.target.value })}
+                            options={INPUT_FORMATS}
+                        />
+                    </FormField>
+
+                    <FormField
+                        label="Card product/type source"
+                        hint="Where the card type and product for this tenant's transactions come from. Configuration only for now — ingestion behavior is unchanged until the enrichment phase is enabled."
+                    >
+                        <Select
+                            value={currentTenant.cardTypeSource || 'FILE'}
+                            onChange={e => setCurrentTenant({ ...currentTenant, cardTypeSource: e.target.value })}
+                            options={CARD_TYPE_SOURCES}
+                        />
+                    </FormField>
                 </div>
             </Modal>
         </Page>

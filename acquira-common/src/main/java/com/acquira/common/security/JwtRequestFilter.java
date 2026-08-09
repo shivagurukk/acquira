@@ -77,6 +77,16 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         }
     }
 
+    /**
+     * Endpoints a user may still reach while must_change_password is set:
+     * the change-password call itself plus the auth endpoints (refresh, logout).
+     * Matched on the request URI so it works with or without a context path.
+     */
+    private static boolean isAllowedDuringForcedPasswordChange(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        return uri.endsWith("/users/change-password") || uri.contains("/auth/");
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
@@ -135,6 +145,23 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                         userRepository.save(dbUser);
                     }
                     chain.doFilter(request, response);
+                    return;
+                }
+                // Forced password change was enforced only by a frontend
+                // redirect, which a page refresh bypassed. Enforce it here:
+                // while the flag is set, a local (non-SSO) user may only call
+                // change-password and the auth endpoints (refresh/logout).
+                // 403 + a machine-readable code lets the frontend route the
+                // user back to the change-password screen.
+                if (dbUser.isMustChangePassword() && !dbUser.isSsoUser()
+                        && !isAllowedDuringForcedPasswordChange(request)) {
+                    logger.warn("Blocked request pending password change: " + username
+                            + " -> " + request.getRequestURI());
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json");
+                    response.getWriter().write(
+                            "{\"error\":\"You must change your password before continuing.\","
+                            + "\"code\":\"PASSWORD_CHANGE_REQUIRED\"}");
                     return;
                 }
 
