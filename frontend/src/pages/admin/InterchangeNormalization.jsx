@@ -94,12 +94,23 @@ const InterchangeNormalization = () => {
                 monthKey: selMonth, target: Number(target),
             });
             const runId = started.runId;
+            let misses = 0;                          // consecutive poll failures
             for (let i = 0; i < 900; i++) {          // ~30 min ceiling at 2s
                 await new Promise(r => setTimeout(r, 2000));
                 let res;
                 try {
                     res = (await api.get(`/admin/interchange-normalization/runs/${runId}/preview`)).data;
-                } catch { continue; }               // transient — keep polling
+                    misses = 0;
+                } catch {
+                    // Transient network blips are fine, but a poll that NEVER
+                    // succeeds means the endpoint itself is unreachable (e.g. a
+                    // backend build that predates it) — fail loudly, don't spin.
+                    if (++misses >= 10) {
+                        showToast('Cannot read the calculation status — is the backend up to date?', 'error');
+                        return;
+                    }
+                    continue;
+                }
                 if (res.status === 'PREVIEW') { setPreview(res); return; }
                 if (res.status === 'FAILED') {
                     showToast(res.statusDetail || 'Preview failed', 'error');

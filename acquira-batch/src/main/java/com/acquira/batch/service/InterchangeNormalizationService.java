@@ -27,7 +27,9 @@ import java.util.Map;
  * total) is added on top weighted by VOLUME — merchant share of month volume,
  * then transaction share of the merchant's volume — i.e.
  * new = old + volumeShare * extra — with largest-remainder reconciliation so
- * the merchant amounts sum EXACTLY to the target. On apply,
+ * the merchant amounts sum EXACTLY to the target. For a REDUCTION (target below
+ * the current total) each merchant is clamped at zero and the shortfall is
+ * redistributed over the merchants that can still absorb it. On apply,
  * fact_transaction.interchange_fee is updated for the month and every summary
  * table is rebuilt via BulkMigrationService.rebuildSummaries, so all screens
  * show only the normalized figures. Pre-normalization values survive ONLY in
@@ -280,11 +282,12 @@ public class InterchangeNormalizationService {
 
         allocateExtra(rows, delta, totalBase);
 
+        // allocateExtra clamps reductions at zero per merchant, so a negative here
+        // is arithmetic gone wrong, not a bad target — fail the run, never persist.
         for (MerchantRow r : rows) {
             if (r.normalized.signum() < 0) {
-                throw new IllegalStateException("The reduction is larger than " + r.name + "'s volume-weighted share " +
-                    "can absorb (its normalized value would be " + r.normalized + "). A volume-weighted decrease of " +
-                    "this size cannot keep all merchants non-negative — check the target amount.");
+                throw new IllegalStateException("Internal allocation error: " + r.name +
+                    " would be " + r.normalized + " after clamping — this is a bug, not a target problem");
             }
         }
 
@@ -395,6 +398,16 @@ public class InterchangeNormalizationService {
      * Distributes the EXTRA (delta, can be negative) across rows pro-rata by
      * volume with largest-remainder reconciliation, in minor units at the
      * storage precision, so old + extra sums EXACTLY to the target.
+     *
+     * A negative delta (target below the current total) is weighted by each
+     * merchant's EXISTING INTERCHANGE, not volume: everyone scales by the same
+     * factor (target / current total) and keeps a proportional share of what it
+     * had — a merchant only reaches zero if the target itself is zero (or the
+     * merchant's value is a single minor unit that rounding must take). Volume
+     * weighting is wrong for reductions: a high-volume merchant holding almost
+     * no interchange gets a cut bigger than its balance and goes negative
+     * (the -0.0002 failure), while proportional scaling by definition cannot.
+     *
      * Deterministic: remainder ordering ties break on merchant_id.
      * Sets r.extra and r.normalized (= originalInterchange + extra).
      */
@@ -402,23 +415,95 @@ public class InterchangeNormalizationService {
         BigDecimal minor = BigDecimal.ONE.movePointLeft(ALLOC_SCALE);
         long deltaMinor = delta.movePointRight(ALLOC_SCALE).setScale(0, RoundingMode.HALF_UP).longValueExact();
 
-        long floorSum = 0;
         for (MerchantRow r : rows) {
             r.weightPct = r.base.multiply(BigDecimal.valueOf(100)).divide(totalBase, 10, RoundingMode.HALF_UP);
-            BigDecimal rawMinor = BigDecimal.valueOf(deltaMinor).multiply(r.base, MC).divide(totalBase, MC);
-            r.floorMinor = rawMinor.setScale(0, RoundingMode.FLOOR).longValueExact();
-            r.remainder = rawMinor.subtract(BigDecimal.valueOf(r.floorMinor));
-            floorSum += r.floorMinor;
         }
-        long residual = deltaMinor - floorSum; // 0 <= residual < rows.size(), also for negative delta
-        rows.stream()
-            .sorted(Comparator.comparing((MerchantRow r) -> r.remainder).reversed()
-                .thenComparing(r -> r.merchantId))
-            .limit(Math.max(0, residual))
-            .forEach(r -> r.floorMinor++);
+
+        if (deltaMinor >= 0) {
+            long floorSum = 0;
+            for (MerchantRow r : rows) {
+                BigDecimal rawMinor = BigDecimal.valueOf(deltaMinor).multiply(r.base, MC).divide(totalBase, MC);
+                r.floorMinor = rawMinor.setScale(0, RoundingMode.FLOOR).longValueExact();
+                r.remainder = rawMinor.subtract(BigDecimal.valueOf(r.floorMinor));
+                floorSum += r.floorMinor;
+            }
+            long residual = deltaMinor - floorSum; // 0 <= residual < rows.size()
+            rows.stream()
+                .sorted(Comparator.comparing((MerchantRow r) -> r.remainder).reversed()
+                    .thenComparing(r -> r.merchantId))
+                .limit(residual)
+                .forEach(r -> r.floorMinor++);
+        } else {
+            allocateReduction(rows, -deltaMinor);
+        }
+
         for (MerchantRow r : rows) {
             r.extra = BigDecimal.valueOf(r.floorMinor).multiply(minor).setScale(ALLOC_SCALE, RoundingMode.UNNECESSARY);
             r.normalized = r.originalInterchange.add(r.extra);
+        }
+    }
+
+    /**
+     * Places a reduction of {@code toRemove} minor units pro-rata to each row's
+     * EXISTING interchange (proportional scaling: everyone keeps the same share
+     * of what it had), with largest-remainder reconciliation and clamping at
+     * zero as a rounding backstop. Because a row's raw slice is
+     * remaining * own/total and remaining <= total, no slice can exceed the
+     * row's own balance — the clamp only ever absorbs the ±1-minor-unit rounding
+     * bump, never a structural overdraft. Iterates only if that dust clamps a
+     * row out; terminates in at most rows.size() rounds.
+     * Leaves the (negative) allocation in r.floorMinor.
+     */
+    private void allocateReduction(List<MerchantRow> rows, long toRemove) {
+        List<MerchantRow> active = new ArrayList<>();
+        for (MerchantRow r : rows) {
+            r.floorMinor = 0;
+            // Fees are stored NUMERIC(18,4) = ALLOC_SCALE, so this is exact.
+            long cap = r.originalInterchange.setScale(ALLOC_SCALE, RoundingMode.HALF_UP)
+                .movePointRight(ALLOC_SCALE).longValueExact();
+            r.capMinor = Math.max(0, cap);
+            if (r.capMinor > 0) active.add(r);
+        }
+
+        long remaining = toRemove;
+        while (remaining > 0 && !active.isEmpty()) {
+            // Weight by remaining balance, NOT volume: proportional scaling.
+            BigDecimal weightSum = active.stream()
+                .map(r -> BigDecimal.valueOf(r.capMinor))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            long floorSum = 0;
+            for (MerchantRow r : active) {
+                BigDecimal raw = BigDecimal.valueOf(remaining)
+                    .multiply(BigDecimal.valueOf(r.capMinor), MC).divide(weightSum, MC);
+                r.roundMinor = raw.setScale(0, RoundingMode.FLOOR).longValueExact();
+                r.remainder = raw.subtract(BigDecimal.valueOf(r.roundMinor));
+                floorSum += r.roundMinor;
+            }
+            long residual = remaining - floorSum;
+            active.stream()
+                .sorted(Comparator.comparing((MerchantRow r) -> r.remainder).reversed()
+                    .thenComparing(r -> r.merchantId))
+                .limit(residual)
+                .forEach(r -> r.roundMinor++);
+
+            long taken = 0;
+            for (MerchantRow r : active) {
+                long take = Math.min(r.roundMinor, r.capMinor);
+                r.floorMinor -= take;
+                r.capMinor -= take;
+                taken += take;
+            }
+            remaining -= taken;
+            active.removeIf(r -> r.capMinor == 0);
+            if (taken == 0) break; // no row could absorb anything — capacity exhausted
+        }
+        if (remaining > 0) {
+            // Unreachable for target >= 0 unless fact holds negative fees whose
+            // magnitude exceeds the positive ones — surfaced rather than hidden.
+            throw new IllegalStateException("The month's transactions cannot absorb the full reduction: " +
+                BigDecimal.valueOf(remaining).movePointLeft(ALLOC_SCALE) + " could not be placed " +
+                "without driving a merchant negative. Check for negative interchange rows in the month.");
         }
     }
 
@@ -690,6 +775,8 @@ public class InterchangeNormalizationService {
         BigDecimal base;
         BigDecimal weightPct;
         long floorMinor;
+        long capMinor;    // reduction only: how much this row can still absorb
+        long roundMinor;  // reduction only: this round's tentative slice
         BigDecimal remainder;
         BigDecimal extra;
         BigDecimal normalized;
