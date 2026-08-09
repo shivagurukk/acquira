@@ -87,10 +87,27 @@ const InterchangeNormalization = () => {
         }
         setCalculating(true);
         try {
-            const res = await api.post('/admin/interchange-normalization/preview', {
+            // The calculation reads a month of fact_transaction per merchant, which
+            // is far too slow for one request on a large tenant, so the server runs
+            // it on a worker thread and we poll the run until it is ready.
+            const { data: started } = await api.post('/admin/interchange-normalization/preview', {
                 monthKey: selMonth, target: Number(target),
             });
-            setPreview(res.data);
+            const runId = started.runId;
+            for (let i = 0; i < 900; i++) {          // ~30 min ceiling at 2s
+                await new Promise(r => setTimeout(r, 2000));
+                let res;
+                try {
+                    res = (await api.get(`/admin/interchange-normalization/runs/${runId}/preview`)).data;
+                } catch { continue; }               // transient — keep polling
+                if (res.status === 'PREVIEW') { setPreview(res); return; }
+                if (res.status === 'FAILED') {
+                    showToast(res.statusDetail || 'Preview failed', 'error');
+                    return;
+                }
+                if (res.status === 'CANCELLED') return;   // superseded by a newer calculation
+            }
+            showToast('Preview is taking unusually long — check back shortly.', 'warning');
         } catch (e) {
             showToast(e?.response?.data?.error || 'Preview failed', 'error');
         } finally {

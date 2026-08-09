@@ -101,6 +101,21 @@ public class InterchangeNormalizationController {
         }
     }
 
+    /**
+     * Poll target for /preview, which now returns as soon as the calculation is
+     * queued. Responds with just {status} while it is CALCULATING and the full
+     * preview payload once it reaches PREVIEW.
+     */
+    @GetMapping("/runs/{runId}/preview")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<?> previewResult(@PathVariable long runId) {
+        try {
+            return ResponseEntity.ok(service.previewResult(tenantOr400(), runId));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(404).body(Map.of("error", "Run not found for the active tenant"));
+        }
+    }
+
     @GetMapping("/runs/{runId}")
     @PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<?> runStatus(@PathVariable long runId) {

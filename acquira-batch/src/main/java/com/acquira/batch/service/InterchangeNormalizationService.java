@@ -1,5 +1,6 @@
 package com.acquira.batch.service;
 
+import com.acquira.common.config.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -62,27 +63,59 @@ public class InterchangeNormalizationService {
     /**
      * One row per month of the year that has transaction data: system
      * interchange total, merchant count, and the latest normalization run.
+     *
+     * Reads the SUMMARY tables, not fact_transaction. A year of fact rows cannot
+     * be aggregated inside the 30s statement_timeout that TenantAwareDataSource
+     * stamps on servlet connections once a tenant carries real volume — that is
+     * what this screen used to die on. sum_monthly_bank already holds exactly one
+     * row per tenant-month and is rebuilt by the same BulkMigrationService path
+     * that {@link #apply} triggers, so the list reflects normalized figures as
+     * soon as a run completes.
+     *
+     * CAVEAT, deliberate: sum_monthly_bank.total_interchange is rolled up from
+     * sum_daily_bank's DECIMAL(19,2) per-day rows, so the figure listed here can
+     * differ from the exact fact total by a rounding hair. It is a picker value.
+     * {@link #preview} recomputes the original total EXACTLY from fact for the one
+     * month being normalized, and {@link #apply}'s drift guard re-checks it against
+     * fact again, so no decision is ever made on the rounded number.
      */
     public List<Map<String, Object>> summary(Long tenantId, int year) {
         int fromKey = year * 100 + 1, toKey = year * 100 + 12;
+        LocalDate yearStart = LocalDate.of(year, 1, 1), yearEnd = LocalDate.of(year + 1, 1, 1);
 
         Map<Integer, Map<String, Object>> byMonth = new LinkedHashMap<>();
         jdbcTemplate.query(
-            "SELECT CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) mk, " +
-            "       SUM(COALESCE(interchange_fee,0)) ic, COUNT(DISTINCT merchant_id) mc, COUNT(*) txns " +
-            "FROM fact_transaction WHERE tenant_id = ? " +
-            "  AND payment_date >= ? AND payment_date < ? " +
-            "GROUP BY TO_CHAR(payment_date,'YYYYMM') ORDER BY 1",
+            "SELECT month_key mk, COALESCE(total_interchange,0) ic, COALESCE(total_txns,0) txns " +
+            "FROM sum_monthly_bank WHERE tenant_id = ? AND month_key BETWEEN ? AND ? " +
+            "ORDER BY month_key",
             rs -> {
                 Map<String, Object> row = new LinkedHashMap<>();
                 int mk = rs.getInt("mk");
                 row.put("monthKey", mk);
                 row.put("originalInterchange", rs.getBigDecimal("ic"));
-                row.put("merchantCount", rs.getInt("mc"));
+                row.put("merchantCount", 0);
                 row.put("txnCount", rs.getLong("txns"));
                 byMonth.put(mk, row);
             },
-            tenantId, LocalDate.of(year, 1, 1), LocalDate.of(year + 1, 1, 1));
+            tenantId, fromKey, toKey);
+
+        // Merchant count is not a column on sum_monthly_bank, so it comes from the
+        // per-merchant-day grain instead. That is merchants x days for the year —
+        // orders of magnitude smaller than the fact rows behind it — and it rides
+        // idx_sum_merch_tenant_date. COUNT(DISTINCT) skips NULL merchant_id, which
+        // is the same treatment the old fact query gave unattributed rows.
+        jdbcTemplate.query(
+            "SELECT (EXTRACT(YEAR FROM business_date)::INTEGER * 100 " +
+            "        + EXTRACT(MONTH FROM business_date)::INTEGER) mk, " +
+            "       COUNT(DISTINCT merchant_id) mc " +
+            "FROM sum_daily_merchant " +
+            "WHERE tenant_id = ? AND business_date >= ? AND business_date < ? " +
+            "GROUP BY 1",
+            rs -> {
+                Map<String, Object> row = byMonth.get(rs.getInt("mk"));
+                if (row != null) row.put("merchantCount", rs.getInt("mc"));
+            },
+            tenantId, yearStart, yearEnd);
 
         // Latest run per month (any status) + the currently APPLIED one.
         jdbcTemplate.query(
@@ -111,15 +144,77 @@ public class InterchangeNormalizationService {
     /* ───────────────────────────── preview ─────────────────────────────── */
 
     /**
-     * Computes the pro-rata distribution for one month and persists it as a
-     * PREVIEW run (new version). Nothing in fact_transaction is touched.
+     * Starts the pro-rata calculation for one month and returns immediately.
+     *
+     * The calculation itself reads a whole month of fact_transaction grouped by
+     * merchant, which cannot finish inside the 30s statement_timeout that
+     * TenantAwareDataSource stamps on servlet connections once a tenant carries
+     * real volume. It therefore runs on a worker thread exactly like
+     * {@link #apply} does — no request context there means the pool hands that
+     * thread a connection with statement_timeout=0, so the aggregate is allowed
+     * to take as long as it needs without pinning the HTTP request.
+     *
+     * Unlike the summary screen this CANNOT read the summary tables: the
+     * allocation needs exact per-merchant interchange and volume from fact.
+     *
+     * The run row is created up-front as CALCULATING so the caller has something
+     * to poll; {@link #previewResult} serves the assembled payload once the
+     * worker flips it to PREVIEW. Nothing in fact_transaction is touched.
      */
     public Map<String, Object> preview(Long tenantId, int monthKey, BigDecimal target, String username) {
+        int scale = currencyScale(tenantId);
+        BigDecimal scaledTarget = target.setScale(scale, RoundingMode.HALF_UP);
+        if (scaledTarget.signum() < 0) throw new IllegalArgumentException("Target must not be negative");
+
+        // Supersede anything already outstanding for the month, including a
+        // calculation still in flight — its worker sees the status change when it
+        // tries to finalise and cleans up after itself.
+        jdbcTemplate.update(
+            "UPDATE interchange_normalization_run SET status='CANCELLED', status_detail='Replaced by a newer preview' " +
+            "WHERE tenant_id=? AND month_key=? AND status IN ('PREVIEW','CALCULATING')", tenantId, monthKey);
+
+        Long runId = jdbcTemplate.queryForObject(
+            "INSERT INTO interchange_normalization_run " +
+            "(tenant_id, month_key, version_no, target_normalized_total, weighting_base, residual_method, " +
+            " currency_scale, status, status_detail, created_by) " +
+            "VALUES (?,?, COALESCE((SELECT MAX(version_no) FROM interchange_normalization_run WHERE tenant_id=? AND month_key=?),0)+1, " +
+            "        ?, 'VOLUME_EXTRA','LARGEST_REMAINDER', ?, 'CALCULATING', 'Calculating preview', ?) RETURNING run_id",
+            Long.class,
+            tenantId, monthKey, tenantId, monthKey, scaledTarget, scale, username);
+
+        BigDecimal finalTarget = scaledTarget;
+        Thread worker = new Thread(() -> runPreview(tenantId, runId, monthKey, scale, finalTarget),
+            "interchange-preview");
+        worker.setDaemon(true);
+        worker.start();
+
+        return Map.of("status", "STARTED", "runId", runId, "monthKey", monthKey,
+            "message", "Calculating. Poll the run until it reaches PREVIEW.");
+    }
+
+    /**
+     * The heavy half of {@link #preview}, on a worker thread. Sets the run to
+     * PREVIEW on success or FAILED with the reason on error — the validation
+     * errors that used to come back as HTTP 400 ("no merchant transactions",
+     * "zero volume", "reduction too large") now surface through status_detail.
+     */
+    private void runPreview(Long tenantId, long runId, int monthKey, int scale, BigDecimal target) {
+        TenantContext.setCurrentTenant(tenantId); // worker thread: RLS/tenant GUC does not inherit
+        try {
+            previewInto(tenantId, runId, monthKey, scale, target);
+        } catch (Exception e) {
+            log.error("[IC-NORM] preview run {} failed", runId, e);
+            jdbcTemplate.update(
+                "UPDATE interchange_normalization_run SET status='FAILED', status_detail=? " +
+                "WHERE run_id=? AND status='CALCULATING'", truncate(e.getMessage()), runId);
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    private void previewInto(Long tenantId, long runId, int monthKey, int scale, BigDecimal target) {
         YearMonth ym = YearMonth.of(monthKey / 100, monthKey % 100);
         LocalDate start = ym.atDay(1), end = ym.plusMonths(1).atDay(1);
-        int scale = currencyScale(tenantId);
-        target = target.setScale(scale, RoundingMode.HALF_UP);
-        if (target.signum() < 0) throw new IllegalArgumentException("Target must not be negative");
 
         // Per-merchant base from fact (source of truth, not the summaries).
         List<MerchantRow> rows = jdbcTemplate.query(
@@ -193,31 +288,14 @@ public class InterchangeNormalizationService {
             }
         }
 
-        // Persist as a new PREVIEW version; any older un-applied previews for the
-        // month are cancelled so only one actionable preview exists at a time.
-        jdbcTemplate.update(
-            "UPDATE interchange_normalization_run SET status='CANCELLED', status_detail='Replaced by a newer preview' " +
-            "WHERE tenant_id=? AND month_key=? AND status='PREVIEW'", tenantId, monthKey);
         BigDecimal unattributedNormalized = unattributedRow != null ? unattributedRow.normalized : BigDecimal.ZERO;
         List<MerchantRow> merchantRows = rows.stream().filter(r -> r.merchantId > 0).toList();
-
-        Long runId = jdbcTemplate.queryForObject(
-            "INSERT INTO interchange_normalization_run " +
-            "(tenant_id, month_key, version_no, original_interchange_total, target_normalized_total, difference, " +
-            " unattributed_original, unattributed_normalized, weighting_base, residual_method, currency_scale, " +
-            " merchant_count, status, created_by) " +
-            "VALUES (?,?, COALESCE((SELECT MAX(version_no) FROM interchange_normalization_run WHERE tenant_id=? AND month_key=?),0)+1, " +
-            "        ?,?,?,?,?, 'VOLUME_EXTRA','LARGEST_REMAINDER', ?, ?, 'PREVIEW', ?) RETURNING run_id",
-            Long.class,
-            tenantId, monthKey, tenantId, monthKey,
-            originalTotal, target, target.subtract(originalTotal), unattributed, unattributedNormalized,
-            scale, merchantRows.size(), username);
 
         jdbcTemplate.batchUpdate(
             "INSERT INTO interchange_normalization_detail " +
             "(run_id, merchant_id, merchant_name, txn_count, txn_volume, original_interchange, weight_pct, " +
             " normalized_interchange, difference) VALUES (?,?,?,?,?,?,?,?,?)",
-            merchantRows, 200, (ps, r) -> {
+            rows, 200, (ps, r) -> {
                 ps.setLong(1, runId);
                 ps.setLong(2, r.merchantId);
                 ps.setString(3, r.name);
@@ -229,19 +307,87 @@ public class InterchangeNormalizationService {
                 ps.setBigDecimal(9, r.normalized.subtract(r.originalInterchange));
             });
 
-        BigDecimal proposedTotal = rows.stream().map(r -> r.normalized).reduce(BigDecimal.ZERO, BigDecimal::add);
+        // Flip to PREVIEW only if this run is still the live calculation. A newer
+        // preview (or a cancel) for the month will have moved it to CANCELLED
+        // while we were working, in which case our detail rows are orphaned
+        // output and must go — otherwise they would inflate a later run's sums.
+        int claimed = jdbcTemplate.update(
+            "UPDATE interchange_normalization_run SET status='PREVIEW', status_detail=NULL, " +
+            "  original_interchange_total=?, difference=?, unattributed_original=?, unattributed_normalized=?, " +
+            "  merchant_count=? " +
+            "WHERE run_id=? AND status='CALCULATING'",
+            originalTotal, target.subtract(originalTotal), unattributed, unattributedNormalized,
+            merchantRows.size(), runId);
+        if (claimed == 0) {
+            jdbcTemplate.update("DELETE FROM interchange_normalization_detail WHERE run_id=?", runId);
+            log.info("[IC-NORM] preview run {} was superseded while calculating — results discarded", runId);
+        }
+    }
+
+    /**
+     * The finished preview payload for a run, in the same shape the synchronous
+     * preview used to return, so the screen renders it unchanged. While the
+     * worker is still going this returns just the status for the caller to poll.
+     */
+    public Map<String, Object> previewResult(Long tenantId, long runId) {
+        Map<String, Object> run = jdbcTemplate.queryForMap(
+            "SELECT tenant_id, month_key, status, status_detail, currency_scale, merchant_count, " +
+            "       original_interchange_total, target_normalized_total, " +
+            "       unattributed_original, unattributed_normalized " +
+            "FROM interchange_normalization_run WHERE run_id = ?", runId);
+        if (!tenantId.equals(((Number) run.get("tenant_id")).longValue())) {
+            throw new IllegalArgumentException("Run does not belong to the active tenant");
+        }
+
         Map<String, Object> out = new LinkedHashMap<>();
+        String status = (String) run.get("status");
         out.put("runId", runId);
-        out.put("monthKey", monthKey);
-        out.put("currencyScale", scale);
-        out.put("merchantCount", merchantRows.size());
-        out.put("originalTotal", originalTotal);
-        out.put("unattributedOriginal", unattributed);
+        out.put("status", status);
+        out.put("statusDetail", run.get("status_detail"));
+        out.put("monthKey", run.get("month_key"));
+        if (!"PREVIEW".equals(status)) return out;   // CALCULATING / FAILED / CANCELLED
+
+        BigDecimal target = (BigDecimal) run.get("target_normalized_total");
+        BigDecimal unattributedNormalized = run.get("unattributed_normalized") != null
+            ? (BigDecimal) run.get("unattributed_normalized") : BigDecimal.ZERO;
+
+        List<Map<String, Object>> rows = jdbcTemplate.query(
+            "SELECT d.merchant_id, COALESCE(m.mid,'') mid, d.merchant_name, d.txn_count, d.txn_volume, " +
+            "       d.original_interchange, d.weight_pct, d.normalized_interchange, d.difference " +
+            "FROM interchange_normalization_detail d " +
+            "LEFT JOIN dim_merchant m ON m.merchant_id = d.merchant_id AND m.tenant_id = ? " +
+            "WHERE d.run_id = ? ORDER BY d.txn_volume DESC",
+            (rs, i) -> {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("merchantId", rs.getLong("merchant_id"));
+                r.put("mid", rs.getString("mid"));
+                r.put("merchantName", rs.getString("merchant_name"));
+                r.put("txnCount", rs.getLong("txn_count"));
+                r.put("txnVolume", rs.getBigDecimal("txn_volume"));
+                r.put("originalInterchange", rs.getBigDecimal("original_interchange"));
+                r.put("weightPct", rs.getBigDecimal("weight_pct"));
+                r.put("extraAdded", rs.getBigDecimal("difference"));
+                r.put("normalizedInterchange", rs.getBigDecimal("normalized_interchange"));
+                r.put("difference", rs.getBigDecimal("difference"));
+                return r;
+            },
+            tenantId, runId);
+
+        // Detail carries the unattributed bucket as merchant_id -1, so summing it
+        // straight gives the proposed month total without double-counting.
+        BigDecimal proposedTotal = rows.stream()
+            .map(r -> (BigDecimal) r.get("normalizedInterchange"))
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        out.put("currencyScale", run.get("currency_scale"));
+        out.put("merchantCount", run.get("merchant_count"));
+        out.put("originalTotal", run.get("original_interchange_total"));
+        out.put("unattributedOriginal", run.get("unattributed_original"));
         out.put("unattributedNormalized", unattributedNormalized);
         out.put("target", target);
         out.put("proposedTotal", proposedTotal);
-        out.put("remainingDifference", target.subtract(proposedTotal)); // must be 0.00 by construction
-        out.put("rows", rows.stream().map(MerchantRow::toMap).toList());
+        out.put("remainingDifference", target.subtract(proposedTotal)); // 0.00 by construction
+        out.put("rows", rows);
         return out;
     }
 
@@ -308,23 +454,22 @@ public class InterchangeNormalizationService {
         // Guard 1: detail (+ the unattributed share) must still sum exactly to the target.
         BigDecimal unattributedNormalized = run.get("unattributed_normalized") != null
             ? (BigDecimal) run.get("unattributed_normalized") : BigDecimal.ZERO;
+        // merchant_id > 0 excludes the unattributed bucket, which detail stores as
+        // merchant_id -1; it is added back explicitly on the next line.
         BigDecimal detailSum = jdbcTemplate.queryForObject(
-            "SELECT COALESCE(SUM(normalized_interchange),0) FROM interchange_normalization_detail WHERE run_id=?",
+            "SELECT COALESCE(SUM(normalized_interchange),0) FROM interchange_normalization_detail " +
+            "WHERE run_id=? AND merchant_id > 0",
             BigDecimal.class, runId);
         if (detailSum.add(unattributedNormalized).compareTo(target) != 0) {
             throw new IllegalStateException("Allocations (" + detailSum.add(unattributedNormalized) +
                 ") do not sum to the target (" + target + ") — recalculate the preview");
         }
-        // Guard 2: fact data must not have changed since the preview was built.
-        BigDecimal currentOriginal = jdbcTemplate.queryForObject(
-            "SELECT COALESCE(SUM(interchange_fee),0) FROM fact_transaction " +
-            "WHERE tenant_id=? AND payment_date >= ? AND payment_date < ?",
-            BigDecimal.class, tenantId, start, end);
+        // Guard 2 (fact must not have changed since the preview) is NOT here: it
+        // sums a whole month of fact_transaction, which cannot finish inside the
+        // 30s web statement_timeout on a large tenant. It runs first thing in
+        // runApply instead, on the worker thread, where the timeout is 0 — still
+        // before any row is written, so it protects exactly what it did before.
         BigDecimal previewOriginal = (BigDecimal) run.get("original_interchange_total");
-        if (previewOriginal != null && currentOriginal.compareTo(previewOriginal) != 0) {
-            throw new IllegalStateException("Transaction data changed since this preview was calculated (" +
-                previewOriginal + " -> " + currentOriginal + ") — recalculate the preview");
-        }
 
         jdbcTemplate.update("UPDATE interchange_normalization_run SET status='APPLYING', status_detail='Updating transactions' " +
             "WHERE run_id=?", runId);
@@ -337,7 +482,7 @@ public class InterchangeNormalizationService {
         BigDecimal unattributedOriginal = run.get("unattributed_original") != null
             ? (BigDecimal) run.get("unattributed_original") : BigDecimal.ZERO;
         Thread worker = new Thread(() -> runApply(tenantId, runId, monthKey, scale, target,
-            unattributedOriginal, unattributedNormalized, start, end, username),
+            unattributedOriginal, unattributedNormalized, previewOriginal, start, end, username),
             "interchange-normalization");
         worker.setDaemon(true);
         worker.start();
@@ -348,8 +493,20 @@ public class InterchangeNormalizationService {
 
     private void runApply(Long tenantId, long runId, int monthKey, int scale, BigDecimal target,
                           BigDecimal unattributedOriginal, BigDecimal unattributedNormalized,
-                          LocalDate start, LocalDate end, String username) {
+                          BigDecimal previewOriginal, LocalDate start, LocalDate end, String username) {
+        TenantContext.setCurrentTenant(tenantId); // worker thread: RLS/tenant GUC does not inherit
         try {
+            // Guard 2, moved off the web thread (see apply): fact must not have
+            // changed since the preview was calculated. Still runs before any write.
+            BigDecimal currentOriginal = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(interchange_fee),0) FROM fact_transaction " +
+                "WHERE tenant_id=? AND payment_date >= ? AND payment_date < ?",
+                BigDecimal.class, tenantId, start, end);
+            if (previewOriginal != null && currentOriginal.compareTo(previewOriginal) != 0) {
+                throw new IllegalStateException("Transaction data changed since this preview was calculated (" +
+                    previewOriginal + " -> " + currentOriginal + ") — recalculate the preview");
+            }
+
             txTemplate.executeWithoutResult(tx -> {
                 // 1. Each transaction KEEPS its existing interchange and gains its
                 //    volume-weighted slice of the merchant's extra:
@@ -453,6 +610,8 @@ public class InterchangeNormalizationService {
             log.error("[IC-NORM] run {} failed (rolled back)", runId, e);
             jdbcTemplate.update("UPDATE interchange_normalization_run SET status='FAILED', status_detail=? WHERE run_id=?",
                 truncate(e.getMessage()), runId);
+        } finally {
+            TenantContext.clear();
         }
     }
 
@@ -496,7 +655,7 @@ public class InterchangeNormalizationService {
     public void cancel(Long tenantId, long runId) {
         int n = jdbcTemplate.update(
             "UPDATE interchange_normalization_run SET status='CANCELLED', status_detail='Cancelled by user' " +
-            "WHERE run_id=? AND tenant_id=? AND status='PREVIEW'", runId, tenantId);
+            "WHERE run_id=? AND tenant_id=? AND status IN ('PREVIEW','CALCULATING')", runId, tenantId);
         if (n == 0) throw new IllegalStateException("Only a PREVIEW run of the active tenant can be cancelled");
     }
 
