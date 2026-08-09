@@ -77,6 +77,7 @@ const SettingsHub = lazy(() => import('./pages/SettingsHub'));
 // S3 report storage settings
 const S3Settings = lazy(() => import('./pages/admin/S3Settings'));
 const BudgetTargets = lazy(() => import('./pages/admin/BudgetTargets'));
+const InterchangeNormalization = lazy(() => import('./pages/admin/InterchangeNormalization'));
 
 function App() {
   return (
@@ -246,6 +247,10 @@ function App() {
               } />
               <Route path="/business/budget-targets" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><BudgetTargets /></RoleGuard>
+              } />
+              {/* SA-only: apply overwrites fact-level interchange fees for a month. */}
+              <Route path="/admin/interchange-normalization" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN']}><InterchangeNormalization /></RoleGuard>
               } />
             </Route>
           </Routes>
