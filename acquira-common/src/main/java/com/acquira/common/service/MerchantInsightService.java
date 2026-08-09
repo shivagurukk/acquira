@@ -810,7 +810,9 @@ public class MerchantInsightService {
 
     private List<ChartData> buildTxnSizeDistribution(
             List<com.acquira.common.model.SumDailyMerchantAttribute> attrs) {
-        String[] bucketOrder = {"< 50", "50-100", "100-250", "250-500", "500-1K", "1K+"};
+        // '1K+' is the legacy top bucket kept for data aggregated before the
+        // '1K-5K'/'5K+' split; the enhancer splits it by estimate only when present.
+        String[] bucketOrder = {"< 50", "50-100", "100-250", "250-500", "500-1K", "1K-5K", "5K+", "1K+"};
         Map<String, long[]> buckets = new java.util.LinkedHashMap<>();
         for (String b : bucketOrder) buckets.put(b, new long[]{0, 0});
         long totalCount = 0;

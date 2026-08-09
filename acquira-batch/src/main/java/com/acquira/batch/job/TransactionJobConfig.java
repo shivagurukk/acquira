@@ -1610,17 +1610,24 @@ public class TransactionJobConfig {
                         " GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date) " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                         "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
+                    // Legacy aggregations stored a single '1K+' bucket; remove those rows for the
+                    // date scope so they can't double-count alongside the '1K-5K'/'5K+' split below.
+                    jdbcTemplate.update(
+                        "DELETE FROM sum_daily_merchant_attribute WHERE tenant_id=? AND business_date IN " + dateScope +
+                        " AND attribute_type='TXN_SIZE_BUCKET' AND attribute_value='1K+'", tenantId);
                     totalRows += jdbcTemplate.update(
                         "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                         "SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_SIZE_BUCKET', " +
                         "CASE WHEN store_base_currency_amount < 50 THEN '< 50' WHEN store_base_currency_amount < 100 THEN '50-100' " +
                         "WHEN store_base_currency_amount < 250 THEN '100-250' WHEN store_base_currency_amount < 500 THEN '250-500' " +
-                        "WHEN store_base_currency_amount < 1000 THEN '500-1K' ELSE '1K+' END, COUNT(*), SUM(store_base_currency_amount) " +
+                        "WHEN store_base_currency_amount < 1000 THEN '500-1K' WHEN store_base_currency_amount < 5000 THEN '1K-5K' " +
+                        "ELSE '5K+' END, COUNT(*), SUM(store_base_currency_amount) " +
                         "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, merchant_id, DATE(payment_date), " +
                         "CASE WHEN store_base_currency_amount < 50 THEN '< 50' WHEN store_base_currency_amount < 100 THEN '50-100' " +
                         "WHEN store_base_currency_amount < 250 THEN '100-250' WHEN store_base_currency_amount < 500 THEN '250-500' " +
-                        "WHEN store_base_currency_amount < 1000 THEN '500-1K' ELSE '1K+' END " +
+                        "WHEN store_base_currency_amount < 1000 THEN '500-1K' WHEN store_base_currency_amount < 5000 THEN '1K-5K' " +
+                        "ELSE '5K+' END " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                         "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
                     totalRows += jdbcTemplate.update(

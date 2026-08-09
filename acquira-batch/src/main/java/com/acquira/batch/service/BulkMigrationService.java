@@ -610,16 +610,23 @@ public class BulkMigrationService {
             tenantId, monthStart, monthEnd);
 
         // TXN_SIZE_BUCKET
+        // Legacy aggregations stored a single '1K+' bucket; remove those rows for the
+        // window so they can't double-count alongside the '1K-5K'/'5K+' split below.
+        jdbcTemplate.update("DELETE FROM sum_daily_merchant_attribute WHERE tenant_id=? " +
+            "AND business_date BETWEEN ? AND ? AND attribute_type='TXN_SIZE_BUCKET' AND attribute_value='1K+'",
+            tenantId, monthStart, monthEnd);
         jdbcTemplate.update("INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
             "SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_SIZE_BUCKET', " +
             "CASE WHEN txn_currency_amount < 50 THEN '< 50' WHEN txn_currency_amount < 100 THEN '50-100' " +
             "WHEN txn_currency_amount < 250 THEN '100-250' WHEN txn_currency_amount < 500 THEN '250-500' " +
-            "WHEN txn_currency_amount < 1000 THEN '500-1K' ELSE '1K+' END, COUNT(*), SUM(txn_currency_amount) " +
+            "WHEN txn_currency_amount < 1000 THEN '500-1K' WHEN txn_currency_amount < 5000 THEN '1K-5K' " +
+            "ELSE '5K+' END, COUNT(*), SUM(txn_currency_amount) " +
             "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) BETWEEN ? AND ? AND merchant_id IS NOT NULL " +
             "GROUP BY tenant_id, merchant_id, DATE(payment_date), " +
             "CASE WHEN txn_currency_amount < 50 THEN '< 50' WHEN txn_currency_amount < 100 THEN '50-100' " +
             "WHEN txn_currency_amount < 250 THEN '100-250' WHEN txn_currency_amount < 500 THEN '250-500' " +
-            "WHEN txn_currency_amount < 1000 THEN '500-1K' ELSE '1K+' END " +
+            "WHEN txn_currency_amount < 1000 THEN '500-1K' WHEN txn_currency_amount < 5000 THEN '1K-5K' " +
+            "ELSE '5K+' END " +
             "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
             "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume",
             tenantId, monthStart, monthEnd);

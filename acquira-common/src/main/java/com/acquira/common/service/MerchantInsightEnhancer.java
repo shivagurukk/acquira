@@ -143,55 +143,77 @@ public class MerchantInsightEnhancer {
     // ─────────────────────────────────────────────────────────────
 
     /**
-     * FIX UX: splits the "1K+" bucket from the base 5-bucket distribution into
-     * "1K–5K" and "5K+". The base txnSizeDistribution remains unchanged (backward
-     * compat); the extended list is placed in txnSizeDistributionExtended which
-     * the heatmap template reads first, falling back to txnSizeDistribution.
+     * Builds txnSizeDistributionExtended, which the heatmap template reads first,
+     * falling back to txnSizeDistribution.
      *
-     * Since the raw per-transaction breakpoints aren't available in the summary
-     * table, we approximate by splitting the 1K+ bucket proportionally using the
-     * volume-weighted ratio stored in value3 (raw volume) vs value (count).
-     * A merchant whose 1K+ ATV is > 5K gets 30% of counts in 1K–5K and 70% in 5K+.
-     * This is a presentation approximation; exact split requires a new attribute bucket.
+     * The batch jobs now aggregate real "1K-5K" and "5K+" buckets, so those rows
+     * pass through unchanged. A legacy "1K+" row (data aggregated before the
+     * split) has no per-transaction breakpoints left, so it is split by an
+     * avg-ticket estimate and merged into the real buckets. Re-running the
+     * aggregation for the month removes the estimate entirely.
      */
     private void populateExtendedTxnSizeBuckets(MerchantInsightsDTO dto) {
         if (dto.getAchievements() == null) return;
         List<MerchantInsightsDTO.ChartData> base = dto.getAchievements().getTxnSizeDistribution();
         if (base == null || base.isEmpty()) return;
 
+        MerchantInsightsDTO.ChartData legacy = null;
         List<MerchantInsightsDTO.ChartData> extended = new ArrayList<>();
         for (MerchantInsightsDTO.ChartData b : base) {
             if ("1K+".equals(b.getLabel())) {
-                // Split 1K+ bucket: use volume/count to estimate average ticket
-                BigDecimal count = b.getValue() != null ? b.getValue() : BigDecimal.ZERO;
-                BigDecimal volume = b.getValue3() != null ? b.getValue3() : BigDecimal.ZERO;
-                BigDecimal avgTicket = count.compareTo(BigDecimal.ZERO) > 0
-                        ? volume.divide(count, 0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-
-                // Estimate split: if avg ticket >= 5000, ~60% are in 5K+ tier
-                double highFraction = avgTicket.doubleValue() >= 5000 ? 0.60
-                        : avgTicket.doubleValue() >= 2500 ? 0.35 : 0.15;
-
-                BigDecimal highCount = count.multiply(BigDecimal.valueOf(highFraction))
-                        .setScale(0, RoundingMode.HALF_UP);
-                BigDecimal lowCount = count.subtract(highCount);
-                BigDecimal highVol = volume.multiply(BigDecimal.valueOf(highFraction))
-                        .setScale(0, RoundingMode.HALF_UP);
-                BigDecimal lowVol = volume.subtract(highVol);
-                BigDecimal pctBase = b.getValue2() != null ? b.getValue2() : BigDecimal.ZERO;
-                BigDecimal highPct = pctBase.multiply(BigDecimal.valueOf(highFraction))
-                        .setScale(1, RoundingMode.HALF_UP);
-                BigDecimal lowPct = pctBase.subtract(highPct);
-
-                extended.add(MerchantInsightsDTO.ChartData.builder()
-                        .label("1K–5K").value(lowCount).value2(lowPct).value3(lowVol).build());
-                extended.add(MerchantInsightsDTO.ChartData.builder()
-                        .label("5K+").value(highCount).value2(highPct).value3(highVol).build());
+                legacy = b;
             } else {
                 extended.add(b);
             }
         }
+
+        if (legacy != null) {
+            BigDecimal count = legacy.getValue() != null ? legacy.getValue() : BigDecimal.ZERO;
+            BigDecimal volume = legacy.getValue3() != null ? legacy.getValue3() : BigDecimal.ZERO;
+            BigDecimal avgTicket = count.compareTo(BigDecimal.ZERO) > 0
+                    ? volume.divide(count, 0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+
+            // Estimate split for legacy data only: if avg ticket >= 5000, ~60% are 5K+
+            double highFraction = avgTicket.doubleValue() >= 5000 ? 0.60
+                    : avgTicket.doubleValue() >= 2500 ? 0.35 : 0.15;
+
+            BigDecimal highCount = count.multiply(BigDecimal.valueOf(highFraction))
+                    .setScale(0, RoundingMode.HALF_UP);
+            BigDecimal lowCount = count.subtract(highCount);
+            BigDecimal highVol = volume.multiply(BigDecimal.valueOf(highFraction))
+                    .setScale(0, RoundingMode.HALF_UP);
+            BigDecimal lowVol = volume.subtract(highVol);
+            BigDecimal pctBase = legacy.getValue2() != null ? legacy.getValue2() : BigDecimal.ZERO;
+            BigDecimal highPct = pctBase.multiply(BigDecimal.valueOf(highFraction))
+                    .setScale(1, RoundingMode.HALF_UP);
+            BigDecimal lowPct = pctBase.subtract(highPct);
+
+            mergeBucket(extended, "1K-5K", lowCount, lowPct, lowVol);
+            mergeBucket(extended, "5K+", highCount, highPct, highVol);
+        }
         dto.getAchievements().setTxnSizeDistributionExtended(extended);
+    }
+
+    /** Adds the given amounts into the bucket with this label, creating it (in order) if absent. */
+    private void mergeBucket(List<MerchantInsightsDTO.ChartData> buckets, String label,
+                             BigDecimal count, BigDecimal pct, BigDecimal volume) {
+        if (count.compareTo(BigDecimal.ZERO) == 0 && volume.compareTo(BigDecimal.ZERO) == 0) return;
+        for (MerchantInsightsDTO.ChartData b : buckets) {
+            if (label.equals(b.getLabel())) {
+                b.setValue((b.getValue() != null ? b.getValue() : BigDecimal.ZERO).add(count));
+                b.setValue2((b.getValue2() != null ? b.getValue2() : BigDecimal.ZERO).add(pct));
+                b.setValue3((b.getValue3() != null ? b.getValue3() : BigDecimal.ZERO).add(volume));
+                return;
+            }
+        }
+        int insertAt = buckets.size();
+        if ("1K-5K".equals(label)) {
+            for (int i = 0; i < buckets.size(); i++) {
+                if ("5K+".equals(buckets.get(i).getLabel())) { insertAt = i; break; }
+            }
+        }
+        buckets.add(insertAt, MerchantInsightsDTO.ChartData.builder()
+                .label(label).value(count).value2(pct).value3(volume).build());
     }
 
     // ─────────────────────────────────────────────────────────────
