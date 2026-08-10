@@ -289,15 +289,16 @@ public class BackfillIngestionService {
 
         // 3.1 Bank
         jdbcTemplate.update("""
-                INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_msf,
-                     total_interchange, total_scheme_fee, total_vat, total_net_revenue)
-                SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(txn_currency_amount), SUM(msf),
-                     SUM(interchange_fee), 0, SUM(vat), SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0))
+                INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_base_volume, total_msf,
+                     total_interchange, total_scheme_fee, total_ecom_fee, total_vat, total_net_revenue)
+                SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(store_base_currency_amount), SUM(store_base_currency_amount), SUM(msf),
+                     SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), SUM(COALESCE(ecom_fee,0)), SUM(vat),
+                     SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - COALESCE(scheme_fee,0) - COALESCE(ecom_fee,0))
                 FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) = ?
                 GROUP BY tenant_id, DATE(payment_date)
                 ON CONFLICT (tenant_id, business_date) DO UPDATE SET
-                     total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf,
-                     total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee,
+                     total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf,
+                     total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, total_ecom_fee=EXCLUDED.total_ecom_fee,
                      total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue
                 """, tenantId, date);
 
@@ -309,14 +310,15 @@ public class BackfillIngestionService {
                                total_debit_prepaid_volume, total_credit_volume, sales_user_id, unique_customer_count,
                                dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume, dcc_eligible_count, dcc_optin_count)
                            SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, COUNT(*),
-                               SUM(f.txn_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
-                               SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0)),
-                               SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT','PREPAID') THEN f.txn_currency_amount ELSE 0 END),
-                               SUM(CASE WHEN UPPER(f.card_type) = 'CREDIT' THEN f.txn_currency_amount ELSE 0 END),
+                               SUM(f.store_base_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee),
+                               SUM(COALESCE(f.scheme_fee,0)),
+                               SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - COALESCE(f.scheme_fee,0) - COALESCE(f.ecom_fee,0)),
+                               SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT','PREPAID') THEN f.store_base_currency_amount ELSE 0 END),
+                               SUM(CASE WHEN UPPER(f.card_type) = 'CREDIT' THEN f.store_base_currency_amount ELSE 0 END),
                                m.sales_user_id, COUNT(DISTINCT f.card_number),
-                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN f.txn_currency_amount ELSE 0 END),
-                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN f.txn_currency_amount ELSE 0 END),
-                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.txn_currency_amount ELSE 0 END),
+                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN f.store_base_currency_amount ELSE 0 END),
+                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN f.store_base_currency_amount ELSE 0 END),
+                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.store_base_currency_amount ELSE 0 END),
                                COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN 1 END),
                                COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END)
                            FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id AND m.tenant_id = f.tenant_id
@@ -339,7 +341,7 @@ public class BackfillIngestionService {
                 """
                         WITH DailyCustSpend AS (
                             SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number,
-                                SUM(txn_currency_amount) as total_spend
+                                SUM(store_base_currency_amount) as total_spend
                             FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) = ?
                             GROUP BY tenant_id, merchant_id, DATE(payment_date), card_number
                         ), Ranked AS (
@@ -357,7 +359,8 @@ public class BackfillIngestionService {
                 INSERT INTO sum_daily_mcc (tenant_id, business_date, mcc, card_scheme, total_txns,
                     total_volume, total_msf, total_scheme_fee, total_net_revenue)
                 SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*),
-                    SUM(f.txn_currency_amount), SUM(f.msf), 0, SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0))
+                    SUM(f.store_base_currency_amount), SUM(f.msf), SUM(COALESCE(f.scheme_fee,0)),
+                    SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0))
                 FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id AND s.tenant_id=f.tenant_id
                 WHERE f.tenant_id=? AND DATE(f.payment_date) = ?
                 GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme
@@ -372,7 +375,8 @@ public class BackfillIngestionService {
                         INSERT INTO sum_daily_scheme (tenant_id, business_date, card_scheme, total_txns,
                             total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue)
                         SELECT tenant_id, DATE(payment_date), card_scheme, COUNT(*),
-                            SUM(txn_currency_amount), SUM(msf), SUM(interchange_fee), 0, SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0))
+                            SUM(store_base_currency_amount), SUM(msf), SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)),
+                            SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)-COALESCE(ecom_fee,0))
                         FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
                         GROUP BY tenant_id, DATE(payment_date), card_scheme
                         ON CONFLICT (tenant_id, business_date, card_scheme) DO UPDATE SET
@@ -387,8 +391,8 @@ public class BackfillIngestionService {
                 INSERT INTO sum_daily_channel (tenant_id, business_date, channel, total_txns,
                     total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue)
                 SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*),
-                    SUM(f.txn_currency_amount), SUM(f.msf), SUM(f.interchange_fee), 0,
-                    SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0))
+                    SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), SUM(COALESCE(f.scheme_fee,0)),
+                    SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0))
                 FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id
                 WHERE f.tenant_id=? AND DATE(f.payment_date) = ?
                 GROUP BY f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS')
@@ -402,18 +406,18 @@ public class BackfillIngestionService {
         String monthScope = "(SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
         jdbcTemplate.update(
                 """
-                        INSERT INTO sum_monthly_bank (tenant_id, month_key, total_txns, total_volume, total_msf,
-                            total_interchange, total_scheme_fee, total_vat, total_net_revenue)
+                        INSERT INTO sum_monthly_bank (tenant_id, month_key, total_txns, total_volume, total_base_volume, total_msf,
+                            total_interchange, total_scheme_fee, total_ecom_fee, total_vat, total_net_revenue)
                         SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER),
-                            SUM(total_txns), SUM(total_volume), SUM(total_msf), SUM(total_interchange),
-                            SUM(total_scheme_fee), SUM(total_vat), SUM(total_net_revenue)
+                            SUM(total_txns), SUM(total_volume), SUM(COALESCE(total_base_volume,0)), SUM(total_msf), SUM(total_interchange),
+                            SUM(total_scheme_fee), SUM(COALESCE(total_ecom_fee,0)), SUM(total_vat), SUM(total_net_revenue)
                         FROM sum_daily_bank WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN """
                         + monthScope
                         + """
                                 GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM')
                                 ON CONFLICT (tenant_id, month_key) DO UPDATE SET
-                                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf,
-                                    total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee,
+                                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf,
+                                    total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, total_ecom_fee=EXCLUDED.total_ecom_fee,
                                     total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue
                                 """,
                 tenantId, tenantId, tenantId);
@@ -421,14 +425,17 @@ public class BackfillIngestionService {
         // 7. sum_daily_terminal
         jdbcTemplate.update("""
                 INSERT INTO sum_daily_terminal (tenant_id, business_date, merchant_id, store_id, terminal_id,
-                    total_txns, total_volume, total_msf, total_revenue)
+                    total_txns, total_volume, total_base_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_revenue)
                 SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id,
-                    COUNT(*), SUM(txn_currency_amount), SUM(msf), SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0))
-                FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
+                    COUNT(*), SUM(store_base_currency_amount), SUM(store_base_currency_amount), SUM(msf),
+                    SUM(COALESCE(interchange_fee,0)), SUM(COALESCE(scheme_fee,0)), SUM(COALESCE(ecom_fee,0)),
+                    SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)-COALESCE(ecom_fee,0))
+                FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ?
                 GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id
                 ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET
-                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume,
-                    total_msf=EXCLUDED.total_msf, total_revenue=EXCLUDED.total_revenue
+                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume,
+                    total_msf=EXCLUDED.total_msf, total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee,
+                    total_ecom_fee=EXCLUDED.total_ecom_fee, total_revenue=EXCLUDED.total_revenue
                 """, tenantId, date);
 
         // 8. sum_daily_finance
@@ -440,18 +447,18 @@ public class BackfillIngestionService {
                             int_cnt, int_vol, int_msf, int_optin, total_vol, total_msf)
                         SELECT tenant_id, DATE(payment_date),
                             COUNT(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN 1 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN txn_currency_amount ELSE 0 END),
+                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN store_base_currency_amount ELSE 0 END),
                             SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN msf ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
+                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
                             COUNT(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN 1 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN txn_currency_amount ELSE 0 END),
+                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN store_base_currency_amount ELSE 0 END),
                             SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN msf ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
+                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
                             COUNT(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN 1 END),
-                            SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN txn_currency_amount ELSE 0 END),
+                            SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN store_base_currency_amount ELSE 0 END),
                             SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN msf ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' AND dcc IS TRUE THEN txn_currency_amount ELSE 0 END),
-                            SUM(txn_currency_amount), SUM(msf)
+                            SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
+                            SUM(store_base_currency_amount), SUM(msf)
                         FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
                         GROUP BY tenant_id, DATE(payment_date)
                         ON CONFLICT (tenant_id, business_date) DO UPDATE SET
@@ -472,7 +479,7 @@ public class BackfillIngestionService {
                             card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf)
                         SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
                             f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc,
-                            COUNT(*), SUM(f.txn_currency_amount), SUM(f.msf)
+                            COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf)
                         FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id
                         WHERE f.tenant_id=? AND DATE(f.payment_date) = ?
                         GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
@@ -484,7 +491,19 @@ public class BackfillIngestionService {
 
         // 10. Merchant attributes (CARD_SCHEME, CARD_TYPE, DESTINATION,
         // TRANSACTION_TYPE, HOUR)
-        String[] attrCols = { "CARD_SCHEME:card_scheme", "CARD_TYPE:card_type", "DESTINATION:destination",
+        // CARD_SCHEME uses the upload job's normalization (blank/'NULL' scheme ->
+        // card_type, else 'Unclassified') so labels match upload-written rows.
+        String schemeExpr = "UPPER(CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
+                "THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') ELSE card_scheme END)";
+        jdbcTemplate.update(
+                "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
+                "SELECT tenant_id, merchant_id, DATE(payment_date), 'CARD_SCHEME', " + schemeExpr + ", COUNT(*), SUM(store_base_currency_amount) " +
+                "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ? " +
+                "GROUP BY tenant_id, merchant_id, DATE(payment_date), " + schemeExpr + " " +
+                "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
+                "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume",
+                tenantId, date);
+        String[] attrCols = { "CARD_TYPE:card_type", "DESTINATION:destination",
                 "TRANSACTION_TYPE:transaction_type" };
         String dateScopeStr = "(SELECT DATE('" + date.toString() + "'))"; // Simple literal date for attribute loop, or
                                                                           // bind param?
@@ -495,7 +514,7 @@ public class BackfillIngestionService {
             jdbcTemplate.update(String.format(
                     """
                             INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
-                            SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(txn_currency_amount)
+                            SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(store_base_currency_amount)
                             FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
                             GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(%s,'UNKNOWN'))
                             ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
@@ -508,7 +527,7 @@ public class BackfillIngestionService {
         jdbcTemplate.update(
                 """
                         INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
-                        SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(txn_currency_amount)
+                        SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(store_base_currency_amount)
                         FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
                         GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date)
                         ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
@@ -527,22 +546,22 @@ public class BackfillIngestionService {
                 """
                         INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
                         SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_SIZE_BUCKET',
-                            CASE WHEN txn_currency_amount < 50 THEN '< 50'
-                                 WHEN txn_currency_amount < 100 THEN '50-100'
-                                 WHEN txn_currency_amount < 250 THEN '100-250'
-                                 WHEN txn_currency_amount < 500 THEN '250-500'
-                                 WHEN txn_currency_amount < 1000 THEN '500-1K'
-                                 WHEN txn_currency_amount < 5000 THEN '1K-5K'
+                            CASE WHEN store_base_currency_amount < 50 THEN '< 50'
+                                 WHEN store_base_currency_amount < 100 THEN '50-100'
+                                 WHEN store_base_currency_amount < 250 THEN '100-250'
+                                 WHEN store_base_currency_amount < 500 THEN '250-500'
+                                 WHEN store_base_currency_amount < 1000 THEN '500-1K'
+                                 WHEN store_base_currency_amount < 5000 THEN '1K-5K'
                                  ELSE '5K+' END,
-                            COUNT(*), SUM(txn_currency_amount)
+                            COUNT(*), SUM(store_base_currency_amount)
                         FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
                         GROUP BY tenant_id, merchant_id, DATE(payment_date),
-                            CASE WHEN txn_currency_amount < 50 THEN '< 50'
-                                 WHEN txn_currency_amount < 100 THEN '50-100'
-                                 WHEN txn_currency_amount < 250 THEN '100-250'
-                                 WHEN txn_currency_amount < 500 THEN '250-500'
-                                 WHEN txn_currency_amount < 1000 THEN '500-1K'
-                                 WHEN txn_currency_amount < 5000 THEN '1K-5K'
+                            CASE WHEN store_base_currency_amount < 50 THEN '< 50'
+                                 WHEN store_base_currency_amount < 100 THEN '50-100'
+                                 WHEN store_base_currency_amount < 250 THEN '100-250'
+                                 WHEN store_base_currency_amount < 500 THEN '250-500'
+                                 WHEN store_base_currency_amount < 1000 THEN '500-1K'
+                                 WHEN store_base_currency_amount < 5000 THEN '1K-5K'
                                  ELSE '5K+' END
                         ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
                             metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
@@ -553,7 +572,7 @@ public class BackfillIngestionService {
         jdbcTemplate
                 .update("""
                         INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend)
-                        SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(txn_currency_amount)
+                        SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(store_base_currency_amount)
                         FROM fact_transaction WHERE tenant_id=? AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN """
                         + monthScope + """
                                 GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date,'YYYYMM'), card_number
@@ -581,9 +600,9 @@ public class BackfillIngestionService {
                             m.tenant_id, m.merchant_id, d.target_date,
                             MIN(f.payment_date), MAX(f.payment_date),
                             COALESCE(COUNT(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN 1 END), 0),
-                            COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN f.txn_currency_amount ELSE 0 END), 0),
+                            COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '7 days' THEN f.store_base_currency_amount ELSE 0 END), 0),
                             COALESCE(COUNT(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN 1 END), 0),
-                            COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN f.txn_currency_amount ELSE 0 END), 0),
+                            COALESCE(SUM(CASE WHEN f.payment_date >= d.target_date - INTERVAL '30 days' THEN f.store_base_currency_amount ELSE 0 END), 0),
                             CASE WHEN MAX(f.payment_date) >= d.target_date - INTERVAL '30 days' THEN 'ACTIVE'
                                  WHEN MAX(f.payment_date) < d.target_date - INTERVAL '30 days' THEN 'DORMANT'
                                  ELSE 'ONBOARDED' END,
