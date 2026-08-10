@@ -19,10 +19,8 @@
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px;">
                 <div style="flex: 1 1 0; min-width: 160px;">
                     <div style="font-size: 8px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">DCC Eligible Volume</div>
-                    <div style="font-size: 22px; font-weight: 900; color: #FFFFFF; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                        <span th:if="${dto.dccPerformance.dccEligibleVolume != null}" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT')}"><span th:text="${dto.currencyCode}">AED</span> 0</span>
-                        <span th:if="${dto.dccPerformance.dccEligibleVolume == null}"><span th:text="${dto.currencyCode}">AED</span> 0</span>
-                    </div>
+                    <div style="font-size: 22px; font-weight: 900; color: #FFFFFF; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
+                         th:text="${dto.dccPerformance.dccEligibleVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
                     <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">International card transactions</div>
                 </div>
                 <div style="flex: 0 0 auto; width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>

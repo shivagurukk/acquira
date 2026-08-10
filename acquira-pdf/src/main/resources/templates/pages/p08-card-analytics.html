@@ -143,9 +143,9 @@
             <div class="card" style="padding: 12px 14px; border-left: 4px solid #1E3A8A;">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div>
-                        <div style="font-size: 7.5px; font-weight: 700; color: #1E3A8A; letter-spacing: 0.05em; text-transform: uppercase;">&#127463;&#127469; Local Cards</div>
+                        <div style="font-size: 7.5px; font-weight: 700; color: #1E3A8A; letter-spacing: 0.05em; text-transform: uppercase;">Local Cards</div>
                         <div style="font-size: 28px; font-weight: 900; color: #111827; margin: 3px 0 2px 0;" th:text="${dto.demographics.localCardPct != null ? dto.demographics.localCardPct + '%' : '-'}">-</div>
-                        <div style="font-size: 8px; color: #6B7280;">of all transactions</div>
+                        <div style="font-size: 8px; color: #6B7280;">of card volume</div>
                     </div>
                     <div style="text-align: right;">
                         <div style="font-size: 8px; color: #6B7280;">Volume</div>
@@ -162,9 +162,9 @@
             <div class="card" style="padding: 12px 14px; border-left: 4px solid #D97706;">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div>
-                        <div style="font-size: 7.5px; font-weight: 700; color: #D97706; letter-spacing: 0.05em; text-transform: uppercase;">&#127758; International Cards</div>
+                        <div style="font-size: 7.5px; font-weight: 700; color: #D97706; letter-spacing: 0.05em; text-transform: uppercase;">International Cards</div>
                         <div style="font-size: 28px; font-weight: 900; color: #111827; margin: 3px 0 2px 0;" th:text="${dto.demographics.internationalCardPct != null ? dto.demographics.internationalCardPct + '%' : '-'}">-</div>
-                        <div style="font-size: 8px; color: #6B7280;">of all transactions</div>
+                        <div style="font-size: 8px; color: #6B7280;">of card volume</div>
                     </div>
                     <div style="text-align: right;">
                         <div style="font-size: 8px; color: #6B7280;">Volume</div>
@@ -216,32 +216,14 @@
             </div>
         </div>
 
-        <!-- ═══ SECTION E: TOP INTERNATIONAL CARD COUNTRIES (by txn count)
-             Only shown when topCountries data exists (requires COUNTRY attribute to
-             be populated in sum_daily_merchant_attribute by the batch job).
-             Placed in the available space below the unique-cards chart without
-             disturbing any other section's layout or position. ═══ -->
-        <div th:if="${dto.demographics.topCountries != null and !dto.demographics.topCountries.isEmpty()}"
-             class="card mb-6" style="padding: 10px 12px;">
-            <div class="card-title">TOP INTERNATIONAL CARD ORIGINS &mdash; By Transaction Count</div>
-            <div style="display: flex; flex-direction: column; gap: 5px; margin-top: 6px;">
-                <th:block th:with="maxCount=${dto.demographics.topCountries[0].value}">
-                <div th:each="c, iter : ${dto.demographics.topCountries}" style="display: flex; align-items: center; gap: 8px;">
-                    <div style="width: 28px; font-size: 8px; font-weight: 700; color: #374151; text-align: right; flex-shrink: 0;"
-                         th:text="${iter.index + 1} + '.'">#1</div>
-                    <div style="font-size: 8.5px; font-weight: 700; color: #111827; width: 40px; flex-shrink: 0;"
-                         th:text="${c.label}">CCY</div>
-                    <div style="flex: 1; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
-                        <div th:style="'width:' + ${maxCount != null and maxCount.compareTo(T(java.math.BigDecimal).ZERO) > 0 ? c.value.multiply(new java.math.BigDecimal(100)).divide(maxCount, 0, T(java.math.RoundingMode).HALF_UP) : 0} + '%; height: 100%; border-radius: 5px; background: linear-gradient(90deg, #D97706, #FBBF24);'"></div>
-                    </div>
-                    <div style="font-size: 8.5px; font-weight: 700; color: #D97706; width: 36px; text-align: right; flex-shrink: 0;"
-                         th:text="${#numbers.formatDecimal(c.value, 1, 'COMMA', 0, 'POINT')}">0</div>
-                    <div style="font-size: 7.5px; color: #9CA3AF; flex-shrink: 0;">txns</div>
-                </div>
-                </th:block>
-            </div>
-            <div style="font-size: 7px; color: #9CA3AF; margin-top: 6px;">* Country proxied from transaction currency code (international cards only)</div>
-        </div>
+        <!-- ═══ SECTION E: TOP INTERNATIONAL CARD COUNTRIES — REMOVED.
+             The COUNTRY attribute is proxied from the TRANSACTION CURRENCY, so it
+             only captures international transactions charged in a foreign currency
+             (essentially DCC opt-ins). Most international cards pay in the local
+             currency and never appear, which made the table show e.g. a single
+             "USD / 1 txn" row while 85 international transactions existed — and a
+             currency code is not an origin country. Do not reinstate until the
+             batch job writes a real issuer-country attribute. ═══ -->
 
         <!-- AI Insight -->
         <div class="ai-insight">

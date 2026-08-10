@@ -706,26 +706,34 @@ public class MerchantMasterJobConfig {
                 execCtx.putString("reassign.warnings", String.join(" | ", capped));
             }
 
+            // Every value is LEFT()-bounded to its dim_merchant column width.
+            // Staging is wider than dim on several columns (address is TEXT but
+            // location is VARCHAR(100), emails/partners are VARCHAR(100), the
+            // name normalization can pass 150 through) — one over-long cell in
+            // the file used to abort the ENTIRE upsert with
+            // "value too long for type character varying(100)". Truncating at
+            // the boundary keeps the row (the tail of an address is not worth a
+            // failed upload); widths must track the dim_merchant DDL.
             String upsertMerchantSql = """
                 INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date, sales_user_id, sales_email, referral_partner, risk_level, mcc, contact_email, city, location)
                 SELECT
                     CAST(TID AS INTEGER),
-                    COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)),
-                    mid,
-                    MAX(CASE WHEN merchant_name ~ '^[0-9.]+$' THEN NULL ELSE NULLIF(TRIM(merchant_name), '') END),
-                    COALESCE(MAX(merchant_status), 'ACTIVE'),
+                    LEFT(COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), 50),
+                    LEFT(mid, 50),
+                    LEFT(MAX(CASE WHEN merchant_name ~ '^[0-9.]+$' THEN NULL ELSE NULLIF(TRIM(merchant_name), '') END), 150),
+                    LEFT(COALESCE(MAX(merchant_status), 'ACTIVE'), 50),
                     MAX(created_date),
-                    MAX(sales_user_id),
-                    MAX(sales_user_email),
-                    MAX(referral_partner),
-                    MAX(risk_level),
-                    MAX(NULLIF(TRIM(business_mcc), '')),
-                    MAX(NULLIF(TRIM(primary_contact_email), '')),
-                    MAX(NULLIF(TRIM(city), '')),
-                    MAX(NULLIF(TRIM(address), ''))
+                    LEFT(MAX(sales_user_id), 50),
+                    LEFT(MAX(sales_user_email), 100),
+                    LEFT(MAX(referral_partner), 100),
+                    LEFT(MAX(risk_level), 20),
+                    LEFT(MAX(NULLIF(TRIM(business_mcc), '')), 10),
+                    LEFT(MAX(NULLIF(TRIM(primary_contact_email), '')), 100),
+                    LEFT(MAX(NULLIF(TRIM(city), '')), 100),
+                    LEFT(MAX(NULLIF(TRIM(address), '')), 100)
                 FROM stg_merchant_master_raw
                 WHERE tenant_id = TID AND NULLIF(TRIM(mid), '') IS NOT NULL
-                GROUP BY tenant_id, COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), mid
+                GROUP BY tenant_id, LEFT(COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), 50), LEFT(mid, 50)
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
                     name          = CASE WHEN EXCLUDED.name IS NOT NULL AND TRIM(EXCLUDED.name) <> ''
                                          THEN EXCLUDED.name ELSE dim_merchant.name END,
@@ -771,7 +779,7 @@ public class MerchantMasterJobConfig {
                 INSERT INTO dim_store (tenant_id, internal_id, merchant_id, sid, name, legal_name, address, city, state, postal_code, mcc, status, created_date)
                 SELECT
                     CAST(TID AS INTEGER),
-                    COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)),
+                    LEFT(COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)), 50),
                     MAX(m.merchant_id),
                     s.sid,
                     MAX(COALESCE(NULLIF(TRIM(store_name), ''), NULLIF(TRIM(merchant_name), ''))),
@@ -783,7 +791,7 @@ public class MerchantMasterJobConfig {
                 FROM stg_merchant_master_raw s
                 JOIN dim_merchant m ON s.mid = m.mid AND m.tenant_id = TID
                 WHERE s.tenant_id = TID AND NULLIF(TRIM(s.sid), '') IS NOT NULL
-                GROUP BY s.tenant_id, COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)), s.sid
+                GROUP BY s.tenant_id, LEFT(COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)), 50), s.sid
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
                     -- SID and internal_id are IMMUTABLE — never overwritten.
                     -- Only mutable descriptive fields updated so name / legal_name
@@ -809,7 +817,7 @@ public class MerchantMasterJobConfig {
                 INSERT INTO dim_terminal (tenant_id, internal_id, store_id, tid, device_number, type, status, created_date)
                 SELECT
                     CAST(TID AS INTEGER),
-                    COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)),
+                    LEFT(COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)), 50),
                     MAX(s.store_id),
                     raw.tid,
                     MAX(terminal_device_number),
@@ -819,12 +827,12 @@ public class MerchantMasterJobConfig {
                 FROM stg_merchant_master_raw raw
                 JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
                 JOIN dim_store s ON s.merchant_id = m.merchant_id
-                    AND (s.sid = raw.sid OR s.internal_id = COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)))
+                    AND (s.sid = raw.sid OR s.internal_id = LEFT(COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)), 50))
                     AND s.tenant_id = TID
                 WHERE raw.tenant_id = TID
                   AND NULLIF(TRIM(raw.tid), '') IS NOT NULL
                 GROUP BY raw.tenant_id,
-                         COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)),
+                         LEFT(COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)), 50),
                          raw.tid
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
                     -- TID and internal_id are IMMUTABLE — never overwritten.
@@ -1006,7 +1014,7 @@ public class MerchantMasterJobConfig {
                         FROM stg_merchant_master_raw raw
                         JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
                         JOIN dim_store s ON s.merchant_id = m.merchant_id
-                            AND (s.sid = raw.sid OR s.internal_id = COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)))
+                            AND (s.sid = raw.sid OR s.internal_id = LEFT(COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)), 50))
                             AND s.tenant_id = TID
                         WHERE raw.tenant_id = TID AND raw.bank_account_number IS NOT NULL
                         GROUP BY raw.tenant_id, bank_account_number

@@ -418,11 +418,10 @@ public class MerchantInsightService {
      *
      * Caveat: We don't have the previous month's true distinct count readily
      * available (would require an extra sum_monthly_card query for prev month, which
-     * we currently don't fetch in getInsights). For now, keep the prevCustomers
-     * value untouched and rebuild momGrowth using a best-effort estimate by scaling.
-     * This means the "% change" arrow on UNIQUE CUSTOMERS may be slightly off in
-     * sign/magnitude until prev-month loyalty data is also fetched. The absolute
-     * number is now correct, which was the user-visible problem.
+     * we currently don't fetch in getInsights). prevCustomers is kept untouched and
+     * momGrowth is computed from exactly the two values the report prints
+     * (prevCustomers vs trueDistinct), so the % change always matches the numbers
+     * shown next to it.
      */
     private void overrideCustomersFromLoyalty(MerchantInsightsDTO dto) {
         if (dto.getOverview() == null || dto.getLoyalty() == null) return;
@@ -436,20 +435,11 @@ public class MerchantInsightService {
             prevValue = dto.getOverview().getPrevCustomers().getValue();
         }
 
-        // If prev was the same buggy sum-of-daily-distinct, scale it down by the
-        // ratio between the buggy current value and the correct one so MoM stays
-        // roughly comparable. This is a best-effort adjustment; truly fixing prev
-        // would require a sum_monthly_card lookup for the prior month too.
-        BigDecimal buggyCurrent = dto.getOverview().getCustomers() != null
-                ? dto.getOverview().getCustomers().getValue() : BigDecimal.ZERO;
-        if (prevValue != null && prevValue.compareTo(BigDecimal.ZERO) > 0
-                && buggyCurrent != null && buggyCurrent.compareTo(BigDecimal.ZERO) > 0
-                && trueDistinct.compareTo(BigDecimal.ZERO) > 0) {
-            // Scale prev to remove the same kind of double-counting.
-            BigDecimal scale = trueDistinct.divide(buggyCurrent, 6, RoundingMode.HALF_UP);
-            prevValue = prevValue.multiply(scale).setScale(0, RoundingMode.HALF_UP);
-        }
-
+        // The report prints prevCustomers and the current value side by side, so
+        // momGrowth MUST be computed from those same two numbers. The earlier
+        // "scale prev by trueDistinct/buggyCurrent" adjustment made the arrow
+        // reproduce the buggy sum-of-daily growth (≈ the transaction change)
+        // while the printed values implied a different percentage.
         dto.getOverview().setCustomers(createKpi(trueDistinct, prevValue));
 
         // Also recompute avgSpendPerCustomer with the correct denominator so it
@@ -1662,7 +1652,10 @@ public class MerchantInsightService {
         BigDecimal creditPct = demo.getCreditPct() != null ? demo.getCreditPct() : BigDecimal.ZERO;
         BigDecimal debitPct = demo.getDebitPct() != null ? demo.getDebitPct() : BigDecimal.ZERO;
         BigDecimal intlPct = demo.getInternationalCardPct() != null ? demo.getInternationalCardPct() : BigDecimal.ZERO;
-        n.setCardInsight(String.format("Credit cards represent %s%% of volume and debit cards %s%%. International cards account for %s%% of transactions this period.", fmt(creditPct), fmt(debitPct), fmt(intlPct)));
+        // NOTE: creditPct/debitPct/internationalCardPct are all VOLUME shares
+        // (computed from value splits in buildDemographics), so the wording must
+        // say "volume" — by transaction count the intl share is far smaller.
+        n.setCardInsight(String.format("Credit cards represent %s%% of volume and debit cards %s%%. International cards account for %s%% of card volume this period.", fmt(creditPct), fmt(debitPct), fmt(intlPct)));
         n.setCardTip(creditPct.compareTo(new BigDecimal(60)) > 0
             ? "A high proportion of credit card usage may suggest an opportunity to explore premium offerings or higher-margin products."
             : intlPct.compareTo(new BigDecimal(20)) > 0
@@ -1685,7 +1678,9 @@ public class MerchantInsightService {
         // multiplier) so the merchant sees a real number.
         BigDecimal dccConv = dcc != null && dcc.getDccConversionRate() != null ? dcc.getDccConversionRate() : BigDecimal.ZERO;
         BigDecimal optOutVol = dcc != null && dcc.getDccOptoutVolume() != null ? dcc.getDccOptoutVolume() : BigDecimal.ZERO;
-        n.setDccInsight(String.format("DCC conversion rate stands at %s%% for this period. %s", fmt(dccConv),
+        // One decimal here, not fmt() (0 decimals) — the funnel and page 9 print
+        // this same rate as e.g. "1.2%", and the banner must not round it to "1%".
+        n.setDccInsight(String.format("DCC conversion rate stands at %.1f%% for this period. %s", dccConv,
             optOutVol.compareTo(BigDecimal.ZERO) > 0
                 ? String.format("An estimated %s %s in international card volume came from transactions where customers chose to pay in local currency rather than opting in to DCC.", ccy, fmt(optOutVol))
                 : "There is no significant opt-out volume to note this month."));
