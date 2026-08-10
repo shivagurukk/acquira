@@ -80,11 +80,24 @@ const InterchangeNormalization = () => {
         setPreview(null);
     };
 
+    /* Calculate then IMMEDIATELY apply — one click, one confirmation, no
+       review stop in between. The preview table still fills in as soon as the
+       calculation lands, purely as feedback while the apply runs. */
     const calculate = async () => {
         if (target === '' || Number(target) < 0 || Number.isNaN(Number(target))) {
             showToast('Enter the normalized interchange total for the month (non-negative number)', 'error');
             return;
         }
+        const ok = await confirm({
+            title: `Normalize ${monthLabel(selMonth)}?`,
+            message: `This calculates the distribution and applies it in one step: every transaction's interchange ` +
+                `is adjusted so the month total becomes exactly ${money(Number(target))}, then every summary is ` +
+                `rebuilt. All screens will show only the normalized figures. The current values are preserved in ` +
+                `the run history (version).`,
+            confirmLabel: 'Calculate & apply',
+            tone: 'danger',
+        });
+        if (!ok) return;
         setCalculating(true);
         try {
             // The calculation reads a month of fact_transaction per merchant, which
@@ -111,7 +124,30 @@ const InterchangeNormalization = () => {
                     }
                     continue;
                 }
-                if (res.status === 'PREVIEW') { setPreview(res); return; }
+                if (res.status === 'PREVIEW') {
+                    setPreview(res);
+                    if (Number(res.remainingDifference) !== 0) {
+                        showToast('Calculation did not reconcile to the target — not applying. Contact support.', 'error');
+                        return;
+                    }
+                    // Auto-apply: no review stop. Failure here leaves the preview
+                    // on screen so the manual Apply button can retry it.
+                    setApplying(true);
+                    try {
+                        await api.post('/admin/interchange-normalization/apply', { runId, confirm: true });
+                        showToast('Applying — updating transactions and rebuilding summaries…', 'info');
+                        await pollRun(runId);
+                        setPreview(null);
+                        setSelMonth(null);
+                        setTarget('');
+                        loadSummary();
+                    } catch (e) {
+                        showToast(e?.response?.data?.error || 'Apply failed — the calculation is kept, use Apply Normalization to retry', 'error');
+                    } finally {
+                        setApplying(false);
+                    }
+                    return;
+                }
                 if (res.status === 'FAILED') {
                     showToast(res.statusDetail || 'Preview failed', 'error');
                     return;
@@ -339,8 +375,8 @@ const InterchangeNormalization = () => {
                                         disabled={applying}
                                     />
                                 </FormField>
-                                <Button variant="primary" icon={Play} onClick={calculate} disabled={applying} loading={calculating}>
-                                    Calculate / Preview
+                                <Button variant="primary" icon={Play} onClick={calculate} disabled={applying} loading={calculating || applying}>
+                                    Calculate & Apply
                                 </Button>
                                 <Button icon={Download} onClick={exportPreview} disabled={!preview}>
                                     Export Preview

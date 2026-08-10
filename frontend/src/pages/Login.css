@@ -71,56 +71,18 @@
     color: var(--nx-on-dark);
 }
 
-/* ---- Signature: three concentric arcs, cropped by the panel edge.
-   One filled disc anchors the corner; two rings step outward from the same
-   centre at a fixed 1.42 ratio. Deliberately off-centre and cropped so the
-   composition reads as placed, not generated. Static by design. ---- */
-.nx-geo {
+/* ---- Signature: a measurement dial, cropped by the corner.
+   Tick ring, two thin rings, a filled teal disc, and one cyan arc segment
+   with round caps — the panel's single high-chroma moment. Drawn as SVG so
+   every stroke is deliberate. Static by design. ---- */
+.nx-dial {
     position: absolute;
-    right: -14%;
-    bottom: -32%;
+    right: -13%;
+    bottom: -28%;
     z-index: -1;
-    width: clamp(420px, 46vw, 720px);
-    aspect-ratio: 1;
+    width: clamp(440px, 48vw, 760px);
+    height: auto;
     pointer-events: none;
-}
-
-.nx-geo__disc,
-.nx-geo__ring {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-}
-
-.nx-geo__disc {
-    width: 49%;
-    height: 49%;
-    background: #0D9488;
-    opacity: 0.9;
-}
-
-.nx-geo__ring {
-    border: 1px solid rgba(45, 212, 191, 0.42);
-}
-
-.nx-geo__ring--1 { width: 70%;  height: 70%; }
-.nx-geo__ring--2 { width: 100%; height: 100%; border-color: rgba(34, 211, 238, 0.26); }
-
-/* A single flat cyan wedge overlapping the disc — the one place two brand
-   colours meet, and the panel's only high-chroma moment. */
-.nx-geo__wedge {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 49%;
-    height: 49%;
-    border-radius: 50%;
-    background: #22D3EE;
-    opacity: 0.85;
-    transform: translate(-18%, -50%);
-    clip-path: inset(0 0 0 46%);
 }
 
 /* ---- Masthead ---- */
@@ -181,6 +143,25 @@
     padding: clamp(28px, 5vh, 56px) 0;
 }
 
+.nx-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 20px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--nx-teal-300);
+}
+
+.nx-eyebrow::before {
+    content: '';
+    width: 26px;
+    height: 2px;
+    background: var(--nx-teal-500);
+}
+
 .nx-headline {
     margin: 0 0 22px;
     font-size: clamp(2.1rem, 3.5vw, 3.3rem);
@@ -205,31 +186,59 @@
     color: var(--nx-on-dark-soft);
 }
 
-/* ---- Capability rail: four columns, each opened by a short teal rule.
-   The rules mark divisions that exist in the product, so the structure is
-   carrying information rather than decorating the panel. ---- */
+/* ---- Capability rail: four columns inside the statement band, each opened
+   by a short rule stepping teal -> cyan. Narrow columns so every label sets
+   on two lines — one wrapped label among three straight ones reads as an
+   accident. The rules mark divisions that exist in the product. ---- */
 .nx-capabilities {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0 20px;
-    margin: 0;
+    gap: 0 18px;
+    margin: 38px 0 0;
     padding: 0;
-    max-width: 620px;
+    max-width: 470px;
     list-style: none;
 }
 
 .nx-capability {
     padding-top: 12px;
     border-top: 2px solid var(--nx-teal-500);
-    font-size: 0.78rem;
+    font-size: 0.77rem;
     font-weight: 500;
-    line-height: 1.4;
+    line-height: 1.45;
     color: #B9D6D6;
 }
 
 .nx-capability:nth-child(2) { border-top-color: var(--nx-teal-400); }
 .nx-capability:nth-child(3) { border-top-color: var(--nx-cyan-400); }
 .nx-capability:nth-child(4) { border-top-color: rgba(34, 211, 238, 0.45); }
+
+/* ---- Baseline strip: full-width hairline with three quiet facts. All three
+   are true of the platform (JWT auth, RBAC menus, audit log). ---- */
+.nx-baseline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 32px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(94, 234, 212, 0.14);
+    font-size: 0.73rem;
+    font-weight: 500;
+    color: rgba(168, 198, 201, 0.8);
+}
+
+.nx-baseline span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.nx-baseline span::before {
+    content: '';
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--nx-teal-500);
+}
 
 /* ============================ RIGHT — AUTH ============================= */
 
@@ -862,13 +871,13 @@
 /* Tablet — keep the split, thin out the decoration. */
 @media (max-width: 1180px) {
     .login-page { grid-template-columns: 52fr 48fr; }
-    .nx-capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
+    .nx-capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 18px; max-width: 320px; }
 }
 
 @media (max-width: 900px) {
-    .nx-geo { right: -30%; bottom: -26%; }
+    .nx-dial { right: -34%; bottom: -22%; }
     .nx-brand__mid { max-width: 22rem; }
-    .nx-capabilities { gap: 14px 16px; }
+    .nx-baseline { gap: 8px 20px; }
 }
 
 /* Mobile — single column with a compact brand header. */

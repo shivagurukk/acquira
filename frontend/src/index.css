@@ -6,16 +6,16 @@
    Clean whites · generous spacing · subtle depth
    ══════════════════════════════════════════════════════════════ */
 :root {
-  /* ── Brand ── */
-  --brand:        #2563eb;
-  --brand-dark:   #1d4ed8;
-  --brand-light:  #eff6ff;
-  --brand-ring:   rgba(37,99,235,0.18);
-  --brand-50:     #eff6ff;
-  --brand-100:    #dbeafe;
-  --brand-500:    #3b82f6;
-  --brand-600:    #2563eb;
-  --brand-700:    #1d4ed8;
+  /* ── Brand — NEXUS teal (matches the login identity) ── */
+  --brand:        #0D9488;
+  --brand-dark:   #0F766E;
+  --brand-light:  #F0FDFA;
+  --brand-ring:   rgba(13,148,136,0.18);
+  --brand-50:     #F0FDFA;
+  --brand-100:    #CCFBF1;
+  --brand-500:    #14B8A6;
+  --brand-600:    #0D9488;
+  --brand-700:    #0F766E;
 
   /* ── Spacing (4px grid) ── */
   --space-xs:   4px;
@@ -60,7 +60,7 @@
   /* ── Light Mode Borders ── */
   --border:       #e5e7eb;
   --border-light: #f3f4f6;
-  --border-focus: rgba(37,99,235,0.4);
+  --border-focus: rgba(13,148,136,0.4);
 
   /* ── Status Colors ── */
   --success:      #059669;
@@ -80,7 +80,7 @@
   --bg-dark:        #f9fafb;
   --bg-panel:       #ffffff;
   --primary:        #111827;
-  --accent:         #2563eb;
+  --accent:         #0D9488;
   --text-main:      #111827;
   --text-muted-alt: #6b7280;
   --border-light-alt: #e5e7eb;
@@ -97,8 +97,8 @@
   --sidebar-text:   #374151;
   --sidebar-text-secondary: #9ca3af;
   --sidebar-hover:  #f9fafb;
-  --sidebar-active-bg: #eff6ff;
-  --sidebar-active-text: #2563eb;
+  --sidebar-active-bg: #F0FDFA;
+  --sidebar-active-text: #0D9488;
 }
 
 /* ══════════════════════════════════════════════════════════════

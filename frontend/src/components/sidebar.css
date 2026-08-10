@@ -17,11 +17,11 @@
   --sb-text-2: #55627a;
   --sb-text-3: #8794ab;
   --sb-hover: rgba(37, 99, 235, 0.06);
-  --sb-accent: #2563eb;
-  --sb-accent-2: #3b82f6;
-  --sb-accent-text: #1d4ed8;
-  --sb-accent-bg: rgba(37, 99, 235, 0.09);
-  --sb-accent-soft: #dbe7fe;
+  --sb-accent: #0D9488;
+  --sb-accent-2: #14B8A6;
+  --sb-accent-text: #0F766E;
+  --sb-accent-bg: rgba(13, 148, 136, 0.09);
+  --sb-accent-soft: #CCFBF1;
   --sb-field: #f6f8fc;
   --sb-danger: #b42318;
   --sb-danger-bg: rgba(180, 35, 24, 0.07);
@@ -45,11 +45,11 @@ html.dark .sb {
   --sb-text-2: #94a0b8;
   --sb-text-3: #76829a;
   --sb-hover: rgba(255, 255, 255, 0.06);
-  --sb-accent: #60a5fa;
-  --sb-accent-2: #93c5fd;
-  --sb-accent-text: #b7d3ff;
-  --sb-accent-bg: rgba(96, 165, 250, 0.13);
-  --sb-accent-soft: rgba(96, 165, 250, 0.18);
+  --sb-accent: #2DD4BF;
+  --sb-accent-2: #5EEAD4;
+  --sb-accent-text: #99F6E4;
+  --sb-accent-bg: rgba(45, 212, 191, 0.13);
+  --sb-accent-soft: rgba(45, 212, 191, 0.18);
   --sb-field: #171c28;
   --sb-danger: #f97066;
   --sb-danger-bg: rgba(249, 112, 102, 0.09);
@@ -92,10 +92,12 @@ html.dark .sb {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  /* Two-letter NX monogram — matches the login mark. */
+  font-size: 12px;
   font-weight: 700;
+  letter-spacing: -0.03em;
   flex-shrink: 0;
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
+  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.35);
 }
 html.dark .sb__logo {
   color: #0d1320;

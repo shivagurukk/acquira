@@ -55,11 +55,14 @@ const num = (v) => (v == null ? 0 : Number(v));
    reordering the stack invalidates it. On the light surface schemeFee and
    ecomFee fall below 3:1 against white; the breakdown table below the charts
    carries those values in text, which is what makes that legal. */
+/* Primary series follows the NEXUS teal identity. Cyan-leaning (#0891B2)
+   rather than pure teal so it stays clearly separated from the green
+   scheme-fee series where the two sit adjacent in the stacked bars. */
 const CHART_COLORS = {
-    light: { volume: '#2a78d6', marginPct: '#1baf7a',
-        netRevenue: '#2a78d6', interchange: '#eb6834', schemeFee: '#1baf7a', ecomFee: '#eda100' },
-    dark: { volume: '#3987e5', marginPct: '#199e70',
-        netRevenue: '#3987e5', interchange: '#d95926', schemeFee: '#199e70', ecomFee: '#c98500' },
+    light: { volume: '#0891B2', marginPct: '#1baf7a',
+        netRevenue: '#0891B2', interchange: '#eb6834', schemeFee: '#1baf7a', ecomFee: '#eda100' },
+    dark: { volume: '#22D3EE', marginPct: '#199e70',
+        netRevenue: '#22D3EE', interchange: '#d95926', schemeFee: '#199e70', ecomFee: '#c98500' },
 };
 
 /* Both panels of the small-multiple chart must share these so the volume bars
@@ -201,7 +204,7 @@ const InsightPill = ({ icon: Icon, tone, title, value }) => {
     const tones = {
         good: { c: '#059669', bg: 'rgba(5,150,105,0.08)' },
         bad: { c: '#dc2626', bg: 'rgba(220,38,38,0.07)' },
-        info: { c: 'var(--brand, #3b82f6)', bg: 'rgba(59,130,246,0.08)' },
+        info: { c: 'var(--brand, #0D9488)', bg: 'rgba(13,148,136,0.08)' },
     };
     const t = tones[tone] || tones.info;
     return (
@@ -502,7 +505,7 @@ const Dashboard = () => {
                         settlement currency
                         {isFiltered && viewData.length > 0 && (
                             <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700,
-                                color: 'var(--brand, #3b82f6)', background: 'rgba(59,130,246,0.10)',
+                                color: 'var(--brand, #0D9488)', background: 'rgba(13,148,136,0.10)',
                                 borderRadius: 999, padding: '2px 9px' }}>
                                 {viewData[0].label} – {viewData[viewData.length - 1].label}
                             </span>
@@ -551,7 +554,7 @@ const Dashboard = () => {
                             <button key={m} onClick={() => setMode(m)} style={{
                                 border: 'none', cursor: 'pointer', borderRadius: 8,
                                 padding: '6px 18px', fontSize: 13, fontWeight: 600,
-                                background: mode === m ? 'var(--brand, #3b82f6)' : 'transparent',
+                                background: mode === m ? 'var(--brand, #0D9488)' : 'transparent',
                                 color: mode === m ? '#fff' : 'var(--text-secondary)',
                                 transition: 'background 0.15s, color 0.15s',
                             }}>{m}</button>
@@ -583,7 +586,7 @@ const Dashboard = () => {
                     {/* ── Primary hero band (4 tiles, sparkline shape) ── */}
                     <div style={{ display: 'grid', gap: 14, marginBottom: 14,
                         gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
-                        <HeroTile label="Volume" icon={BarChart3} accent="#3b82f6"
+                        <HeroTile label="Volume" icon={BarChart3} accent="#0D9488"
                             value={fmt.currency(num(vt.volume))}
                             fullValue={fullNum(vt.volume, currencySymbol)}
                             deltaPct={dpg(vt.volume, prev?.volume)} compareLabel={compareLabel}

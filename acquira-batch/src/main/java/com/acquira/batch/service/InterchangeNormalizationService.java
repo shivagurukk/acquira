@@ -256,8 +256,13 @@ public class InterchangeNormalizationService {
         // Every transaction KEEPS its existing interchange; only the EXTRA
         // (target - current total) is distributed, weighted by VOLUME share.
         // Unattributed rows join the split as one pseudo participant.
+        // A merchant whose month NETS NEGATIVE volume (refunds exceed sales —
+        // the YADKAR case) has no meaningful share: with raw weighting its slice
+        // of a positive extra is NEGATIVE, silently pulling its interchange down
+        // (0.0000 -> -0.0002). Clamp the weighting base at zero so such
+        // merchants take no part in the split and keep their value untouched.
         for (MerchantRow r : rows) {
-            r.base = r.volume;
+            r.base = r.volume.signum() > 0 ? r.volume : BigDecimal.ZERO;
         }
         MerchantRow unattributedRow = null;
         if (unattributedCnt > 0) {
@@ -268,7 +273,7 @@ public class InterchangeNormalizationService {
             unattributedRow.txns = unattributedCnt;
             unattributedRow.volume = unattributedVol;
             unattributedRow.originalInterchange = unattributed;
-            unattributedRow.base = unattributedVol;
+            unattributedRow.base = unattributedVol.signum() > 0 ? unattributedVol : BigDecimal.ZERO;
             rows.add(unattributedRow);
         }
 
@@ -282,12 +287,17 @@ public class InterchangeNormalizationService {
 
         allocateExtra(rows, delta, totalBase);
 
-        // allocateExtra clamps reductions at zero per merchant, so a negative here
-        // is arithmetic gone wrong, not a bad target — fail the run, never persist.
+        // A merchant whose fact rows net to a NEGATIVE interchange for the month
+        // (refund/reversal-heavy) is legitimate input: it has no capacity, absorbs
+        // nothing, and simply keeps its value — the allocation must not "fix" data.
+        // What is NEVER allowed is the allocation pushing a merchant below both
+        // zero and its own starting point; the clamp makes that impossible, so a
+        // hit here is arithmetic gone wrong — fail the run, never persist.
         for (MerchantRow r : rows) {
-            if (r.normalized.signum() < 0) {
+            if (r.normalized.signum() < 0 && r.normalized.compareTo(r.originalInterchange) < 0) {
                 throw new IllegalStateException("Internal allocation error: " + r.name +
-                    " would be " + r.normalized + " after clamping — this is a bug, not a target problem");
+                    " would go from " + r.originalInterchange + " to " + r.normalized +
+                    " — this is a bug, not a target problem");
             }
         }
 

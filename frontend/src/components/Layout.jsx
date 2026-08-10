@@ -283,10 +283,10 @@ const Layout = () => {
                 {(!collapsed || isMobile) ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <button className="sb__brand" onClick={() => navigate('/dashboard')} title="Go to dashboard">
-                            <div className="sb__logo">N</div>
+                            <div className="sb__logo">NX</div>
                             <div style={{ minWidth: 0, flex: 1 }}>
                                 <div className="sb__brand-name">NEXUS</div>
-                                <div className="sb__brand-sub">MIS Platform</div>
+                                <div className="sb__brand-sub">Payment Intelligence</div>
                             </div>
                         </button>
                         {!isMobile && (
@@ -298,7 +298,7 @@ const Layout = () => {
                 ) : (
                     <>
                         <button className="sb__brand" style={{ width: 'auto', padding: 0 }} onClick={() => navigate('/dashboard')} title="Go to dashboard" aria-label="Go to dashboard">
-                            <div className="sb__logo">N</div>
+                            <div className="sb__logo">NX</div>
                         </button>
                         <button className="sb__collapse-btn" onClick={() => setCollapsed(false)} title="Expand sidebar" aria-label="Expand sidebar">
                             <LucideIcons.PanelLeftOpen size={14} />

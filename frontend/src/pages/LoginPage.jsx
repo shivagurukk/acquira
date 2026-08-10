@@ -313,18 +313,33 @@ const LoginPage = () => {
         <div className="login-page">
             {/* ─────────────── Brand panel ─────────────── */}
             <section className="nx-brand" aria-labelledby="nx-headline">
-                <div className="nx-geo" aria-hidden="true">
-                    <span className="nx-geo__ring nx-geo__ring--2" />
-                    <span className="nx-geo__ring nx-geo__ring--1" />
-                    <span className="nx-geo__disc" />
-                    <span className="nx-geo__wedge" />
-                </div>
+                {/* Measurement dial, cropped by the corner. Tick ring + two thin
+                    rings + filled disc + one cyan arc segment. Static. */}
+                <svg className="nx-dial" viewBox="0 0 400 400" aria-hidden="true" focusable="false">
+                    <g stroke="rgba(94, 234, 212, 0.25)" strokeWidth="1">
+                        {Array.from({ length: 48 }, (_, i) => {
+                            const a = (i * 7.5 * Math.PI) / 180;
+                            return (
+                                <line key={i}
+                                    x1={200 + 188 * Math.cos(a)} y1={200 + 188 * Math.sin(a)}
+                                    x2={200 + 196 * Math.cos(a)} y2={200 + 196 * Math.sin(a)} />
+                            );
+                        })}
+                    </g>
+                    <circle cx="200" cy="200" r="152" fill="none" stroke="rgba(45, 212, 191, 0.35)" strokeWidth="1" />
+                    <circle cx="200" cy="200" r="118" fill="none" stroke="rgba(45, 212, 191, 0.18)" strokeWidth="1" />
+                    <circle cx="200" cy="200" r="86" fill="#0D9488" opacity="0.95" />
+                    <circle cx="200" cy="200" r="152" fill="none" stroke="#22D3EE" strokeWidth="9"
+                        strokeLinecap="round" strokeDasharray="212 744"
+                        transform="rotate(-150 200 200)" />
+                </svg>
 
                 <header>
                     <Brandmark />
                 </header>
 
                 <div className="nx-brand__mid">
+                    <p className="nx-eyebrow">Built for merchant acquiring</p>
                     <h1 className="nx-headline" id="nx-headline">
                         Turn every transaction into <em>actionable intelligence</em>
                     </h1>
@@ -332,13 +347,18 @@ const LoginPage = () => {
                         Monitor merchant performance, uncover revenue opportunities, and make faster
                         acquiring decisions from one secure workspace.
                     </p>
+                    <ul className="nx-capabilities">
+                        {CAPABILITIES.map(label => (
+                            <li className="nx-capability" key={label}>{label}</li>
+                        ))}
+                    </ul>
                 </div>
 
-                <ul className="nx-capabilities">
-                    {CAPABILITIES.map(label => (
-                        <li className="nx-capability" key={label}>{label}</li>
-                    ))}
-                </ul>
+                <div className="nx-baseline">
+                    <span>Bank-grade security</span>
+                    <span>Role-based access</span>
+                    <span>Complete audit trail</span>
+                </div>
             </section>
 
             {/* ─────────────── Auth panel ─────────────── */}
