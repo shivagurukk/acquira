@@ -172,19 +172,9 @@
             </div>
         </div>
 
-        <!-- AI Insight -->
-        <div class="ai-insight">
-            <div class="ai-insight-icon">&#9733;</div>
-            <div class="ai-insight-text">
-                <strong>Insight:</strong>
-                <span th:if="${dto.insights != null and dto.insights.growthInsight != null}" th:text="${dto.insights.growthInsight}"></span>
-                <span th:if="${dto.insights == null or dto.insights.growthInsight == null}">
-                    <th:block th:if="${dto.demographics.yoyGrowthPct != null and dto.demographics.yoyGrowthPct.doubleValue() != 0.0}">Year-on-year performance at <span th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">0%</span>.</th:block>
-                    <th:block th:if="${dto.demographics.yoyGrowthPct == null or dto.demographics.yoyGrowthPct.doubleValue() == 0.0}">Year-on-year data will be available once more history builds up.</th:block>
-                    Month-on-month: <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 1) + '%'}">0%</span>.
-                </span>
-            </div>
-        </div>
+        <!-- AI Insight removed — the page content runs tall and the banner was
+             clipping behind the fixed footer. The same growthInsight text is
+             still available via dto.insights if the page is ever rebalanced. -->
 
     </div>
 </body>
