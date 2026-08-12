@@ -38,7 +38,7 @@
                 <div style="padding: 8px 14px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
                     <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280;">
                         <span>Volume</span>
-                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.creditVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.creditVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.creditVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.creditVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280; margin-top: 3px;">
                         <span>Transaction Count</span>
@@ -66,7 +66,7 @@
                 <div style="padding: 8px 14px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
                     <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280;">
                         <span>Volume</span>
-                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.debitVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.debitVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.debitVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.debitVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280; margin-top: 3px;">
                         <span>Transaction Count</span>
@@ -94,7 +94,7 @@
                 <div style="padding: 8px 14px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
                     <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280;">
                         <span>Volume</span>
-                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.prepaidVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.prepaidVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.prepaidVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.prepaidVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280; margin-top: 3px;">
                         <span>Transaction Count</span>
@@ -118,7 +118,7 @@
                     <div style="font-size: 7px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;"
                          th:style="${ct.label == 'CREDIT' ? 'color: #1E3A8A;' : (ct.label == 'DEBIT' ? 'color: #0D9488;' : 'color: #6D28D9;')}"
                          th:text="${ct.label}">TYPE</div>
-                    <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 2px 0;" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(ct.value, 1, 'COMMA', 0, 'POINT')}">0</div>
+                    <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 2px 0;" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(ct.value, 1, 'COMMA', dto.currencyDecimals, 'POINT')}">0</div>
                     <div style="font-size: 7.5px; color: #6B7280;">per transaction</div>
                     <div style="width: 100%; height: 4px; border-radius: 2px; overflow: hidden; margin-top: 6px;"
                          th:style="'background: ' + ${ct.label == 'CREDIT' ? '#DBEAFE' : (ct.label == 'DEBIT' ? '#CCFBF1' : '#EDE9FE')} + ';'">
@@ -127,7 +127,7 @@
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 7px; color: #9CA3AF; margin-top: 4px;">
                         <span th:text="${ct.value3 != null ? #numbers.formatDecimal(ct.value3, 1, 'COMMA', 0, 'POINT') + ' txns' : '-'}">0 txns</span>
-                        <span th:text="${ct.value2 != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(ct.value2, 1, 'COMMA', 0, 'POINT') : '-'}">0</span>
+                        <span th:text="${ct.value2 != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(ct.value2, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">0</span>
                     </div>
                 </div>
             </div>
@@ -149,7 +149,7 @@
                     </div>
                     <div style="text-align: right;">
                         <div style="font-size: 8px; color: #6B7280;">Volume</div>
-                        <div style="font-size: 14px; font-weight: 900; color: #1E3A8A;" th:text="${dto.demographics.localCardVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.localCardVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                        <div style="font-size: 14px; font-weight: 900; color: #1E3A8A;" th:text="${dto.demographics.localCardVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.localCardVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</div>
                         <div style="font-size: 8px; color: #6B7280; margin-top: 4px;">Transactions</div>
                         <div style="font-size: 14px; font-weight: 900; color: #1E3A8A;" th:text="${dto.demographics.localCardCustomers != null ? #numbers.formatDecimal(dto.demographics.localCardCustomers, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
                     </div>
@@ -168,7 +168,7 @@
                     </div>
                     <div style="text-align: right;">
                         <div style="font-size: 8px; color: #6B7280;">Volume</div>
-                        <div style="font-size: 14px; font-weight: 900; color: #D97706;" th:text="${dto.demographics.internationalCardVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.internationalCardVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                        <div style="font-size: 14px; font-weight: 900; color: #D97706;" th:text="${dto.demographics.internationalCardVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.internationalCardVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</div>
                         <div style="font-size: 8px; color: #6B7280; margin-top: 4px;">Transactions</div>
                         <div style="font-size: 14px; font-weight: 900; color: #D97706;" th:text="${dto.demographics.internationalCardCustomers != null ? #numbers.formatDecimal(dto.demographics.internationalCardCustomers, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
                     </div>

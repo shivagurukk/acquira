@@ -608,16 +608,25 @@ public class IntegrationPullService {
 
         int divided = 0;
         if (minorUnits) {
+            // CURRENCY-AWARE SCALE (2026-08-10). The divisor was always resolved from
+            // ref_country, but the ROUND() scale next to it was hardcoded to 2 — so a
+            // BHD amount was divided by 1000 and then immediately rounded back to 2dp,
+            // destroying the fils this code had just correctly recovered. LOG10 of the
+            // divisor gives the currency's real precision (1000 -> 3, 100 -> 2).
             divided += jdbcTemplate.update(
-                "UPDATE stg_trnx_raw s SET txn_currency_amount = ROUND(s.txn_currency_amount / " +
-                "COALESCE((SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 THEN rc.decimal_notation_value ELSE 100 END) " +
-                "          FROM ref_country rc WHERE TRIM(rc.currency_code) = TRIM(s.txn_currency)), 100), 2) " +
+                "UPDATE stg_trnx_raw s SET txn_currency_amount = ROUND(s.txn_currency_amount / d.div, " +
+                "  CAST(ROUND(LOG(10, d.div)) AS INT)) " +
+                "FROM LATERAL (SELECT COALESCE((SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
+                "                THEN rc.decimal_notation_value ELSE 100 END) FROM ref_country rc " +
+                "                WHERE TRIM(rc.currency_code) = TRIM(s.txn_currency)), 100)::NUMERIC AS div) d " +
                 "WHERE s.tenant_id = ? AND s.txn_currency_amount IS NOT NULL",
                 tenantId);
             divided += jdbcTemplate.update(
-                "UPDATE stg_trnx_raw s SET store_base_currency_amount = ROUND(s.store_base_currency_amount / " +
-                "COALESCE((SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 THEN rc.decimal_notation_value ELSE 100 END) " +
-                "          FROM ref_country rc WHERE TRIM(rc.currency_code) = TRIM(s.store_base_currency)), 100), 2) " +
+                "UPDATE stg_trnx_raw s SET store_base_currency_amount = ROUND(s.store_base_currency_amount / d.div, " +
+                "  CAST(ROUND(LOG(10, d.div)) AS INT)) " +
+                "FROM LATERAL (SELECT COALESCE((SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
+                "                THEN rc.decimal_notation_value ELSE 100 END) FROM ref_country rc " +
+                "                WHERE TRIM(rc.currency_code) = TRIM(s.store_base_currency)), 100)::NUMERIC AS div) d " +
                 "WHERE s.tenant_id = ? AND s.store_base_currency_amount IS NOT NULL",
                 tenantId);
             divided += jdbcTemplate.update(

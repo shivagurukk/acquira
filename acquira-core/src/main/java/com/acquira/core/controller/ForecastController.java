@@ -73,11 +73,15 @@ public class ForecastController {
 
     private final BankBudgetTargetRepository budgetRepo;
     private final SumMonthlyBankRepository monthlyBankRepo;
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
 
     public ForecastController(BankBudgetTargetRepository budgetRepo,
-                              SumMonthlyBankRepository monthlyBankRepo) {
+                              SumMonthlyBankRepository monthlyBankRepo,
+                              CurrencyMeta currencyMeta) {
         this.budgetRepo = budgetRepo;
         this.monthlyBankRepo = monthlyBankRepo;
+        this.currencyMeta = currencyMeta;
     }
 
     // Metric → sum_daily_bank / sum_monthly_bank column. Matches the metric set
@@ -223,7 +227,7 @@ public class ForecastController {
                 "seasonalityFactor", "reported factor = forecast / naive linear run-rate projection (1.0 = purely linear month)",
                 "businessDays", "All calendar days counted; weekly shape comes from last year's profile and the trailing 28-day weekday averages."
         ));
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     /**
@@ -331,7 +335,7 @@ public class ForecastController {
         resp.put("forecastMonthEnd", round2(f.value));
         resp.put("target", target);
         resp.put("series", series);
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     /**
@@ -380,7 +384,7 @@ public class ForecastController {
         resp.put("currentMonthLabel", monthLabel(ym.getYear() * 100 + ym.getMonthValue()));
         resp.put("priorYearMonthLabel", monthLabel(lySame.getYear() * 100 + lySame.getMonthValue()));
         resp.put("metrics", out);
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -517,7 +521,7 @@ public class ForecastController {
                 "model", "weighted heuristic (no ML)",
                 "weights", "volume decline 35, txn decline 20, inactivity 30, merchant age 15",
                 "windows", "last 30 days vs prior 30 days; inactivity scaled over 45 days"));
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -628,7 +632,7 @@ public class ForecastController {
                 "model", "trailing 30-day margin",
                 "marginFormula", "net / gross * 100; net = total_margin (or MSF - interchange - scheme fees), gross = MSF",
                 "lowMarginThreshold", "< 20% margin; loss-making when net < 0"));
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -720,7 +724,7 @@ public class ForecastController {
                 "peerGroup", "same MCC",
                 "window", "trailing 90 days",
                 "index", "merchant metric / peer-group median * 100 (100 = at median)"));
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -808,7 +812,7 @@ public class ForecastController {
                 "peerGroup", "all RMs in tenant",
                 "window", "trailing 90 days",
                 "index", "RM metric / all-RM median * 100 (100 = at median)"));
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     // ── Shared filter application for the merchant-grained endpoints above ──

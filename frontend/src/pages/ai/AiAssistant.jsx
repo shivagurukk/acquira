@@ -15,6 +15,7 @@ import {
     ResponsiveContainer, PieChart, Pie, Cell, Legend, AreaChart, Area
 } from 'recharts';
 import { aiApi } from '../../api/ai';
+import { formatCompactCurrency } from '../../utils/formatters';
 
 /* ═══════════════════════════════════════════════════════════════
    DESIGN: "Luma" — Clean premium dark, inspired by Linear/Vercel
@@ -37,9 +38,18 @@ const P = {
 };
 const COLORS = ['#4f8ef7','#2dd4bf','#22c55e','#facc15','#a78bfa','#f43f5e','#22d3ee','#fb923c'];
 
-const fmtNum = v => {
+/* The assistant returns arbitrary SQL result columns, so money is identified by
+   column name. Anything matching this list is rendered WITH the tenant currency
+   and at the tenant's precision; everything else stays a plain number. Rates,
+   percentages, bps and counts are deliberately excluded. */
+const MONEY_COL = /(^|_)(volume|amount|msf|revenue|fee|fees|interchange|vat|settled|settlement|ticket|spend|value|balance|charge|cost)(_|$)/i;
+const NON_MONEY_COL = /(rate|pct|percent|bps|ratio|count|txns|transactions|_id$|^id$)/i;
+const isMoneyKey = (key) => !!key && !NON_MONEY_COL.test(key) && MONEY_COL.test(key);
+
+const fmtNum = (v, money = false) => {
     if (v==null) return '—';
     if (typeof v !== 'number') return String(v);
+    if (money) return formatCompactCurrency(v);
     const a = Math.abs(v);
     if (a >= 1e9) return (v/1e9).toFixed(2)+'B';
     if (a >= 1e6) return (v/1e6).toFixed(2)+'M';
@@ -155,6 +165,7 @@ const KpiCards = ({ data, columns }) => {
     const numCols = columns.filter(c=>data.some(r=>typeof r[c]==='number'));
     if(!numCols.length) return null;
     const cards = numCols.slice(0,4).map((c,i) => ({
+        key: c,
         label: c.replace(/_/g,' '),
         value: data.reduce((s,r)=>s+(typeof r[c]==='number'?r[c]:0),0),
         color: COLORS[i%8],
@@ -173,7 +184,7 @@ const KpiCards = ({ data, columns }) => {
                             </Box>
                             <Typography sx={{fontSize:9,fontWeight:700,color:P.t3,textTransform:'uppercase',letterSpacing:1.2,lineHeight:1}}>{c.label}</Typography>
                         </Stack>
-                        <Typography sx={{fontSize:22,fontWeight:800,color:P.t1,fontVariantNumeric:'tabular-nums',letterSpacing:'-0.03em',lineHeight:1}}>{fmtNum(c.value)}</Typography>
+                        <Typography sx={{fontSize:22,fontWeight:800,color:P.t1,fontVariantNumeric:'tabular-nums',letterSpacing:'-0.03em',lineHeight:1}}>{fmtNum(c.value, isMoneyKey(c.key))}</Typography>
                     </Box>
                 );
             })}
@@ -196,7 +207,7 @@ const ResultTable = ({data,columns}) => {
                     <tbody>{data.slice(0,100).map((row,ri)=>(
                         <tr key={ri} className="lu-tr" style={{borderBottom:`1px solid ${P.t4}`}}>{columns.map((c,ci)=>{
                             const v=row[c]; const isN=typeof v==='number';
-                            return <td key={ci} style={{padding:'9px 14px',fontSize:12.5,whiteSpace:'nowrap',fontVariantNumeric:'tabular-nums',fontWeight:ci===0?600:400,color:ci===0?P.t1:isN?P.cyan:P.t2}}>{fmtNum(v)}</td>;
+                            return <td key={ci} style={{padding:'9px 14px',fontSize:12.5,whiteSpace:'nowrap',fontVariantNumeric:'tabular-nums',fontWeight:ci===0?600:400,color:ci===0?P.t1:isN?P.cyan:P.t2}}>{fmtNum(v, isN && isMoneyKey(c))}</td>;
                         })}</tr>
                     ))}</tbody>
                 </table>
@@ -236,15 +247,15 @@ const AutoChart = ({data,columns,hint}) => {
                     <PieChart>
                         <defs>{cd.map((_,i)=><linearGradient key={i} id={`pc${i}`} x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor={COLORS[i%8]} stopOpacity={1}/><stop offset="100%" stopColor={COLORS[i%8]} stopOpacity={0.55}/></linearGradient>)}</defs>
                         <Pie data={cd} dataKey={meas[0]} nameKey="name" cx="50%" cy="50%" outerRadius={110} innerRadius={55} label={({name,percent})=>percent>0.04?`${name} ${(percent*100).toFixed(0)}%`:''} labelLine={false} stroke={P.bg} strokeWidth={3} paddingAngle={2}>{cd.map((_,i)=><Cell key={i} fill={`url(#pc${i})`}/>)}</Pie>
-                        <RTooltip contentStyle={tip}/><Legend wrapperStyle={{fontSize:11,color:P.t2}}/>
+                        <RTooltip contentStyle={tip} formatter={(v,n)=>[fmtNum(v, isMoneyKey(String(n).replace(/ /g,"_"))), n]}/><Legend wrapperStyle={{fontSize:11,color:P.t2}}/>
                     </PieChart>
                 ):isTrend?(
                     <AreaChart data={cd} margin={{top:5,right:5,bottom:5,left:-15}}>
                         <defs>{meas.map((k,i)=><linearGradient key={k} id={`ac${i}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={COLORS[i]} stopOpacity={0.25}/><stop offset="100%" stopColor={COLORS[i]} stopOpacity={0.01}/></linearGradient>)}</defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.03)" vertical={false}/>
                         <XAxis dataKey="name" tick={{fontSize:10,fill:P.t3}} axisLine={false} tickLine={false}/>
-                        <YAxis tick={{fontSize:10,fill:P.t3}} axisLine={false} tickLine={false}/>
-                        <RTooltip contentStyle={tip}/><Legend wrapperStyle={{fontSize:11,color:P.t2}}/>
+                        <YAxis tick={{fontSize:10,fill:P.t3}} axisLine={false} tickLine={false} width={70} tickFormatter={(v)=>fmtNum(v, isMoneyKey(meas[0]))}/>
+                        <RTooltip contentStyle={tip} formatter={(v,n)=>[fmtNum(v, isMoneyKey(String(n).replace(/ /g,"_"))), n]}/><Legend wrapperStyle={{fontSize:11,color:P.t2}}/>
                         {meas.map((k,i)=><Area key={k} type="monotone" dataKey={k} stroke={COLORS[i]} strokeWidth={2} fill={`url(#ac${i})`} name={k.replace(/_/g,' ')} dot={{r:3,fill:COLORS[i],stroke:P.bg,strokeWidth:2}} activeDot={{r:5}}/>)}
                     </AreaChart>
                 ):(
@@ -252,8 +263,8 @@ const AutoChart = ({data,columns,hint}) => {
                         <defs>{meas.map((k,i)=><linearGradient key={k} id={`bc${i}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={COLORS[i]} stopOpacity={0.9}/><stop offset="100%" stopColor={COLORS[i]} stopOpacity={0.35}/></linearGradient>)}</defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.03)" vertical={false}/>
                         <XAxis dataKey="name" tick={{fontSize:10,fill:P.t3}} axisLine={false} tickLine={false}/>
-                        <YAxis tick={{fontSize:10,fill:P.t3}} axisLine={false} tickLine={false}/>
-                        <RTooltip contentStyle={tip}/><Legend wrapperStyle={{fontSize:11,color:P.t2}}/>
+                        <YAxis tick={{fontSize:10,fill:P.t3}} axisLine={false} tickLine={false} width={70} tickFormatter={(v)=>fmtNum(v, isMoneyKey(meas[0]))}/>
+                        <RTooltip contentStyle={tip} formatter={(v,n)=>[fmtNum(v, isMoneyKey(String(n).replace(/ /g,"_"))), n]}/><Legend wrapperStyle={{fontSize:11,color:P.t2}}/>
                         {meas.map((k,i)=><Bar key={k} dataKey={k} fill={`url(#bc${i})`} radius={[5,5,0,0]} name={k.replace(/_/g,' ')}/>)}
                     </BarChart>
                 )}
@@ -456,7 +467,7 @@ export default function AiAssistant() {
     const connected = health?.status==='connected';
 
     return (
-        <Box className="lu" sx={{display:'flex',flexDirection:'column',height:'100vh',bgcolor:P.bg,position:'relative',overflow:'hidden'}}>
+        <Box className="lu" sx={{display:'flex',flexDirection:'column',height:'var(--vh100, 100vh)',bgcolor:P.bg,position:'relative',overflow:'hidden'}}>
 
             {/* ═══ AMBIENT ═══ */}
             <Box sx={{position:'absolute',inset:0,pointerEvents:'none',zIndex:0}}>

@@ -17,6 +17,8 @@
 //
 // If `columns` is omitted, every key on the first row becomes a column.
 
+import { getDefaultCurrency } from './formatters';
+
 function timestamp() {
     const d = new Date();
     const p = (n) => String(n).padStart(2, '0');
@@ -51,12 +53,23 @@ function csvCell(raw) {
     return v;
 }
 
+// `format: 'currency'` deliberately leaves the VALUE raw so spreadsheets can
+// still sum the column — but a bare number in a multi-currency deployment is
+// ambiguous, so the currency is carried in the column HEADER instead
+// ("Volume (BHD)"). An explicit `currency` on the column wins over the tenant's.
+function headerFor(col) {
+    const label = col.header ?? col.key;
+    if (col.format !== 'currency') return label;
+    const ccy = col.currency || getDefaultCurrency();
+    return ccy ? `${label} (${ccy})` : label;
+}
+
 function buildCsv(rows, columns) {
     const cols = columns && columns.length
         ? columns
         : Object.keys(rows[0] || {}).map((k) => ({ key: k, header: k }));
 
-    const header = cols.map((c) => csvCell(c.header ?? c.key)).join(',');
+    const header = cols.map((c) => csvCell(headerFor(c))).join(',');
     const body = rows.map((row) =>
         cols.map((c) => csvCell(applyFormat(row[c.key], c.format))).join(',')
     );

@@ -1,43 +1,46 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import {
-  DollarSign, CreditCard, Activity, TrendingUp, TrendingDown, Users,
-  RefreshCw, ArrowUpRight, ArrowDownRight, Receipt, Download
-} from 'lucide-react';
+import { DollarSign, Activity, TrendingUp } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell, Sector
 } from 'recharts';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
+import { formatCurrency, formatCompactCurrency, getDefaultCurrency, resolveDecimals } from '../utils/formatters';
 
 /* ── Design tokens (theme-aware, dark-mode safe) ─────────── */
 const T = {
-  brand: 'var(--brand, #4f46e5)',
-  text: 'var(--text, #0f172a)',
-  textSec: 'var(--text-secondary, #64748b)',
-  textMut: 'var(--text-muted, #94a3b8)',
-  card: 'var(--bg-card, #ffffff)',
-  bg: 'var(--bg, #f9fafb)',
-  subtle: 'var(--bg-subtle, #f8fafc)',
-  border: 'var(--border, #e8edf3)',
-  borderLight: 'var(--border-light, #f1f5f9)',
-  up: '#10b981', down: '#ef4444',
+  brand: 'var(--primary)',
+  text: 'var(--text)',
+  textSec: 'var(--text-secondary)',
+  textMut: 'var(--text-muted)',
+  card: 'var(--bg-card)',
+  bg: 'var(--bg)',
+  subtle: 'var(--bg-subtle)',
+  border: 'var(--border)',
+  borderLight: 'var(--border-light)',
+  up: 'var(--success)', down: 'var(--danger)',
 };
-let CCY = 'AED'; // overridden per-tenant from AuthContext at render time
 const SERIES = {
-  volume:  { key: 'volume',  label: 'Volume',       color: '#4f46e5', icon: DollarSign },
-  revenue: { key: 'revenue', label: 'Net Margin',   color: '#10b981', icon: TrendingUp },
-  txns:    { key: 'txns',    label: 'Transactions', color: '#f59e0b', icon: Activity },
+  volume:  { key: 'volume',  label: 'Volume',       color: 'var(--chart-2)', icon: DollarSign },
+  revenue: { key: 'revenue', label: 'Net Margin',   color: 'var(--chart-1)', icon: TrendingUp },
+  txns:    { key: 'txns',    label: 'Transactions', color: 'var(--chart-3)', icon: Activity },
 };
-const SCHEME_COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899', '#64748b'];
-const NUMS = { fontVariantNumeric: 'tabular-nums' };
+// Categorical series walk the teal ramp, then the projected/attention tokens.
+const SCHEME_COLORS = [
+  'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)',
+  'var(--chart-5)', 'var(--projected)', 'var(--attention)', 'var(--muted)',
+];
+// Every numeral on this page: mono face + tabular figures.
+const NUMS = { fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' };
 
 /* ── Formatting helpers ──────────────────────────────────── */
 const n = (v) => (v == null || isNaN(Number(v)) ? 0 : Number(v));
-const fmtMoney = (v, compact = false) => new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: CCY, notation: compact ? 'compact' : 'standard',
-  maximumFractionDigits: compact ? 1 : 0,
-}).format(n(v));
+// Money always goes through the central formatter so the tenant's currency AND
+// its decimal precision (3 for BHD, 2 for AED/EGP) apply — this page used to
+// pin currency to AED and round money to whole units.
+const fmtMoney = (v, compact = false) =>
+  (compact ? formatCompactCurrency(n(v)) : formatCurrency(n(v)));
 const fmtNum = (v, compact = false) => new Intl.NumberFormat('en-US', {
   notation: compact ? 'compact' : 'standard', maximumFractionDigits: compact ? 1 : 0,
 }).format(n(v));
@@ -92,7 +95,7 @@ const csvCell = (v) => {
 const buildCsv = ({ kpiRows, trendRows, merchantRows, range }) => {
   const lines = [];
   lines.push(`Executive Dashboard Export,${new Date().toISOString().slice(0, 10)}`);
-  lines.push(`Currency,${CCY}`);
+  lines.push(`Currency,${getDefaultCurrency() || 'UNKNOWN'}`);
   lines.push('');
   lines.push('KPI,Value');
   kpiRows.forEach(([k, v]) => lines.push(`${csvCell(k)},${csvCell(v)}`));
@@ -136,8 +139,10 @@ const useCountUp = (target, dur = 900) => {
 };
 
 const ExecutiveDashboard = () => {
-  const { currencyCode, tenantVersion } = useAuth();
-  CCY = currencyCode || CCY; // use the active tenant's currency everywhere on this page
+  // Currency/precision come from the shared formatters (AuthContext pushes the
+  // active tenant's baseCurrency + currencyDecimals into them); currencyCode is
+  // read only so this page re-renders on a tenant switch.
+  const { currencyCode, currencyDecimals, tenantVersion } = useAuth();
   const [data, setData] = useState(null);
   const [schemes, setSchemes] = useState([]);
   const [topMerchants, setTopMerchants] = useState([]);
@@ -217,7 +222,8 @@ const ExecutiveDashboard = () => {
         ['MTD Volume', n(mtd.totalVolume)],
         ['MTD Net Margin', mtdRevenue],
         ['MTD Transactions', mtdTxns],
-        ['MTD Avg Ticket', avgTicket.toFixed(2)],
+        // Money → tenant precision (3dp for BHD); the % rows below stay at 2dp.
+        ['MTD Avg Ticket', avgTicket.toFixed(resolveDecimals(currencyDecimals, currencyCode))],
         ['MTD Margin %', mtdMargin.toFixed(2)],
         ['YoY Volume %', yoyPct == null ? '' : yoyPct.toFixed(2)],
         ['Active Merchants', n(data?.activeMerchants)],
@@ -238,14 +244,14 @@ const ExecutiveDashboard = () => {
   return (
     <div style={{ padding: 'var(--space-page, 28px)', color: T.text, minHeight: '100vh', background: T.bg }}>
       <style>{`
-        .ex-card{transition:border-color .15s ease, box-shadow .15s ease}
-        .ex-card:hover{border-color:var(--text-muted, #cbd5e1);box-shadow:var(--shadow-hover, 0 4px 16px rgba(15,23,42,.06))}
-        .ex-seg{cursor:pointer;transition:all .15s}
-        .ex-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:9px;border:1px solid ${T.border};background:${T.card};color:${T.text};cursor:pointer;font-size:13px;font-weight:600;transition:border-color .15s, background .15s}
-        .ex-btn:hover{border-color:var(--text-muted,#cbd5e1);background:${T.subtle}}
+        .ex-card{transition:background-color .15s ease}
+        .ex-card:hover{background:${T.card}}
+        .ex-seg{cursor:pointer;transition:background-color .15s}
+        .ex-btn{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:4px;border:1px solid ${T.border};background:${T.card};color:${T.text};cursor:pointer;font-size:13px;font-weight:500;transition:background-color .15s}
+        .ex-btn:hover{background:var(--bg-hover)}
         .ex-btn:focus-visible{outline:2px solid ${T.brand};outline-offset:2px}
-        .ex-skel{background:linear-gradient(90deg,${T.subtle} 25%,${T.border} 37%,${T.subtle} 63%);background-size:400% 100%;animation:exsh 1.4s ease infinite;border-radius:10px}
-        @keyframes exsh{0%{background-position:100% 50%}100%{background-position:0 50%}}
+        .ex-skel{background:${T.subtle};animation:exsh 1.4s ease infinite;border-radius:4px}
+        @keyframes exsh{0%,100%{opacity:1}50%{opacity:.55}}
         @keyframes spin{to{transform:rotate(360deg)}}
         @media (prefers-reduced-motion: reduce){.ex-card,.ex-btn,.ex-seg{transition:none}}
         @media (max-width:1280px){.ex-strip{grid-template-columns:repeat(3,1fr) !important}.ex-strip>div{border-bottom:1px solid ${T.borderLight}}}
@@ -256,19 +262,20 @@ const ExecutiveDashboard = () => {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 14, marginBottom: 20, paddingBottom: 18, borderBottom: `1px solid ${T.border}` }}>
         <div>
-          <div style={{ fontFamily: 'ui-monospace,monospace', fontSize: 11, letterSpacing: '.22em', textTransform: 'uppercase', color: T.textMut }}>Executive Overview</div>
-          <h1 style={{ fontSize: 26, fontWeight: 800, margin: '4px 0 0', letterSpacing: '-.02em' }}>Performance at a glance</h1>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: T.textMut }}>Executive Overview</div>
+          <h1 style={{ fontSize: 20, fontWeight: 600, margin: '4px 0 0', letterSpacing: '-.01em' }}>Performance at a glance</h1>
           <p style={{ fontSize: 13, color: T.textSec, margin: '4px 0 0', ...NUMS }}>
             {latestDate ? `Latest data: ${latestDate}` : 'No data loaded yet'} · {range}-day view
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <Segmented value={range} onChange={setRange} options={[{ v: 7, l: '7D' }, { v: 30, l: '30D' }]} />
+          {/* Text-only actions — icons live in the sidebar rail only. */}
           <button className="ex-btn" onClick={exportCsv} aria-label="Export CSV">
-            <Download size={15} /> Export
+            Export
           </button>
-          <button className="ex-btn" onClick={refresh} aria-label="Refresh">
-            <RefreshCw size={15} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} /> Refresh
+          <button className="ex-btn" onClick={refresh} aria-label="Refresh" disabled={refreshing}>
+            {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -276,18 +283,18 @@ const ExecutiveDashboard = () => {
       {/* Hero KPIs — the three numbers a CEO checks first */}
       <div className="ex-heroes" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
         <HeroKpi title="Today's Volume" value={fmtMoney(daily.totalVolume, true)}
-          icon={DollarSign} color="#4f46e5" delta={metric === 'volume' ? delta : null}
+          color="var(--chart-2)" delta={metric === 'volume' ? delta : null}
           spark={spark('volume')} />
         <HeroKpi title="Today's Net Margin" value={fmtMoney(daily.totalRevenue, true)}
-          icon={TrendingUp} color="#10b981" delta={metric === 'revenue' ? delta : null}
+          color="var(--chart-1)" delta={metric === 'revenue' ? delta : null}
           spark={spark('revenue')} />
         <HeroKpi title="MTD Volume" value={fmtMoney(mtd.totalVolume, true)}
-          icon={Activity} color="#8b5cf6" sub={`${fmtNum(mtd.totalTxns, true)} transactions`}
+          color="var(--chart-3)" sub={`${fmtNum(mtd.totalTxns, true)} transactions`}
           spark={spark('volume')} />
       </div>
 
       {/* Secondary metrics — one quiet strip, hairline-divided */}
-      <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, marginBottom: 16, overflow: 'hidden' }}>
+      <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 4, marginBottom: 16, overflow: 'hidden' }}>
         <div className="ex-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
           <StatCell label="MTD Net Margin" value={fmtMoney(mtdRevenue, true)} sub={`${mtdMargin.toFixed(1)}% margin`} />
           <StatCell label="MTD Transactions" value={fmtNum(mtdTxns, true)} sub="this month" countTo={mtdTxns} integer />
@@ -307,7 +314,7 @@ const ExecutiveDashboard = () => {
         <Panel>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 10 }}>
             <div>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>{activeMeta.label} trend</h3>
+              <h3 className="section-title" style={{ margin: 0, fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: T.textMut }}>{activeMeta.label} trend</h3>
               <p style={{ margin: '2px 0 0', fontSize: 12, color: T.textMut }}>Last {range} days</p>
             </div>
             <Segmented value={metric} onChange={setMetric}
@@ -317,17 +324,11 @@ const ExecutiveDashboard = () => {
             {series.length === 0 ? <EmptyChart label="No trend data for this period" /> : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={series} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="exGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={activeMeta.color} stopOpacity={0.28} />
-                      <stop offset="95%" stopColor={activeMeta.color} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={T.borderLight} vertical={false} />
-                  <XAxis dataKey="full" tickFormatter={shortDate} tick={{ fontSize: 11, fill: T.textMut }} tickLine={false} axisLine={{ stroke: T.border }} minTickGap={24} />
-                  <YAxis tickFormatter={(v) => metric === 'txns' ? fmtNum(v, true) : fmtMoney(v, true)} tick={{ fontSize: 11, fill: T.textMut }} tickLine={false} axisLine={false} width={56} />
+                  <XAxis dataKey="full" tickFormatter={shortDate} tick={{ fontSize: 11, fill: T.textMut, fontFamily: 'var(--font-mono)' }} tickLine={false} axisLine={{ stroke: T.border }} minTickGap={24} />
+                  <YAxis tickFormatter={(v) => metric === 'txns' ? fmtNum(v, true) : fmtMoney(v, true)} tick={{ fontSize: 11, fill: T.textMut, fontFamily: 'var(--font-mono)' }} tickLine={false} axisLine={false} width={56} />
                   <Tooltip content={<TrendTip metric={metric} />} />
-                  <Area type="monotone" dataKey={metric} stroke={activeMeta.color} strokeWidth={2.5} fill="url(#exGrad)" activeDot={{ r: 5 }} animationDuration={700} />
+                  <Area type="monotone" dataKey={metric} stroke={activeMeta.color} strokeWidth={2} fill={activeMeta.color} fillOpacity={0.08} activeDot={{ r: 4 }} animationDuration={150} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
@@ -336,7 +337,7 @@ const ExecutiveDashboard = () => {
 
         {/* Scheme donut */}
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Card scheme mix</h3>
+          <h3 className="section-title" style={{ margin: 0, fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: T.textMut }}>Card scheme mix</h3>
           <p style={{ margin: '2px 0 10px', fontSize: 12, color: T.textMut }}>Volume share, last 30 days</p>
           {schemes.length === 0 ? <EmptyChart label="No scheme data" /> : (
             <>
@@ -373,7 +374,7 @@ const ExecutiveDashboard = () => {
       {/* Bottom grid: top merchants + revenue composition */}
       <div className="ex-main" style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 16 }}>
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Top 10 merchants</h3>
+          <h3 className="section-title" style={{ margin: 0, fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: T.textMut }}>Top 10 merchants</h3>
           <p style={{ margin: '2px 0 10px', fontSize: 12, color: T.textMut }}>By month-to-date volume</p>
           {topMerchants.length === 0 ? <EmptyChart label="No merchant data" /> : (
             <TopMerchantList merchants={topMerchants} />
@@ -381,7 +382,7 @@ const ExecutiveDashboard = () => {
         </Panel>
 
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Revenue composition</h3>
+          <h3 className="section-title" style={{ margin: 0, fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: T.textMut }}>Revenue composition</h3>
           <p style={{ margin: '2px 0 10px', fontSize: 12, color: T.textMut }}>{range}-day fees</p>
           <RevenueComposition series={series} />
         </Panel>
@@ -390,7 +391,7 @@ const ExecutiveDashboard = () => {
       {/* Card mix row */}
       <div style={{ marginTop: 16 }}>
         <Panel>
-          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Credit vs Debit / Prepaid</h3>
+          <h3 className="section-title" style={{ margin: 0, fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: T.textMut }}>Credit vs Debit / Prepaid</h3>
           <p style={{ margin: '2px 0 14px', fontSize: 12, color: T.textMut }}>Volume split, today</p>
           <CardMixChart mix={cardMix} />
         </Panel>
@@ -401,41 +402,34 @@ const ExecutiveDashboard = () => {
 
 /* ── Sub-components ──────────────────────────────────────── */
 const Panel = ({ children }) => (
-  <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20, boxShadow: 'var(--shadow-card, 0 1px 2px rgba(15,23,42,.04))' }}>
+  <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 4, padding: 20, boxShadow: 'none' }}>
     {children}
   </div>
 );
 
-/* Hero KPI — large number, muted label, sparkline underneath */
-const HeroKpi = ({ title, value, icon: Icon, color, delta, sub, spark }) => (
-  <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: '18px 20px 12px', boxShadow: 'var(--shadow-card, 0 1px 2px rgba(15,23,42,.04))', overflow: 'hidden' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-      <div style={{ minWidth: 0 }}>
-        <p style={{ color: T.textSec, fontSize: 12, fontWeight: 600, margin: 0, textTransform: 'uppercase', letterSpacing: '.05em' }}>{title}</p>
-        <h3 style={{ fontSize: 28, fontWeight: 800, color: T.text, margin: '6px 0 0', letterSpacing: '-.02em', ...NUMS }}>{value}</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, minHeight: 18 }}>
-          {delta != null && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, fontWeight: 700, color: delta >= 0 ? T.up : T.down, ...NUMS }}>
-              {delta >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{Math.abs(delta).toFixed(1)}%
-            </span>
-          )}
-          {delta != null && <span style={{ fontSize: 11, color: T.textMut }}>vs prev day</span>}
-          {sub && <span style={{ fontSize: 11.5, color: T.textMut, ...NUMS }}>{sub}</span>}
-        </div>
+/* Hero KPI — mono number, muted section title, sparkline underneath.
+   No icon chip: icons are a sidebar-only affordance. Delta pairs colour
+   with a glyph so meaning survives greyscale. */
+const HeroKpi = ({ title, value, color, delta, sub, spark }) => (
+  <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 4, padding: '18px 20px 12px', boxShadow: 'none', overflow: 'hidden' }}>
+    <div style={{ minWidth: 0 }}>
+      <p style={{ color: T.textMut, fontSize: 13, fontWeight: 600, margin: 0, letterSpacing: '.02em' }}>{title}</p>
+      <h3 style={{ fontSize: 28, fontWeight: 500, color: T.text, margin: '6px 0 0', ...NUMS }}>{value}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, minHeight: 18 }}>
+        {delta != null && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 500, color: delta >= 0 ? T.up : T.down, ...NUMS }}>
+            {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}%
+          </span>
+        )}
+        {delta != null && <span style={{ fontSize: 11, color: T.textMut }}>vs prev day</span>}
+        {sub && <span style={{ fontSize: 11.5, color: T.textMut, ...NUMS }}>{sub}</span>}
       </div>
-      <div style={{ padding: 9, background: `${color}14`, borderRadius: 10, color, flexShrink: 0 }}><Icon size={18} /></div>
     </div>
     {spark && spark.length > 1 && (
       <div style={{ height: 38, marginTop: 8, marginLeft: -20, marginRight: -20, marginBottom: -12 }}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={spark} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id={`sp-${title}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.22} />
-                <stop offset="100%" stopColor={color} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <Area type="monotone" dataKey="y" stroke={color} strokeWidth={1.8} fill={`url(#sp-${title})`} isAnimationActive={false} dot={false} />
+            <Area type="monotone" dataKey="y" stroke={color} strokeWidth={1.5} fill={color} fillOpacity={0.08} isAnimationActive={false} dot={false} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -450,20 +444,20 @@ const StatCell = ({ label, value, sub, tone, countTo, integer, last }) => {
   const toneColor = tone === 'up' ? T.up : tone === 'down' ? T.down : T.text;
   return (
     <div style={{ padding: '16px 20px', borderRight: last ? 'none' : `1px solid ${T.borderLight}` }}>
-      <p style={{ color: T.textMut, fontSize: 11, fontWeight: 600, margin: 0, textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
-      <div style={{ fontSize: 19, fontWeight: 750, color: toneColor, margin: '5px 0 0', letterSpacing: '-.01em', ...NUMS }}>{display}</div>
+      <p style={{ color: T.textMut, fontSize: 12, fontWeight: 600, margin: 0, letterSpacing: '.02em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
+      <div style={{ fontSize: 16, fontWeight: 500, color: toneColor, margin: '5px 0 0', ...NUMS }}>{display}</div>
       {sub && <div style={{ fontSize: 11, color: T.textMut, marginTop: 3 }}>{sub}</div>}
     </div>
   );
 };
 
 const Segmented = ({ value, onChange, options, small }) => (
-  <div style={{ display: 'inline-flex', background: 'var(--bg-subtle, #f1f5f9)', border: `1px solid ${T.border}`, borderRadius: 10, padding: 3, gap: 2 }}>
+  <div style={{ display: 'inline-flex', background: T.subtle, border: `1px solid ${T.border}`, borderRadius: 4, padding: 2, gap: 2 }}>
     {options.map(o => (
       <button key={o.v} onClick={() => onChange(o.v)}
-        style={{ border: 'none', cursor: 'pointer', borderRadius: 8, padding: small ? '5px 10px' : '7px 13px', fontSize: small ? 12 : 13, fontWeight: 600,
-          background: value === o.v ? T.card : 'transparent', color: value === o.v ? T.brand : T.textSec,
-          boxShadow: value === o.v ? '0 1px 2px rgba(15,23,42,.08)' : 'none', transition: 'all .15s' }}>
+        style={{ border: 'none', cursor: 'pointer', borderRadius: 4, padding: small ? '4px 10px' : '6px 12px', fontSize: small ? 12 : 13, fontWeight: 500,
+          background: value === o.v ? 'var(--wash)' : 'transparent', color: value === o.v ? T.brand : T.textSec,
+          transition: 'background-color .15s, color .15s' }}>
         {o.l}
       </button>
     ))}
@@ -474,7 +468,7 @@ const ActiveSlice = (props) => {
   const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, percent } = props;
   return (
     <g>
-      <text x={cx} y={cy - 6} textAnchor="middle" fill={T.text} style={{ fontSize: 15, fontWeight: 800 }}>{payload.name}</text>
+      <text x={cx} y={cy - 6} textAnchor="middle" fill={T.text} style={{ fontSize: 14, fontWeight: 600 }}>{payload.name}</text>
       <text x={cx} y={cy + 14} textAnchor="middle" fill={T.textSec} style={{ fontSize: 12 }}>{(percent * 100).toFixed(1)}%</text>
       <Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 5} startAngle={startAngle} endAngle={endAngle} fill={fill} />
     </g>
@@ -485,9 +479,9 @@ const TrendTip = ({ active, payload, label, metric }) => {
   if (!active || !payload?.length) return null;
   const v = payload[0].value;
   return (
-    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 12px', boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
-      <div style={{ fontSize: 11, color: T.textMut, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700, ...NUMS }}>{metric === 'txns' ? fmtNum(v) : fmtMoney(v)}</div>
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 4, padding: '8px 12px', boxShadow: 'var(--shadow-pop)' }}>
+      <div style={{ fontSize: 11, color: T.textMut, marginBottom: 2, ...NUMS }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 500, ...NUMS }}>{metric === 'txns' ? fmtNum(v) : fmtMoney(v)}</div>
     </div>
   );
 };
@@ -514,7 +508,7 @@ const TopMerchantList = ({ merchants }) => {
           }}>
             {/* Rank */}
             <span style={{
-              fontSize: 12, fontWeight: 800, textAlign: 'center',
+              fontSize: 12, fontWeight: 500, textAlign: 'center',
               color: i < 3 ? color : T.textMut, ...NUMS,
             }}>{i + 1}</span>
 
@@ -522,19 +516,19 @@ const TopMerchantList = ({ merchants }) => {
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                 title={m.name}>{m.name}</div>
-              <div style={{ marginTop: 5, height: 6, background: T.subtle, borderRadius: 999, overflow: 'hidden' }}>
-                <div style={{ width: `${barPct}%`, height: '100%', background: color, borderRadius: 999, transition: 'width .6s ease' }} />
+              <div style={{ marginTop: 5, height: 4, background: T.subtle, overflow: 'hidden' }}>
+                <div style={{ width: `${barPct}%`, height: '100%', background: color }} />
               </div>
             </div>
 
             {/* Volume + txns */}
             <div style={{ textAlign: 'right', ...NUMS }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{fmtMoney(m.value, true)}</div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: T.text }}>{fmtMoney(m.value, true)}</div>
               <div style={{ fontSize: 11, color: T.textMut, marginTop: 2 }}>{fmtNum(m.txns, true)} txns</div>
             </div>
 
             {/* % share */}
-            <span style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 600, color: T.textSec, ...NUMS }}>
+            <span style={{ textAlign: 'right', fontSize: 12, fontWeight: 500, color: T.textSec, ...NUMS }}>
               {sharePct.toFixed(1)}%
             </span>
           </div>
@@ -549,8 +543,8 @@ const TopMerchantList = ({ merchants }) => {
    creditVolume / debitPrepaidVolume columns). */
 const CardMixChart = ({ mix }) => {
   const data = [
-    { name: 'Credit', value: n(mix.credit), color: '#4f46e5' },
-    { name: 'Debit / Prepaid', value: n(mix.debitPrepaid), color: '#10b981' },
+    { name: 'Credit', value: n(mix.credit), color: 'var(--chart-2)' },
+    { name: 'Debit / Prepaid', value: n(mix.debitPrepaid), color: 'var(--chart-4)' },
   ].filter(d => d.value > 0);
   const total = data.reduce((a, b) => a + b.value, 0);
   if (total === 0) return <EmptyChart label="No credit/debit split for today" />;
@@ -571,20 +565,19 @@ const CardMixChart = ({ mix }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, marginBottom: 5 }}>
               <span style={{ width: 11, height: 11, borderRadius: 3, background: d.color, flexShrink: 0 }} />
               <span style={{ fontWeight: 600 }}>{d.name}</span>
-              <span style={{ marginLeft: 'auto', fontWeight: 700, ...NUMS }}>{fmtMoney(d.value, true)}</span>
+              <span style={{ marginLeft: 'auto', fontWeight: 500, ...NUMS }}>{fmtMoney(d.value, true)}</span>
               <span style={{ color: T.textMut, width: 52, textAlign: 'right', ...NUMS }}>
                 {((d.value / total) * 100).toFixed(1)}%
               </span>
             </div>
-            <div style={{ height: 8, background: T.subtle, borderRadius: 999, overflow: 'hidden' }}>
-              <div style={{ width: `${(d.value / total) * 100}%`, height: '100%', background: d.color, borderRadius: 999, transition: 'width .6s ease' }} />
+            <div style={{ height: 4, background: T.subtle, overflow: 'hidden' }}>
+              <div style={{ width: `${(d.value / total) * 100}%`, height: '100%', background: d.color }} />
             </div>
           </div>
         ))}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, padding: '9px 12px', background: T.subtle, borderRadius: 10 }}>
-          <CreditCard size={16} color={T.textSec} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, padding: '9px 12px', background: T.subtle, borderRadius: 4 }}>
           <span style={{ fontSize: 13, color: T.textSec }}>Total split volume</span>
-          <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 800, ...NUMS }}>{fmtMoney(total)}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 500, ...NUMS }}>{fmtMoney(total)}</span>
         </div>
       </div>
     </div>
@@ -594,15 +587,15 @@ const CardMixChart = ({ mix }) => {
 const RevenueComposition = ({ series }) => {
   const totals = series.reduce((a, s) => ({ msf: a.msf + s.msf, interchange: a.interchange + s.interchange, vat: a.vat + s.vat }), { msf: 0, interchange: 0, vat: 0 });
   const data = [
-    { name: 'MSF', value: totals.msf, color: '#4f46e5' },
-    { name: 'Interchange', value: totals.interchange, color: '#06b6d4' },
-    { name: 'VAT', value: totals.vat, color: '#f59e0b' },
+    { name: 'MSF', value: totals.msf, color: 'var(--chart-1)' },
+    { name: 'Interchange', value: totals.interchange, color: 'var(--chart-3)' },
+    { name: 'VAT', value: totals.vat, color: 'var(--chart-5)' },
   ].filter(d => d.value > 0);
   const sum = data.reduce((a, b) => a + b.value, 0);
   if (sum === 0) return <EmptyChart label="No fee data" />;
   return (
     <div>
-      <div style={{ display: 'flex', height: 14, borderRadius: 999, overflow: 'hidden', marginBottom: 14 }}>
+      <div style={{ display: 'flex', height: 8, overflow: 'hidden', marginBottom: 14 }}>
         {data.map((d, i) => <div key={i} title={`${d.name}: ${fmtMoney(d.value)}`} style={{ width: `${(d.value / sum) * 100}%`, background: d.color }} />)}
       </div>
       {data.map((d, i) => (
@@ -613,10 +606,9 @@ const RevenueComposition = ({ series }) => {
           <span style={{ color: T.textMut, width: 46, textAlign: 'right', ...NUMS }}>{((d.value / sum) * 100).toFixed(1)}%</span>
         </div>
       ))}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, padding: '10px 12px', background: T.subtle, borderRadius: 10 }}>
-        <Receipt size={16} color={T.textSec} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, padding: '10px 12px', background: T.subtle, borderRadius: 4 }}>
         <span style={{ fontSize: 13, color: T.textSec }}>Total fees</span>
-        <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 800, ...NUMS }}>{fmtMoney(sum)}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 500, ...NUMS }}>{fmtMoney(sum)}</span>
       </div>
     </div>
   );
@@ -631,7 +623,7 @@ const EmptyChart = ({ label }) => (
 const DashboardSkeleton = () => (
   <div style={{ padding: 'var(--space-page, 28px)' }}>
     <div className="ex-skel" style={{ width: 280, height: 30, marginBottom: 22 }} />
-    <style>{`.ex-skel{background:linear-gradient(90deg,${T.subtle} 25%,${T.border} 37%,${T.subtle} 63%);background-size:400% 100%;animation:exsh 1.4s ease infinite;border-radius:12px}@keyframes exsh{0%{background-position:100% 50%}100%{background-position:0 50%}}`}</style>
+    <style>{`.ex-skel{background:${T.subtle};animation:exsh 1.4s ease infinite;border-radius:4px}@keyframes exsh{0%,100%{opacity:1}50%{opacity:.55}}@media (prefers-reduced-motion: reduce){.ex-skel{animation:none}}`}</style>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16, marginBottom: 16 }}>
       {[...Array(3)].map((_, i) => <div key={i} className="ex-skel" style={{ height: 150 }} />)}
     </div>

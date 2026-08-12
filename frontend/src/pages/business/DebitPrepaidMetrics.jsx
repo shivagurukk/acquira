@@ -14,7 +14,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatMsf } from '../../utils/formatters';
+import { formatMsf, formatCurrency as fmtMoney, formatCompactCurrency } from '../../utils/formatters';
 import { useDataBounds } from '../../hooks/useDataBounds';
 import DataBoundsBanner from '../../components/DataBoundsBanner';
 
@@ -247,15 +247,14 @@ const CompositionCard = ({ title, icon: Icon, accent, headline, caption, segment
 };
 
 const DebitPrepaidMetrics = () => {
-    const { currencyCode = 'AED', formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
+    // No 'AED' default — unknown currency renders unlabelled rather than wrong.
+    const { currencyCode, formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
 
-    const formatCurrency = useCallback((val) => {
-        if (fmtCurr) return fmtCurr(val);
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode, minimumFractionDigits: 2 }).format(val || 0);
-    }, [fmtCurr, currencyCode]);
+    const formatCurrency = useCallback((val) => (fmtCurr ? fmtCurr(val) : fmtMoney(val)), [fmtCurr]);
 
     const formatNumber  = (val) => new Intl.NumberFormat('en-US').format(val || 0);
-    const formatCompact = (val) => `${currencyCode} ${new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0)}`;
+    // Money compaction with the tenant's currency + precision (BHD keeps fils).
+    const formatCompact = (val) => formatCompactCurrency(val);
     const formatBps     = (val) => (val === null || val === undefined ? '—' : `${Number(val).toFixed(1)} bps`);
 
     const [filters, setFilters] = useState(() => ({ datePreset: 'MONTH', startDate: '', endDate: '' }));
@@ -501,7 +500,7 @@ const DebitPrepaidMetrics = () => {
             renderCell: (params) => <Typography variant="body2" color="var(--text-secondary, #64748b)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatNumber(params.value)}</Typography>
         },
         {
-            field: 'volume', headerName: `VOLUME (${currencyCode})`, type: 'number', width: 160, align: 'right', headerAlign: 'right',
+            field: 'volume', headerName: `VOLUME${currencyCode ? ` (${currencyCode})` : ''}`, type: 'number', width: 160, align: 'right', headerAlign: 'right',
             renderCell: (params) => <Typography variant="body2" fontWeight="700" color="var(--text, #0f172a)" sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
         },
         {

@@ -43,8 +43,8 @@ const STATUS_META = {
 };
 
 const DailyMerchantDashboard = () => {
-    const { currencySymbol, tenantVersion } = useAuth();
-    const formatCurrency = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const formatCurrency = useMemo(() => createFmt(currencySymbol, currencyDecimals).currency, [currencySymbol, currencyDecimals]);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filterOptions, setFilterOptions] = useState({ sids: [], mids: [] });

@@ -52,6 +52,8 @@ public class SalesPortfolioController {
     private final SalesTeamMappingRepository teamMappingRepository;
     private final SalesCountryLeadRepository countryLeadRepository;
     private final SalesUserAssignmentRepository userAssignmentRepository;
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
 
     private Long getTenantId() {
         Long t = tenantService.getCurrentTenantId();
@@ -202,7 +204,7 @@ public class SalesPortfolioController {
         // Org-wide totals for the KPI row. Summed from the country nodes, so they
         // agree with the tree by construction.
         out.put("totals", groupNode("org", null, "All Sales", null, tree, hasComparison));
-        return ResponseEntity.ok(out);
+        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
     }
 
     /** Portfolio counts per agent. Merchant counts are all-time; only "new" is date-bound. */
@@ -424,7 +426,7 @@ public class SalesPortfolioController {
             + " GROUP BY TO_CHAR(sdm.business_date, 'YYYY-MM') ORDER BY month DESC LIMIT 12";
         out.put("monthlyTrend", jdbcTemplate.queryForList(trendSql, tenantId, salesUserId));
 
-        return ResponseEntity.ok(out);
+        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -514,7 +516,7 @@ public class SalesPortfolioController {
             + " GROUP BY TO_CHAR(sdm.business_date, 'YYYY-MM') ORDER BY month DESC LIMIT 12";
         out.put("monthlyTrend", jdbcTemplate.queryForList(trendSql, tenantId, teamLeadId));
 
-        return ResponseEntity.ok(out);
+        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -605,6 +607,6 @@ public class SalesPortfolioController {
             + " GROUP BY TO_CHAR(sdm.business_date, 'YYYY-MM') ORDER BY month DESC LIMIT 12";
         out.put("monthlyTrend", jdbcTemplate.queryForList(trendSql, tenantId, countryLeadId));
 
-        return ResponseEntity.ok(out);
+        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
     }
 }

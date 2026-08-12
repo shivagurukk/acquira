@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
 public class TemplateRendererService {
 
     private final JdbcTemplate jdbcTemplate;
+    private final com.acquira.common.service.CurrencyResolver currencyResolver;
 
     private static final Pattern VAR_PATTERN = Pattern.compile("\\{\\{(\\w+)\\}\\}");
 
@@ -33,9 +34,10 @@ public class TemplateRendererService {
         put("month", "Statement month (e.g. January 2026)");
         put("year", "Year");
         put("month_code", "Month code (e.g. 2026-01)");
-        put("total_volume", "Total transaction volume for period");
+        put("currency", "Tenant base currency code (e.g. BHD) — prefix monetary variables with this");
+        put("total_volume", "Total transaction volume for period (in {{currency}})");
         put("total_count", "Total transaction count for period");
-        put("total_msf", "Total MSF revenue for period");
+        put("total_msf", "Total MSF revenue for period (in {{currency}})");
         put("merchant_status", "Merchant status (Active/Inactive)");
         put("city", "Merchant city");
         put("onboarding_date", "Date of onboarding");
@@ -67,6 +69,19 @@ public class TemplateRendererService {
      */
     public Map<String, String> buildVariablesForMerchant(Long merchantId, Long tenantId, String monthCode) {
         Map<String, String> vars = new HashMap<>();
+
+        // Currency FIRST — every monetary variable below is formatted at this
+        // tenant's minor-unit precision (BHD 3, EGP/AED 2). formatNumber() used to
+        // hardcode "%,.2f", and no {{currency}} variable was offered at all, so an
+        // email template author had no way to say WHICH currency {{total_volume}}
+        // was in. Fails loud rather than emitting an unlabelled amount.
+        var ccyInfo = currencyResolver.forTenant(tenantId);
+        if (ccyInfo == null || ccyInfo.code() == null || ccyInfo.code().isBlank()) {
+            log.error("[email-template] currency unresolved for tenant {} — refusing to render unlabelled amounts", tenantId);
+            throw new IllegalStateException("Currency could not be resolved for tenant " + tenantId);
+        }
+        final int ccyDecimals = ccyInfo.decimals();
+        vars.put("currency", ccyInfo.code());
 
         // Merchant info
         try {
@@ -116,13 +131,13 @@ public class TemplateRendererService {
                     "SELECT COALESCE(SUM(store_base_currency_amount),0) AS vol, COUNT(*) AS cnt, COALESCE(SUM(msf),0) AS msf_total " +
                     "FROM fact_transaction WHERE merchant_id = ? AND tenant_id = ? AND TO_CHAR(payment_date,'YYYY-MM') = ?",
                     merchantId, tenantId, monthCode);
-                vars.put("total_volume", formatNumber(txnStats.get("vol")));
+                vars.put("total_volume", formatMoney(txnStats.get("vol"), ccyDecimals));
                 vars.put("total_count", str(txnStats.get("cnt")));
-                vars.put("total_msf", formatNumber(txnStats.get("msf_total")));
+                vars.put("total_msf", formatMoney(txnStats.get("msf_total"), ccyDecimals));
             } catch (Exception e) {
-                vars.put("total_volume", "0");
+                vars.put("total_volume", formatMoney(0, ccyDecimals));
                 vars.put("total_count", "0");
-                vars.put("total_msf", "0");
+                vars.put("total_msf", formatMoney(0, ccyDecimals));
             }
         }
 
@@ -171,9 +186,12 @@ public class TemplateRendererService {
         vars.put("month", "January 2026");
         vars.put("year", "2026");
         vars.put("month_code", "2026-01");
-        vars.put("total_volume", "125,430.50");
+        vars.put("currency", "BHD");
+        // Preview sample deliberately uses a 3-decimal currency so a template
+        // author immediately sees that precision is currency-driven, not fixed 2dp.
+        vars.put("total_volume", "125,430.505");
         vars.put("total_count", "3,247");
-        vars.put("total_msf", "2,508.61");
+        vars.put("total_msf", "2,508.610");
         vars.put("merchant_status", "Active");
         vars.put("city", "Dubai");
         vars.put("onboarding_date", "2024-03-15");
@@ -189,11 +207,15 @@ public class TemplateRendererService {
         return val != null ? val.toString() : "";
     }
 
-    private String formatNumber(Object val) {
-        if (val == null) return "0";
+    /**
+     * Currency-aware money formatter for merge variables.
+     * Replaces the hardcoded {@code "%,.2f"}, which truncated BHD's third digit.
+     */
+    private String formatMoney(Object val, int decimals) {
+        if (val == null) return String.format("%,." + decimals + "f", 0.0);
         try {
             double d = ((Number) val).doubleValue();
-            return String.format("%,.2f", d);
+            return String.format("%,." + decimals + "f", d);
         } catch (Exception e) { return val.toString(); }
     }
 }

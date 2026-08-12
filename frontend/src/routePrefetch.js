@@ -59,6 +59,9 @@ const ROUTE_IMPORTS = {
     '/sales/agents': () => import('./pages/sales/SalesAgentDirectory'),
     '/sales/leaderboard': () => import('./pages/sales/SalesLeaderboard'),
     '/sales/hierarchy': () => import('./pages/sales/SalesHierarchyTree'),
+    '/sales/targets': () => import('./pages/sales/SalesTargetManagement'),
+
+    '/executive/sales': () => import('./pages/executive/ExecutiveSalesPulse'),
 
     '/finance/dashboard': () => import('./pages/finance/FinanceDashboard'),
     '/finance/summary': () => import('./pages/finance/FinanceSummary'),

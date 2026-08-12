@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import api from '../api/axios';
 import { invalidateApiCache } from '../api/apiCache';
 import { clearAuthStorage } from '../utils/authStorage';
-import { setDefaultCurrency, setDefaultLocale } from '../utils/formatters';
+import { setDefaultCurrency, setDefaultLocale, resolveDecimals } from '../utils/formatters';
 
 const AuthContext = createContext(null);
 
@@ -177,13 +177,27 @@ export const AuthProvider = ({ children }) => {
     const isAdmin = isSuperAdmin || auth.userRole === 'ROLE_ADMIN';
     const activeTenant = auth.tenants.find(t => String(t.tenantId) === String(auth.activeTenantId));
 
-    // #16: Dynamic currency from active tenant
-    const currencyCode = activeTenant?.baseCurrency || 'BHD';
-    const currencySymbol = activeTenant?.currencySymbol || currencyCode;
+    // #16: Dynamic currency from active tenant.
+    // NO fallback code here on purpose: the backend has its own fallback, and a
+    // different fallback on each side means the same null renders two different
+    // currencies. Unknown stays unknown and the formatters render bare numbers.
+    const currencyCode = activeTenant?.baseCurrency || null;
+    const currencySymbol = activeTenant?.currencySymbol || currencyCode || null;
+    // Minor-unit digits: 3 for BHD (1 BHD = 1000 fils), 2 for AED/EGP.
+    // null/absent means the backend could not resolve it — treat as UNKNOWN,
+    // never as 2 (see resolveDecimals in utils/formatters.js).
+    const rawDecimals = activeTenant?.currencyDecimals;
+    const currencyDecimals = Number.isInteger(rawDecimals) ? rawDecimals
+        : (rawDecimals != null && !isNaN(Number(rawDecimals)) ? Number(rawDecimals) : null);
 
     // Keep the shared formatters (utils/formatters.js) in sync with the active
-    // tenant so formatCurrency()/createFmt() render in the right currency app-wide.
-    useEffect(() => { setDefaultCurrency(currencyCode); }, [currencyCode]);
+    // tenant so formatCurrency()/createFmt() render in the right currency AND
+    // at the right precision app-wide. tenantVersion is in the dep list so a
+    // switch (Egypt → Bahrain → Egypt) can never leave stale currency/decimals
+    // behind, even if two tenants happened to share a currency code.
+    useEffect(() => {
+        setDefaultCurrency(currencyCode, currencyDecimals);
+    }, [currencyCode, currencyDecimals, auth.tenantVersion, auth.activeTenantId]);
 
     // Per-tenant locale (date format + timezone) — same pattern as currency.
     // Fetched from GET /users/me/locale (tenant_setting locale.* keys) whenever
@@ -205,21 +219,26 @@ export const AuthProvider = ({ children }) => {
         return () => { cancelled = true; };
     }, [auth.token, auth.activeTenantId, auth.tenantVersion]);
 
-    // #16: Currency formatter — use instead of hardcoded currency symbols
+    // #16: Currency formatter — use instead of hardcoded currency symbols.
+    // Defaults to the TENANT's decimals (3 for BHD), not 0: rounding money to
+    // whole units hid the fils entirely on every KPI tile that called this.
     const formatCurrency = useCallback((value, opts = {}) => {
-        if (value == null || isNaN(value)) return currencySymbol + ' 0';
-        const num = Number(value);
-        const decimals = opts.decimals != null ? opts.decimals : 0;
-        const formatted = num.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-        return currencySymbol + ' ' + formatted;
-    }, [currencySymbol]);
+        const decimals = opts.decimals != null ? opts.decimals : resolveDecimals(currencyDecimals, currencyCode);
+        const prefix = currencySymbol ? currencySymbol + ' ' : '';
+        if (value == null || isNaN(value)) {
+            return prefix + (0).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+        }
+        const formatted = Number(value).toLocaleString('en-US',
+            { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+        return prefix + formatted;
+    }, [currencySymbol, currencyCode, currencyDecimals]);
 
     const value = {
         ...auth,
         login, switchTenant, logout, clearMustChangePassword,
         isSuperAdmin, isAdmin, activeTenant,
         // #16: Currency
-        currencyCode, currencySymbol, formatCurrency,
+        currencyCode, currencySymbol, currencyDecimals, formatCurrency,
         // Per-tenant locale (date format + timezone)
         dateFormat: tenantLocale.dateFormat, timezone: tenantLocale.timezone,
     };

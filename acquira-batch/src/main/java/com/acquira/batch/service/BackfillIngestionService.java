@@ -141,12 +141,71 @@ public class BackfillIngestionService {
             }
         }
 
+        // B2. NORMALIZE STAGED AMOUNTS (added 2026-08-10).
+        // This path wrote staging rows RAW and went straight to aggregation: it never
+        // ran transactionTenantProcessor, so it skipped both ISO-numeric -> currency-code
+        // resolution (leaving '048'/'818' stored as the currency) and minor-unit
+        // division (landing amounts 100x too large for EGP/AED and 1000x for BHD).
+        // Any tenant backfilled through here had a silently corrupt warehouse.
+        normalizeStagedAmounts(tenantId);
+
         // C. Run Aggregation Pipeline (Same logic as TransactionJobConfig)
         runAggregationPipeline(tenantId, targetDate);
 
         // D. Metrics
         calculateBusinessMetrics(tenantId, targetDate);
         calculateDashboardMetrics(tenantId, targetDate);
+    }
+
+    /**
+     * Bring staged rows to the same contract as the file/pull paths: real currency
+     * codes, and amounts in major units at the CURRENCY's own precision (BHD keeps
+     * its third decimal; EGP/AED get two). Mirrors
+     * IntegrationPullService.normalizeStagedTransactions.
+     */
+    private void normalizeStagedAmounts(Long tenantId) {
+        // ISO numeric ('048','818') -> alpha code ('BHD','EGP'), both currency columns.
+        for (String col : new String[] { "txn_currency", "store_base_currency" }) {
+            jdbcTemplate.update(
+                "UPDATE stg_trnx_raw s SET " + col + " = TRIM(rc.currency_code) FROM ref_country rc " +
+                "WHERE s.tenant_id = ? AND rc.iso_numeric IS NOT NULL AND rc.currency_code IS NOT NULL " +
+                "AND TRIM(s." + col + ") = TRIM(rc.iso_numeric)", tenantId);
+        }
+
+        Boolean minorUnits = true;
+        try {
+            String fmt = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(input_format,'CMM') FROM tenant WHERE tenant_id = ?", String.class, tenantId);
+            minorUnits = !"AMS".equalsIgnoreCase(fmt);
+        } catch (Exception e) {
+            log.warn("[Backfill] Could not read tenant {} input_format ({}) - assuming CMM/minor units",
+                    tenantId, e.getMessage());
+        }
+        if (!minorUnits) {
+            log.info("[Backfill] Tenant {} is AMS - staged amounts already carry final decimals.", tenantId);
+            return;
+        }
+
+        // Scale from the divisor: LOG10(1000)=3 for BHD, LOG10(100)=2 for EGP/AED.
+        String[][] cols = {
+            { "txn_currency_amount", "txn_currency" },
+            { "store_base_currency_amount", "store_base_currency" },
+            { "total_amount_settled", "store_base_currency" }
+        };
+        int divided = 0;
+        for (String[] c : cols) {
+            divided += jdbcTemplate.update(
+                "UPDATE stg_trnx_raw s SET " + c[0] + " = ROUND(s." + c[0] + " / d.div, " +
+                "  CAST(ROUND(LOG(10, d.div)) AS INT)) " +
+                "FROM LATERAL (SELECT COALESCE((SELECT MAX(CASE WHEN rc.decimal_notation_value > 0 " +
+                "                THEN rc.decimal_notation_value ELSE 100 END) FROM ref_country rc " +
+                "                WHERE TRIM(rc.currency_code) = TRIM(s." + c[1] + ")), 100)::NUMERIC AS div) d " +
+                "WHERE s.tenant_id = ? AND s." + c[0] + " IS NOT NULL", tenantId);
+        }
+        divided += jdbcTemplate.update(
+            "UPDATE stg_trnx_raw SET interchange_fee = ROUND(interchange_fee / 10000, 4) " +
+            "WHERE tenant_id = ? AND interchange_fee IS NOT NULL", tenantId);
+        log.info("[Backfill] Normalized {} staged amount values for tenant {}", divided, tenantId);
     }
 
     private void batchInsertStaging(List<Map<String, Object>> rows, Long tenantId) {

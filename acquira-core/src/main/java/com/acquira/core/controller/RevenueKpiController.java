@@ -49,6 +49,10 @@ public class RevenueKpiController {
     @PersistenceContext
     private EntityManager entityManager;
 
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private CurrencyMeta currencyMeta;
+
     @PostMapping
     public ResponseEntity<Map<String, Object>> getRevenueKpis(
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
@@ -126,7 +130,7 @@ public class RevenueKpiController {
         response.put("dccPenetrationPct", pct(dccEligibleVol, dccTotalVol));   // eligible of total
         response.put("dccSourceBaseVolume", dccTotalVol);
 
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(currencyMeta.attach(response));
     }
 
     /* Filtered rate metrics off sum_daily_insight (MSF & volume real; no net rev). */

@@ -127,8 +127,8 @@ const LeaderboardCard = ({ title, icon: Icon, color = T.brand, rows, primaryKey,
 );
 
 const TopPerformers = () => {
-    const { currencySymbol, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
 
     const [filters, setFilters] = useState(emptyFilters());
     const [showFilters, setShowFilters] = useState(false);

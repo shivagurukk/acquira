@@ -61,7 +61,7 @@
         <!-- ROW 2: Annual Sales Trend -->
         <div class="card mb-6" style="flex: 1; min-height: 0;">
             <div class="card-title"><span>ANNUAL SALES TREND (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
-            <div class="chart-container" style="max-height: 150px;"><canvas data-chart="gradient-bar" data-field="demographics.monthlySales" data-color="#1E3A8A"></canvas></div>
+            <div class="chart-container" style="max-height: 150px;"><canvas data-chart="gradient-bar" data-field="demographics.monthlySales" data-money="true" data-color="#1E3A8A"></canvas></div>
         </div>
 
         <!-- ROW 3a: Transaction Count full width -->
@@ -114,7 +114,7 @@
                      style="background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 6px 8px; text-align: center;">
                     <div style="font-size: 7.5px; color: #78350F; font-weight: 700;">📊 NEXT-MONTH FORECAST</div>
                     <div style="font-size: 13px; font-weight: 900; color: #D97706; margin: 2px 0;"
-                         th:text="${dto.currencyCode} + ' ' + ${dto.demographics.forecastNextMonthSales != null ? #numbers.formatDecimal(dto.demographics.forecastNextMonthSales, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                         th:text="${dto.currencyCode} + ' ' + ${dto.demographics.forecastNextMonthSales != null ? #numbers.formatDecimal(dto.demographics.forecastNextMonthSales, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</div>
                     <div style="font-size: 7px; color: #92400E;">3-month moving avg  · beta</div>
                 </div>
             </div>
@@ -140,7 +140,7 @@
                         <tr th:each="q, iter : ${dto.demographics.quarterlyBreakdown}"
                             th:style="${q.value3 != null and q.value3 &lt; 3 ? 'background: #FFFBEB;' : ''}">
                             <td style="font-weight: 700; padding: 5px 10px;" th:text="${q.label}">Q1</td>
-                            <td style="font-weight: 700;" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(q.value, 1, 'COMMA', 0, 'POINT')}">0</td>
+                            <td style="font-weight: 700;" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(q.value, 1, 'COMMA', dto.currencyDecimals, 'POINT')}">0</td>
                             <td th:text="${q.value2 != null ? #numbers.formatDecimal(q.value2, 1, 'COMMA', 0, 'POINT') : '-'}">0</td>
                             <td th:if="${iter.index == 0}" style="color: #9CA3AF;">—</td>
                             <td th:if="${iter.index > 0}" th:with="prevVal=${dto.demographics.quarterlyBreakdown[iter.index - 1].value}">

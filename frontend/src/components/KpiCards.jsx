@@ -1,12 +1,12 @@
 import React from 'react';
-import { TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
+import BenchmarkRail from './BenchmarkRail';
 
 /* ─── Inline Sparkline ────────────────────────────────────────────
-   Seats as a full-width footer band inside the card. A soft area fill,
-   a hairline baseline, and a terminal dot make it read as an intentional
-   micro-chart rather than a corner decoration. Colour is driven by the
-   card's accent so it stays on-token in both light and dark themes. */
-const Sparkline = ({ data = [], color = 'var(--brand, #2563eb)', width = 140, height = 36 }) => {
+   A quiet micro-chart in the card footer: flat low-opacity area fill
+   (no gradients in this design system), hairline stroke, terminal dot.
+   Colour comes from the card's token so it stays on-token in both
+   colour schemes. */
+const Sparkline = ({ data = [], color = 'var(--chart-2)', width = 140, height = 36 }) => {
     if (!data || data.length < 2) return null;
     const W = width, H = height;
     const pad = 3;                          // keep stroke off the top/bottom edge
@@ -18,18 +18,10 @@ const Sparkline = ({ data = [], color = 'var(--brand, #2563eb)', width = 140, he
     const polyline = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
     const area = `0,${H} ${polyline} ${W},${H}`;
     const [lastX, lastY] = pts[pts.length - 1];
-    // Deterministic gradient id per colour so multiple cards don't collide.
-    const gid = `spark-${String(color).replace(/[^a-z0-9]/gi, '')}`;
     return (
         <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
             style={{ display: 'block' }} aria-hidden="true">
-            <defs>
-                <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={color} stopOpacity="0.14" />
-                    <stop offset="100%" stopColor={color} stopOpacity="0" />
-                </linearGradient>
-            </defs>
-            <polygon points={area} fill={`url(#${gid})`} />
+            <polygon points={area} fill={color} fillOpacity="0.08" />
             <polyline points={polyline} fill="none" stroke={color} strokeWidth="1.5"
                 strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
             <circle cx={lastX} cy={lastY} r="2.4" fill={color} />
@@ -37,43 +29,53 @@ const Sparkline = ({ data = [], color = 'var(--brand, #2563eb)', width = 140, he
     );
 };
 
-/* ─── Trend Pill ──────────────────────────────────────────────── */
-const TrendPill = ({ value, isPositive, isNeutral, rose }) => {
-    if (isNeutral || value === null || value === undefined) return null;
-    const bg    = isPositive ? 'var(--success-bg, #ecfdf5)' : 'var(--danger-bg, #fef2f2)';
-    const color = isPositive ? 'var(--success, #059669)' : 'var(--danger, #dc2626)';
-    // `rose` (did the value go up) drives the ARROW direction; `isPositive`
-    // drives the good/bad COLOR. They diverge for inverted metrics — e.g.
-    // fewer leakage alerts is good even though the number went down.
+/* ─── Delta ────────────────────────────────────────────────────────
+   Up = teal, down = burnt sienna, flat = muted. Colour is always
+   paired with a glyph (▲ ▼ —) so meaning survives colourblindness
+   and greyscale printing. Mono face, tabular figures. */
+const Delta = ({ value, isPositive, isNeutral, rose }) => {
+    if (value === null || value === undefined) return null;
+    // `rose` (did the value go up) drives the GLYPH; `isPositive`
+    // drives the good/bad COLOUR. They diverge for inverted metrics —
+    // e.g. fewer leakage alerts is good even though the number fell.
     const roseDir = rose === undefined ? isPositive : rose;
-    const Icon  = roseDir ? TrendingUp : TrendingDown;
+    const glyph = isNeutral ? '—' : roseDir ? '▲' : '▼';
+    const color = isNeutral
+        ? 'var(--text-muted)'
+        : isPositive ? 'var(--success)' : 'var(--danger)';
+    const bg = isNeutral
+        ? 'var(--bg-subtle)'
+        : isPositive ? 'var(--success-bg)' : 'var(--danger-bg)';
     return (
-        <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 3,
-            padding: '3px 8px', borderRadius: '8px',
-            fontSize: '11px', fontWeight: 600,
-            fontVariantNumeric: 'tabular-nums',
+        <span className="num" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '2px 6px', borderRadius: 'var(--radius-chip)',
+            fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+            fontSize: '11px', fontWeight: 500,
             background: bg, color,
         }}>
-            <Icon size={10} strokeWidth={2.5} />
-            {Math.abs(Number(value)).toFixed(1)}%
+            {glyph} {isNeutral ? '' : `${Math.abs(Number(value)).toFixed(1)}%`}
         </span>
     );
 };
 
 /* ─── Skeleton Pulse ──────────────────────────────────────────── */
-const Pulse = ({ w = '100%', h = 16, r = 6 }) => (
+const Pulse = ({ w = '100%', h = 14, r = 4 }) => (
     <div style={{
         width: w, height: h, borderRadius: r,
-        background: 'var(--bg-subtle, #f3f4f6)',
+        background: 'var(--bg-subtle)',
         animation: 'kpiPulse 1.5s ease-in-out infinite',
     }} />
 );
 
-/* ─── Single KPI Card ─────────────────────────────────────────── */
+/* ─── Single KPI Card ─────────────────────────────────────────────
+   Hairline border, 20px padding, no drop shadow, no hover lift.
+   Icons are a sidebar-only affordance — none here. `benchmark`
+   ({ percentile, benchmarkLabel }) renders a BenchmarkRail under the
+   value; pass it only where a real benchmark exists. */
 export const KpiCard = ({
     title, value, subtitle, trend, trendLabel, invertTrend = false,
-    icon: Icon, color = 'var(--brand, #2563eb)', sparkData,
+    color = 'var(--chart-2)', sparkData, benchmark,
     loading, onClick,
 }) => {
     const rose       = Number(trend) > 0;          // did the value move up?
@@ -85,18 +87,17 @@ export const KpiCard = ({
     if (loading) {
         return (
             <div style={{
-                background: 'var(--bg-card, #fff)',
-                border: '1px solid var(--border, #e5e7eb)',
-                borderRadius: 'var(--radius-lg, 14px)',
-                padding: '20px 22px',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '20px',
             }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                    <Pulse w={40} h={40} r={12} />
-                    <Pulse w={48} h={22} r={8} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+                    <Pulse w="45%" h={13} />
+                    <Pulse w={44} h={18} />
                 </div>
-                <Pulse w="55%" h={28} r={6} />
-                <div style={{ marginTop: 10 }}><Pulse w="40%" h={14} r={4} /></div>
-                <div style={{ marginTop: 18 }}><Pulse w="100%" h={36} r={6} /></div>
+                <Pulse w="55%" h={24} />
+                <div style={{ marginTop: 14 }}><Pulse w="100%" h={36} /></div>
             </div>
         );
     }
@@ -110,81 +111,70 @@ export const KpiCard = ({
                 position: 'relative',
                 display: 'flex',
                 flexDirection: 'column',
-                background: 'var(--bg-card, #fff)',
-                border: '1px solid var(--border, #e5e7eb)',
-                borderRadius: 'var(--radius-lg, 14px)',
-                padding: '20px 22px 0',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '20px 20px 0',
                 cursor: clickable ? 'pointer' : 'default',
                 overflow: 'hidden',
-                transition: 'box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease',
+                transition: 'background-color 150ms ease',
             }}
             onMouseEnter={e => {
-                e.currentTarget.style.boxShadow = 'var(--shadow-hover, 0 6px 20px rgba(15,23,42,0.08))';
-                e.currentTarget.style.transform = 'translateY(-2px)';
-                e.currentTarget.style.borderColor = 'var(--border-strong, #d1d5db)';
+                if (clickable) e.currentTarget.style.background = 'var(--bg-hover)';
             }}
             onMouseLeave={e => {
-                e.currentTarget.style.boxShadow = 'none';
-                e.currentTarget.style.transform = '';
-                e.currentTarget.style.borderColor = 'var(--border, #e5e7eb)';
+                e.currentTarget.style.background = 'var(--bg-card)';
             }}
             onKeyDown={e => { if (clickable && (e.key === 'Enter' || e.key === ' ')) onClick(); }}
         >
-            {/* ── Top: icon + trend ── */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-                {Icon ? (
-                    <div style={{
-                        width: 40, height: 40, borderRadius: 12,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: `color-mix(in srgb, ${color} 8%, transparent)`,
-                        border: `1px solid color-mix(in srgb, ${color} 16%, transparent)`,
-                    }}>
-                        <Icon size={18} color={color} strokeWidth={1.8} />
-                    </div>
-                ) : <div />}
-                <TrendPill value={trend} isPositive={isPositive} isNeutral={isNeutral} rose={rose} />
+            {/* ── Top: section title + delta ── */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                <div className="section-title" style={{
+                    fontSize: 13, fontWeight: 600, letterSpacing: '0.02em',
+                    color: 'var(--text-muted)',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                    {title}
+                </div>
+                <Delta value={trend} isPositive={isPositive} isNeutral={isNeutral} rose={rose} />
             </div>
 
-            {/* ── Value ── */}
-            <div style={{
-                fontSize: '1.5rem', fontWeight: 700,
-                letterSpacing: '-0.03em', lineHeight: 1,
+            {/* ── Value — mono face, tabular figures ── */}
+            <div className="num" style={{
+                fontSize: '20px', fontWeight: 500, lineHeight: 1.15,
+                fontFamily: 'var(--font-mono)',
                 fontVariantNumeric: 'tabular-nums',
-                color: 'var(--text, #111827)',
-                marginBottom: 8,
+                color: 'var(--text)',
+                marginBottom: 4,
             }}>
                 {value ?? '—'}
             </div>
 
-            {/* ── Label (+ optional trend label) ── */}
-            <div style={{
-                fontSize: '0.8rem', fontWeight: 500,
-                color: 'var(--text-muted, #9ca3af)',
-                display: 'flex', alignItems: 'center', gap: 4,
-            }}>
-                {title}
-                {clickable && <ArrowRight size={12} color="var(--brand, #2563eb)" />}
-            </div>
-
             {subtitle && (
-                <div style={{ marginTop: 4, fontSize: '0.72rem', color: 'var(--text-muted, #9ca3af)' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                     {subtitle}
                 </div>
             )}
 
-            {/* ── Footer: full-width sparkline band ──
-                Fills the card base with a real micro-chart. When there's no
-                series, a spacer keeps card heights aligned across the row. */}
-            <div style={{ marginTop: 18, marginLeft: -22, marginRight: -22 }}>
+            {/* Benchmark rail — only where a real benchmark exists. */}
+            {benchmark?.percentile != null && (
+                <div style={{ marginTop: 10 }}>
+                    <BenchmarkRail percentile={benchmark.percentile} benchmarkLabel={benchmark.benchmarkLabel} />
+                </div>
+            )}
+
+            {/* ── Footer: full-width sparkline band ── */}
+            <div style={{ marginTop: 'auto', paddingTop: 12, marginLeft: -20, marginRight: -20 }}>
                 {hasSpark ? (
                     <div style={{
-                        borderTop: '1px solid var(--border-light, #f3f4f6)',
-                        padding: '8px 14px 10px',
+                        borderTop: '1px solid var(--border)',
+                        padding: '8px 12px 10px',
                     }}>
                         {trendLabel && (
                             <div style={{
-                                fontSize: '0.66rem', fontWeight: 500, letterSpacing: '0.02em',
-                                textTransform: 'uppercase', color: 'var(--text-muted, #9ca3af)',
+                                fontFamily: 'var(--font-mono)',
+                                fontSize: '10px', letterSpacing: '0.08em',
+                                textTransform: 'uppercase', color: 'var(--text-muted)',
                                 marginBottom: 4,
                             }}>
                                 {trendLabel}
@@ -193,7 +183,7 @@ export const KpiCard = ({
                         <Sparkline data={sparkData} color={color} />
                     </div>
                 ) : (
-                    <div style={{ height: 20 }} />
+                    <div style={{ height: 16 }} />
                 )}
             </div>
         </div>
@@ -208,12 +198,15 @@ const KpiCards = ({ cards = [], loading, cols }) => {
         <>
             <style>{`
                 @keyframes kpiPulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+                @media (prefers-reduced-motion: reduce) {
+                    [style*="kpiPulse"] { animation: none; }
+                }
             `}</style>
             <div style={{
                 display: 'grid',
                 gridTemplateColumns: `repeat(auto-fit, minmax(min(220px, 100%), 1fr))`,
-                gap: '16px',
-                marginBottom: '28px',
+                gap: '12px',
+                marginBottom: '20px',
             }}>
                 {loading
                     ? Array.from({ length: count }).map((_, i) => <KpiCard key={i} loading />)

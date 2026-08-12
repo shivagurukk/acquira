@@ -14,7 +14,7 @@ import {
 import { merchantApi } from '../../api/merchants';
 import { SectionLoader } from '../../components/Loaders';
 import { useAuth } from '../../contexts/AuthContext';
-import { createFmt } from '../../utils/formatters';
+import { createFmt, formatCompactCurrency } from '../../utils/formatters';
 import { pageContainer } from '../../theme/dataGridStyles';
 
 // ── Palette: one distinct colour per merchant slot ─────────────────
@@ -112,8 +112,8 @@ const EmptyState = () => (
 
 // ── Main component ─────────────────────────────────────────────────
 const MerchantComparison = () => {
-    const { currencySymbol, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals).currency, [currencySymbol, currencyDecimals]);
     const [options, setOptions] = useState([]);
     const [loadingOptions, setLoadingOptions] = useState(false);
     const [selected, setSelected] = useState([]);
@@ -456,7 +456,8 @@ const MerchantComparison = () => {
                                     <LineChart data={trendData}>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border-tertiary)" />
                                         <XAxis dataKey="month" tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
-                                        <YAxis tickFormatter={(v) => `${v/1000}k`} tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
+                                        {/* Money axis — carries the tenant currency instead of a bare 'k'. */}
+                                        <YAxis tickFormatter={(v) => formatCompactCurrency(v)} width={78} tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
                                         <RTooltip content={<CustomTooltip />} />
                                         <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:11 }} />
                                         {merchants.map((m, i) => (
@@ -479,7 +480,7 @@ const MerchantComparison = () => {
                                 <ResponsiveContainer width="100%" height={240}>
                                     <BarChart data={schemeData} layout="vertical">
                                         <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--color-border-tertiary)" />
-                                        <XAxis type="number" tickFormatter={(v) => `${v/1000}k`} tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
+                                        <XAxis type="number" tickFormatter={(v) => formatCompactCurrency(v)} tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
                                         <YAxis dataKey="scheme" type="category" width={90} tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
                                         <RTooltip content={<CustomTooltip />} />
                                         <Legend iconType="square" iconSize={8} wrapperStyle={{ fontSize:11 }} />
@@ -508,7 +509,8 @@ const MerchantComparison = () => {
                                     <BarChart data={cardTypeData}>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border-tertiary)" />
                                         <XAxis dataKey="type" tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
-                                        <YAxis tickFormatter={(v) => `${v/1000}k`} tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
+                                        {/* Money axis — carries the tenant currency instead of a bare 'k'. */}
+                                        <YAxis tickFormatter={(v) => formatCompactCurrency(v)} width={78} tick={{ fontSize:11 }} tickLine={false} axisLine={false} />
                                         <RTooltip content={<CustomTooltip />} />
                                         <Legend iconType="square" iconSize={8} wrapperStyle={{ fontSize:11 }} />
                                         {merchants.map((m, i) => (

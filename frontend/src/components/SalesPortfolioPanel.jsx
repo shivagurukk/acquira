@@ -2,16 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { X, Loader2, DollarSign, TrendingUp, Building2, Users, Target, Percent } from 'lucide-react';
 import api from '../api/axios';
-import { formatMsf } from '../utils/formatters';
+import { formatMsf, formatCompactCurrency } from '../utils/formatters';
 
 // ── formatters ───────────────────────────────────────────────
+// fmt = counts. fmtM = MONEY: every value it renders (volume, MSF, target) is
+// an amount, so it now carries the tenant currency and the tenant's decimals
+// instead of a bare number rounded to whole units.
 const fmt = (v) => v == null ? '0' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
-const fmtM = (v) => {
-  const n = Number(v || 0);
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-  return n.toFixed(0);
-};
+const fmtM = (v) => formatCompactCurrency(v);
 const fmtPct = (v) => v == null ? '—' : Number(v).toFixed(2) + '%';
 
 const CARD = { background: '#fff', borderRadius: 14, padding: 20, border: '1px solid #eef0f4', boxShadow: '0 1px 4px rgba(0,0,0,.05)' };
@@ -131,7 +129,7 @@ const SalesPortfolioPanel = ({ level, id, onClose, onDrill }) => {
             <BarChart data={trend}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtM} />
+              <YAxis tick={{ fontSize: 11 }} width={78} tickFormatter={fmtM} />
               <Tooltip formatter={(v) => fmtM(v)} />
               <Bar dataKey="volume" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Volume" />
               <Bar dataKey="msf" fill="#f59e0b" radius={[4, 4, 0, 0]} name="MSF" />

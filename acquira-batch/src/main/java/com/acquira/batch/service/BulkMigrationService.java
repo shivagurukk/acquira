@@ -462,8 +462,32 @@ public class BulkMigrationService {
         String arnCol = cm.containsKey("arn") ? cm.get("arn") : "NULL";
         String rrnCol = cm.containsKey("rrn_number") ? cm.get("rrn_number") : "NULL";
         String authCodeCol = cm.containsKey("auth_code") ? cm.get("auth_code") : "NULL";
-        String txnCurrencyCol = cm.containsKey("txn_currency") ? cm.get("txn_currency") : "'BHD'";
-        String baseCurrencyCol = cm.containsKey("store_base_currency") ? cm.get("store_base_currency") : "'BHD'";
+        // CURRENCY DEFAULT (fixed 2026-08-10). These were hardcoded to 'BHD', so a
+        // migration whose column mapping omitted currency stamped EVERY row as
+        // Bahraini Dinar regardless of tenant — mislabelling an Egyptian tenant's
+        // whole history as BHD, and the UAE tenant's as BHD too. The tenant's own
+        // configured currency is the only defensible default; if that cannot be
+        // resolved we refuse rather than guess, because a wrong currency label on
+        // migrated history is effectively unrecoverable once summaries are built.
+        String tenantCurrency = null;
+        try {
+            tenantCurrency = jdbcTemplate.queryForObject(
+                "SELECT NULLIF(TRIM(COALESCE(t.base_currency, rc.currency_code)), '') " +
+                "FROM tenant t LEFT JOIN ref_country rc ON rc.country_code = t.home_country_code " +
+                "WHERE t.tenant_id = ?", String.class, tenantId);
+        } catch (Exception e) {
+            log.warn("[BulkMigration] Could not resolve currency for tenant {}: {}", tenantId, e.getMessage());
+        }
+        if ((!cm.containsKey("txn_currency") || !cm.containsKey("store_base_currency"))
+                && (tenantCurrency == null || tenantCurrency.isBlank())) {
+            throw new IllegalStateException(
+                "Tenant " + tenantId + " has no resolvable base currency and the column mapping does not supply "
+                + "txn_currency / store_base_currency. Set the tenant's Jurisdiction and currency, or map the "
+                + "source currency columns, before migrating.");
+        }
+        String tenantCurrencyLiteral = "'" + (tenantCurrency == null ? "" : tenantCurrency.replace("'", "''")) + "'";
+        String txnCurrencyCol = cm.containsKey("txn_currency") ? cm.get("txn_currency") : tenantCurrencyLiteral;
+        String baseCurrencyCol = cm.containsKey("store_base_currency") ? cm.get("store_base_currency") : tenantCurrencyLiteral;
 
         // Delete existing data for this month first (idempotent)
         jdbcTemplate.update(

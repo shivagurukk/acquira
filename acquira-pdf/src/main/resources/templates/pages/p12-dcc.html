@@ -27,13 +27,13 @@
                 <div style="flex: 1 1 0; min-width: 160px;">
                     <div style="font-size: 8px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">DCC Eligible Volume</div>
                     <div style="font-size: 22px; font-weight: 900; color: #FFFFFF; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
-                         th:text="${dto.dccPerformance.dccEligibleVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
+                         th:text="${dto.dccPerformance.dccEligibleVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
                     <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">International card transactions</div>
                 </div>
                 <div style="flex: 0 0 auto; width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
                 <div style="flex: 1 1 0; min-width: 160px; text-align: center;">
                     <div style="font-size: 8px; font-weight: 700; color: #FBBF24; letter-spacing: 0.06em; text-transform: uppercase;">Opt-Out Volume</div>
-                    <div style="font-size: 24px; font-weight: 900; color: #FBBF24; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" th:text="${dto.currencyCode} + ' ' + ${dto.dccPerformance.dccOptoutVolume != null ? #numbers.formatDecimal(dto.dccPerformance.dccOptoutVolume, 1, 'COMMA', 0, 'POINT') : '0'}"><span th:text="${dto.currencyCode}">AED</span> 0</div>
+                    <div style="font-size: 24px; font-weight: 900; color: #FBBF24; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" th:text="${dto.currencyCode} + ' ' + ${dto.dccPerformance.dccOptoutVolume != null ? #numbers.formatDecimal(dto.dccPerformance.dccOptoutVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '0'}"><span th:text="${dto.currencyCode}">AED</span> 0</div>
                     <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">Volume from declined opt-ins</div>
                 </div>
                 <div style="flex: 0 0 auto; width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
@@ -61,34 +61,31 @@
         <div class="card mb-6" style="padding: 16px 20px;">
             <div class="card-title" style="margin-bottom: 10px;"><span>DCC CONVERSION FUNNEL</span></div>
             <div style="display: flex; align-items: center; justify-content: center; gap: 0; padding: 4px 0;">
-                <!-- Step 1: Total Intl Txns -->
+                <!-- Step 1: DCC Eligible
+                     There used to be a "Total Intl Transaction Count" step ahead of this
+                     one, but it read dccPerformance.totalIntlTxnCount, which the service
+                     assigns from eligCount — so it always printed the identical number to
+                     DCC Eligible and implied a funnel drop-off that was never measured.
+                     A genuine first step needs an international-transaction count on
+                     sum_daily_merchant; there is no such column today. -->
                 <div style="text-align: center; flex: 1;">
                     <div style="background: linear-gradient(135deg, #1E3A8A, #2563EB); color: white; padding: 12px 8px; border-radius: 8px 0 0 8px; clip-path: polygon(0 0, 90% 0, 100% 50%, 90% 100%, 0 100%);">
-                        <div style="font-size: 8px; font-weight: 700; color: #93C5FD; text-transform: uppercase; letter-spacing: 0.05em;">Total Intl Transaction Count</div>
-                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.totalIntlTxnCount != null ? #numbers.formatDecimal(dto.dccPerformance.totalIntlTxnCount, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
-                        <div style="font-size: 8px; color: #93C5FD; margin-top: 1px;" th:text="${dto.dccPerformance.totalIntlVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.totalIntlVolume, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
-                    </div>
-                </div>
-                <div style="font-size: 14px; color: #CBD5E1; margin: 0 -6px; z-index: 1;">&#9654;</div>
-                <!-- Step 2: DCC Eligible -->
-                <div style="text-align: center; flex: 1;">
-                    <div style="background: linear-gradient(135deg, #2563EB, #3B82F6); color: white; padding: 12px 8px; clip-path: polygon(0 10%, 10% 0, 90% 0, 100% 50%, 90% 100%, 10% 100%, 0 90%);">
                         <div style="font-size: 8px; font-weight: 700; color: #BFDBFE; text-transform: uppercase; letter-spacing: 0.05em;">DCC Eligible</div>
                         <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccEligibleCount != null ? #numbers.formatDecimal(dto.dccPerformance.dccEligibleCount, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
-                        <div style="font-size: 8px; color: #BFDBFE; margin-top: 1px;" th:text="${dto.dccPerformance.dccEligibleVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
+                        <div style="font-size: 8px; color: #BFDBFE; margin-top: 1px;" th:text="${dto.dccPerformance.dccEligibleVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
                     </div>
                 </div>
                 <div style="font-size: 14px; color: #CBD5E1; margin: 0 -6px; z-index: 1;">&#9654;</div>
-                <!-- Step 3: DCC Opted In -->
+                <!-- Step 2: DCC Opted In -->
                 <div style="text-align: center; flex: 1;">
                     <div style="background: linear-gradient(135deg, #047857, #059669); color: white; padding: 12px 8px; clip-path: polygon(0 10%, 10% 0, 90% 0, 100% 50%, 90% 100%, 10% 100%, 0 90%);">
                         <div style="font-size: 8px; font-weight: 700; color: #6EE7B7; text-transform: uppercase; letter-spacing: 0.05em;">Opted In</div>
                         <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccOptinCountLong != null ? #numbers.formatDecimal(dto.dccPerformance.dccOptinCountLong, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
-                        <div style="font-size: 8px; color: #6EE7B7; margin-top: 1px;" th:text="${dto.dccPerformance.dccOptinVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptinVolume, 1, 'COMMA', 0, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
+                        <div style="font-size: 8px; color: #6EE7B7; margin-top: 1px;" th:text="${dto.dccPerformance.dccOptinVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptinVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : dto.currencyCode + ' 0'}">AED 0</div>
                     </div>
                 </div>
                 <div style="font-size: 14px; color: #CBD5E1; margin: 0 -6px; z-index: 1;">&#9654;</div>
-                <!-- Step 4: Conversion Rate -->
+                <!-- Step 3: Conversion Rate -->
                 <div style="text-align: center; flex: 1;">
                     <div style="background: linear-gradient(135deg, #C9A962, #D4B878); color: white; padding: 12px 8px; border-radius: 0 8px 8px 0; clip-path: polygon(0 10%, 10% 0, 100% 0, 100% 100%, 10% 100%, 0 90%);">
                         <div style="font-size: 8px; font-weight: 700; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.05em;">Conversion Rate</div>
@@ -110,11 +107,17 @@
         </div>
 
         <!-- ROW 3: Opt-Out Volume Trend + Opt-In Rate Overlay
-             FIX NEW: opt-in conversion rate % is now overlaid as a line on the right axis
-             so the merchant can track whether opt-in rate is improving month on month.
+             opt-in conversion rate % is overlaid as a line on the right axis so the
+             merchant can track whether opt-in rate is improving month on month.
              data-field = monthly opt-out volume (bars, left axis)
              data-field2 = monthly opt-in conversion rate % (line, right axis)
-             Both series come from dccPerformance.optOutOptInTrend and optInConversionRateTrend. -->
+             Both series come from dccPerformance.optOutOptInTrend and optInConversionRateTrend.
+
+             The rate line is count-based (optin/eligible), the same definition as the
+             funnel's headline rate above, and months with fewer than 5 eligible
+             transactions are omitted — the line breaks across them. Without that floor
+             a single opt-in in a month with no opt-outs printed a 100% spike directly
+             under a 0.0% headline. -->
         <div class="card mb-6" style="padding: 10px 12px;">
             <div class="card-title">
                 <span>OPT-OUT VOLUME TREND WITH OPT-IN RATE (<span th:text="${dto.currencyCode}">AED</span>)</span>

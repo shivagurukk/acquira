@@ -55,6 +55,10 @@ public class TopPerformersController {
     @Autowired
     private com.acquira.core.service.TenantService tenantService;
 
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    @Autowired
+    private CurrencyMeta currencyMeta;
+
     private void resolveFilters(VolumeRevenueFilterDTO filters, Long tenantId) {
         if (notEmpty(filters.getTeamLeaderList()) && tenantId != null) {
             List<String> ids = salesTeamService.getSalesUserIdsByTeamLeadNames(tenantId, filters.getTeamLeaderList());
@@ -124,7 +128,7 @@ public class TopPerformersController {
         concentration.put("top10SharePct", totalVolume > 0 ? round2(top10Volume / totalVolume * 100) : 0);
         response.put("concentration", concentration);
 
-        return response;
+        return currencyMeta.attach(response, tenantId);
     }
 
     // ─────────────────────────────────────────────────────────────

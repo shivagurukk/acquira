@@ -1,269 +1,192 @@
 /**
- * Sidebar — "quiet ledger" theme.
+ * Sidebar — dark rail, constant in both colour schemes.
  *
- * All sidebar colour comes from the --sb-* tokens below, flipped by the
- * global html.dark class (set by ThemeContext). One accent; category
- * identity is carried by icons and type, not per-category colour.
+ * The rail stays dark always so it reads as app chrome rather than
+ * content. All rail colour comes from the --rail-* tokens defined in
+ * index.css (:root); there is deliberately NO html.dark override here.
  *
- * Signature element: the ledger rail — a continuous hairline down the left
- * edge of each open group. The active item overlays a 2px accent segment.
+ * Structure: 232px expanded / 56px collapsed icon rail. Active state is
+ * a 2px full-height teal marker flush to the item's left edge plus a
+ * background wash — no filled pill, no weight change, no chevron.
  */
 
 .sb {
-  --sb-bg: #ffffff;
-  --sb-border: #e5eaf3;
-  --sb-rail: #dbe3f0;
-  --sb-text: #1e2a3f;
-  --sb-text-2: #55627a;
-  --sb-text-3: #8794ab;
-  --sb-hover: rgba(37, 99, 235, 0.06);
-  --sb-accent: #0D9488;
-  --sb-accent-2: #14B8A6;
-  --sb-accent-text: #0F766E;
-  --sb-accent-bg: rgba(13, 148, 136, 0.09);
-  --sb-accent-soft: #CCFBF1;
-  --sb-field: #f6f8fc;
-  --sb-danger: #b42318;
-  --sb-danger-bg: rgba(180, 35, 24, 0.07);
-
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  background: var(--sb-bg);
-  color: var(--sb-text);
-  border-right: 1px solid var(--sb-border);
+  /* --vh100, not 100vh: the rail is full-bleed dark, so under --app-zoom a
+     raw 100vh would leave a lighter band below it. */
+  height: var(--vh100, 100vh);
+  background: var(--rail-bg, #101F1E);
+  color: var(--rail-text, #9FB3B0);
+  border-right: 1px solid var(--rail-edge, #1F3130);
   overflow: hidden;
   flex-shrink: 0;
-  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Sidebar collapse is the one width animation permitted. */
+  transition: width 180ms ease-out;
 }
 
-html.dark .sb {
-  --sb-bg: #10141d;
-  --sb-border: #232a3a;
-  --sb-rail: #2b3348;
-  --sb-text: #d9e0ee;
-  --sb-text-2: #94a0b8;
-  --sb-text-3: #76829a;
-  --sb-hover: rgba(255, 255, 255, 0.06);
-  --sb-accent: #2DD4BF;
-  --sb-accent-2: #5EEAD4;
-  --sb-accent-text: #99F6E4;
-  --sb-accent-bg: rgba(45, 212, 191, 0.13);
-  --sb-accent-soft: rgba(45, 212, 191, 0.18);
-  --sb-field: #171c28;
-  --sb-danger: #f97066;
-  --sb-danger-bg: rgba(249, 112, 102, 0.09);
+/* The rail may render as a MUI Drawer paper; keep it dark and hairlined
+   even against the generic html.dark .MuiDrawer-paper overrides. */
+.sb.MuiDrawer-paper,
+html.dark .sb.MuiDrawer-paper {
+  background: var(--rail-bg, #101F1E) !important;
+  color: var(--rail-text, #9FB3B0) !important;
+  border-right: 1px solid var(--rail-edge, #1F3130) !important;
+  box-shadow: none !important;
 }
 
-/* Every interactive element shares the same reset + focus treatment. */
-.sb button {
+/* Every interactive element shares the same reset + focus treatment.
+   Focus ring stays teal and visible against the dark rail.
+
+   `:where(button)` contributes ZERO specificity, so this reset weighs the
+   same as a single class. Without it the reset is (0,1,1) and silently
+   beats every single-class state rule below — `.sb__item--active`,
+   `--muted`, `.sb__collapse`, `.sb__tenant-trigger`, `.sb__icon-item--active`
+   — flattening the whole rail to one grey with no active wash. */
+.sb :where(button) {
   font-family: inherit;
   background: none;
   border: none;
   cursor: pointer;
   color: inherit;
-  border-radius: 8px;
+  border-radius: 4px;
+  transition: background-color 150ms, color 150ms;
 }
 .sb button:focus-visible {
-  outline: 2px solid var(--sb-accent);
-  outline-offset: -2px;
+  outline: 2px solid var(--rail-marker, #37B0A5);
+  outline-offset: 2px;
 }
 
-/* ── Header: brand + tenant as one identity block ─────────────────── */
+/* ── Header: wordmark + environment tag, 56px, bottom hairline ────── */
 .sb__header {
-  padding: 14px 14px 10px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rail-edge, #1F3130);
   flex-shrink: 0;
+}
+.sb--collapsed .sb__header {
+  justify-content: center;
+  padding: 0;
 }
 .sb__brand {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
-  padding: 2px;
+  padding: 2px 0;
   text-align: left;
 }
-.sb__logo {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, var(--sb-accent), var(--sb-accent-2));
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Two-letter NX monogram — matches the login mark. */
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  flex-shrink: 0;
-  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.35);
-}
-html.dark .sb__logo {
-  color: #0d1320;
-}
 .sb__brand-name {
-  font-size: 14.5px;
-  font-weight: 700;
-  color: var(--sb-text);
-  letter-spacing: 0.05em;
-  line-height: 1.25;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rail-text-active, #E4ECEA);
+  letter-spacing: 0.04em;
+  line-height: 1;
 }
-.sb__brand-sub {
-  font-size: 11px;
-  color: var(--sb-text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.25;
-}
-.sb__collapse-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  color: var(--sb-text-3);
-  flex-shrink: 0;
-}
-.sb__collapse-btn:hover {
-  background: var(--sb-hover);
-  color: var(--sb-text-2);
+.sb__env {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--rail-eyebrow, #5A6B6A);
+  line-height: 1;
+  user-select: none;
 }
 
 /* ── Search field ─────────────────────────────────────────────────── */
 .sb__search {
-  margin: 4px 12px 10px;
+  margin: 10px 12px 4px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
-  border: 1px solid var(--sb-border);
-  border-radius: 8px;
-  background: var(--sb-field);
+  padding: 6px 10px;
+  border: 1px solid var(--rail-edge, #1F3130);
+  border-radius: 4px;
+  background: transparent;
   cursor: text;
   flex-shrink: 0;
 }
 .sb__search:focus-within {
-  border-color: var(--sb-accent);
+  border-color: var(--rail-marker, #37B0A5);
 }
 .sb__search input {
   background: none;
   border: none;
   outline: none;
-  color: var(--sb-text);
+  color: var(--rail-text-active, #E4ECEA);
   font-size: 12px;
   flex: 1;
   min-width: 0;
-  caret-color: var(--sb-accent);
+  caret-color: var(--rail-marker, #37B0A5);
   font-family: inherit;
 }
 .sb__search input::placeholder {
-  color: var(--sb-text-3);
+  color: var(--rail-eyebrow, #5A6B6A);
 }
 .sb__kbd {
+  font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--sb-text-3);
-  border: 1px solid var(--sb-border);
-  border-radius: 4px;
-  padding: 1px 5px;
+  color: var(--rail-eyebrow, #5A6B6A);
+  border: 1px solid var(--rail-edge, #1F3130);
+  border-radius: 2px;
+  padding: 1px 4px;
   flex-shrink: 0;
   user-select: none;
 }
 
-/* ── Scrollable nav ───────────────────────────────────────────────── */
+/* ── Scrollable nav — scrollbar hidden until hover ────────────────── */
 .sb__nav {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 2px 12px 8px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--sb-rail) transparent;
+  padding: 4px 8px 8px;
+  scrollbar-width: none;
 }
+.sb__nav::-webkit-scrollbar { width: 4px; }
+.sb__nav::-webkit-scrollbar-thumb { background: transparent; }
+.sb__nav:hover { scrollbar-width: thin; scrollbar-color: var(--rail-edge) transparent; }
+.sb__nav:hover::-webkit-scrollbar-thumb { background: var(--rail-edge, #1F3130); }
 
-/* Zone eyebrow — the only uppercase element left. */
+/* Group eyebrow — mono, 10px, uppercase, no divider lines. */
 .sb__zone {
-  font-size: 10.5px;
-  font-weight: 650;
-  letter-spacing: 0.1em;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--sb-text-3);
-  padding: 16px 8px 5px;
+  color: var(--rail-eyebrow, #5A6B6A);
+  padding: 0 8px 4px;
+  margin-top: 20px;
   user-select: none;
 }
 .sb__zone:first-child {
-  padding-top: 4px;
+  margin-top: 8px;
 }
 
-/* Category header — plain text row, no icon chip. */
-.sb__group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--sb-text);
-  text-align: left;
-}
-.sb__group:hover {
-  background: var(--sb-hover);
-  color: var(--sb-text);
-}
-.sb__group-label {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sb__group-chev {
-  color: var(--sb-text-3);
-  opacity: 0.7;
-  flex-shrink: 0;
-  transition: transform 0.18s ease-out;
-}
-.sb__group-chev--open {
-  transform: rotate(90deg);
-}
-.sb__group--active {
-  color: var(--sb-text);
-}
-
-/* The ledger rail: hairline down the group's left edge. */
-.sb__rail {
-  border-left: 1px solid var(--sb-rail);
-  margin-left: 11px;
-  margin-bottom: 2px;
-}
-
-/* Nav item hanging off the rail. */
+/* Nav item — 36px, 13px/500, 12px icon gap, 4px radius. */
 .sb__item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  min-height: 34px;
-  padding: 7px 10px 7px 14px;
-  margin-left: -1px;
-  border-left: 2px solid transparent;
-  border-radius: 0 8px 8px 0;
-  font-size: 13.5px;
-  color: var(--sb-text-2);
+  height: 36px;
+  padding: 0 10px 0 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--rail-text, #9FB3B0);
   text-align: left;
-  transition: background 0.13s, color 0.13s;
 }
 .sb__item:hover {
-  background: var(--sb-hover);
-  color: var(--sb-text);
+  background: var(--rail-hover-bg, #182A29);
+  color: var(--rail-text-hover, #D6E2E0);
 }
 .sb__item svg {
-  color: var(--sb-text-2);
+  color: inherit;
   flex-shrink: 0;
-  transition: color 0.13s;
-}
-.sb__item:hover svg {
-  color: var(--sb-text);
 }
 .sb__item-label {
   white-space: nowrap;
@@ -271,66 +194,70 @@ html.dark .sb__logo {
   text-overflow: ellipsis;
   flex: 1;
 }
+/* ACTIVE: 2px full-height teal marker flush to the left edge + wash +
+   brightened text. No pill, no weight change, no chevron. */
 .sb__item--active,
 .sb__item--active:hover {
-  border-left-color: var(--sb-accent);
-  background: var(--sb-accent-bg);
-  color: var(--sb-accent-text);
-  font-weight: 600;
+  background: var(--rail-active-bg, #16302E);
+  color: var(--rail-text-active, #E4ECEA);
 }
-.sb__item--active svg,
-.sb__item--active:hover svg {
-  color: var(--sb-accent);
+.sb__item--active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 0;
+  background: var(--rail-marker, #37B0A5);
 }
 .sb__item--muted {
-  color: var(--sb-text-3);
-  font-size: 12.5px;
-  min-height: 30px;
+  color: var(--rail-eyebrow, #5A6B6A);
 }
 
 /* Empty search result */
 .sb__empty {
   text-align: center;
   padding: 40px 16px;
-  color: var(--sb-text-3);
+  color: var(--rail-eyebrow, #5A6B6A);
   font-size: 12px;
 }
 
-/* ── Footer: user card + popover menu ─────────────────────────────── */
+/* ── Footer stack: user → freshness → collapse toggle ─────────────── */
 .sb__footer {
-  border-top: 1px solid var(--sb-border);
-  padding: 8px 10px;
+  border-top: 1px solid var(--rail-edge, #1F3130);
+  padding: 8px 8px 6px;
   flex-shrink: 0;
   position: relative;
 }
 .sb__user {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   width: 100%;
   padding: 6px 8px;
   text-align: left;
 }
 .sb__user:hover {
-  background: var(--sb-hover);
+  background: var(--rail-hover-bg, #182A29);
 }
 .sb__avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--sb-accent-soft);
-  color: var(--sb-accent-text);
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--rail-active-bg, #16302E);
+  color: var(--rail-marker, #37B0A5);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   flex-shrink: 0;
 }
 .sb__user-name {
-  font-size: 12.5px;
-  font-weight: 550;
-  color: var(--sb-text);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--rail-text-hover, #D6E2E0);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -338,95 +265,151 @@ html.dark .sb__logo {
 }
 .sb__user-sub {
   font-size: 11px;
-  color: var(--sb-text-3);
+  color: var(--rail-eyebrow, #5A6B6A);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.3;
 }
 
+/* Data freshness stamp — mono 11px + status dot. */
+.sb__fresh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: default;
+}
+.sb__fresh--collapsed {
+  justify-content: center;
+  padding: 6px 0;
+}
+.sb__fresh-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--rail-fresh, #37B0A5);
+  flex-shrink: 0;
+}
+.sb__fresh-dot--stale {
+  background: var(--rail-stale, #D9A542);
+}
+.sb__fresh-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rail-text, #9FB3B0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Collapse toggle — bottom of the rail, not a header hamburger. */
+.sb__collapse {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--rail-eyebrow, #5A6B6A);
+}
+.sb__collapse:hover {
+  background: var(--rail-hover-bg, #182A29);
+  color: var(--rail-text-hover, #D6E2E0);
+}
+.sb--collapsed .sb__collapse {
+  justify-content: center;
+  padding: 0;
+}
+
+/* Popover menu (user actions) — the one elevated surface in the rail. */
 .sb__menu {
   position: absolute;
   bottom: calc(100% + 4px);
-  left: 10px;
-  right: 10px;
-  background: var(--sb-field);
-  border: 1px solid var(--sb-border);
-  border-radius: 10px;
+  left: 8px;
+  right: 8px;
+  background: var(--rail-bg, #101F1E);
+  border: 1px solid var(--rail-edge, #1F3130);
+  border-radius: 4px;
   padding: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
   z-index: 300;
-}
-html.dark .sb__menu {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 .sb__menu-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   width: 100%;
   padding: 7px 10px;
-  font-size: 12.5px;
-  color: var(--sb-text);
+  font-size: 12px;
+  color: var(--rail-text-hover, #D6E2E0);
 }
 .sb__menu-item svg {
-  color: var(--sb-text-2);
+  color: var(--rail-text, #9FB3B0);
 }
 .sb__menu-item:hover {
-  background: var(--sb-hover);
+  background: var(--rail-hover-bg, #182A29);
 }
 .sb__menu-item--danger,
 .sb__menu-item--danger svg {
-  color: var(--sb-danger);
+  color: var(--rail-stale, #D9A542);
 }
 .sb__menu-item--danger:hover {
-  background: var(--sb-danger-bg);
+  background: var(--rail-hover-bg, #182A29);
 }
 .sb__menu-sep {
   height: 1px;
-  background: var(--sb-border);
+  background: var(--rail-edge, #1F3130);
   margin: 4px 6px;
 }
 
-/* ── Collapsed rail (64px) ────────────────────────────────────────── */
-.sb--collapsed .sb__header {
-  padding: 14px 0 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
+/* ── Collapsed rail (56px): icons centred, marker still visible ───── */
 .sb__icon-item {
-  width: 38px;
+  position: relative;
+  width: 40px;
   height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 1px auto;
-  color: var(--sb-text-2);
+  border-radius: 4px;
+  color: var(--rail-text, #9FB3B0);
 }
 .sb__icon-item:hover {
-  background: var(--sb-hover);
+  background: var(--rail-hover-bg, #182A29);
+  color: var(--rail-text-hover, #D6E2E0);
 }
 .sb__icon-item--active {
-  background: var(--sb-accent-bg);
-  color: var(--sb-accent);
+  background: var(--rail-active-bg, #16302E);
+  color: var(--rail-text-active, #E4ECEA);
+}
+.sb__icon-item--active::before {
+  content: '';
+  position: absolute;
+  left: -8px;              /* flush to the rail edge (nav has 8px padding) */
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--rail-marker, #37B0A5);
 }
 .sb__zone-dot {
   width: 16px;
   height: 1px;
-  background: var(--sb-rail);
-  margin: 8px auto;
+  background: var(--rail-edge, #1F3130);
+  margin: 10px auto;
 }
 .sb--collapsed .sb__footer {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px 0;
+  gap: 2px;
+  padding: 8px 0 6px;
 }
 
-/* ── Tenant switcher (rendered inside .sb, shares its tokens) ─────── */
+/* ── Tenant switcher (rendered inside .sb, shares rail tokens) ────── */
 .sb__tenant {
   position: relative;
   width: 100%;
@@ -437,14 +420,14 @@ html.dark .sb__menu {
   gap: 8px;
   width: 100%;
   padding: 6px 8px;
-  font-size: 12.5px;
-  color: var(--sb-text-2);
+  font-size: 12px;
+  color: var(--rail-text, #9FB3B0);
   text-align: left;
 }
 .sb__tenant-trigger:hover,
 .sb__tenant-trigger--open {
-  background: var(--sb-hover);
-  color: var(--sb-text);
+  background: var(--rail-hover-bg, #182A29);
+  color: var(--rail-text-hover, #D6E2E0);
 }
 .sb__tenant-name {
   flex: 1;
@@ -452,12 +435,12 @@ html.dark .sb__menu {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-weight: 550;
+  font-weight: 500;
 }
 .sb__tenant-chev {
-  color: var(--sb-text-3);
+  color: var(--rail-eyebrow, #5A6B6A);
   flex-shrink: 0;
-  transition: transform 0.18s ease-out;
+  transition: transform 150ms ease-out;
 }
 .sb__tenant-chev--open {
   transform: rotate(180deg);
@@ -468,23 +451,21 @@ html.dark .sb__menu {
   left: 0;
   right: 0;
   z-index: 300;
-  background: var(--sb-field);
-  border: 1px solid var(--sb-border);
-  border-radius: 10px;
+  background: var(--rail-bg, #101F1E);
+  border: 1px solid var(--rail-edge, #1F3130);
+  border-radius: 4px;
   padding: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
   max-height: 300px;
   overflow-y: auto;
 }
-html.dark .sb__tenant-menu {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
-}
 .sb__tenant-menu-label {
+  font-family: var(--font-mono);
   font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--sb-text-3);
+  color: var(--rail-eyebrow, #5A6B6A);
   padding: 6px 10px 4px;
 }
 .sb__tenant-item {
@@ -494,20 +475,20 @@ html.dark .sb__tenant-menu {
   width: 100%;
   padding: 7px 10px;
   text-align: left;
-  color: var(--sb-text);
+  color: var(--rail-text-hover, #D6E2E0);
 }
 .sb__tenant-item:hover {
-  background: var(--sb-hover);
+  background: var(--rail-hover-bg, #182A29);
 }
 .sb__tenant-item--active {
-  background: var(--sb-accent-bg);
-  color: var(--sb-accent-text);
+  background: var(--rail-active-bg, #16302E);
+  color: var(--rail-text-active, #E4ECEA);
 }
 .sb__tenant-item--active svg {
-  color: var(--sb-accent);
+  color: var(--rail-marker, #37B0A5);
 }
 .sb__tenant-item-name {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -516,7 +497,7 @@ html.dark .sb__tenant-menu {
 }
 .sb__tenant-item-meta {
   font-size: 11px;
-  color: var(--sb-text-3);
+  color: var(--rail-eyebrow, #5A6B6A);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

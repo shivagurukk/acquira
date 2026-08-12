@@ -8,7 +8,7 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatMsf } from '../../utils/formatters';
+import { formatMsf, formatCurrency as fmtMoney, formatCompactCurrency } from '../../utils/formatters';
 import { useDataBounds } from '../../hooks/useDataBounds';
 
 /* ── Date Preset Resolver ──────────────────────────────────────── */
@@ -142,7 +142,7 @@ const ConcentrationBand = ({ data, formatCurrency }) => {
                             {s.name}
                         </Typography>
                         <Typography sx={{ fontSize: '0.78rem', color: C.textSec, fontVariantNumeric: 'tabular-nums' }}>
-                            {formatCompact(s.volume)}
+                            {formatCompactCurrency(s.volume)}
                         </Typography>
                         <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, color: C.text, fontVariantNumeric: 'tabular-nums', width: 48, textAlign: 'right' }}>
                             {s.share.toFixed(1)}%
@@ -155,11 +155,9 @@ const ConcentrationBand = ({ data, formatCurrency }) => {
 };
 
 const MerchantFinancialSummary = () => {
-    const { currencyCode = 'AED', formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
-    const formatCurrency = useCallback((val) => {
-        if (fmtCurr) return fmtCurr(val);
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode, minimumFractionDigits: 2 }).format(val || 0);
-    }, [fmtCurr, currencyCode]);
+    // No 'AED' default — unknown currency renders unlabelled rather than wrong.
+    const { currencyCode, formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
+    const formatCurrency = useCallback((val) => (fmtCurr ? fmtCurr(val) : fmtMoney(val)), [fmtCurr]);
 
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -247,8 +245,8 @@ const MerchantFinancialSummary = () => {
         // Four tiles, one accent: volume leads (brand + sparkline), revenue is
         // the money outcome (success), rate and counts stay neutral ink.
         return [
-            { title: 'Total Volume', value: `${currencyCode} ${formatCompact(totalVol)}`, icon: TrendingUp, color: C.brand, sparkData: topVols, trendLabel: 'Top 10 merchants' },
-            { title: 'MSF Revenue', value: `${currencyCode} ${formatCompact(totalMsf)}`, icon: DollarSign, color: C.success },
+            { title: 'Total Volume', value: formatCompactCurrency(totalVol), icon: TrendingUp, color: C.brand, sparkData: topVols, trendLabel: 'Top 10 merchants' },
+            { title: 'MSF Revenue', value: formatCompactCurrency(totalMsf), icon: DollarSign, color: C.success },
             { title: 'Avg MSF Rate', value: `${avgRate.toFixed(2)}%`, icon: Percent, color: rateColor(avgRate) },
             { title: 'Merchants', value: formatNumber(data.length), subtitle: `${formatCompact(totalCount)} transactions`, icon: Users, color: 'var(--text-secondary, #6b7280)' },
         ];
@@ -295,7 +293,7 @@ const MerchantFinancialSummary = () => {
             )
         },
         {
-            field: 'volume', headerName: `VOLUME (${currencyCode})`, flex: 1.5, minWidth: 170, align: 'right', headerAlign: 'right',
+            field: 'volume', headerName: `VOLUME${currencyCode ? ` (${currencyCode})` : ''}`, flex: 1.5, minWidth: 170, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
                 <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
                     <Typography variant="body2" sx={{ fontWeight: 700, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
@@ -308,7 +306,7 @@ const MerchantFinancialSummary = () => {
             )
         },
         {
-            field: 'msf', headerName: `MSF (${currencyCode})`, flex: 1.1, minWidth: 130, align: 'right', headerAlign: 'right',
+            field: 'msf', headerName: `MSF${currencyCode ? ` (${currencyCode})` : ''}`, flex: 1.1, minWidth: 130, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
                 <Typography variant="body2" sx={{ fontWeight: 600, color: C.textSec, fontVariantNumeric: 'tabular-nums' }}>
                     {formatMsf(params.value)}
@@ -330,7 +328,7 @@ const MerchantFinancialSummary = () => {
             }
         },
         {
-            field: 'opt_in_volume', headerName: `OPT-IN (${currencyCode})`, flex: 1, minWidth: 130, align: 'right', headerAlign: 'right',
+            field: 'opt_in_volume', headerName: `OPT-IN${currencyCode ? ` (${currencyCode})` : ''}`, flex: 1, minWidth: 130, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
                 <Typography variant="body2" sx={{ color: C.textMut, fontVariantNumeric: 'tabular-nums' }}>
                     {formatCurrency(params.value)}

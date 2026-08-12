@@ -14,7 +14,7 @@ import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { createFmt, formatMsf } from '../utils/formatters';
+import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Landing Dashboard — MTD (weeks 1–5) / YTD (month-wise).
@@ -76,10 +76,28 @@ const deltaPct = (cur, prev) => {
     return ((c - p) / Math.abs(p)) * 100;
 };
 
-const fullNum = (v, sym = '') =>
-    (sym ? sym + ' ' : '') + Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+/* Exact (uncompacted) value for tooltips/titles.
+   With a symbol it is MONEY and renders at the tenant's decimal precision
+   (3dp for BHD, 2dp for AED/EGP) — it used to be pinned at 2dp, which hid a
+   third of a Bahraini fils figure. Without a symbol it is a count. */
+const fullNum = (v, sym = '') => {
+    if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    const d = resolveDecimals();
+    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+        { minimumFractionDigits: d, maximumFractionDigits: d });
+};
 
 const safeDiv = (a, b) => (num(b) === 0 ? 0 : num(a) / num(b));
+
+/* Cost line as a rate on volume — same basis as the blended MSF take rate,
+   so the fee columns are directly comparable against it. Scheme/ECOM land in
+   the hundredths of a percent, so 2dp would flatten them to 0.05 vs 0.10;
+   3dp is the coarsest precision that keeps the columns readable. A bucket
+   with no volume has no rate — an em dash, not a misleading 0.000%. */
+const ratePct = (fee, volume) =>
+    (num(volume) === 0 ? '—' : (safeDiv(fee, volume) * 100).toFixed(3) + '%');
+const ratePctTitle = (fee, volume) =>
+    (num(volume) === 0 ? 'No volume in this period' : (safeDiv(fee, volume) * 100).toFixed(4) + '% of volume');
 
 /* ─── Delta chip ─── */
 const DeltaChip = ({ pct, compareLabel, invert, suffix = '%' }) => {
@@ -291,9 +309,9 @@ const ChartCard = ({ title, subtitle, children, footer }) => (
 );
 
 const Dashboard = () => {
-    const { currencySymbol, tenantVersion } = useAuth();
+    const { currencySymbol, currencyCode, currencyDecimals, tenantVersion } = useAuth();
     const { isDark } = useTheme();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
     const C = CHART_COLORS[isDark ? 'dark' : 'light'];
 
     const [mode, setMode] = useState('MTD');
@@ -432,14 +450,25 @@ const Dashboard = () => {
         lines.push(['Period', (mode === 'MTD' ? data?.mtd?.label : data?.ytd?.label) || ''].map(esc).join(','));
         if (data?.effectiveDate) lines.push(['Through', data.effectiveDate].map(esc).join(','));
         if (isFiltered && viewData.length) lines.push(['Filter', `${viewData[0].label} to ${viewData[viewData.length - 1].label}`].map(esc).join(','));
-        lines.push(['Currency', currencySymbol].map(esc).join(','));
+        lines.push(['Currency', currencyCode || currencySymbol || 'UNKNOWN'].map(esc).join(','));
         lines.push('');
+        // Money columns are written at the tenant's precision (3dp for BHD), not
+        // a hardcoded 2dp; MSF keeps its reconciliation digits. Percentages below
+        // are unaffected.
+        const dp = resolveDecimals(currencyDecimals, currencyCode);
+        const msfDp = Math.max(4, dp);
         const heads = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume', 'Avg Ticket',
-            'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
+            'MSF', 'Interchange', 'Interchange % Vol', 'Scheme Fee', 'Scheme % Vol',
+            'ECOM Fee', 'ECOM % Vol', 'Net Margin', 'Net Margin %'];
         lines.push(heads.map(esc).join(','));
-        const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(2), num(b.avgTicket).toFixed(2),
-            num(b.msf).toFixed(4), num(b.interchange).toFixed(2), num(b.schemeFee).toFixed(2),
-            num(b.ecomFee).toFixed(2), num(b.netRevenue).toFixed(2), num(b.marginPct).toFixed(2)]
+        // Rate columns mirror the on-screen table; exported at 4dp because a
+        // spreadsheet has no tooltip to fall back on.
+        const rate = (fee, volume) => (num(volume) === 0 ? '' : (safeDiv(fee, volume) * 100).toFixed(4));
+        const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(dp), num(b.avgTicket).toFixed(dp),
+            num(b.msf).toFixed(msfDp), num(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
+            num(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
+            num(b.ecomFee).toFixed(dp), rate(b.ecomFee, b.volume),
+            num(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2)]
             .map(esc).join(',');
         viewData.forEach(b => lines.push(row(b.label + (b.partial ? ' (partial)' : ''), b)));
         lines.push(row(`${mode} Total`, t));
@@ -449,7 +478,7 @@ const Dashboard = () => {
             lines.push(['Interchange % of Volume', derived.interchangeRate.toFixed(4)].map(esc).join(','));
             lines.push(['Scheme Fee % of Volume', derived.schemeRate.toFixed(4)].map(esc).join(','));
             lines.push(['ECOM Fee % of Volume', derived.ecomRate.toFixed(4)].map(esc).join(','));
-            lines.push(['Total Fees', derived.fees.toFixed(2)].map(esc).join(','));
+            lines.push(['Total Fees', derived.fees.toFixed(dp)].map(esc).join(','));
             lines.push(['Total Fees % of Volume', derived.feesRate.toFixed(4)].map(esc).join(','));
         }
         const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -458,7 +487,7 @@ const Dashboard = () => {
         a.download = `executive_summary_${mode.toLowerCase()}_${data?.effectiveDate || 'export'}.csv`;
         a.click();
         URL.revokeObjectURL(a.href);
-    }, [viewTotals, viewData, derived, mode, data, currencySymbol, isFiltered]);
+    }, [viewTotals, viewData, derived, mode, data, currencySymbol, currencyCode, currencyDecimals, isFiltered]);
 
     if (loading) return <SkeletonLoader type="dashboard" />;
 
@@ -472,8 +501,26 @@ const Dashboard = () => {
     const hasData = totals && num(totals.txns) > 0;
     const vt = viewTotals || totals;
 
-    const TABLE_HEADS = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume',
-        'Avg Ticket', 'MSF', 'Interchange', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
+    /* Money columns carry the tenant currency in the header (once) instead of
+       on every cell — a 13-column table repeating "BHD" 7 times per row is
+       noise. `ccy: true` renders the code next to the label; when the tenant
+       currency is unknown the suffix is simply omitted (never invented). */
+    const headCcy = currencyCode || currencySymbol || null;
+    const TABLE_HEADS = [
+        { label: mode === 'MTD' ? 'Week' : 'Month' },
+        { label: 'Transactions' },
+        { label: 'Volume', ccy: true },
+        { label: 'Avg Ticket', ccy: true },
+        { label: 'MSF', ccy: true },
+        { label: 'Interchange', ccy: true },
+        { label: 'Interchange % Vol' },
+        { label: 'Scheme Fee', ccy: true },
+        { label: 'Scheme % Vol' },
+        { label: 'ECOM Fee', ccy: true },
+        { label: 'ECOM % Vol' },
+        { label: 'Net Margin', ccy: true },
+        { label: 'Net Margin %' },
+    ];
 
     const maxAbsMargin = Math.max(...viewData.map(b => Math.abs(b.marginPct)), 0.0001);
 
@@ -717,7 +764,8 @@ const Dashboard = () => {
                                 <BarChart data={viewData} margin={PANEL_MARGIN}>
                                     <CartesianGrid stroke="var(--border)" vertical={false} />
                                     <XAxis dataKey="label" hide />
-                                    <YAxis tickFormatter={(v) => fmt.number(v)}
+                                    {/* Money axis — carries the tenant currency. */}
+                                    <YAxis tickFormatter={(v) => fmt.currency(v)}
                                         tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
                                         axisLine={false} tickLine={false} width={PANEL_Y_WIDTH} />
                                     <ReTooltip content={<BucketTooltip fmt={fmt} />}
@@ -777,9 +825,10 @@ const Dashboard = () => {
                                     <CartesianGrid stroke="var(--border)" vertical={false} />
                                     <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
                                         axisLine={false} tickLine={false} />
-                                    <YAxis tickFormatter={(v) => fmt.number(v)}
+                                    {/* Money axis (MSF composition) — carries the tenant currency. */}
+                                    <YAxis tickFormatter={(v) => fmt.currency(v)}
                                         tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} width={56} />
+                                        axisLine={false} tickLine={false} width={66} />
                                     <ReTooltip content={<CompositionTooltip fmt={fmt} />}
                                         cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
                                     <Legend wrapperStyle={{ fontSize: 11.5 }} iconType="circle" iconSize={8} />
@@ -811,12 +860,19 @@ const Dashboard = () => {
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid var(--border)' }}>
                                         {TABLE_HEADS.map((h, i) => (
-                                            <th key={h} style={{
+                                            <th key={h.label} style={{
                                                 textAlign: i === 0 ? 'left' : 'right',
                                                 padding: '12px 16px', fontSize: 11, fontWeight: 600,
                                                 letterSpacing: '0.05em', textTransform: 'uppercase',
                                                 color: 'var(--text-secondary)', whiteSpace: 'nowrap',
-                                            }}>{h}</th>
+                                            }}>
+                                                {h.label}
+                                                {h.ccy && headCcy && (
+                                                    <span style={{ marginLeft: 5, fontWeight: 500, opacity: 0.75 }}>
+                                                        ({headCcy})
+                                                    </span>
+                                                )}
+                                            </th>
                                         ))}
                                     </tr>
                                 </thead>
@@ -843,15 +899,18 @@ const Dashboard = () => {
                                                     )}
                                                 </td>
                                                 <td style={tdNum} title={fullNum(b.txns)}>{num(b.txns).toLocaleString()}</td>
-                                                <td style={tdNum} title={fullNum(b.volume, currencySymbol)}>{fmt.currency(b.volume)}</td>
-                                                <td style={tdNum} title={fullNum(b.avgTicket, currencySymbol)}>{fmt.currency(b.avgTicket)}</td>
-                                                <td style={tdNum} title={formatMsf(b.msf, currencySymbol)}>{fmt.currency(b.msf)}</td>
-                                                <td style={tdNum} title={fullNum(b.interchange, currencySymbol)}>{fmt.currency(b.interchange)}</td>
-                                                <td style={tdNum} title={fullNum(b.schemeFee, currencySymbol)}>{fmt.currency(b.schemeFee)}</td>
-                                                <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.currency(b.ecomFee)}</td>
+                                                <td style={tdNum} title={fullNum(b.volume, currencySymbol)}>{fmt.amount(b.volume)}</td>
+                                                <td style={tdNum} title={fullNum(b.avgTicket, currencySymbol)}>{fmt.amount(b.avgTicket)}</td>
+                                                <td style={tdNum} title={formatMsf(b.msf, currencySymbol)}>{fmt.amount(b.msf)}</td>
+                                                <td style={tdNum} title={fullNum(b.interchange, currencySymbol)}>{fmt.amount(b.interchange)}</td>
+                                                <td style={tdRate} title={ratePctTitle(b.interchange, b.volume)}>{ratePct(b.interchange, b.volume)}</td>
+                                                <td style={tdNum} title={fullNum(b.schemeFee, currencySymbol)}>{fmt.amount(b.schemeFee)}</td>
+                                                <td style={tdRate} title={ratePctTitle(b.schemeFee, b.volume)}>{ratePct(b.schemeFee, b.volume)}</td>
+                                                <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.amount(b.ecomFee)}</td>
+                                                <td style={tdRate} title={ratePctTitle(b.ecomFee, b.volume)}>{ratePct(b.ecomFee, b.volume)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 600,
                                                     color: b.netRevenue >= 0 ? 'var(--text)' : '#dc2626' }}
-                                                    title={fullNum(b.netRevenue, currencySymbol)}>{fmt.currency(b.netRevenue)}</td>
+                                                    title={fullNum(b.netRevenue, currencySymbol)}>{fmt.amount(b.netRevenue)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 700,
                                                     color: b.marginPct >= 0 ? '#059669' : '#dc2626' }}>
                                                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
@@ -874,13 +933,16 @@ const Dashboard = () => {
                                             {mode} Total{isFiltered ? ' (filtered)' : ''}
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.txns)}>{num(vt.txns).toLocaleString()}</td>
-                                        <td style={tdTotal} title={fullNum(vt.volume, currencySymbol)}>{fmt.currency(num(vt.volume))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.avgTicket, currencySymbol)}>{fmt.currency(num(vt.avgTicket))}</td>
-                                        <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.currency(num(vt.msf))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.interchange, currencySymbol)}>{fmt.currency(num(vt.interchange))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.schemeFee, currencySymbol)}>{fmt.currency(num(vt.schemeFee))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.currency(num(vt.ecomFee))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.currency(num(vt.netRevenue))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.volume, currencySymbol)}>{fmt.amount(num(vt.volume))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.avgTicket, currencySymbol)}>{fmt.amount(num(vt.avgTicket))}</td>
+                                        <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.amount(num(vt.msf))}</td>
+                                        <td style={tdTotal} title={fullNum(vt.interchange, currencySymbol)}>{fmt.amount(num(vt.interchange))}</td>
+                                        <td style={tdTotal} title={ratePctTitle(vt.interchange, vt.volume)}>{ratePct(vt.interchange, vt.volume)}</td>
+                                        <td style={tdTotal} title={fullNum(vt.schemeFee, currencySymbol)}>{fmt.amount(num(vt.schemeFee))}</td>
+                                        <td style={tdTotal} title={ratePctTitle(vt.schemeFee, vt.volume)}>{ratePct(vt.schemeFee, vt.volume)}</td>
+                                        <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.amount(num(vt.ecomFee))}</td>
+                                        <td style={tdTotal} title={ratePctTitle(vt.ecomFee, vt.volume)}>{ratePct(vt.ecomFee, vt.volume)}</td>
+                                        <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.amount(num(vt.netRevenue))}</td>
                                         <td style={{ ...tdTotal,
                                             color: num(vt.marginPct) >= 0 ? '#059669' : '#dc2626' }}>
                                             {num(vt.marginPct).toFixed(2)}%
@@ -900,6 +962,9 @@ const tdNum = {
     padding: '11px 16px', textAlign: 'right', color: 'var(--text)',
     fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
 };
+/* Rate columns sit beside the money they derive from — muted so the eye still
+   reads the amounts first. */
+const tdRate = { ...tdNum, color: 'var(--text-secondary)' };
 const selStyle = {
     border: 'none', background: 'transparent', color: 'var(--text)',
     fontSize: 12.5, fontWeight: 600, cursor: 'pointer', outline: 'none',

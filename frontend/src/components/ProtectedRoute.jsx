@@ -45,7 +45,7 @@ const ProtectedRoute = ({ children }) => {
         return (
             <div style={{
                 display: 'flex', justifyContent: 'center', alignItems: 'center',
-                height: '100vh', color: 'var(--text-secondary, #64748b)', fontSize: '0.9rem',
+                height: 'var(--vh100, 100vh)', color: 'var(--text-secondary, #64748b)', fontSize: '0.9rem',
                 background: 'var(--bg, #F9FAFB)',
             }}>
                 Validating Session...

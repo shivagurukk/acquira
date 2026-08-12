@@ -28,16 +28,26 @@ public class AnalyticsController {
     @PersistenceContext
     private EntityManager entityManager;
 
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
+
     public AnalyticsController(AnalyticsService analyticsService,
-            com.acquira.common.repository.SumDailyMerchantRepository sumDailyMerchantRepository) {
+            com.acquira.common.repository.SumDailyMerchantRepository sumDailyMerchantRepository,
+            CurrencyMeta currencyMeta) {
         this.analyticsService = analyticsService;
         this.sumDailyMerchantRepository = sumDailyMerchantRepository;
+        this.currencyMeta = currencyMeta;
     }
 
     @GetMapping("/executive")
     public ResponseEntity<Map<String, Object>> getExecutiveDashboard(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return ResponseEntity.ok(analyticsService.getExecutiveDashboard(date));
+        Map<String, Object> dashboard = analyticsService.getExecutiveDashboard(date);
+        // The service may hand back an immutable map; copy before adding the key so
+        // this never throws UnsupportedOperationException on some code path.
+        Map<String, Object> body = dashboard == null ? new java.util.LinkedHashMap<>()
+                : new java.util.LinkedHashMap<>(dashboard);
+        return ResponseEntity.ok(currencyMeta.attach(body));
     }
 
     @GetMapping("/merchant-summaries")
@@ -223,26 +233,45 @@ public class AnalyticsController {
         response.setContentType("text/csv");
         response.setHeader("Content-Disposition", "attachment; filename=\"merchant_summary_" + targetDate + ".csv\"");
 
+        // Every volume column below comes from sum_daily_merchant and is denominated
+        // in the tenant's settlement currency, so one currency covers the whole file.
+        String currencyCode = currencyMeta.codeOrNull(tenantId);
+        int decimals = currencyMeta.decimalsOr(tenantId, -1); // -1 = unresolved, never assume 2
+
         try (java.io.PrintWriter writer = response.getWriter()) {
+            // "Currency" added: the export shipped bare volume numbers with no
+            // denomination, so a BHD file and an EGP file were indistinguishable.
             writer.println(
-                    "Merchant Name,MID,Credit Volume,Debit/Prepaid Volume,Sales User,Daily Count,Daily Volume,MTD Count,MTD Volume,YTD Count,YTD Volume");
+                    "Merchant Name,MID,Currency,Credit Volume,Debit/Prepaid Volume,Sales User,Daily Count,Daily Volume,MTD Count,MTD Volume,YTD Count,YTD Volume");
             for (Object[] row : results) {
                 // row: 0=Name, 1=MID, 2=Store, 3=SID, 4=TID, 5=DevNum, 6=DC, 7=DV, 8=MC, 9=MV,
                 // 10=YC, 11=YV, 12=Credit, 13=Debit, 14=SalesUser
                 // Text fields are RFC-4180 escaped + formula-neutralised: a
                 // merchant named ACME "Holdings" used to break every row after
                 // it, and =/+/-/@ prefixes execute as formulas in Excel.
-                writer.printf("%s,%s,%s,%s,%s,%d,%s,%d,%s,%d,%s%n",
-                        csvCell(row[0]), csvCell(row[1]), row[12], row[13], csvCell(row[14]),
-                        ((Number) row[6]).longValue(), row[7],
-                        ((Number) row[8]).longValue(), row[9],
-                        ((Number) row[10]).longValue(), row[11]);
+                writer.printf("%s,%s,%s,%s,%s,%s,%d,%s,%d,%s,%d,%s%n",
+                        csvCell(row[0]), csvCell(row[1]), csvCell(currencyCode),
+                        money(row[12], decimals), money(row[13], decimals), csvCell(row[14]),
+                        ((Number) row[6]).longValue(), money(row[7], decimals),
+                        ((Number) row[8]).longValue(), money(row[9], decimals),
+                        ((Number) row[10]).longValue(), money(row[11], decimals));
             }
             if (truncated) {
                 writer.println(csvCell("TRUNCATED — first " + EXPORT_CAP
                         + " merchants by name; refine the export or contact support for a full extract"));
             }
         }
+    }
+
+    /**
+     * Money at the tenant's real scale. When the currency is unresolved
+     * ({@code decimals < 0}) the stored value is written unrounded rather than
+     * forced into a guessed number of decimals.
+     */
+    private static String money(Object v, int decimals) {
+        if (v == null) return "";
+        if (decimals >= 0) return CurrencyMeta.formatAmount(v, decimals);
+        return v instanceof java.math.BigDecimal b ? b.stripTrailingZeros().toPlainString() : v.toString();
     }
 
     /** RFC-4180 CSV cell: quote, double internal quotes, neutralise leading =+-@ (formula injection). */

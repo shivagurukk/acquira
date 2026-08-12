@@ -6,8 +6,8 @@ import { createFmt, formatMsf } from '../../utils/formatters';
 import api from '../../api/axios';
 
 const FinanceSummary = () => {
-    const { currencySymbol, tenantVersion } = useAuth();
-    const formatCurrency = useMemo(() => createFmt(currencySymbol).currency, [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const formatCurrency = useMemo(() => createFmt(currencySymbol, currencyDecimals).currency, [currencySymbol, currencyDecimals]);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     // Every fetch used to `catch { console.error }`, so a 500/403/timeout looked
@@ -259,7 +259,7 @@ const FinanceSummary = () => {
     };
 
     return (
-        <div className="page-container" style={{ padding: '20px', color: '#1e293b', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="page-container" style={{ padding: '20px', color: '#1e293b', height: 'var(--vh100, 100vh)', display: 'flex', flexDirection: 'column' }}>
 
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>

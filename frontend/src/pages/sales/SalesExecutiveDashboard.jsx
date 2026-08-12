@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatCompactCurrency } from '../../utils/formatters';
 import { T, CARD } from '../../theme/salesTokens';
 
 /*
@@ -22,12 +23,9 @@ import { T, CARD } from '../../theme/salesTokens';
  */
 
 const fmt = (v) => v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
-const fmtM = (v) => {
-  const n = Number(v || 0);
-  if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-  return n.toFixed(0);
-};
+// fmtM renders MONEY — it now carries the tenant currency and the tenant's
+// decimal precision (3dp for BHD) instead of a bare, unlabelled number.
+const fmtM = (v) => formatCompactCurrency(v);
 const fmtDate = (v) => {
   if (!v) return '—';
   const d = new Date(v);

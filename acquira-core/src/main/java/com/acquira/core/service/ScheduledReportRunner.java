@@ -113,14 +113,21 @@ public class ScheduledReportRunner {
         String ext;
         String contentType;
         ReportSchedule.ExportFormat fmt = s.getExportFormat();
+        // Pass the schedule's OWN tenant explicitly rather than relying on the
+        // TenantContext this thread happens to carry: the exporter needs it to
+        // resolve the currency and its decimal precision (BHD 3dp vs EGP 2dp) for
+        // every monetary column. The runner has always known s.getTenantId() but
+        // never handed it to the exporter, so scheduled artifacts came out with
+        // no currency label and a fixed 2-decimal number format.
+        Long tenantId = s.getTenantId();
         if (fmt == ReportSchedule.ExportFormat.CSV) {
-            bytes = exportService.exportCsv(rows);
+            bytes = exportService.exportCsv(rows, tenantId);
             ext = "csv"; contentType = "text/csv";
         } else if (fmt == ReportSchedule.ExportFormat.PDF) {
-            bytes = exportService.exportPdf(rows, t.getName());
+            bytes = exportService.exportPdf(rows, t.getName(), tenantId);
             ext = "pdf"; contentType = "application/pdf";
         } else {
-            bytes = exportService.exportExcel(rows, t.getName(), cfg);
+            bytes = exportService.exportExcel(rows, t.getName(), cfg, tenantId);
             ext = "xlsx"; contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         }
 

@@ -45,6 +45,10 @@ public class TrendsController {
     @PersistenceContext
     private EntityManager entityManager;
 
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private CurrencyMeta currencyMeta;
+
     private Long resolveTenant(Long headerTenant) {
         // SECURITY: the raw X-Tenant-Id header is attacker-controlled; use only the
         // filter-validated TenantContext (JwtRequestFilter rejects spoofed headers).
@@ -275,7 +279,7 @@ public class TrendsController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("totalMerchants", totalMerchants);
         resp.put("rows", out);
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     // ── Range resolution ──

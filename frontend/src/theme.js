@@ -1,133 +1,266 @@
 import { createTheme } from '@mui/material/styles';
 
 // ═══════════════════════════════════════════════════════════
-// Acquira Design System — Modern Minimal Theme
-// Clean · Spacious · Professional
+// Acquira Design System — Ledger Theme
+// Dense · hairline structure · teal marks action + upward movement
 //
-// createAppTheme(mode) returns a MUI theme for 'light' or 'dark'.
-// The custom ThemeContext calls this so MUI components (DataGrid,
-// Dialog, Paper, Button…) respond to dark mode instead of staying
-// permanently light.
+// Single theme with cssVariables + colorSchemes. Both schemes are
+// declared here; MUI emits them as CSS custom properties scoped by
+// the `dark` class on <html> (toggled by ThemeContext), so every
+// component flips without a theme rebuild.
 // ═══════════════════════════════════════════════════════════
 
-const LIGHT_PALETTE = {
-    mode: 'light',
-    primary:   { main: '#2563eb', light: '#3b82f6', dark: '#1d4ed8', contrastText: '#ffffff' },
-    secondary: { main: '#059669', light: '#10b981', dark: '#047857', contrastText: '#ffffff' },
-    error:     { main: '#dc2626', light: '#ef4444', dark: '#b91c1c' },
-    warning:   { main: '#d97706', light: '#f59e0b', dark: '#b45309' },
-    background:{ default: '#f9fafb', paper: '#ffffff' },
-    text:      { primary: '#111827', secondary: '#6b7280' },
-    divider:   '#e5e7eb',
+// Raw token values. These mirror the --canvas/--surface/… custom
+// properties in index.css — the one place hex values may live.
+export const TOKENS = {
+    light: {
+        canvas:    '#EEF2F1',
+        surface:   '#FFFFFF',
+        hairline:  '#DDE4E3',
+        ink:       '#101F1E',
+        muted:     '#5A6B6A',
+        primary:   '#12706B',
+        wash:      '#E3F0EE',
+        negative:  '#B4442F',
+        attention: '#B5822A',
+        projected: '#3E5C76',
+    },
+    dark: {
+        canvas:    '#0C1616',
+        surface:   '#132020',
+        hairline:  '#1F3130',
+        ink:       '#E4ECEA',
+        muted:     '#8FA3A1',
+        primary:   '#37B0A5',
+        wash:      '#16302E',
+        negative:  '#E0755C',
+        attention: '#D9A542',
+        projected: '#7794AE',
+    },
+    // Sequential chart ramp — teal only, light → dark.
+    chartRamp: ['#0B4F4C', '#12706B', '#35948C', '#6FB3A8', '#A7CFC6'],
 };
 
-const DARK_PALETTE = {
-    mode: 'dark',
-    primary:   { main: '#3b82f6', light: '#60a5fa', dark: '#2563eb', contrastText: '#ffffff' },
-    secondary: { main: '#10b981', light: '#34d399', dark: '#059669', contrastText: '#ffffff' },
-    error:     { main: '#ef4444', light: '#f87171', dark: '#dc2626' },
-    warning:   { main: '#f59e0b', light: '#fbbf24', dark: '#d97706' },
-    background:{ default: '#0f172a', paper: '#1e293b' },
-    text:      { primary: '#f1f5f9', secondary: '#94a3b8' },
-    divider:   '#334155',
-};
+const FONT_UI   = "'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+const FONT_MONO = "'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace";
 
-export function createAppTheme(mode = 'light') {
-    const isDark = mode === 'dark';
-    const palette = isDark ? DARK_PALETTE : LIGHT_PALETTE;
+const schemePalette = (t, mode) => ({
+    mode,
+    primary:   { main: t.primary, contrastText: mode === 'dark' ? t.canvas : '#FFFFFF' },
+    secondary: { main: t.projected, contrastText: '#FFFFFF' },
+    success:   { main: t.primary },
+    error:     { main: t.negative },
+    warning:   { main: t.attention },
+    info:      { main: t.projected },
+    background: { default: t.canvas, paper: t.surface },
+    text:      { primary: t.ink, secondary: t.muted, disabled: t.muted },
+    divider:   t.hairline,
+    action:    {
+        hover: t.wash,
+        selected: t.wash,
+        hoverOpacity: 0.4,
+    },
+});
 
+export function buildTheme() {
     return createTheme({
-        palette,
-        typography: {
-            fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            h1: { fontSize: '1.75rem', fontWeight: 700, letterSpacing: '-0.025em', lineHeight: 1.2 },
-            h2: { fontSize: '1.5rem', fontWeight: 700, letterSpacing: '-0.025em', lineHeight: 1.25 },
-            h3: { fontSize: '1.25rem', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.3 },
-            h4: { fontSize: '1.125rem', fontWeight: 600, lineHeight: 1.35 },
-            h5: { fontSize: '1rem', fontWeight: 600, lineHeight: 1.4 },
-            h6: { fontSize: '0.875rem', fontWeight: 600, lineHeight: 1.5 },
-            body1: { fontSize: '0.875rem', lineHeight: 1.6 },
-            body2: { fontSize: '0.8125rem', lineHeight: 1.5 },
-            caption: { fontSize: '0.75rem', lineHeight: 1.4 },
-            button: { textTransform: 'none', fontWeight: 600, fontSize: '0.8125rem' },
+        // Emit both schemes as CSS variables; the `dark` class on <html>
+        // (set by ThemeContext) selects the scheme.
+        cssVariables: { colorSchemeSelector: 'class' },
+        colorSchemes: {
+            light: { palette: schemePalette(TOKENS.light, 'light') },
+            dark:  { palette: schemePalette(TOKENS.dark, 'dark') },
         },
-        shape: { borderRadius: 10 },
+        typography: {
+            // UI: Public Sans 12/13/14/16/20/28, weights 400/500/600 only.
+            fontFamily: FONT_UI,
+            h1: { fontSize: '28px', fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.2 },
+            h2: { fontSize: '20px', fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.25 },
+            h3: { fontSize: '16px', fontWeight: 600, lineHeight: 1.3 },
+            h4: { fontSize: '16px', fontWeight: 600, lineHeight: 1.35 },
+            h5: { fontSize: '14px', fontWeight: 600, lineHeight: 1.4 },
+            // h6 doubles as the section title: sentence case, tracked, muted.
+            h6: { fontSize: '13px', fontWeight: 600, letterSpacing: '0.02em', lineHeight: 1.5 },
+            body1: { fontSize: '14px', lineHeight: 1.5 },
+            body2: { fontSize: '13px', lineHeight: 1.5 },
+            caption: { fontSize: '12px', lineHeight: 1.4 },
+            button: { textTransform: 'none', fontWeight: 500, fontSize: '13px' },
+            // Numeric variant — currency, counts, percentages, IDs.
+            mono: { fontFamily: FONT_MONO, fontVariantNumeric: 'tabular-nums' },
+        },
+        shape: { borderRadius: 4 },
+        transitions: {
+            duration: {
+                shortest: 100, shorter: 120, short: 150,
+                standard: 150, complex: 150, enteringScreen: 150, leavingScreen: 150,
+            },
+        },
         components: {
             MuiButton: {
+                defaultProps: { disableElevation: true },
                 styleOverrides: {
-                    root: {
-                        borderRadius: 10,
+                    root: ({ theme }) => ({
+                        borderRadius: 4,
                         boxShadow: 'none',
-                        padding: '8px 18px',
-                        fontWeight: 600,
-                        '&:hover': { boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.06)' },
-                    },
-                    sizeSmall: { padding: '5px 14px', fontSize: '0.75rem' },
+                        padding: '6px 14px',
+                        fontWeight: 500,
+                        transition: 'background-color 150ms, opacity 150ms',
+                        '&:hover': { boxShadow: 'none' },
+                        '&:focus-visible': {
+                            outline: `2px solid ${theme.vars.palette.primary.main}`,
+                            outlineOffset: 2,
+                        },
+                    }),
+                    sizeSmall: { padding: '4px 10px', fontSize: '12px' },
                 },
             },
             MuiPaper: {
+                defaultProps: { elevation: 0 },
+                styleOverrides: {
+                    root: ({ theme }) => ({
+                        backgroundImage: 'none',
+                        boxShadow: 'none',
+                        border: `1px solid ${theme.vars.palette.divider}`,
+                    }),
+                    rounded: { borderRadius: 4 },
+                    // Menus / dialogs / popovers are the only elevated surfaces.
+                    elevation8: { boxShadow: 'var(--shadow-pop)' },
+                    elevation24: { boxShadow: 'var(--shadow-pop)' },
+                },
+            },
+            MuiCard: {
+                styleOverrides: {
+                    root: ({ theme }) => ({
+                        borderRadius: 4,
+                        border: `1px solid ${theme.vars.palette.divider}`,
+                        boxShadow: 'none',
+                    }),
+                },
+            },
+            MuiCardContent: {
+                styleOverrides: { root: { padding: 20, '&:last-child': { paddingBottom: 20 } } },
+            },
+            MuiDialog: {
+                styleOverrides: {
+                    paper: { borderRadius: 4, boxShadow: 'var(--shadow-pop)' },
+                },
+            },
+            MuiMenu: {
+                styleOverrides: {
+                    paper: { borderRadius: 4, boxShadow: 'var(--shadow-pop)' },
+                },
+            },
+            MuiPopover: {
+                styleOverrides: {
+                    paper: { borderRadius: 4, boxShadow: 'var(--shadow-pop)' },
+                },
+            },
+            // Status chips: 11px mono, uppercase, 2px radius, tinted bg + solid
+            // text — never solid fill with white text.
+            MuiChip: {
                 styleOverrides: {
                     root: {
-                        backgroundImage: 'none',
-                        boxShadow: isDark
-                            ? '0 1px 3px 0 rgb(0 0 0 / 0.4)'
-                            : '0 1px 3px 0 rgb(0 0 0 / 0.03)',
-                    },
-                    rounded: { borderRadius: 14 },
-                    elevation1: {
-                        boxShadow: isDark
-                            ? '0 1px 3px 0 rgb(0 0 0 / 0.4)'
-                            : '0 1px 3px 0 rgb(0 0 0 / 0.03)',
-                    },
-                    elevation8: {
-                        boxShadow: isDark
-                            ? '0 10px 20px -4px rgb(0 0 0 / 0.5), 0 4px 8px -4px rgb(0 0 0 / 0.4)'
-                            : '0 10px 20px -4px rgb(0 0 0 / 0.06), 0 4px 8px -4px rgb(0 0 0 / 0.03)',
+                        borderRadius: 2,
+                        fontFamily: FONT_MONO,
+                        fontVariantNumeric: 'tabular-nums',
+                        fontSize: '11px',
+                        fontWeight: 500,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.02em',
                     },
                 },
             },
-            MuiCard: { styleOverrides: { root: { borderRadius: 14 } } },
-            MuiDialog: { styleOverrides: { paper: { borderRadius: 18 } } },
-            MuiChip: { styleOverrides: { root: { borderRadius: 8, fontWeight: 500 } } },
             MuiTextField: { defaultProps: { variant: 'outlined', size: 'small' } },
+            MuiToggleButton: {
+                styleOverrides: {
+                    root: ({ theme }) => ({
+                        borderRadius: 4,
+                        textTransform: 'none',
+                        fontWeight: 500,
+                        transition: 'background-color 150ms, color 150ms',
+                        '&.Mui-selected': {
+                            backgroundColor: theme.vars.palette.action.selected,
+                            color: theme.vars.palette.primary.main,
+                        },
+                    }),
+                },
+            },
+            // Tables: 40px rows, 12px cell padding, sticky hairlined header,
+            // wash hover, no zebra.
+            MuiTableCell: {
+                styleOverrides: {
+                    root: ({ theme }) => ({
+                        padding: '0 12px',
+                        height: 40,
+                        borderBottom: `1px solid ${theme.vars.palette.divider}`,
+                        fontSize: '13px',
+                    }),
+                    head: ({ theme }) => ({
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        color: theme.vars.palette.text.secondary,
+                        backgroundColor: theme.vars.palette.background.paper,
+                    }),
+                },
+            },
             MuiDataGrid: {
                 styleOverrides: {
                     root: {
                         border: 'none',
-                        borderRadius: 10,
+                        borderRadius: 4,
+                        '--DataGrid-rowBorderColor': 'var(--border)',
+                        fontFamily: FONT_UI,
                         '& .MuiDataGrid-cell': {
-                            borderBottom: '1px solid var(--border-light)',
-                            fontSize: '0.82rem',
+                            borderBottom: '1px solid var(--border)',
+                            fontSize: '13px',
+                            padding: '0 12px',
+                        },
+                        '& .MuiDataGrid-cell--textRight, & .MuiDataGrid-cell[data-field] .num': {
+                            fontFamily: FONT_MONO,
+                            fontVariantNumeric: 'tabular-nums',
                         },
                         '& .MuiDataGrid-columnHeaders': {
-                            backgroundColor: 'var(--bg-subtle)',
+                            backgroundColor: 'var(--bg-card)',
                             borderBottom: '1px solid var(--border)',
                             color: 'var(--text-secondary)',
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            letterSpacing: '0.04em',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            letterSpacing: '0.02em',
                         },
                         '& .MuiDataGrid-row:hover': {
                             backgroundColor: 'var(--bg-hover) !important',
+                        },
+                        '& .MuiDataGrid-row.Mui-selected': {
+                            backgroundColor: 'var(--wash) !important',
                         },
                     },
                 },
             },
             MuiTooltip: {
                 styleOverrides: {
-                    tooltip: {
-                        fontSize: '0.75rem',
-                        borderRadius: 8,
-                        padding: '6px 12px',
-                        backgroundColor: isDark ? '#334155' : '#111827',
-                    },
+                    tooltip: ({ theme }) => ({
+                        fontSize: '12px',
+                        borderRadius: 4,
+                        padding: '6px 10px',
+                        backgroundColor: theme.vars.palette.text.primary,
+                        color: theme.vars.palette.background.paper,
+                    }),
+                },
+            },
+            MuiLink: {
+                styleOverrides: {
+                    root: ({ theme }) => ({ color: theme.vars.palette.primary.main }),
                 },
             },
         },
     });
 }
 
-// Default light theme kept as a named export for any module that
-// imports a ready-made theme directly.
-const theme = createAppTheme('light');
+// Backwards-compatible factory: callers passed 'light' | 'dark', but the
+// theme now carries both schemes — the html.dark class picks the active one.
+export function createAppTheme() {
+    return buildTheme();
+}
+
+const theme = buildTheme();
 export default theme;

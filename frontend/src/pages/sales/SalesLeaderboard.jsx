@@ -6,6 +6,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatCompactCurrency } from '../../utils/formatters';
 import { T, CARD, BTN } from '../../theme/salesTokens';
 import { chartTooltipStyle } from '../../theme/dataGridStyles';
 
@@ -27,7 +28,9 @@ const TABS = [
 ];
 
 const fmt = (v) => v == null ? '0' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
-const fmtM = (v) => { const n = Number(v) || 0; const a = Math.abs(n); if (a >= 1e6) return (n/1e6).toFixed(1)+'M'; if (a >= 1e3) return (n/1e3).toFixed(1)+'K'; return n.toFixed(0); };
+// fmtM renders MONEY — it now carries the tenant currency and the tenant's
+// decimal precision (3dp for BHD) instead of a bare, unlabelled number.
+const fmtM = (v) => formatCompactCurrency(v);
 const fmtPct = (v) => v == null ? '0%' : Number(v).toFixed(2) + '%';
 
 // Backend sends stable badge KEYS; icon/label/colors are owned here.

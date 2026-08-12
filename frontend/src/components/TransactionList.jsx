@@ -3,6 +3,31 @@ import { Filter, ChevronLeft, ChevronRight, X, Download, AlertTriangle } from 'l
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
 import Loader from './Loader';
+import { decimalsForCurrency, getDefaultCurrency, resolveDecimals } from '../utils/formatters';
+
+/* Per-ROW currency: a transaction can settle in a currency that is not the
+   tenant's base currency, so the cardholder amount must use ITS OWN minor-unit
+   precision (BHD/KWD/OMR = 3, JPY = 0, everything else = 2). Falls back to the
+   tenant currency when the row does not carry one, and never renders a bare
+   number with no code. */
+const rowAmount = (val, code) => {
+    if (val == null) return '';
+    const ccy = code || getDefaultCurrency();
+    const d = decimalsForCurrency(ccy);
+    const n = Number(val).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+    return ccy ? `${ccy} ${n}` : n;
+};
+
+/* MSF is a SETTLEMENT figure — always the tenant's currency, so its precision
+   is the tenant's (3dp for BHD) and the code is stated once in the column
+   header rather than repeated on every row. Reconciliation digits (4dp) are
+   kept when the tenant's own precision is coarser. */
+const msfCell = (val) => {
+    if (val == null) return '';
+    const d = Math.max(2, resolveDecimals());
+    return Number(val).toLocaleString('en-US',
+        { minimumFractionDigits: d, maximumFractionDigits: Math.max(4, d) });
+};
 
 const EMPTY_FILTERS = {
     mid: '', sid: '', tid: '',
@@ -256,7 +281,13 @@ const TransactionList = () => {
                             <table className="tx-table">
                                 <thead>
                                     <tr>
-                                        {['Date', 'ARN', 'Merchant', 'Store', 'Terminal', 'Card', 'Amount', 'Fee (MSF)', 'DCC', 'Type', 'Destination'].map(h => (
+                                        {/* "Amount" carries the row's own currency code inline (it can
+                                            differ per transaction); MSF is settlement, so the tenant
+                                            currency is stated once here. */}
+                                        {['Date', 'ARN', 'Merchant', 'Store', 'Terminal', 'Card',
+                                          'Amount (txn ccy)',
+                                          `Fee (MSF)${getDefaultCurrency() ? ` — ${getDefaultCurrency()}` : ''}`,
+                                          'DCC', 'Type', 'Destination'].map(h => (
                                             <th key={h}>{h}</th>
                                         ))}
                                     </tr>
@@ -282,10 +313,16 @@ const TransactionList = () => {
                                                 </td>
                                                 <td className="tx-mono">{t.terminal ? t.terminal.tid : t.terminalId}</td>
                                                 <td className="tx-mono">{t.cardNumber}</td>
+                                                {/* Cardholder amount is in the ROW's own currency, so its
+                                                    precision comes from that code (BHD 3dp, JPY 0dp, …) —
+                                                    not from a hardcoded .toFixed(3). MSF is a settlement
+                                                    figure and follows the tenant currency. */}
                                                 <td>
-                                                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>{t.txnCurrency} {t.txnCurrencyAmount?.toFixed(3)}</span>
+                                                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>
+                                                        {rowAmount(t.txnCurrencyAmount, t.txnCurrency)}
+                                                    </span>
                                                 </td>
-                                                <td style={{ color: 'var(--danger)', fontWeight: 600 }}>{t.msf == null ? '' : Number(t.msf).toFixed(4)}</td>
+                                                <td style={{ color: 'var(--danger)', fontWeight: 600 }}>{msfCell(t.msf)}</td>
                                                 <td style={{ color: 'var(--text-secondary)' }}>{t.dcc ? 'Yes' : 'No'}</td>
                                                 <td>
                                                     <span className="tx-pill" style={{

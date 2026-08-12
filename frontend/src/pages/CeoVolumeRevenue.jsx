@@ -9,7 +9,7 @@ import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { showToast } from '../contexts/ToastContext';
-import { createFmt, formatMsf } from '../utils/formatters';
+import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Volume & Revenue — MID x SID detail with the full fee stack:
@@ -36,8 +36,14 @@ import { createFmt, formatMsf } from '../utils/formatters';
    ════════════════════════════════════════════════════════════════════ */
 
 const num = (v) => (v == null ? 0 : Number(v));
-const fullNum = (v, sym = '') =>
-    (sym ? sym + ' ' : '') + Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+/* Exact (uncompacted) tooltip value. With a symbol it is MONEY and follows the
+   tenant's decimals (3dp for BHD); without one it is a count. */
+const fullNum = (v, sym = '') => {
+    if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    const d = resolveDecimals();
+    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+        { minimumFractionDigits: d, maximumFractionDigits: d });
+};
 
 /* Net margin % is null from the server when the ratio is undefined (zero
    volume). Render that as an em-dash — NEVER as 0.00%, which the colour rules
@@ -124,8 +130,8 @@ const CeoVolumeRevenue = ({
     title = 'Volume & Revenue',
     subtitleSuffix = 'volume & fees in settlement currency',
 }) => {
-    const { currencySymbol, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const { currencySymbol, currencyCode, currencyDecimals, tenantVersion } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
 
     // period: 'MTD' | 'YTD' | 'THIS_MONTH' | 'MONTH'
     const [period, setPeriod] = useState('MTD');
@@ -230,18 +236,24 @@ const CeoVolumeRevenue = ({
             // Net margin % is null when undefined (zero volume) — leave the cell
             // empty rather than writing a 0.00 that reads as a real measurement.
             const pctCell = (v) => (v == null ? '' : Number(v).toFixed(2));
+            // Money columns follow the tenant's precision (3dp for BHD) instead
+            // of a hardcoded 2dp; MSF keeps its reconciliation digits.
+            const dp = resolveDecimals(currencyDecimals, currencyCode);
+            const msfDp = Math.max(4, dp);
             const header = lossOnly
                 ? ['MID', 'Merchant', 'Count', 'Volume', 'MSF',
                     'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %']
                 : ['MID', 'SID', 'Merchant', 'Count', 'Volume', 'MSF',
                     'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
-            const lines = [header.join(',')];
+            // The file must state its currency — the same numbers mean something
+            // different in BHD (3dp) than in EGP/AED (2dp).
+            const lines = [`Currency,${currencyCode || currencySymbol || 'UNKNOWN'}`, header.join(',')];
             rows.forEach(r => lines.push([
                 esc(r.mid), ...(lossOnly ? [] : [esc(r.sid)]), esc(r.name), num(r.txns),
-                num(r.volume).toFixed(2), num(r.msf).toFixed(4),
-                num(r.interchange).toFixed(2), num(r.schemeFee).toFixed(2),
-                num(r.ecomFee).toFixed(2),
-                num(r.netRevenue).toFixed(2), pctCell(r.marginPct),
+                num(r.volume).toFixed(dp), num(r.msf).toFixed(msfDp),
+                num(r.interchange).toFixed(dp), num(r.schemeFee).toFixed(dp),
+                num(r.ecomFee).toFixed(dp),
+                num(r.netRevenue).toFixed(dp), pctCell(r.marginPct),
             ].join(',')));
             // Always append the server's own period-total aggregate (unbounded, matches
             // the on-screen KPI band) as a trailing TOTAL row -- so the file is
@@ -252,10 +264,10 @@ const CeoVolumeRevenue = ({
                 lines.push([
                     esc('TOTAL'), ...(lossOnly ? [] : [esc('')]), esc(`${totalRows} rows (period total)`),
                     num(exportTotals.txns),
-                    num(exportTotals.volume).toFixed(2), num(exportTotals.msf).toFixed(4),
-                    num(exportTotals.interchange).toFixed(2), num(exportTotals.schemeFee).toFixed(2),
-                    num(exportTotals.ecomFee).toFixed(2),
-                    num(exportTotals.netRevenue).toFixed(2), pctCell(exportTotals.marginPct),
+                    num(exportTotals.volume).toFixed(dp), num(exportTotals.msf).toFixed(msfDp),
+                    num(exportTotals.interchange).toFixed(dp), num(exportTotals.schemeFee).toFixed(dp),
+                    num(exportTotals.ecomFee).toFixed(dp),
+                    num(exportTotals.netRevenue).toFixed(dp), pctCell(exportTotals.marginPct),
                 ].join(','));
             }
             const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });

@@ -28,6 +28,8 @@ public class BusinessController {
         private final com.acquira.common.repository.SumDailyBankRepository dailyBankRepository;
         /** Server-side check of the DB-driven sys_group_menu screen grants. */
         private final com.acquira.common.security.MenuAccessEvaluator menuAccess;
+        /** Stamps the tenant's currency onto every money-bearing response. */
+        private final CurrencyMeta currencyMeta;
 
         @PersistenceContext
         private EntityManager entityManager;
@@ -35,11 +37,13 @@ public class BusinessController {
         public BusinessController(MerchantActivitySummaryRepository activityRepository,
                         MerchantOpportunityScoreRepository opportunityRepository,
                         com.acquira.common.repository.SumDailyBankRepository dailyBankRepository,
-                        com.acquira.common.security.MenuAccessEvaluator menuAccess) {
+                        com.acquira.common.security.MenuAccessEvaluator menuAccess,
+                        CurrencyMeta currencyMeta) {
                 this.activityRepository = activityRepository;
                 this.opportunityRepository = opportunityRepository;
                 this.dailyBankRepository = dailyBankRepository;
                 this.menuAccess = menuAccess;
+                this.currencyMeta = currencyMeta;
         }
 
         // SECURITY: use only the filter-validated TenantContext, never the raw
@@ -113,7 +117,7 @@ public class BusinessController {
                 response.put("zeroSalesMerchants", 0);
                 response.put("effectiveDate", effectiveDate);
 
-                return ResponseEntity.ok(response);
+                return ResponseEntity.ok(currencyMeta.attach(response));
         }
 
         /**
@@ -303,7 +307,7 @@ public class BusinessController {
                 response.put("effectiveDate", eff.toString());
                 response.put("mtd", mtd);
                 response.put("ytd", ytd);
-                return ResponseEntity.ok(response);
+                return ResponseEntity.ok(currencyMeta.attach(response));
         }
 
         /**
@@ -590,7 +594,7 @@ public class BusinessController {
                 response.put("totalRows", totalRows);
                 response.put("totals", totals);
                 response.put("rows", out);
-                return ResponseEntity.ok(response);
+                return ResponseEntity.ok(currencyMeta.attach(response));
         }
 
         /** One-row SUM aggregate over sum_daily_bank for a date window (settlement volume). */
@@ -880,7 +884,7 @@ public class BusinessController {
                 response.put("snapshotDate",      snapshotDate);
                 response.put("filtersApplied",    !isFilterEmpty(filter));
 
-                return ResponseEntity.ok(response);
+                return ResponseEntity.ok(currencyMeta.attach(response));
         }
 
         /** WHERE-fragment for the filterable columns (used by the active-count query). */

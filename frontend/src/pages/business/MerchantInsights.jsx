@@ -218,16 +218,16 @@ const MerchantInsights = () => {
                     <Stack spacing={3}>
                         {/* KPI Row 1 */}
                         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                            <DarkKpiCard title={`SALES (${currencyCode})`} value={data.overview.sales?.formattedValue} growth={data.overview.sales?.momGrowth} trend={data.overview.sales?.trend} icon={CreditCard} />
+                            <DarkKpiCard title={`SALES${currencyCode ? ` (${currencyCode})` : ''}`} value={data.overview.sales?.formattedValue} growth={data.overview.sales?.momGrowth} trend={data.overview.sales?.trend} icon={CreditCard} />
                             <DarkKpiCard title="TRANSACTIONS" value={data.overview.transactions?.formattedValue} growth={data.overview.transactions?.momGrowth} trend={data.overview.transactions?.trend} icon={LayoutGrid} />
                             <DarkKpiCard title="CUSTOMERS" value={data.overview.customers?.formattedValue} growth={data.overview.customers?.momGrowth} trend={data.overview.customers?.trend} icon={Users} />
                         </Box>
 
                         {/* KPI Row 2 */}
                         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                            <DarkKpiCard title={`MAX DAILY SALES (${currencyCode})`} value={data.overview.peakStats?.maxDailySales?.formattedValue} growth={data.overview.peakStats?.maxDailySales?.momGrowth} trend={data.overview.peakStats?.maxDailySales?.trend} />
+                            <DarkKpiCard title={`MAX DAILY SALES${currencyCode ? ` (${currencyCode})` : ''}`} value={data.overview.peakStats?.maxDailySales?.formattedValue} growth={data.overview.peakStats?.maxDailySales?.momGrowth} trend={data.overview.peakStats?.maxDailySales?.trend} />
                             <DarkKpiCard title="MAX NO. OF TXNS IN A DAY" value={data.overview.peakStats?.maxTxnsInDay?.formattedValue} growth={data.overview.peakStats?.maxTxnsInDay?.momGrowth} trend={data.overview.peakStats?.maxTxnsInDay?.trend} />
-                            <DarkKpiCard title={`HIGHEST TXN VALUE (${currencyCode})`} value={data.overview.peakStats?.highestTxnValue?.formattedValue} growth={data.overview.peakStats?.highestTxnValue?.momGrowth} trend={data.overview.peakStats?.highestTxnValue?.trend} />
+                            <DarkKpiCard title={`HIGHEST TXN VALUE${currencyCode ? ` (${currencyCode})` : ''}`} value={data.overview.peakStats?.highestTxnValue?.formattedValue} growth={data.overview.peakStats?.highestTxnValue?.momGrowth} trend={data.overview.peakStats?.highestTxnValue?.trend} />
                         </Box>
 
                         {/* Charts */}

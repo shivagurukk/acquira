@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Download, ChevronRight, Loader2, AlertTriangle } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatMsf } from '../../utils/formatters';
+import { formatMsf, formatCurrency, resolveDecimals } from '../../utils/formatters';
 
 const TransactionTrendsHub = () => {
-    const { tenantVersion, currencyCode } = useAuth();
+    const { tenantVersion, currencyCode, currencyDecimals } = useAuth();
     // --- State ---
     const [filters, setFilters] = useState({
         datePreset: 'CURRENT_YEAR',
@@ -137,11 +137,17 @@ const TransactionTrendsHub = () => {
             const s = String(v ?? '');
             return `"${(/^[=+\-@]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
         };
-        const lines = [['Month', 'Year', 'Transactions', 'Volume', 'MSF', 'Opt-In Volume'].join(',')];
+        // Money columns use the tenant's decimals (3 for BHD) and the file
+        // states its currency, so a BHD export is not silently truncated to fils.
+        const dp = resolveDecimals(currencyDecimals, currencyCode);
+        const lines = [
+            `Currency,${currencyCode || 'UNKNOWN'}`,
+            ['Month', 'Year', 'Transactions', 'Volume', 'MSF', 'Opt-In Volume'].join(','),
+        ];
         monthlyData.forEach(r => lines.push([
             esc(r.month_name), r.year, r.count,
-            Number(r.volume || 0).toFixed(2), Number(r.msf || 0).toFixed(4),
-            Number(r.opt_in_volume || 0).toFixed(2),
+            Number(r.volume || 0).toFixed(dp), Number(r.msf || 0).toFixed(Math.max(4, dp)),
+            Number(r.opt_in_volume || 0).toFixed(dp),
         ].join(',')));
         const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
         const a = document.createElement('a');
@@ -151,7 +157,9 @@ const TransactionTrendsHub = () => {
         URL.revokeObjectURL(a.href);
     };
 
-    const fmt = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode || 'AED', minimumFractionDigits: 0 }).format(val || 0);
+    // No 'AED' fallback and no whole-unit rounding — the central formatter
+    // applies the tenant's currency and decimals (3dp for BHD).
+    const fmt = (val) => formatCurrency(val);
     const fmtInt = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 
     const PRESETS = [
@@ -161,7 +169,7 @@ const TransactionTrendsHub = () => {
     ];
 
     return (
-        <div className="page-container" style={{ padding: '20px', color: '#1e293b', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="page-container" style={{ padding: '20px', color: '#1e293b', height: 'var(--vh100, 100vh)', display: 'flex', flexDirection: 'column' }}>
 
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>

@@ -15,6 +15,22 @@ public class MerchantInsightsDTO {
     // NEW: Currency support
     private String currencySymbol;
     private String currencyCode;
+    /**
+     * Minor-unit precision of {@link #currencyCode}, sourced from
+     * ref_country.decimal_notation_value via CurrencyResolver
+     * (divisor 100 -> 2, divisor 1000 -> 3).
+     *
+     * EVERY monetary figure in the PDF templates, the KPI formattedValue
+     * strings and the narrative sentences must be rendered to exactly this many
+     * fraction digits. Before this field existed the whole display stack
+     * hardcoded ZERO decimals, so BHD 450.755 printed as "BHD 451" and EGP lost
+     * its piastres.
+     *
+     * Never defaulted: MerchantInsightService throws if the tenant currency
+     * cannot be resolved, so a DTO that reaches a template always carries a
+     * non-null value here.
+     */
+    private Integer currencyDecimals;
     private List<ChartData> storeLeaderboard;
     // Dynamic AI-generated insights for each PDF section
     private InsightNarrative insights;
@@ -57,6 +73,8 @@ public class MerchantInsightsDTO {
     public void setCurrencySymbol(String currencySymbol) { this.currencySymbol = currencySymbol; }
     public String getCurrencyCode() { return currencyCode; }
     public void setCurrencyCode(String currencyCode) { this.currencyCode = currencyCode; }
+    public Integer getCurrencyDecimals() { return currencyDecimals; }
+    public void setCurrencyDecimals(Integer currencyDecimals) { this.currencyDecimals = currencyDecimals; }
 
     public static MerchantInsightsDTOBuilder builder() { return new MerchantInsightsDTOBuilder(); }
 
@@ -68,6 +86,7 @@ public class MerchantInsightsDTO {
         private DccPerformance dccPerformance;
         private String currencySymbol;
         private String currencyCode;
+        private Integer currencyDecimals;
 
         public MerchantInsightsDTOBuilder overview(BusinessOverview v) { this.overview = v; return this; }
         public MerchantInsightsDTOBuilder achievements(BusinessAchievements v) { this.achievements = v; return this; }
@@ -76,8 +95,12 @@ public class MerchantInsightsDTO {
         public MerchantInsightsDTOBuilder dccPerformance(DccPerformance v) { this.dccPerformance = v; return this; }
         public MerchantInsightsDTOBuilder currencySymbol(String v) { this.currencySymbol = v; return this; }
         public MerchantInsightsDTOBuilder currencyCode(String v) { this.currencyCode = v; return this; }
+        public MerchantInsightsDTOBuilder currencyDecimals(Integer v) { this.currencyDecimals = v; return this; }
         public MerchantInsightsDTO build() {
-            return new MerchantInsightsDTO(overview, achievements, loyalty, demographics, dccPerformance, currencySymbol, currencyCode);
+            MerchantInsightsDTO d = new MerchantInsightsDTO(overview, achievements, loyalty, demographics,
+                    dccPerformance, currencySymbol, currencyCode);
+            d.setCurrencyDecimals(currencyDecimals);
+            return d;
         }
     }
 

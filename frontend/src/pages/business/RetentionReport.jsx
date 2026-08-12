@@ -58,8 +58,8 @@ const prettyDate = (ymd) => {
 };
 
 const RetentionReport = () => {
-    const { currencySymbol, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
     const [data, setData] = useState([]);
     const [meta, setMeta] = useState(null);
     const [loading, setLoading] = useState(false);

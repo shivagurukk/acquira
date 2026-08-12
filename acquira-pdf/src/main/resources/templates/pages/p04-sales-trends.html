@@ -21,7 +21,7 @@
         <!-- ROW 1: Sales by Day of Week (full width) -->
         <div class="card mb-6" style="padding: 10px 12px;">
             <div class="card-title"><span>SALES BY DAY OF WEEK (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
-            <div class="chart-container" style="max-height: 140px;"><canvas data-chart="gradient-bar" data-field="overview.salesByDayOfWeek" data-color="#1E3A8A"></canvas></div>
+            <div class="chart-container" style="max-height: 140px;"><canvas data-chart="gradient-bar" data-field="overview.salesByDayOfWeek" data-money="true" data-color="#1E3A8A"></canvas></div>
         </div>
 
         <!-- ROW 2: HOURLY SALES DISTRIBUTION
@@ -41,7 +41,7 @@
             </div>
             <div style="font-size: 8px; color: #6B7280; margin-bottom: 6px;">Hour-by-hour sales distribution across the reporting period</div>
             <!-- data-clamp-negative="true" signals the chart renderer to max(0, value) per bucket -->
-            <div class="chart-container" style="max-height: 170px;"><canvas data-chart="gradient-bar" data-field="achievements.salesTimeOfDay" data-color="#6D28D9" data-clamp-negative="true"></canvas></div>
+            <div class="chart-container" style="max-height: 170px;"><canvas data-chart="gradient-bar" data-field="achievements.salesTimeOfDay" data-money="true" data-color="#6D28D9" data-clamp-negative="true"></canvas></div>
         </div>
 
         <!-- ROW 3: Dual Axis full width

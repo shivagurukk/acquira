@@ -28,6 +28,8 @@ public class FinanceController {
     private final SumDailyChannelRepository channelRepository;
     private final VolumeRevenueRepository volumeRevenueRepository;
     private final com.acquira.core.service.TenantService tenantService;
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -39,7 +41,8 @@ public class FinanceController {
             SumDailySchemeRepository schemeRepository,
             SumDailyChannelRepository channelRepository,
             VolumeRevenueRepository volumeRevenueRepository,
-            com.acquira.core.service.TenantService tenantService) {
+            com.acquira.core.service.TenantService tenantService,
+            CurrencyMeta currencyMeta) {
         this.bankRepository = bankRepository;
         this.monthlyBankRepository = monthlyBankRepository;
         this.merchantRepository = merchantRepository;
@@ -48,6 +51,7 @@ public class FinanceController {
         this.channelRepository = channelRepository;
         this.volumeRevenueRepository = volumeRevenueRepository;
         this.tenantService = tenantService;
+        this.currencyMeta = currencyMeta;
     }
 
     /**
@@ -214,7 +218,7 @@ public class FinanceController {
         }
         response.put("marginPct", marginPct);
 
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(currencyMeta.attach(response, resolveTenantId()));
     }
 
     /**
@@ -286,7 +290,7 @@ public class FinanceController {
         }
         response.put("marginPct", marginPct);
 
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(currencyMeta.attach(response, resolveTenantId()));
     }
 
     /**
@@ -625,21 +629,49 @@ public class FinanceController {
         response.setContentType("text/csv");
         response.setHeader("Content-Disposition", "attachment; filename=\"profitability.csv\"");
 
+        // Volume / net margin here come from the sum_* tables and are always in the
+        // tenant's own settlement currency, so one currency applies to the whole file.
+        String currencyCode = currencyMeta.codeOrNull(tenantId);
+        int decimals = currencyMeta.decimalsOr(tenantId, -1); // -1 = unresolved, never assume 2
+
         try (java.io.PrintWriter writer = response.getWriter()) {
-            writer.println("Name,Txn Count,Volume,Net Margin,Margin %");
+            // "Currency" added: the file previously carried bare numbers with no
+            // indication of denomination or scale.
+            writer.println("Name,Currency,Txn Count,Volume,Net Margin,Margin %");
             for (Map<String, Object> row : data) {
                 String name = String.valueOf(row.get("name") != null ? row.get("name") : row.get("key"));
                 BigDecimal vol = (BigDecimal) row.get("totalVolume");
                 BigDecimal net = (BigDecimal) row.get("totalNetRevenue");
                 Long cnt = (Long) row.get("totalTxns");
-                BigDecimal margin = (vol != null && vol.compareTo(BigDecimal.ZERO) > 0)
+                BigDecimal margin = (vol != null && vol.compareTo(BigDecimal.ZERO) > 0 && net != null)
                         ? net.multiply(new BigDecimal(100)).divide(vol, 2, RoundingMode.HALF_UP)
                         : BigDecimal.ZERO;
 
-                writer.printf("\"%s\",%d,%s,%s,%s%n",
-                        name, cnt, vol, net, margin);
+                writer.printf("%s,%s,%s,%s,%s,%s%n",
+                        csvQuote(name),
+                        csvQuote(currencyCode == null ? "" : currencyCode),
+                        cnt == null ? "" : cnt.toString(),
+                        money(vol, decimals),
+                        money(net, decimals),
+                        margin.toPlainString()); // a percentage, not money — stays 2dp
             }
         }
+    }
+
+    /**
+     * Money at the tenant's real scale. When the currency is unresolved
+     * ({@code decimals < 0}) the stored value is written unrounded rather than
+     * being forced to a guessed number of decimals.
+     */
+    private static String money(BigDecimal v, int decimals) {
+        if (v == null) return "";
+        return decimals >= 0 ? CurrencyMeta.formatAmount(v, decimals) : v.stripTrailingZeros().toPlainString();
+    }
+
+    /** RFC-4180 quoting — a merchant name containing a quote or comma used to corrupt the row. */
+    private static String csvQuote(String s) {
+        if (s == null) return "";
+        return "\"" + s.replace("\"", "\"\"") + "\"";
     }
 
     // D) Profitability Breakdown

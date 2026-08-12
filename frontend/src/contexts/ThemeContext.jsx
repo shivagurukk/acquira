@@ -1,36 +1,53 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
+import { ThemeProvider as MuiThemeProvider, useColorScheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { createAppTheme } from '../theme';
+import { buildTheme } from '../theme';
 
 /**
  * Dark Mode — single source of truth for theming.
  *
  * Responsibilities:
  *   1. Tracks light/dark preference (localStorage + OS preference).
- *   2. Toggles the 'dark' class on <html> for Tailwind.
+ *   2. Toggles the 'dark' class on <html> — this drives Tailwind, the
+ *      index.css token sheet, AND the MUI colour scheme (the theme is
+ *      built with cssVariables + colorSchemeSelector: 'class', so both
+ *      schemes are emitted as CSS variables and the class picks one).
  *   3. Publishes CSS custom properties for inline-style components.
- *   4. Builds the matching MUI theme and provides it via MUI's
- *      ThemeProvider — so MUI components (DataGrid, Dialog, Paper…)
- *      switch with dark mode instead of staying permanently light.
+ *
+ * The ledger palette lives in exactly two places: index.css (:root /
+ * html.dark) and theme.js TOKENS. The values below mirror those files.
  */
 const ThemeContext = createContext(null);
 
 const LIGHT = {
   mode: 'light',
-  bg: '#F9FAFB', bgCard: '#FFFFFF', bgSidebar: '#0F172A',
-  bgSubtle: '#F3F4F6', bgHover: '#F9FAFB',
-  text: '#111827', textSecondary: '#6B7280',
-  border: '#E5E7EB', borderLight: '#F3F4F6',
-  accent: '#1E3A8A', accentLight: '#EFF6FF',
+  bg: '#EEF2F1', bgCard: '#FFFFFF', bgSidebar: '#101F1E',
+  bgSubtle: '#F5F8F7', bgHover: '#F4F9F8',
+  text: '#101F1E', textSecondary: '#5A6B6A',
+  border: '#DDE4E3', borderLight: '#DDE4E3',
+  accent: '#12706B', accentLight: '#E3F0EE',
 };
 const DARK = {
   mode: 'dark',
-  bg: '#0F172A', bgCard: '#1E293B', bgSidebar: '#020617',
-  bgSubtle: '#0F172A', bgHover: '#243049',
-  text: '#F1F5F9', textSecondary: '#94A3B8',
-  border: '#334155', borderLight: '#1E293B',
-  accent: '#3B82F6', accentLight: '#1E3A5C',
+  bg: '#0C1616', bgCard: '#132020', bgSidebar: '#101F1E',
+  bgSubtle: '#101B1B', bgHover: '#142625',
+  text: '#E4ECEA', textSecondary: '#8FA3A1',
+  border: '#1F3130', borderLight: '#1F3130',
+  accent: '#37B0A5', accentLight: '#16302E',
+};
+
+// One theme carrying both colour schemes — never rebuilt on toggle.
+const muiTheme = buildTheme();
+
+// Keeps MUI's internal colour-scheme state in step with our isDark flag,
+// so MUI and the html.dark class never disagree about the active scheme.
+const SyncMuiMode = ({ isDark }) => {
+  const { mode, setMode } = useColorScheme();
+  useEffect(() => {
+    const want = isDark ? 'dark' : 'light';
+    if (mode !== want) setMode(want);
+  }, [isDark, mode, setMode]);
+  return null;
 };
 
 export const ThemeProvider = ({ children }) => {
@@ -41,9 +58,6 @@ export const ThemeProvider = ({ children }) => {
   });
 
   const theme = isDark ? DARK : LIGHT;
-
-  // MUI theme rebuilt only when the mode changes.
-  const muiTheme = useMemo(() => createAppTheme(isDark ? 'dark' : 'light'), [isDark]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -66,9 +80,12 @@ export const ThemeProvider = ({ children }) => {
 
   const toggleTheme = useCallback(() => setIsDark(prev => !prev), []);
 
+  const ctx = useMemo(() => ({ isDark, theme, toggleTheme }), [isDark, theme, toggleTheme]);
+
   return (
-    <ThemeContext.Provider value={{ isDark, theme, toggleTheme }}>
-      <MuiThemeProvider theme={muiTheme}>
+    <ThemeContext.Provider value={ctx}>
+      <MuiThemeProvider theme={muiTheme} defaultMode={isDark ? 'dark' : 'light'}>
+        <SyncMuiMode isDark={isDark} />
         <CssBaseline />
         {children}
       </MuiThemeProvider>

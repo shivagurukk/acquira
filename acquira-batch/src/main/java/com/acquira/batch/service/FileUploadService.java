@@ -330,13 +330,44 @@ public class FileUploadService {
 
         if (isSuperAdmin) {
             String finalFileEntityId = fileEntityId;
-            return tenantRepository.findByBankShortCode(fileEntityId)
+            Long fileTenantId = tenantRepository.findByBankShortCode(fileEntityId)
                     .map(com.acquira.common.model.Tenant::getTenantId)
                     .or(() -> tenantRepository.findByInstitutionId(finalFileEntityId)
                             .map(com.acquira.common.model.Tenant::getTenantId))
                     .orElseThrow(() -> new RuntimeException(
                             "Super Admin Upload: No Tenant found for Entity ID '" + finalFileEntityId
                                     + "' (Checked Short Code & Institution ID)."));
+
+            // CROSS-TENANT SAFETY.
+            //
+            // A super admin's upload used to be routed ENTIRELY by the "Entity Name"
+            // column inside the file, silently ignoring the tenant the admin actually
+            // had selected (X-Tenant-Id / TenantContext). So a file mislabelled "EGY"
+            // — a copy-paste of last month's template, a wrong export, a supplier
+            // sending the wrong bank's extract — ingested cleanly into Egypt while the
+            // admin watched a Bahrain upload appear to succeed. Nothing flagged it:
+            // both tenants exist, both resolve, and the job reports success. The
+            // damage only surfaces later as another tenant's numbers moving.
+            //
+            // With two new tenants going live (EGP 2dp and BHD 3dp), the two feeds
+            // also differ in scale, so a mis-routed file corrupts amounts as well as
+            // ownership. When the admin has an explicit tenant selected we now refuse
+            // to guess which of the two intentions is right and name BOTH sides.
+            //
+            // No tenant context (scheduler, server-side folder sweep, API client that
+            // sends no X-Tenant-Id) keeps the previous file-driven behaviour.
+            if (sessionTenantId != null && !sessionTenantId.equals(fileTenantId)) {
+                throw new RuntimeException(
+                        "Tenant mismatch — upload refused. The active tenant is "
+                                + describeTenant(sessionTenantId)
+                                + ", but this file's Entity Name '" + finalFileEntityId + "' belongs to "
+                                + describeTenant(fileTenantId)
+                                + ". Switch to the intended tenant, or correct the file's Entity Name, and upload again. "
+                                + "Refusing to choose between them, because ingesting into the wrong tenant "
+                                + "cannot be undone by re-uploading.");
+            }
+
+            return fileTenantId;
         } else {
             if (sessionTenantId == null) {
                 throw new RuntimeException("No session tenant found for user.");
@@ -354,6 +385,20 @@ public class FileUploadService {
 
             return sessionTenantId;
         }
+    }
+
+    /**
+     * Human-readable identity for a tenant in error messages: short code, bank name
+     * and id, so an operator can tell at a glance which two tenants were confused
+     * without looking anything up. Degrades to the bare id if the row is missing.
+     */
+    private String describeTenant(Long tenantId) {
+        if (tenantId == null) {
+            return "(none)";
+        }
+        return tenantRepository.findById(tenantId)
+                .map(t -> "'" + t.getBankShortCode() + "' (" + t.getBankName() + ", id=" + tenantId + ")")
+                .orElse("id=" + tenantId + " (not found)");
     }
 
     // Kept for processSingleServerFile() which still uses the old API — it now delegates

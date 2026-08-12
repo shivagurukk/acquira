@@ -57,7 +57,7 @@
                 <div style="padding: 10px 16px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
                     <div style="display: flex; justify-content: space-between; font-size: 8.5px; margin-bottom: 4px;">
                         <span style="color: #6B7280;">Opt-In Volume</span>
-                        <span style="font-weight: 800; color: #059669;" th:text="${dto.dccPerformance.dccOptinVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptinVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</span>
+                        <span style="font-weight: 800; color: #059669;" th:text="${dto.dccPerformance.dccOptinVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptinVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 8.5px;">
                         <span style="color: #6B7280;">Conversion Rate</span>
@@ -82,7 +82,7 @@
                 <div style="padding: 10px 16px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
                     <div style="display: flex; justify-content: space-between; font-size: 8.5px; margin-bottom: 4px;">
                         <span style="color: #6B7280;">Opt-Out Volume</span>
-                        <span style="font-weight: 800; color: #DC2626;" th:text="${dto.dccPerformance.dccOptoutVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptoutVolume, 1, 'COMMA', 0, 'POINT') : '-'}">-</span>
+                        <span style="font-weight: 800; color: #DC2626;" th:text="${dto.dccPerformance.dccOptoutVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptoutVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 8.5px;">
                         <span style="color: #6B7280;">Decline Rate</span>
@@ -106,7 +106,10 @@
             <!-- FIX UX: switched from dual-axis (vol/vol) to dual-axis-bar-line (vol/rate)
                  so the conversion-rate % line is visible even when opt-in volumes are small.
                  data-field2 = "dccPerformance.optInConversionRateTrend" carries the monthly
-                 conversion % so the right-axis scale is 0–100% instead of raw AED. -->
+                 conversion % so the right-axis scale is 0–100% instead of raw AED.
+                 That series is count-based (optin/eligible) and omits months with fewer
+                 than 5 eligible transactions, so the line breaks rather than showing a
+                 0%/100% reading derived from one or two transactions. -->
             <div class="chart-container" style="max-height: 130px;">
                 <canvas data-chart="dual-axis-bar-line"
                         data-field="dccPerformance.optOutOptInTrend"

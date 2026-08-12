@@ -175,7 +175,7 @@ const MerchantInsightHub = () => {
     const fmtInt = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 
     return (
-        <div className="page-container" style={{ padding: '20px', color: '#1e293b', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="page-container" style={{ padding: '20px', color: '#1e293b', height: 'var(--vh100, 100vh)', display: 'flex', flexDirection: 'column' }}>
 
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>

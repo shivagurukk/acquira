@@ -78,8 +78,8 @@ const Meter = ({ value, color }) => (
 
 const BudgetTargets = () => {
     const confirm = useConfirm();
-    const { currencySymbol, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
 
     const [viewMode, setViewMode] = useState('YEARLY'); // MONTHLY | YEARLY
     const [viewYear, setViewYear] = useState(currentYear);

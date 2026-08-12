@@ -623,6 +623,59 @@ public class TransactionJobConfig {
         return code;
     }
 
+    /**
+     * Decimal PLACES for a minor-unit divisor. The divisor was always
+     * currency-aware; the rounding scale next to it was hardcoded to 2, which
+     * is why every BHD amount lost its third decimal (fils) at the very first
+     * touch — verified: 100.505 -> 100.51, 99.999 -> 100.00.
+     */
+    private static int scaleFor(int decVal) {
+        switch (decVal) {
+            case 1:     return 0;
+            case 10:    return 1;
+            case 100:   return 2;
+            case 1000:  return 3;
+            case 10000: return 4;
+            default:
+                if (WARNED_MISSING_CURRENCIES.add("SCALE:" + decVal)) {
+                    log.warn("decimal_notation_value={} is not a power of ten - falling back to scale 2", decVal);
+                }
+                return 2;
+        }
+    }
+
+    /** Unit mode for one feed column, per the feed_amount_contract table. */
+    private static final String UNIT_MINOR = "MINOR";
+    private static final String UNIT_BASIS_10000 = "BASIS_10000";
+
+    /**
+     * Resolve the per-column unit contract for a tenant (global default ->
+     * country -> tenant, most specific wins). Loaded once per processor build.
+     */
+    private java.util.Map<String, String> loadAmountContract(Long tenantId) {
+        java.util.Map<String, String> modes = new java.util.HashMap<>();
+        try {
+            jdbcTemplate.query(
+                "SELECT c.column_name, c.unit_mode FROM feed_amount_contract c " +
+                "LEFT JOIN tenant t ON t.tenant_id = ? " +
+                "WHERE c.tenant_id IS NULL AND c.country_code IS NULL " +
+                "   OR c.country_code = t.home_country_code " +
+                "   OR c.tenant_id = ? " +
+                "ORDER BY (c.tenant_id IS NOT NULL) ASC, (c.country_code IS NOT NULL) ASC",
+                rs -> { modes.put(rs.getString("column_name"), rs.getString("unit_mode")); },
+                tenantId, tenantId);
+        } catch (Exception e) {
+            log.warn("feed_amount_contract unavailable ({}) - using legacy defaults", e.getMessage());
+        }
+        modes.putIfAbsent("txn_currency_amount", UNIT_MINOR);
+        modes.putIfAbsent("store_base_currency_amount", UNIT_MINOR);
+        modes.putIfAbsent("total_amount_settled", UNIT_MINOR);
+        modes.putIfAbsent("msf", "MAJOR");
+        modes.putIfAbsent("vat", "MAJOR");
+        modes.putIfAbsent("interchange_fee", UNIT_BASIS_10000);
+        return modes;
+    }
+
     private static int resolveDecimal(String raw,
             java.util.Map<String, String> isoNumericToCode,
             java.util.Map<String, Integer> codeToDecimal,
@@ -650,6 +703,12 @@ public class TransactionJobConfig {
         if (rawAmounts) {
             log.info("transactionTenantProcessor: AMS input - skipping amount divisions (txn, store-base, interchange).");
         }
+
+        // Per-column unit contract (V2026_08_10_03). Defaults reproduce the legacy
+        // behaviour exactly; a feed whose MSF/VAT genuinely arrive in minor units is
+        // now a configuration row rather than a silent 100x/1000x revenue error.
+        final java.util.Map<String, String> unitModes = loadAmountContract(tenantId);
+        log.info("transactionTenantProcessor: amount unit contract = {}", unitModes);
 
         return item -> {
             item.setTenantId(tenantId);
@@ -684,23 +743,55 @@ public class TransactionJobConfig {
                 int txnDecVal = resolveDecimal(rawTxnCcy, isoNumericToCurrencyCode, currencyCodeToDecimal, "Txn");
                 String txnCode = resolveCurrencyCode(rawTxnCcy, isoNumericToCurrencyCode, currencyCodeToDecimal);
                 if (txnCode != null) item.setTxnCurrency(txnCode);
-                if (!rawAmounts && item.getTxnCurrencyAmount() != null) {
-                    item.setTxnCurrencyAmount(
-                        item.getTxnCurrencyAmount().divide(decimalDivisor(txnDecVal), 2, java.math.RoundingMode.HALF_UP));
+                if (!rawAmounts && item.getTxnCurrencyAmount() != null
+                        && UNIT_MINOR.equals(unitModes.get("txn_currency_amount"))) {
+                    // Scale now comes from the SAME currency fact as the divisor.
+                    item.setTxnCurrencyAmount(item.getTxnCurrencyAmount()
+                        .divide(decimalDivisor(txnDecVal), scaleFor(txnDecVal), java.math.RoundingMode.HALF_UP));
                 }
             }
 
             int stlDecVal = resolveDecimal(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal, "Store base");
             String stlCode = resolveCurrencyCode(item.getStoreBaseCurrency(), isoNumericToCurrencyCode, currencyCodeToDecimal);
             if (stlCode != null) item.setStoreBaseCurrency(stlCode);
-            if (!rawAmounts && item.getStoreBaseCurrencyAmount() != null) {
-                item.setStoreBaseCurrencyAmount(
-                    item.getStoreBaseCurrencyAmount().divide(decimalDivisor(stlDecVal), 2, java.math.RoundingMode.HALF_UP));
+            final int stlScale = scaleFor(stlDecVal);
+            if (!rawAmounts && item.getStoreBaseCurrencyAmount() != null
+                    && UNIT_MINOR.equals(unitModes.get("store_base_currency_amount"))) {
+                // THE most damaging of the old hardcoded scales: this is the basis of
+                // every fee computation and every volume rollup, so rounding it to 2dp
+                // rounded the whole warehouse to 2dp for a 3-decimal currency.
+                item.setStoreBaseCurrencyAmount(item.getStoreBaseCurrencyAmount()
+                    .divide(decimalDivisor(stlDecVal), stlScale, java.math.RoundingMode.HALF_UP));
             }
-            item.setTotalAmountSettled(null);
+
+            // TOTAL AMOUNT SETTLED: previously thrown away unconditionally
+            // (setTotalAmountSettled(null)) — a financial field from the feed silently
+            // discarded. Now retained, with the same unit contract as the amounts.
+            if (item.getTotalAmountSettled() != null
+                    && !rawAmounts && UNIT_MINOR.equals(unitModes.get("total_amount_settled"))) {
+                item.setTotalAmountSettled(item.getTotalAmountSettled()
+                    .divide(decimalDivisor(stlDecVal), stlScale, java.math.RoundingMode.HALF_UP));
+            }
+
+            // MSF / VAT: honour the contract. Legacy default is MAJOR (untouched), so
+            // this is a no-op until a feed is explicitly configured as MINOR. Fees keep
+            // 4dp because the columns are DECIMAL(19,4) and fee arithmetic needs the
+            // headroom below the currency's own precision.
+            if (!rawAmounts && item.getMsf() != null && UNIT_MINOR.equals(unitModes.get("msf"))) {
+                item.setMsf(item.getMsf().divide(decimalDivisor(stlDecVal), 4, java.math.RoundingMode.HALF_UP));
+            }
+            if (!rawAmounts && item.getVat() != null && UNIT_MINOR.equals(unitModes.get("vat"))) {
+                item.setVat(item.getVat().divide(decimalDivisor(stlDecVal), 4, java.math.RoundingMode.HALF_UP));
+            }
 
             if (!rawAmounts && item.getInterchangeFee() != null) {
-                item.setInterchangeFee(item.getInterchangeFee().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
+                String icMode = unitModes.get("interchange_fee");
+                if (UNIT_BASIS_10000.equals(icMode)) {
+                    item.setInterchangeFee(item.getInterchangeFee().divide(BD_10000, 4, java.math.RoundingMode.HALF_UP));
+                } else if (UNIT_MINOR.equals(icMode)) {
+                    item.setInterchangeFee(item.getInterchangeFee()
+                        .divide(decimalDivisor(stlDecVal), 4, java.math.RoundingMode.HALF_UP));
+                }
             }
 
             return item;
@@ -913,7 +1004,8 @@ public class TransactionJobConfig {
             String sql = "INSERT INTO fact_transaction (tenant_id, merchant_id, store_id, terminal_id, " +
                 "arn, rrn_number, card_number, auth_code, payment_date, transaction_date, batch_number, " +
                 "transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, txn_currency_amount, " +
-                "store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, interchange_fee, destination) " +
+                "store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, interchange_fee, " +
+                "destination, destination_raw) " +
                 "SELECT stg.tenant_id, " +
                 "COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id) AS merchant_id, " +
                 "COALESCE(s.store_id, s2.store_id) AS store_id, t.terminal_id, " +
@@ -938,8 +1030,27 @@ public class TransactionJobConfig {
                 "     THEN -ABS(stg.store_base_currency_amount) ELSE ABS(stg.store_base_currency_amount) END, " +
                 "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
                 "     THEN -ABS(stg.msf) ELSE ABS(stg.msf) END, " +
-                "ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination " +
+                "ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), " +
+                // DESTINATION NORMALIZATION (2026-08-10). The feed's own vocabulary is
+                // mapped to the engine's canonical DOMESTIC/INTERNATIONAL exactly once,
+                // here, so fact + fee engine + every rollup all see the same value.
+                // Previously the raw token was copied verbatim and the fee engine
+                // exact-matched it, so a Bahraini or Egyptian feed saying 'LOCAL'
+                // matched no rate row and silently took a 1.85% UAE fallback.
+                // An UNMAPPED token deliberately lands as NULL rather than being
+                // guessed as INTERNATIONAL — the fee engine reports it as
+                // UNMAPPED_DESTINATION and prices nothing. destination_raw always
+                // keeps the original token for audit and for mapping gaps analysis.
+                "dtm.dest, NULLIF(TRIM(stg.destination),'') " +
                 "FROM stg_trnx_raw stg " +
+                "LEFT JOIN tenant tn ON tn.tenant_id = stg.tenant_id " +
+                "LEFT JOIN LATERAL ( " +
+                "  SELECT d.dest FROM destination_token_map d " +
+                "  WHERE d.country_code = COALESCE(tn.home_country_code,'AE') " +
+                "    AND (d.tenant_id IS NULL OR d.tenant_id = stg.tenant_id) " +
+                "    AND d.raw_token = UPPER(TRIM(COALESCE(stg.destination,''))) " +
+                "  ORDER BY (d.tenant_id IS NOT NULL) DESC LIMIT 1 " +
+                ") dtm ON TRUE " +
                 "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '') " +
                 "LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '') " +
                 "LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id " +
@@ -1100,21 +1211,70 @@ public class TransactionJobConfig {
                 "UPDATE fact_transaction f SET " +
                 "  interchange_fee = r.computed_ic, " +
                 "  scheme_fee      = r.computed_scheme, " +
-                "  ecom_fee        = r.computed_ecom " +
+                "  ecom_fee        = r.computed_ecom, " +
+                "  channel                  = r.channel, " +
+                "  fee_resolution_status    = r.status, " +
+                "  scheme_fee_status        = r.sf_status, " +
+                "  interchange_rule_id      = r.ic_rule_id, " +
+                "  scheme_fee_rule_id       = r.sf_rule_id, " +
+                "  interchange_pct_applied  = r.ic_pct, " +
+                "  interchange_flat_applied = r.ic_flat, " +
+                "  interchange_cap_applied  = r.ic_cap " +
                 "FROM ( " +
-                "  SELECT ft.transaction_id, ft.payment_date, " +
+                "  SELECT ft.transaction_id, ft.payment_date, ch.channel, " +
                 // REFUND RULE (2026-07-08, business-confirmed): refunds carry ZERO
                 // interchange and ZERO scheme fee. Feed transaction_type = 'RFND'.
                 // Ecom flat fee untouched.
                 // interchange: refund => 0; else matched rate (+cap) else flat 1.85% fallback
+                // INTERCHANGE (rewritten 2026-08-10).
+                //
+                // The old version ended `WHEN lr.interchange_pct IS NULL THEN
+                // 0.018500 * amount` — any transaction that matched no rate row was
+                // silently charged the UAE cross-border rate, in the tenant's own
+                // currency, with a NULL (=0) scheme fee. It was indistinguishable
+                // from a correctly priced row. That fallback is GONE: an unmatched
+                // transaction now yields NULL and an explicit fee_resolution_status.
+                //
+                // FORMULA: cap bounds the PERCENTAGE component, then the flat fee is
+                // added. Both live cases confirm that ordering —
+                //   BENEFIT petrol : LEAST(0.6% x 45.750, 0.085) + 0    = 0.085
+                //   BENEFIT intl   : LEAST(1.1% x 100.000, inf) + 0.100 = 1.200
                 "    CASE WHEN rf.is_refund THEN 0 " +
-                "         WHEN lr.interchange_pct IS NULL " +
-                "         THEN 0.018500 * ABS(COALESCE(ft.store_base_currency_amount,0)) " +
+                "         WHEN ft.destination IS NULL OR ch.channel IS NULL THEN NULL " +
+                "         WHEN lr.id IS NULL OR lr.rate_status <> 'APPROVED' THEN NULL " +
                 "         ELSE LEAST(lr.interchange_pct * ABS(COALESCE(ft.store_base_currency_amount,0)), " +
-                "                    COALESCE(lr.cap_amount, 999999999999)) END AS computed_ic, " +
-                // scheme fee: refund => 0; else matched scheme rate * ABS(settlement); wildcard fallback guarantees a row
+                "                    COALESCE(lr.cap_amount, 999999999999)) + COALESCE(lr.flat_fee,0) END AS computed_ic, " +
+                // scheme fee: same discipline — an approved rate or nothing at all.
+                // BH/EG scheme-fee grids are verbatim UAE copies (flagged PLACEHOLDER
+                // in V2026_08_10_01), so they resolve to NULL + PLACEHOLDER_RATE until
+                // real country figures are supplied rather than quietly billing UAE
+                // economics to Bahraini and Egyptian merchants.
                 "    CASE WHEN rf.is_refund THEN 0 " +
-                "         ELSE (sfr.fee_pct * ABS(COALESCE(ft.store_base_currency_amount,0))) END AS computed_scheme, " +
+                "         WHEN ft.destination IS NULL OR ch.channel IS NULL THEN NULL " +
+                "         WHEN sfr.id IS NULL OR sfr.rate_status <> 'APPROVED' THEN NULL " +
+                "         ELSE (sfr.fee_pct * ABS(COALESCE(ft.store_base_currency_amount,0))) " +
+                "              + COALESCE(sfr.flat_fee,0) END AS computed_scheme, " +
+                // ---- provenance + resolution status -------------------------------
+                "    lr.id AS ic_rule_id, sfr.id AS sf_rule_id, " +
+                "    CASE WHEN lr.rate_status = 'APPROVED' THEN lr.interchange_pct END AS ic_pct, " +
+                "    CASE WHEN lr.rate_status = 'APPROVED' THEN lr.flat_fee END AS ic_flat, " +
+                "    CASE WHEN lr.rate_status = 'APPROVED' THEN lr.cap_amount END AS ic_cap, " +
+                "    CASE WHEN rf.is_refund                      THEN 'RESOLVED' " +
+                "         WHEN ft.destination IS NULL            THEN 'UNMAPPED_DESTINATION' " +
+                "         WHEN ch.channel IS NULL                THEN 'UNMAPPED_CHANNEL' " +
+                "         WHEN lr.id IS NULL                     THEN 'NO_RATE_FOUND' " +
+                "         WHEN lr.rate_status <> 'APPROVED'      THEN 'PLACEHOLDER_RATE' " +
+                // The scheme token did not resolve to a known network, so pricing came
+                // from the country's any-scheme row. Legitimate (this is how Amex and
+                // unmapped tokens have always priced) but it must be visible, not
+                // silently indistinguishable from a scheme-specific match.
+                "         WHEN rcs.group_name IS NULL            THEN 'RESOLVED_SCHEME_WILDCARD' " +
+                "         ELSE 'RESOLVED' END AS status, " +
+                "    CASE WHEN rf.is_refund                       THEN 'RESOLVED' " +
+                "         WHEN ft.destination IS NULL OR ch.channel IS NULL THEN 'UNRESOLVED' " +
+                "         WHEN sfr.id IS NULL                     THEN 'NO_RATE_FOUND' " +
+                "         WHEN sfr.rate_status <> 'APPROVED'      THEN 'PLACEHOLDER_RATE' " +
+                "         ELSE 'RESOLVED' END AS sf_status, " +
                 // ecom flat fee (V2026_07_31_06): per-country config (ecom_flat_fee)
                 // resolved by home_country_code, NOT a hardcoded 0.18. On ECOM channel
                 // use the resolved fee (COALESCE to 0 when a country has no configured
@@ -1133,18 +1293,56 @@ public class TransactionJobConfig {
                 // variants like 'MASTER CARD' resolve to ref_card_scheme 'MasterCard'.
                 // Without this, ~42% of rows (MASTER CARD) got group_name NULL -> wrong
                 // interchange AND zero scheme fee. Strips spaces on BOTH sides.
-                "  LEFT JOIN ref_card_scheme rcs " +
-                // TIER FIX (2026-07-07): resolve tier + scheme group from the GRANULAR
-                // product code (card_product_code = feed 'Card Type': VIPM/MCPM/MCDB...),
-                // which carries the Premium/Standard signal. card_scheme is only the
-                // network name ('Visa'/'Master Card') and always resolved Standard.
-                // Match the product code first; fall back to the network name so rows
-                // with a blank product code still resolve the scheme GROUP.
-                "    ON REPLACE(UPPER(TRIM(rcs.code)),' ','') = REPLACE(UPPER(TRIM(COALESCE(NULLIF(TRIM(ft.card_product_code),''), ft.card_scheme))),' ','') " +
-                "    OR REPLACE(UPPER(TRIM(rcs.name)),' ','') = REPLACE(UPPER(TRIM(COALESCE(NULLIF(TRIM(ft.card_product_code),''), ft.card_scheme))),' ','') " +
+                // SCHEME RESOLUTION, two-tier (fixed 2026-08-10). The product code is
+                // tried FIRST because it carries the Premium/Standard tier signal, then
+                // the network name is tried as a fallback.
+                //
+                // The previous single-expression join used
+                //   COALESCE(NULLIF(card_product_code,''), card_scheme)
+                // which falls back only when the product code is EMPTY — never when it
+                // is present but unrecognised. A feed that puts a generic word like
+                // 'DEBIT' or 'CREDIT' in its Card Type column therefore resolved
+                // group_name = NULL for EVERY row, so scheme-specific pricing became
+                // unreachable and everything silently took the country's any-scheme
+                // wildcard. Verified on real Bahraini and Egyptian ingestion: BENEFIT
+                // and Meeza transactions were being priced at the generic 1.75%
+                // instead of their own rate cards. UAE is unaffected — its product
+                // codes (VIPM/MCPM/MCDB...) still match on the first tier.
+                "  CROSS JOIN LATERAL (SELECT REPLACE(UPPER(TRIM(COALESCE(ft.card_product_code,''))),' ','') AS v) pc " +
+                "  CROSS JOIN LATERAL (SELECT REPLACE(UPPER(TRIM(COALESCE(ft.card_scheme,''))),' ','') AS v) sc " +
+                "  LEFT JOIN LATERAL ( " +
+                "    SELECT r.*, CASE WHEN pc.v <> '' AND (REPLACE(UPPER(TRIM(r.code)),' ','') = pc.v " +
+                "                       OR REPLACE(UPPER(TRIM(r.name)),' ','') = pc.v) THEN 1 ELSE 0 END AS by_product " +
+                "    FROM ref_card_scheme r " +
+                "    WHERE (pc.v <> '' AND (REPLACE(UPPER(TRIM(r.code)),' ','') = pc.v " +
+                "                        OR REPLACE(UPPER(TRIM(r.name)),' ','') = pc.v)) " +
+                "       OR (sc.v <> '' AND (REPLACE(UPPER(TRIM(r.code)),' ','') = sc.v " +
+                "                        OR REPLACE(UPPER(TRIM(r.name)),' ','') = sc.v)) " +
+                "    ORDER BY by_product DESC, r.id ASC LIMIT 1 " +
+                "  ) rcs ON TRUE " +
                 // derive channel ONCE, reused by both rate LATERALs and the ecom CASE
-                "  CROSS JOIN LATERAL (SELECT CASE WHEN UPPER(TRIM(COALESCE(dt.type,''))) " +
-                "         IN ('ECOM PROFILE','MPGS','PAY BY LINK','PAY ON') THEN 'ECOM' ELSE 'POS' END AS channel) ch " +
+                // CHANNEL RESOLUTION (config-driven since 2026-08-10). This used to be
+                // a hardcoded four-string UAE whitelist with an implicit `ELSE 'POS'`,
+                // so ANY other processor's e-commerce silently priced as POS — cheaper
+                // interchange and a cheaper scheme fee, i.e. an error that flatters the
+                // P&L and never trips an alarm. Now: exact terminal-type match, then
+                // the country's '*' wildcard. AE seeds '*' -> POS so its behaviour is
+                // unchanged; BH/EG have no wildcard, so an unrecognised terminal type
+                // surfaces as UNMAPPED_CHANNEL until the real feed values are mapped.
+                "  CROSS JOIN LATERAL ( " +
+                "    SELECT COALESCE( " +
+                "      (SELECT t1.channel FROM terminal_channel_map t1 " +
+                "         WHERE t1.country_code = COALESCE(tn.home_country_code,'AE') " +
+                "           AND (t1.tenant_id IS NULL OR t1.tenant_id = ft.tenant_id) " +
+                "           AND t1.raw_type = UPPER(TRIM(COALESCE(dt.type,''))) " +
+                "         ORDER BY (t1.tenant_id IS NOT NULL) DESC LIMIT 1), " +
+                "      (SELECT t2.channel FROM terminal_channel_map t2 " +
+                "         WHERE t2.country_code = COALESCE(tn.home_country_code,'AE') " +
+                "           AND (t2.tenant_id IS NULL OR t2.tenant_id = ft.tenant_id) " +
+                "           AND t2.raw_type = '*' " +
+                "         ORDER BY (t2.tenant_id IS NOT NULL) DESC LIMIT 1) " +
+                "    ) AS channel " +
+                "  ) ch " +
                 // derive refund flag ONCE, reused by both computed_ic and computed_scheme.
                 // MUST match the volume-signing set IN ('RFND','REFUND') used in
                 // stagingToFact (2026-07-18) — previously this checked only 'RFND', so a
@@ -1170,7 +1368,7 @@ public class TransactionJobConfig {
                 // Branch 2 uses idx_interchange_rate_local_generic (partial, mcc IS NULL).
                 // Same candidate set, same priority pick - semantics unchanged.
                 "  LEFT JOIN LATERAL ( " +
-                "    SELECT ilr.interchange_pct, ilr.cap_amount FROM ( " +
+                "    SELECT ilr.id, ilr.interchange_pct, ilr.flat_fee, ilr.cap_amount, ilr.rate_status FROM ( " +
                 // COUNTRY-LEVEL lookup (V2026_07_31_02): match country_code =
                 // tenant's home country (not tenant_id) so all tenants in a country
                 // share its card; tenant_id IS NULL = country default, non-null =
@@ -1204,12 +1402,19 @@ public class TransactionJobConfig {
                 // MCC-KEYED RATE CARD (2026-07-07): mcc match/wildcard now enforced by the
                 // UNION ALL branches above (most-specific still wins via priority DESC).
                 "      AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = msm.sector) " +
-                "      AND (ilr.min_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket_aed) " +
-                "      AND (ilr.max_ticket_aed IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket_aed) " +
-                // tenant override (tenant_id NOT NULL) wins over the country default,
-                // then highest priority, then lowest id. For AE (all rows tenant_id
-                // NULL after V2026_07_31_02) the first key is inert -> identical pick.
-                "    ORDER BY (ilr.tenant_id IS NOT NULL) DESC, ilr.priority DESC, ilr.id ASC LIMIT 1 " +
+                "      AND (ilr.min_ticket IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket) " +
+                "      AND (ilr.max_ticket IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket) " +
+                // EFFECTIVE DATING (2026-08-10): resolve against the rate that was in
+                // force on the PAYMENT date, not today's. Without this, re-ingesting a
+                // historical month reprices it at current rates. Needed imminently
+                // because the Egypt Meeza figure is an explicit interim rate.
+                "      AND (ilr.effective_from IS NULL OR ilr.effective_from <= DATE(ft.payment_date)) " +
+                "      AND (ilr.effective_to   IS NULL OR ilr.effective_to   >= DATE(ft.payment_date)) " +
+                // An APPROVED row always beats a PLACEHOLDER one; a placeholder is only
+                // ever returned so the status column can say WHY nothing priced.
+                // Then: tenant override over country default, then priority, then id.
+                "    ORDER BY (ilr.rate_status = 'APPROVED') DESC, (ilr.tenant_id IS NOT NULL) DESC, " +
+                "             ilr.priority DESC, ilr.id ASC LIMIT 1 " +
                 "  ) lr ON TRUE " +
                 // SCHEME FEE: match dest x channel; prefer scheme-specific row, then the
                 // scheme_group IS NULL wildcard (seeded 2026-07-07) so EVERY scheme -
@@ -1218,13 +1423,16 @@ public class TransactionJobConfig {
                 // COUNTRY-LEVEL (V2026_07_31_02): match the tenant's country card.
                 // Prefer a per-tenant override (tenant_id NOT NULL), then a
                 // scheme-specific row over the scheme_group IS NULL wildcard.
-                "    SELECT s.fee_pct FROM scheme_fee_rate s " +
+                "    SELECT s.id, s.fee_pct, s.flat_fee, s.rate_status FROM scheme_fee_rate s " +
                 "    WHERE s.country_code = COALESCE(tn.home_country_code,'AE') " +
                 "      AND (s.tenant_id IS NULL OR s.tenant_id = ft.tenant_id) " +
                 "      AND s.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
                 "      AND s.channel = ch.channel " +
                 "      AND (s.scheme_group IS NULL OR s.scheme_group = COALESCE(rcs.group_name,'')) " +
-                "    ORDER BY (s.tenant_id IS NOT NULL) DESC, (s.scheme_group IS NOT NULL) DESC LIMIT 1 " +
+                "      AND (s.effective_from IS NULL OR s.effective_from <= DATE(ft.payment_date)) " +
+                "      AND (s.effective_to   IS NULL OR s.effective_to   >= DATE(ft.payment_date)) " +
+                "    ORDER BY (s.rate_status = 'APPROVED') DESC, (s.tenant_id IS NOT NULL) DESC, " +
+                "             (s.scheme_group IS NOT NULL) DESC LIMIT 1 " +
                 "  ) sfr ON TRUE " +
                 // ECOM FLAT FEE (V2026_07_31_06): resolve the per-country flat fee the
                 // same country-level way (tenant override preferred over country default).
@@ -1241,6 +1449,39 @@ public class TransactionJobConfig {
                 tenantId, tenantId);
             log.info(String.format("Fee computation (single-pass): %d rows in %.1fs",
                 feeRows, (System.currentTimeMillis() - tFee) / 1000.0));
+
+            // FEE RESOLUTION REPORT. The whole point of removing the 1.85% fallback is
+            // that a pricing gap must be LOUD. Every non-RESOLVED status is a
+            // configuration gap that leaves money uncosted, so surface it per run
+            // instead of leaving it to be discovered in a month-end reconciliation.
+            try {
+                java.util.List<java.util.Map<String, Object>> byStatus = jdbcTemplate.queryForList(
+                    "SELECT fee_resolution_status AS st, COUNT(*) AS n FROM fact_transaction " +
+                    "WHERE tenant_id = ? AND " + dateRangeFt + " AND DATE(payment_date) IN " + dateScope +
+                    " GROUP BY 1 ORDER BY 2 DESC", tenantId);
+                long unresolved = 0;
+                StringBuilder sb = new StringBuilder();
+                for (java.util.Map<String, Object> row : byStatus) {
+                    String st = String.valueOf(row.get("st"));
+                    long n = ((Number) row.get("n")).longValue();
+                    sb.append(st).append('=').append(n).append(' ');
+                    if (!"RESOLVED".equals(st) && !"RESOLVED_SCHEME_WILDCARD".equals(st)) {
+                        unresolved += n;
+                    }
+                }
+                if (unresolved > 0) {
+                    log.warn("FEE RESOLUTION GAPS for tenant {}: {} row(s) not priced -> {}",
+                        tenantId, unresolved, sb.toString().trim());
+                    log.warn("  Unmapped destination tokens seen: {}", jdbcTemplate.queryForList(
+                        "SELECT DISTINCT destination_raw FROM fact_transaction WHERE tenant_id = ? " +
+                        "AND fee_resolution_status = 'UNMAPPED_DESTINATION' AND " + dateRangeFt +
+                        " LIMIT 20", String.class, tenantId));
+                } else {
+                    log.info("Fee resolution: {}", sb.toString().trim());
+                }
+            } catch (Exception e) {
+                log.warn("Fee resolution report failed (non-fatal): {}", e.getMessage());
+            }
 
             log.info(String.format("stagingToFact completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;
@@ -1610,24 +1851,42 @@ public class TransactionJobConfig {
                         " GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date) " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                         "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
-                    // Legacy aggregations stored a single '1K+' bucket; remove those rows for the
-                    // date scope so they can't double-count alongside the '1K-5K'/'5K+' split below.
+                    // Clear the whole TXN_SIZE_BUCKET slice for this date scope before
+                    // reinserting. Previously only the legacy '1K+' label was deleted,
+                    // which was enough while the band labels were fixed constants. Now
+                    // that bands are configurable per country, a relabelled or retuned
+                    // band would otherwise leave its old rows behind and double-count
+                    // (e.g. a BH tenant's historical '< 50' alongside its new '< 5').
                     jdbcTemplate.update(
                         "DELETE FROM sum_daily_merchant_attribute WHERE tenant_id=? AND business_date IN " + dateScope +
-                        " AND attribute_type='TXN_SIZE_BUCKET' AND attribute_value='1K+'", tenantId);
+                        " AND attribute_type='TXN_SIZE_BUCKET'", tenantId);
+                    // TICKET-SIZE BUCKETS (config-driven since 2026-08-11). These were
+                    // the hardcoded constants 50/100/250/500/1000/5000 compared raw
+                    // against the settlement amount — AED-shaped numbers. 50 BHD is a
+                    // large ticket and 50 EGP is a trivial one, so the same band meant
+                    // three different things across three tenants and the distribution
+                    // was not comparable to anything. Bands now come from
+                    // ticket_size_bucket, per country (AE keeps its historical values,
+                    // so the UAE tenant is unchanged), with a per-tenant override.
+                    // A transaction whose amount matches no band is skipped rather
+                    // than dumped into a catch-all, so a gap in the configuration is
+                    // visible as a missing row instead of a wrong one.
                     totalRows += jdbcTemplate.update(
                         "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
-                        "SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_SIZE_BUCKET', " +
-                        "CASE WHEN store_base_currency_amount < 50 THEN '< 50' WHEN store_base_currency_amount < 100 THEN '50-100' " +
-                        "WHEN store_base_currency_amount < 250 THEN '100-250' WHEN store_base_currency_amount < 500 THEN '250-500' " +
-                        "WHEN store_base_currency_amount < 1000 THEN '500-1K' WHEN store_base_currency_amount < 5000 THEN '1K-5K' " +
-                        "ELSE '5K+' END, COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
-                        " GROUP BY tenant_id, merchant_id, DATE(payment_date), " +
-                        "CASE WHEN store_base_currency_amount < 50 THEN '< 50' WHEN store_base_currency_amount < 100 THEN '50-100' " +
-                        "WHEN store_base_currency_amount < 250 THEN '100-250' WHEN store_base_currency_amount < 500 THEN '250-500' " +
-                        "WHEN store_base_currency_amount < 1000 THEN '500-1K' WHEN store_base_currency_amount < 5000 THEN '1K-5K' " +
-                        "ELSE '5K+' END " +
+                        "SELECT ft.tenant_id, ft.merchant_id, DATE(ft.payment_date), 'TXN_SIZE_BUCKET', tb.label, " +
+                        "       COUNT(*), SUM(ft.store_base_currency_amount) " +
+                        "FROM fact_transaction ft " +
+                        "LEFT JOIN tenant tn ON tn.tenant_id = ft.tenant_id " +
+                        "CROSS JOIN LATERAL ( " +
+                        "  SELECT b.label FROM ticket_size_bucket b " +
+                        "  WHERE b.country_code = COALESCE(tn.home_country_code,'AE') " +
+                        "    AND (b.tenant_id IS NULL OR b.tenant_id = ft.tenant_id) " +
+                        "    AND (b.min_amount IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= b.min_amount) " +
+                        "    AND (b.max_amount IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  b.max_amount) " +
+                        "  ORDER BY (b.tenant_id IS NOT NULL) DESC, b.seq ASC LIMIT 1 " +
+                        ") tb " +
+                        "WHERE ft.tenant_id=? AND ft.merchant_id IS NOT NULL AND DATE(ft.payment_date) IN " + dateScope +
+                        " GROUP BY ft.tenant_id, ft.merchant_id, DATE(ft.payment_date), tb.label " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                         "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
                     totalRows += jdbcTemplate.update(

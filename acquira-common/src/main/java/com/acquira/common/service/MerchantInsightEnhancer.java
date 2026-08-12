@@ -22,7 +22,6 @@ import java.util.stream.Collectors;
  *  ConsumerLoyalty     : lapsedCardCount, lapsedCardPct
  *  CustomerDemographics: monthlyAtvStddev, forecastAvailable, forecastNextMonthSales,
  *                        hasUnclassifiedScheme
- *  DccPerformance      : optInConversionRateTrend
  *  HealthScore         : prevCompositeScore, improve1Metric/Target (×3)
  *  InsightNarrative    : salesWeakestDay
  *
@@ -68,8 +67,9 @@ public class MerchantInsightEnhancer {
         // 6. Unclassified card scheme flag
         populateUnclassifiedSchemeFlag(dto);
 
-        // 7. DCC opt-in conversion rate trend
-        populateDccConversionRateTrend(dto);
+        // 7. (was: DCC opt-in conversion rate trend — now built in
+        //     MerchantInsightService.buildDccPerformance, which has the monthly
+        //     eligible/opt-in counts the rate needs.)
 
         // 8. Scorecard: previous-month score + structured action items
         populateHealthScoreEnhancements(dto, prevCompositeScore);
@@ -381,39 +381,17 @@ public class MerchantInsightEnhancer {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 7. DCC opt-in conversion rate trend
+    // 7. DCC opt-in conversion rate trend — REMOVED
+    //
+    // This used to derive the rate as optinVol / (optinVol + optoutVol) from
+    // optOutOptInTrend, because that was the only monthly DCC data on the DTO.
+    // Two problems: it was volume-based while the funnel's headline rate is
+    // count-based, and it had no low-volume guard, so a month with one opt-in
+    // and zero opt-outs printed a 100% spike under a 0.0% headline.
+    //
+    // It now lives in MerchantInsightService.buildDccPerformance, which reads
+    // monthly dccEligibleCount/dccOptinCount straight from findMonthlyTrends.
     // ─────────────────────────────────────────────────────────────
-
-    /**
-     * FIX NEW: computes the per-month DCC opt-in conversion rate % from the
-     * monthly trend data already present in dccPerformance.optOutOptInTrend.
-     *
-     * Each entry in optOutOptInTrend has:
-     *   value  = opt-out volume (bar, left axis)
-     *   value2 = opt-in volume (line data — currently underused)
-     *
-     * We use: conversion rate = optinVol / (optinVol + optoutVol) × 100
-     * and store it as optInConversionRateTrend for the right-axis line.
-     */
-    private void populateDccConversionRateTrend(MerchantInsightsDTO dto) {
-        if (dto.getDccPerformance() == null) return;
-        List<MerchantInsightsDTO.ChartData> trend = dto.getDccPerformance().getOptOutOptInTrend();
-        if (trend == null || trend.isEmpty()) return;
-
-        List<MerchantInsightsDTO.ChartData> rateTrend = new ArrayList<>();
-        for (MerchantInsightsDTO.ChartData t : trend) {
-            BigDecimal optoutVol = t.getValue() != null ? t.getValue() : BigDecimal.ZERO;
-            BigDecimal optinVol  = t.getValue2() != null ? t.getValue2() : BigDecimal.ZERO;
-            BigDecimal total = optoutVol.add(optinVol);
-            BigDecimal rate = total.compareTo(BigDecimal.ZERO) > 0
-                    ? optinVol.multiply(BigDecimal.valueOf(100))
-                              .divide(total, 1, RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO;
-            rateTrend.add(MerchantInsightsDTO.ChartData.builder()
-                    .label(t.getLabel()).value(rate).build());
-        }
-        dto.getDccPerformance().setOptInConversionRateTrend(rateTrend);
-    }
 
     // ─────────────────────────────────────────────────────────────
     // 8. Health score enhancements
@@ -460,7 +438,19 @@ public class MerchantInsightEnhancer {
      */
     private String[] deriveMetricTarget(String title, MerchantInsightsDTO dto) {
         String t = title.toLowerCase();
-        String ccy = dto.getCurrencyCode() != null ? dto.getCurrencyCode() : "";
+        // Currency code and its minor-unit precision come from the DTO, which
+        // MerchantInsightService has already populated from CurrencyResolver.
+        // Both used to be fudged here: ccy silently defaulted to "" (an unlabelled
+        // amount) and the amount itself was formatted "%,.0f" (0 decimals), so a
+        // BHD improvement target read "450" instead of "450.755".
+        if (dto.getCurrencyCode() == null || dto.getCurrencyCode().isBlank()
+                || dto.getCurrencyDecimals() == null) {
+            throw new IllegalStateException(
+                "MerchantInsightsDTO reached the enhancer without a resolved currency "
+                + "(code=" + dto.getCurrencyCode() + ", decimals=" + dto.getCurrencyDecimals() + ")");
+        }
+        String ccy = dto.getCurrencyCode();
+        int ccyDecimals = dto.getCurrencyDecimals();
 
         if (t.contains("revenue") || t.contains("sales")) {
             BigDecimal sales = dto.getOverview() != null && dto.getOverview().getSales() != null
@@ -470,7 +460,7 @@ public class MerchantInsightEnhancer {
                     ? dto.getOverview().getSales().getMomGrowth() : 0;
             if (sales != null)
                 return new String[]{
-                    String.format("%s %,.0f (%+.1f%% MoM)", ccy, sales, mom),
+                    String.format("%s %,." + ccyDecimals + "f (%+.1f%% MoM)", ccy, sales, mom),
                     "Grow to 5% above last month's figure"
                 };
         }

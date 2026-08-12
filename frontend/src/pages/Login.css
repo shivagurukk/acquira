@@ -45,8 +45,10 @@
     position: relative;
     display: grid;
     grid-template-columns: 58fr 42fr;
-    min-height: 100vh;
-    min-height: 100dvh;
+    /* Divided by --app-zoom so the split screen still fills the window when
+       the shell is scaled down; dvh keeps mobile browser chrome out of it. */
+    min-height: calc(100vh / var(--app-zoom, 1));
+    min-height: calc(100dvh / var(--app-zoom, 1));
     width: 100%;
     overflow-x: hidden;
     background: var(--nx-surface);

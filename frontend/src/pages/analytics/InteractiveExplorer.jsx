@@ -6,6 +6,7 @@ import {
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatCompactCurrency } from '../../utils/formatters';
 
 /*
  * Interactive Explorer — click-to-cross-filter.
@@ -44,8 +45,10 @@ const T = {
 
 // Flat register-aesthetic card: hairline border, subtle shadow, no gradients.
 const CARD = { background: T.card, borderRadius: 14, padding: 18, boxShadow: T.shadowXs, border: `1px solid ${T.border}` };
+// fmt = counts. fmtM = MONEY: it used to emit a bare, unlabelled number at a
+// hardcoded precision; it now carries the tenant's currency and decimals.
 const fmt = (v) => v == null ? '0' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
-const fmtM = (v) => { const n = Number(v || 0); if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'; return n.toFixed(0); };
+const fmtM = (v) => formatCompactCurrency(v);
 
 const DIMS = [
   { key: 'scheme', label: 'Card Scheme', icon: CreditCard, color: 'var(--dim-scheme, #1E3A8A)' },

@@ -8,10 +8,9 @@ import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
-import { createFmt } from '../../utils/formatters';
+import { createFmt, formatCompactCurrency } from '../../utils/formatters';
 import api from '../../api/axios';
 
-const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
 // ─── Local design tokens ─────────────────────────────────────────
 // Every colour routes through a CSS variable with a light-mode fallback, matching
@@ -40,8 +39,8 @@ const MONTH_ABBR = Array.from({ length: 12 }, (_, i) =>
 );
 
 const MerchantHeatmap = () => {
-    const { tenantVersion, currencySymbol } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const { tenantVersion, currencySymbol, currencyDecimals } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
     const formatCurrency = fmt.currency;
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -134,9 +133,9 @@ const MerchantHeatmap = () => {
         const activeMonths = data.reduce((s, d) => { let c = 0; for (let i = 1; i <= 12; i++) if (d[`month_${i}`] > 0) c++; return s + c; }, 0);
         return [
             { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: 'var(--accent-indigo, #6366f1)', trendLabel: `${year}` },
-            { title: 'Total Annual Volume', value: `${currencySymbol} ${formatCompact(totalVol)}`, icon: DollarSign, color: T.success, trendLabel: 'all merchants' },
+            { title: 'Total Annual Volume', value: formatCompactCurrency(totalVol), icon: DollarSign, color: T.success, trendLabel: 'all merchants' },
             { title: 'Active Merchant-Months', value: activeMonths.toString(), icon: GridIcon, color: T.brandAlt, trendLabel: `of ${data.length * 12} possible` },
-            { title: 'Avg per Merchant', value: `${currencySymbol} ${formatCompact(data.length > 0 ? totalVol / data.length : 0)}`, icon: TrendingUp, color: 'var(--warning, #f59e0b)', trendLabel: 'annual volume' },
+            { title: 'Avg per Merchant', value: formatCompactCurrency(data.length > 0 ? totalVol / data.length : 0), icon: TrendingUp, color: 'var(--warning, #f59e0b)', trendLabel: 'annual volume' },
         ];
     }, [data, currencySymbol, year]);
 

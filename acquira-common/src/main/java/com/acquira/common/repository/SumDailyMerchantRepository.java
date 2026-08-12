@@ -184,7 +184,13 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         // DCC Metrics
                         "SUM(COALESCE(m.dccEligibleVolume, 0)) as dccEligibleVolume, " +
                         "SUM(COALESCE(m.dccOptinVolume, 0)) as dccOptinVolume, " +
-                        "SUM(COALESCE(m.dccOptoutVolume, 0)) as dccOptoutVolume " +
+                        "SUM(COALESCE(m.dccOptoutVolume, 0)) as dccOptoutVolume, " +
+                        // Counts drive the monthly opt-in rate line on P9/P12. That line has to
+                        // be count-based (optin/eligible) to match the funnel's headline rate —
+                        // the old volume-based ratio disagreed with the funnel whenever a
+                        // month's eligible volume differed from optin+optout.
+                        "SUM(COALESCE(m.dccEligibleCount, 0)) as dccEligibleCount, " +
+                        "SUM(COALESCE(m.dccOptinCount, 0)) as dccOptinCount " +
                         ") " +
                         "FROM SumDailyMerchant m " +
                         "WHERE m.tenantId = :tenantId AND m.merchantId = :merchantId AND m.businessDate BETWEEN :startDate AND :endDate " +
@@ -269,7 +275,11 @@ public interface SumDailyMerchantRepository extends JpaRepository<SumDailyMercha
                         "SUM(COALESCE(m.uniqueCustomerCount, 0)) as uniqueCustomers, " +
                         "SUM(COALESCE(m.dccEligibleVolume, 0)) as dccEligibleVolume, " +
                         "SUM(COALESCE(m.dccOptinVolume, 0)) as dccOptinVolume, " +
-                        "SUM(COALESCE(m.dccOptoutVolume, 0)) as dccOptoutVolume " +
+                        "SUM(COALESCE(m.dccOptoutVolume, 0)) as dccOptoutVolume, " +
+                        // Must mirror findMonthlyTrends — the prefetched (bulk) path builds the
+                        // same DccPerformance, so it needs the same count columns.
+                        "SUM(COALESCE(m.dccEligibleCount, 0)) as dccEligibleCount, " +
+                        "SUM(COALESCE(m.dccOptinCount, 0)) as dccOptinCount " +
                         ") " +
                         "FROM SumDailyMerchant m " +
                         "WHERE m.tenantId = :tenantId AND m.merchantId IN :merchantIds AND m.businessDate BETWEEN :startDate AND :endDate " +

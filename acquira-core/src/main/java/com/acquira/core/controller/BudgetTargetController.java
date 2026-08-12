@@ -74,11 +74,15 @@ public class BudgetTargetController {
 
     private final BankBudgetTargetRepository budgetRepo;
     private final SumMonthlyBankRepository monthlyBankRepo;
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
 
     public BudgetTargetController(BankBudgetTargetRepository budgetRepo,
-                                  SumMonthlyBankRepository monthlyBankRepo) {
+                                  SumMonthlyBankRepository monthlyBankRepo,
+                                  CurrencyMeta currencyMeta) {
         this.budgetRepo = budgetRepo;
         this.monthlyBankRepo = monthlyBankRepo;
+        this.currencyMeta = currencyMeta;
     }
 
     private Long resolveTenant(Long headerTenant) {
@@ -454,7 +458,7 @@ public class BudgetTargetController {
         resp.put("dataLag", dataLag);
         resp.put("rows", rows);
         resp.put("summary", summary);
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(currencyMeta.attach(resp, tenantId));
     }
 
     // ── helpers ──

@@ -56,6 +56,8 @@ public class AnalyticsExplorerController {
     private final ExplorerMasterItemRepository masterRepo;
     private final ExplorerAlertRepository alertRepo;
     private final ObjectMapper objectMapper;
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
 
     /** Which table/alias a dimension lives on — drives which dim joins we add. */
     private enum Src { TXN, MERCHANT, STORE, TERMINAL }
@@ -159,11 +161,13 @@ public class AnalyticsExplorerController {
     public AnalyticsExplorerController(JdbcTemplate jdbcTemplate,
                                       ExplorerMasterItemRepository masterRepo,
                                       ExplorerAlertRepository alertRepo,
-                                      ObjectMapper objectMapper) {
+                                      ObjectMapper objectMapper,
+                                      CurrencyMeta currencyMeta) {
         this.jdbcTemplate = jdbcTemplate;
         this.masterRepo = masterRepo;
         this.alertRepo = alertRepo;
         this.objectMapper = objectMapper;
+        this.currencyMeta = currencyMeta;
     }
 
     // ═════════════════════════════════════════════════════════
@@ -428,7 +432,7 @@ public class AnalyticsExplorerController {
         response.put("dimensions", query.getDimensions());
         response.put("measures", requested);
         response.put("grain", "time-intelligence");
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(currencyMeta.attach(response));
     }
 
     private ExplorerQuery cloneForWindow(ExplorerQuery q, String sd, String ed, List<String> measures) {
@@ -798,7 +802,7 @@ public class AnalyticsExplorerController {
             response.put("dimensions", dimensions);
             response.put("measures", measures);
             response.put("grain", grain.name().toLowerCase()); // "summary" | "fact" — observability
-            return ResponseEntity.ok(response);
+            return ResponseEntity.ok(currencyMeta.attach(response, tenantId));
         } catch (Exception e) {
             logger.error("Explorer query failed [{}]: {}", grain, e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Query failed: " + e.getMessage()));
@@ -858,7 +862,13 @@ public class AnalyticsExplorerController {
 
         try {
             List<Map<String, Object>> results = jdbcTemplate.queryForList(sql.toString(), params.toArray());
-            return ResponseEntity.ok(Map.of("data", results, "rowCount", results.size(), "dimensions", dimensions));
+            // Same keys as before (Map.of was immutable, so it could not take the
+            // currency block) plus "currency".
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("data", results);
+            response.put("rowCount", results.size());
+            response.put("dimensions", dimensions);
+            return ResponseEntity.ok(currencyMeta.attach(response, tenantId));
         } catch (Exception e) {
             logger.error("Merchant explorer query failed: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Query failed: " + e.getMessage()));

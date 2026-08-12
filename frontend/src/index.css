@@ -1,21 +1,46 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 /* ══════════════════════════════════════════════════════════════
-   ACQUIRA — Modern Minimal Design System
-   Clean whites · generous spacing · subtle depth
+   ACQUIRA / NEXUS — Ledger Design System
+   Dense · hairline structure · teal marks action + upward movement
+   Every colour, radius and spacing value below is a token; nothing
+   downstream should carry its own hex.
    ══════════════════════════════════════════════════════════════ */
 :root {
-  /* ── Brand — NEXUS teal (matches the login identity) ── */
-  --brand:        #0D9488;
-  --brand-dark:   #0F766E;
-  --brand-light:  #F0FDFA;
-  --brand-ring:   rgba(13,148,136,0.18);
-  --brand-50:     #F0FDFA;
-  --brand-100:    #CCFBF1;
-  --brand-500:    #14B8A6;
-  --brand-600:    #0D9488;
-  --brand-700:    #0F766E;
+  /* ── Core palette (light) ── */
+  --canvas:      #EEF2F1;
+  --surface:     #FFFFFF;
+  --hairline:    #DDE4E3;
+  --ink:         #101F1E;
+  --muted:       #5A6B6A;
+  --primary:     #12706B;   /* actions AND positive movement */
+  --wash:        #E3F0EE;   /* selected rows, chips, hover */
+  --negative:    #B4442F;
+  --attention:   #B5822A;   /* margin risk, churn flags */
+  --projected:   #3E5C76;   /* forecast + benchmark series */
+
+  /* ── Chart ramp ── */
+  --chart-1: #0B4F4C;
+  --chart-2: #12706B;
+  --chart-3: #35948C;
+  --chart-4: #6FB3A8;
+  --chart-5: #A7CFC6;
+
+  /* ── Typography ── */
+  --font-ui:   'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* ── Brand aliases (legacy names, remapped to the ledger palette) ── */
+  --brand:        var(--primary);
+  --brand-dark:   var(--chart-1);
+  --brand-light:  var(--wash);
+  --brand-ring:   color-mix(in srgb, var(--primary) 20%, transparent);
+  --brand-50:     var(--wash);
+  --brand-100:    var(--wash);
+  --brand-500:    var(--primary);
+  --brand-600:    var(--primary);
+  --brand-700:    var(--chart-1);
 
   /* ── Spacing (4px grid) ── */
   --space-xs:   4px;
@@ -26,79 +51,129 @@
   --space-2xl:  24px;
   --space-3xl:  32px;
   --space-4xl:  40px;
-  --space-page: 28px;
-  --space-card: 24px;
+  --space-page: 20px;
+  --space-card: 20px;
 
-  /* ── Radii ── */
-  --radius-sm:  6px;
-  --radius-md:  10px;
-  --radius-lg:  14px;
-  --radius-xl:  18px;
-  --radius-2xl: 24px;
+  /* ── Radii — 4px everywhere; pills only for status chips ── */
+  --radius-sm:  4px;
+  --radius-md:  4px;
+  --radius-lg:  4px;
+  --radius-xl:  4px;
+  --radius-2xl: 4px;
+  --radius-chip: 2px;
+  --radius-pill: 999px;
 
-  /* ── Shadows — very subtle for minimal look ── */
-  --shadow-xs:    0 1px 2px 0 rgb(0 0 0 / 0.03);
-  --shadow-sm:    0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.02);
-  --shadow-md:    0 4px 6px -1px rgb(0 0 0 / 0.04), 0 2px 4px -2px rgb(0 0 0 / 0.02);
-  --shadow-lg:    0 10px 20px -4px rgb(0 0 0 / 0.06), 0 4px 8px -4px rgb(0 0 0 / 0.03);
-  --shadow-hover: 0 8px 24px -4px rgb(0 0 0 / 0.08);
-  --shadow-card:  0 1px 3px rgb(0 0 0 / 0.03);
+  /* ── Shadows — structure comes from hairlines; elevation only for
+       menus / dialogs / popovers (--shadow-pop) ── */
+  --shadow-xs:    none;
+  --shadow-sm:    none;
+  --shadow-md:    none;
+  --shadow-lg:    none;
+  --shadow-hover: none;
+  --shadow-card:  none;
+  --shadow-pop:   0 8px 24px rgba(16, 31, 30, 0.14), 0 2px 6px rgba(16, 31, 30, 0.08);
 
-  /* ── Light Mode Surfaces ── */
-  --bg:           #f1f5f9;
-  --bg-card:      #ffffff;
-  --bg-subtle:    #f3f4f6;
-  --bg-muted:     #f9fafb;
-  --bg-hover:     #f3f4f6;
+  /* ── Surfaces ── */
+  --bg:           var(--canvas);
+  --bg-card:      var(--surface);
+  --bg-subtle:    color-mix(in srgb, var(--canvas) 55%, var(--surface));
+  --bg-muted:     color-mix(in srgb, var(--canvas) 55%, var(--surface));
+  --bg-hover:     color-mix(in srgb, var(--wash) 40%, var(--surface));
+  --bg-zebra:     transparent;                 /* no zebra striping */
 
-  /* ── Light Mode Text ── */
-  --text:           #111827;
-  --text-secondary: #6b7280;
-  --text-muted:     #9ca3af;
-  --text-disabled:  #d1d5db;
+  /* ── Text ── */
+  --text:           var(--ink);
+  --text-secondary: var(--muted);
+  --text-muted:     var(--muted);
+  --text-disabled:  color-mix(in srgb, var(--muted) 55%, var(--surface));
 
-  /* ── Light Mode Borders ── */
-  --border:       #e5e7eb;
-  --border-light: #f3f4f6;
-  --border-focus: rgba(13,148,136,0.4);
+  /* ── Borders ── */
+  --border:       var(--hairline);
+  --border-light: var(--hairline);
+  --border-focus: color-mix(in srgb, var(--primary) 40%, transparent);
 
-  /* ── Status Colors ── */
-  --success:      #059669;
-  --success-bg:   #ecfdf5;
-  --success-text: #065f46;
-  --warning:      #d97706;
-  --warning-bg:   #fffbeb;
-  --warning-text: #92400e;
-  --danger:       #dc2626;
-  --danger-bg:    #fef2f2;
-  --danger-text:  #991b1b;
-  --info:         #2563eb;
-  --info-bg:      #eff6ff;
-  --info-text:    #1e40af;
+  /* ── Status — up/positive = primary teal; down = burnt sienna;
+       attention = brass; projected/benchmark = slate blue.
+       Chips: tinted background + solid text, never solid fill. ── */
+  --success:      var(--primary);
+  --success-bg:   var(--wash);
+  --success-text: var(--primary);
+  --warning:      var(--attention);
+  --warning-bg:   color-mix(in srgb, var(--attention) 12%, var(--surface));
+  --warning-text: var(--attention);
+  --danger:       var(--negative);
+  --danger-bg:    color-mix(in srgb, var(--negative) 10%, var(--surface));
+  --danger-text:  var(--negative);
+  --info:         var(--projected);
+  --info-bg:      color-mix(in srgb, var(--projected) 10%, var(--surface));
+  --info-text:    var(--projected);
 
   /* ── Legacy compat ── */
-  --bg-dark:        #f9fafb;
-  --bg-panel:       #ffffff;
-  --primary:        #111827;
-  --accent:         #0D9488;
-  --text-main:      #111827;
-  --text-muted-alt: #6b7280;
-  --border-light-alt: #e5e7eb;
-  --glass-border:   1px solid #e5e7eb;
-  --glass-shadow:   var(--shadow-sm);
-  --tooltip-bg:     var(--bg-card, #fff);
-  --tooltip-border: var(--border, #e5e7eb);
-  --tooltip-radius: 10px;
+  --accent:         var(--primary);
+  --accent-light:   var(--wash);
+  --accent-blue:    var(--projected);
+  --accent-indigo:  var(--projected);
+  --accent-cyan:    var(--chart-3);
+  --bg-dark:        var(--canvas);
+  --bg-panel:       var(--surface);
+  --text-main:      var(--ink);
+  --text-muted-alt: var(--muted);
+  --border-light-alt: var(--hairline);
+  --glass-border:   1px solid var(--hairline);
+  --glass-shadow:   none;
+  --tooltip-bg:     var(--surface);
+  --tooltip-border: var(--hairline);
+  --tooltip-radius: 4px;
   --tooltip-font:   12px;
 
-  /* ── Sidebar ── */
-  --sidebar-bg:     #ffffff;
-  --sidebar-border: #f0f0f0;
-  --sidebar-text:   #374151;
-  --sidebar-text-secondary: #9ca3af;
-  --sidebar-hover:  #f9fafb;
-  --sidebar-active-bg: #F0FDFA;
-  --sidebar-active-text: #0D9488;
+  /* ── Fit-to-screen scale ──────────────────────────────────────
+       The shell is dense by design: 232px rail + the 6-up KPI strips,
+       1.7fr/1fr chart rows and ~1000px tables want ~1400 CSS px. Below
+       that the app used to overflow and get CLIPPED (body was
+       overflow-x:hidden), so the only way to see it was to zoom the
+       browser out by hand — the common trigger being not a small monitor
+       but Windows display scaling at 125%/150%, which turns a 1920px
+       screen into a 1536/1280px CSS viewport.
+
+       --app-zoom does that zoom-out automatically, in steps, so every
+       screen gets the whole layout at 100% browser zoom. Steps (not a
+       continuous scale) keep text on predictable pixel sizes, and the
+       floor is 0.8 so nothing shrinks past legibility. Browsers without
+       `zoom` simply keep 1 and scroll — see body.overflow-x below.
+
+       Anything sized in vh must use --vh100 instead: `zoom` scales
+       viewport units along with everything else, so a raw 100vh renders
+       only 80% of the screen at 0.8 and leaves a dead band. ── */
+  --app-zoom: 1;
+  --vh100: calc(100vh / var(--app-zoom));
+
+  /* ── Sidebar rail — constant dark in BOTH colour schemes.
+       It reads as app chrome, not content, so it never flips. ── */
+  --rail-bg:          #101F1E;
+  --rail-edge:        #1F3130;
+  --rail-text:        #9FB3B0;
+  --rail-text-hover:  #D6E2E0;
+  --rail-text-active: #E4ECEA;
+  --rail-hover-bg:    #182A29;
+  --rail-active-bg:   #16302E;
+  --rail-marker:      #37B0A5;
+  /* Spec'd #5A6B6A, but on the #101F1E rail that is 3.04:1 — below the
+     AA floor the same brief sets for "every sidebar state". This token
+     also carries the muted nav items, tenant meta and collapse toggle,
+     so it must be readable: #7E9391 is 5.23:1 and still clearly recedes
+     behind rest text (#9FB3B0, 7.7:1). */
+  --rail-eyebrow:     #7E9391;
+  --rail-fresh:       #37B0A5;
+  --rail-stale:       #D9A542;
+
+  /* legacy sidebar aliases */
+  --sidebar-bg:     var(--rail-bg);
+  --sidebar-border: var(--rail-edge);
+  --sidebar-text:   var(--rail-text);
+  --sidebar-text-secondary: var(--rail-eyebrow);
+  --sidebar-hover:  var(--rail-hover-bg);
+  --sidebar-active-bg: var(--rail-active-bg);
+  --sidebar-active-text: var(--rail-text-active);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -120,22 +195,53 @@ html {
 
 #root {
   width: 100%;
-  min-height: 100vh;
+  min-height: var(--vh100);
+  zoom: var(--app-zoom);
 }
+
+/* Desktop only — the ≤768px breakpoint already has its own mobile layout
+   (hamburger + drawer), which fits without scaling. */
+@media (min-width: 769px) and (max-width: 1359px) { :root { --app-zoom: 0.92; } }
+@media (min-width: 769px) and (max-width: 1199px) { :root { --app-zoom: 0.85; } }
+@media (min-width: 769px) and (max-width: 1023px) { :root { --app-zoom: 0.80; } }
 
 /* Icon rotations used as UI state indicators (chevrons, disclosure arrows). */
 svg.rotate-180 { transform: rotate(180deg); }
 svg.rotate-90  { transform: rotate(90deg); }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-feature-settings: 'cv11', 'ss01';
+  font-family: var(--font-ui);
   background-color: var(--bg);
   color: var(--text);
-  overflow-x: hidden;
+  /* Scroll, never clip. Whatever --app-zoom cannot absorb (a wide table,
+     a long merchant name) has to stay reachable; `hidden` here used to
+     cut it off with no way to get at it. */
+  overflow-x: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  line-height: 1.6;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+/* ── Numerals: every amount, count, %, delta, MID/TID gets the mono
+   face with tabular figures. Apply via .num or the --font-mono token. ── */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Currency symbol / decimals rendered smaller and muted inside a figure. */
+.num-unit {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+/* Section title: sentence case, 13px/600, tracked, muted. */
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -143,24 +249,20 @@ body {
    ══════════════════════════════════════════════════════════════ */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
-
-html.dark ::-webkit-scrollbar-track { background: transparent; }
-html.dark ::-webkit-scrollbar-thumb { background: #374151; }
-html.dark ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 /* ══════════════════════════════════════════════════════════════
-   PAGE TRANSITIONS
+   PAGE TRANSITIONS — opacity only, ≤150ms
    ══════════════════════════════════════════════════════════════ */
 @keyframes pageIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .page-transition {
-  animation: pageIn 0.3s ease-out;
-  will-change: opacity, transform;
+  animation: pageIn 0.15s ease-out;
+  will-change: opacity;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -168,56 +270,42 @@ html.dark ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
 }
 
 /* ══════════════════════════════════════════════════════════════
-   CARD UTILITY
+   CARD UTILITY — hairline border, no shadow
    ══════════════════════════════════════════════════════════════ */
 .glass-panel,
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
 }
 
 /* ══════════════════════════════════════════════════════════════
-   DARK MODE
+   DARK MODE — core palette flips; the sidebar rail does not.
    ══════════════════════════════════════════════════════════════ */
 html.dark {
-  /* Slate dark palette — kept in sync with ThemeContext (the live source). */
-  --bg:           #0f172a;
-  --bg-card:      #1e293b;
-  --bg-subtle:    #0f172a;
-  --bg-muted:     #0f172a;
-  --bg-hover:     #243049;
+  --canvas:      #0C1616;
+  --surface:     #132020;
+  --hairline:    #1F3130;
+  --ink:         #E4ECEA;
+  --muted:       #8FA3A1;
+  --primary:     #37B0A5;
+  --wash:        #16302E;
+  --negative:    #E0755C;
+  --attention:   #D9A542;
+  --projected:   #7794AE;
 
-  --text:           #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-muted:     #64748b;
-  --text-disabled:  #475569;
+  --shadow-pop:  0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
 
-  --border:       #334155;
-  --border-light: #1e293b;
+  --bg-subtle:   color-mix(in srgb, var(--canvas) 45%, var(--surface));
+  --bg-muted:    color-mix(in srgb, var(--canvas) 45%, var(--surface));
+  --bg-hover:    color-mix(in srgb, var(--wash) 40%, var(--surface));
 
-  --shadow-card:  0 1px 3px rgb(0 0 0 / 0.4);
-  --shadow-hover: 0 8px 24px -4px rgb(0 0 0 / 0.5);
+  --warning-bg:  color-mix(in srgb, var(--attention) 16%, var(--surface));
+  --danger-bg:   color-mix(in srgb, var(--negative) 14%, var(--surface));
+  --info-bg:     color-mix(in srgb, var(--projected) 14%, var(--surface));
 
-  --success-bg:  rgba(5,150,105,0.12);
-  --warning-bg:  rgba(217,119,6,0.12);
-  --danger-bg:   rgba(220,38,38,0.12);
-  --info-bg:     rgba(37,99,235,0.12);
-
-  --bg-panel:    #1e293b;
-  --bg-dark:     #0f172a;
-  --text-main:   #f1f5f9;
-  --border-light-alt: #334155;
-  --glass-border: 1px solid #334155;
-
-  --sidebar-bg:     #020617;
-  --sidebar-border: #1e293b;
-  --sidebar-text:   #f1f5f9;
-  --sidebar-text-secondary: #94a3b8;
-  --sidebar-hover:  #1e293b;
-  --sidebar-active-bg: rgba(59,130,246,0.12);
-  --sidebar-active-text: #60a5fa;
+  --text-disabled: color-mix(in srgb, var(--muted) 55%, var(--surface));
 }
 
 /* ── MUI dark mode overrides ── */
@@ -268,10 +356,10 @@ button {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   FOCUS STYLES — accessible + branded
+   FOCUS — visible teal ring, 2px offset, everywhere (rail included)
    ══════════════════════════════════════════════════════════════ */
 :focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -280,7 +368,7 @@ button {
    SELECTION COLOR
    ══════════════════════════════════════════════════════════════ */
 ::selection {
-  background: rgba(37,99,235,0.15);
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
   color: var(--text);
 }
 
@@ -295,23 +383,17 @@ button {
 .spin { animation: spin 1s linear infinite; }
 
 /* ══════════════════════════════════════════════════════════════
-   FADE-IN UTILITY
+   FADE-IN UTILITY — opacity only, ≤150ms
    ══════════════════════════════════════════════════════════════ */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-.fade-in { animation: fadeIn 0.25s ease-out; }
+.fade-in { animation: fadeIn 0.15s ease-out; }
 
-/* ══════════════════════════════════════════════════════════════
-   STAGGER ANIMATION UTILITY
-   ══════════════════════════════════════════════════════════════ */
-@keyframes staggerIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+.stagger-in { animation: fadeIn 0.15s ease-out both; }
 
-.stagger-in {
-  animation: staggerIn 0.35s ease-out both;
+@media (prefers-reduced-motion: reduce) {
+  .spin, .fade-in, .stagger-in { animation: none; }
 }

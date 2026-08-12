@@ -55,7 +55,10 @@ const FREQ_OPTIONS = [
   { label: 'Custom', value: 'CUSTOM', cron: '' },
 ];
 
-const TIMEZONES = ['UTC', 'Asia/Bahrain', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Kolkata', 'Europe/London', 'America/New_York'];
+// Africa/Cairo is required for the Egypt tenant: Egypt observes DST and the
+// Gulf zones do not, so a Gulf substitute schedules jobs an hour off for half
+// the year.
+const TIMEZONES = ['UTC', 'Asia/Bahrain', 'Asia/Dubai', 'Asia/Riyadh', 'Africa/Cairo', 'Asia/Kolkata', 'Europe/London', 'America/New_York'];
 
 const emptyStateStyle = {
   padding: 'var(--space-3xl)',

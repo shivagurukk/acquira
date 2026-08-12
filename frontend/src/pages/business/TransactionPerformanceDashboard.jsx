@@ -9,11 +9,13 @@ import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatMsf } from '../../utils/formatters';
+import { formatMsf, formatCurrency as fmtTenantMoney, formatCompactCurrency } from '../../utils/formatters';
 
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
-const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
-const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
+// Despite the name this used to emit a BARE decimal at a hardcoded 2dp — no
+// currency at all, and wrong for BHD. It now renders the tenant's currency at
+// the tenant's precision.
+const formatCurrency = (val) => fmtTenantMoney(val);
 // % of total, guarded: a zero or negative total (refund-dominated cell) has no
 // meaningful share — show an em dash instead of Infinity / NaN / negative %.
 const pctOfTotal = (part, total) => {
@@ -179,14 +181,14 @@ const TransactionPerformanceDashboard = () => {
         const avgTicket = totalCnt > 0 && totalVol > 0 ? totalVol / totalCnt : null;
         const takeRate = totalVol > 0 ? (totalMsf / totalVol) * 100 : null;
         return [
-            { title: 'Total Volume', value: `${currencySymbol} ${formatCompact(totalVol)}`, icon: TrendingUp, color: '#6366f1', subtitle: 'Total processed amount', sparkData: topRows.slice().reverse().map(r => r.total_vol || 0) },
+            { title: 'Total Volume', value: formatCompactCurrency(totalVol), icon: TrendingUp, color: '#6366f1', subtitle: 'Total processed amount', sparkData: topRows.slice().reverse().map(r => r.total_vol || 0) },
             { title: 'Total Transactions', value: formatNumber(totalCnt), icon: Hash, color: '#3b82f6', subtitle: 'Total transaction count' },
-            { title: 'Total MSF', value: `${currencySymbol} ${formatCompact(totalMsf)}`, icon: DollarSign, color: '#10b981', subtitle: 'Merchant service fee revenue' },
-            { title: 'Average Ticket', value: avgTicket !== null ? `${currencySymbol} ${formatCurrency(avgTicket)}` : '—', icon: Receipt, color: '#8b5cf6', subtitle: 'Volume ÷ transactions' },
+            { title: 'Total MSF', value: formatCompactCurrency(totalMsf), icon: DollarSign, color: '#10b981', subtitle: 'Merchant service fee revenue' },
+            { title: 'Average Ticket', value: avgTicket !== null ? formatCurrency(avgTicket) : '—', icon: Receipt, color: '#8b5cf6', subtitle: 'Volume ÷ transactions' },
             { title: 'Take Rate', value: takeRate !== null ? `${takeRate.toFixed(2)}%` : '—', icon: Percent, color: '#f59e0b', subtitle: 'MSF ÷ volume' },
             { title: 'Active Merchants', value: activeMerchants !== null ? formatNumber(activeMerchants) : '—', icon: Users, color: '#06b6d4', subtitle: 'With transactions in period' },
-            { title: 'POS Volume', value: posVol !== null ? `${currencySymbol} ${formatCompact(posVol)}` : '—', icon: Monitor, color: '#0ea5e9', subtitle: posVol !== null ? `${pctOfTotal(posVol, totalVol)} of total · terminal-based` : 'Terminal-based volume' },
-            { title: 'ECOM Volume', value: ecomVol !== null ? `${currencySymbol} ${formatCompact(ecomVol)}` : '—', icon: Globe, color: '#ec4899', subtitle: ecomVol !== null ? `${pctOfTotal(ecomVol, totalVol)} of total · online` : 'Online volume' },
+            { title: 'POS Volume', value: posVol !== null ? formatCompactCurrency(posVol) : '—', icon: Monitor, color: '#0ea5e9', subtitle: posVol !== null ? `${pctOfTotal(posVol, totalVol)} of total · terminal-based` : 'Terminal-based volume' },
+            { title: 'ECOM Volume', value: ecomVol !== null ? formatCompactCurrency(ecomVol) : '—', icon: Globe, color: '#ec4899', subtitle: ecomVol !== null ? `${pctOfTotal(ecomVol, totalVol)} of total · online` : 'Online volume' },
         ];
     }, [rows, kpiTotals, currencySymbol]);
 

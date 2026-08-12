@@ -26,10 +26,13 @@ const DATE_FORMATS = [
     { value: 'DD-MMM-YYYY', example: '15-Sep-2025' },
 ];
 
+// Africa/Cairo is required for the Egypt tenant. Egypt observes DST while every
+// Gulf zone here is fixed-offset, so substituting a Gulf zone is wrong for
+// roughly half the year — it must be its own entry.
 const TIMEZONES = [
     '', 'Asia/Bahrain', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Kuwait', 'Asia/Qatar',
-    'Asia/Muscat', 'Asia/Kolkata', 'Asia/Singapore', 'Europe/London', 'Europe/Paris',
-    'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC',
+    'Asia/Muscat', 'Africa/Cairo', 'Asia/Kolkata', 'Asia/Singapore', 'Europe/London',
+    'Europe/Paris', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'UTC',
 ];
 
 const KEYS = {

@@ -9,11 +9,13 @@ import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatMsf } from '../../utils/formatters';
+import { formatMsf, formatCurrency as fmtTenantMoney, formatCompactCurrency } from '../../utils/formatters';
 import api from '../../api/axios';
 
-const formatCurrency = (val) =>
-    new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
+// Despite the name this used to emit a BARE decimal at a hardcoded 2dp — no
+// currency at all, and wrong for BHD. It now renders the tenant's currency at
+// the tenant's precision.
+const formatCurrency = (val) => fmtTenantMoney(val);
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 const formatCompact = (val) =>
     new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
@@ -186,8 +188,8 @@ const MerchantAnalyticsReport = () => {
         const totalCount    = data.reduce((s, d) => s + (Number(d.count)        || 0), 0);
         return [
             { title: 'Total Records',   value: formatNumber(totalRows),                          icon: Layers,     color: '#6366f1', subtitle: `Page ${paginationModel.page + 1} of ${Math.ceil(totalRows / paginationModel.pageSize)}` },
-            { title: 'Page Volume',     value: `${currencyCode} ${formatCompact(totalVol)}`,     icon: DollarSign, color: '#3b82f6' },
-            { title: 'Page MSF',        value: `${currencyCode} ${formatCompact(totalMsf)}`,     icon: BarChart2,  color: '#10b981' },
+            { title: 'Page Volume',     value: formatCompactCurrency(totalVol),     icon: DollarSign, color: '#3b82f6' },
+            { title: 'Page MSF',        value: formatCompactCurrency(totalMsf),     icon: BarChart2,  color: '#10b981' },
             { title: 'Page Trnx Count', value: formatCompact(totalCount),                         icon: Hash,       color: '#f59e0b' },
         ];
     }, [data, totalRows, paginationModel, currencyCode]);

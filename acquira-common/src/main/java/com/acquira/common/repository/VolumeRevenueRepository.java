@@ -1423,6 +1423,20 @@ public class VolumeRevenueRepository {
                 && !listNonEmpty(filter.getCardTypeList())
                 && !listNonEmpty(filter.getDestinationList());
 
+        // Classifier windows — same math as getAttritionReport (latest-data clamp,
+        // complete-month baselines). The status column needs its OWN coverage probe:
+        // an empty trailing-3-month baseline makes every status read NEW/CHURNED,
+        // an artifact of missing history the MoM/YoY probes below cannot see.
+        java.time.LocalDate latestData = latestBusinessDate(
+                canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight", tenantId);
+        java.time.LocalDate classifierEnd = (latestData != null && latestData.isBefore(end)) ? latestData : end;
+        int dayCut = classifierEnd.getDayOfMonth();
+        boolean monthComplete = dayCut == classifierEnd.lengthOfMonth();
+        java.time.LocalDate curMonStart = classifierEnd.withDayOfMonth(1);
+        java.time.LocalDate m1Start = curMonStart.minusMonths(1);
+        java.time.LocalDate m3Start = curMonStart.minusMonths(3);
+        java.time.LocalDate m1End = m1Start.withDayOfMonth(monthComplete ? m1Start.lengthOfMonth() : Math.min(dayCut, m1Start.lengthOfMonth()));
+
         java.util.function.BiFunction<java.time.LocalDate, java.time.LocalDate, Boolean> windowHasData = (wStart, wEnd) -> {
             StringBuilder sql = new StringBuilder();
             sql.append("SELECT EXISTS(SELECT 1 FROM ")
@@ -1474,6 +1488,9 @@ public class VolumeRevenueRepository {
         boolean momHasData = windowHasData.apply(momStart, momEnd);
         boolean yoyHasData = windowHasData.apply(prevStart, prevEnd);
         boolean ytdPrevHasData = windowHasData.apply(prevYtdStart, prevEnd);
+        // One probe over the contiguous [m3Start, m1End] span — the three baseline
+        // months are consecutive, so any-data-in-span is the right granularity.
+        boolean baselineHasData = windowHasData.apply(m3Start, m1End);
 
         Map<String, Object> meta = new HashMap<>();
         meta.put("currentStart", start.toString());
@@ -1487,6 +1504,13 @@ public class VolumeRevenueRepository {
         meta.put("ytdPrevStart", prevYtdStart.toString());
         meta.put("ytdPrevEnd", prevEnd.toString());
         meta.put("ytdPrevWindowHasData", ytdPrevHasData);
+        // Classifier transparency: the anchor the STATUS column is classified as-of
+        // (selected end clamped to the latest loaded business date), and whether its
+        // trailing-3-month baseline holds any data at all.
+        meta.put("classifierAnchor", classifierEnd.toString());
+        meta.put("baselineStart", m3Start.toString());
+        meta.put("baselineEnd", m1End.toString());
+        meta.put("baselineWindowHasData", baselineHasData);
         return meta;
     }
 
@@ -1516,6 +1540,14 @@ public class VolumeRevenueRepository {
         java.time.LocalDate momStart  = start.minusMonths(1);
         java.time.LocalDate momEnd    = end.minusMonths(1);
 
+        boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
+        boolean canUseMerchantGrain = !needStore
+                && !listNonEmpty(filter.getChannelList())
+                && !listNonEmpty(filter.getSchemeList())
+                && !listNonEmpty(filter.getCardTypeList())
+                && !listNonEmpty(filter.getDestinationList());
+        String baseTable = canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight";
+
         // ── Attrition classification windows (calendar months, independent of the
         //    selected range) ──
         // "Current month" is the calendar month containing `end`, read month-to-date.
@@ -1523,14 +1555,29 @@ public class VolumeRevenueRepository {
         // partial current month is never compared against full prior months — the
         // same apples-to-apples rule the MoM window above already follows. Without
         // this, every merchant looks churned on the 2nd of the month.
-        int dayCut = end.getDayOfMonth();
-        java.time.LocalDate curMonStart = end.withDayOfMonth(1);
+        //
+        // [FIX] The anchor is `end` clamped to the latest LOADED business date, not
+        // the raw selected end. `end` comes from the calendar ("This month" ends at
+        // today), but data always lags it — so the current window held fewer real
+        // days than dayCut while the baselines were complete, biasing every ratio
+        // low by (missing days / dayCut) and mass-stamping CHURNED right after
+        // month start. Historical selections are unaffected (latest >= end there).
+        java.time.LocalDate latestData = latestBusinessDate(baseTable, tenantId);
+        java.time.LocalDate classifierEnd = (latestData != null && latestData.isBefore(end)) ? latestData : end;
+        int dayCut = classifierEnd.getDayOfMonth();
+        // [FIX] When the anchored month is COMPLETE, the baselines must be complete
+        // months too. The old unconditional day-of-month cut dropped day 29-31 from
+        // longer baseline months (Feb selected → Jan/Dec/Nov all read 1st-28th),
+        // understating avg3 ~9% and inflating every ratio against the 30%/90%
+        // thresholds. Truncation is only the right rule while the month is partial.
+        boolean monthComplete = dayCut == classifierEnd.lengthOfMonth();
+        java.time.LocalDate curMonStart = classifierEnd.withDayOfMonth(1);
         java.time.LocalDate m1Start = curMonStart.minusMonths(1);
         java.time.LocalDate m2Start = curMonStart.minusMonths(2);
         java.time.LocalDate m3Start = curMonStart.minusMonths(3);
-        java.time.LocalDate m1End = m1Start.withDayOfMonth(Math.min(dayCut, m1Start.lengthOfMonth()));
-        java.time.LocalDate m2End = m2Start.withDayOfMonth(Math.min(dayCut, m2Start.lengthOfMonth()));
-        java.time.LocalDate m3End = m3Start.withDayOfMonth(Math.min(dayCut, m3Start.lengthOfMonth()));
+        java.time.LocalDate m1End = m1Start.withDayOfMonth(monthComplete ? m1Start.lengthOfMonth() : Math.min(dayCut, m1Start.lengthOfMonth()));
+        java.time.LocalDate m2End = m2Start.withDayOfMonth(monthComplete ? m2Start.lengthOfMonth() : Math.min(dayCut, m2Start.lengthOfMonth()));
+        java.time.LocalDate m3End = m3Start.withDayOfMonth(monthComplete ? m3Start.lengthOfMonth() : Math.min(dayCut, m3Start.lengthOfMonth()));
 
         // Earliest date any window reads — used as the WHERE lower bound for partition pruning.
         //
@@ -1546,9 +1593,8 @@ public class VolumeRevenueRepository {
         if (momStart.isBefore(globalLowerBound)) globalLowerBound = momStart;
         if (m3Start.isBefore(globalLowerBound)) globalLowerBound = m3Start;
 
-        boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
-
-        // ── Base-table routing ─────────────────────────────────────────────
+        // ── Base-table routing (booleans computed above, before the classifier
+        //    windows, because the latest-data clamp reads the routed table) ──
         // This report is merchant-grained: it only ever reads business_date,
         // merchant_id and the three measures. sum_daily_insight is the
         // merchant x store x scheme x type x destination x channel cross-tab —
@@ -1558,12 +1604,6 @@ public class VolumeRevenueRepository {
         // SUM, or when a store filter needs s.store_id (always NULL on
         // sum_daily_merchant). Everything else — including the default unfiltered
         // load, the slow case in practice — routes to the small table.
-        boolean canUseMerchantGrain = !needStore
-                && !listNonEmpty(filter.getChannelList())
-                && !listNonEmpty(filter.getSchemeList())
-                && !listNonEmpty(filter.getCardTypeList())
-                && !listNonEmpty(filter.getDestinationList());
-
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT m.mid AS mid, m.name AS merchant_name, ");
         // For each window emit volume / txns / msf so the UI can toggle metric without re-querying.
@@ -1574,13 +1614,13 @@ public class VolumeRevenueRepository {
         appendWindowMeasures(sql, "momprev", ":momStartDate",   ":momEndDate");
         // Volume-only windows for the attrition classifier. Appended LAST so the
         // hard-coded row[] indices of the five windows above stay valid.
-        appendVolumeMeasure(sql, "curmon", ":curMonStart", ":endDate");
+        appendVolumeMeasure(sql, "curmon", ":curMonStart", ":curMonEnd");
         appendVolumeMeasure(sql, "m1",     ":m1Start",     ":m1End");
         appendVolumeMeasure(sql, "m2",     ":m2Start",     ":m2End");
         appendVolumeMeasure(sql, "m3",     ":m3Start",     ":m3End");
         // strip trailing comma
         sql.setLength(sql.length() - 2);
-        sql.append(" FROM ").append(canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight").append(" s ");
+        sql.append(" FROM ").append(baseTable).append(" s ");
         // [TENANCY] Join is tenant-scoped (s.tenant_id = m.tenant_id) — the old version
         // joined on merchant_id alone, the [P2-1] cross-tenant time-bomb pattern.
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
@@ -1620,6 +1660,7 @@ public class VolumeRevenueRepository {
         query.setParameter("momStartDate", momStart);
         query.setParameter("momEndDate", momEnd);
         query.setParameter("curMonStart", curMonStart);
+        query.setParameter("curMonEnd", classifierEnd);
         query.setParameter("m1Start", m1Start);
         query.setParameter("m1End", m1End);
         query.setParameter("m2Start", m2Start);
@@ -1719,19 +1760,28 @@ public class VolumeRevenueRepository {
             map.put("prev_m2", m2Vol);
             map.put("prev_m3", m3Vol);
             map.put("avg_3m_ratio_pct", ratioPct);
-            map.put("status", classifyAttrition(curMon, m1Vol.doubleValue(), m2Vol.doubleValue(), avg3));
+            map.put("status", classifyAttrition(curMon, m1Vol.doubleValue(), m2Vol.doubleValue(), m3Vol.doubleValue(), avg3));
 
             result.add(map);
         }
 
-        // Worst first — churned at the top, then the weakest ratio to the 3-month
-        // average. Merchants with no trailing history (null ratio) sort last: they
-        // are new, not attriting. Ties fall back to YTD % so the order stays stable.
+        // Worst first — status severity, then the weakest ratio to the 3-month
+        // average, then YTD % so the order stays stable.
+        //
+        // [FIX] The old sort keyed on the ratio alone with nulls last, on the
+        // reasoning that no history = new. But a long-dead merchant (traded months
+        // ago, zero in all four classifier windows) also has avg3 = 0 → null ratio
+        // → status CHURNED, and sorted to the BOTTOM of a worst-first grid. Rank by
+        // severity first so every churned merchant is at the top regardless of how
+        // long it has been dead; nulls-last now only orders WITHIN a status band.
         result.sort((a, b) -> {
+            int c = Integer.compare(statusSeverity((String) a.get("status")),
+                                    statusSeverity((String) b.get("status")));
+            if (c != 0) return c;
             Object ra = a.get("avg_3m_ratio_pct"), rb = b.get("avg_3m_ratio_pct");
             double da = ra == null ? Double.MAX_VALUE : ((Number) ra).doubleValue();
             double db = rb == null ? Double.MAX_VALUE : ((Number) rb).doubleValue();
-            int c = Double.compare(da, db);
+            c = Double.compare(da, db);
             if (c != 0) return c;
             return Double.compare(
                     ((Number) a.getOrDefault("ytd_pct", 0d)).doubleValue(),
@@ -1739,6 +1789,35 @@ public class VolumeRevenueRepository {
         });
 
         return result;
+    }
+
+    /** Worst-first rank for the attrition grid. Unknown statuses sort with STABLE. */
+    private static int statusSeverity(String status) {
+        switch (status == null ? "" : status) {
+            case "CHURNED":    return 0;
+            case "DECLINING":  return 1;
+            case "STABLE":     return 2;
+            case "PERFORMING": return 3;
+            case "NEW":        return 4;
+            default:           return 2;
+        }
+    }
+
+    /**
+     * Latest loaded business date for the tenant on the routed summary table.
+     * Anchors the attrition classifier on real data instead of the calendar —
+     * see the [FIX] comment in getAttritionReport. Null when the tenant has no
+     * rows at all (classifier then falls back to the selected end date).
+     */
+    private java.time.LocalDate latestBusinessDate(String baseTable, Long tenantId) {
+        Object r = entityManager.createNativeQuery(
+                "SELECT MAX(s.business_date) FROM " + baseTable + " s WHERE s.tenant_id = :tenantId")
+                .setParameter("tenantId", tenantId)
+                .getSingleResult();
+        if (r == null) return null;
+        if (r instanceof java.time.LocalDate) return (java.time.LocalDate) r;
+        if (r instanceof java.sql.Date) return ((java.sql.Date) r).toLocalDate();
+        return java.time.LocalDate.parse(r.toString().substring(0, 10));
     }
 
     /** Emits "SUM(CASE WHEN business_date in window THEN <col> ELSE 0 END) AS <alias>_x, " for vol/txn/msf. */
@@ -1762,8 +1841,13 @@ public class VolumeRevenueRepository {
      * All comparisons are against avg3 — the mean of the three months preceding the
      * current one, each truncated to the same day-of-month as the current partial month.
      *
+     *   NEW        no trailing 3-month history (avg3 == 0) but trading this month —
+     *              there is no baseline to attrite FROM. [FIX] Previously this fell
+     *              through to PERFORMING ("current >= 90% of a zero average"), so a
+     *              window at the start of the tenant's data history stamped the whole
+     *              portfolio Performing against an average that did not exist.
      *   CHURNED    current month is zero, OR below 30% of avg3
-     *   DECLINING  the last three months are constantly dropping (m2 > m1 > current)
+     *   DECLINING  the last three months are constantly dropping (m3 > m2 > m1 > current)
      *   PERFORMING current month is at least 90% of avg3. Zero months inside the
      *              trailing window do NOT disqualify — a merchant returning from
      *              dormancy at >=90% of its (correspondingly lower) average counts
@@ -1773,13 +1857,14 @@ public class VolumeRevenueRepository {
      *
      * Evaluated in that order, so the most severe status wins when several apply.
      *
-     * With no trailing history (avg3 == 0) a merchant that traded this month falls
-     * through to PERFORMING: it is new, not attriting. One that did not trade at all
-     * is caught by the zero check and never reaches here (filtered as noise upstream).
+     * A merchant with no classifier-window activity at all (avg3 == 0, current == 0)
+     * still classifies CHURNED: it traded in SOME window (the noise filter upstream
+     * guarantees that) but has been dead for the whole classification horizon.
      */
-    private String classifyAttrition(double curMonth, double m1, double m2, double avg3) {
+    private String classifyAttrition(double curMonth, double m1, double m2, double m3, double avg3) {
+        if (avg3 <= 0 && curMonth > 0) return "NEW";
         if (curMonth <= 0 || (avg3 > 0 && curMonth < 0.30 * avg3)) return "CHURNED";
-        if (m2 > m1 && m1 > curMonth) return "DECLINING";
+        if (m3 > m2 && m2 > m1 && m1 > curMonth) return "DECLINING";
         if (curMonth >= 0.90 * avg3) return "PERFORMING";
         return "STABLE";
     }

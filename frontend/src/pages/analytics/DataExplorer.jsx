@@ -26,6 +26,7 @@ import {
 import { explorerApi, reportApi, savedViewsApi } from '../../api/explorer';
 import { SectionLoader } from '../../components/Loaders';
 import { useAuth } from '../../contexts/AuthContext';
+import { resolveDecimals, getDefaultCurrency } from '../../utils/formatters';
 import RGL, { WidthProvider } from 'react-grid-layout';
 
 const SheetGrid = WidthProvider(RGL);
@@ -94,52 +95,66 @@ const CATS = {
     amount:{ icon: DollarSign, color: '#2dd4bf' },
 };
 const gc = k => CATS[k] || { icon: Tag, color: '#9ca3af' };
-const fmt = v => v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
-const fmtK = v => {
-    if (v == null) return '—';
-    const n = Number(v);
-    if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(1) + 'B';
-    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-    return n % 1 === 0 ? n.toString() : n.toFixed(2);
-};
+// (The old currency-blind `fmt` / `fmtK` helpers were removed — every number on
+// this screen now goes through formatMeasure/chartFmt, which knows whether a
+// measure is money and what the tenant's currency and precision are.)
 
 /* ═══ Per-measure display formatting (Measure Studio · A5) ═══ */
 // Sensible defaults for the built-in base measures; custom measures carry their own `format`.
+// Money measures deliberately carry NO `decimals`: the precision is a property
+// of the tenant's currency (3dp for BHD, 2dp for AED/EGP), not of the measure.
+// `reconcile: true` marks the MSF measures, which are stored at 4-dp so finance
+// can tie back to source files — they never render coarser than 4dp.
 const BASE_FMT = {
     txn_count: { unit: 'number', decimals: 0 },
     distinct_merchants: { unit: 'number', decimals: 0 },
     distinct_cards: { unit: 'number', decimals: 0 },
-    total_volume: { unit: 'currency', decimals: 2 },
-    // MSF is stored at 4-dp precision so finance can reconcile to the fils;
-    // 2 dp here would hide exactly the digits they check against source files.
-    total_msf: { unit: 'currency', decimals: 4 },
-    total_vat: { unit: 'currency', decimals: 2 },
-    total_settled: { unit: 'currency', decimals: 2 },
-    total_interchange: { unit: 'currency', decimals: 2 },
-    total_txn_currency_amount: { unit: 'currency', decimals: 2 },
-    avg_txn_value: { unit: 'currency', decimals: 2 },
-    net_revenue: { unit: 'currency', decimals: 2 },
-    avg_msf_per_txn: { unit: 'currency', decimals: 4 },
+    total_volume: { unit: 'currency' },
+    total_msf: { unit: 'currency', reconcile: true },
+    total_vat: { unit: 'currency' },
+    total_settled: { unit: 'currency' },
+    total_interchange: { unit: 'currency' },
+    total_txn_currency_amount: { unit: 'currency' },
+    avg_txn_value: { unit: 'currency' },
+    net_revenue: { unit: 'currency' },
+    avg_msf_per_txn: { unit: 'currency', reconcile: true },
     effective_msf_rate: { unit: 'number', decimals: 1, suffix: ' bps' },
     interchange_rate: { unit: 'number', decimals: 1, suffix: ' bps' },
     settlement_ratio: { unit: 'number', decimals: 1, suffix: '%' },
 };
-// Format a number per a {unit,decimals,scale,prefix,suffix} spec. Currency is symbol-agnostic
-// (multi-tenant currencies vary) — use prefix/suffix for a symbol.
+/* Format a number per a {unit,decimals,scale,prefix,suffix} spec.
+   This screen used to be deliberately "symbol-agnostic" and rendered money as a
+   bare number — with three tenants on two different currencies that is no
+   longer readable, so currency measures now carry the tenant's ISO code (unless
+   the measure defines its own prefix/suffix) at the tenant's precision. */
 const formatMeasure = (n, f) => {
     f = f || {};
     if (n == null || isNaN(Number(n))) return '—';
     let v = Number(n);
     const unit = f.unit || 'number';
-    const dec = f.decimals != null ? f.decimals : (unit === 'percent' ? 1 : 2);
+    let dec = f.decimals;
+    if (dec == null) {
+        if (unit === 'currency') {
+            dec = resolveDecimals();
+            if (f.reconcile) dec = Math.max(4, dec);
+        } else {
+            dec = unit === 'percent' ? 1 : 2;
+        }
+    }
     let scale = f.scale || 'none';
     if (scale === 'auto') { const a = Math.abs(v); scale = a >= 1e9 ? 'B' : a >= 1e6 ? 'M' : a >= 1e3 ? 'K' : 'none'; }
     const div = scale === 'B' ? 1e9 : scale === 'M' ? 1e6 : scale === 'K' ? 1e3 : 1;
-    const body = (v / div).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    // Compacted money keeps ~4 significant digits rather than the full tenant
+    // precision, which would be noise on a "1.235K" tier.
+    const compacted = scale !== 'none';
+    const body = compacted
+        ? (v / div).toLocaleString('en-US', { maximumSignificantDigits: 4 })
+        : (v / div).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
     const sUnit = scale === 'none' ? '' : scale;
     const pct = unit === 'percent' ? '%' : '';
-    return `${f.prefix || ''}${body}${sUnit}${pct}${f.suffix || ''}`;
+    const ccy = (unit === 'currency' && !f.prefix && !f.suffix && getDefaultCurrency())
+        ? getDefaultCurrency() + ' ' : '';
+    return `${f.prefix || ''}${ccy}${body}${sUnit}${pct}${f.suffix || ''}`;
 };
 const AGG_LABELS = { SUM: 'Sum', AVG: 'Average', MIN: 'Min', MAX: 'Max', MEDIAN: 'Median', STDDEV: 'Std Dev', P90: '90th pct', P95: '95th pct', COUNT: 'Count', COUNT_DISTINCT: 'Distinct count' };
 // Chart formatting bridge: every chart on this screen shares one measure-format map,
@@ -636,8 +651,8 @@ const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height 
                 <ResponsiveContainer width="100%" height={height}>
                     <ScatterChart {...common}>
                         {grid}
-                        <XAxis dataKey={mK[0]} name={mK[0]?.replace(/_/g,' ')} tick={{ fontSize: 11, fill: T.td3 }} axisLine={false} tickLine={false} tickFormatter={fmtK} />
-                        <YAxis dataKey={mK[1] || mK[0]} name={(mK[1] || mK[0])?.replace(/_/g,' ')} tick={{ fontSize: 11, fill: T.td3 }} axisLine={false} tickLine={false} tickFormatter={fmtK} width={55} />
+                        <XAxis dataKey={mK[0]} name={mK[0]?.replace(/_/g,' ')} tick={{ fontSize: 11, fill: T.td3 }} axisLine={false} tickLine={false} tickFormatter={(v) => chartFmt(v, mK[0], true)} />
+                        <YAxis dataKey={mK[1] || mK[0]} name={(mK[1] || mK[0])?.replace(/_/g,' ')} tick={{ fontSize: 11, fill: T.td3 }} axisLine={false} tickLine={false} tickFormatter={(v) => chartFmt(v, mK[1] || mK[0], true)} width={70} />
                         {mK[2] && <ZAxis dataKey={mK[2]} range={[40, 400]} name={mK[2]?.replace(/_/g,' ')} />}
                         <RTooltip content={<ChartTip />} cursor={{ strokeDasharray: '3 3' }} />
                         <Scatter data={data} fill={palette[0]} fillOpacity={0.7} name="Data Points">
@@ -680,7 +695,7 @@ const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height 
                 return (
                     <g><rect x={x} y={y} width={width} height={h} rx={4} fill={fill} fillOpacity={0.85} stroke="white" strokeWidth={2} />
                         {width > 60 && <text x={x + width / 2} y={y + h / 2 - 6} textAnchor="middle" fill="white" fontSize={11} fontWeight={700}>{name?.substring(0, Math.floor(width / 8))}</text>}
-                        {width > 60 && h > 40 && <text x={x + width / 2} y={y + h / 2 + 10} textAnchor="middle" fill="rgba(255,255,255,0.7)" fontSize={10}>{fmtK(size)}</text>}
+                        {width > 60 && h > 40 && <text x={x + width / 2} y={y + h / 2 + 10} textAnchor="middle" fill="rgba(255,255,255,0.7)" fontSize={10}>{chartFmt(size, mK[0], true)}</text>}
                     </g>
                 );
             };
@@ -1091,11 +1106,13 @@ export default function DataExplorer() {
         if (val == null) return '—';
         if (typeof val !== 'number') return val;
         return formatMeasure(val, measFmt[key] || BASE_FMT[key] || { unit: 'number', decimals: 2 });
-    }, [measFmt]);
+        // tenantVersion: money precision/currency live in module state, so these
+        // memoised formatters must be rebuilt when the tenant changes.
+    }, [measFmt, tenantVersion]);
     const fmtKpi = useCallback((val, key) => {
         const f = measFmt[key] || BASE_FMT[key] || { unit: 'number' };
         return formatMeasure(val, { ...f, scale: (f.scale && f.scale !== 'none') ? f.scale : 'auto' });
-    }, [measFmt]);
+    }, [measFmt, tenantVersion]);
 
     // ── Sheet (pinned objects) ──────────────────────────────────────
     const newId = () => `obj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -1483,7 +1500,7 @@ export default function DataExplorer() {
     );
 
     return (
-        <Box className="qe4" sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: T.workspace }}>
+        <Box className="qe4" sx={{ display: 'flex', height: 'var(--vh100, 100vh)', overflow: 'hidden', bgcolor: T.workspace }}>
 
             {/* ████ SIDEBAR ████ */}
             <Collapse in={sideOpen} orientation="horizontal" timeout={250}>

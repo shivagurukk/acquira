@@ -9,7 +9,7 @@
         <div class="grid-3 mb-8">
             <div class="card card-accent-blue" style="padding: 12px 14px;">
                 <div class="kpi-label">TOTAL SALES</div>
-                <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="'AED ' + ${dto.overview.sales.formattedValue}">AED 0</div>
+                <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.currencyCode} + ' ' + ${dto.overview.sales.formattedValue}">AED 0</div>
                 <span style="font-size: 8.5px; color: #6B7280;">Monthly volume</span>
             </div>
             <div class="card" style="padding: 12px 14px; border-top: 3px solid #1E3A8A;">

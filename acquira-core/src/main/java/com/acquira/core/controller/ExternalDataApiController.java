@@ -38,9 +38,12 @@ public class ExternalDataApiController {
     private static final int MAX_TXN_WINDOW_DAYS = 92;   // protects the ~18B-row fact table
 
     private final JdbcTemplate jdbc;
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
 
-    public ExternalDataApiController(JdbcTemplate jdbc) {
+    public ExternalDataApiController(JdbcTemplate jdbc, CurrencyMeta currencyMeta) {
         this.jdbc = jdbc;
+        this.currencyMeta = currencyMeta;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -113,7 +116,11 @@ public class ExternalDataApiController {
         out.put("merchant", merchant);
         out.put("startDate", range[0].toString());
         out.put("endDate", range[1].toString());
-        out.put("currency", "BASE"); // settlement / store base currency
+        // Was the literal string "BASE" — a placeholder that told an external API
+        // consumer nothing except "some base currency". The figures below are in the
+        // tenant's settlement currency, so name it, and carry the precision with it
+        // (BHD is 3dp; a client assuming 2 silently loses fils).
+        out.put("currency", currencyMeta.block(tenantId));
         out.put("totals", agg);
         return ResponseEntity.ok(out);
     }
@@ -229,7 +236,7 @@ public class ExternalDataApiController {
         out.put("endDate", range[1].toString());
         out.put("groupBy", gb);
         out.put("series", series);
-        return ResponseEntity.ok(out);
+        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
     }
 
     /** Scheme × card-type breakdown — sum_daily_insight. */
@@ -251,7 +258,7 @@ public class ExternalDataApiController {
         out.put("startDate", range[0].toString());
         out.put("endDate", range[1].toString());
         out.put("breakdown", rows);
-        return ResponseEntity.ok(out);
+        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -281,7 +288,7 @@ public class ExternalDataApiController {
         out.put("startDate", range[0].toString());
         out.put("endDate", range[1].toString());
         out.put("totals", agg);
-        return ResponseEntity.ok(out);
+        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
     }
 
     // ═══════════════════════════════════════════════════════════

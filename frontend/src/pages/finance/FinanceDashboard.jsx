@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatCurrency, formatCompactCurrency } from '../../utils/formatters';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -19,14 +20,9 @@ import {
 const CARD = { background: '#fff', borderRadius: 14, padding: 18, boxShadow: '0 1px 4px rgba(0,0,0,.06)', border: '1px solid #eef0f4' };
 const input = { padding: '6px 8px', borderRadius: 7, border: '1px solid #e2e8f0', fontSize: 12.5, color: '#334155', fontFamily: 'inherit' };
 
+// Counts only — money compaction goes through formatCompactCurrency so it
+// carries the tenant's currency and decimal precision.
 const num = (v) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-const compact = (v) => {
-  const n = Number(v || 0), a = Math.abs(n), s = n < 0 ? '-' : '';
-  if (a >= 1e9) return s + (a / 1e9).toFixed(2) + 'B';
-  if (a >= 1e6) return s + (a / 1e6).toFixed(2) + 'M';
-  if (a >= 1e3) return s + (a / 1e3).toFixed(1) + 'K';
-  return s + a.toFixed(0);
-};
 
 const PRESETS = [
   { label: 'Today', value: 'TODAY' }, { label: 'MTD', value: 'MTD' }, { label: 'QTD', value: 'QTD' },
@@ -73,10 +69,11 @@ const marginOf = (r) => {
 const valOf = (r, key) => key === 'marginPct' ? marginOf(r) : Number(r[key] || 0);
 
 export default function FinanceDashboard() {
-  const { currencyCode = 'AED', formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
-  const cur = useCallback((v) => fmtCurr ? fmtCurr(v)
-    : new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode, maximumFractionDigits: 0 }).format(v || 0), [fmtCurr, currencyCode]);
-  const curC = useCallback((v) => `${currencyCode} ${compact(v)}`, [currencyCode]);
+  // No 'AED' default and no whole-unit rounding: money renders in the tenant's
+  // currency at the tenant's precision (3dp for BHD).
+  const { currencyCode, formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
+  const cur = useCallback((v) => (fmtCurr ? fmtCurr(v) : formatCurrency(v)), [fmtCurr]);
+  const curC = useCallback((v) => formatCompactCurrency(v), [currencyCode]);
 
   const [period, setPeriod] = useState('YTD');
   const [customFrom, setCustomFrom] = useState('');

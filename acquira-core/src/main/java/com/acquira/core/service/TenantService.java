@@ -19,14 +19,29 @@ public class TenantService {
     private final com.acquira.common.repository.UserRepository userRepository;
     private final com.acquira.common.repository.UserCombinedViewRepository userCombinedViewRepository;
 
+    private final com.acquira.common.service.CurrencyResolver currencyResolver;
+
     public TenantService(TenantRepository tenantRepository,
             UserTenantAccessRepository userTenantAccessRepository,
             com.acquira.common.repository.UserRepository userRepository,
-            com.acquira.common.repository.UserCombinedViewRepository userCombinedViewRepository) {
+            com.acquira.common.repository.UserCombinedViewRepository userCombinedViewRepository,
+            com.acquira.common.service.CurrencyResolver currencyResolver) {
         this.tenantRepository = tenantRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
         this.userRepository = userRepository;
         this.userCombinedViewRepository = userCombinedViewRepository;
+        this.currencyResolver = currencyResolver;
+    }
+
+    /**
+     * Stamp the derived decimal precision onto every tenant leaving this service.
+     * These rows are serialized straight into the login/session payload, which is
+     * where the frontend learns its currency — without this the UI has a currency
+     * CODE but no way to know BHD needs 3 decimals and EGP 2.
+     */
+    private List<Tenant> withCurrency(List<Tenant> tenants) {
+        tenants.forEach(currencyResolver::withCurrencyDecimals);
+        return tenants;
     }
 
     public List<Tenant> getAllowedTenants(String username) {
@@ -40,13 +55,13 @@ public class TenantService {
         // JwtRequestFilter still blocks switching into those tenants; this closes the
         // disclosure.
         if ("ROLE_SUPER_ADMIN".equals(user.getRole())) {
-            return tenantRepository.findAll();
+            return withCurrency(tenantRepository.findAll());
         }
 
         List<UserTenantAccess> accessList = userTenantAccessRepository.findByUser(user);
-        return accessList.stream()
+        return withCurrency(accessList.stream()
                 .map(UserTenantAccess::getTenant)
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     public List<Long> getAllowedTenantIds(String username) {

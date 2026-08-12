@@ -10,6 +10,7 @@ import { exportToCSV } from '../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../theme/dataGridStyles';
 import { useAuth } from '../contexts/AuthContext';
 import { useDataBounds } from '../hooks/useDataBounds';
+import { formatCurrency as fmtMoney, formatCompactCurrency } from '../utils/formatters';
 
 /**
  * Group Management Reports — enriched to consume the full payload the backend
@@ -75,6 +76,8 @@ const TABS = [
 ];
 
 const formatNumber  = (val) => new Intl.NumberFormat('en-US').format(val || 0);
+// Non-money compaction (transaction counts). Money tiles use fmtMoneyCompact
+// below so they carry the tenant currency and precision.
 const formatCompact = (val) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
 /* Margin chip colour bands: healthy >= 40%, watch 15–40%, thin/negative < 15% */
@@ -86,11 +89,11 @@ const marginBand = (pct) => {
 };
 
 const GroupReports = () => {
-    const { currencyCode = 'AED', formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
-    const formatCurrency = useCallback((val) => {
-        if (fmtCurr) return fmtCurr(val);
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(val || 0);
-    }, [fmtCurr, currencyCode]);
+    // No 'AED' default: an unknown currency must not be silently relabelled.
+    // The shared formatter renders a bare number in that case.
+    const { currencyCode, formatCurrency: fmtCurr, tenantVersion } = useAuth() || {};
+    const formatCurrency = useCallback((val) => (fmtCurr ? fmtCurr(val) : fmtMoney(val)), [fmtCurr]);
+    const fmtMoneyCompact = useCallback((val) => formatCompactCurrency(val), [currencyCode]);
 
     const [activeTab, setActiveTab] = useState('MCC');
     const [data, setData] = useState([]);
@@ -225,18 +228,18 @@ const GroupReports = () => {
         const marginPct   = totalMsf > 0 ? (totalNetRev / totalMsf) * 100 : 0;
         return [
             { title: 'Groups',             value: formatNumber(groupCount),                      icon: Layers,     color: '#6366f1' },
-            { title: 'Total Volume',       value: `${currencyCode} ${formatCompact(totalVol)}`,  icon: DollarSign, color: '#3b82f6',
+            { title: 'Total Volume',       value: fmtMoneyCompact(totalVol),                     icon: DollarSign, color: '#3b82f6',
               subtitle: 'settlement basis' },
             { title: 'Transactions',       value: formatCompact(totalTxns),                      icon: Hash,       color: '#10b981' },
             { title: 'Merchants',          value: formatNumber(totalMerch),                      icon: Users,      color: '#f59e0b' },
-            { title: 'Net Margin',        value: `${currencyCode} ${formatCompact(totalNetRev)}`, icon: TrendingUp, color: '#059669',
+            { title: 'Net Margin',        value: fmtMoneyCompact(totalNetRev),                   icon: TrendingUp, color: '#059669',
               subtitle: `${marginPct.toFixed(1)}% margin on MSF` },
-            { title: 'MSF',                value: `${currencyCode} ${formatCompact(totalMsf)}`,  icon: Receipt,    color: '#8b5cf6' },
+            { title: 'MSF',                value: fmtMoneyCompact(totalMsf),                     icon: Receipt,    color: '#8b5cf6' },
             { title: 'Blended MSF Rate',   value: `${blendedBps.toFixed(1)} bps`,                icon: Percent,    color: '#0891b2',
               subtitle: 'volume-weighted' },
             { title: 'Avg Ticket',         value: formatCurrency(avgTicket),                     icon: Coins,      color: '#d97706' },
         ];
-    }, [data, currencyCode, formatCurrency]);
+    }, [data, currencyCode, formatCurrency, fmtMoneyCompact]);
 
     /* ── Grid rows + columns ────────────────────────────────────────── */
     const rows = useMemo(() => {
@@ -295,7 +298,7 @@ const GroupReports = () => {
             )
         },
         {
-            field: 'volume', headerName: `VOLUME (${currencyCode})`, type: 'number', flex: 1.2, minWidth: 145, align: 'right', headerAlign: 'right',
+            field: 'volume', headerName: `VOLUME${currencyCode ? ` (${currencyCode})` : ''}`, type: 'number', flex: 1.2, minWidth: 145, align: 'right', headerAlign: 'right',
             renderCell: (params) => (
                 <Typography variant="body2" fontWeight="700" sx={{ color: T.text, fontVariantNumeric: 'tabular-nums' }}>
                     {formatCurrency(params.value)}

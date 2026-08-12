@@ -8,7 +8,7 @@
         <div class="grid-4 mb-8">
             <div class="card card-accent-blue" style="padding: 10px 12px;">
                 <div class="kpi-label">CURRENT MONTH</div>
-                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="'AED ' + ${dto.overview.sales.formattedValue}">0</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.currencyCode} + ' ' + ${dto.overview.sales.formattedValue}">0</div>
                 <span th:class="${dto.overview.sales.momGrowth >= 0 ? 'trend-up' : 'trend-down'}">
                     <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '% MoM'}">0%</span>
                 </span>
@@ -34,13 +34,13 @@
 
         <!-- ROW 2: Annual Sales Trend -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title"><span>ANNUAL SALES TREND (AED)</span></div>
+            <div class="card-title"><span>ANNUAL SALES TREND (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
             <div class="chart-container"><canvas data-chart="gradient-bar" data-field="demographics.monthlySales" data-color="#1E3A8A"></canvas></div>
         </div>
 
         <!-- ROW 3: Monthly Avg TXN Value -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title"><span>MONTHLY AVG TRANSACTION VALUE (AED)</span></div>
+            <div class="card-title"><span>MONTHLY AVG TRANSACTION VALUE (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
             <div class="chart-container"><canvas data-chart="area" data-field="demographics.monthlyAtv" data-color="#6D28D9" data-bg="rgba(109,40,217,0.08)"></canvas></div>
         </div>
 

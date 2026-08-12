@@ -11,7 +11,7 @@ import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
-import { formatMsf } from '../../utils/formatters';
+import { formatMsf, formatCompactCurrency } from '../../utils/formatters';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer, chartTooltipStyle } from '../../theme/dataGridStyles';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
@@ -128,7 +128,7 @@ const VolumeRevenueChart = ({ data, currencySymbol, formatCurrency }) => {
                     <XAxis dataKey="monthShort" tick={{ fontSize: 11, fill: axisColor }}
                         axisLine={{ stroke: gridColor }} tickLine={false} />
                     <YAxis yAxisId="vol" tick={{ fontSize: 11, fill: axisColor }} axisLine={false} tickLine={false}
-                        tickFormatter={(v) => `${currencySymbol} ${formatCompact(v)}`} width={70} />
+                        tickFormatter={(v) => formatCompactCurrency(v)} width={82} />
                     <YAxis yAxisId="msf" orientation="right" tick={{ fontSize: 11, fill: axisColor }} axisLine={false} tickLine={false}
                         tickFormatter={(v) => formatCompact(v)} width={50} />
                     <Tooltip content={<CustomTooltip />} cursor={{ fill: 'var(--bg-hover, rgba(148,163,184,0.08))' }} />
@@ -154,7 +154,8 @@ const LegendDot = ({ color, label }) => (
 
 const VolumeRevenueSummary = () => {
     const { currencySymbol, formatCurrency: fmtCurrency, tenantVersion } = useAuth();
-    const formatCurrency = (val) => fmtCurrency(val, { decimals: 2 });
+    // Precision comes from the tenant (3dp for BHD), not a hardcoded 2.
+    const formatCurrency = (val) => fmtCurrency(val);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showFilters, setShowFilters] = useState(false);
@@ -268,13 +269,13 @@ const VolumeRevenueSummary = () => {
             ? ((latest.active_merchants - prev.active_merchants) / prev.active_merchants) * 100 : 0;
 
         return [
-            { title: 'Total Volume', value: `${currencySymbol} ${formatCompact(totalVol)}`, icon: BarChart3, color: 'var(--brand-alt, #3b82f6)', trend: volTrend, trendLabel: 'vs prev month', sparkData: sparkVols },
-            { title: 'Total MSF Revenue', value: `${currencySymbol} ${formatCompact(totalMsf)}`, icon: DollarSign, color: 'var(--success, #10b981)', trend: msfTrend, trendLabel: 'vs prev month', sparkData: sparkMsf },
+            { title: 'Total Volume', value: formatCompactCurrency(totalVol), icon: BarChart3, color: 'var(--brand-alt, #3b82f6)', trend: volTrend, trendLabel: 'vs prev month', sparkData: sparkVols },
+            { title: 'Total MSF Revenue', value: formatCompactCurrency(totalMsf), icon: DollarSign, color: 'var(--success, #10b981)', trend: msfTrend, trendLabel: 'vs prev month', sparkData: sparkMsf },
             { title: 'Transaction Count', value: formatNumber(totalCount), icon: Hash, color: 'var(--warning, #f59e0b)', trendLabel: 'monthly counts', sparkData: data.slice().reverse().map(d => d.count || 0) },
             { title: 'Effective MSF Rate', value: `${takeRateBps.toFixed(1)} bps`, icon: Gauge, color: 'var(--accent-cyan, #06b6d4)', trendLabel: 'fee revenue / volume' },
-            { title: 'Avg Ticket Size', value: `${currencySymbol} ${formatCompact(avgTicket)}`, icon: Receipt, color: 'var(--accent-purple, #8b5cf6)', trendLabel: 'volume / transaction' },
-            { title: 'DCC Opt-in Rate', value: `${dccOptInRate.toFixed(1)}%`, icon: Percent, color: 'var(--accent-pink, #ec4899)', trendLabel: `${currencySymbol} ${formatCompact(totalOptIn)} opted in` },
-            { title: 'International Volume', value: `${currencySymbol} ${formatCompact(totalIntl)}`, icon: Globe2, color: 'var(--brand-alt, #3b82f6)', trendLabel: `${intlSharePct.toFixed(1)}% of total`, sparkData: sparkIntl },
+            { title: 'Avg Ticket Size', value: formatCompactCurrency(avgTicket), icon: Receipt, color: 'var(--accent-purple, #8b5cf6)', trendLabel: 'volume / transaction' },
+            { title: 'DCC Opt-in Rate', value: `${dccOptInRate.toFixed(1)}%`, icon: Percent, color: 'var(--accent-pink, #ec4899)', trendLabel: `${formatCompactCurrency(totalOptIn)} opted in` },
+            { title: 'International Volume', value: formatCompactCurrency(totalIntl), icon: Globe2, color: 'var(--brand-alt, #3b82f6)', trendLabel: `${intlSharePct.toFixed(1)}% of total`, sparkData: sparkIntl },
             { title: 'Active Merchants', value: formatNumber(latestActiveMerchants), icon: Users, color: 'var(--warning, #f59e0b)', trend: merchantTrend, trendLabel: `avg ${formatNumber(Math.round(avgActiveMerchants))}/mo`, sparkData: sparkActive },
         ];
     }, [data]);

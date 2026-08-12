@@ -58,6 +58,15 @@ public class Tenant {
     @Column(name = "card_type_source")
     private String cardTypeSource = "FILE";
 
+    // Decimal places for baseCurrency, derived (not stored) from
+    // ref_country.decimal_notation_value via CurrencyResolver: BHD -> 3,
+    // EGP/AED -> 2. Serialized into the login payload so the frontend, PDFs and
+    // exports format money at the tenant's real precision instead of a
+    // hardcoded 2 (or 0). NULL means "could not resolve" — callers must treat
+    // that as a configuration error, never as 2.
+    @Transient
+    private Integer currencyDecimals;
+
     @ManyToOne
     @JoinColumn(name = "region_id")
     private Region region;

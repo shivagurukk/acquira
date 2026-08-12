@@ -45,6 +45,10 @@ public class TransactionController {
     @Autowired
     private TerminalRepository terminalRepository;
 
+    /** Tenant currency + decimal precision for the export path. */
+    @Autowired
+    private CurrencyMeta currencyMeta;
+
     @GetMapping
     public ResponseEntity<Page<Transaction>> getTransactions(
             @RequestParam(defaultValue = "0") int page,
@@ -113,40 +117,39 @@ public class TransactionController {
         // Clamp page size to a sane bound.
         int pageSize = Math.max(1, Math.min(size, 200));
 
-        LocalDateTime from = paymentDateFrom != null ? paymentDateFrom.atStartOfDay() : null;
-        LocalDateTime to   = paymentDateTo   != null ? paymentDateTo.atTime(23, 59, 59) : null;
-
-        List<Transaction> rows;
-        boolean hasIdFilter = (mid != null && !mid.isBlank())
-                || (sid != null && !sid.isBlank())
-                || (tid != null && !tid.isBlank());
-        // Transaction-date filters take the spec path too (the keyset query
-        // paginates on payment_date and doesn't carry them). They used to be
-        // dropped entirely: the screen's inputs were a silent no-op while the
-        // export honoured them — screen and export disagreed by design.
-        boolean hasSpecFilter = hasIdFilter || transactionDateFrom != null || transactionDateTo != null;
-
-        // Fetch one extra row to detect "has more" without a COUNT.
-        Pageable limitPlusOne = PageRequest.of(0, pageSize + 1);
-
-        if (!hasSpecFilter) {
-            // Fast path: pure keyset over the (tenant_id, payment_date) index.
-            rows = transactionRepository.findKeyset(tenantId, from, to, cursorPaymentDate, cursorTxnId, limitPlusOne);
-        } else {
-            // Filter path: bounded spec + keyset cursor predicate, fetched as a
-            // true SLICE via the fluent API. findAll(spec, PageRequest) returned
-            // a Page, and because limit+1 rows come back whenever more data
-            // exists, Spring ran the full COUNT(*) on every page — the exact
-            // query keyset paging exists to avoid.
-            Specification<Transaction> spec = createSpecification(tenantId, mid, sid, tid,
-                    paymentDateFrom, paymentDateTo, transactionDateFrom, transactionDateTo)
-                    .and(keysetSpec(cursorPaymentDate, cursorTxnId));
-            rows = transactionRepository.findBy(spec, q -> q
-                    .sortBy(Sort.by(Sort.Direction.DESC, "paymentDate")
-                            .and(Sort.by(Sort.Direction.DESC, "transactionId")))
-                    .limit(pageSize + 1)
-                    .all());
-        }
+        // ── Why there is no longer a "fast path" JPQL branch ──
+        // This endpoint used to call TransactionRepository.findKeyset(...) when no
+        // MID/SID/TID or transaction-date filter was present. That @Query encoded
+        // every optional filter as a null-guard on a bind parameter:
+        //     AND (:paymentDateFrom IS NULL OR t.paymentDate >= :paymentDateFrom)
+        //     AND ( :cursorPaymentDate IS NULL OR ... )
+        // Hibernate emits those guards as bare positional placeholders, so Postgres
+        // sees `$2 IS NULL` with the parameter compared to nothing but NULL and has
+        // no way to infer its type. Every call — including the plain, unfiltered
+        // `GET /api/transactions/keyset?size=20` the Transaction List screen issues
+        // on load — died with:
+        //     ERROR: could not determine data type of parameter $2
+        // i.e. the screen was a hard 500 for every tenant.
+        //
+        // Casting each parameter (CAST(:paymentDateFrom AS timestamp)) would silence
+        // the error, but it keeps sending placeholders for filters the caller never
+        // supplied and leaves the planner with an un-sargable OR-chain. Building the
+        // predicate dynamically is strictly better: an absent filter contributes NO
+        // predicate and NO parameter, so the emitted SQL for the no-filter case is
+        // just `WHERE tenant_id = ?` — index-friendly and partition-prunable.
+        //
+        // The Specification path below already did exactly that for the filtered
+        // case, so both cases now share it. It is still a true SLICE (limit+1 via
+        // the fluent API, never findAll(spec, PageRequest)), so no COUNT(*) is
+        // issued and the reason keyset paging exists is preserved.
+        Specification<Transaction> spec = createSpecification(tenantId, mid, sid, tid,
+                paymentDateFrom, paymentDateTo, transactionDateFrom, transactionDateTo)
+                .and(keysetSpec(cursorPaymentDate, cursorTxnId));
+        List<Transaction> rows = transactionRepository.findBy(spec, q -> q
+                .sortBy(Sort.by(Sort.Direction.DESC, "paymentDate")
+                        .and(Sort.by(Sort.Direction.DESC, "transactionId")))
+                .limit(pageSize + 1)
+                .all());
 
         boolean hasMore = rows.size() > pageSize;
         List<Transaction> content = hasMore ? rows.subList(0, pageSize) : rows;
@@ -256,26 +259,64 @@ public class TransactionController {
         response.setContentType("text/csv");
         response.setHeader("Content-Disposition", "attachment; filename=\"transactions.csv\"");
 
+        // Currency of the tenant's own books. The Amount column holds
+        // txn_currency_amount, which is denominated in the ROW's txn_currency —
+        // usually the tenant's currency, but not for DCC/foreign-currency rows.
+        String tenantCurrency = currencyMeta.codeOrNull(tenantId);
+        // -1 = unresolved. Deliberately NOT 2: defaulting to 2 is exactly what
+        // truncated BHD's third decimal here in the first place.
+        int tenantDecimals = currencyMeta.decimalsOr(tenantId, -1);
+
         try (java.io.PrintWriter writer = response.getWriter()) {
-            // Header
+            // Header — "Currency" was missing entirely, so every exported amount was
+            // a bare number the recipient had to guess the denomination of, even
+            // though fact_transaction carries txn_currency per row.
             writer.println(
-                    "TransactionID,Payment Date,Transaction Date,Amount,Type,Card Scheme,Card Number,MID,Store ID,Terminal ID");
+                    "TransactionID,Payment Date,Transaction Date,Currency,Amount,Type,Card Scheme,Card Number,MID,Store ID,Terminal ID");
 
             // Data
             for (Transaction t : transactions) {
-                writer.printf("%s,%s,%s,%.2f,%s,%s,%s,%s,%s,%s%n",
+                // The old "%.2f" hardcoded two decimals for every tenant. For Bahrain
+                // that silently destroyed the third decimal on EVERY exported row:
+                // BHD 12.345 left the system as "12.35" (0.005 gone, and irrecoverable
+                // from the file). Amounts are now rendered at the tenant's real scale.
+                writer.printf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
                         t.getTransactionId(),
                         t.getPaymentDate(),
                         t.getTransactionDate(),
-                        t.getTxnCurrencyAmount() != null ? t.getTxnCurrencyAmount() : 0.0,
-                        t.getTransactionType(),
-                        t.getCardScheme(),
+                        nzs(t.getTxnCurrency()),
+                        exportAmount(t.getTxnCurrencyAmount(), t.getTxnCurrency(), tenantCurrency, tenantDecimals),
+                        nzs(t.getTransactionType()),
+                        nzs(t.getCardScheme()),
                         maskCardNumber(t.getCardNumber()),
                         t.getMerchantId(),
                         t.getStoreId(),
                         t.getTerminalId());
             }
         }
+    }
+
+    /**
+     * Render a transaction amount for CSV at the correct scale.
+     *
+     * <p>Rounds to the tenant's decimal places only when the row is actually in the
+     * tenant's currency. A foreign-currency (DCC) row is written at its FULL stored
+     * precision rather than being forced into the tenant's scale — rounding a JPY or
+     * KWD figure to the local currency's decimals would be a fabricated number.
+     * When the tenant currency cannot be resolved we also emit full precision instead
+     * of guessing a scale.
+     */
+    private static String exportAmount(java.math.BigDecimal amount, String rowCurrency,
+            String tenantCurrency, int tenantDecimals) {
+        if (amount == null) {
+            return "";
+        }
+        boolean sameCurrency = rowCurrency != null && tenantCurrency != null
+                && rowCurrency.trim().equalsIgnoreCase(tenantCurrency.trim());
+        if (tenantDecimals >= 0 && sameCurrency) {
+            return CurrencyMeta.formatAmount(amount, tenantDecimals);
+        }
+        return amount.stripTrailingZeros().toPlainString();
     }
 
     private Specification<Transaction> createSpecification(Long tenantId, String mid, String sid, String tid,

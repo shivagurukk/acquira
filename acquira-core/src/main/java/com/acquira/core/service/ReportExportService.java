@@ -22,8 +22,21 @@ import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
 
 /**
- * Generates Excel and CSV exports from DataExplorer query results.
+ * Generates Excel, CSV and PDF exports from DataExplorer query results.
  * Reuses the same query logic as AnalyticsExplorerController.
+ *
+ * ─── Currency handling ───
+ * Every export is denominated in the requesting tenant's base currency, and
+ * monetary columns are written at that currency's minor-unit precision
+ * (BHD = 3, EGP/AED = 2). Before this, the Excel number format was a hardcoded
+ * {@code "#,##0.00"} (so BHD lost its third digit), a monetary value that
+ * happened to be whole was silently downgraded to the integer style (so
+ * "1234.000" became "1234"), and the CSV / PDF paths emitted raw
+ * {@code toString()} with no currency label anywhere on the artifact.
+ *
+ * Every public export method now has a tenant-explicit overload. The no-tenant
+ * overloads resolve from {@link TenantContext}, which request threads already
+ * populate — that keeps {@code ReportBuilderController} working unchanged.
  */
 @Service
 @Slf4j
@@ -31,11 +44,80 @@ import com.lowagie.text.pdf.PdfWriter;
 public class ReportExportService {
 
     private final JdbcTemplate jdbcTemplate;
+    private final com.acquira.common.service.CurrencyResolver currencyResolver;
 
     /**
-     * Export query results as styled Excel (.xlsx).
+     * Column-name fragments that mark a numeric column as MONEY. Data Explorer
+     * returns an arbitrary, user-chosen column set with no type metadata, so the
+     * measure name is the only signal available. Anything not matched here is
+     * treated as a plain number (counts, ratios, percentages) and is NOT scaled
+     * to the currency precision.
+     */
+    private static final List<String> MONEY_COLUMN_HINTS = List.of(
+        "amount", "volume", "value", "revenue", "sales", "msf", "fee", "spend",
+        "interchange", "commission", "net_", "gross_", "turnover", "ticket", "atv",
+        "refund", "chargeback", "settlement", "payout", "balance"
+    );
+
+    /** Resolved currency for a report: ISO code plus minor-unit precision. */
+    private record ExportCurrency(String code, int decimals) {
+        String excelFormat() {
+            if (decimals <= 0) return "#,##0";
+            StringBuilder sb = new StringBuilder("#,##0.");
+            for (int i = 0; i < decimals; i++) sb.append('0');
+            return sb.toString();
+        }
+    }
+
+    /**
+     * FAILS LOUD rather than defaulting to 2 decimals — a BHD export silently
+     * rounded to fils-less dinars is worse than a failed export.
+     */
+    private ExportCurrency requireCurrency(Long tenantId) {
+        if (tenantId == null) {
+            log.error("[export] no tenant on the calling thread — cannot resolve the report currency");
+            throw new IllegalStateException("Tenant context not resolved — refusing to export an unlabelled report");
+        }
+        try {
+            var info = currencyResolver.forTenant(tenantId);
+            if (info == null || info.code() == null || info.code().isBlank()) {
+                throw new IllegalStateException("CurrencyResolver returned no currency");
+            }
+            return new ExportCurrency(info.code(), info.decimals());
+        } catch (RuntimeException e) {
+            log.error("[export] currency unresolved for tenant {} — refusing to export. Cause: {}", tenantId, e.toString());
+            throw new IllegalStateException("Currency could not be resolved for tenant " + tenantId, e);
+        }
+    }
+
+    private static boolean isMoneyColumn(String header) {
+        if (header == null) return false;
+        String h = header.toLowerCase();
+        return MONEY_COLUMN_HINTS.stream().anyMatch(h::contains);
+    }
+
+    private static String formatMoney(Object val, int decimals) {
+        if (val == null) return "";
+        if (val instanceof Number n) return String.format("%." + decimals + "f", n.doubleValue());
+        return val.toString();
+    }
+
+    /**
+     * Export query results as styled Excel (.xlsx), for the tenant on the
+     * current thread. Kept so {@code ReportBuilderController} needs no change.
      */
     public byte[] exportExcel(List<Map<String, Object>> rows, String reportName, Map<String, Object> queryConfig) {
+        return exportExcel(rows, reportName, queryConfig,
+                com.acquira.common.config.TenantContext.getCurrentTenant());
+    }
+
+    /**
+     * Export query results as styled Excel (.xlsx) for an explicit tenant.
+     * Monetary columns are written with the tenant's decimal precision.
+     */
+    public byte[] exportExcel(List<Map<String, Object>> rows, String reportName,
+                             Map<String, Object> queryConfig, Long tenantId) {
+        ExportCurrency ccy = requireCurrency(tenantId);
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             XSSFSheet sheet = workbook.createSheet("Report");
 
@@ -51,6 +133,11 @@ public class ReportExportService {
             headerStyle.setAlignment(HorizontalAlignment.CENTER);
             headerStyle.setBorderBottom(BorderStyle.THIN);
 
+            // Currency-aware money format: EGP/AED "#,##0.00", BHD "#,##0.000".
+            XSSFCellStyle moneyStyle = workbook.createCellStyle();
+            moneyStyle.setDataFormat(workbook.createDataFormat().getFormat(ccy.excelFormat()));
+
+            // Non-monetary decimals (rates, ratios, averages) keep 2dp.
             XSSFCellStyle numberStyle = workbook.createCellStyle();
             numberStyle.setDataFormat(workbook.createDataFormat().getFormat("#,##0.00"));
 
@@ -78,7 +165,11 @@ public class ReportExportService {
             titleCell.setCellStyle(titleStyle);
 
             Row dateRow = sheet.createRow(rowIdx++);
-            dateRow.createCell(0).setCellValue("Generated: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+            // Report-level currency metadata — previously the workbook carried no
+            // indication of which currency the amounts were denominated in.
+            dateRow.createCell(0).setCellValue("Generated: "
+                + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+                + "   |   Currency: " + ccy.code() + " (" + ccy.decimals() + " decimals)");
             rowIdx++; // blank row
 
             if (rows == null || rows.isEmpty()) {
@@ -110,7 +201,15 @@ public class ReportExportService {
                     } else if (val instanceof Number) {
                         double d = ((Number) val).doubleValue();
                         cell.setCellValue(d);
-                        cell.setCellStyle(d == Math.floor(d) ? intStyle : numberStyle);
+                        // A monetary column ALWAYS gets the currency format, even when
+                        // the value happens to be whole. The old `d == Math.floor(d)`
+                        // shortcut sent 1234.000 BHD down the integer path and printed
+                        // "1,234", hiding the fils entirely.
+                        if (isMoneyColumn(headers.get(c))) {
+                            cell.setCellStyle(moneyStyle);
+                        } else {
+                            cell.setCellStyle(d == Math.floor(d) ? intStyle : numberStyle);
+                        }
                     } else {
                         cell.setCellValue(val.toString());
                     }
@@ -147,30 +246,49 @@ public class ReportExportService {
         }
     }
 
-    /**
-     * Export query results as CSV.
-     */
+    /** Export query results as CSV for the tenant on the current thread. */
     public byte[] exportCsv(List<Map<String, Object>> rows) {
-        if (rows == null || rows.isEmpty()) return "No data\n".getBytes();
+        return exportCsv(rows, com.acquira.common.config.TenantContext.getCurrentTenant());
+    }
+
+    /**
+     * Export query results as CSV for an explicit tenant.
+     *
+     * Two changes from the raw {@code toString()} dump this used to be:
+     *  1. monetary columns are written at the tenant's minor-unit precision, so a
+     *     BHD figure keeps its three digits instead of arriving as "450.755" or
+     *     "450.76" depending on how the driver stringified the BigDecimal;
+     *  2. a trailing {@code currency} column labels every row, because a bare CSV
+     *     carried no indication of the denomination at all.
+     */
+    public byte[] exportCsv(List<Map<String, Object>> rows, Long tenantId) {
+        ExportCurrency ccy = requireCurrency(tenantId);
+        if (rows == null || rows.isEmpty()) return "No data\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
         StringBuilder sb = new StringBuilder();
         List<String> headers = new ArrayList<>(rows.get(0).keySet());
 
-        // Header
+        // Header (+ currency column)
         sb.append(String.join(",", headers.stream().map(this::csvEscape).toArray(String[]::new)));
+        sb.append(",").append(csvEscape("currency"));
         sb.append("\n");
 
         // Data
         for (Map<String, Object> row : rows) {
             for (int i = 0; i < headers.size(); i++) {
                 if (i > 0) sb.append(",");
-                Object val = row.get(headers.get(i));
-                sb.append(csvEscape(val != null ? val.toString() : ""));
+                String h = headers.get(i);
+                Object val = row.get(h);
+                String out = (val != null && isMoneyColumn(h))
+                        ? formatMoney(val, ccy.decimals())
+                        : (val != null ? val.toString() : "");
+                sb.append(csvEscape(out));
             }
+            sb.append(",").append(csvEscape(ccy.code()));
             sb.append("\n");
         }
 
-        return sb.toString().getBytes();
+        return sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /**
@@ -178,6 +296,17 @@ public class ReportExportService {
      * Landscape A4, zebra rows, capped at 2000 rows for size.
      */
     public byte[] exportPdf(List<Map<String, Object>> rows, String reportName) {
+        return exportPdf(rows, reportName, com.acquira.common.config.TenantContext.getCurrentTenant());
+    }
+
+    /**
+     * Tenant-explicit PDF export. Monetary cells are rendered at the tenant's
+     * minor-unit precision and the currency is stated in the header meta line —
+     * the previous version printed raw {@code toString()} with no currency
+     * anywhere on the page.
+     */
+    public byte[] exportPdf(List<Map<String, Object>> rows, String reportName, Long tenantId) {
+        ExportCurrency ccy = requireCurrency(tenantId);
         Document doc = new Document(PageSize.A4.rotate(), 24, 24, 28, 28);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
@@ -192,7 +321,8 @@ public class ReportExportService {
             com.lowagie.text.Font metaFont = FontFactory.getFont(FontFactory.HELVETICA, 8, new java.awt.Color(100, 116, 139));
             doc.add(new Paragraph("Generated "
                 + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
-                + "  •  " + (rows != null ? rows.size() : 0) + " rows", metaFont));
+                + "  •  " + (rows != null ? rows.size() : 0) + " rows"
+                + "  •  Amounts in " + ccy.code() + " (" + ccy.decimals() + " dp)", metaFont));
 
             if (rows == null || rows.isEmpty()) {
                 doc.add(new Paragraph(" "));
@@ -221,7 +351,10 @@ public class ReportExportService {
                     java.awt.Color rowBg = (r % 2 == 0) ? java.awt.Color.WHITE : new java.awt.Color(248, 250, 252);
                     for (String h : headers) {
                         Object v = row.get(h);
-                        PdfPCell c = new PdfPCell(new Phrase(v != null ? v.toString() : "", cf));
+                        String text = (v != null && isMoneyColumn(h))
+                                ? formatMoney(v, ccy.decimals())
+                                : (v != null ? v.toString() : "");
+                        PdfPCell c = new PdfPCell(new Phrase(text, cf));
                         c.setBackgroundColor(rowBg);
                         c.setBorderColor(borderCol);
                         c.setPadding(4f);

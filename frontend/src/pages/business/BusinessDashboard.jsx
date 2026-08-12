@@ -187,8 +187,8 @@ const FILTER_CHIP_DEFS = [
 
 const BusinessDashboard = () => {
     const navigate = useNavigate();
-    const { currencySymbol, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
     const [kpis, setKpis] = useState(null);
     const [revenue, setRevenue] = useState(null);
     const [loading, setLoading] = useState(true);

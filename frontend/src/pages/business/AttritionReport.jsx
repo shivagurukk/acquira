@@ -54,6 +54,9 @@ const STATUS_META = {
     DECLINING:  { label: 'Declining',  color: 'var(--attr-declining, #d97706)', bg: 'var(--attr-declining-bg, #fffbeb)' },
     STABLE:     { label: 'Stable',     color: 'var(--attr-stable, #64748b)',    bg: 'var(--attr-stable-bg, #f1f5f9)' },
     PERFORMING: { label: 'Performing', color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #ecfdf5)' },
+    // Trading this month with no trailing 3-month baseline — nothing to attrite
+    // FROM. Brand-blue: informational, neither healthy nor at-risk.
+    NEW:        { label: 'New',        color: 'var(--attr-new, #2563eb)',       bg: 'var(--attr-new-bg, #eff6ff)' },
 };
 
 // Predicted churn-risk band → colour. These are the ML forward-looking scores,
@@ -71,8 +74,8 @@ const RISK_META = {
 const firstOfMonth = (isoDate) => (isoDate ? `${String(isoDate).slice(0, 7)}-01` : '');
 
 const AttritionReport = () => {
-    const { currencySymbol, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
     const [data, setData] = useState([]);
     const [meta, setMeta] = useState(null);      // comparison-window coverage flags
     const [error, setError] = useState(null);
@@ -204,8 +207,24 @@ const AttritionReport = () => {
         if (meta.momWindowHasData === false) out.push(`previous month (${meta.momPrevStart} → ${meta.momPrevEnd})`);
         if (meta.yoyWindowHasData === false) out.push(`prior year (${meta.yoyPrevStart} → ${meta.yoyPrevEnd})`);
         if (meta.ytdPrevWindowHasData === false) out.push(`prior YTD (${meta.ytdPrevStart} → ${meta.ytdPrevEnd})`);
+        // Status classifier's trailing-3-month baseline — when empty, every status
+        // reads New/Churned as an artifact of missing history, not real attrition.
+        if (meta.baselineWindowHasData === false) out.push(`status baseline (${meta.baselineStart} → ${meta.baselineEnd})`);
         return out;
     }, [meta, data.length]);
+
+    // ── MoM applicability ──
+    // The backend's MoM window is the selected range shifted back ONE month. For
+    // any range longer than a month the shifted window overlaps the current one
+    // (select Jan→Aug and "previous month" is Dec→Jul — seven shared months), so
+    // the % is arithmetically meaningless. Hide the group rather than render it.
+    // Range length is read off meta (what the loaded rows were actually queried
+    // with), not the live filters state, so the columns can't flicker mid-edit.
+    const momApplicable = useMemo(() => {
+        if (!meta?.currentStart || !meta?.currentEnd) return true; // legacy shape — keep old behavior
+        const days = (Date.parse(meta.currentEnd) - Date.parse(meta.currentStart)) / 86400000 + 1;
+        return days <= 31;
+    }, [meta]);
 
     // Helpers that read the active-metric value off a row.
     const val = (row, base) => row[`${base}${suffix}`];
@@ -226,7 +245,7 @@ const AttritionReport = () => {
 
     // Status counts come from the whole portfolio (not the status-filtered view).
     const statusCounts = useMemo(() => {
-        const c = { CHURNED: 0, DECLINING: 0, STABLE: 0, PERFORMING: 0 };
+        const c = { CHURNED: 0, DECLINING: 0, STABLE: 0, PERFORMING: 0, NEW: 0 };
         data.forEach(d => { if (c[d.status] != null) c[d.status]++; });
         return c;
     }, [data]);
@@ -301,7 +320,7 @@ const AttritionReport = () => {
     }, [rows, statusFilter, bucketFilter, metric]);
 
     // ── Churn analytics (all from the rows already returned) ──
-    const STATUS_BARS = ['CHURNED', 'DECLINING', 'STABLE', 'PERFORMING'];
+    const STATUS_BARS = ['CHURNED', 'DECLINING', 'STABLE', 'PERFORMING', 'NEW'];
     const analytics = useMemo(() => {
         const total = data.length || 1;
         const breakdown = STATUS_BARS.map(s => ({
@@ -375,13 +394,17 @@ const AttritionReport = () => {
         }
         return [
             ...base,
-            // MoM (equal-length window vs one month earlier)
-            { field: 'mom_prev_col', headerName: 'Prev Month', width: 120, type: 'number',
-                valueGetter: (v, row) => val(row, 'mom_prev'), renderCell: measureCell },
-            { field: 'mom_curr_col', headerName: 'Current', width: 120, type: 'number',
-                valueGetter: (v, row) => val(row, 'mom_current'), renderCell: measureCellBold },
-            { field: 'mom_pct_col', headerName: '% Change', width: 110, type: 'number',
-                valueGetter: (v, row) => val(row, 'mom_pct'), renderCell: pctCell },
+            // MoM (equal-length window vs one month earlier) — omitted when the
+            // selected range exceeds a month, because the shifted window would
+            // overlap the current one. See momApplicable above.
+            ...(momApplicable ? [
+                { field: 'mom_prev_col', headerName: 'Prev Month', width: 120, type: 'number',
+                    valueGetter: (v, row) => val(row, 'mom_prev'), renderCell: measureCell },
+                { field: 'mom_curr_col', headerName: 'Current', width: 120, type: 'number',
+                    valueGetter: (v, row) => val(row, 'mom_current'), renderCell: measureCellBold },
+                { field: 'mom_pct_col', headerName: '% Change', width: 110, type: 'number',
+                    valueGetter: (v, row) => val(row, 'mom_pct'), renderCell: pctCell },
+            ] : []),
             // MTD YoY
             { field: 'mtd_prev_col', headerName: `${prevYear}`, width: 120, type: 'number',
                 valueGetter: (v, row) => val(row, 'mtd_prev'), renderCell: measureCell },
@@ -397,11 +420,14 @@ const AttritionReport = () => {
             { field: 'ytd_pct_col', headerName: '% Change', width: 110, type: 'number',
                 valueGetter: (v, row) => val(row, 'ytd_pct'), renderCell: pctCell },
         ];
-    }, [metric, selectedYear, prevYear, churnAvailable]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [metric, selectedYear, prevYear, churnAvailable, momApplicable]);
 
     const columnGroupingModel = [
-        { groupId: 'mom_group', headerName: 'Month-on-Month', headerClassName: 'mom-header-group',
-            children: [{ field: 'mom_prev_col' }, { field: 'mom_curr_col' }, { field: 'mom_pct_col' }] },
+        ...(momApplicable ? [
+            { groupId: 'mom_group', headerName: 'Month-on-Month', headerClassName: 'mom-header-group',
+                children: [{ field: 'mom_prev_col' }, { field: 'mom_curr_col' }, { field: 'mom_pct_col' }] },
+        ] : []),
         { groupId: 'mtd_group', headerName: `Period YoY (${prevYear} vs ${selectedYear})`, headerClassName: 'mtd-header-group',
             children: [{ field: 'mtd_prev_col' }, { field: 'mtd_curr_col' }, { field: 'mtd_pct_col' }] },
         { groupId: 'ytd_group', headerName: `YTD (${prevYear} vs ${selectedYear})`, headerClassName: 'ytd-header-group',
@@ -529,7 +555,7 @@ const AttritionReport = () => {
                     <AlertTriangle size={15} style={{ flexShrink: 0 }} />
                     <Typography sx={{ fontSize: '0.82rem', fontWeight: 600, color: 'inherit' }}>
                         No data in the {emptyWindows.join(' or ')} comparison {emptyWindows.length > 1 ? 'windows' : 'window'} —
-                        those % columns show +100% because there is nothing to compare against, not because of growth.
+                        results measured against {emptyWindows.length > 1 ? 'them' : 'it'} (+100% growth, "New" statuses) are artifacts of missing history, not real change.
                     </Typography>
                 </Box>
             )}
@@ -543,7 +569,17 @@ const AttritionReport = () => {
             {data.length > 0 && (
                 <Paper sx={{ ...panelSx, mb: 2, height: 'auto' }}>
                     <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
-                        {panelTitle('Portfolio Health')}
+                        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, flexWrap: 'wrap' }}>
+                            {panelTitle('Portfolio Health')}
+                            {/* Status is classified on calendar months anchored at the latest
+                                loaded data date — independent of the money columns' selected
+                                range. Say so, or a custom range reads as the status basis. */}
+                            {meta?.classifierAnchor && (
+                                <Typography variant="caption" color={T.textMut}>
+                                    status as of {meta.classifierAnchor} · month-to-date vs prior 3 months
+                                </Typography>
+                            )}
+                        </Box>
                         {statusFilter !== 'ALL' && (
                             <Typography variant="caption" onClick={() => setStatusFilter('ALL')}
                                 sx={{ cursor: 'pointer', color: 'var(--brand, #2563eb)', fontWeight: 700 }}>
@@ -665,6 +701,13 @@ const AttritionReport = () => {
                             sx={{ fontWeight: 700, color: STATUS_META[statusFilter].color, bgcolor: STATUS_META[statusFilter].bg,
                                 '& .MuiChip-deleteIcon': { color: STATUS_META[statusFilter].color, opacity: 0.7 } }} />
                     )}
+                    {!momApplicable && (
+                        <Tooltip arrow title="The MoM window is the selected range shifted back one month. On a range longer than a month the two windows overlap, so the comparison is meaningless — pick a single month to see it.">
+                            <Typography variant="caption" color={T.textMut} sx={{ cursor: 'help', textDecoration: 'underline dotted' }}>
+                                Month-on-Month hidden for ranges over one month
+                            </Typography>
+                        </Tooltip>
+                    )}
                     <Typography variant="caption" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>
                         {filteredData.length.toLocaleString()} of {data.length.toLocaleString()} merchants
                     </Typography>
@@ -709,7 +752,10 @@ const AttritionReport = () => {
                     const rMeta = detailRow.churnBand ? (RISK_META[detailRow.churnBand] || null) : null;
                     // All three metrics, all three windows — straight off the row.
                     const windows = [
-                        { key: 'mom', label: 'Month-on-Month', prevKey: 'mom_prev', curKey: 'mom_current', pctKey: 'mom_pct' },
+                        // MoM hidden on >1-month ranges for the same reason as the grid group.
+                        ...(momApplicable ? [
+                            { key: 'mom', label: 'Month-on-Month', prevKey: 'mom_prev', curKey: 'mom_current', pctKey: 'mom_pct' },
+                        ] : []),
                         { key: 'mtd', label: `Period YoY (${prevYear} vs ${selectedYear})`, prevKey: 'mtd_prev', curKey: 'mtd_current', pctKey: 'mtd_pct' },
                         { key: 'ytd', label: `YTD (${prevYear} vs ${selectedYear})`, prevKey: 'ytd_prev', curKey: 'ytd_current', pctKey: 'ytd_pct' },
                     ];

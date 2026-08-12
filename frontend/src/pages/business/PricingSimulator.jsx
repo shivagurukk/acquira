@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../../api/axios';
 import { explorerApi } from '../../api/explorer';
+import { formatCompactCurrency } from '../../utils/formatters';
 
 /*
  * What-If Pricing Simulator
@@ -41,15 +42,8 @@ const TOP_SCHEMES = 6;
 // ── formatting helpers ──
 const num = (v) => (v == null || isNaN(Number(v)) ? 0 : Number(v));
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const fmtMoney = (v) => {
-  const n = num(v);
-  const sign = n < 0 ? '-' : '';
-  const a = Math.abs(n);
-  if (a >= 1e9) return `${sign}${(a / 1e9).toFixed(2)}B`;
-  if (a >= 1e6) return `${sign}${(a / 1e6).toFixed(2)}M`;
-  if (a >= 1e3) return `${sign}${(a / 1e3).toFixed(1)}K`;
-  return `${sign}${a.toFixed(0)}`;
-};
+// Money — carries the tenant currency and precision (was a bare number).
+const fmtMoney = (v) => formatCompactCurrency(v);
 const fmtSigned = (v) => (num(v) >= 0 ? '+' : '') + fmtMoney(v);
 const fmtBps = (v) => `${num(v).toFixed(1)} bps`;
 const fmtPct = (v) => `${num(v).toFixed(1)}%`;

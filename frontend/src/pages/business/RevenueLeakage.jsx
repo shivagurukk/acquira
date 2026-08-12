@@ -4,6 +4,7 @@ import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { ShieldAlert, TrendingDown, DollarSign, AlertTriangle, Users, Check, X, RotateCcw, Download } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatCompactCurrency } from '../../utils/formatters';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
@@ -24,12 +25,8 @@ const SEV_META = {
 };
 const STATUS_TABS = ['OPEN', 'RESOLVED', 'ALL'];
 
-const fmtMoney = (v) => {
-    const n = Number(v || 0);
-    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-    if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-    return n.toFixed(0);
-};
+// Money — carries the tenant currency and precision (was a bare number).
+const fmtMoney = (v) => formatCompactCurrency(v);
 
 const RevenueLeakage = () => {
     const { tenantVersion } = useAuth();

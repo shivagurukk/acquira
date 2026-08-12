@@ -35,6 +35,8 @@ public class MerchantController {
     private final MerchantRiskProfileRepository riskRepository;
     private final MerchantSalesAssignmentHistoryRepository salesHistoryRepository;
     private final JdbcTemplate jdbcTemplate;
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
 
     public MerchantController(MerchantRepository merchantRepository,
             StoreRepository storeRepository,
@@ -43,7 +45,8 @@ public class MerchantController {
             MerchantDocumentRepository documentRepository,
             MerchantRiskProfileRepository riskRepository,
             MerchantSalesAssignmentHistoryRepository salesHistoryRepository,
-            JdbcTemplate jdbcTemplate) {
+            JdbcTemplate jdbcTemplate,
+            CurrencyMeta currencyMeta) {
         this.merchantRepository = merchantRepository;
         this.storeRepository = storeRepository;
         this.terminalRepository = terminalRepository;
@@ -52,6 +55,7 @@ public class MerchantController {
         this.riskRepository = riskRepository;
         this.salesHistoryRepository = salesHistoryRepository;
         this.jdbcTemplate = jdbcTemplate;
+        this.currencyMeta = currencyMeta;
     }
 
     @GetMapping
@@ -323,7 +327,7 @@ public class MerchantController {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("merchants", merchants);
         result.put("comparison", comparison);
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(currencyMeta.attach(result, tenantId));
     }
 
     @GetMapping("/hierarchy")

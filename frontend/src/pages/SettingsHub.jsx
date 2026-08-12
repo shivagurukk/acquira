@@ -159,7 +159,7 @@ const SettingsHub = () => {
         .filter(g => g.items.length > 0);
 
     return (
-        <div style={{ display: 'flex', height: 'calc(100vh - 52px)', background: 'var(--bg)', color: 'var(--text)' }}>
+        <div style={{ display: 'flex', height: 'calc(var(--vh100, 100vh) - 52px)', background: 'var(--bg)', color: 'var(--text)' }}>
             {/* ── Left settings nav ─────────────────────────────────────── */}
             <aside style={{
                 width: 280, flexShrink: 0, borderRight: '1px solid var(--border)',

@@ -61,7 +61,7 @@
                 <strong>Refunds &amp; voids:</strong>
                 <span th:text="${dto.overview.refundVoidCount}">0</span> transactions
                 (<span th:text="${dto.currencyCode}">AED</span>
-                <span th:text="${dto.overview.refundVoidVolume != null ? #numbers.formatDecimal(dto.overview.refundVoidVolume, 1, 'COMMA', 0, 'POINT') : '0'}">0</span> offset).
+                <span th:text="${dto.overview.refundVoidVolume != null ? #numbers.formatDecimal(dto.overview.refundVoidVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '0'}">0</span> offset).
                 These are subtracted from daily totals but shown as zero-intensity in the heatmap above.
             </p>
         </div>
@@ -91,7 +91,7 @@
                     <div style="font-size: 8px; color: #6B7280; width: 50px; text-align: right; flex-shrink: 0;"
                          th:text="${bucket.value != null ? #numbers.formatDecimal(bucket.value, 1, 'COMMA', 0, 'POINT') + ' txns' : '-'}">-</div>
                     <div style="font-size: 8px; font-weight: 600; color: #374151; width: 70px; text-align: right; flex-shrink: 0;"
-                         th:text="${bucket.value3 != null ? 'AED ' + #numbers.formatDecimal(bucket.value3, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                         th:text="${bucket.value3 != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(bucket.value3, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</div>
                 </div>
             </div>
 
@@ -110,7 +110,7 @@
                     <div style="font-size: 8px; color: #6B7280; width: 50px; text-align: right; flex-shrink: 0;"
                          th:text="${bucket.value != null ? #numbers.formatDecimal(bucket.value, 1, 'COMMA', 0, 'POINT') + ' txns' : '-'}">-</div>
                     <div style="font-size: 8px; font-weight: 600; color: #374151; width: 70px; text-align: right; flex-shrink: 0;"
-                         th:text="${bucket.value3 != null ? 'AED ' + #numbers.formatDecimal(bucket.value3, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                         th:text="${bucket.value3 != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(bucket.value3, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</div>
                 </div>
             </div>
 

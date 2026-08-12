@@ -478,7 +478,7 @@ html.dark .ui-tr--current td { background: rgba(37, 99, 235, 0.09); }
   box-shadow: var(--shadow-lg);
   width: 100%;
   max-width: 520px;
-  max-height: calc(100vh - 2 * var(--space-2xl));
+  max-height: calc(var(--vh100, 100vh) - 2 * var(--space-2xl));
   display: flex;
   flex-direction: column;
   animation: uiModalIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);

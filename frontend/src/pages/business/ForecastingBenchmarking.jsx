@@ -12,6 +12,7 @@ import api from '../../api/axios';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
+import BenchmarkRail from '../../components/BenchmarkRail';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer, chartTooltipStyle } from '../../theme/dataGridStyles';
 import { useDataBounds } from '../../hooks/useDataBounds';
 
@@ -29,25 +30,25 @@ const T = {
 
 // Metric registry — maps the backend metricType to label + how to format it.
 const METRICS = {
-    VOLUME:      { label: 'Volume',       kind: 'currency', icon: TrendingUp, color: 'var(--accent-indigo, #6366f1)' },
-    NET_REVENUE: { label: 'Net Margin',  kind: 'currency', icon: DollarSign, color: 'var(--success, #10b981)' },
-    MSF:         { label: 'MSF Revenue',  kind: 'currency', icon: DollarSign, color: 'var(--accent-blue, #2563eb)' },
-    TXNS:        { label: 'Transactions', kind: 'count',    icon: Hash,       color: 'var(--accent-cyan, #0891b2)' },
+    VOLUME:      { label: 'Volume',       kind: 'currency', icon: TrendingUp, color: 'var(--chart-2)' },
+    NET_REVENUE: { label: 'Net Margin',  kind: 'currency', icon: DollarSign, color: 'var(--chart-1)' },
+    MSF:         { label: 'MSF Revenue',  kind: 'currency', icon: DollarSign, color: 'var(--chart-3)' },
+    TXNS:        { label: 'Transactions', kind: 'count',    icon: Hash,       color: 'var(--chart-4)' },
 };
 const METRIC_ORDER = ['VOLUME', 'NET_REVENUE', 'MSF', 'TXNS'];
 
 // Target risk status → colour + label. Mirrors riskStatus() in ForecastController.
 const RISK_META = {
-    LIKELY_TO_EXCEED: { label: 'Likely to Exceed', color: 'var(--success, #059669)',  bg: 'var(--success-bg, #d1fae5)' },
-    ON_TRACK:         { label: 'On Track',         color: 'var(--success, #10b981)',  bg: 'var(--success-bg, #d1fae5)' },
-    AT_RISK:          { label: 'At Risk',          color: 'var(--warning, #ea580c)',  bg: 'var(--warning-bg, #ffedd5)' },
-    BEHIND:           { label: 'Behind',           color: 'var(--danger, #dc2626)',   bg: 'var(--danger-bg, #fee2e2)' },
-    NO_TARGET:        { label: 'No Target',        color: 'var(--text-muted, #94a3b8)', bg: 'var(--bg-subtle, #f1f5f9)' },
+    LIKELY_TO_EXCEED: { label: 'Likely to Exceed', color: 'var(--success)',    bg: 'var(--success-bg)' },
+    ON_TRACK:         { label: 'On Track',         color: 'var(--success)',    bg: 'var(--success-bg)' },
+    AT_RISK:          { label: 'At Risk',          color: 'var(--warning)',    bg: 'var(--warning-bg)' },
+    BEHIND:           { label: 'Behind',           color: 'var(--danger)',     bg: 'var(--danger-bg)' },
+    NO_TARGET:        { label: 'No Target',        color: 'var(--text-muted)', bg: 'var(--bg-subtle)' },
 };
 
 const ForecastingBenchmarking = () => {
-    const { currencySymbol, tenantVersion } = useAuth();
-    const fmt = useMemo(() => createFmt(currencySymbol), [currencySymbol]);
+    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
 
     const [summary, setSummary] = useState(null);
     const [seasonal, setSeasonal] = useState(null);
@@ -157,28 +158,31 @@ const ForecastingBenchmarking = () => {
     })), [trend]);
 
     // ── Risk band chip metadata ──
+    // Churn / margin flags are ATTENTION (brass) until truly negative.
     const CHURN_BAND = {
-        LOW:      { label: 'Low',      color: 'var(--success, #059669)',  bg: 'var(--success-bg, #d1fae5)' },
-        MEDIUM:   { label: 'Medium',   color: 'var(--warning, #d97706)',  bg: 'var(--warning-bg, #fef3c7)' },
-        HIGH:     { label: 'High',     color: 'var(--danger, #ea580c)',   bg: 'var(--warning-bg, #ffedd5)' },
-        CRITICAL: { label: 'Critical', color: 'var(--danger, #dc2626)',   bg: 'var(--danger-bg, #fee2e2)' },
+        LOW:      { label: 'Low',      color: 'var(--success)', bg: 'var(--success-bg)' },
+        MEDIUM:   { label: 'Medium',   color: 'var(--warning)', bg: 'var(--warning-bg)' },
+        HIGH:     { label: 'High',     color: 'var(--warning)', bg: 'var(--warning-bg)' },
+        CRITICAL: { label: 'Critical', color: 'var(--danger)',  bg: 'var(--danger-bg)' },
     };
     const MARGIN_BAND = {
-        LOSS_MAKING: { label: 'Loss-Making', color: 'var(--danger, #dc2626)', bg: 'var(--danger-bg, #fee2e2)' },
-        LOW_MARGIN:  { label: 'Low Margin',  color: 'var(--warning, #d97706)', bg: 'var(--warning-bg, #fef3c7)' },
+        LOSS_MAKING: { label: 'Loss-Making', color: 'var(--danger)',  bg: 'var(--danger-bg)' },
+        LOW_MARGIN:  { label: 'Low Margin',  color: 'var(--warning)', bg: 'var(--warning-bg)' },
     };
     const bandChip = (meta) => (p) => {
         const m = meta[p.value] || { label: p.value, color: T.textSec, bg: T.subtle };
         return <Chip label={m.label} size="small" sx={{ bgcolor: m.bg, color: m.color, fontWeight: 700 }} />;
     };
+    // Index vs median — colour always paired with a glyph so meaning
+    // survives colourblindness and greyscale printing.
     const idxChip = (p) => {
         const v = Number(p.value);
         const up = v >= 100;
-        return <Chip label={v.toFixed(0)} size="small"
-            sx={{ fontWeight: 700, color: up ? 'var(--success, #059669)' : 'var(--danger, #dc2626)',
-                  bgcolor: up ? 'var(--success-bg, #d1fae5)' : 'var(--danger-bg, #fee2e2)' }} />;
+        return <Chip label={`${up ? '▲' : '▼'} ${v.toFixed(0)}`} size="small"
+            sx={{ color: up ? 'var(--success)' : 'var(--danger)',
+                  bgcolor: up ? 'var(--success-bg)' : 'var(--danger-bg)' }} />;
     };
-    const monoCell = (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', color: T.textSec }}>{p.value}</Typography>;
+    const monoCell = (p) => <Typography variant="body2" className="num" sx={{ fontFamily: 'var(--font-mono)', color: T.textSec }}>{p.value}</Typography>;
     const nameCell = (p) => <Typography variant="body2" sx={{ fontWeight: 600, color: T.text }}>{p.value}</Typography>;
 
     const churnCols = useMemo(() => [
@@ -188,8 +192,8 @@ const ForecastingBenchmarking = () => {
         { field: 'churnRiskScore', headerName: 'SCORE', width: 90, type: 'number',
             renderCell: (p) => <Typography variant="body2" fontWeight={700} sx={{ color: T.text }}>{Number(p.value).toFixed(0)}</Typography> },
         { field: 'daysSinceLastTxn', headerName: 'IDLE DAYS', width: 100, type: 'number' },
-        { field: 'volDeclinePct', headerName: 'VOL Δ%', width: 100, type: 'number',
-            renderCell: (p) => <Typography variant="body2" sx={{ fontWeight: 700, color: p.value < 0 ? 'var(--danger, #ef4444)' : 'var(--success, #10b981)' }}>{Number(p.value) >= 0 ? '+' : ''}{Number(p.value).toFixed(1)}%</Typography> },
+        { field: 'volDeclinePct', headerName: 'VOL Δ%', width: 110, type: 'number',
+            renderCell: (p) => <Typography variant="body2" className="num" sx={{ fontWeight: 600, fontFamily: 'var(--font-mono)', color: p.value < 0 ? 'var(--danger)' : 'var(--success)' }}>{Number(p.value) >= 0 ? '▲ +' : '▼ '}{Number(p.value).toFixed(1)}%</Typography> },
         { field: 'msf30', headerName: 'MSF (30d)', width: 130, type: 'number',
             renderCell: (p) => <Typography variant="body2" sx={{ color: T.textSec }}>{fmt.currency(Number(p.value))}</Typography> },
         { field: 'rm', headerName: 'RM', width: 180, renderCell: (p) => <Typography variant="body2" sx={{ color: T.textMut }} noWrap>{p.value}</Typography> },
@@ -231,8 +235,8 @@ const ForecastingBenchmarking = () => {
             renderCell: (p) => <Typography variant="body2" sx={{ color: T.textSec }}>{fmt.currency(Number(p.value))}</Typography> },
         { field: 'avgTicket', headerName: 'AVG TICKET', width: 120, type: 'number',
             renderCell: (p) => <Typography variant="body2" sx={{ color: T.textSec }}>{fmt.currency(Number(p.value))}</Typography> },
-        { field: 'volumeGapVsPeer', headerName: 'VOL GAP', width: 130, type: 'number',
-            renderCell: (p) => <Typography variant="body2" sx={{ fontWeight: 600, color: Number(p.value) >= 0 ? 'var(--success, #059669)' : 'var(--danger, #dc2626)' }}>{Number(p.value) >= 0 ? '+' : ''}{fmt.currency(Number(p.value))}</Typography> },
+        { field: 'volumeGapVsPeer', headerName: 'VOL GAP', width: 140, type: 'number',
+            renderCell: (p) => <Typography variant="body2" className="num" sx={{ fontWeight: 600, fontFamily: 'var(--font-mono)', color: Number(p.value) >= 0 ? 'var(--success)' : 'var(--danger)' }}>{Number(p.value) >= 0 ? '▲ +' : '▼ '}{fmt.currency(Number(p.value))}</Typography> },
     ], [fmt]);
 
     const rmCols = useMemo(() => [
@@ -246,14 +250,36 @@ const ForecastingBenchmarking = () => {
         { field: 'revenue', headerName: 'REVENUE', width: 130, type: 'number',
             renderCell: (p) => <Typography variant="body2" sx={{ color: T.textSec }}>{fmt.currency(Number(p.value))}</Typography> },
         { field: 'activeMerchants', headerName: 'MERCHANTS', width: 110, type: 'number' },
-        { field: 'volumeGapVsMedian', headerName: 'VOL GAP vs MED', width: 150, type: 'number',
-            renderCell: (p) => <Typography variant="body2" sx={{ fontWeight: 600, color: Number(p.value) >= 0 ? 'var(--success, #059669)' : 'var(--danger, #dc2626)' }}>{Number(p.value) >= 0 ? '+' : ''}{fmt.currency(Number(p.value))}</Typography> },
+        { field: 'volumeGapVsMedian', headerName: 'VOL GAP vs MED', width: 160, type: 'number',
+            renderCell: (p) => <Typography variant="body2" className="num" sx={{ fontWeight: 600, fontFamily: 'var(--font-mono)', color: Number(p.value) >= 0 ? 'var(--success)' : 'var(--danger)' }}>{Number(p.value) >= 0 ? '▲ +' : '▼ '}{fmt.currency(Number(p.value))}</Typography> },
     ], [fmt]);
 
-    const panelSx = { p: 2.5, borderRadius: '14px', border: `1px solid ${T.border}`, bgcolor: T.card };
+    // Portfolio position vs benchmark — median of the percentile_cont
+    // percentiles the backend computes per merchant (vs MCC peers) and
+    // per RM (vs all RMs). Feeds the BenchmarkRail stat blocks.
+    const medianPct = (rows, key) => {
+        const vals = (rows || []).map(r => Number(r[key])).filter(v => !Number.isNaN(v)).sort((a, b) => a - b);
+        if (!vals.length) return null;
+        const mid = Math.floor(vals.length / 2);
+        return vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+    };
+    const peerMedianPercentile = useMemo(() => medianPct(peer?.rows, 'peerPercentile'), [peer]);
+    const rmMedianPercentile   = useMemo(() => medianPct(rm?.rows, 'peerPercentile'), [rm]);
+
+    const benchStat = (title, value, percentile, benchmarkLabel) => (
+        <Box sx={{ p: '20px', border: `1px solid ${T.border}`, borderRadius: '4px', bgcolor: T.card, minWidth: 220, flex: '0 1 260px' }}>
+            <Typography className="section-title" sx={{ mb: 0.5 }}>{title}</Typography>
+            <Typography className="num" sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', fontSize: 20, fontWeight: 500, color: T.text, mb: 1 }}>
+                {value}
+            </Typography>
+            <BenchmarkRail percentile={percentile} benchmarkLabel={benchmarkLabel} />
+        </Box>
+    );
+
+    const panelSx = { p: '20px', borderRadius: '4px', border: `1px solid ${T.border}`, bgcolor: T.card, boxShadow: 'none' };
     const panelTitle = (t, hint) => (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1.5 }}>
-            <Typography variant="caption" fontWeight={700} color={T.textMut} sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t}</Typography>
+            <Typography className="section-title" sx={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: T.textMut }}>{t}</Typography>
             {hint && (
                 <MuiTooltip title={hint} arrow>
                     <Info size={13} style={{ color: 'var(--text-muted, #94a3b8)', cursor: 'help' }} />
@@ -317,25 +343,23 @@ const ForecastingBenchmarking = () => {
                 <Box sx={{ height: 320 }}>
                     <ResponsiveContainer width="100%" height="100%">
                         <ComposedChart data={trendChartData} margin={{ top: 10, right: 16, left: 4, bottom: 0 }}>
-                            <defs>
-                                <linearGradient id="fcActual" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="var(--accent-indigo, #6366f1)" stopOpacity={0.25} />
-                                    <stop offset="95%" stopColor="var(--accent-indigo, #6366f1)" stopOpacity={0} />
-                                </linearGradient>
-                            </defs>
+                            {/* Actual = teal (what happened); forecast + target are
+                                projections and take the projected/attention tokens. */}
                             <CartesianGrid strokeDasharray="3 6" stroke={T.grid} vertical={false} />
-                            <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.axis }} />
-                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.axis }} width={54}
+                            <XAxis dataKey="date" axisLine={false} tickLine={false}
+                                tick={{ fontSize: 11, fill: T.axis, fontFamily: 'var(--font-mono)' }} />
+                            <YAxis axisLine={false} tickLine={false}
+                                tick={{ fontSize: 11, fill: T.axis, fontFamily: 'var(--font-mono)' }} width={54}
                                 tickFormatter={(v) => trendMeta.kind === 'count' ? Number(v).toLocaleString() : fmt.currency(v)} />
                             <ReTooltip contentStyle={chartTooltipStyle}
                                 formatter={(v, name) => [fmtMeasure(trendMeta.kind, v), name]} />
                             <Legend />
-                            <Area type="monotone" dataKey="actual" name="Actual" stroke="var(--accent-indigo, #6366f1)"
-                                strokeWidth={2.5} fill="url(#fcActual)" connectNulls={false} />
-                            <Line type="monotone" dataKey="forecast" name="Forecast" stroke="var(--accent-blue, #2563eb)"
+                            <Area type="monotone" dataKey="actual" name="Actual" stroke="var(--chart-2)"
+                                strokeWidth={2} fill="var(--chart-2)" fillOpacity={0.08} connectNulls={false} />
+                            <Line type="monotone" dataKey="forecast" name="Forecast" stroke="var(--projected)"
                                 strokeWidth={2} strokeDasharray="5 4" dot={false} />
                             {trend?.target != null && (
-                                <Line type="monotone" dataKey="target" name="Target" stroke="var(--warning, #ea580c)"
+                                <Line type="monotone" dataKey="target" name="Target" stroke="var(--attention)"
                                     strokeWidth={1.5} dot={false} />
                             )}
                         </ComposedChart>
@@ -357,14 +381,14 @@ const ForecastingBenchmarking = () => {
                             const hasTarget = row.forecastAttainmentPct != null;
                             const pctVal = hasTarget ? Number(row.forecastAttainmentPct) : 0;
                             return (
-                                <Box key={mt} sx={{ p: 1.5, borderRadius: '10px', border: `1px solid ${T.border}`, bgcolor: T.subtle }}>
+                                <Box key={mt} sx={{ p: 1.5, borderRadius: '4px', border: `1px solid ${T.border}`, bgcolor: T.subtle }}>
                                     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: hasTarget ? 1 : 0 }}>
                                         <Typography variant="body2" fontWeight={700} color={T.text}>{meta.label}</Typography>
                                         <Chip label={risk.label} size="small" sx={{ bgcolor: risk.bg, color: risk.color, fontWeight: 700 }} />
                                     </Box>
                                     {hasTarget ? (
                                         <>
-                                            <Box sx={{ display: 'flex', height: 8, borderRadius: 999, overflow: 'hidden', bgcolor: 'var(--border, #e2e8f0)', mb: 0.75 }}>
+                                            <Box sx={{ display: 'flex', height: 4, borderRadius: 0, overflow: 'hidden', bgcolor: 'var(--border)', mb: 0.75 }}>
                                                 <Box sx={{ width: `${Math.min(100, pctVal)}%`, bgcolor: risk.color, transition: 'width .5s ease' }} />
                                             </Box>
                                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, justifyContent: 'space-between' }}>
@@ -420,7 +444,7 @@ const ForecastingBenchmarking = () => {
                             const yoy = Number(row.yoyGrowthPct);
                             const up = yoy >= 0;
                             return (
-                                <Box key={row.metricType} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1.25, borderRadius: '10px', border: `1px solid ${T.border}` }}>
+                                <Box key={row.metricType} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1.25, borderRadius: '4px', border: `1px solid ${T.border}` }}>
                                     <Box sx={{ minWidth: 0 }}>
                                         <Typography variant="body2" fontWeight={700} color={T.text}>{meta.label}</Typography>
                                         <Typography variant="caption" color={T.textMut}>
@@ -428,9 +452,9 @@ const ForecastingBenchmarking = () => {
                                         </Typography>
                                     </Box>
                                     <Stack alignItems="flex-end" spacing={0.25}>
-                                        <Chip label={pctFmt(yoy)} size="small"
-                                            sx={{ fontWeight: 700, color: up ? 'var(--success, #059669)' : 'var(--danger, #dc2626)',
-                                                  bgcolor: up ? 'var(--success-bg, #d1fae5)' : 'var(--danger-bg, #fee2e2)' }} />
+                                        <Chip label={`${up ? '▲' : '▼'} ${pctFmt(yoy)}`} size="small"
+                                            sx={{ color: up ? 'var(--success)' : 'var(--danger)',
+                                                  bgcolor: up ? 'var(--success-bg)' : 'var(--danger-bg)' }} />
                                         {row.seasonalityIndex != null && (
                                             <Typography variant="caption" color={T.textMut}>idx {Number(row.seasonalityIndex).toFixed(0)}</Typography>
                                         )}
@@ -471,7 +495,7 @@ const ForecastingBenchmarking = () => {
                                 rows={(churn?.rows || []).map((r, i) => ({ id: r.mid || i, ...r }))}
                                 columns={churnCols}
                                 loading={loading}
-                                disableRowSelectionOnClick rowHeight={52}
+                                disableRowSelectionOnClick rowHeight={40} columnHeaderHeight={40}
                                 initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
                                 pageSizeOptions={[25, 50, 100]}
                                 sx={premiumDataGridStyles}
@@ -495,7 +519,7 @@ const ForecastingBenchmarking = () => {
                                 rows={(margin?.rows || []).map((r, i) => ({ id: r.mid || i, ...r }))}
                                 columns={marginCols}
                                 loading={loading}
-                                disableRowSelectionOnClick rowHeight={52}
+                                disableRowSelectionOnClick rowHeight={40} columnHeaderHeight={40}
                                 initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
                                 pageSizeOptions={[25, 50, 100]}
                                 sx={premiumDataGridStyles}
@@ -519,13 +543,25 @@ const ForecastingBenchmarking = () => {
                     </ToggleButtonGroup>
                 </Box>
 
+                {benchTab === 'rm' && rm?.rows?.length > 0 && (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
+                        {benchStat('Median RM position', rmMedianPercentile != null ? `${Math.round(rmMedianPercentile)}%` : '—', rmMedianPercentile, 'RM benchmark')}
+                        {benchStat('Top RM position', rm.rows[0]?.peerPercentile != null ? `${Math.round(rm.rows[0].peerPercentile)}%` : '—', rm.rows[0]?.peerPercentile, 'RM benchmark')}
+                    </Box>
+                )}
+                {benchTab === 'peer' && peer?.rows?.length > 0 && (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
+                        {benchStat('Portfolio median vs MCC peers', peerMedianPercentile != null ? `${Math.round(peerMedianPercentile)}%` : '—', peerMedianPercentile, 'peer group')}
+                    </Box>
+                )}
+
                 {benchTab === 'rm' && (
                     <Box sx={{ ...premiumTableWrapper, height: 460 }}>
                         <DataGrid
                             rows={(rm?.rows || []).map((r, i) => ({ id: r.rm || i, ...r }))}
                             columns={rmCols}
                             loading={loading}
-                            disableRowSelectionOnClick rowHeight={52}
+                            disableRowSelectionOnClick rowHeight={40} columnHeaderHeight={40}
                             initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
                             pageSizeOptions={[25, 50, 100]}
                             sx={premiumDataGridStyles}
@@ -539,7 +575,7 @@ const ForecastingBenchmarking = () => {
                             rows={(peer?.rows || []).map((r, i) => ({ id: r.mid || i, ...r }))}
                             columns={peerCols}
                             loading={loading}
-                            disableRowSelectionOnClick rowHeight={52}
+                            disableRowSelectionOnClick rowHeight={40} columnHeaderHeight={40}
                             initialState={{
                                 pagination: { paginationModel: { pageSize: 25 } },
                                 sorting: { sortModel: [{ field: 'peerIndex', sort: 'desc' }] },

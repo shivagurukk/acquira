@@ -56,9 +56,12 @@ public class DataExplorerController {
     private static final Logger log = LoggerFactory.getLogger(DataExplorerController.class);
 
     private final JdbcTemplate jdbcTemplate;
+    /** Stamps the tenant's currency onto every money-bearing response. */
+    private final CurrencyMeta currencyMeta;
 
-    public DataExplorerController(JdbcTemplate jdbcTemplate) {
+    public DataExplorerController(JdbcTemplate jdbcTemplate, CurrencyMeta currencyMeta) {
         this.jdbcTemplate = jdbcTemplate;
+        this.currencyMeta = currencyMeta;
     }
 
     private Long getTenantId() {
@@ -364,7 +367,7 @@ public class DataExplorerController {
             response.put("dimensions", request.getDimensions());
             response.put("measures", request.getMeasures());
 
-            return ResponseEntity.ok(response);
+            return ResponseEntity.ok(currencyMeta.attach(response, tenantId));
 
         } catch (Exception e) {
             log.error("Explorer query failed", e);

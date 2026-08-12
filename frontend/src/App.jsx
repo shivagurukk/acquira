@@ -46,6 +46,8 @@ const SalesAgentDirectory = lazy(() => import('./pages/sales/SalesAgentDirectory
 const SalesLeaderboard = lazy(() => import('./pages/sales/SalesLeaderboard'));
 const SalesHierarchyTree = lazy(() => import('./pages/sales/SalesHierarchyTree'));
 const SalesExecutiveDashboard = lazy(() => import('./pages/sales/SalesExecutiveDashboard'));
+const ExecutiveSalesPulse = lazy(() => import('./pages/executive/ExecutiveSalesPulse'));
+const SalesTargetManagement = lazy(() => import('./pages/sales/SalesTargetManagement'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const TenantManagement = lazy(() => import('./pages/TenantManagement'));
 const RbacGroups = lazy(() => import('./pages/RbacGroups'));
@@ -104,6 +106,7 @@ function App() {
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/business/ceo-volume-revenue" element={<CeoVolumeRevenue />} />
               <Route path="/business/loss-making" element={<LossMakingMerchants />} />
+              <Route path="/executive/sales" element={<ExecutiveSalesPulse />} />
 
               {/* Merchant MGT */}
               <Route path="/merchants" element={<MerchantHierarchy />} />
@@ -141,6 +144,7 @@ function App() {
               <Route path="/sales/agents" element={<SalesAgentDirectory />} />
               <Route path="/sales/leaderboard" element={<SalesLeaderboard />} />
               <Route path="/sales/hierarchy" element={<SalesHierarchyTree />} />
+              <Route path="/sales/targets" element={<SalesTargetManagement />} />
 
               {/* Finance */}
               <Route path="/finance/dashboard" element={<FinanceDashboard />} />

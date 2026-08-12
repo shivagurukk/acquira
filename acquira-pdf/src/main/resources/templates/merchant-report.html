@@ -110,7 +110,7 @@
                 <div>
                     <h3 class="text-slate-500 text-xs font-bold uppercase tracking-wider">Total Sales</h3>
                     <div class="flex items-baseline mt-2">
-                        <span class="text-4xl font-bold text-slate-800" id="kpi-sales-val">AED 0</span>
+                        <span class="text-4xl font-bold text-slate-800" id="kpi-sales-val">0</span>
                         <span class="ml-2 text-sm font-medium text-green-600 bg-green-100 px-2 py-0.5 rounded-full" id="kpi-sales-growth">+0%</span>
                     </div>
                 </div>
@@ -139,7 +139,7 @@
                 <div>
                     <h3 class="text-slate-500 text-xs font-bold uppercase tracking-wider">Avg Ticket Size</h3>
                     <div class="flex items-baseline mt-2">
-                        <span class="text-4xl font-bold text-slate-800" id="kpi-atv-val">AED 0</span>
+                        <span class="text-4xl font-bold text-slate-800" id="kpi-atv-val">0</span>
                         <span class="ml-2 text-sm font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">+2.4%</span>
                     </div>
                 </div>
@@ -214,7 +214,15 @@
     <!-- JS LOGIC TO RENDER CHARTS -->
     <script>
         // --- Formatting Helpers ---
-        const formatCurrency = (val) => 'AED ' + new Intl.NumberFormat('en-US').format(val);
+        // Tenant-driven currency + minor-unit precision (BHD 3dp, EGP/AED 2dp).
+        // Was hardcoded 'AED ' with default (0-3dp) grouping — see MerchantInsightsDTO.currencyDecimals.
+        const formatCurrency = (val) => {
+            const code = (data && (data.currencySymbol || data.currencyCode)) || '';
+            const d = (data && data.currencyDecimals != null) ? Number(data.currencyDecimals) : null;
+            if (!code || d === null) console.error('merchant-report: unresolved currency on reportData');
+            const opts = d === null ? {} : { minimumFractionDigits: d, maximumFractionDigits: d };
+            return (code ? code + ' ' : '') + new Intl.NumberFormat('en-US', opts).format(val);
+        };
         const formatNum = (val) => new Intl.NumberFormat('en-US').format(val);
 
         // --- Render Logic ---

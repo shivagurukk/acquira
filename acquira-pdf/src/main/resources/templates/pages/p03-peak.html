@@ -28,7 +28,7 @@
             </div>
             <div class="card card-accent-amber" style="padding: 10px 12px;">
                 <div class="kpi-label">AVG DAILY SALES (<span th:text="${dto.currencyCode}">AED</span>)</div>
-                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.dailyAverage != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.overview.dailyAverage, 1, 'COMMA', 0, 'POINT') : '-'}">0</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.dailyAverage != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.overview.dailyAverage, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">0</div>
                 <span class="text-xs text-muted">Daily average sales</span>
             </div>
             <div class="card card-accent-amber" style="padding: 10px 12px;">
@@ -46,7 +46,7 @@
              1123px; with header+footer+KPIs+insight the two charts must share a bounded budget. -->
         <div class="card mb-6" style="flex: 1 1 0; min-height: 0; max-height: 235px;">
             <div class="card-title"><span>DAILY SALES VOLUME (<span th:text="${dto.currencyCode}">AED</span>) — Day of Month</span></div>
-            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailySalesAndCount" data-color="#1E3A8A"></canvas></div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="achievements.dailySalesAndCount" data-money="true" data-color="#1E3A8A"></canvas></div>
         </div>
 
         <!-- ROW 3: DAILY TRANSACTION COUNT — promoted up into the slot previously held by the

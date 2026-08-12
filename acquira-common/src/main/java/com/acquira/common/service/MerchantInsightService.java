@@ -65,6 +65,15 @@ public class MerchantInsightService {
     @org.springframework.beans.factory.annotation.Autowired
     private com.acquira.common.repository.TenantRepository tenantRepository;
 
+    /**
+     * Single source of truth for a tenant's currency code / symbol / minor-unit
+     * precision (ref_country.decimal_notation_value). Before this existed the
+     * whole display stack hardcoded "AED" and ZERO decimals, so BHD (3dp)
+     * printed 450.755 as "451" and EGP silently lost its piastres.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private CurrencyResolver currencyResolver;
+
     // ── Enhancement pass (2026-06 PDF fixes): populates new DTO fields after the
     //    core DTO is assembled. required=false so the service still starts if the
     //    component hasn't been added to the classpath yet.
@@ -82,6 +91,52 @@ public class MerchantInsightService {
                 "Tenant context not resolved — refusing unscoped merchant insight query");
         }
         return tenantId;
+    }
+
+    /**
+     * Currency for a tenant — code, symbol AND minor-unit precision.
+     *
+     * FAILS LOUD. The previous behaviour was a silent {@code "AED"} fallback
+     * (four separate sites, one of which swallowed the tenant lookup exception
+     * with a bare {@code // ignore}). A Bahraini merchant then received a report
+     * denominated in dirhams, rounded to 0 decimals. Any tenant whose currency
+     * cannot be resolved must fail the report, not mislabel it.
+     */
+    private CurrencyView requireCurrency(Long tenantId) {
+        requireTenant(tenantId);
+        try {
+            var info = currencyResolver.forTenant(tenantId);
+            if (info == null) throw new IllegalStateException("CurrencyResolver returned null");
+            String code = info.code();
+            String symbol = info.symbol();
+            int decimals = info.decimals();
+            if (code == null || code.isBlank()) {
+                throw new IllegalStateException("resolved currency has no ISO code");
+            }
+            if (decimals < 0 || decimals > 4) {
+                throw new IllegalStateException("implausible decimal precision " + decimals + " for " + code);
+            }
+            return new CurrencyView(code, (symbol != null && !symbol.isBlank()) ? symbol : code, decimals);
+        } catch (RuntimeException e) {
+            log.error("CURRENCY UNRESOLVED for tenant {} — refusing to render insights. "
+                    + "Check tenant.base_currency / home_country_code and ref_country.decimal_notation_value. Cause: {}",
+                    tenantId, e.toString());
+            throw new IllegalStateException(
+                "Currency could not be resolved for tenant " + tenantId
+                + " — refusing to emit a report with a substituted currency", e);
+        }
+    }
+
+    /**
+     * Local, immutable view of the resolved currency so the rest of this class
+     * never has to name CurrencyResolver's nested record type.
+     */
+    private record CurrencyView(String code, String symbol, int decimals) {}
+
+    /** Currency-aware money formatter — the ONLY way monetary text is built here. */
+    private static String money(BigDecimal v, int decimals) {
+        if (v == null) v = BigDecimal.ZERO;
+        return String.format("%,." + decimals + "f", v);
     }
 
     /**
@@ -174,16 +229,9 @@ public class MerchantInsightService {
         for (com.acquira.common.model.Merchant m : merchantRepository.findAllById(merchantIds)) {
             merchantsById.put(m.getMerchantId(), m);
         }
-        Set<Long> tenantIdSet = merchantsById.values().stream()
-            .map(com.acquira.common.model.Merchant::getTenantId)
-            .filter(Objects::nonNull)
-            .collect(Collectors.toSet());
-        Map<Long, com.acquira.common.model.Tenant> tenantsById = new HashMap<>();
-        if (!tenantIdSet.isEmpty()) {
-            for (com.acquira.common.model.Tenant t : tenantRepository.findAllById(tenantIdSet)) {
-                tenantsById.put(t.getTenantId(), t);
-            }
-        }
+        // Currency (code + symbol + decimals) memoised per tenant. A bulk chunk is
+        // normally single-tenant, so this is one CurrencyResolver call per chunk.
+        Map<Long, CurrencyView> currencyByTenant = new HashMap<>();
 
         // ===== Build DTOs per merchant (pure in-memory) =====
         Map<Long, MerchantInsightsDTO> result = new HashMap<>();
@@ -201,22 +249,21 @@ public class MerchantInsightService {
                     trendsMap.getOrDefault(mid, Collections.emptyList());
                 CardLoyaltyAggregates cardAgg = cardAggById.get(mid);
 
-                // Resolve this merchant's currency from the bulk-loaded maps (no DB here).
-                String ccyCode = "AED", ccySymbol = "AED";
+                // Resolve this merchant's currency (code + symbol + PRECISION).
+                // No AED fallback: an unresolvable currency fails this merchant.
+                // Memoised per tenant so the resolver isn't hit N times in the loop
+                // (the whole point of the bulk path is avoiding per-merchant lookups).
                 com.acquira.common.model.Merchant mObj = merchantsById.get(mid);
-                if (mObj != null && mObj.getTenantId() != null) {
-                    com.acquira.common.model.Tenant t = tenantsById.get(mObj.getTenantId());
-                    if (t != null) {
-                        if (t.getCurrencySymbol() != null) ccySymbol = t.getCurrencySymbol();
-                        if (t.getBaseCurrency() != null && !t.getBaseCurrency().isBlank()) ccyCode = t.getBaseCurrency();
-                    }
+                Long owningTenant = (mObj != null) ? mObj.getTenantId() : null;
+                if (owningTenant == null) {
+                    throw new IllegalStateException("merchant " + mid + " has no tenant — cannot resolve currency");
                 }
+                CurrencyView ccy = currencyByTenant.computeIfAbsent(owningTenant, this::requireCurrency);
 
                 // Build DTO using existing logic
                 MerchantInsightsDTO dto = buildDtoFromPrefetched(
                     mid, currentDaily, prevDaily, currentAttrs2, prevAttrs2,
-                    trends, cardAgg, startOfMonth, endOfMonth,
-                    ccyCode, ccySymbol);
+                    trends, cardAgg, startOfMonth, endOfMonth, ccy);
                 result.put(mid, dto);
             } catch (Exception e) {
                 log.warn("[BULK] Failed to build DTO for merchant {}: {}", mid, e.getMessage());
@@ -238,7 +285,7 @@ public class MerchantInsightService {
             List<Map<String, Object>> monthlyTrends,
             CardLoyaltyAggregates cardAgg,
             LocalDate startOfMonth, LocalDate endOfMonth,
-            String currencyCode, String currencySymbol) {
+            CurrencyView ccy) {
 
         Map<String, BigDecimal> currentAgg = aggregateDaily(currentDailyRows);
         Map<String, BigDecimal> prevAgg = aggregateDaily(prevDailyRows);
@@ -246,11 +293,10 @@ public class MerchantInsightService {
         MerchantInsightsDTO dto = new MerchantInsightsDTO();
         currentDailyRows = fillMissingDays(currentDailyRows, startOfMonth, endOfMonth, merchantId);
 
-        dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows));
+        dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows, ccy.decimals()));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
         dto.setLoyalty(buildLoyalty(cardAgg, endOfMonth));
-        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends,
-                (currencyCode != null && !currencyCode.isBlank()) ? currencyCode : "AED"));
+        dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends, ccy.code()));
         dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
 
         // FIX 1 (UNIQUE CUSTOMERS): the customers Kpi was previously sourced from
@@ -260,17 +306,17 @@ public class MerchantInsightService {
         // month is loyalty.totalUniqueCards (computed in buildLoyalty from
         // sum_monthly_card, which is keyed by card_number+month). Override here so
         // the cover page, executive summary and scorecard agree with page 9.
-        overrideCustomersFromLoyalty(dto);
+        overrideCustomersFromLoyalty(dto, ccy.decimals());
 
         // Currency was resolved in BULK by the caller (getBulkInsights) and passed
         // in — no per-merchant merchantRepository.findById / tenantRepository.findById
-        // here (that was a 2× N PK-lookup N+1). Fall back to AED if unresolved.
-        String ccySymbol = (currencySymbol != null && !currencySymbol.isBlank()) ? currencySymbol : "AED";
-        String ccyCode = (currencyCode != null && !currencyCode.isBlank()) ? currencyCode : "AED";
-        dto.setCurrencySymbol(ccySymbol);
-        dto.setCurrencyCode(ccyCode);
-        dto.setInsights(buildInsights(dto, currentDailyRows, currentAttributes, ccyCode));
-        dto.setHealthScore(buildHealthScore(dto, currentDailyRows, ccyCode));
+        // here (that was a 2× N PK-lookup N+1). It is guaranteed non-null and
+        // fully resolved: requireCurrency() throws rather than substituting AED.
+        dto.setCurrencySymbol(ccy.symbol());
+        dto.setCurrencyCode(ccy.code());
+        dto.setCurrencyDecimals(ccy.decimals());
+        dto.setInsights(buildInsights(dto, currentDailyRows, currentAttributes, ccy.code(), ccy.decimals()));
+        dto.setHealthScore(buildHealthScore(dto, currentDailyRows, ccy.code(), ccy.decimals()));
         // 2026-06 PDF enhancement pass: populate new DTO fields in-memory
         if (insightEnhancer != null) {
             insightEnhancer.enhanceDto(dto, Collections.emptyList(), 0);
@@ -356,45 +402,42 @@ public class MerchantInsightService {
         // Fill any missing days with zeroes so charts align labels to calendar days
         currentDailyRows = fillMissingDays(currentDailyRows, startOfMonth, endOfMonth, merchantId);
 
-        dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows));
+        // Resolve currency FIRST — before buildOverview, because the KPI
+        // formattedValue strings it produces are already money-formatted and need
+        // the tenant's minor-unit precision (BHD = 3, EGP/AED = 2). It also has to
+        // precede buildDemographics so the domestic currency code can be filtered
+        // out of topCountries.
+        //
+        // No try/catch, no "AED" seed values: requireCurrency() logs ERROR and
+        // throws if the tenant's currency or its decimal_notation_value cannot be
+        // resolved. Previously this block swallowed the tenant lookup failure with
+        // a bare `// ignore, fallback to AED`, so a misconfigured Bahraini tenant
+        // silently produced a dirham-labelled, 0-decimal report.
+        CurrencyView ccy = requireCurrency(tenantId);
+        String currencySymbol = ccy.symbol();
+        String currencyCode = ccy.code();
+        int ccyDecimals = ccy.decimals();
+
+        dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows, ccyDecimals));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
         dto.setLoyalty(buildLoyalty(cardAgg, endOfMonth));
-
-        // Resolve currency BEFORE buildDemographics so the tenant currency can be
-        // used to filter the domestic currency code out of topCountries.
-        // FIX: Use base_currency (e.g. BHD) instead of bank_short_code (e.g. ACQ).
-        String currencySymbol = "AED";
-        String currencyCode = "AED";
-        try {
-            com.acquira.common.model.Merchant merchant = merchantRepository.findById(merchantId).orElse(null);
-            if (merchant != null && merchant.getTenantId() != null) {
-                com.acquira.common.model.Tenant tenant = tenantRepository.findById(merchant.getTenantId()).orElse(null);
-                if (tenant != null) {
-                    if (tenant.getCurrencySymbol() != null)
-                        currencySymbol = tenant.getCurrencySymbol();
-                    if (tenant.getBaseCurrency() != null && !tenant.getBaseCurrency().isBlank())
-                        currencyCode = tenant.getBaseCurrency();
-                }
-            }
-        } catch (Exception e) {
-            // ignore, fallback to AED
-        }
 
         dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends, currencyCode));
         dto.setDccPerformance(buildDccPerformance(currentDailyRows, prevDailyRows, monthlyTrends));
 
         // FIX 1 (UNIQUE CUSTOMERS): override the customers Kpi using true distinct
         // card count from loyalty.totalUniqueCards. See note in buildDtoFromPrefetched.
-        overrideCustomersFromLoyalty(dto);
+        overrideCustomersFromLoyalty(dto, ccyDecimals);
 
         dto.setCurrencySymbol(currencySymbol);
         dto.setCurrencyCode(currencyCode);
+        dto.setCurrencyDecimals(ccyDecimals);
 
         // ========== BUILD DYNAMIC INSIGHTS (data-driven narrative for every PDF section) ==========
-        dto.setInsights(buildInsights(dto, currentDailyRows, currentAttributes, currencyCode));
+        dto.setInsights(buildInsights(dto, currentDailyRows, currentAttributes, currencyCode, ccyDecimals));
 
         // ========== BUILD BUSINESS HEALTH SCORE (composite performance rating) ==========
-        dto.setHealthScore(buildHealthScore(dto, currentDailyRows, currencyCode));
+        dto.setHealthScore(buildHealthScore(dto, currentDailyRows, currencyCode, ccyDecimals));
 
         // 2026-06 PDF enhancement pass: populate new DTO fields in-memory.
         // Pass prevMonthCards for lapsed-customer detection; prevCompositeScore=0
@@ -423,7 +466,7 @@ public class MerchantInsightService {
      * (prevCustomers vs trueDistinct), so the % change always matches the numbers
      * shown next to it.
      */
-    private void overrideCustomersFromLoyalty(MerchantInsightsDTO dto) {
+    private void overrideCustomersFromLoyalty(MerchantInsightsDTO dto, int ccyDecimals) {
         if (dto.getOverview() == null || dto.getLoyalty() == null) return;
         BigDecimal trueDistinct = dto.getLoyalty().getTotalUniqueCards();
         if (trueDistinct == null) return;
@@ -440,7 +483,8 @@ public class MerchantInsightService {
         // "scale prev by trueDistinct/buggyCurrent" adjustment made the arrow
         // reproduce the buggy sum-of-daily growth (≈ the transaction change)
         // while the printed values implied a different percentage.
-        dto.getOverview().setCustomers(createKpi(trueDistinct, prevValue));
+        // Customers is a COUNT of cards, not money → 0 decimals.
+        dto.getOverview().setCustomers(createKpi(trueDistinct, prevValue, 0));
 
         // Also recompute avgSpendPerCustomer with the correct denominator so it
         // doesn't divide total sales by an inflated customer count.
@@ -451,7 +495,7 @@ public class MerchantInsightService {
                 && prevValue.compareTo(BigDecimal.ZERO) > 0)
                 ? safeDivide(dto.getOverview().getPrevSales().getValue(), prevValue)
                 : BigDecimal.ZERO;
-        dto.getOverview().setAvgSpendPerCustomer(createKpi(newAvgSpend, prevAvgSpend));
+        dto.getOverview().setAvgSpendPerCustomer(createKpi(newAvgSpend, prevAvgSpend, ccyDecimals));
 
         // Recompute avgTxnsPerCustomer (visits per card) with same correction.
         BigDecimal totalTxns = dto.getOverview().getTransactions() != null
@@ -461,7 +505,8 @@ public class MerchantInsightService {
                 && prevValue.compareTo(BigDecimal.ZERO) > 0)
                 ? safeDivide(dto.getOverview().getPrevTransactions().getValue(), prevValue)
                 : BigDecimal.ZERO;
-        Kpi visitsKpi = createKpi(newAvgVisits, prevAvgVisits);
+        // Visits-per-card is a ratio, deliberately shown to 1dp regardless of currency.
+        Kpi visitsKpi = createKpi(newAvgVisits, prevAvgVisits, 0);
         if (visitsKpi != null && visitsKpi.getValue() != null) {
             visitsKpi.setFormattedValue(String.format("%,.1f", visitsKpi.getValue()));
         }
@@ -581,13 +626,20 @@ public class MerchantInsightService {
     // OVERVIEW
     // ============================================================
 
+    /**
+     * @param ccyDecimals the tenant's minor-unit precision. MONETARY KPIs are
+     *   formatted to exactly this many fraction digits; COUNT KPIs (transactions,
+     *   customers, txns-in-day) stay at 0 — a card count of "12,345.000" for a
+     *   BHD tenant would be nonsense.
+     */
     private BusinessOverview buildOverview(Map<String, BigDecimal> current, Map<String, BigDecimal> previous,
             List<com.acquira.common.model.SumDailyMerchant> currentRows,
-            List<com.acquira.common.model.SumDailyMerchant> prevRows) {
+            List<com.acquira.common.model.SumDailyMerchant> prevRows,
+            int ccyDecimals) {
 
-        Kpi sales = createKpi(current.get("total_sales"), previous.get("total_sales"));
-        Kpi txns = createKpi(current.get("total_txns"), previous.get("total_txns"));
-        Kpi customers = createKpi(current.get("unique_customers"), previous.get("unique_customers"));
+        Kpi sales = createKpi(current.get("total_sales"), previous.get("total_sales"), ccyDecimals);
+        Kpi txns = createKpi(current.get("total_txns"), previous.get("total_txns"), 0);
+        Kpi customers = createKpi(current.get("unique_customers"), previous.get("unique_customers"), 0);
 
         BigDecimal avgSpend = safeDivide(current.get("total_sales"), current.get("unique_customers"));
         BigDecimal prevAvgSpend = safeDivide(previous.get("total_sales"), previous.get("unique_customers"));
@@ -597,10 +649,10 @@ public class MerchantInsightService {
         BigDecimal prevAvgTxnsPerCust = safeDivide(previous.get("total_txns"), previous.get("unique_customers"));
 
         PeakStats peakStats = PeakStats.builder()
-                .maxDailySales(createKpi(current.get("max_daily_sales"), previous.get("max_daily_sales")))
-                .maxTxnsInDay(createKpi(current.get("max_daily_txns"), previous.get("max_daily_txns")))
-                .highestTxnValue(createKpi(current.get("max_daily_sales"), previous.get("max_daily_sales")))
-                .highestCustomerSpend(createKpi(current.get("max_cust_spend"), previous.get("max_cust_spend")))
+                .maxDailySales(createKpi(current.get("max_daily_sales"), previous.get("max_daily_sales"), ccyDecimals))
+                .maxTxnsInDay(createKpi(current.get("max_daily_txns"), previous.get("max_daily_txns"), 0))
+                .highestTxnValue(createKpi(current.get("max_daily_sales"), previous.get("max_daily_sales"), ccyDecimals))
+                .highestCustomerSpend(createKpi(current.get("max_cust_spend"), previous.get("max_cust_spend"), ccyDecimals))
                 // FIX BUG: set the two peak dates independently so the insight narrative
                 // "peak sales day" and "peak txn day" reference the correct calendar day.
                 .maxDailySalesDate(current.get("max_sales_epoch_day") != null
@@ -614,7 +666,7 @@ public class MerchantInsightService {
         List<ChartData> salesByWeek = aggregateByWeekOfMonth(currentRows);
 
         // FIX C: avgTxnsPerCustomer formatted with one decimal place (e.g. "1.2" not "1")
-        Kpi avgTxnsPerCustKpi = createKpi(avgTxnsPerCust, prevAvgTxnsPerCust);
+        Kpi avgTxnsPerCustKpi = createKpi(avgTxnsPerCust, prevAvgTxnsPerCust, 0);
         if (avgTxnsPerCustKpi != null && avgTxnsPerCustKpi.getValue() != null) {
             avgTxnsPerCustKpi.setFormattedValue(String.format("%,.1f", avgTxnsPerCustKpi.getValue()));
         }
@@ -633,19 +685,19 @@ public class MerchantInsightService {
 
         return BusinessOverview.builder()
                 .sales(sales).transactions(txns).customers(customers)
-                .avgSpendPerCustomer(createKpi(avgSpend, prevAvgSpend))
-                .avgTxnValue(createKpi(avgTxnVal, prevAvgTxnVal))
+                .avgSpendPerCustomer(createKpi(avgSpend, prevAvgSpend, ccyDecimals))
+                .avgTxnValue(createKpi(avgTxnVal, prevAvgTxnVal, ccyDecimals))
                 .avgTxnsPerCustomer(avgTxnsPerCustKpi)
                 .peakStats(peakStats)
                 .salesByDayOfWeek(salesByDow)
                 .transactionsByDayOfWeek(txnsByDow)
                 .salesByWeekOfMonth(salesByWeek)
                 .transactionsByWeekOfMonth(salesByWeek)
-                .prevSales(createKpi(previous.get("total_sales"), BigDecimal.ZERO))
-                .prevTransactions(createKpi(previous.get("total_txns"), BigDecimal.ZERO))
-                .prevCustomers(createKpi(previous.get("unique_customers"), BigDecimal.ZERO))
-                .prevAvgTxnValue(createKpi(prevAvgTxnVal, BigDecimal.ZERO))
-                .prevMaxDailySales(createKpi(previous.get("max_daily_sales"), BigDecimal.ZERO))
+                .prevSales(createKpi(previous.get("total_sales"), BigDecimal.ZERO, ccyDecimals))
+                .prevTransactions(createKpi(previous.get("total_txns"), BigDecimal.ZERO, 0))
+                .prevCustomers(createKpi(previous.get("unique_customers"), BigDecimal.ZERO, 0))
+                .prevAvgTxnValue(createKpi(prevAvgTxnVal, BigDecimal.ZERO, ccyDecimals))
+                .prevMaxDailySales(createKpi(previous.get("max_daily_sales"), BigDecimal.ZERO, ccyDecimals))
                 .weekdayRevenuePct(calcWeekdayPct(currentRows))
                 .weekendRevenuePct(calcWeekendPct(currentRows))
                 .peakDayName(findPeakDay(currentRows))
@@ -1298,7 +1350,7 @@ public class MerchantInsightService {
         // Kept for backward compat on the DTO; not displayed in PDF.
         BigDecimal missedRevenue = optoutVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
 
-        List<ChartData> missed = new ArrayList<>(), opt = new ArrayList<>();
+        List<ChartData> missed = new ArrayList<>(), opt = new ArrayList<>(), rateTrend = new ArrayList<>();
         for (java.util.Map<String, Object> r : monthlyTrends) {
             int y = ((Number) r.get("year")).intValue();
             int m = ((Number) r.get("month")).intValue();
@@ -1312,6 +1364,7 @@ public class MerchantInsightService {
             // the DTO gets the underlying opt-out volume.
             missed.add(ChartData.builder().label(label).value(oout).build());
             opt.add(ChartData.builder().label(label).value(oout).value2(oin).build());
+            rateTrend.add(ChartData.builder().label(label).value(monthlyOptInRate(r)).build());
         }
 
         long optoutCount = eligCount - optinCount;
@@ -1320,6 +1373,7 @@ public class MerchantInsightService {
 
         DccPerformance dcc = DccPerformance.builder()
                 .missedOpportunityTrend(missed).optOutOptInTrend(opt).eligibilityTrend(new ArrayList<>())
+                .optInConversionRateTrend(rateTrend)
                 .dccEligibleVolume(eligVol).dccOptinVolume(optinVol).dccOptoutVolume(optoutVol)
                 .dccConversionRate(conversionRate).dccMissedRevenue(missedRevenue).build();
 
@@ -1328,6 +1382,11 @@ public class MerchantInsightService {
         dcc.setOptInRevenue(revenueGenerated);
         dcc.setDccEligibleCount(eligCount);
         dcc.setDccOptinCountLong(optinCount);
+        // NOTE: these are aliases of the eligible figures, not a measured international
+        // total — sum_daily_merchant carries no international transaction count. The P12
+        // funnel no longer renders them as a separate step (it looked like a real
+        // drop-off from intl → eligible when the two numbers are the same by
+        // construction). Kept on the DTO for JSON consumers.
         dcc.setTotalIntlTxnCount(eligCount);
         dcc.setTotalIntlVolume(eligVol);
         dcc.setDccRevenueGenerated(revenueGenerated);
@@ -1335,6 +1394,36 @@ public class MerchantInsightService {
                 ? new BigDecimal(optoutCount * 100.0 / eligCount).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO);
 
         return dcc;
+    }
+
+    /**
+     * Minimum DCC-eligible transactions a month needs before its opt-in rate is
+     * plotted. Below this the ratio is meaningless — one eligible transaction can
+     * only ever print 0% or 100%, and it did: a month with a single opt-in and no
+     * opt-outs rendered a 100% spike on the P12 trend line directly beneath a 0.0%
+     * headline conversion rate.
+     */
+    private static final long MIN_ELIGIBLE_FOR_RATE = 5;
+
+    /**
+     * Monthly DCC opt-in rate for the P9/P12 trend line, as a percentage.
+     *
+     * Deliberately count-based (optin / eligible) so it uses the same definition as
+     * the funnel's headline {@code dccConversionRate}. The earlier volume-based
+     * form — optinVol / (optinVol + optoutVol) — had a different numerator basis
+     * AND a different denominator, so the line and the funnel could disagree even
+     * for the same month.
+     *
+     * Returns null for months below {@link #MIN_ELIGIBLE_FOR_RATE}; the chart
+     * renderer breaks the line at nulls rather than drawing a false 0%.
+     */
+    private BigDecimal monthlyOptInRate(java.util.Map<String, Object> monthRow) {
+        Number elig = (Number) monthRow.get("dccEligibleCount");
+        Number optin = (Number) monthRow.get("dccOptinCount");
+        long eligCount = elig == null ? 0 : elig.longValue();
+        if (eligCount < MIN_ELIGIBLE_FOR_RATE) return null;
+        long optinCount = optin == null ? 0 : optin.longValue();
+        return new BigDecimal(optinCount * 100.0 / eligCount).setScale(1, RoundingMode.HALF_UP);
     }
 
     // ============================================================
@@ -1475,7 +1564,13 @@ public class MerchantInsightService {
     // HELPERS
     // ============================================================
 
-    private Kpi createKpi(BigDecimal current, BigDecimal previous) {
+    /**
+     * @param decimals fraction digits for {@code formattedValue}. Pass the
+     *   tenant's currency precision for money, 0 for counts. This used to be a
+     *   hardcoded {@code "%,.0f"}, which is why every monetary figure on every
+     *   PDF page was rounded to whole units (BHD 450.755 -> "451").
+     */
+    private Kpi createKpi(BigDecimal current, BigDecimal previous, int decimals) {
         if (current == null) current = BigDecimal.ZERO;
         if (previous == null) previous = BigDecimal.ZERO;
         double growth = 0.0;
@@ -1486,7 +1581,8 @@ public class MerchantInsightService {
             growth = 100.0;
         }
         if (growth > 0) trend = "UP"; else if (growth < 0) trend = "DOWN";
-        return Kpi.builder().value(current).momGrowth(growth).formattedValue(String.format("%,.0f", current)).trend(trend).build();
+        return Kpi.builder().value(current).momGrowth(growth)
+                .formattedValue(money(current, decimals)).trend(trend).build();
     }
 
     private BigDecimal safeDivide(BigDecimal n, BigDecimal d) {
@@ -1499,16 +1595,26 @@ public class MerchantInsightService {
     // DYNAMIC INSIGHTS ENGINE — zero hardcoded text, all data-driven
     // ============================================================
 
+    /**
+     * Whole-number formatter for NON-monetary quantities in the narrative:
+     * transaction counts, card counts, percentages. Deliberately still 0
+     * decimals — a "45.750%" repeat rate for a BHD tenant would be a regression,
+     * not a fix. Monetary amounts must use {@link #money(BigDecimal, int)}.
+     */
     private String fmt(BigDecimal v) {
         if (v == null) return "0";
         return String.format("%,.0f", v);
     }
 
+    /**
+     * @param ccy  ISO currency code printed alongside every monetary figure
+     * @param ccyDecimals minor-unit precision for those figures (BHD 3, EGP/AED 2)
+     */
     private MerchantInsightsDTO.InsightNarrative buildInsights(
             MerchantInsightsDTO dto,
             List<com.acquira.common.model.SumDailyMerchant> dailyRows,
             List<com.acquira.common.model.SumDailyMerchantAttribute> attrs,
-            String ccy) {
+            String ccy, int ccyDecimals) {
 
         MerchantInsightsDTO.InsightNarrative n = new MerchantInsightsDTO.InsightNarrative();
         var ov = dto.getOverview();
@@ -1554,8 +1660,8 @@ public class MerchantInsightService {
         BigDecimal avgTxn = ov.getAvgTxnValue() != null ? ov.getAvgTxnValue().getValue() : BigDecimal.ZERO;
         String trend = salesGrowth >= 5 ? "an upward" : salesGrowth >= 0 ? "a steady" : salesGrowth >= -5 ? "a mixed" : "a slower";
         StringBuilder exec = new StringBuilder();
-        exec.append(String.format("This was %s month with total sales of %s %s (%s%% vs last month). ", trend, ccy, fmt(totalSales), String.format("%+.0f", salesGrowth)));
-        exec.append(String.format("Average transaction value stood at %s %s across %s transactions. ", ccy, fmt(avgTxn), fmt(ov.getTransactions().getValue())));
+        exec.append(String.format("This was %s month with total sales of %s %s (%s%% vs last month). ", trend, ccy, money(totalSales, ccyDecimals), String.format("%+.0f", salesGrowth)));
+        exec.append(String.format("Average transaction value stood at %s %s across %s transactions. ", ccy, money(avgTxn, ccyDecimals), fmt(ov.getTransactions().getValue())));
         BigDecimal retRate = loyalty != null && loyalty.getRetentionRate() != null ? loyalty.getRetentionRate() : BigDecimal.ZERO;
         exec.append(String.format("Repeat card holder rate for the period was %s%%.", fmt(retRate)));
 
@@ -1590,18 +1696,18 @@ public class MerchantInsightService {
         String maxTxnsStr = (ov.getPeakStats() != null && ov.getPeakStats().getMaxTxnsInDay() != null)
                 ? ov.getPeakStats().getMaxTxnsInDay().getFormattedValue() : "0";
         n.setPeakAchievement(String.format("Peak daily sales reached %s %s on %s. Highest single-day transaction count was %s on %s.",
-            ccy, fmt(peakVal), salesPeakStr, maxTxnsStr, txnPeakStr));
+            ccy, money(peakVal, ccyDecimals), salesPeakStr, maxTxnsStr, txnPeakStr));
         BigDecimal dailyAvg = ov.getDailyAverage() != null ? ov.getDailyAverage() : BigDecimal.ZERO;
         BigDecimal ratio = dailyAvg.compareTo(BigDecimal.ZERO) > 0 ? peakVal.divide(dailyAvg, 1, RoundingMode.HALF_UP) : BigDecimal.ONE;
         n.setPeakWatch(String.format("Your best day was %.1fx your daily average of %s %s. %s",
-            ratio, ccy, fmt(dailyAvg),
+            ratio, ccy, money(dailyAvg, ccyDecimals),
             ratio.compareTo(new BigDecimal("2.5")) > 0
                 ? "Sales look quite concentrated on a few days \u2014 loyalty incentives on quieter days may help spread demand more evenly."
                 : "Sales appear fairly distributed across the month \u2014 worth monitoring whether that pattern holds next month."));
 
         // Page 5: Sales & Hourly Intelligence
         n.setSalesInsight(String.format("Your busiest hour appears to be %s, generating %s %s (%s%% of total sales volume). %s tends to be the quietest window.",
-            n.getPeakHourLabel(), ccy, fmt(peakHourVal),
+            n.getPeakHourLabel(), ccy, money(peakHourVal, ccyDecimals),
             hourMap.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add).compareTo(BigDecimal.ZERO) > 0
                 ? fmt(peakHourVal.multiply(new BigDecimal(100)).divide(hourMap.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add), 0, RoundingMode.HALF_UP))
                 : "0",
@@ -1665,7 +1771,7 @@ public class MerchantInsightService {
         // Page 9: Customer Intelligence
         n.setCustomerInsight(String.format("This month saw %s unique cards, with %s%% returning for more than one visit. Average spend per card holder was %s %s.",
             loyalty != null && loyalty.getTotalUniqueCards() != null ? fmt(loyalty.getTotalUniqueCards()) : "0",
-            fmt(retRate), ccy, ov.getAvgSpendPerCustomer() != null ? fmt(ov.getAvgSpendPerCustomer().getValue()) : "0"));
+            fmt(retRate), ccy, ov.getAvgSpendPerCustomer() != null ? money(ov.getAvgSpendPerCustomer().getValue(), ccyDecimals) : money(BigDecimal.ZERO, ccyDecimals)));
         n.setCustomerTip(retRate.compareTo(new BigDecimal(30)) < 0
             ? String.format("Your repeat card holder rate is currently %s%%. A loyalty or incentive programme may help grow that figure over time.", fmt(retRate))
             : String.format("Repeat card holder rate is at %s%%. Looking for ways to grow average spend per visit \u2014 such as bundling or upselling \u2014 could be a natural next step.", fmt(retRate)));
@@ -1682,7 +1788,7 @@ public class MerchantInsightService {
         // this same rate as e.g. "1.2%", and the banner must not round it to "1%".
         n.setDccInsight(String.format("DCC conversion rate stands at %.1f%% for this period. %s", dccConv,
             optOutVol.compareTo(BigDecimal.ZERO) > 0
-                ? String.format("An estimated %s %s in international card volume came from transactions where customers chose to pay in local currency rather than opting in to DCC.", ccy, fmt(optOutVol))
+                ? String.format("An estimated %s %s in international card volume came from transactions where customers chose to pay in local currency rather than opting in to DCC.", ccy, money(optOutVol, ccyDecimals))
                 : "There is no significant opt-out volume to note this month."));
         n.setDccTip(dccConv.compareTo(new BigDecimal(20)) < 0
             ? "Opt-in rates look relatively low, which may suggest currency choice isn't being consistently offered. A brief awareness session with staff could help \u2014 even small improvements in opt-in rates tend to add up quickly."
@@ -1698,14 +1804,14 @@ public class MerchantInsightService {
         // volume came from opt-out transactions" instead of "AED 15,440 in
         // potential revenue".
         if (dccConv.compareTo(new BigDecimal(15)) < 0 && dcc != null && dcc.getDccEligibleVolume() != null && dcc.getDccEligibleVolume().compareTo(BigDecimal.ZERO) > 0) {
-            actions.add(String.format("DCC opt-in rates may have room to grow \u2014 %s %s of international card volume came from opt-out transactions this period. Staff awareness training is typically the highest-impact starting point.", ccy, fmt(optOutVol)));
+            actions.add(String.format("DCC opt-in rates may have room to grow \u2014 %s %s of international card volume came from opt-out transactions this period. Staff awareness training is typically the highest-impact starting point.", ccy, money(optOutVol, ccyDecimals)));
         }
         if (salesGrowth < -5)
             actions.add(String.format("Sales are down %.0f%% versus last month \u2014 it may be worth looking at pricing, promotional activity, or external factors that could be contributing.", salesGrowth));
         if (wkePct.compareTo(new BigDecimal(45)) > 0)
             actions.add("Sales are currently leaning towards the weekend. Exploring weekday offers or programmes may help spread demand more evenly through the week.");
         if (avgTxn.compareTo(new BigDecimal(50)) < 0)
-            actions.add(String.format("Average transaction value is currently %s %s. Bundling, combination offers, or gentle upselling at point of sale may be worth exploring to grow the average ticket.", ccy, fmt(avgTxn)));
+            actions.add(String.format("Average transaction value is currently %s %s. Bundling, combination offers, or gentle upselling at point of sale may be worth exploring to grow the average ticket.", ccy, money(avgTxn, ccyDecimals)));
         if (actions.isEmpty()) actions.add("Performance looks strong across the board. Maintaining the current approach while watching for seasonal shifts should serve well.");
         if (actions.size() < 2) actions.add(String.format("Your data suggests %s and %s are your highest-traffic periods \u2014 aligning staffing and any promotional activity around these windows may help make the most of that demand.", peakDay, n.getPeakHourLabel()));
         if (actions.size() < 3) actions.add(String.format("Your strongest month so far has been %s \u2014 it may be useful to think about what drove that performance and whether similar conditions could be created again.", bestMo));
@@ -1725,10 +1831,13 @@ public class MerchantInsightService {
     /** Minimum Business Health Score reported on the merchant PDF. */
     private static final int MIN_COMPOSITE_HEALTH_SCORE = 80;
 
+    /**
+     * @param ccy ISO currency code, @param ccyDecimals its minor-unit precision.
+     */
     private MerchantInsightsDTO.HealthScore buildHealthScore(
             MerchantInsightsDTO dto,
             List<com.acquira.common.model.SumDailyMerchant> dailyRows,
-            String ccy) {
+            String ccy, int ccyDecimals) {
 
         MerchantInsightsDTO.HealthScore hs = new MerchantInsightsDTO.HealthScore();
         var ov = dto.getOverview();
@@ -1792,7 +1901,7 @@ public class MerchantInsightService {
         hs.setGradeBgColor(bgColorFor(composite));
 
         // ---- Dynamic Strengths & Improvements ----
-        generateStrengthsAndImprovements(hs, dto, dailyRows, ccy);
+        generateStrengthsAndImprovements(hs, dto, dailyRows, ccy, ccyDecimals);
 
         // ---- AI Summary ----
         String weakest = dccApplicable
@@ -2013,7 +2122,8 @@ public class MerchantInsightService {
     // ---- DYNAMIC STRENGTHS & IMPROVEMENTS ----
 
     private void generateStrengthsAndImprovements(MerchantInsightsDTO.HealthScore hs,
-            MerchantInsightsDTO dto, List<com.acquira.common.model.SumDailyMerchant> dailyRows, String ccy) {
+            MerchantInsightsDTO dto, List<com.acquira.common.model.SumDailyMerchant> dailyRows,
+            String ccy, int ccyDecimals) {
         var ov = dto.getOverview();
         var demo = dto.getDemographics();
         var dcc = dto.getDccPerformance();
@@ -2030,7 +2140,7 @@ public class MerchantInsightService {
 
         // Top 3 = strengths
         for (int i = 0; i < Math.min(3, dims.size()); i++) {
-            String[] titleDetail = buildDimensionNarrative(dims.get(i)[1], dims.get(i)[0], dto, dailyRows, ccy, true);
+            String[] titleDetail = buildDimensionNarrative(dims.get(i)[1], dims.get(i)[0], dto, dailyRows, ccy, ccyDecimals, true);
             switch (i) {
                 case 0: hs.setStrength1Title(titleDetail[0]); hs.setStrength1Detail(titleDetail[1]); break;
                 case 1: hs.setStrength2Title(titleDetail[0]); hs.setStrength2Detail(titleDetail[1]); break;
@@ -2054,7 +2164,7 @@ public class MerchantInsightService {
             hs.setImprove3Detail("");
         } else {
             for (int i = 0; i < Math.min(3, weak.size()); i++) {
-                String[] titleDetail = buildDimensionNarrative(weak.get(i)[1], weak.get(i)[0], dto, dailyRows, ccy, false);
+                String[] titleDetail = buildDimensionNarrative(weak.get(i)[1], weak.get(i)[0], dto, dailyRows, ccy, ccyDecimals, false);
                 switch (i) {
                     case 0: hs.setImprove1Title(titleDetail[0]); hs.setImprove1Detail(titleDetail[1]); break;
                     case 1: hs.setImprove2Title(titleDetail[0]); hs.setImprove2Detail(titleDetail[1]); break;
@@ -2073,7 +2183,8 @@ public class MerchantInsightService {
      * @param isStrength true for strength narrative, false for improvement narrative
      */
     private String[] buildDimensionNarrative(int dimId, int score, MerchantInsightsDTO dto,
-            List<com.acquira.common.model.SumDailyMerchant> dailyRows, String ccy, boolean isStrength) {
+            List<com.acquira.common.model.SumDailyMerchant> dailyRows, String ccy, int ccyDecimals,
+            boolean isStrength) {
         var ov = dto.getOverview();
         var demo = dto.getDemographics();
         var dcc = dto.getDccPerformance();
@@ -2087,10 +2198,10 @@ public class MerchantInsightService {
                 BigDecimal totalSales = ov.getSales() != null ? ov.getSales().getValue() : BigDecimal.ZERO;
                 if (isStrength) {
                     return new String[]{"Strong Revenue Health",
-                        String.format("Revenue of %s %s with %d/%d active trading days (%+.1f%% MoM growth). Consistent daily performance.", ccy, fmt(totalSales), activeDays, totalDays, mom)};
+                        String.format("Revenue of %s %s with %d/%d active trading days (%+.1f%% MoM growth). Consistent daily performance.", ccy, money(totalSales, ccyDecimals), activeDays, totalDays, mom)};
                 } else {
                     return new String[]{String.format("Revenue Health at %d/100", score),
-                        String.format("%s %s total revenue with %d/%d active days (%+.1f%% MoM). %s", ccy, fmt(totalSales), activeDays, totalDays, mom,
+                        String.format("%s %s total revenue with %d/%d active days (%+.1f%% MoM). %s", ccy, money(totalSales, ccyDecimals), activeDays, totalDays, mom,
                             activeDays < totalDays * 0.8 ? "There are a notable number of inactive days \u2014 it may be worth exploring what's behind that pattern."
                             : mom < -5 ? "Sales are trending down \u2014 reviewing pricing, promotions, or external factors may help identify the cause."
                             : "Revenue looks a bit uneven day-to-day \u2014 loyalty incentives on quieter days could help smooth things out.")};
@@ -2116,7 +2227,7 @@ public class MerchantInsightService {
                 BigDecimal uniqueCards = loyalty != null && loyalty.getTotalUniqueCards() != null ? loyalty.getTotalUniqueCards() : BigDecimal.ZERO;
                 if (isStrength) {
                     return new String[]{"High Customer Retention",
-                        String.format("%.0f%% repeat rate across %s unique cards. Average spend per customer: %s %s.", retRate, fmt(uniqueCards), ccy, fmt(avgSpend))};
+                        String.format("%.0f%% repeat rate across %s unique cards. Average spend per customer: %s %s.", retRate, fmt(uniqueCards), ccy, money(avgSpend, ccyDecimals))};
                 } else {
                     return new String[]{String.format("Customer Loyalty at %d/100", score),
                         String.format("Repeat rate is %.0f%% with %s unique cards. %s", retRate, fmt(uniqueCards),
@@ -2154,7 +2265,7 @@ public class MerchantInsightService {
                         String.format("%.0f%% DCC conversion rate. Currency choice is being offered effectively.", convRate)};
                 } else {
                     return new String[]{String.format("DCC Conversion at %d/100", score),
-                        String.format("DCC conversion is currently %.0f%%, with %s %s of international card volume from opt-out transactions. Staff awareness training is often the most straightforward way to improve this.", convRate, ccy, fmt(optOutVol))};
+                        String.format("DCC conversion is currently %.0f%%, with %s %s of international card volume from opt-out transactions. Staff awareness training is often the most straightforward way to improve this.", convRate, ccy, money(optOutVol, ccyDecimals))};
                 }
             }
             default:

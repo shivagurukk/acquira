@@ -10,16 +10,13 @@ import {
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatCompactCurrency } from '../../utils/formatters';
 import SalesPortfolioPanel from '../../components/SalesPortfolioPanel';
 import { SectionLoader } from '../../components/Loaders';
 import { T, cardSx } from '../../theme/salesTokens';
 
-const fmtM = (v) => {
-    const n = Number(v || 0);
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-    return n.toFixed(0);
-};
+// Monthly target is MONEY — it now carries the tenant currency and precision.
+const fmtM = (v) => formatCompactCurrency(v);
 
 const SalesAgentDirectory = () => {
     const { tenantVersion } = useAuth();
