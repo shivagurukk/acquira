@@ -39,7 +39,7 @@ const RbacGroups = () => {
     const openModal = (group = null) => {
         if (group) {
             setCurrentGroup({
-                id: group.id,
+                id: group.groupId,
                 groupName: group.groupName,
                 description: group.description,
                 menuIds: group.menus ? group.menus.map(m => m.menuId) : []
