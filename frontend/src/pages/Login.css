@@ -1,45 +1,53 @@
 /* ============================================================================
-   NEXUS — Enterprise Payment Intelligence · Sign in
-   Split-screen: dark teal intelligence panel (58%) / light auth surface (42%).
+   AFS NEXUS — Enterprise Payment Intelligence · Sign in
+   Split-screen: cobalt blueprint panel (58%) / white auth surface (42%).
+
+   Design language: "drawn to spec". The brand panel is a drafting sheet —
+   a fine blueprint grid on deep cobalt, annotated in a monospace hand, with
+   a payment card drawn to its real ISO 7810 ID-1 dimensions as the single
+   signature element. The auth side is paper-white and quiet.
 
    All tokens are scoped to .login-page so this file cannot leak into the
-   application theme. Type personality comes from Inter's variable weight
-   range — a light 300 display against 600 utility caps and tabular figures —
-   rather than a second webfont.
+   application theme. Two voices only: Inter for prose and UI, a monospace
+   stack for every numeral and annotation — figures sit on the grid the way
+   they do on an engineering drawing.
    ========================================================================== */
 
 .login-page {
-    /* Brand */
-    --nx-navy-950: #061B20;
-    --nx-navy-900: #082F35;
-    --nx-navy-800: #0B3C43;
+    /* Brand — blue only, no second hue. */
+    --nx-ink-950: #060F2E;
+    --nx-ink-900: #0A1B4F;
+    --nx-ink-800: #10276B;
 
-    --nx-teal-700: #0F766E;
-    --nx-teal-600: #0D9488;
-    --nx-teal-500: #14B8A6;
-    --nx-teal-400: #2DD4BF;
-    --nx-teal-300: #5EEAD4;
-
-    --nx-cyan-400: #22D3EE;
+    --nx-blue-800: #1E40AF;
+    --nx-blue-700: #1D4ED8;
+    --nx-blue-600: #2563EB;
     --nx-blue-500: #3B82F6;
-    --nx-violet-500: #8B5CF6;
+    --nx-blue-400: #60A5FA;
+    --nx-blue-300: #93C5FD;
 
     /* Surfaces */
     --nx-surface: #FFFFFF;
-    --nx-surface-soft: #F0FDFA;
+    --nx-surface-soft: #F3F7FF;
     --nx-surface-muted: #F8FAFC;
 
     /* Ink */
-    --nx-text-primary: #102A2E;
-    --nx-text-secondary: #64748B;
-    --nx-border: #CCFBF1;
+    --nx-text-primary: #0F1F4B;
+    --nx-text-secondary: #5B6B8C;
+    --nx-border: #D7E3FA;
     --nx-error: #DC2626;
 
     /* Ink on the dark panel */
-    --nx-on-dark: #ECFEFF;
-    --nx-on-dark-soft: #A8C6C9;
+    --nx-on-dark: #EDF4FF;
+    --nx-on-dark-soft: #A7B8DC;
 
-    --nx-brand-gradient: linear-gradient(135deg, #0F766E 0%, #14B8A6 38%, #22D3EE 70%, #3B82F6 100%);
+    /* Blueprint linework on the dark panel */
+    --nx-grid-line: rgba(147, 197, 253, 0.07);
+    --nx-grid-line-major: rgba(147, 197, 253, 0.13);
+    --nx-draft-line: rgba(191, 219, 254, 0.62);
+    --nx-draft-faint: rgba(147, 197, 253, 0.28);
+
+    --nx-mono: 'Cascadia Code', ui-monospace, 'SF Mono', 'JetBrains Mono', Consolas, monospace;
     --nx-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 
     position: relative;
@@ -60,8 +68,9 @@
 /* ============================ LEFT — BRAND ============================== */
 
 /* Three-band page structure: masthead / statement / capability rail.
-   Flat navy — no radial glow, no blur. Depth comes from the composed
-   geometry below, which is drawn with hard edges and sits still. */
+   The panel is a drafting sheet: flat cobalt ink with a fine blueprint grid
+   (a heavier rule every fifth line) drawn in CSS. No glow, no blur — depth
+   comes from linework. */
 .nx-brand {
     position: relative;
     display: grid;
@@ -69,22 +78,40 @@
     padding: clamp(40px, 4.6vw, 68px);
     overflow: hidden;
     isolation: isolate;
-    background: #061B20;
+    background:
+        repeating-linear-gradient(0deg,
+            var(--nx-grid-line-major) 0, var(--nx-grid-line-major) 1px, transparent 1px, transparent 120px),
+        repeating-linear-gradient(90deg,
+            var(--nx-grid-line-major) 0, var(--nx-grid-line-major) 1px, transparent 1px, transparent 120px),
+        repeating-linear-gradient(0deg,
+            var(--nx-grid-line) 0, var(--nx-grid-line) 1px, transparent 1px, transparent 24px),
+        repeating-linear-gradient(90deg,
+            var(--nx-grid-line) 0, var(--nx-grid-line) 1px, transparent 1px, transparent 24px),
+        var(--nx-ink-900);
     color: var(--nx-on-dark);
 }
 
-/* ---- Signature: a measurement dial, cropped by the corner.
-   Tick ring, two thin rings, a filled teal disc, and one cyan arc segment
-   with round caps — the panel's single high-chroma moment. Drawn as SVG so
-   every stroke is deliberate. Static by design. ---- */
-.nx-dial {
+/* ---- Signature: a payment card drawn to spec, cropped by the corner.
+   ISO/IEC 7810 ID-1 — 85.60 × 53.98 mm, R3.18 corners — with dimension
+   lines, centre marks and mono callouts, like a sheet from the card
+   manufacturer's drawing pack. Drawn as SVG so every stroke is deliberate.
+   Static by design. ---- */
+.nx-schematic {
     position: absolute;
-    right: -13%;
-    bottom: -28%;
+    right: -7%;
+    bottom: -14%;
     z-index: -1;
-    width: clamp(440px, 48vw, 760px);
+    width: clamp(460px, 46vw, 720px);
     height: auto;
+    transform: rotate(-7deg);
     pointer-events: none;
+}
+
+.nx-schematic text {
+    font-family: var(--nx-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    fill: var(--nx-blue-300);
 }
 
 /* ---- Masthead ---- */
@@ -94,6 +121,8 @@
     gap: 14px;
 }
 
+/* The tile is drawn inside the SVG (AfsLogo.jsx) so the official asset can be
+   swapped in without touching this file; the wrapper only carries the lift. */
 .nx-mark {
     display: grid;
     place-items: center;
@@ -101,22 +130,20 @@
     width: 52px;
     height: 52px;
     border-radius: 15px;
-    background: var(--nx-brand-gradient);
-    color: #fff;
-    font-size: 1.05rem;
-    font-weight: 700;
-    letter-spacing: -0.04em;
-    box-shadow: 0 10px 30px rgba(13, 148, 136, 0.42);
+    box-shadow: 0 10px 30px rgba(29, 78, 216, 0.45);
 }
+
+.nx-mark svg { display: block; width: 100%; height: 100%; border-radius: inherit; }
 
 .nx-mark--sm {
     width: 42px;
     height: 42px;
     border-radius: 12px;
-    font-size: 0.88rem;
-    box-shadow: 0 8px 22px rgba(13, 148, 136, 0.26);
+    box-shadow: 0 8px 22px rgba(29, 78, 216, 0.26);
 }
 
+/* AFS carries the weight; NEXUS sets lighter beside it so the lockup reads as
+   one name with a parent brand rather than two competing words. */
 .nx-wordmark {
     margin: 0;
     font-size: 1.45rem;
@@ -126,13 +153,19 @@
     color: #fff;
 }
 
+.nx-wordmark span {
+    font-weight: 300;
+    letter-spacing: 0.01em;
+    color: var(--nx-blue-300);
+}
+
 .nx-tagline {
     margin: 5px 0 0;
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--nx-teal-300);
+    color: var(--nx-blue-300);
 }
 
 /* ---- Statement band ---- */
@@ -141,32 +174,35 @@
 .nx-brand__mid {
     position: relative;
     align-self: center;
-    max-width: 32rem;
-    padding: clamp(28px, 5vh, 56px) 0;
+    max-width: 34rem;
+    width: 100%;
+    padding: clamp(24px, 4vh, 48px) 0;
 }
 
+/* Eyebrows are set in the drawing's annotation voice — mono, spaced caps. */
 .nx-eyebrow {
     display: flex;
     align-items: center;
     gap: 12px;
     margin: 0 0 20px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: 0.13em;
+    font-family: var(--nx-mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--nx-teal-300);
+    color: var(--nx-blue-300);
 }
 
 .nx-eyebrow::before {
     content: '';
     width: 26px;
-    height: 2px;
-    background: var(--nx-teal-500);
+    height: 1px;
+    background: var(--nx-blue-400);
 }
 
 .nx-headline {
-    margin: 0 0 22px;
-    font-size: clamp(2.1rem, 3.5vw, 3.3rem);
+    margin: 0 0 18px;
+    font-size: clamp(1.8rem, 2.85vw, 2.7rem);
     font-weight: 600;
     line-height: 1.02;
     letter-spacing: -0.042em;
@@ -177,7 +213,7 @@
 /* Solid accent, not a gradient wash — the colour break carries the emphasis. */
 .nx-headline em {
     font-style: normal;
-    color: var(--nx-teal-300);
+    color: var(--nx-blue-300);
 }
 
 .nx-support {
@@ -188,32 +224,376 @@
     color: var(--nx-on-dark-soft);
 }
 
-/* ---- Capability rail: four columns inside the statement band, each opened
-   by a short rule stepping teal -> cyan. Narrow columns so every label sets
-   on two lines — one wrapped label among three straight ones reads as an
-   accident. The rules mark divisions that exist in the product. ---- */
-.nx-capabilities {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0 18px;
-    margin: 38px 0 0;
+/* ---- Rotating statement deck ------------------------------------------
+   Four slides, each a claim plus one small data visual. The stage is height-
+   locked so the masthead and baseline strip never shift as slides change —
+   a panel that jumps on every rotation reads as broken, not alive. ---- */
+/* Held to the tallest slide. Measured, not guessed — if slide copy or a visual
+   changes, re-check it, because anything taller pushes the baseline strip and
+   the panel visibly jogs on every rotation. */
+.nx-deck__stage {
+    min-height: 31rem;
+}
+
+/* The slide is remounted on every rotation, so this replays each time — and
+   so do the entry animations inside whichever visual it carries. */
+.nx-slide {
+    animation: nxSlideIn 0.5s var(--nx-ease) both;
+}
+
+@keyframes nxSlideIn {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: none; }
+}
+
+.nx-deck__nav {
+    display: flex;
+    gap: 8px;
+    margin-top: 26px;
+}
+
+/* Each bar is both the progress meter for its slide and the control that
+   jumps to it. Height is padded out to a 24px hit area. */
+.nx-deck__dot {
+    flex: 1;
+    max-width: 74px;
+    padding: 10px 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.nx-deck__dot::before {
+    content: '';
+    display: block;
+    height: 2px;
+    border-radius: 2px;
+    background: rgba(147, 197, 253, 0.2);
+    transition: background-color 0.2s var(--nx-ease);
+}
+
+.nx-deck__dot:hover::before { background: rgba(147, 197, 253, 0.38); }
+.nx-deck__dot:focus-visible { outline: 2px solid var(--nx-blue-400); outline-offset: 2px; border-radius: 4px; }
+
+/* The fill doubles as the timer: the live bar scales across in exactly the
+   slide's duration (set inline), so what you see is the real countdown. With
+   reduced motion there is no duration and it simply reads as full. */
+.nx-deck__fill {
+    display: block;
+    width: 100%;
+    height: 2px;
+    margin-top: -2px;
+    border-radius: 2px;
+    background: #fff;
+    transform: scaleX(0);
+    transform-origin: left;
+}
+
+.nx-deck__fill[data-state='done'] {
+    background: var(--nx-blue-400);
+    transform: scaleX(1);
+}
+
+.nx-deck__fill[data-state='live'] {
+    animation-name: nxFill;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+}
+
+@keyframes nxFill {
+    from { transform: scaleX(0); }
+    to   { transform: scaleX(1); }
+}
+
+/* ---- Visual card: a detail view clipped from the drawing sheet ---- */
+.nx-viz {
+    margin: 30px 0 0;
+    padding: 16px 18px 14px;
+    border: 1px solid rgba(147, 197, 253, 0.22);
+    border-radius: 4px;
+    background: rgba(6, 15, 46, 0.45);
+}
+
+.nx-viz__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.nx-viz__label {
+    font-family: var(--nx-mono);
+    font-size: 0.66rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(167, 184, 220, 0.9);
+}
+
+.nx-viz__figure {
+    font-family: var(--nx-mono);
+    font-size: 0.98rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--nx-blue-300);
+}
+
+.nx-viz__foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 10px;
+    font-family: var(--nx-mono);
+    font-size: 0.64rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: rgba(167, 184, 220, 0.62);
+}
+
+@keyframes nxFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes nxStatIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- Slide visuals: four payment-native detail drawings ----------------
+   No charts. Each slide carries a small instrument from the acquiring
+   trade — an authorisation route, a merchant activity punch-card, a
+   pricing rate card, a settlement lifecycle — drawn in the sheet's own
+   linework and annotated in the mono voice. */
+
+/* Authorisation route: card → POS → scheme → issuer. */
+.nx-route {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-bottom: 2px;
+}
+
+.nx-route text {
+    font-family: var(--nx-mono);
+    font-size: 8.5px;
+    letter-spacing: 0.14em;
+    text-anchor: middle;
+    fill: rgba(167, 184, 220, 0.7);
+}
+
+.nx-route__seg {
+    stroke: rgba(147, 197, 253, 0.4);
+    stroke-width: 1;
+    stroke-dasharray: 3 4;
+    animation: nxFade 0.45s var(--nx-ease) both;
+}
+
+.nx-route__node {
+    fill: none;
+    stroke: var(--nx-draft-line);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    animation: nxFade 0.45s var(--nx-ease) both;
+}
+
+.nx-route__node.is-lead { stroke: #fff; }
+
+/* Fee split of the one transaction, dotted leaders like an invoice. */
+.nx-fees {
+    margin: 10px 0 0;
     padding: 0;
-    max-width: 470px;
     list-style: none;
 }
 
-.nx-capability {
-    padding-top: 12px;
-    border-top: 2px solid var(--nx-teal-500);
-    font-size: 0.77rem;
-    font-weight: 500;
-    line-height: 1.45;
-    color: #B9D6D6;
+.nx-fees li {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding-top: 7px;
+    font-size: 0.78rem;
+    color: var(--nx-on-dark-soft);
+    animation: nxStatIn 0.5s var(--nx-ease) both;
 }
 
-.nx-capability:nth-child(2) { border-top-color: var(--nx-teal-400); }
-.nx-capability:nth-child(3) { border-top-color: var(--nx-cyan-400); }
-.nx-capability:nth-child(4) { border-top-color: rgba(34, 211, 238, 0.45); }
+.nx-fees__leader {
+    flex: 1;
+    border-bottom: 1px dotted rgba(147, 197, 253, 0.3);
+}
+
+.nx-fees__amt {
+    font-family: var(--nx-mono);
+    font-weight: 600;
+    color: var(--nx-blue-300);
+}
+
+.nx-fees li.is-lead { color: #fff; }
+.nx-fees li.is-lead .nx-fees__amt { color: #fff; }
+
+/* Merchant pulse: 14 days of card activity per merchant, punch-card style.
+   A row going quiet is the whole story — no chart required. */
+.nx-pulse {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.nx-pulse__row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 12px;
+    animation: nxStatIn 0.5s var(--nx-ease) both;
+}
+
+.nx-pulse__ref {
+    font-family: var(--nx-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #fff;
+}
+
+.nx-pulse__days {
+    display: flex;
+    justify-content: space-between;
+    gap: 4px;
+}
+
+.nx-pulse__day {
+    width: 8px;
+    height: 15px;
+    border-radius: 2px;
+    background: rgba(96, 165, 250, 0.55);
+    animation: nxFade 0.3s var(--nx-ease) both;
+}
+
+.nx-pulse__day.is-off { background: rgba(147, 197, 253, 0.12); }
+
+.nx-pulse__status {
+    font-family: var(--nx-mono);
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(167, 184, 220, 0.7);
+}
+
+.nx-pulse__row.is-flag .nx-pulse__status { color: #fff; }
+.nx-pulse__row.is-flag .nx-pulse__day:not(.is-off) { background: #fff; }
+
+/* Rate card: agreed vs effective MSF by segment, set like the schedule. */
+.nx-rate {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.nx-rate__row {
+    display: grid;
+    grid-template-columns: 1fr 58px 58px 44px;
+    gap: 12px;
+    align-items: baseline;
+    font-size: 0.78rem;
+    animation: nxStatIn 0.5s var(--nx-ease) both;
+}
+
+.nx-rate__row--head {
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(147, 197, 253, 0.14);
+    font-family: var(--nx-mono);
+    font-size: 0.58rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(167, 184, 220, 0.55);
+    animation: none;
+}
+
+.nx-rate__row--head span:not(:first-child) { text-align: right; }
+
+.nx-rate__seg { color: var(--nx-on-dark-soft); }
+
+.nx-rate__num {
+    font-family: var(--nx-mono);
+    font-weight: 600;
+    text-align: right;
+    color: var(--nx-blue-300);
+}
+
+.nx-rate__row.is-flag .nx-rate__seg { color: #fff; }
+.nx-rate__row.is-flag .nx-rate__num { color: #fff; }
+
+/* Settlement lifecycle: three stages on one dashed rail, the same amount
+   at every stage — books that agree, shown literally. */
+.nx-flow {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.nx-flow::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    right: 4px;
+    border-top: 1px dashed rgba(147, 197, 253, 0.3);
+}
+
+.nx-flow__stage {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-top: 16px;
+    animation: nxStatIn 0.5s var(--nx-ease) both;
+}
+
+.nx-flow__stage::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid var(--nx-blue-300);
+    background: var(--nx-ink-900);
+}
+
+.nx-flow__stage.is-lead::before {
+    border-color: #fff;
+    background: #fff;
+}
+
+.nx-flow__label {
+    font-family: var(--nx-mono);
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(167, 184, 220, 0.7);
+}
+
+.nx-flow__time {
+    font-size: 0.7rem;
+    color: rgba(167, 184, 220, 0.62);
+}
+
+.nx-flow__amt {
+    font-family: var(--nx-mono);
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--nx-blue-300);
+}
+
+.nx-flow__stage.is-lead .nx-flow__label,
+.nx-flow__stage.is-lead .nx-flow__amt { color: #fff; }
 
 /* ---- Baseline strip: full-width hairline with three quiet facts. All three
    are true of the platform (JWT auth, RBAC menus, audit log). ---- */
@@ -222,10 +602,10 @@
     flex-wrap: wrap;
     gap: 8px 32px;
     padding-top: 18px;
-    border-top: 1px solid rgba(94, 234, 212, 0.14);
+    border-top: 1px solid rgba(147, 197, 253, 0.16);
     font-size: 0.73rem;
     font-weight: 500;
-    color: rgba(168, 198, 201, 0.8);
+    color: rgba(167, 184, 220, 0.82);
 }
 
 .nx-baseline span {
@@ -239,7 +619,7 @@
     width: 4px;
     height: 4px;
     border-radius: 50%;
-    background: var(--nx-teal-500);
+    background: var(--nx-blue-400);
 }
 
 /* ============================ RIGHT — AUTH ============================= */
@@ -323,7 +703,7 @@
 .login-input-wrapper .input-icon {
     position: absolute;
     left: 16px;
-    color: var(--nx-teal-600);
+    color: var(--nx-blue-600);
     opacity: 0.75;
     pointer-events: none;
     transition: opacity 0.2s var(--nx-ease), color 0.2s var(--nx-ease);
@@ -334,7 +714,7 @@
     height: 52px;
     padding: 0 16px 0 46px;
     border: 1px solid var(--nx-border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--nx-surface);
     color: var(--nx-text-primary);
     font-family: inherit;
@@ -361,17 +741,17 @@
 }
 
 .login-input-wrapper input:hover:not(:disabled) {
-    border-color: var(--nx-teal-400);
+    border-color: var(--nx-blue-400);
 }
 
 .login-input-wrapper input:focus-visible,
 .login-input-wrapper input:focus {
-    border-color: var(--nx-teal-600);
-    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.18);
+    border-color: var(--nx-blue-600);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
 }
 
 .login-input-wrapper:focus-within .input-icon {
-    color: var(--nx-teal-700);
+    color: var(--nx-blue-700);
     opacity: 1;
 }
 
@@ -415,8 +795,8 @@
     transition: color 0.18s var(--nx-ease), background-color 0.18s var(--nx-ease);
 }
 
-.nx-eye:hover { color: var(--nx-teal-700); background: var(--nx-surface-soft); }
-.nx-eye:focus-visible { outline: 2px solid var(--nx-teal-600); outline-offset: 2px; }
+.nx-eye:hover { color: var(--nx-blue-700); background: var(--nx-surface-soft); }
+.nx-eye:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 2px; }
 
 /* ---- Messages ---- */
 .login-error-banner {
@@ -425,7 +805,7 @@
     gap: 9px;
     padding: 12px 14px;
     border: 1px solid rgba(220, 38, 38, 0.22);
-    border-radius: 12px;
+    border-radius: 10px;
     background: rgba(220, 38, 38, 0.06);
     color: #B91C1C;
     font-size: 0.84rem;
@@ -435,10 +815,10 @@
 
 .nx-notice {
     padding: 12px 14px;
-    border: 1px solid rgba(13, 148, 136, 0.24);
-    border-radius: 12px;
+    border: 1px solid rgba(37, 99, 235, 0.24);
+    border-radius: 10px;
     background: var(--nx-surface-soft);
-    color: var(--nx-teal-700);
+    color: var(--nx-blue-700);
     font-size: 0.84rem;
     font-weight: 500;
     line-height: 1.5;
@@ -464,7 +844,7 @@
     padding: 0;
     border: none;
     background: none;
-    color: var(--nx-teal-700);
+    color: var(--nx-blue-700);
     font-family: inherit;
     font-size: 0.82rem;
     font-weight: 600;
@@ -472,11 +852,13 @@
     transition: color 0.18s var(--nx-ease);
 }
 
-.nx-link:hover:not(:disabled) { color: var(--nx-teal-600); text-decoration: underline; }
-.nx-link:focus-visible { outline: 2px solid var(--nx-teal-600); outline-offset: 3px; border-radius: 3px; }
+.nx-link:hover:not(:disabled) { color: var(--nx-blue-600); text-decoration: underline; }
+.nx-link:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 3px; border-radius: 3px; }
 .nx-link:disabled { color: var(--nx-text-secondary); cursor: default; }
 
-/* ---- Primary button ---- */
+/* ---- Primary button ----
+   Solid cobalt, no gradient — the drawing sheet uses one ink and so does the
+   action that signs you into it. #1D4ED8 holds white text at 6.3:1. */
 .login-submit-btn {
     position: relative;
     display: flex;
@@ -485,11 +867,8 @@
     height: 52px;
     padding: 0 20px;
     border: none;
-    border-radius: 12px;
-    /* The brief's example ramp (#0D9488 → #14B8A6 → #0891B2) puts white text at
-       2.5:1 in the middle, well under AA. Same teal → cyan hue ramp, one step
-       darker: 5.5:1 / 4.6:1 / 5.4:1. */
-    background: linear-gradient(110deg, #0F766E, #0D8478, #0E7490);
+    border-radius: 10px;
+    background: var(--nx-blue-700);
     color: #fff;
     font-family: inherit;
     font-size: 0.94rem;
@@ -497,7 +876,7 @@
     letter-spacing: -0.005em;
     cursor: pointer;
     overflow: hidden;
-    box-shadow: 0 12px 28px rgba(13, 148, 136, 0.24);
+    box-shadow: 0 12px 28px rgba(29, 78, 216, 0.26);
     transition: transform 0.18s var(--nx-ease), box-shadow 0.22s var(--nx-ease);
 }
 
@@ -505,19 +884,19 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(110deg, #0B5F58, #0F766E, #0C6180);
+    background: var(--nx-blue-800);
     opacity: 0;
     transition: opacity 0.22s var(--nx-ease);
 }
 
 .login-submit-btn:hover:not(:disabled) {
     transform: translateY(-1px);
-    box-shadow: 0 16px 34px rgba(13, 148, 136, 0.32);
+    box-shadow: 0 16px 34px rgba(29, 78, 216, 0.34);
 }
 
 .login-submit-btn:hover:not(:disabled)::before { opacity: 1; }
 .login-submit-btn:active:not(:disabled) { transform: translateY(0); }
-.login-submit-btn:focus-visible { outline: 2px solid var(--nx-teal-700); outline-offset: 3px; }
+.login-submit-btn:focus-visible { outline: 2px solid var(--nx-blue-800); outline-offset: 3px; }
 
 .login-submit-btn:disabled {
     cursor: not-allowed;
@@ -560,7 +939,7 @@
     width: 100%;
     height: 50px;
     border: 1px solid #E2E8F0;
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--nx-surface);
     color: var(--nx-text-primary);
     font-family: inherit;
@@ -570,8 +949,8 @@
     transition: border-color 0.18s var(--nx-ease), background-color 0.18s var(--nx-ease);
 }
 
-.nx-sso-btn:hover { border-color: var(--nx-teal-400); background: var(--nx-surface-soft); }
-.nx-sso-btn:focus-visible { outline: 2px solid var(--nx-teal-600); outline-offset: 2px; }
+.nx-sso-btn:hover { border-color: var(--nx-blue-400); background: var(--nx-surface-soft); }
+.nx-sso-btn:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 2px; }
 
 .login-back-btn {
     padding: 10px;
@@ -586,8 +965,8 @@
     transition: color 0.18s var(--nx-ease);
 }
 
-.login-back-btn:hover { color: var(--nx-teal-700); }
-.login-back-btn:focus-visible { outline: 2px solid var(--nx-teal-600); outline-offset: 2px; border-radius: 6px; }
+.login-back-btn:hover { color: var(--nx-blue-700); }
+.login-back-btn:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 2px; border-radius: 6px; }
 
 /* ---- Reset-password sub-flow ---- */
 .nx-steps {
@@ -605,7 +984,7 @@
     transition: background-color 0.25s var(--nx-ease);
 }
 
-.nx-step-bar.is-active { background: var(--nx-teal-600); }
+.nx-step-bar.is-active { background: var(--nx-blue-600); }
 
 .nx-step-title {
     margin: 0;
@@ -627,11 +1006,11 @@
 .nx-step-text strong { color: var(--nx-text-primary); font-weight: 600; }
 
 .nx-otp-input {
+    font-family: var(--nx-mono);
     letter-spacing: 0.42em;
     text-align: center;
     font-size: 1.15rem !important;
     font-weight: 600;
-    font-variant-numeric: tabular-nums;
 }
 
 .nx-pw-checks {
@@ -643,7 +1022,7 @@
     color: var(--nx-text-secondary);
 }
 
-.nx-pw-check.is-valid { color: var(--nx-teal-700); font-weight: 500; }
+.nx-pw-check.is-valid { color: var(--nx-blue-700); font-weight: 500; }
 
 /* ---- SSO status / request access ---- */
 .nx-status {
@@ -677,14 +1056,14 @@
 .nx-info-box {
     padding: 12px 14px;
     border: 1px solid var(--nx-border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--nx-surface-soft);
 }
 
 .nx-info-box__title {
     font-size: 0.83rem;
     font-weight: 600;
-    color: var(--nx-teal-700);
+    color: var(--nx-blue-700);
 }
 
 .nx-info-box__body {
@@ -704,7 +1083,7 @@
     height: 52px;
     padding: 0 14px;
     border: 1px solid var(--nx-border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--nx-surface);
     color: var(--nx-text-primary);
     font-family: inherit;
@@ -716,8 +1095,8 @@
 
 .nx-select:focus-visible,
 .nx-select:focus {
-    border-color: var(--nx-teal-600);
-    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.18);
+    border-color: var(--nx-blue-600);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
 }
 
 /* ---- Tenant selection ---- */
@@ -773,7 +1152,7 @@
     width: 100%;
     padding: 13px 14px;
     border: 1px solid #E2E8F0;
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--nx-surface);
     font-family: inherit;
     text-align: left;
@@ -783,14 +1162,14 @@
 }
 
 .tenant-card:hover:not(:disabled) {
-    border-color: var(--nx-teal-400);
+    border-color: var(--nx-blue-400);
     background: var(--nx-surface-soft);
     transform: translateX(3px);
 }
 
-.tenant-card:focus-visible { outline: 2px solid var(--nx-teal-600); outline-offset: 2px; }
+.tenant-card:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 2px; }
 .tenant-card:disabled { cursor: default; }
-.tenant-card.active { border-color: var(--nx-teal-600); background: var(--nx-surface-soft); }
+.tenant-card.active { border-color: var(--nx-blue-600); background: var(--nx-surface-soft); }
 
 .tenant-card-left {
     display: flex;
@@ -837,7 +1216,7 @@
     gap: 6px;
     font-size: 0.76rem;
     font-weight: 500;
-    color: var(--nx-teal-700);
+    color: var(--nx-blue-700);
 }
 
 .login-footer {
@@ -853,10 +1232,11 @@
     border: 1px solid var(--nx-border);
     border-radius: 999px;
     background: var(--nx-surface-soft);
-    color: var(--nx-teal-700);
-    font-size: 0.64rem;
+    color: var(--nx-blue-700);
+    font-family: var(--nx-mono);
+    font-size: 0.62rem;
     font-weight: 600;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
 }
 
@@ -873,13 +1253,18 @@
 /* Tablet — keep the split, thin out the decoration. */
 @media (max-width: 1180px) {
     .login-page { grid-template-columns: 52fr 48fr; }
-    .nx-capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 18px; max-width: 320px; }
+    .nx-deck__stage { min-height: 29.5rem; }
+    .nx-viz { margin-top: 24px; }
 }
 
+/* Below this the brand column is too narrow to hold a readable visual next to
+   the statement, so the card goes and the claim carries the panel alone. */
 @media (max-width: 900px) {
-    .nx-dial { right: -34%; bottom: -22%; }
-    .nx-brand__mid { max-width: 22rem; }
+    .nx-schematic { right: -30%; bottom: -10%; }
+    .nx-brand__mid { max-width: 24rem; }
     .nx-baseline { gap: 8px 20px; }
+    .nx-viz { display: none; }
+    .nx-deck__stage { min-height: 15rem; }
 }
 
 /* Mobile — single column with a compact brand header. */
@@ -903,8 +1288,11 @@
         width: 100%;
         padding: 30px 20px 34px;
         background:
-            radial-gradient(circle at 18% 20%, rgba(45, 212, 191, 0.26), transparent 55%),
-            linear-gradient(145deg, #061B20 0%, #082F35 60%, #0B253F 100%);
+            repeating-linear-gradient(0deg,
+                rgba(147, 197, 253, 0.08) 0, rgba(147, 197, 253, 0.08) 1px, transparent 1px, transparent 24px),
+            repeating-linear-gradient(90deg,
+                rgba(147, 197, 253, 0.08) 0, rgba(147, 197, 253, 0.08) 1px, transparent 1px, transparent 24px),
+            linear-gradient(150deg, #060F2E 0%, #0A1B4F 62%, #10276B 100%);
         color: #fff;
         text-align: center;
     }
@@ -914,7 +1302,7 @@
         margin-bottom: 14px;
     }
 
-    .nx-mobile-brand .nx-tagline { color: var(--nx-teal-300); }
+    .nx-mobile-brand .nx-tagline { color: var(--nx-blue-300); }
 
     .nx-mobile-brand__line {
         margin: 0;

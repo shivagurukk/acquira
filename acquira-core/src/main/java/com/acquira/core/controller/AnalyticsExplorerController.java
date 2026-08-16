@@ -49,6 +49,11 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/analytics/explorer")
+// Gated to the Data Explorer grant. Note: PricingSimulator also calls /query and
+// now requires the /explorer grant (same data sensitivity). The two existing
+// method-level hasAnyRole('ADMIN','SUPER_ADMIN') annotations override this
+// class-level gate for their endpoints.
+@PreAuthorize("@menuAccess.canAccess('/explorer')")
 public class AnalyticsExplorerController {
 
     private static final Logger logger = LoggerFactory.getLogger(AnalyticsExplorerController.class);
@@ -1180,8 +1185,10 @@ public class AnalyticsExplorerController {
                 if (args.size() != 1) throw new IllegalArgumentException("ABS() takes 1 argument");
                 return "ABS(" + args.get(0) + ")";
             case "ROUND":
-                if (args.size() == 1) return "ROUND((" + args.get(0) + ")::numeric)";
-                if (args.size() == 2) return "ROUND((" + args.get(0) + ")::numeric, (" + args.get(1) + ")::int)";
+                // CAST(... AS ...) not ::  — Hibernate mangles the `::` cast in native
+                // queries (sends a single colon → syntax error). See TrendsController.
+                if (args.size() == 1) return "ROUND(CAST(" + args.get(0) + " AS numeric))";
+                if (args.size() == 2) return "ROUND(CAST(" + args.get(0) + " AS numeric), CAST(" + args.get(1) + " AS int))";
                 throw new IllegalArgumentException("ROUND() takes 1 or 2 arguments");
             case "COALESCE":
                 if (args.isEmpty()) throw new IllegalArgumentException("COALESCE() needs at least 1 argument");

@@ -89,6 +89,8 @@ public class MenuController {
                 {"Retention Report",       "/business/retention",        "HeartHandshake","BUSINESS",      15},
                 {"Forecasting",            "/business/forecasting",      "Gauge",        "BUSINESS",      16},
                 {"Top Performers",         "/business/top-performers",   "Trophy",       "BUSINESS",      17},
+                // Safety net for V2026_08_15_01__destination_dashboard_menu.sql
+                {"Destination Dashboard",  "/business/destination-dashboard", "Globe",   "BUSINESS",      18},
                 // ── SALES suite ──────────────────────────────────────────────
                 // Routes for all five screens exist in App.jsx, but only Team
                 // Management and Leaderboard ever had sys_menu rows (from an
@@ -126,7 +128,13 @@ public class MenuController {
                 "  AND m.path NOT IN (" +
                 "    '/admin/groups','/admin/smtp-settings','/admin/audit-logs'," +
                 "    '/admin/backups','/admin/s3-settings','/admin/sso-settings'," +
-                "    '/admin/data-migration','/admin/security-settings','/admin/api-management'" +
+                "    '/admin/data-migration','/admin/security-settings','/admin/api-management'," +
+                // SUPER_ADMIN-only screens (route RoleGuard is SUPER_ADMIN): a Bank
+                // Admin must not even see these in the sidebar. Added 2026-08-15 (E2E
+                // RBAC-006u) — previously granted here, so the menu showed though the
+                // route still redirected.
+                "    '/tenants','/admin/tenant-provisioning','/admin/bin-management'," +
+                "    '/admin/interchange-normalization'" +
                 "  ) ON CONFLICT DO NOTHING"
             );
 

@@ -64,6 +64,11 @@ public class StagingTransaction {
 
     private String destination;
 
+    // Issuer country resolved from the BIN reference data (ref_bin /
+    // ref_bin_range) during ingestion when the tenant opted into BIN typing.
+    // Metadata only — never drives destination or fee pricing.
+    private String issuerCountry;
+
     // Additional fields from schema if missed
     private String terminalDeviceNumber; // Not in used sample but good to have if in schema? No, not in stg_trnx_raw
                                          // schema check above.
@@ -394,6 +399,14 @@ public class StagingTransaction {
 
     public void setDestination(String destination) {
         this.destination = destination;
+    }
+
+    public String getIssuerCountry() {
+        return issuerCountry;
+    }
+
+    public void setIssuerCountry(String issuerCountry) {
+        this.issuerCountry = issuerCountry;
     }
 
     public String getTerminalDeviceNumber() {

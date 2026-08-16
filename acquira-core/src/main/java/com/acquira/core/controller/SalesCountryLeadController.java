@@ -5,6 +5,7 @@ import com.acquira.core.service.SalesCountryLeadService;
 import com.acquira.core.service.TenantService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -17,6 +18,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/sales-country-lead")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAccess.canAccess('/sales/country-management')")
 public class SalesCountryLeadController {
 
     private final SalesCountryLeadService salesCountryLeadService;
@@ -26,6 +28,8 @@ public class SalesCountryLeadController {
         return tenantService.getCurrentTenantId();
     }
 
+    // Also read by the executive sales and hierarchy screens, so any of the three grants passes.
+    @PreAuthorize("@menuAccess.canAccess('/sales/country-management') or @menuAccess.canAccess('/executive/sales') or @menuAccess.canAccess('/sales/hierarchy')")
     @GetMapping("/country-leads")
     public ResponseEntity<List<SalesCountryLead>> getCountryLeads() {
         return ResponseEntity.ok(salesCountryLeadService.getCountryLeads(getTenantId()));
@@ -59,6 +63,8 @@ public class SalesCountryLeadController {
     }
 
     /** Team leads with their current country-lead mapping + MAPPED/UNMAPPED status. */
+    // Also read by the hierarchy screen, so either grant passes.
+    @PreAuthorize("@menuAccess.canAccess('/sales/country-management') or @menuAccess.canAccess('/sales/hierarchy')")
     @GetMapping("/team-leads")
     public ResponseEntity<List<Map<String, Object>>> getTeamLeads() {
         return ResponseEntity.ok(salesCountryLeadService.getTeamLeadsWithStatus(getTenantId()));

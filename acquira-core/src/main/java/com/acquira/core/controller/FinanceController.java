@@ -9,6 +9,7 @@ import jakarta.persistence.PersistenceContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -18,6 +19,12 @@ import java.util.*;
 
 @RestController
 @RequestMapping("/api/finance")
+// Server-side enforcement of the DB menu grant (audit M-7): the Finance screens
+// are granted to Super Admin / Bank Admin / Finance User only. Without this a
+// Business/Ops user of the tenant could call these bank-wide net-revenue
+// endpoints directly. Role annotations can't express group grants, so we defer
+// to the same sys_group_menu grant the sidebar uses. SUPER_ADMIN always passes.
+@PreAuthorize("@menuAccess.canAccess('/finance/dashboard')")
 public class FinanceController {
 
     private final SumDailyBankRepository bankRepository;

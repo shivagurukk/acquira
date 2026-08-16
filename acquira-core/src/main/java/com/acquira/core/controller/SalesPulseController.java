@@ -19,6 +19,7 @@ import com.acquira.core.service.SalesTargetResolver;
 import com.acquira.core.service.TenantService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -60,6 +61,7 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/executive/sales-pulse")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAccess.canAccess('/executive/sales')")
 public class SalesPulseController {
 
     private static final String UNASSIGNED_TEAM = "Unassigned";

@@ -6,6 +6,7 @@ import com.acquira.common.model.SumMonthlyBank;
 import com.acquira.common.repository.BankBudgetTargetRepository;
 import com.acquira.common.repository.SumMonthlyBankRepository;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.persistence.EntityManager;
@@ -66,6 +67,7 @@ import java.util.*;
  */
 @RestController
 @RequestMapping("/api/business/forecast")
+@PreAuthorize("@menuAccess.canAccess('/business/forecasting')")
 public class ForecastController {
 
     @PersistenceContext

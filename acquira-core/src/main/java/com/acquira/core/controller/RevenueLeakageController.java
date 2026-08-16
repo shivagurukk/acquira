@@ -5,6 +5,7 @@ import com.acquira.common.service.AuditService;
 import com.acquira.common.service.RevenueLeakageDetectionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,6 +20,8 @@ import java.util.*;
  */
 @RestController
 @RequestMapping("/api/leakage")
+// /business/revenue-leakage has no sys_menu row; matches the route's RoleGuard.
+@PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
 public class RevenueLeakageController {
 
     private final JdbcTemplate jdbc;

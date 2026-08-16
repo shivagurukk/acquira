@@ -3,6 +3,7 @@ package com.acquira.core.controller;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.VolumeRevenueRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -83,6 +84,7 @@ public class BusinessAnalyticsController {
         }
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/business/volume-revenue')")
     @PostMapping("/volume-revenue-summary")
     public List<Map<String, Object>> getVolumeRevenueSummary(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -90,6 +92,7 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getSummary(filters, tenantId);
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/business/merchant-financial')")
     @PostMapping("/merchant-financial-summary")
     public List<Map<String, Object>> getMerchantFinancialSummary(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -97,6 +100,7 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getMerchantFinancialSummary(filters, tenantId);
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/business/performance')")
     @PostMapping("/performance-dashboard")
     public List<Map<String, Object>> getPerformanceDashboard(
             @RequestBody VolumeRevenueFilterDTO filters,
@@ -108,6 +112,7 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getPerformanceDashboardData(filters, groupBy, parentValue, grandParentValue, tenantId);
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/business/debit-prepaid')")
     @PostMapping("/debit-prepaid-metrics")
     public List<Map<String, Object>> getDebitPrepaidMetrics(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -122,6 +127,7 @@ public class BusinessAnalyticsController {
      * Leader picks behave identically to every other Business Analytics
      * endpoint. Additive — the existing table endpoint above is untouched.
      */
+    @PreAuthorize("@menuAccess.canAccess('/business/debit-prepaid')")
     @PostMapping("/debit-prepaid-summary")
     public Map<String, Object> getDebitPrepaidSummary(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -133,6 +139,7 @@ public class BusinessAnalyticsController {
      * Attrition rows only — the original response shape, kept so any existing
      * caller keeps working unchanged.
      */
+    @PreAuthorize("@menuAccess.canAccess('/business/attrition')")
     @PostMapping("/attrition-report")
     public List<Map<String, Object>> getAttritionReport(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -149,6 +156,7 @@ public class BusinessAnalyticsController {
      * prior-year window is indistinguishable from real explosive growth: both
      * render as +100%. Mirrors the {rows, meta} shape of /retention-report.
      */
+    @PreAuthorize("@menuAccess.canAccess('/business/attrition')")
     @PostMapping("/attrition-report-with-meta")
     public Map<String, Object> getAttritionReportWithMeta(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -159,6 +167,7 @@ public class BusinessAnalyticsController {
         return response;
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/business/retention')")
     @PostMapping("/retention-report")
     public Map<String, Object> getRetentionReport(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -171,6 +180,7 @@ public class BusinessAnalyticsController {
         return response;
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/dashboard')")
     @PostMapping("/executive-metrics")
     public Map<String, Object> getExecutiveMetrics(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
@@ -178,6 +188,7 @@ public class BusinessAnalyticsController {
         return volumeRevenueRepository.getExecutiveMetrics(filters, tenantId);
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/business/merchant-analytics') or @menuAccess.canAccess('/business/dashboard')")
     @PostMapping("/merchant-analytics")
     public Map<String, Object> getMerchantAnalyticsReport(
             @RequestBody VolumeRevenueFilterDTO filters,
@@ -196,6 +207,8 @@ public class BusinessAnalyticsController {
     private jakarta.persistence.EntityManager entityManager;
 
     // Placeholder for filter options (dropdowns)
+    // Deliberately UNGATED: called by the shared Layout/filter components on
+    // every screen — gating it would break the whole app for non-admin users.
     @GetMapping("/filter-options")
     public Map<String, List<String>> getFilterOptions() {
         // Pass tenant context so dropdown lists are scoped to the user's tenant.
@@ -211,6 +224,8 @@ public class BusinessAnalyticsController {
      * where transaction data lags real time (e.g. data through April but it's
      * already May).
      */
+    // Deliberately UNGATED: called by the shared Layout/filter components on
+    // every screen — gating it would break the whole app for non-admin users.
     @GetMapping("/data-bounds")
     public Map<String, Object> getDataBounds() {
         // Delegated to DataBoundsService: same fact-first/insight-fallback

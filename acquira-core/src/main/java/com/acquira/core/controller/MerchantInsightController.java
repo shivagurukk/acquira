@@ -5,6 +5,7 @@ import com.acquira.common.service.MerchantInsightService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Files;
@@ -23,6 +24,7 @@ import java.util.stream.Stream;
 @RestController
 @RequestMapping("/api/business/insights")
 @ConditionalOnMissingClass("com.acquira.pdf.controller.PdfController")
+@PreAuthorize("@menuAccess.canAccess('/business/report-manager')")
 public class MerchantInsightController {
 
     private final MerchantInsightService insightService;

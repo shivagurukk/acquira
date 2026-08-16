@@ -5,6 +5,7 @@ import com.acquira.common.model.SavedFilter;
 import com.acquira.common.repository.SavedFilterRepository;
 import com.acquira.common.repository.UserRepository;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -15,6 +16,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/filters/views")
+@PreAuthorize("@menuAccess.canAccess('/explorer')")
 public class SavedFilterController {
 
     private final SavedFilterRepository savedFilterRepository;

@@ -592,6 +592,146 @@ public class TransactionJobConfig {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // BIN typing cache (card_type_source='BIN', V2026_08_08_06).
+    // ref_bin (operator-uploaded exact 6-digit mapping — checked first, acts
+    // as an override) + ref_bin_range (scheme files: Visa BIN list + promoted
+    // Mastercard T068; 19-char zero-padded bounds, binary-searched).
+    // Shared across the 8 partition workers like REF_CACHE, but with a
+    // freshness window: BIN uploads happen in the core JVM, so a long-lived
+    // batch JVM must not serve last week's ranges forever. All partitions of
+    // one job start within seconds, so one reload per run in practice.
+    // ─────────────────────────────────────────────────────────────────────
+    private static volatile BinCache BIN_CACHE = null;
+    private static final Object BIN_CACHE_LOCK = new Object();
+    private static final long BIN_CACHE_TTL_MS = 10 * 60 * 1000L;
+
+    /**
+     * Immutable lookup result: [0]=cardType, [1]=productCode, [2]=issuerCountry,
+     * [3]=source — "M" for a manual ref_bin row, null for a scheme range file.
+     * The source matters because only manual rows carry product codes in the
+     * rate-card vocabulary; scheme-file product codes are a different alphabet.
+     */
+    private static final class BinCache {
+        final long loadedAt;
+        final java.util.Map<String, String[]> exactBin6;
+        final String[] lows; final String[] highs; final String[][] vals;
+        BinCache(long loadedAt, java.util.Map<String, String[]> exactBin6,
+                 String[] lows, String[] highs, String[][] vals) {
+            this.loadedAt = loadedAt; this.exactBin6 = exactBin6;
+            this.lows = lows; this.highs = highs; this.vals = vals;
+        }
+        /** prefix = leading clear digits of the PAN (>= 6). */
+        String[] lookup(String prefix) {
+            String[] exact = exactBin6.get(prefix.substring(0, 6));
+            if (exact != null) return exact;
+            if (lows.length == 0) return null;
+            // Zero-pad to the fixed 19-char width — lexicographic == numeric.
+            String pan19 = (prefix + "0000000000000000000").substring(0, 19);
+            int lo = 0, hi = lows.length - 1, floor = -1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >>> 1;
+                if (lows[mid].compareTo(pan19) <= 0) { floor = mid; lo = mid + 1; }
+                else hi = mid - 1;
+            }
+            if (floor >= 0 && highs[floor].compareTo(pan19) >= 0) return vals[floor];
+            return null;
+        }
+    }
+
+    private BinCache loadOrGetBinCache() {
+        BinCache cached = BIN_CACHE;
+        long now = System.currentTimeMillis();
+        if (cached != null && now - cached.loadedAt < BIN_CACHE_TTL_MS) return cached;
+        synchronized (BIN_CACHE_LOCK) {
+            if (BIN_CACHE != null && now - BIN_CACHE.loadedAt < BIN_CACHE_TTL_MS) return BIN_CACHE;
+            long t = System.currentTimeMillis();
+            java.util.Map<String, String[]> exact = new java.util.HashMap<>();
+            java.util.List<String[]> rows = new java.util.ArrayList<>();
+            int skippedBin8 = 0;
+            try (java.sql.Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(true);
+                boolean hasRefBin = false, hasRanges = false;
+                try (java.sql.ResultSet rs = conn.getMetaData().getTables(null, null, "ref_bin", null)) { hasRefBin = rs.next(); }
+                try (java.sql.ResultSet rs = conn.getMetaData().getTables(null, null, "ref_bin_range", null)) { hasRanges = rs.next(); }
+                if (hasRefBin) {
+                    try (java.sql.Statement stmt = conn.createStatement();
+                         java.sql.ResultSet rs = stmt.executeQuery(
+                             "SELECT bin, card_type, product_code, issuer_country FROM ref_bin")) {
+                        while (rs.next()) {
+                            String bin = rs.getString("bin");
+                            if (bin == null) continue;
+                            bin = bin.trim();
+                            // Feeds carry only 6 clear digits (first-6 + masked + last-4),
+                            // so 8-digit operator rows cannot be matched — skipped, counted.
+                            if (bin.length() != 6) { skippedBin8++; continue; }
+                            exact.put(bin, new String[]{
+                                nzTrim(rs.getString("card_type")),
+                                nzTrim(rs.getString("product_code")),
+                                nzTrim(rs.getString("issuer_country")), "M"});
+                        }
+                    }
+                }
+                if (hasRanges) {
+                    try (java.sql.Statement stmt = conn.createStatement();
+                         java.sql.ResultSet rs = stmt.executeQuery(
+                             // Same invariant BinManagementController asserts: only fixed-width
+                             // 19-char bounds compare correctly as strings.
+                             "SELECT range_low, range_high, card_type, product_code, issuer_country " +
+                             "FROM ref_bin_range WHERE LENGTH(range_low) = 19 AND LENGTH(range_high) = 19 " +
+                             "ORDER BY range_low, range_high")) {
+                        String prevLow = null, prevHigh = null;
+                        while (rs.next()) {
+                            String low = rs.getString("range_low"), high = rs.getString("range_high");
+                            // Mastercard splits one range across product codes (uq on
+                            // range_low+product_code) — card typing needs one row per range;
+                            // duplicates agree on funding-derived card_type in practice.
+                            if (low.equals(prevLow) && high.equals(prevHigh)) continue;
+                            prevLow = low; prevHigh = high;
+                            rows.add(new String[]{low, high,
+                                nzTrim(rs.getString("card_type")),
+                                nzTrim(rs.getString("product_code")),
+                                nzTrim(rs.getString("issuer_country"))});
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Could not load BIN reference tables (non-fatal, BIN typing degrades to FILE): {}", e.getMessage());
+            }
+            String[] lows = new String[rows.size()];
+            String[] highs = new String[rows.size()];
+            String[][] vals = new String[rows.size()][];
+            for (int i = 0; i < rows.size(); i++) {
+                String[] r = rows.get(i);
+                lows[i] = r[0]; highs[i] = r[1];
+                vals[i] = new String[]{r[2], r[3], r[4], null};
+            }
+            if (skippedBin8 > 0) {
+                log.warn("BIN cache: skipped {} ref_bin rows whose bin is not exactly 6 digits (feeds carry only 6 clear digits)", skippedBin8);
+            }
+            BIN_CACHE = new BinCache(System.currentTimeMillis(), exact, lows, highs, vals);
+            log.info(String.format("BIN cache loaded in %.2fs (exact=%d, ranges=%d)",
+                (System.currentTimeMillis() - t) / 1000.0, exact.size(), lows.length));
+            return BIN_CACHE;
+        }
+    }
+
+    private static String nzTrim(String s) {
+        if (s == null) return null;
+        // Card types / country codes repeat across ~800K rows — intern the few
+        // distinct values instead of holding 800K duplicate strings.
+        String v = s.trim();
+        return v.isEmpty() ? null : v.intern();
+    }
+
+    /** Leading clear digits of the PAN (feeds: first-6 clear + mask + last-4). Null if fewer than 6. */
+    private static String clearPanPrefix(String cardNumber) {
+        if (cardNumber == null) return null;
+        int n = 0;
+        while (n < cardNumber.length() && Character.isDigit(cardNumber.charAt(n))) n++;
+        return n >= 6 ? cardNumber.substring(0, n) : null;
+    }
+
     private static final java.util.Set<String> WARNED_MISSING_CURRENCIES = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Static constant - never allocates per row.
@@ -710,6 +850,38 @@ public class TransactionJobConfig {
         final java.util.Map<String, String> unitModes = loadAmountContract(tenantId);
         log.info("transactionTenantProcessor: amount unit contract = {}", unitModes);
 
+        // BIN typing (card_type_source='BIN', tenant-level opt-in). Applied ONLY
+        // to domestically-issued cards: BIN issuer country == tenant home country.
+        // International cards ALWAYS keep the feed's card type — the BIN's issuer
+        // country is stored as metadata on every matched row, but typing is never
+        // touched for them. card_product_code is overwritten ONLY when the hit is
+        // a manual ref_bin row (bank-authored, expected in the rate-card product
+        // vocabulary) AND the card is local; scheme range files never touch it
+        // (their product codes are a different alphabet than the rate cards).
+        // Destination/fee inputs are untouched by design.
+        String binSource = "FILE"; String binHomeCountry = null;
+        try {
+            java.util.Map<String, Object> trow = jdbcTemplate.queryForMap(
+                "SELECT card_type_source, home_country_code FROM tenant WHERE tenant_id = ?", tenantId);
+            binSource = String.valueOf(trow.getOrDefault("card_type_source", "FILE"));
+            Object hc = trow.get("home_country_code");
+            binHomeCountry = hc != null ? hc.toString().trim() : null;
+        } catch (Exception e) {
+            log.warn("Could not read tenant card_type_source ({}) - BIN typing disabled for this run", e.getMessage());
+        }
+        final boolean binTyping = "BIN".equalsIgnoreCase(binSource)
+                && binHomeCountry != null && !binHomeCountry.isBlank();
+        final BinCache binCache = binTyping ? loadOrGetBinCache() : null;
+        final String homeCountry = binHomeCountry;
+        final java.util.concurrent.atomic.AtomicLong binTyped = new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicLong binProductTyped = new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicLong binIntlSkipped = new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicLong binNoMatch = new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicLong binShortPrefix = new java.util.concurrent.atomic.AtomicLong();
+        if (binTyping) {
+            log.info("transactionTenantProcessor: BIN typing ACTIVE for tenant {} (home country {})", tenantId, homeCountry);
+        }
+
         return item -> {
             item.setTenantId(tenantId);
 
@@ -732,6 +904,40 @@ public class TransactionJobConfig {
             if (rawCardType != null && !rawCardType.isBlank()) {
                 String resolved = cardSchemeToType.get(rawCardType.trim());
                 if (resolved != null) item.setCardType(resolved);
+            }
+
+            // BIN typing — local cards only. Runs AFTER the feed-based coarsening
+            // so a local BIN hit overrides it and everything else keeps it.
+            if (binTyping) {
+                String prefix = clearPanPrefix(item.getCardNumber());
+                if (prefix == null) {
+                    binShortPrefix.incrementAndGet();
+                } else {
+                    String[] hit = binCache.lookup(prefix);
+                    if (hit == null) {
+                        binNoMatch.incrementAndGet();
+                    } else {
+                        // Issuer country is metadata on every match, local or not.
+                        if (hit[2] != null) item.setIssuerCountry(hit[2]);
+                        if (hit[2] != null && hit[2].equalsIgnoreCase(homeCountry)) {
+                            if (hit[0] != null) item.setCardType(hit[0]);
+                            // Manual ref_bin rows are the bank's own product mapping —
+                            // for local cards their product code replaces the feed's,
+                            // so tier resolution (Standard/Premium) prices off the BIN.
+                            if ("M".equals(hit[3]) && hit[1] != null) {
+                                item.setCardProductCode(hit[1]);
+                                binProductTyped.incrementAndGet();
+                            }
+                            long n = binTyped.incrementAndGet();
+                            if (n % 250_000 == 0) {
+                                log.info("BIN typing: {} local rows typed so far (productTyped={}, intlSkipped={}, noMatch={}, shortPrefix={})",
+                                    n, binProductTyped.get(), binIntlSkipped.get(), binNoMatch.get(), binShortPrefix.get());
+                            }
+                        } else {
+                            binIntlSkipped.incrementAndGet();
+                        }
+                    }
+                }
             }
 
             // PERF FIX: decimalDivisor() - cached BigDecimal, no per-row allocation.
@@ -806,7 +1012,7 @@ public class TransactionJobConfig {
             "merchant_store_legal_name, store_name, tid, arn, rrn_number, card_number, auth_code, payment_date, " +
             "transaction_date, batch_number, transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, " +
             "txn_currency_amount, store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, " +
-            "interchange_fee, destination, tenant_id, load_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
+            "interchange_fee, destination, issuer_country, tenant_id, load_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
         return items -> jdbcTemplate.batchUpdate(sql,
             new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
                 @Override public int getBatchSize() { return items.size(); }
@@ -837,6 +1043,7 @@ public class TransactionJobConfig {
                     if (t.getTotalAmountSettled() != null) ps.setBigDecimal(i++, t.getTotalAmountSettled()); else ps.setNull(i++, java.sql.Types.NUMERIC);
                     if (t.getInterchangeFee() != null) ps.setBigDecimal(i++, t.getInterchangeFee()); else ps.setNull(i++, java.sql.Types.NUMERIC);
                     ps.setString(i++, t.getDestination());
+                    ps.setString(i++, t.getIssuerCountry());
                     if (t.getTenantId() != null) ps.setLong(i++, t.getTenantId()); else ps.setNull(i++, java.sql.Types.BIGINT);
                 }
             });
@@ -1005,7 +1212,7 @@ public class TransactionJobConfig {
                 "arn, rrn_number, card_number, auth_code, payment_date, transaction_date, batch_number, " +
                 "transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, txn_currency_amount, " +
                 "store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, interchange_fee, " +
-                "destination, destination_raw) " +
+                "destination, destination_raw, issuer_country) " +
                 "SELECT stg.tenant_id, " +
                 "COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id) AS merchant_id, " +
                 "COALESCE(s.store_id, s2.store_id) AS store_id, t.terminal_id, " +
@@ -1022,7 +1229,18 @@ public class TransactionJobConfig {
                 // exactly 2x refund MSF higher (16,583,044.4293). Refund fees must
                 // net out to reconcile with the raw feed / finance pivot.
                 // vat/interchange remain ABS; total_amount_settled stays raw SIGNED.
-                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, stg.txn_currency, " +
+                // TXN CURRENCY FALLBACK (2026-08-14, user rule): feeds mask the PAN
+                // as first-6-clear + masked + last-4-clear, so only a 6-digit BIN is
+                // extractable and BIN -> issuer-country -> cardholder-currency cannot
+                // resolve yet. For rows the feed leaves blank AND that map to
+                // DOMESTIC, the cardholder is local by definition, so take the
+                // tenant's home currency (base_currency, else the home country's
+                // ref_country currency). Blank INTERNATIONAL rows stay NULL — a
+                // guessed foreign currency would poison the by-country rollups.
+                // A feed-supplied currency is never overridden.
+                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, " +
+                "COALESCE(NULLIF(TRIM(stg.txn_currency),''), " +
+                "  CASE WHEN dtm.dest = 'DOMESTIC' THEN NULLIF(TRIM(COALESCE(tn.base_currency, rchome.currency_code)),'') END), " +
                 "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
                 "     THEN -ABS(stg.txn_currency_amount) ELSE ABS(stg.txn_currency_amount) END, " +
                 "stg.store_base_currency, " +
@@ -1041,9 +1259,12 @@ public class TransactionJobConfig {
                 // guessed as INTERNATIONAL — the fee engine reports it as
                 // UNMAPPED_DESTINATION and prices nothing. destination_raw always
                 // keeps the original token for audit and for mapping gaps analysis.
-                "dtm.dest, NULLIF(TRIM(stg.destination),'') " +
+                "dtm.dest, NULLIF(TRIM(stg.destination),''), stg.issuer_country " +
                 "FROM stg_trnx_raw stg " +
                 "LEFT JOIN tenant tn ON tn.tenant_id = stg.tenant_id " +
+                // home-currency source for the DOMESTIC txn_currency fallback above;
+                // country_code is ref_country's key, so this can never fan out rows.
+                "LEFT JOIN ref_country rchome ON rchome.country_code = COALESCE(tn.home_country_code,'AE') " +
                 "LEFT JOIN LATERAL ( " +
                 "  SELECT d.dest FROM destination_token_map d " +
                 "  WHERE d.country_code = COALESCE(tn.home_country_code,'AE') " +
@@ -1566,7 +1787,7 @@ public class TransactionJobConfig {
                         "sum_daily_bank", "sum_daily_merchant", "sum_daily_mcc",
                         "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                         "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
-                        "sum_daily_explorer",
+                        "sum_daily_explorer", "sum_daily_merchant_destination",
                         "sum_daily_merchant_attribute"}) {
                     int del = jdbcTemplate.update(
                         "DELETE FROM " + dailyTbl +
@@ -1626,6 +1847,31 @@ public class TransactionJobConfig {
                         "dcc_eligible_volume=EXCLUDED.dcc_eligible_volume, dcc_optin_volume=EXCLUDED.dcc_optin_volume, " +
                         "dcc_optout_volume=EXCLUDED.dcc_optout_volume, dcc_eligible_count=EXCLUDED.dcc_eligible_count, " +
                         "dcc_optin_count=EXCLUDED.dcc_optin_count", tenantId)));
+
+                // Merchant x destination with REAL fees (V2026_07_10_03 — the table's
+                // promised population, previously never written). Settlement currency,
+                // straight off fact with no dim_merchant join so bank-level totals
+                // reconcile exactly with fact (unmatched-merchant rows keep NULL
+                // merchant_id; the clean-slate DELETE above makes that safe under the
+                // plain UNIQUE). NULL destination lands as DOMESTIC per the table's
+                // documented convention. MIRRORED in BulkMigrationService.rebuildSummaries
+                // — keep both in sync (summary-rebuild-drift rule).
+                phase1.add(runAsync(exec, "sum_daily_merchant_destination", () ->
+                    jdbcTemplate.update("INSERT INTO sum_daily_merchant_destination (tenant_id, business_date, merchant_id, destination, " +
+                        "total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_net_revenue) " +
+                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
+                        "CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END, " +
+                        "COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), " +
+                        "SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
+                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
+                        "FROM fact_transaction f " +
+                        "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN " + dateScope +
+                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
+                        "CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END " +
+                        "ON CONFLICT (tenant_id, business_date, merchant_id, destination) DO UPDATE SET " +
+                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
+                        "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
+                        "total_ecom_fee=EXCLUDED.total_ecom_fee, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
 
                 phase1.add(runAsync(exec, "sum_daily_mcc", () ->
                     jdbcTemplate.update("INSERT INTO sum_daily_mcc (tenant_id, business_date, mcc, card_scheme, total_txns, " +

@@ -12,6 +12,7 @@ import com.acquira.core.service.TenantService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -113,6 +114,7 @@ public class SalesPortfolioController {
      * synthetic "Unassigned" parents instead of being dropped — otherwise the tree
      * totals would silently disagree with the leaderboard.
      */
+    @PreAuthorize("@menuAccess.canAccess('/sales/executive')")
     @GetMapping("/executive")
     public ResponseEntity<?> getExecutiveDashboard(
             @RequestParam(defaultValue = "") String dateFrom,
@@ -331,6 +333,7 @@ public class SalesPortfolioController {
     //  AGENT PORTFOLIO  (children: merchants)
     // ═══════════════════════════════════════════════════════════
 
+    @PreAuthorize("@menuAccess.canAccess('/sales/executive') or @menuAccess.canAccess('/sales/agents')")
     @GetMapping("/agent/{salesUserId}")
     public ResponseEntity<?> getAgentPortfolio(@PathVariable String salesUserId,
             @RequestParam(defaultValue = "") String dateFrom,
@@ -433,6 +436,7 @@ public class SalesPortfolioController {
     //  TEAM PORTFOLIO  (children: agents)
     // ═══════════════════════════════════════════════════════════
 
+    @PreAuthorize("@menuAccess.canAccess('/sales/hierarchy') or @menuAccess.canAccess('/sales/agents')")
     @GetMapping("/team/{teamLeadId}")
     public ResponseEntity<?> getTeamPortfolio(@PathVariable Long teamLeadId,
             @RequestParam(defaultValue = "") String dateFrom,
@@ -523,6 +527,7 @@ public class SalesPortfolioController {
     //  COUNTRY PORTFOLIO  (children: team leads)
     // ═══════════════════════════════════════════════════════════
 
+    @PreAuthorize("@menuAccess.canAccess('/sales/hierarchy') or @menuAccess.canAccess('/sales/agents')")
     @GetMapping("/country/{countryLeadId}")
     public ResponseEntity<?> getCountryPortfolio(@PathVariable Long countryLeadId,
             @RequestParam(defaultValue = "") String dateFrom,

@@ -2,6 +2,7 @@ package com.acquira.core.controller;
 
 import com.acquira.common.config.TenantContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -9,6 +10,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/reports/filters")
+@PreAuthorize("@menuAccess.canAccess('/merchant/insight-hub')")
 public class ReportFilterController {
 
     private final JdbcTemplate jdbcTemplate;

@@ -77,13 +77,20 @@ public class ApiKeyController {
         String username = org.springframework.security.core.context.SecurityContextHolder
             .getContext().getAuthentication().getName();
 
+        // A key must carry at least one scope (audit / E2E SEC-034) — a scopeless
+        // key is either a mistake or an attempt to create an ambiguous credential.
+        Object permsObj = body.get("permissions");
+        if (!(permsObj instanceof List) || ((List<?>) permsObj).isEmpty()) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("error", "At least one permission scope is required"));
+        }
+
         // Generate a secure API key
         String rawKey = "aqr_" + UUID.randomUUID().toString().replace("-", "");
         String keyHash = passwordEncoder.encode(rawKey);
         String keyPrefix = rawKey.substring(0, 12) + "...";
 
         // Convert permissions list to JSON string
-        Object permsObj = body.get("permissions");
         String permsJson = "[]";
         if (permsObj instanceof List) {
             permsJson = "[" + String.join(",",

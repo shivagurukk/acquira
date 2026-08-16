@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -51,6 +52,10 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/explorer")
+// Menu-grant enforcement (audit M-7): the Data Explorer screen is granted to
+// Super Admin / Bank Admin / Business User. Finance/Ops users of the tenant must
+// not reach the raw pivot API directly. SUPER_ADMIN always passes.
+@PreAuthorize("@menuAccess.canAccess('/explorer')")
 public class DataExplorerController {
 
     private static final Logger log = LoggerFactory.getLogger(DataExplorerController.class);

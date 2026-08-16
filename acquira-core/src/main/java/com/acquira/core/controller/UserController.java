@@ -22,6 +22,10 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/users")
 public class UserController {
 
+    /** Same shape the frontend enforces: local@domain.tld, no spaces. */
+    private static final java.util.regex.Pattern EMAIL_PATTERN =
+            java.util.regex.Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+
     private final UserRepository userRepository;
     private final TenantService tenantService;
     private final com.acquira.common.repository.UserTenantAccessRepository accessRepository;
@@ -156,6 +160,13 @@ public class UserController {
         // (an empty string would collide on the uniqueness check).
         if (user.getEmail() != null && !user.getEmail().trim().isEmpty()) {
             String email = user.getEmail().trim();
+            // Server-side format validation (mirrors the frontend check) — the UI
+            // guarded this but the API did not, so malformed addresses like "bad@"
+            // were persisted.
+            if (!EMAIL_PATTERN.matcher(email).matches()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Email '" + email + "' is not a valid email address"));
+            }
             if (userRepository.existsByEmail(email)) {
                 return ResponseEntity.badRequest()
                         .body(Map.of("error", "Email '" + email + "' is already registered"));
@@ -235,6 +246,9 @@ public class UserController {
             String email = str(body.get("email"));
             if (email == null || email.isEmpty()) {
                 user.setEmail(null);
+            } else if (!EMAIL_PATTERN.matcher(email).matches()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Email '" + email + "' is not a valid email address"));
             } else if (!email.equalsIgnoreCase(user.getEmail())) {
                 // The equalsIgnoreCase guard above means we only get here when the
                 // address genuinely differs from the user's own, so any hit belongs
@@ -750,10 +764,21 @@ public class UserController {
     @GetMapping("/export/csv")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<byte[]> exportUsersCsv() {
-        List<User> users = isSuperAdmin()
+        boolean superAdmin = isSuperAdmin();
+        List<User> users = superAdmin
                 ? userRepository.findAll()
                 : userRepository.findAllById(userIdsInCurrentTenant());
         Map<Long, List<com.acquira.common.model.UserTenantAccess>> accessByUser = accessesByUser(users);
+        // E2E USER-042: the ROWS were tenant-scoped, but the Tenants/Groups columns
+        // still listed a shared user's memberships in OTHER banks — a bank admin
+        // could see that a user also holds a group in a tenant they don't
+        // administer. Restrict the columns to the active tenant unless super admin.
+        Long activeTenantId = TenantContext.getCurrentTenant();
+        if (!superAdmin && activeTenantId != null) {
+            accessByUser.replaceAll((id, list) -> list.stream()
+                    .filter(a -> activeTenantId.equals(a.getTenant().getTenantId()))
+                    .collect(Collectors.toList()));
+        }
 
         StringBuilder sb = new StringBuilder();
         // Excel-friendly UTF-8 BOM so accented names render correctly.
@@ -823,6 +848,17 @@ public class UserController {
         if (users == null || users.isEmpty()) return java.util.Map.of();
         return accessRepository.findAllByUserIn(users).stream()
                 .collect(Collectors.groupingBy(a -> a.getUser().getId()));
+    }
+
+    // Hard-deleting users is intentionally unsupported (audit trail + FK integrity):
+    // callers deactivate instead (PUT /{id} {"active":false}). Without this handler an
+    // unmatched DELETE fell through to a 500; return a clear 405 explaining the path.
+    @DeleteMapping("/{userId}")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    public ResponseEntity<?> deleteUser(@PathVariable Long userId) {
+        return ResponseEntity.status(org.springframework.http.HttpStatus.METHOD_NOT_ALLOWED)
+                .body(Map.of("error",
+                    "User deletion is not supported. Deactivate the account instead (set active=false)."));
     }
 
     private static String nz(String s) { return s == null ? "" : s; }

@@ -305,7 +305,8 @@ public class BulkMigrationService {
                 "sum_daily_merchant", "sum_daily_merchant_attribute", "sum_daily_bank",
                 "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                 "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc",
-                "sum_daily_full", "sum_daily_explorer", "sum_monthly_insight",
+                "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
+                "sum_monthly_insight",
                 "sum_monthly_bank", "sum_monthly_card", "merchant_activity_summary");
 
             currentPhase = "COMPLETED";
@@ -366,7 +367,11 @@ public class BulkMigrationService {
         String[] dailyTables = {
             "sum_daily_bank", "sum_daily_merchant", "sum_daily_merchant_attribute",
             "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
-            "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc"
+            "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc",
+            // 2026-08-15: these three were missing — a deleted day survived in
+            // Explorer/Full rollups (and now the destination split) until the
+            // next upload for that date rebuilt them.
+            "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination"
         };
         for (String tbl : dailyTables) {
             deleted.put(tbl, jdbcTemplate.update(
@@ -570,6 +575,8 @@ public class BulkMigrationService {
             tenantId, monthStart, monthEnd);
         jdbcTemplate.update("DELETE FROM sum_daily_merchant_attribute WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
             tenantId, monthStart, monthEnd);
+        jdbcTemplate.update("DELETE FROM sum_daily_merchant_destination WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
+            tenantId, monthStart, monthEnd);
         jdbcTemplate.update("DELETE FROM sum_daily_bank WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
             tenantId, monthStart, monthEnd);
         jdbcTemplate.update("DELETE FROM sum_monthly_card WHERE tenant_id = ? AND month_key = ?",
@@ -619,6 +626,27 @@ public class BulkMigrationService {
             "dcc_eligible_volume=EXCLUDED.dcc_eligible_volume, dcc_optin_volume=EXCLUDED.dcc_optin_volume, " +
             "dcc_optout_volume=EXCLUDED.dcc_optout_volume, dcc_eligible_count=EXCLUDED.dcc_eligible_count, " +
             "dcc_optin_count=EXCLUDED.dcc_optin_count",
+            tenantId, monthStart, monthEnd);
+
+        // 2b. sum_daily_merchant_destination — MIRRORS the identical INSERT in
+        // TransactionJobConfig.populateSummary (summary-rebuild-drift rule: a
+        // rebuilt month must produce the same rows the upload path writes).
+        // Straight off fact, NULL merchant_id kept, NULL destination → DOMESTIC.
+        jdbcTemplate.update("INSERT INTO sum_daily_merchant_destination (tenant_id, business_date, merchant_id, destination, " +
+            "total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_net_revenue) " +
+            "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
+            "CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END, " +
+            "COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), " +
+            "SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
+            "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
+            "FROM fact_transaction f " +
+            "WHERE f.tenant_id = ? AND DATE(f.payment_date) BETWEEN ? AND ? " +
+            "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
+            "CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END " +
+            "ON CONFLICT (tenant_id, business_date, merchant_id, destination) DO UPDATE SET " +
+            "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
+            "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
+            "total_ecom_fee=EXCLUDED.total_ecom_fee, total_net_revenue=EXCLUDED.total_net_revenue",
             tenantId, monthStart, monthEnd);
 
         // 3. Merchant attributes. CARD_SCHEME uses the upload job's normalization

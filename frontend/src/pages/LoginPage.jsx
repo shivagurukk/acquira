@@ -6,14 +6,21 @@ import {
     ShieldCheck, AlertCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { AfsMark } from '../components/AfsLogo';
+import BrandDeck from './BrandDeck';
 import './Login.css';
 
-const CAPABILITIES = [
-    'Merchant performance',
-    'Transaction intelligence',
-    'Revenue optimisation',
-    'Portfolio monitoring',
-];
+const Brandmark = ({ small = false }) => (
+    <div className="nx-logo">
+        <div className={small ? 'nx-mark nx-mark--sm' : 'nx-mark'}>
+            <AfsMark size={small ? 42 : 52} />
+        </div>
+        <div>
+            <p className="nx-wordmark">AFS <span>NEXUS</span></p>
+            <p className="nx-tagline">Enterprise Payment Intelligence</p>
+        </div>
+    </div>
+);
 
 const LoginPage = () => {
     const navigate = useNavigate();
@@ -202,9 +209,15 @@ const LoginPage = () => {
 
     const handleSelectTenant = async (tenant) => {
         setSwitchingTenant(tenant.tenantId);
-        try { await switchTenant(tenant.tenantId); navigate('/dashboard'); }
-        catch (e) { navigate('/dashboard'); }
-        finally { setSwitchingTenant(null); }
+        setError(null);
+        try {
+            // switchTenant never throws — it reports {success, error}. Only
+            // navigate on success; a failed switch would land the user on a
+            // dashboard whose tenant context was never established.
+            const result = await switchTenant(tenant.tenantId);
+            if (result?.success) navigate('/dashboard');
+            else setError(result?.error || 'Could not switch to that organisation. Please try again.');
+        } finally { setSwitchingTenant(null); }
     };
 
     const resetSsoState = () => {
@@ -264,12 +277,8 @@ const LoginPage = () => {
             const data = await res.json().catch(() => ({}));
             if (res.ok) {
                 resetForgotState();
-                setError(null);
-                setForgotMsg(null);
-                // Surface success on the login form.
-                setTimeout(() => setError(null), 0);
                 setCredentials({ username: '', password: '' });
-                setForgotMsg(null);
+                // Surface success on the login form.
                 setLoginNotice(data.message || 'Password reset. Please sign in with your new password.');
             } else {
                 setError(data.error || 'Could not reset password. Please try again.');
@@ -299,39 +308,71 @@ const LoginPage = () => {
         </div>
     );
 
-    const Brandmark = ({ small = false }) => (
-        <div className="nx-logo">
-            <div className={small ? 'nx-mark nx-mark--sm' : 'nx-mark'} aria-hidden="true">NX</div>
-            <div>
-                <p className="nx-wordmark">NEXUS</p>
-                <p className="nx-tagline">Enterprise Payment Intelligence</p>
-            </div>
-        </div>
-    );
-
     return (
         <div className="login-page">
             {/* ─────────────── Brand panel ─────────────── */}
             <section className="nx-brand" aria-labelledby="nx-headline">
-                {/* Measurement dial, cropped by the corner. Tick ring + two thin
-                    rings + filled disc + one cyan arc segment. Static. */}
-                <svg className="nx-dial" viewBox="0 0 400 400" aria-hidden="true" focusable="false">
-                    <g stroke="rgba(94, 234, 212, 0.25)" strokeWidth="1">
-                        {Array.from({ length: 48 }, (_, i) => {
-                            const a = (i * 7.5 * Math.PI) / 180;
-                            return (
-                                <line key={i}
-                                    x1={200 + 188 * Math.cos(a)} y1={200 + 188 * Math.sin(a)}
-                                    x2={200 + 196 * Math.cos(a)} y2={200 + 196 * Math.sin(a)} />
-                            );
-                        })}
+                {/* Signature: a payment card drawn to spec, cropped by the corner.
+                    ISO/IEC 7810 ID-1 — 85.60 × 53.98 mm at 5 px/mm (428 × 270),
+                    R3.18 corners — with drafting-style dimension lines, oblique
+                    ticks instead of arrowheads, and mono callouts. Static. */}
+                <svg className="nx-schematic" viewBox="0 0 600 440" aria-hidden="true" focusable="false">
+                    {/* Ghost duplicate behind, dashed — a second sheet in the stack. */}
+                    <rect x="86" y="112" width="428" height="270" rx="16" fill="none"
+                        stroke="rgba(147, 197, 253, 0.16)" strokeWidth="1" strokeDasharray="5 6" />
+
+                    {/* The card itself. */}
+                    <rect x="66" y="92" width="428" height="270" rx="16" fill="rgba(6, 15, 46, 0.35)"
+                        stroke="rgba(191, 219, 254, 0.62)" strokeWidth="1.5" />
+
+                    {/* Chip with contact pads. */}
+                    <rect x="112" y="164" width="60" height="46" rx="7" fill="none"
+                        stroke="rgba(191, 219, 254, 0.62)" strokeWidth="1.25" />
+                    <path d="M112 179 h60 M112 195 h60 M132 164 v46 M152 164 v46"
+                        stroke="rgba(147, 197, 253, 0.35)" strokeWidth="1" fill="none" />
+
+                    {/* PAN groups as tick marks, embossing implied not spelled. */}
+                    <g stroke="rgba(147, 197, 253, 0.45)" strokeWidth="2" strokeLinecap="round">
+                        {[0, 1, 2, 3].map(g => (
+                            <g key={g}>
+                                {[0, 1, 2, 3].map(d => (
+                                    <line key={d}
+                                        x1={112 + g * 92 + d * 16} y1={266}
+                                        x2={112 + g * 92 + d * 16 + 9} y2={266} />
+                                ))}
+                            </g>
+                        ))}
                     </g>
-                    <circle cx="200" cy="200" r="152" fill="none" stroke="rgba(45, 212, 191, 0.35)" strokeWidth="1" />
-                    <circle cx="200" cy="200" r="118" fill="none" stroke="rgba(45, 212, 191, 0.18)" strokeWidth="1" />
-                    <circle cx="200" cy="200" r="86" fill="#0D9488" opacity="0.95" />
-                    <circle cx="200" cy="200" r="152" fill="none" stroke="#22D3EE" strokeWidth="9"
-                        strokeLinecap="round" strokeDasharray="212 744"
-                        transform="rotate(-150 200 200)" />
+
+                    {/* Centre marks. */}
+                    <path d="M280 217 v20 M270 227 h20" stroke="rgba(147, 197, 253, 0.4)" strokeWidth="1" />
+
+                    {/* Width dimension — extension lines + oblique drafting ticks. */}
+                    <g stroke="rgba(147, 197, 253, 0.45)" strokeWidth="1">
+                        <line x1="66" y1="84" x2="66" y2="56" />
+                        <line x1="494" y1="84" x2="494" y2="56" />
+                        <line x1="66" y1="64" x2="494" y2="64" />
+                        <line x1="62" y1="68" x2="70" y2="60" />
+                        <line x1="490" y1="68" x2="498" y2="60" />
+                    </g>
+                    <text x="280" y="52" textAnchor="middle">85.60</text>
+
+                    {/* Height dimension. */}
+                    <g stroke="rgba(147, 197, 253, 0.45)" strokeWidth="1">
+                        <line x1="502" y1="92" x2="530" y2="92" />
+                        <line x1="502" y1="362" x2="530" y2="362" />
+                        <line x1="522" y1="92" x2="522" y2="362" />
+                        <line x1="518" y1="96" x2="526" y2="88" />
+                        <line x1="518" y1="366" x2="526" y2="358" />
+                    </g>
+                    <text x="540" y="231" textAnchor="middle" transform="rotate(90 540 231)">53.98</text>
+
+                    {/* Corner radius callout. */}
+                    <line x1="76" y1="102" x2="36" y2="142" stroke="rgba(147, 197, 253, 0.45)" strokeWidth="1" />
+                    <text x="34" y="160" textAnchor="start">R3.18</text>
+
+                    {/* Sheet reference, bottom-left. */}
+                    <text x="66" y="404" textAnchor="start" opacity="0.75">ISO/IEC 7810 · ID-1 · SCALE 5:1</text>
                 </svg>
 
                 <header>
@@ -339,19 +380,7 @@ const LoginPage = () => {
                 </header>
 
                 <div className="nx-brand__mid">
-                    <p className="nx-eyebrow">Built for merchant acquiring</p>
-                    <h1 className="nx-headline" id="nx-headline">
-                        Turn every transaction into <em>actionable intelligence</em>
-                    </h1>
-                    <p className="nx-support">
-                        Monitor merchant performance, uncover revenue opportunities, and make faster
-                        acquiring decisions from one secure workspace.
-                    </p>
-                    <ul className="nx-capabilities">
-                        {CAPABILITIES.map(label => (
-                            <li className="nx-capability" key={label}>{label}</li>
-                        ))}
-                    </ul>
+                    <BrandDeck />
                 </div>
 
                 <div className="nx-baseline">
@@ -372,7 +401,7 @@ const LoginPage = () => {
 
                 <div className="nx-auth__inner">
                     <div className="nx-auth__head">
-                        <div className="nx-mark nx-mark--sm" aria-hidden="true">NX</div>
+                        <div className="nx-mark nx-mark--sm"><AfsMark size={42} /></div>
                         <h2 className="nx-auth__title">Welcome back</h2>
                         <p className="nx-auth__subtitle">Sign in to your payment intelligence workspace</p>
                     </div>
@@ -381,7 +410,7 @@ const LoginPage = () => {
                         {ssoLoading && (
                             <motion.div key="sso-loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                                 className="nx-status">
-                                <Loader2 size={26} className="spin-icon" style={{ color: 'var(--nx-teal-600)', marginBottom: 14 }} />
+                                <Loader2 size={26} className="spin-icon" style={{ color: 'var(--nx-blue-600)', marginBottom: 14 }} />
                                 <p className="nx-status__text">Authenticating with Microsoft…</p>
                             </motion.div>
                         )}
@@ -400,7 +429,7 @@ const LoginPage = () => {
                         )}
                         {!ssoLoading && ssoStatus === 'request_submitted' && (
                             <motion.div key="sso-submitted" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                                <StatusCard icon={Send} iconBg="rgba(13,148,136,0.12)" iconColor="#0D9488"
+                                <StatusCard icon={Send} iconBg="rgba(37,99,235,0.12)" iconColor="#1D4ED8"
                                     title="Request submitted" description="An administrator will review your access request shortly." />
                             </motion.div>
                         )}
@@ -608,12 +637,13 @@ const LoginPage = () => {
                             <motion.div key="tenant-select" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
                                 className="tenant-section">
                                 <div className="tenant-header">
-                                    <div className="tenant-header-icon"><Building2 size={19} color="#0D9488" aria-hidden="true" /></div>
+                                    <div className="tenant-header-icon"><Building2 size={19} color="#1D4ED8" aria-hidden="true" /></div>
                                     <div>
                                         <h3 className="tenant-title">Select organisation</h3>
                                         <p className="tenant-subtitle">You have access to {allowedTenants.length} organisations</p>
                                     </div>
                                 </div>
+                                {error && <ErrorBanner />}
                                 <div className="tenant-list">
                                     {allowedTenants.map(tenant => {
                                         const isSwitching = switchingTenant === tenant.tenantId;
@@ -622,7 +652,7 @@ const LoginPage = () => {
                                                 disabled={!!switchingTenant} className={`tenant-card ${isSwitching ? 'active' : ''}`}>
                                                 <div className="tenant-card-left">
                                                     <div className="tenant-card-icon">
-                                                        {isSwitching ? <Loader2 size={17} color="#0D9488" className="spin-icon" /> : <Building2 size={17} color="#0F766E" />}
+                                                        {isSwitching ? <Loader2 size={17} color="#1D4ED8" className="spin-icon" /> : <Building2 size={17} color="#1E40AF" />}
                                                     </div>
                                                     <div>
                                                         <span className="tenant-card-name">{tenant.bankName}</span>
@@ -645,7 +675,7 @@ const LoginPage = () => {
                         <span className="nx-secure">
                             <ShieldCheck size={13} aria-hidden="true" /> Protected enterprise access
                         </span>
-                        <p className="login-footer">© {new Date().getFullYear()} NEXUS. All rights reserved.</p>
+                        <p className="login-footer">© {new Date().getFullYear()} AFS Nexus. All rights reserved.</p>
                         <span className="nx-version">v2.0 · Secure</span>
                     </div>
                 </div>

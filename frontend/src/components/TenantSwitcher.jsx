@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { showToast } from '../contexts/ToastContext';
 import { Building2, ChevronDown, Check, Loader2 } from 'lucide-react';
 
 /**
@@ -51,10 +52,14 @@ const TenantSwitcher = () => {
         }
         setSwitching(tenantId);
         try {
-            await switchTenant(tenantId);
-            setIsOpen(false);
-        } catch (err) {
-            console.error('Switch failed:', err);
+            // switchTenant never throws — it reports {success, error}. Keep the
+            // dropdown open and tell the user when the switch didn't happen.
+            const result = await switchTenant(tenantId);
+            if (result?.success) {
+                setIsOpen(false);
+            } else {
+                showToast(result?.error || 'Could not switch organization. Please try again.', 'error', 5000);
+            }
         } finally {
             setSwitching(null);
         }

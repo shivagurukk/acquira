@@ -3,6 +3,7 @@ package com.acquira.core.controller;
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.DestinationDashboardRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -22,7 +23,24 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/business/destination-dashboard")
+// Menu-grant gate, same as every other business screen — the sidebar entry
+// and this API are driven by the same sys_group_menu grant.
+@PreAuthorize("@menuAccess.canAccess('/business/destination-dashboard')")
 public class DestinationDashboardController {
+
+    /** The only group columns getBreakdown supports — anything else is a client error (400), not a 500. */
+    private static final java.util.Set<String> BREAKDOWN_DIMENSIONS =
+            java.util.Set.of("scheme", "cardType", "channel", "mcc");
+
+    /**
+     * Server-side date defaults: without them a missing range scans every
+     * partition back to 2024. KPIs already default internally (30d); the
+     * other three get an explicit window here.
+     */
+    private static void defaultDates(VolumeRevenueFilterDTO f, int defaultDays) {
+        if (f.getEndDate() == null) f.setEndDate(java.time.LocalDate.now());
+        if (f.getStartDate() == null) f.setStartDate(f.getEndDate().minusDays(defaultDays));
+    }
 
     @Autowired
     private DestinationDashboardRepository destinationDashboardRepository;
@@ -61,23 +79,32 @@ public class DestinationDashboardController {
     @PostMapping("/trend")
     public List<Map<String, Object>> getTrend(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
+        defaultDates(filters, 365); // 12 months of monthly buckets
         Long tenantId = tenantService.getCurrentTenantId();
         return destinationDashboardRepository.getTrend(filters, tenantId);
     }
 
     @PostMapping("/breakdown/{dimension}")
-    public List<Map<String, Object>> getBreakdown(@RequestBody VolumeRevenueFilterDTO filters,
+    public org.springframework.http.ResponseEntity<?> getBreakdown(@RequestBody VolumeRevenueFilterDTO filters,
                                                    @PathVariable String dimension) {
+        if (!BREAKDOWN_DIMENSIONS.contains(dimension)) {
+            return org.springframework.http.ResponseEntity.badRequest()
+                    .body(Map.of("error", "Unknown breakdown dimension: " + dimension
+                            + " (supported: " + BREAKDOWN_DIMENSIONS + ")"));
+        }
         resolveFilters(filters);
+        defaultDates(filters, 30);
         Long tenantId = tenantService.getCurrentTenantId();
-        return destinationDashboardRepository.getBreakdown(filters, dimension, tenantId);
+        return org.springframework.http.ResponseEntity.ok(
+                destinationDashboardRepository.getBreakdown(filters, dimension, tenantId));
     }
 
     @PostMapping("/top-merchants")
     public List<Map<String, Object>> getTopMerchants(@RequestBody VolumeRevenueFilterDTO filters,
                                                        @RequestParam(defaultValue = "15") int limit) {
         resolveFilters(filters);
+        defaultDates(filters, 30);
         Long tenantId = tenantService.getCurrentTenantId();
-        return destinationDashboardRepository.getTopMerchants(filters, tenantId, limit);
+        return destinationDashboardRepository.getTopMerchants(filters, tenantId, Math.min(Math.max(limit, 1), 100));
     }
 }

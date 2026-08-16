@@ -5,6 +5,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -24,6 +25,8 @@ import java.util.*;
  */
 @RestController
 @RequestMapping("/api/business/segments")
+// API path /segments has no menu row; the calling screen is Merchant Analytics.
+@PreAuthorize("@menuAccess.canAccess('/business/merchant-analytics')")
 public class MerchantSegmentController {
 
     @PersistenceContext

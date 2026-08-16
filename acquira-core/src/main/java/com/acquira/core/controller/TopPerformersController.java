@@ -5,6 +5,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -42,6 +43,7 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/business")
+@PreAuthorize("@menuAccess.canAccess('/business/top-performers')")
 public class TopPerformersController {
 
     private static final int TOP_N = 10;

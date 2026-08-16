@@ -59,6 +59,11 @@ public class PasswordResetToken {
         this.user = user;
         this.otpHash = otpHash;
         this.expiresAt = expiresAt;
+        // The legacy `token` column (from the old email-link flow) is NOT NULL +
+        // unique. The OTP flow authenticates via otpHash and a verify-time ticket,
+        // not this column, but it must still be populated or the INSERT violates
+        // the not-null constraint (every forgot-password 500'd). Random opaque value.
+        this.token = "otp-" + java.util.UUID.randomUUID();
     }
 
     public Long getId() { return id; }

@@ -8,6 +8,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -21,6 +22,7 @@ import java.util.Set;
 @RestController
 @RequestMapping("/api/business")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAccess.canAccess('/business/daily-dashboard')")
 public class DailyMerchantDashboardController {
 
     private final SumDailyMerchantRepository sumDailyMerchantRepository;

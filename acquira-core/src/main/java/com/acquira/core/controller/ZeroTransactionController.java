@@ -4,6 +4,7 @@ import com.acquira.common.dto.VolumeRevenueFilterDTO;
 import com.acquira.common.repository.ZeroTransactionRepository;
 import com.acquira.core.service.TenantService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -11,6 +12,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/reports/zero-txn")
+@PreAuthorize("@menuAccess.canAccess('/business/zero-transaction')")
 public class ZeroTransactionController {
 
     @Autowired

@@ -37,6 +37,7 @@ const ZeroTransactionReport = lazy(() => import('./pages/business/ZeroTransactio
 const MerchantReportManager = lazy(() => import('./pages/business/MerchantReportManager'));
 const MerchantHeatmap = lazy(() => import('./pages/business/MerchantHeatmap'));
 const DailyMerchantDashboard = lazy(() => import('./pages/business/DailyMerchantDashboard'));
+const DestinationDashboard = lazy(() => import('./pages/business/DestinationDashboard'));
 const MerchantAnalyticsReport = lazy(() => import('./pages/business/MerchantAnalyticsReport'));
 const MerchantComparison = lazy(() => import('./pages/business/MerchantComparison'));
 const PricingSimulator = lazy(() => import('./pages/business/PricingSimulator'));
@@ -128,6 +129,7 @@ function App() {
               <Route path="/business/zero-transaction" element={<ZeroTransactionReport />} />
               <Route path="/business/heatmap" element={<MerchantHeatmap />} />
               <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
+              <Route path="/business/destination-dashboard" element={<DestinationDashboard />} />
               <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
               <Route path="/business/comparison" element={<MerchantComparison />} />
               <Route path="/business/pricing-simulator" element={<PricingSimulator />} />

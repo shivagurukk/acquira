@@ -4,6 +4,7 @@ import com.acquira.common.config.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -28,6 +29,8 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/cross-filter")
 @RequiredArgsConstructor
+// Serves both Data Explorer and the un-menued Interactive Explorer, so the base dashboard grant also passes.
+@PreAuthorize("@menuAccess.canAccess('/explorer') or @menuAccess.canAccess('/dashboard')")
 public class CrossFilterController {
 
     private final JdbcTemplate jdbcTemplate;

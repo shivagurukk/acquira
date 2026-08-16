@@ -5,5 +5,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 
 public interface MerchantRiskProfileRepository extends JpaRepository<MerchantRiskProfile, Long> {
-    Optional<MerchantRiskProfile> findByMerchantId(Long merchantId);
+    // NOTE: unscoped findByMerchantId was removed — merchant_id is a global
+    // sequence, so every read must also match tenant_id or a guessed id leaks
+    // another tenant's rows (IDOR).
+    Optional<MerchantRiskProfile> findByTenantIdAndMerchantId(Long tenantId, Long merchantId);
 }

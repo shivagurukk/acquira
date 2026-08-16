@@ -6,6 +6,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -44,6 +45,10 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/business/revenue-kpis")
+// Menu-grant enforcement (audit M-7): these revenue-efficiency KPIs back the
+// Business Dashboard, granted to Super Admin / Bank Admin / Business User.
+// Finance/Ops users must not reach them directly. SUPER_ADMIN always passes.
+@PreAuthorize("@menuAccess.canAccess('/business/dashboard')")
 public class RevenueKpiController {
 
     @PersistenceContext

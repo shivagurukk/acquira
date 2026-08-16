@@ -10,6 +10,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -39,6 +40,11 @@ public class AnalyticsController {
         this.currencyMeta = currencyMeta;
     }
 
+    // Executive analytics back the dashboard screens; require the caller's group
+    // to hold the base dashboard grant (audit M-7 / SEC-014). Data is already
+    // tenant-scoped, so this closes the "no dashboard grant at all" path without
+    // breaking any group that legitimately sees the dashboard. SUPER_ADMIN passes.
+    @PreAuthorize("@menuAccess.canAccess('/dashboard')")
     @GetMapping("/executive")
     public ResponseEntity<Map<String, Object>> getExecutiveDashboard(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
@@ -50,6 +56,7 @@ public class AnalyticsController {
         return ResponseEntity.ok(currencyMeta.attach(body));
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/merchant-summary')")
     @GetMapping("/merchant-summaries")
     public ResponseEntity<Page<MerchantSummaryDTO>> getMerchantSummaries(
             @RequestParam(defaultValue = "0") int year,
@@ -146,6 +153,7 @@ public class AnalyticsController {
         return ResponseEntity.ok(new PageImpl<>(dtos, PageRequest.of(page, size), totalElements));
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/merchant-summary')")
     @GetMapping("/merchant-summaries/export")
     public void exportMerchantSummaries(
             @RequestParam(defaultValue = "0") int year,
@@ -281,6 +289,7 @@ public class AnalyticsController {
         return "\"" + s.replace("\"", "\"\"") + "\"";
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/business/heatmap')")
     @GetMapping("/heatmap")
     public ResponseEntity<List<com.acquira.common.dto.MerchantHeatmapDTO>> getMerchantHeatmap(
             @RequestParam(required = false) Integer year) {
@@ -307,6 +316,7 @@ public class AnalyticsController {
      *
      * In both paths we always tenant-scope on s.tenant_id AND m.tenant_id.
      */
+    @PreAuthorize("@menuAccess.canAccess('/business/heatmap')")
     @PostMapping("/heatmap-filtered")
     public ResponseEntity<List<com.acquira.common.dto.MerchantHeatmapDTO>> getMerchantHeatmapFiltered(
             @RequestParam(required = false) Integer year,
@@ -427,6 +437,7 @@ public class AnalyticsController {
         return ResponseEntity.ok(result);
     }
 
+    @PreAuthorize("@menuAccess.canAccess('/dashboard')")
     @GetMapping("/available-years")
     public ResponseEntity<List<Integer>> getAvailableYears() {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -452,6 +463,7 @@ public class AnalyticsController {
      * Scheme breakdown for dashboard pie chart.
      * Queries sum_daily_scheme grouped by card_scheme for a date range.
      */
+    @PreAuthorize("@menuAccess.canAccess('/dashboard')")
     @PostMapping("/scheme-breakdown")
     public ResponseEntity<List<Map<String, Object>>> getSchemeBreakdown(
             @RequestBody Map<String, String> body) {

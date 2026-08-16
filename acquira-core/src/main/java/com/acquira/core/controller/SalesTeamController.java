@@ -5,6 +5,7 @@ import com.acquira.core.service.SalesTeamService;
 import com.acquira.core.service.TenantService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -13,6 +14,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/sales-team")
 @RequiredArgsConstructor
+@PreAuthorize("@menuAccess.canAccess('/sales/team-management')")
 public class SalesTeamController {
 
     private final SalesTeamService salesTeamService;
@@ -22,6 +24,8 @@ public class SalesTeamController {
         return tenantService.getCurrentTenantId();
     }
 
+    // Also read by the executive sales screen, so either grant passes.
+    @PreAuthorize("@menuAccess.canAccess('/sales/team-management') or @menuAccess.canAccess('/executive/sales')")
     @GetMapping("/team-leads")
     public ResponseEntity<List<SalesTeamMapping>> getTeamLeads() {
         return ResponseEntity.ok(salesTeamService.getTeamLeads(getTenantId()));

@@ -5,6 +5,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -40,6 +41,7 @@ import java.util.*;
  */
 @RestController
 @RequestMapping("/api/trends")
+@PreAuthorize("@menuAccess.canAccess('/trends/hub')")
 public class TrendsController {
 
     @PersistenceContext
@@ -109,8 +111,11 @@ public class TrendsController {
         boolean needMerchant = listNonEmpty(filter.getRm()) || listNonEmpty(filter.getMid());
 
         StringBuilder sql = new StringBuilder();
-        sql.append("SELECT EXTRACT(YEAR FROM s.business_date)::int AS yr, ");
-        sql.append("       EXTRACT(MONTH FROM s.business_date)::int AS mo, ");
+        // Use CAST(... AS int) not ::int — Hibernate's native-query parser mangles
+        // the `::` Postgres cast (treats one colon as a named-param marker), sending
+        // `:int` to the DB → "syntax error at or near :". This 500'd /trends/monthly.
+        sql.append("SELECT CAST(EXTRACT(YEAR FROM s.business_date) AS int) AS yr, ");
+        sql.append("       CAST(EXTRACT(MONTH FROM s.business_date) AS int) AS mo, ");
         sql.append("       COALESCE(SUM(s.total_txns),0) AS cnt, ");
         sql.append("       COALESCE(SUM(s.total_volume),0) AS vol, ");
         sql.append("       COALESCE(SUM(s.total_msf),0) AS msf, ");

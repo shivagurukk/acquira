@@ -6,6 +6,10 @@ import { startLoading, stopLoading } from '../contexts/LoadingContext';
 const api = axios.create({
     baseURL: '/api',
     withCredentials: true, // #12: Send HttpOnly cookies with requests (for refresh token)
+    // A hung request must eventually settle — callers rely on finally{} to
+    // re-enable buttons (tenant switch, uploads). Long-running calls can
+    // override per-request.
+    timeout: 60000,
 });
 
 // Refresh token cache. The primary mechanism is the HttpOnly cookie set

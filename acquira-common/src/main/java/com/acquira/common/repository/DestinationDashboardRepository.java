@@ -22,11 +22,29 @@ import java.util.Map;
  * International, and Compare are purely front-end rendering choices over
  * the same payload.
  *
- * Base table: sum_daily_insight (has destination, card_scheme, card_type,
- * channel, is_opt_in — see ACQUIRA_FEATURE_GUIDE.md §9.1). Note total_volume
- * here is CARDHOLDER currency, not settlement — international rows are a
- * mixed-currency sum. This mirrors how CrossFilterController/Explorer
- * already treat this table; the frontend must show the same caveat tooltip.
+ * Routing: two backing tables.
+ *
+ * Fast/accurate path — sum_daily_merchant_destination (tenant_id,
+ * business_date, merchant_id, destination in ('DOMESTIC','INTERNATIONAL'),
+ * total_txns, total_volume, total_msf, total_interchange, total_scheme_fee,
+ * total_ecom_fee, total_net_revenue). total_volume here is SETTLEMENT
+ * currency, so international sums are a single-currency, board-accurate
+ * number. Used by getKpis/getTrend/getTopMerchants whenever no dimensional
+ * filter (channel/scheme/cardType/mcc/sid) is set; merchant-level filters
+ * (partner/rm/teamLeader/mid/industry/merchantName) still work via the
+ * dim_merchant join. DCC KPIs come from a companion query on
+ * sum_daily_merchant (dcc_optin_volume / dcc_eligible_volume, both
+ * international-only and settlement currency).
+ *
+ * Dimensional fallback — sum_daily_insight (has destination, card_scheme,
+ * card_type, channel, is_opt_in — see ACQUIRA_FEATURE_GUIDE.md §9.1). Note
+ * total_volume here is CARDHOLDER currency, not settlement — international
+ * rows are a mixed-currency sum. This mirrors how
+ * CrossFilterController/Explorer already treat this table. getKpis reports
+ * which basis produced the payload via "basis": "SETTLEMENT" |
+ * "CARDHOLDER_MIXED" so the frontend can show the mixed-currency caveat
+ * only when it actually applies. getBreakdown always uses this table
+ * (its dimensions don't exist on the destination pre-aggregate).
  *
  * Destination literal: existing code (VolumeRevenueRepository.getSummary)
  * already treats UPPER(COALESCE(destination,'')) <> 'DOMESTIC' as
@@ -42,7 +60,18 @@ public class DestinationDashboardRepository {
     private static final String DOM_PRED = "UPPER(COALESCE(s.destination,'')) = 'DOMESTIC'";
     private static final String INTL_PRED = "UPPER(COALESCE(s.destination,'')) <> 'DOMESTIC'";
 
+    // sum_daily_merchant_destination stores exactly two literals at this grain.
+    private static final String DEST_DOM_PRED = "s.destination = 'DOMESTIC'";
+    private static final String DEST_INTL_PRED = "s.destination = 'INTERNATIONAL'";
+
     private static boolean listNonEmpty(List<?> l) { return l != null && !l.isEmpty(); }
+
+    /** Dimensional filters only exist on sum_daily_insight; when any is set we must fall back to it (cardholder-currency basis). */
+    private static boolean needsInsightFallback(VolumeRevenueFilterDTO f) {
+        return listNonEmpty(f.getChannelList()) || listNonEmpty(f.getSchemeList())
+            || listNonEmpty(f.getCardTypeList()) || listNonEmpty(f.getMccList())
+            || listNonEmpty(f.getSidList());
+    }
 
     private static BigDecimal bd(Object o) {
         if (o == null) return BigDecimal.ZERO;
@@ -110,6 +139,137 @@ public class DestinationDashboardRepository {
     // 1) KPIs — current vs. prior window, split domestic/international
     // ─────────────────────────────────────────────────────────────────
     public Map<String, Object> getKpis(VolumeRevenueFilterDTO filter, Long tenantId) {
+        return needsInsightFallback(filter)
+                ? getKpisFromInsight(filter, tenantId)
+                : getKpisFromDestination(filter, tenantId);
+    }
+
+    /** Settlement-currency fast path against sum_daily_merchant_destination. */
+    private Map<String, Object> getKpisFromDestination(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
+        LocalDate end = filter.getEndDate() != null ? filter.getEndDate() : LocalDate.now();
+        LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.minusDays(30);
+
+        long days = ChronoUnit.DAYS.between(start, end);
+        if (days == 0) days = 1;
+
+        LocalDate prevEnd = start.minusDays(1);
+        LocalDate prevStart = prevEnd.minusDays(days);
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT ");
+        // Domestic — current window
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol_curr, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn_curr, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf_curr, ");
+        sql.append("COUNT(DISTINCT CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.merchant_id END) as dom_merch_curr, ");
+        // International — current window
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol_curr, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn_curr, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf_curr, ");
+        sql.append("COUNT(DISTINCT CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.merchant_id END) as intl_merch_curr, ");
+        // Real-fee extras — only available on this table, additive to the payload
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_interchange ELSE 0 END) as dom_ic_curr, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_net_revenue ELSE 0 END) as dom_nr_curr, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_interchange ELSE 0 END) as intl_ic_curr, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_net_revenue ELSE 0 END) as intl_nr_curr, ");
+        // Domestic — prior window
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol_prev, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn_prev, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf_prev, ");
+        // International — prior window
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol_prev, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn_prev, ");
+        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf_prev ");
+
+        sql.append("FROM sum_daily_merchant_destination s ");
+        // LEFT: merchant_id can be NULL on this table (unmatched-merchant fact rows);
+        // only merchant-level filters can be set here (routing excludes mcc/sid).
+        sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+
+        sql.append("WHERE s.business_date >= :prevStart AND s.business_date <= :end ");
+        sql.append("AND s.tenant_id = :tenantId ");
+        appendCommonFilters(sql, filter);
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("start", start);
+        query.setParameter("end", end);
+        query.setParameter("prevStart", prevStart);
+        query.setParameter("prevEnd", prevEnd);
+        query.setParameter("tenantId", tenantId);
+        bindCommonParams(query, filter);
+
+        Map<String, Object> out = new HashMap<>();
+        {
+            Object[] r = (Object[]) query.getSingleResult();
+            BigDecimal domVolCurr = bd(r[0]);   long domTxnCurr = lng(r[1]);   BigDecimal domMsfCurr = bd(r[2]);   long domMerchCurr = lng(r[3]);
+            BigDecimal intlVolCurr = bd(r[4]);  long intlTxnCurr = lng(r[5]);  BigDecimal intlMsfCurr = bd(r[6]);  long intlMerchCurr = lng(r[7]);
+            BigDecimal domIcCurr = bd(r[8]);    BigDecimal domNrCurr = bd(r[9]);
+            BigDecimal intlIcCurr = bd(r[10]);  BigDecimal intlNrCurr = bd(r[11]);
+            BigDecimal domVolPrev = bd(r[12]);  long domTxnPrev = lng(r[13]);  BigDecimal domMsfPrev = bd(r[14]);
+            BigDecimal intlVolPrev = bd(r[15]); long intlTxnPrev = lng(r[16]); BigDecimal intlMsfPrev = bd(r[17]);
+
+            Map<String, Object> domBlock = kpiBlock(domVolCurr, domTxnCurr, domMsfCurr, domMerchCurr, domVolPrev, domTxnPrev, domMsfPrev);
+            domBlock.put("interchange", domIcCurr);
+            domBlock.put("netRevenue", domNrCurr);
+            out.put("domestic", domBlock);
+
+            Map<String, Object> intlBlock = kpiBlock(intlVolCurr, intlTxnCurr, intlMsfCurr, intlMerchCurr, intlVolPrev, intlTxnPrev, intlMsfPrev);
+            intlBlock.put("interchange", intlIcCurr);
+            intlBlock.put("netRevenue", intlNrCurr);
+
+            // DCC KPIs live on sum_daily_merchant (settlement currency,
+            // international-only by construction) — small companion query.
+            BigDecimal[] dcc = fetchDccVolumes(filter, tenantId, start, end);
+            BigDecimal optIn = dcc[0];
+            BigDecimal eligible = dcc[1];
+            intlBlock.put("dccOptInVolume", optIn);
+            intlBlock.put("dccOptInRatePct", eligible.signum() > 0
+                    ? optIn.doubleValue() / eligible.doubleValue() * 100.0 : 0.0);
+            intlBlock.put("dccMissedVolume", eligible.subtract(optIn));
+            out.put("international", intlBlock);
+
+            BigDecimal totalVolCurr = domVolCurr.add(intlVolCurr);
+            out.put("domesticSharePct", totalVolCurr.signum() > 0 ? domVolCurr.doubleValue() / totalVolCurr.doubleValue() * 100.0 : 0.0);
+            out.put("internationalSharePct", totalVolCurr.signum() > 0 ? intlVolCurr.doubleValue() / totalVolCurr.doubleValue() * 100.0 : 0.0);
+
+            boolean priorHasData = domVolPrev.signum() > 0 || intlVolPrev.signum() > 0 || domTxnPrev > 0 || intlTxnPrev > 0;
+            out.put("priorWindowHasData", priorHasData);
+        }
+        out.put("priorStart", prevStart.toString());
+        out.put("priorEnd", prevEnd.toString());
+        out.put("start", start.toString());
+        out.put("end", end.toString());
+        out.put("basis", "SETTLEMENT");
+        return out;
+    }
+
+    /**
+     * SUM(dcc_optin_volume), SUM(dcc_eligible_volume) from sum_daily_merchant
+     * for the current window, honoring the merchant-level filters. Both
+     * columns are international-only by construction and settlement currency.
+     */
+    private BigDecimal[] fetchDccVolumes(VolumeRevenueFilterDTO filter, Long tenantId, LocalDate start, LocalDate end) {
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT SUM(s.dcc_optin_volume) as optin_vol, SUM(s.dcc_eligible_volume) as eligible_vol ");
+        sql.append("FROM sum_daily_merchant s ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        sql.append("WHERE s.tenant_id = :tenantId ");
+        sql.append("AND s.business_date BETWEEN :start AND :end ");
+        appendCommonFilters(sql, filter); // only merchant-level clauses can fire on this path
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("tenantId", tenantId);
+        query.setParameter("start", start);
+        query.setParameter("end", end);
+        bindCommonParams(query, filter);
+
+        Object[] r = (Object[]) query.getSingleResult();
+        return new BigDecimal[] { bd(r[0]), bd(r[1]) };
+    }
+
+    /** Cardholder-currency fallback against sum_daily_insight (dimensional filters). */
+    private Map<String, Object> getKpisFromInsight(VolumeRevenueFilterDTO filter, Long tenantId) {
         requireTenant(tenantId);
         LocalDate end = filter.getEndDate() != null ? filter.getEndDate() : LocalDate.now();
         LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.minusDays(30);
@@ -160,8 +320,11 @@ public class DestinationDashboardRepository {
         if (tenantId != null) query.setParameter("tenantId", tenantId);
         bindCommonParams(query, filter);
 
+        // No defensive catch here: a failed query must surface as a 500 so the
+        // screen shows a real error state — a silently-zero dashboard on a
+        // revenue screen reads as "no business", which is worse than an error.
         Map<String, Object> out = new HashMap<>();
-        try {
+        {
             Object[] r = (Object[]) query.getSingleResult();
             BigDecimal domVolCurr = bd(r[0]);   long domTxnCurr = lng(r[1]);   BigDecimal domMsfCurr = bd(r[2]);   long domMerchCurr = lng(r[3]);
             BigDecimal intlVolCurr = bd(r[4]);  long intlTxnCurr = lng(r[5]);  BigDecimal intlMsfCurr = bd(r[6]);  long intlMerchCurr = lng(r[7]);
@@ -184,17 +347,12 @@ public class DestinationDashboardRepository {
 
             boolean priorHasData = domVolPrev.signum() > 0 || intlVolPrev.signum() > 0 || domTxnPrev > 0 || intlTxnPrev > 0;
             out.put("priorWindowHasData", priorHasData);
-        } catch (Exception e) {
-            out.put("domestic", kpiBlock(BigDecimal.ZERO, 0, BigDecimal.ZERO, 0, BigDecimal.ZERO, 0, BigDecimal.ZERO));
-            out.put("international", kpiBlock(BigDecimal.ZERO, 0, BigDecimal.ZERO, 0, BigDecimal.ZERO, 0, BigDecimal.ZERO));
-            out.put("domesticSharePct", 0.0);
-            out.put("internationalSharePct", 0.0);
-            out.put("priorWindowHasData", false);
         }
         out.put("priorStart", prevStart.toString());
         out.put("priorEnd", prevEnd.toString());
         out.put("start", start.toString());
         out.put("end", end.toString());
+        out.put("basis", "CARDHOLDER_MIXED");
         return out;
     }
 
@@ -222,6 +380,54 @@ public class DestinationDashboardRepository {
     // 2) Monthly trend — domestic + international columns in one row
     // ─────────────────────────────────────────────────────────────────
     public List<Map<String, Object>> getTrend(VolumeRevenueFilterDTO filter, Long tenantId) {
+        return needsInsightFallback(filter)
+                ? getTrendFromInsight(filter, tenantId)
+                : getTrendFromDestination(filter, tenantId);
+    }
+
+    /** Settlement-currency fast path against sum_daily_merchant_destination. */
+    private List<Map<String, Object>> getTrendFromDestination(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT TO_CHAR(s.business_date, 'YYYY-MM') as month_label, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_volume, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txns, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_volume, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txns, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf ");
+        sql.append("FROM sum_daily_merchant_destination s ");
+        // LEFT: merchant_id can be NULL (unmatched-merchant fact rows).
+        sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+
+        sql.append("WHERE 1=1 ");
+        sql.append("AND s.tenant_id = :tenantId ");
+        if (filter.getStartDate() != null) sql.append("AND s.business_date >= :startDate ");
+        if (filter.getEndDate() != null) sql.append("AND s.business_date <= :endDate ");
+        appendCommonFilters(sql, filter);
+        sql.append("GROUP BY TO_CHAR(s.business_date, 'YYYY-MM') ORDER BY month_label ASC");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("tenantId", tenantId);
+        if (filter.getStartDate() != null) query.setParameter("startDate", filter.getStartDate());
+        if (filter.getEndDate() != null) query.setParameter("endDate", filter.getEndDate());
+        bindCommonParams(query, filter);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object[] r : rows) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("month", r[0]);
+            m.put("domVolume", bd(r[1])); m.put("domTxns", lng(r[2])); m.put("domMsf", bd(r[3]));
+            m.put("intlVolume", bd(r[4])); m.put("intlTxns", lng(r[5])); m.put("intlMsf", bd(r[6]));
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** Cardholder-currency fallback against sum_daily_insight (dimensional filters). */
+    private List<Map<String, Object>> getTrendFromInsight(VolumeRevenueFilterDTO filter, Long tenantId) {
         requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT TO_CHAR(s.business_date, 'YYYY-MM') as month_label, ");
@@ -266,6 +472,7 @@ public class DestinationDashboardRepository {
     // 3) Breakdown by scheme / cardType / channel / mcc — dom+intl split
     // ─────────────────────────────────────────────────────────────────
     public List<Map<String, Object>> getBreakdown(VolumeRevenueFilterDTO filter, String dimension, Long tenantId) {
+        // Always sum_daily_insight: the breakdown dimensions (scheme/cardType/channel/mcc) don't exist on sum_daily_merchant_destination.
         requireTenant(tenantId);
         String groupCol;
         boolean needStoreForGroup = false;
@@ -323,6 +530,64 @@ public class DestinationDashboardRepository {
     //    (flags travel/FX/DCC-opportunity merchants).
     // ─────────────────────────────────────────────────────────────────
     public List<Map<String, Object>> getTopMerchants(VolumeRevenueFilterDTO filter, Long tenantId, int limit) {
+        return needsInsightFallback(filter)
+                ? getTopMerchantsFromInsight(filter, tenantId, limit)
+                : getTopMerchantsFromDestination(filter, tenantId, limit);
+    }
+
+    /** Settlement-currency fast path against sum_daily_merchant_destination. */
+    private List<Map<String, Object>> getTopMerchantsFromDestination(VolumeRevenueFilterDTO filter, Long tenantId, int limit) {
+        requireTenant(tenantId);
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT m.mid as mid, m.name as merchant_name, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_volume, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_volume, ");
+        sql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf ");
+        sql.append("FROM sum_daily_merchant_destination s ");
+        // INNER, same as the insight variant — a merchant ranking has no row for NULL merchant_id.
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+
+        sql.append("WHERE 1=1 ");
+        sql.append("AND s.tenant_id = :tenantId ");
+        if (filter.getStartDate() != null) sql.append("AND s.business_date >= :startDate ");
+        if (filter.getEndDate() != null) sql.append("AND s.business_date <= :endDate ");
+        appendCommonFilters(sql, filter);
+        sql.append("GROUP BY m.mid, m.name ");
+        sql.append("ORDER BY (SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) + ")
+           .append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END)) DESC ");
+        sql.append("LIMIT :limit");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("tenantId", tenantId);
+        if (filter.getStartDate() != null) query.setParameter("startDate", filter.getStartDate());
+        if (filter.getEndDate() != null) query.setParameter("endDate", filter.getEndDate());
+        bindCommonParams(query, filter);
+        query.setParameter("limit", limit);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object[] r : rows) {
+            BigDecimal domVol = bd(r[2]);
+            BigDecimal intlVol = bd(r[4]);
+            BigDecimal totalVol = domVol.add(intlVol);
+            Map<String, Object> m = new HashMap<>();
+            m.put("mid", r[0]);
+            m.put("merchantName", r[1]);
+            m.put("domVolume", domVol);
+            m.put("domMsf", bd(r[3]));
+            m.put("intlVolume", intlVol);
+            m.put("intlMsf", bd(r[5]));
+            m.put("totalVolume", totalVol);
+            m.put("intlSharePct", totalVol.signum() > 0 ? intlVol.doubleValue() / totalVol.doubleValue() * 100.0 : 0.0);
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** Cardholder-currency fallback against sum_daily_insight (dimensional filters). */
+    private List<Map<String, Object>> getTopMerchantsFromInsight(VolumeRevenueFilterDTO filter, Long tenantId, int limit) {
         requireTenant(tenantId);
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT m.mid as mid, m.name as merchant_name, ");

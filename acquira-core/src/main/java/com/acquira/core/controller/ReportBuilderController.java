@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -19,6 +20,7 @@ import java.util.*;
 @RequestMapping("/api/reports")
 @RequiredArgsConstructor
 @Slf4j
+@PreAuthorize("@menuAccess.canAccess('/explorer')")
 public class ReportBuilderController {
 
     private final ReportTemplateRepository templateRepo;

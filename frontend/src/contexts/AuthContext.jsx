@@ -94,7 +94,9 @@ export const AuthProvider = ({ children }) => {
                 return { success: false };
             }
 
-            const res = await api.post('/auth/switch-context', { tenantId: numericTenantId });
+            // Tight timeout: the login tenant-picker disables every button until
+            // this settles, so a hung backend must fail fast, not freeze the modal.
+            const res = await api.post('/auth/switch-context', { tenantId: numericTenantId }, { timeout: 15000 });
             const { menus, activeTenantId: confirmedId, groupName, roleInTenant, sessionTimeoutMinutes } = res.data;
 
             const newTenantId = confirmedId || numericTenantId;

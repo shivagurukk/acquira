@@ -7,6 +7,7 @@ import com.acquira.core.service.LeaderboardService.Tier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/leaderboard")
 @RequiredArgsConstructor
 @Slf4j
+@PreAuthorize("@menuAccess.canAccess('/sales/leaderboard')")
 public class LeaderboardController {
 
     private final LeaderboardService leaderboardService;
@@ -56,6 +58,8 @@ public class LeaderboardController {
             periods(t, period, dateFrom, dateTo)));
     }
 
+    // Also called from the sales hierarchy screen, so either grant passes.
+    @PreAuthorize("@menuAccess.canAccess('/sales/leaderboard') or @menuAccess.canAccess('/sales/hierarchy')")
     @GetMapping("/countries")
     public ResponseEntity<?> countries(
             @RequestParam(defaultValue = "") String period,

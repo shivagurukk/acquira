@@ -1,6 +1,7 @@
 package com.acquira.core.controller;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
@@ -9,6 +10,7 @@ import com.acquira.common.config.TenantContext;
 
 @RestController
 @RequestMapping("/api/reports/insight")
+@PreAuthorize("@menuAccess.canAccess('/merchant/insight-hub')")
 public class InsightController {
 
     private final JdbcTemplate jdbcTemplate;
