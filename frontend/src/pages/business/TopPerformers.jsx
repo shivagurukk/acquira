@@ -264,7 +264,7 @@ const TopPerformers = () => {
                     />
 
                     {/* Movers — split up/down within one card */}
-                    <Paper sx={{ ...premiumTableWrapper, display: 'flex', flexDirection: 'column' }}>
+                    <Paper sx={{ ...premiumTableWrapper, display: 'flex', flexDirection: 'column', gridColumn: '1 / -1' }}>
                         <Box sx={{ px: 2.5, py: 1.75, borderBottom: `1px solid ${T.borderLt}` }}>
                             <Stack direction="row" spacing={1.2} alignItems="center">
                                 <Box sx={{
