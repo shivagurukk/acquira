@@ -1493,14 +1493,32 @@ CREATE TABLE IF NOT EXISTS interchange_rate_local (
     card_type           VARCHAR(20),                   -- CREDIT / DEBIT / PREPAID / NULL(any)
     tier                VARCHAR(20),                   -- Standard / Premium / NULL(any)
     mcc_sector          VARCHAR(20),                   -- Govt/Gas/RE/Edu/Trans/Auto/REX / NULL(any)
-    min_ticket_aed      DECIMAL(19, 2),                -- inclusive lower bound / NULL
-    max_ticket_aed      DECIMAL(19, 2),                -- exclusive upper bound / NULL
+    min_ticket      DECIMAL(19, 2),                -- inclusive lower bound / NULL
+    max_ticket      DECIMAL(19, 2),                -- exclusive upper bound / NULL
     interchange_pct     DECIMAL(9, 6) NOT NULL,        -- 0.011500 = 1.15%
     cap_amount          DECIMAL(19, 2),                -- 37.5 AED debit cap / NULL
     label               VARCHAR(80)
 );
 CREATE INDEX IF NOT EXISTS idx_interchange_rate_local_lookup
     ON interchange_rate_local (tenant_id, dest, priority DESC);
+
+-- Legacy rename gap (2026-08-17): databases provisioned from a pre-2026-08-11
+-- copy of this dump still carry min_ticket_aed/max_ticket_aed while the code
+-- queries min_ticket/max_ticket ("column ilr.min_ticket does not exist" at
+-- transactionLoadJob/stagingToFactStep). Idempotent without a DO block: on an
+-- already-renamed DB the ADDs re-create empty legacy columns, the backfill
+-- no-ops, and the DROPs converge.
+ALTER TABLE interchange_rate_local ADD COLUMN IF NOT EXISTS min_ticket DECIMAL(19,4);
+ALTER TABLE interchange_rate_local ADD COLUMN IF NOT EXISTS max_ticket DECIMAL(19,4);
+ALTER TABLE interchange_rate_local ADD COLUMN IF NOT EXISTS min_ticket_aed DECIMAL(19,4);
+ALTER TABLE interchange_rate_local ADD COLUMN IF NOT EXISTS max_ticket_aed DECIMAL(19,4);
+UPDATE interchange_rate_local
+   SET min_ticket = COALESCE(min_ticket, min_ticket_aed),
+       max_ticket = COALESCE(max_ticket, max_ticket_aed)
+ WHERE (min_ticket IS NULL AND min_ticket_aed IS NOT NULL)
+    OR (max_ticket IS NULL AND max_ticket_aed IS NOT NULL);
+ALTER TABLE interchange_rate_local DROP COLUMN IF EXISTS min_ticket_aed;
+ALTER TABLE interchange_rate_local DROP COLUMN IF EXISTS max_ticket_aed;
 
 -- ---------------------------------------------------------------------------
 -- 4. scheme_fee_rate -- destination x channel percentage
@@ -1552,9 +1570,9 @@ ON CONFLICT (tenant_id, dest, channel) DO NOTHING;
 -- (nullable match columns make ON CONFLICT unusable -- see header).
 INSERT INTO interchange_rate_local
     (tenant_id, priority, dest, channel, scheme_group, card_type, tier, mcc_sector,
-     min_ticket_aed, max_ticket_aed, interchange_pct, cap_amount, label)
+     min_ticket, max_ticket, interchange_pct, cap_amount, label)
 SELECT t.tenant_id, v.priority, v.dest, v.channel, v.scheme_group, v.card_type, v.tier, v.mcc_sector,
-       v.min_ticket_aed, v.max_ticket_aed, v.interchange_pct, v.cap_amount, v.label
+       v.min_ticket, v.max_ticket, v.interchange_pct, v.cap_amount, v.label
 FROM (SELECT tenant_id FROM tenant WHERE bank_short_code = 'ACQ') t
 CROSS JOIN (VALUES
     (1,  'INTERNATIONAL', NULL,   NULL,          NULL,      NULL,       NULL,    NULL,      NULL,      0.018500, NULL, 'Intl flat 1.85'),
@@ -1586,7 +1604,7 @@ CROSS JOIN (VALUES
     (30, 'DOMESTIC', 'ECOM', 'MasterCard',  'CREDIT',  NULL,       'REX',   NULL,      3670.00,   0.005000, NULL, 'MC REX ECOM <3670 -> 0.50'),
     (30, 'DOMESTIC', 'ECOM', 'MasterCard',  'CREDIT',  NULL,       'REX',   3670.00,   NULL,      0.011500, NULL, 'MC REX ECOM >=3670 -> 1.15')
 ) AS v(priority, dest, channel, scheme_group, card_type, tier, mcc_sector,
-       min_ticket_aed, max_ticket_aed, interchange_pct, cap_amount, label)
+       min_ticket, max_ticket, interchange_pct, cap_amount, label)
 WHERE NOT EXISTS (SELECT 1 FROM interchange_rate_local x WHERE x.tenant_id = t.tenant_id);
 
 

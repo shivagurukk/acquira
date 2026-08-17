@@ -36,10 +36,9 @@ import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
    • CSV export of the visible range (KPIs + bucket rows).
    • Insight strip: best & worst bucket by margin, momentum (last two
      complete buckets).
-   • Two charts: Volume and Net Margin % as small multiples — two panels on a
-     shared x-axis rather than one plot with two y-scales, so the crossing of
-     bars and line can't imply a relationship the data doesn't contain — plus
-     MSF composition (stacked: net margin / interchange / scheme / ecom = MSF).
+   • Two charts: Volume bars with a Net Margin % line overlay (dual y-axes,
+     money left / % right) in a single combined panel, plus MSF composition
+     (stacked: net margin / interchange / scheme / PG fee = MSF).
    • Breakdown table with inline margin bars, best/worst tint.
    Data: sum_daily_bank weekly buckets + sum_monthly_bank month rows,
    settlement currency. Tenant currency via createFmt(currencySymbol).
@@ -261,7 +260,7 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
                 ['MSF', fmt.currency(d.msf)],
                 ['Interchange', fmt.currency(d.interchange)],
                 ['Scheme Fee', fmt.currency(d.schemeFee)],
-                ['ECOM Fee', fmt.currency(d.ecomFee)],
+                ['PG Fee', fmt.currency(d.ecomFee)],
                 ['Net Margin', fmt.currency(d.netRevenue)],
                 ['Net Margin %', `${num(d.marginPct).toFixed(2)}%`],
             ].map(([k, v]) => (
@@ -459,7 +458,7 @@ const Dashboard = () => {
         const msfDp = Math.max(4, dp);
         const heads = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume', 'Avg Ticket',
             'MSF', 'Interchange', 'Interchange % Vol', 'Scheme Fee', 'Scheme % Vol',
-            'ECOM Fee', 'ECOM % Vol', 'Net Margin', 'Net Margin %'];
+            'PG Fee', 'Net Margin', 'Net Margin %'];
         lines.push(heads.map(esc).join(','));
         // Rate columns mirror the on-screen table; exported at 4dp because a
         // spreadsheet has no tooltip to fall back on.
@@ -467,7 +466,7 @@ const Dashboard = () => {
         const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(dp), num(b.avgTicket).toFixed(dp),
             num(b.msf).toFixed(msfDp), num(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
             num(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
-            num(b.ecomFee).toFixed(dp), rate(b.ecomFee, b.volume),
+            num(b.ecomFee).toFixed(dp),
             num(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2)]
             .map(esc).join(',');
         viewData.forEach(b => lines.push(row(b.label + (b.partial ? ' (partial)' : ''), b)));
@@ -477,7 +476,6 @@ const Dashboard = () => {
             lines.push(['MSF Rate %', derived.msfRate.toFixed(4)].map(esc).join(','));
             lines.push(['Interchange % of Volume', derived.interchangeRate.toFixed(4)].map(esc).join(','));
             lines.push(['Scheme Fee % of Volume', derived.schemeRate.toFixed(4)].map(esc).join(','));
-            lines.push(['ECOM Fee % of Volume', derived.ecomRate.toFixed(4)].map(esc).join(','));
             lines.push(['Total Fees', derived.fees.toFixed(dp)].map(esc).join(','));
             lines.push(['Total Fees % of Volume', derived.feesRate.toFixed(4)].map(esc).join(','));
         }
@@ -513,11 +511,8 @@ const Dashboard = () => {
         { label: 'Avg Ticket', ccy: true },
         { label: 'MSF', ccy: true },
         { label: 'Interchange', ccy: true },
-        { label: 'Interchange % Vol' },
         { label: 'Scheme Fee', ccy: true },
-        { label: 'Scheme % Vol' },
-        { label: 'ECOM Fee', ccy: true },
-        { label: 'ECOM % Vol' },
+        { label: 'PG Fee', ccy: true },
         { label: 'Net Margin', ccy: true },
         { label: 'Net Margin %' },
     ];
@@ -697,14 +692,12 @@ const Dashboard = () => {
                                 deltaPct={dpg(vt.schemeFee, prev?.schemeFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Paid to card schemes" />
-                            <RailMetric label="ECOM Fee" icon={Globe}
+                            <RailMetric label="PG Fee" icon={Globe}
                                 value={fmt.currency(num(vt.ecomFee))}
                                 fullValue={fullNum(vt.ecomFee, currencySymbol)}
-                                sub={`${derived.ecomRate.toFixed(3)}%`}
-                                subTitle={`${derived.ecomRate.toFixed(4)}% — ECOM fee / volume`}
                                 deltaPct={dpg(vt.ecomFee, prev?.ecomFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
-                                hint="E-commerce gateway fees" />
+                                hint="Payment gateway fees" />
                             <RailMetric label="Total Charges" icon={Scale}
                                 value={fmt.currency(derived.fees)}
                                 fullValue={fullNum(derived.fees, currencySymbol)}
@@ -713,7 +706,7 @@ const Dashboard = () => {
                                 deltaPct={isFiltered ? null
                                     : (derived.prevFees ? deltaPct(derived.fees, derived.prevFees) : undefined)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
-                                hint="Interchange + scheme + ECOM" />
+                                hint="Interchange + scheme + PG fee" />
                         </div>
                     )}
 
@@ -747,30 +740,31 @@ const Dashboard = () => {
                         gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))' }}>
                         <ChartCard
                             title={mode === 'MTD' ? 'Week-by-week' : 'Month-by-month'}
-                            subtitle="Volume and Net Margin %"
+                            subtitle="Volume with Net Margin % overlay"
                             footer={mode === 'MTD' && viewData.some(b => b.partial) && (
                                 <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', padding: '4px 2px 8px' }}>
                                     Lighter bar = week in progress.
                                 </div>
                             )}>
-                            {/* Upper panel — volume. The x-axis lives on the lower
-                                panel and is shared; both use PANEL_MARGIN and
-                                PANEL_Y_WIDTH so the columns line up. */}
-                            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
-                                textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 2 }}>
-                                Volume
-                            </div>
-                            <ResponsiveContainer width="100%" height={186}>
-                                <BarChart data={viewData} margin={PANEL_MARGIN}>
+                            {/* Single combined panel: volume bars on the left (money)
+                                axis, Net Margin % line on the right (%) axis. */}
+                            <ResponsiveContainer width="100%" height={344}>
+                                <ComposedChart data={viewData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                                     <CartesianGrid stroke="var(--border)" vertical={false} />
-                                    <XAxis dataKey="label" hide />
+                                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} />
                                     {/* Money axis — carries the tenant currency. */}
-                                    <YAxis tickFormatter={(v) => fmt.currency(v)}
+                                    <YAxis yAxisId="vol" tickFormatter={(v) => fmt.currency(v)}
                                         tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
                                         axisLine={false} tickLine={false} width={PANEL_Y_WIDTH} />
+                                    <YAxis yAxisId="pct" orientation="right"
+                                        tickFormatter={(v) => `${v.toFixed(1)}%`}
+                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                                        axisLine={false} tickLine={false} width={48} />
                                     <ReTooltip content={<BucketTooltip fmt={fmt} />}
                                         cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
-                                    <Bar dataKey="volume" name="Volume"
+                                    <Legend wrapperStyle={{ fontSize: 11.5 }} iconType="circle" iconSize={8} />
+                                    <Bar yAxisId="vol" dataKey="volume" name="Volume"
                                         radius={[4, 4, 0, 0]} maxBarSize={28}>
                                         {viewData.map((b, i) => (
                                             <Cell key={i} fill={C.volume}
@@ -778,38 +772,13 @@ const Dashboard = () => {
                                         ))}
                                     </Bar>
                                     {mode === 'MTD' && runRate && num(runRate.projectedVolume) > 0 && (
-                                        <ReferenceLine
+                                        <ReferenceLine yAxisId="vol"
                                             y={num(runRate.projectedVolume) / Math.max(viewData.length, 1)}
                                             stroke="var(--text-secondary)" strokeDasharray="5 4"
                                             label={{ value: 'avg pace', position: 'insideTopRight',
                                                 fontSize: 10, fill: 'var(--text-secondary)' }} />
                                     )}
-                                </BarChart>
-                            </ResponsiveContainer>
-
-                            {/* Lower panel — margin %, on its own scale and carrying
-                                the shared x-axis labels. */}
-                            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
-                                textTransform: 'uppercase', color: 'var(--text-secondary)', marginTop: 6 }}>
-                                Net Margin %
-                            </div>
-                            <ResponsiveContainer width="100%" height={124}>
-                                <ComposedChart data={viewData} margin={PANEL_MARGIN}>
-                                    <CartesianGrid stroke="var(--border)" vertical={false} />
-                                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} />
-                                    <YAxis tickFormatter={(v) => `${v.toFixed(1)}%`}
-                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} width={PANEL_Y_WIDTH} />
-                                    <ReTooltip content={<BucketTooltip fmt={fmt} />}
-                                        cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
-                                    {/* Unpainted, and not removable: a bar puts this panel on the
-                                        same band scale as the volume panel, which is what lands the
-                                        points and tick labels on the bar centres above. Without it
-                                        Recharts spaces a line edge-to-edge and the panels disagree.
-                                        Same dataKey as the line, so the y-domain is unchanged. */}
-                                    <Bar dataKey="marginPct" fill="none" legendType="none" />
-                                    <Line type="monotone" dataKey="marginPct" name="Net Margin %"
+                                    <Line yAxisId="pct" type="monotone" dataKey="marginPct" name="Net Margin %"
                                         stroke={C.marginPct} strokeWidth={2}
                                         dot={{ r: 4, strokeWidth: 2, stroke: 'var(--bg-card)', fill: C.marginPct }}
                                         activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--bg-card)' }} />
@@ -843,7 +812,7 @@ const Dashboard = () => {
                                     <Bar dataKey="schemeFee" name="Scheme Fee" stackId="c"
                                         fill={C.schemeFee} maxBarSize={30}
                                         stroke="var(--bg-card)" strokeWidth={2} />
-                                    <Bar dataKey="ecomFee" name="ECOM Fee" stackId="c"
+                                    <Bar dataKey="ecomFee" name="PG Fee" stackId="c"
                                         fill={C.ecomFee} maxBarSize={30} radius={[4, 4, 0, 0]}
                                         stroke="var(--bg-card)" strokeWidth={2} />
                                 </BarChart>
@@ -902,12 +871,15 @@ const Dashboard = () => {
                                                 <td style={tdNum} title={fullNum(b.volume, currencySymbol)}>{fmt.amount(b.volume)}</td>
                                                 <td style={tdNum} title={fullNum(b.avgTicket, currencySymbol)}>{fmt.amount(b.avgTicket)}</td>
                                                 <td style={tdNum} title={formatMsf(b.msf, currencySymbol)}>{fmt.amount(b.msf)}</td>
-                                                <td style={tdNum} title={fullNum(b.interchange, currencySymbol)}>{fmt.amount(b.interchange)}</td>
-                                                <td style={tdRate} title={ratePctTitle(b.interchange, b.volume)}>{ratePct(b.interchange, b.volume)}</td>
-                                                <td style={tdNum} title={fullNum(b.schemeFee, currencySymbol)}>{fmt.amount(b.schemeFee)}</td>
-                                                <td style={tdRate} title={ratePctTitle(b.schemeFee, b.volume)}>{ratePct(b.schemeFee, b.volume)}</td>
+                                                <td style={tdNum} title={`${fullNum(b.interchange, currencySymbol)} · ${ratePctTitle(b.interchange, b.volume)}`}>
+                                                    {fmt.amount(b.interchange)}
+                                                    <div style={rateSub}>{ratePct(b.interchange, b.volume)}</div>
+                                                </td>
+                                                <td style={tdNum} title={`${fullNum(b.schemeFee, currencySymbol)} · ${ratePctTitle(b.schemeFee, b.volume)}`}>
+                                                    {fmt.amount(b.schemeFee)}
+                                                    <div style={rateSub}>{ratePct(b.schemeFee, b.volume)}</div>
+                                                </td>
                                                 <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.amount(b.ecomFee)}</td>
-                                                <td style={tdRate} title={ratePctTitle(b.ecomFee, b.volume)}>{ratePct(b.ecomFee, b.volume)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 600,
                                                     color: b.netRevenue >= 0 ? 'var(--text)' : '#dc2626' }}
                                                     title={fullNum(b.netRevenue, currencySymbol)}>{fmt.amount(b.netRevenue)}</td>
@@ -936,12 +908,15 @@ const Dashboard = () => {
                                         <td style={tdTotal} title={fullNum(vt.volume, currencySymbol)}>{fmt.amount(num(vt.volume))}</td>
                                         <td style={tdTotal} title={fullNum(vt.avgTicket, currencySymbol)}>{fmt.amount(num(vt.avgTicket))}</td>
                                         <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.amount(num(vt.msf))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.interchange, currencySymbol)}>{fmt.amount(num(vt.interchange))}</td>
-                                        <td style={tdTotal} title={ratePctTitle(vt.interchange, vt.volume)}>{ratePct(vt.interchange, vt.volume)}</td>
-                                        <td style={tdTotal} title={fullNum(vt.schemeFee, currencySymbol)}>{fmt.amount(num(vt.schemeFee))}</td>
-                                        <td style={tdTotal} title={ratePctTitle(vt.schemeFee, vt.volume)}>{ratePct(vt.schemeFee, vt.volume)}</td>
+                                        <td style={tdTotal} title={`${fullNum(vt.interchange, currencySymbol)} · ${ratePctTitle(vt.interchange, vt.volume)}`}>
+                                            {fmt.amount(num(vt.interchange))}
+                                            <div style={rateSub}>{ratePct(vt.interchange, vt.volume)}</div>
+                                        </td>
+                                        <td style={tdTotal} title={`${fullNum(vt.schemeFee, currencySymbol)} · ${ratePctTitle(vt.schemeFee, vt.volume)}`}>
+                                            {fmt.amount(num(vt.schemeFee))}
+                                            <div style={rateSub}>{ratePct(vt.schemeFee, vt.volume)}</div>
+                                        </td>
                                         <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.amount(num(vt.ecomFee))}</td>
-                                        <td style={tdTotal} title={ratePctTitle(vt.ecomFee, vt.volume)}>{ratePct(vt.ecomFee, vt.volume)}</td>
                                         <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.amount(num(vt.netRevenue))}</td>
                                         <td style={{ ...tdTotal,
                                             color: num(vt.marginPct) >= 0 ? '#059669' : '#dc2626' }}>
@@ -962,9 +937,12 @@ const tdNum = {
     padding: '11px 16px', textAlign: 'right', color: 'var(--text)',
     fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
 };
-/* Rate columns sit beside the money they derive from — muted so the eye still
-   reads the amounts first. */
-const tdRate = { ...tdNum, color: 'var(--text-secondary)' };
+/* Rate lives INSIDE the fee cell it derives from (small muted sub-line under
+   the amount) — no separate % columns. */
+const rateSub = {
+    fontSize: 10.5, fontWeight: 600, color: 'var(--text-secondary)',
+    fontVariantNumeric: 'tabular-nums', marginTop: 1,
+};
 const selStyle = {
     border: 'none', background: 'transparent', color: 'var(--text)',
     fontSize: 12.5, fontWeight: 600, cursor: 'pointer', outline: 'none',

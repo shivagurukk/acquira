@@ -1,1350 +1,530 @@
-/* ============================================================================
-   AFS NEXUS — Enterprise Payment Intelligence · Sign in
-   Split-screen: cobalt blueprint panel (58%) / white auth surface (42%).
+/* ══════════════════════════════════════════════════════════════
+   AFS NEXUS — Sign-in
+   Futuristic payment-intelligence scene: navy canvas, perspective
+   grid floor, particle field, acquiring-rail network and holographic
+   telemetry panels behind a glass sign-in card.
 
-   Design language: "drawn to spec". The brand panel is a drafting sheet —
-   a fine blueprint grid on deep cobalt, annotated in a monospace hand, with
-   a payment card drawn to its real ISO 7810 ID-1 dimensions as the single
-   signature element. The auth side is paper-white and quiet.
-
-   All tokens are scoped to .login-page so this file cannot leak into the
-   application theme. Two voices only: Inter for prose and UI, a monospace
-   stack for every numeral and annotation — figures sit on the grid the way
-   they do on an engineering drawing.
-   ========================================================================== */
+   The login screen is intentionally standalone and always dark — it
+   is brand theatre, not app chrome — so it carries its own local
+   palette instead of the app's light/dark tokens.
+   ══════════════════════════════════════════════════════════════ */
 
 .login-page {
-    /* Brand — blue only, no second hue. */
-    --nx-ink-950: #060F2E;
-    --nx-ink-900: #0A1B4F;
-    --nx-ink-800: #10276B;
+  /* local palette (scoped — does not leak into the app) */
+  --nxl-bg-0: #030916;
+  --nxl-bg-1: #061027;
+  --nxl-ink: #e8f0ff;
+  --nxl-ink-dim: #8fa3c8;
+  --nxl-ink-faint: #4d6291;
+  --nxl-brand: #2f6bff;
+  --nxl-brand-2: #00d4ff;
+  --nxl-ok: #34d399;
+  --nxl-bad: #f87171;
+  --nxl-gold: #fbbf24;
+  --nxl-glass-edge: rgba(84, 140, 255, 0.28);
+  --nxl-mono: 'IBM Plex Mono', 'Cascadia Code', Consolas, monospace;
 
-    --nx-blue-800: #1E40AF;
-    --nx-blue-700: #1D4ED8;
-    --nx-blue-600: #2563EB;
-    --nx-blue-500: #3B82F6;
-    --nx-blue-400: #60A5FA;
-    --nx-blue-300: #93C5FD;
-
-    /* Surfaces */
-    --nx-surface: #FFFFFF;
-    --nx-surface-soft: #F3F7FF;
-    --nx-surface-muted: #F8FAFC;
-
-    /* Ink */
-    --nx-text-primary: #0F1F4B;
-    --nx-text-secondary: #5B6B8C;
-    --nx-border: #D7E3FA;
-    --nx-error: #DC2626;
-
-    /* Ink on the dark panel */
-    --nx-on-dark: #EDF4FF;
-    --nx-on-dark-soft: #A7B8DC;
-
-    /* Blueprint linework on the dark panel */
-    --nx-grid-line: rgba(147, 197, 253, 0.07);
-    --nx-grid-line-major: rgba(147, 197, 253, 0.13);
-    --nx-draft-line: rgba(191, 219, 254, 0.62);
-    --nx-draft-faint: rgba(147, 197, 253, 0.28);
-
-    --nx-mono: 'Cascadia Code', ui-monospace, 'SF Mono', 'JetBrains Mono', Consolas, monospace;
-    --nx-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
-
-    position: relative;
-    display: grid;
-    grid-template-columns: 58fr 42fr;
-    /* Divided by --app-zoom so the split screen still fills the window when
-       the shell is scaled down; dvh keeps mobile browser chrome out of it. */
-    min-height: calc(100vh / var(--app-zoom, 1));
-    min-height: calc(100dvh / var(--app-zoom, 1));
-    width: 100%;
-    overflow-x: hidden;
-    background: var(--nx-surface);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    color: var(--nx-text-primary);
-    -webkit-font-smoothing: antialiased;
+  position: fixed;
+  inset: 0;
+  font-family: var(--font-ui);
+  background: radial-gradient(120% 90% at 50% 0%, #0a1a3f 0%, var(--nxl-bg-1) 42%, var(--nxl-bg-0) 100%);
+  color: var(--nxl-ink);
+  overflow: hidden;
 }
 
-/* ============================ LEFT — BRAND ============================== */
+/* ══════════════════════════════════════════════════════════════
+   BACKDROP
+   ══════════════════════════════════════════════════════════════ */
+.nxl-backdrop { position: absolute; inset: 0; pointer-events: none; }
 
-/* Three-band page structure: masthead / statement / capability rail.
-   The panel is a drafting sheet: flat cobalt ink with a fine blueprint grid
-   (a heavier rule every fifth line) drawn in CSS. No glow, no blur — depth
-   comes from linework. */
-.nx-brand {
-    position: relative;
-    display: grid;
-    grid-template-rows: auto 1fr auto;
-    padding: clamp(40px, 4.6vw, 68px);
-    overflow: hidden;
-    isolation: isolate;
-    background:
-        repeating-linear-gradient(0deg,
-            var(--nx-grid-line-major) 0, var(--nx-grid-line-major) 1px, transparent 1px, transparent 120px),
-        repeating-linear-gradient(90deg,
-            var(--nx-grid-line-major) 0, var(--nx-grid-line-major) 1px, transparent 1px, transparent 120px),
-        repeating-linear-gradient(0deg,
-            var(--nx-grid-line) 0, var(--nx-grid-line) 1px, transparent 1px, transparent 24px),
-        repeating-linear-gradient(90deg,
-            var(--nx-grid-line) 0, var(--nx-grid-line) 1px, transparent 1px, transparent 24px),
-        var(--nx-ink-900);
-    color: var(--nx-on-dark);
+/* perspective grid floor */
+.nxl-grid-floor {
+  position: fixed; left: -40%; right: -40%; bottom: -12%; height: 52%;
+  background:
+    repeating-linear-gradient(90deg, rgba(64, 120, 255, 0.16) 0 1px, transparent 1px 70px),
+    repeating-linear-gradient(0deg, rgba(64, 120, 255, 0.13) 0 1px, transparent 1px 46px);
+  transform: perspective(620px) rotateX(64deg);
+  transform-origin: 50% 0;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 30%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 30%, #000 78%, transparent 100%);
+  animation: nxlGridScroll 9s linear infinite;
+}
+@keyframes nxlGridScroll { from { background-position: 0 0, 0 0; } to { background-position: 0 0, 0 46px; } }
+
+.nxl-grid-glow {
+  position: fixed; left: 0; right: 0; bottom: 0; height: 34%;
+  background: radial-gradient(60% 90% at 50% 100%, rgba(47, 107, 255, 0.20), transparent 70%);
 }
 
-/* ---- Signature: a payment card drawn to spec, cropped by the corner.
-   ISO/IEC 7810 ID-1 — 85.60 × 53.98 mm, R3.18 corners — with dimension
-   lines, centre marks and mono callouts, like a sheet from the card
-   manufacturer's drawing pack. Drawn as SVG so every stroke is deliberate.
-   Static by design. ---- */
-.nx-schematic {
-    position: absolute;
-    right: -7%;
-    bottom: -14%;
-    z-index: -1;
-    width: clamp(460px, 46vw, 720px);
-    height: auto;
-    transform: rotate(-7deg);
-    pointer-events: none;
+.nxl-particles { position: fixed; inset: 0; }
+
+/* ── payment-rail network ── */
+.nxl-rails { position: fixed; inset: 0; width: 100%; height: 100%; }
+.nxl-rail {
+  fill: none; stroke: url(#nxlRailGrad); stroke-width: 1.4; opacity: 0.5;
+  stroke-dasharray: 6 10; animation: nxlRailFlow 1.6s linear infinite;
+}
+.nxl-rail.slow { animation-duration: 2.6s; opacity: 0.35; }
+@keyframes nxlRailFlow { to { stroke-dashoffset: -16; } }
+.nxl-node-ring {
+  fill: none; stroke: var(--nxl-brand-2); stroke-width: 1; opacity: 0.55;
+  transform-origin: center; animation: nxlPulse 3s ease-out infinite;
+}
+.nxl-node-core { fill: #0b1a3d; stroke: var(--nxl-brand-2); stroke-width: 1.4; }
+@keyframes nxlPulse {
+  0% { transform: scale(0.55); opacity: 0.8; }
+  80% { transform: scale(1.6); opacity: 0; }
+  100% { opacity: 0; }
+}
+.nxl-node-label {
+  font-family: var(--nxl-mono); font-size: 9.5px; letter-spacing: 0.22em;
+  fill: var(--nxl-ink-dim); text-transform: uppercase;
+}
+.nxl-node-sub { font-family: var(--nxl-mono); font-size: 8px; letter-spacing: 0.12em; fill: var(--nxl-ink-faint); }
+.nxl-packet { filter: drop-shadow(0 0 6px var(--nxl-brand-2)); }
+
+/* ── top environment strip ── */
+.nxl-topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 26px;
+  font-family: var(--nxl-mono); font-size: 9px; letter-spacing: 0.22em;
+  color: var(--nxl-ink-faint);
+}
+.nxl-topbar .live { display: flex; gap: 18px; }
+.nxl-topbar .live b { color: var(--nxl-ink-dim); font-weight: 400; }
+.nxl-topbar .live .g { color: var(--nxl-ok); }
+
+/* ══════════════════════════════════════════════════════════════
+   HOLOGRAPHIC PANELS
+   ══════════════════════════════════════════════════════════════ */
+.nxl-holo {
+  position: fixed;
+  background: linear-gradient(160deg, rgba(14, 30, 66, 0.72), rgba(8, 18, 42, 0.55));
+  border: 1px solid var(--nxl-glass-edge);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.05), 0 24px 60px rgba(0, 0, 0, 0.45),
+              inset 0 1px 0 rgba(160, 200, 255, 0.12);
+  overflow: hidden;
+  animation: nxlHoloFloat 7s ease-in-out infinite;
+}
+.nxl-holo::before { /* scanlines */
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(120, 190, 255, 0.045) 0 1px, transparent 1px 3px);
+  mix-blend-mode: screen;
+}
+.nxl-holo::after { /* sweeping scan bar */
+  content: ''; position: absolute; left: 0; right: 0; height: 26%; top: -30%;
+  background: linear-gradient(180deg, transparent, rgba(0, 212, 255, 0.10), transparent);
+  animation: nxlScanSweep 5.5s linear infinite; pointer-events: none;
+}
+@keyframes nxlScanSweep { 0% { top: -30%; } 70%, 100% { top: 120%; } }
+@keyframes nxlHoloFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+.nxl-holo .hd {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid rgba(84, 140, 255, 0.16);
+  font-family: var(--nxl-mono); font-size: 10px; letter-spacing: 0.24em; color: var(--nxl-brand-2);
+}
+.nxl-holo .hd .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--nxl-ok);
+  box-shadow: 0 0 8px var(--nxl-ok); animation: nxlBlink 2s ease-in-out infinite;
+}
+@keyframes nxlBlink { 50% { opacity: 0.35; } }
+.nxl-holo .bd { padding: 14px; }
+
+/* settlement panel — left top */
+.nxl-p-settle { left: 4.5vw; top: 16vh; width: 330px; animation-delay: 0.4s; }
+.nxl-p-settle .batch-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.nxl-p-settle .batch-id { font-family: var(--nxl-mono); font-size: 12px; color: var(--nxl-ink); }
+.nxl-p-settle .batch-ccy { font-family: var(--nxl-mono); font-size: 11px; color: var(--nxl-gold); letter-spacing: 0.15em; }
+.nxl-p-settle .stages { display: flex; align-items: flex-start; gap: 0; margin: 14px 0 4px; }
+.nxl-p-settle .stage { flex: 1; position: relative; text-align: left; }
+.nxl-p-settle .stage .tick {
+  width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--nxl-brand-2);
+  background: #07132e; margin-bottom: 8px; position: relative; z-index: 2;
+}
+.nxl-p-settle .stage.done .tick { background: var(--nxl-brand-2); box-shadow: 0 0 10px rgba(0, 212, 255, 0.8); }
+.nxl-p-settle .stage:not(:last-child)::after {
+  content: ''; position: absolute; top: 4px; left: 12px; right: 2px; height: 1px;
+  background: linear-gradient(90deg, var(--nxl-brand-2), rgba(0, 212, 255, 0.15));
+}
+.nxl-p-settle .stage .nm { font-family: var(--nxl-mono); font-size: 8.5px; letter-spacing: 0.18em; color: var(--nxl-ink-dim); }
+.nxl-p-settle .stage .tm { font-family: var(--nxl-mono); font-size: 8px; color: var(--nxl-ink-faint); margin-top: 2px; }
+.nxl-p-settle .stage .amt { font-family: var(--nxl-mono); font-size: 11px; color: var(--nxl-ink); margin-top: 5px; }
+.nxl-p-settle .settle-foot {
+  display: flex; justify-content: space-between; margin-top: 12px;
+  font-family: var(--nxl-mono); font-size: 9px; letter-spacing: 0.1em;
+}
+.nxl-p-settle .settle-foot .m { color: var(--nxl-ok); }
+.nxl-p-settle .settle-foot .b { color: var(--nxl-ink-faint); }
+.nxl-p-settle .recon-bar {
+  height: 3px; border-radius: 2px; background: rgba(84, 140, 255, 0.18);
+  margin-top: 10px; overflow: hidden;
+}
+.nxl-p-settle .recon-bar i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--nxl-brand), var(--nxl-brand-2));
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.6); animation: nxlRecon 4s ease-in-out infinite;
+}
+@keyframes nxlRecon { 0% { width: 0; } 55% { width: 100%; } 100% { width: 100%; } }
+
+/* live txn stream — left bottom */
+.nxl-p-stream { left: 4.5vw; bottom: 9vh; width: 330px; animation-delay: 1.2s; }
+.nxl-p-stream .stream { height: 118px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+.nxl-p-stream .txn {
+  display: flex; gap: 10px; font-family: var(--nxl-mono); font-size: 9.5px; line-height: 2.05;
+  white-space: nowrap; opacity: 0; animation: nxlTxnIn 0.35s ease forwards;
+}
+@keyframes nxlTxnIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.nxl-p-stream .txn .t { color: var(--nxl-ink-faint); }
+.nxl-p-stream .txn .s { color: var(--nxl-brand-2); }
+.nxl-p-stream .txn .a { color: var(--nxl-ink); margin-left: auto; }
+.nxl-p-stream .txn .ok { color: var(--nxl-ok); }
+
+/* KPI hologram — right top */
+.nxl-p-kpi { right: 4.5vw; top: 13vh; width: 308px; animation-delay: 0.8s; }
+.nxl-p-kpi .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.nxl-p-kpi .kpi {
+  background: rgba(7, 17, 40, 0.55); border: 1px solid rgba(84, 140, 255, 0.16);
+  border-radius: 10px; padding: 10px 12px;
+}
+.nxl-p-kpi .kpi .l {
+  font-family: var(--nxl-mono); font-size: 8.5px; letter-spacing: 0.2em;
+  color: var(--nxl-ink-faint); text-transform: uppercase;
+}
+.nxl-p-kpi .kpi .v {
+  font-family: var(--nxl-mono); font-size: 17px; margin-top: 5px; color: var(--nxl-ink);
+  text-shadow: 0 0 14px rgba(0, 212, 255, 0.35);
+}
+.nxl-p-kpi .kpi .d { font-family: var(--nxl-mono); font-size: 9px; margin-top: 3px; }
+.nxl-p-kpi .up, .nxl-p-radial .up { color: var(--nxl-ok); }
+.nxl-p-kpi .flat { color: var(--nxl-ink-dim); }
+.nxl-p-kpi .spark { margin-top: 12px; }
+.nxl-p-kpi .spark svg { display: block; width: 100%; height: 56px; }
+.nxl-p-kpi .spark .lbl {
+  display: flex; justify-content: space-between; font-family: var(--nxl-mono);
+  font-size: 8.5px; letter-spacing: 0.16em; color: var(--nxl-ink-faint); margin-bottom: 6px;
 }
 
-.nx-schematic text {
-    font-family: var(--nx-mono);
-    font-size: 11.5px;
-    letter-spacing: 0.06em;
-    fill: var(--nx-blue-300);
+/* auth-rate radial — right bottom */
+.nxl-p-radial { right: 4.5vw; bottom: 9vh; width: 308px; animation-delay: 1.7s; }
+.nxl-p-radial .radial-wrap { display: flex; align-items: center; gap: 16px; }
+.nxl-p-radial .r-col { position: relative; width: 96px; height: 96px; }
+.nxl-p-radial .ring-svg { width: 96px; height: 96px; transform: rotate(-90deg); }
+.nxl-p-radial .ring-bg { fill: none; stroke: rgba(84, 140, 255, 0.15); stroke-width: 7; }
+.nxl-p-radial .ring-fg {
+  fill: none; stroke: url(#nxlRingGrad); stroke-width: 7; stroke-linecap: round;
+  stroke-dasharray: 264; stroke-dashoffset: 264;
+  animation: nxlRingIn 2.2s 0.6s ease-out forwards;
+  filter: drop-shadow(0 0 6px rgba(0, 212, 255, 0.55));
 }
-
-/* ---- Masthead ---- */
-.nx-logo {
-    display: flex;
-    align-items: center;
-    gap: 14px;
+@keyframes nxlRingIn { to { stroke-dashoffset: 16; } }
+.nxl-p-radial .ring-num {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-family: var(--nxl-mono); font-size: 17px; color: var(--nxl-ink);
 }
-
-/* The tile is drawn inside the SVG (AfsLogo.jsx) so the official asset can be
-   swapped in without touching this file; the wrapper only carries the lift. */
-.nx-mark {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 52px;
-    height: 52px;
-    border-radius: 15px;
-    box-shadow: 0 10px 30px rgba(29, 78, 216, 0.45);
-}
-
-.nx-mark svg { display: block; width: 100%; height: 100%; border-radius: inherit; }
-
-.nx-mark--sm {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    box-shadow: 0 8px 22px rgba(29, 78, 216, 0.26);
-}
-
-/* AFS carries the weight; NEXUS sets lighter beside it so the lockup reads as
-   one name with a parent brand rather than two competing words. */
-.nx-wordmark {
-    margin: 0;
-    font-size: 1.45rem;
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    line-height: 1;
-    color: #fff;
-}
-
-.nx-wordmark span {
-    font-weight: 300;
-    letter-spacing: 0.01em;
-    color: var(--nx-blue-300);
-}
-
-.nx-tagline {
-    margin: 5px 0 0;
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--nx-blue-300);
-}
-
-/* ---- Statement band ---- */
-/* rem, not ch — a ch max-width here would resolve against the inherited
-   body size rather than the display size and collapse the column. */
-.nx-brand__mid {
-    position: relative;
-    align-self: center;
-    max-width: 34rem;
-    width: 100%;
-    padding: clamp(24px, 4vh, 48px) 0;
-}
-
-/* Eyebrows are set in the drawing's annotation voice — mono, spaced caps. */
-.nx-eyebrow {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 0 0 20px;
-    font-family: var(--nx-mono);
-    font-size: 0.68rem;
-    font-weight: 500;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--nx-blue-300);
-}
-
-.nx-eyebrow::before {
-    content: '';
-    width: 26px;
-    height: 1px;
-    background: var(--nx-blue-400);
-}
-
-.nx-headline {
-    margin: 0 0 18px;
-    font-size: clamp(1.8rem, 2.85vw, 2.7rem);
-    font-weight: 600;
-    line-height: 1.02;
-    letter-spacing: -0.042em;
-    color: #fff;
-    text-wrap: balance;
-}
-
-/* Solid accent, not a gradient wash — the colour break carries the emphasis. */
-.nx-headline em {
-    font-style: normal;
-    color: var(--nx-blue-300);
-}
-
-.nx-support {
-    margin: 0;
-    max-width: 30rem;
-    font-size: clamp(0.9rem, 1vw, 0.98rem);
-    line-height: 1.65;
-    color: var(--nx-on-dark-soft);
-}
-
-/* ---- Rotating statement deck ------------------------------------------
-   Four slides, each a claim plus one small data visual. The stage is height-
-   locked so the masthead and baseline strip never shift as slides change —
-   a panel that jumps on every rotation reads as broken, not alive. ---- */
-/* Held to the tallest slide. Measured, not guessed — if slide copy or a visual
-   changes, re-check it, because anything taller pushes the baseline strip and
-   the panel visibly jogs on every rotation. */
-.nx-deck__stage {
-    min-height: 31rem;
-}
-
-/* The slide is remounted on every rotation, so this replays each time — and
-   so do the entry animations inside whichever visual it carries. */
-.nx-slide {
-    animation: nxSlideIn 0.5s var(--nx-ease) both;
-}
-
-@keyframes nxSlideIn {
-    from { opacity: 0; transform: translateY(14px); }
-    to   { opacity: 1; transform: none; }
-}
-
-.nx-deck__nav {
-    display: flex;
-    gap: 8px;
-    margin-top: 26px;
-}
-
-/* Each bar is both the progress meter for its slide and the control that
-   jumps to it. Height is padded out to a 24px hit area. */
-.nx-deck__dot {
-    flex: 1;
-    max-width: 74px;
-    padding: 10px 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    -webkit-appearance: none;
-    appearance: none;
-}
-
-.nx-deck__dot::before {
-    content: '';
-    display: block;
-    height: 2px;
-    border-radius: 2px;
-    background: rgba(147, 197, 253, 0.2);
-    transition: background-color 0.2s var(--nx-ease);
-}
-
-.nx-deck__dot:hover::before { background: rgba(147, 197, 253, 0.38); }
-.nx-deck__dot:focus-visible { outline: 2px solid var(--nx-blue-400); outline-offset: 2px; border-radius: 4px; }
-
-/* The fill doubles as the timer: the live bar scales across in exactly the
-   slide's duration (set inline), so what you see is the real countdown. With
-   reduced motion there is no duration and it simply reads as full. */
-.nx-deck__fill {
-    display: block;
-    width: 100%;
-    height: 2px;
-    margin-top: -2px;
-    border-radius: 2px;
-    background: #fff;
-    transform: scaleX(0);
-    transform-origin: left;
-}
-
-.nx-deck__fill[data-state='done'] {
-    background: var(--nx-blue-400);
-    transform: scaleX(1);
-}
-
-.nx-deck__fill[data-state='live'] {
-    animation-name: nxFill;
-    animation-timing-function: linear;
-    animation-fill-mode: both;
-}
-
-@keyframes nxFill {
-    from { transform: scaleX(0); }
-    to   { transform: scaleX(1); }
-}
-
-/* ---- Visual card: a detail view clipped from the drawing sheet ---- */
-.nx-viz {
-    margin: 30px 0 0;
-    padding: 16px 18px 14px;
-    border: 1px solid rgba(147, 197, 253, 0.22);
-    border-radius: 4px;
-    background: rgba(6, 15, 46, 0.45);
-}
-
-.nx-viz__head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 12px;
-}
-
-.nx-viz__label {
-    font-family: var(--nx-mono);
-    font-size: 0.66rem;
-    font-weight: 500;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: rgba(167, 184, 220, 0.9);
-}
-
-.nx-viz__figure {
-    font-family: var(--nx-mono);
-    font-size: 0.98rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--nx-blue-300);
-}
-
-.nx-viz__foot {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    margin-top: 10px;
-    font-family: var(--nx-mono);
-    font-size: 0.64rem;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    color: rgba(167, 184, 220, 0.62);
-}
-
-@keyframes nxFade {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-}
-
-@keyframes nxStatIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to   { opacity: 1; transform: translateY(0); }
-}
-
-/* ---- Slide visuals: four payment-native detail drawings ----------------
-   No charts. Each slide carries a small instrument from the acquiring
-   trade — an authorisation route, a merchant activity punch-card, a
-   pricing rate card, a settlement lifecycle — drawn in the sheet's own
-   linework and annotated in the mono voice. */
-
-/* Authorisation route: card → POS → scheme → issuer. */
-.nx-route {
-    display: block;
-    width: 100%;
-    height: auto;
-    margin-bottom: 2px;
-}
-
-.nx-route text {
-    font-family: var(--nx-mono);
-    font-size: 8.5px;
-    letter-spacing: 0.14em;
-    text-anchor: middle;
-    fill: rgba(167, 184, 220, 0.7);
-}
-
-.nx-route__seg {
-    stroke: rgba(147, 197, 253, 0.4);
-    stroke-width: 1;
-    stroke-dasharray: 3 4;
-    animation: nxFade 0.45s var(--nx-ease) both;
-}
-
-.nx-route__node {
-    fill: none;
-    stroke: var(--nx-draft-line);
-    stroke-width: 1.4;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    animation: nxFade 0.45s var(--nx-ease) both;
-}
-
-.nx-route__node.is-lead { stroke: #fff; }
-
-/* Fee split of the one transaction, dotted leaders like an invoice. */
-.nx-fees {
-    margin: 10px 0 0;
-    padding: 0;
-    list-style: none;
-}
-
-.nx-fees li {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    padding-top: 7px;
-    font-size: 0.78rem;
-    color: var(--nx-on-dark-soft);
-    animation: nxStatIn 0.5s var(--nx-ease) both;
-}
-
-.nx-fees__leader {
-    flex: 1;
-    border-bottom: 1px dotted rgba(147, 197, 253, 0.3);
-}
-
-.nx-fees__amt {
-    font-family: var(--nx-mono);
-    font-weight: 600;
-    color: var(--nx-blue-300);
-}
-
-.nx-fees li.is-lead { color: #fff; }
-.nx-fees li.is-lead .nx-fees__amt { color: #fff; }
-
-/* Merchant pulse: 14 days of card activity per merchant, punch-card style.
-   A row going quiet is the whole story — no chart required. */
-.nx-pulse {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-}
-
-.nx-pulse__row {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    align-items: center;
-    gap: 12px;
-    animation: nxStatIn 0.5s var(--nx-ease) both;
-}
-
-.nx-pulse__ref {
-    font-family: var(--nx-mono);
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: #fff;
-}
-
-.nx-pulse__days {
-    display: flex;
-    justify-content: space-between;
-    gap: 4px;
-}
-
-.nx-pulse__day {
-    width: 8px;
-    height: 15px;
-    border-radius: 2px;
-    background: rgba(96, 165, 250, 0.55);
-    animation: nxFade 0.3s var(--nx-ease) both;
-}
-
-.nx-pulse__day.is-off { background: rgba(147, 197, 253, 0.12); }
-
-.nx-pulse__status {
-    font-family: var(--nx-mono);
-    font-size: 0.6rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: rgba(167, 184, 220, 0.7);
-}
-
-.nx-pulse__row.is-flag .nx-pulse__status { color: #fff; }
-.nx-pulse__row.is-flag .nx-pulse__day:not(.is-off) { background: #fff; }
-
-/* Rate card: agreed vs effective MSF by segment, set like the schedule. */
-.nx-rate {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-}
-
-.nx-rate__row {
-    display: grid;
-    grid-template-columns: 1fr 58px 58px 44px;
-    gap: 12px;
-    align-items: baseline;
-    font-size: 0.78rem;
-    animation: nxStatIn 0.5s var(--nx-ease) both;
-}
-
-.nx-rate__row--head {
-    padding-bottom: 4px;
-    border-bottom: 1px solid rgba(147, 197, 253, 0.14);
-    font-family: var(--nx-mono);
-    font-size: 0.58rem;
-    font-weight: 500;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: rgba(167, 184, 220, 0.55);
-    animation: none;
-}
-
-.nx-rate__row--head span:not(:first-child) { text-align: right; }
-
-.nx-rate__seg { color: var(--nx-on-dark-soft); }
-
-.nx-rate__num {
-    font-family: var(--nx-mono);
-    font-weight: 600;
-    text-align: right;
-    color: var(--nx-blue-300);
-}
-
-.nx-rate__row.is-flag .nx-rate__seg { color: #fff; }
-.nx-rate__row.is-flag .nx-rate__num { color: #fff; }
-
-/* Settlement lifecycle: three stages on one dashed rail, the same amount
-   at every stage — books that agree, shown literally. */
-.nx-flow {
-    position: relative;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-}
-
-.nx-flow::before {
-    content: '';
-    position: absolute;
-    top: 4px;
-    left: 4px;
-    right: 4px;
-    border-top: 1px dashed rgba(147, 197, 253, 0.3);
-}
-
-.nx-flow__stage {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding-top: 16px;
-    animation: nxStatIn 0.5s var(--nx-ease) both;
-}
-
-.nx-flow__stage::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 1.5px solid var(--nx-blue-300);
-    background: var(--nx-ink-900);
-}
-
-.nx-flow__stage.is-lead::before {
-    border-color: #fff;
-    background: #fff;
-}
-
-.nx-flow__label {
-    font-family: var(--nx-mono);
-    font-size: 0.6rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: rgba(167, 184, 220, 0.7);
-}
-
-.nx-flow__time {
-    font-size: 0.7rem;
-    color: rgba(167, 184, 220, 0.62);
-}
-
-.nx-flow__amt {
-    font-family: var(--nx-mono);
-    font-size: 0.76rem;
-    font-weight: 600;
-    color: var(--nx-blue-300);
-}
-
-.nx-flow__stage.is-lead .nx-flow__label,
-.nx-flow__stage.is-lead .nx-flow__amt { color: #fff; }
-
-/* ---- Baseline strip: full-width hairline with three quiet facts. All three
-   are true of the platform (JWT auth, RBAC menus, audit log). ---- */
-.nx-baseline {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 32px;
-    padding-top: 18px;
-    border-top: 1px solid rgba(147, 197, 253, 0.16);
-    font-size: 0.73rem;
-    font-weight: 500;
-    color: rgba(167, 184, 220, 0.82);
-}
-
-.nx-baseline span {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.nx-baseline span::before {
-    content: '';
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--nx-blue-400);
-}
-
-/* ============================ RIGHT — AUTH ============================= */
-
+.nxl-p-radial .r-legend { flex: 1; font-family: var(--nxl-mono); font-size: 9.5px; line-height: 2.1; color: var(--nxl-ink-dim); }
+.nxl-p-radial .r-legend b { color: var(--nxl-ink); font-weight: 500; float: right; }
+
+/* ══════════════════════════════════════════════════════════════
+   CENTRE CARD
+   ══════════════════════════════════════════════════════════════ */
 .nx-auth {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: clamp(28px, 4vw, 56px) clamp(20px, 3.5vw, 60px);
-    background:
-        linear-gradient(180deg, var(--nx-surface-soft) 0%, var(--nx-surface) 42%);
+  position: absolute; inset: 0; z-index: 10;
+  display: grid; place-items: center;
+  overflow-y: auto;
+  padding: 56px 16px 24px;
 }
 
 .nx-auth__inner {
-    width: 100%;
-    max-width: 408px;
-    animation: nxRise 0.5s var(--nx-ease) both;
+  width: 400px; max-width: calc(100vw - 32px);
+  background: linear-gradient(165deg, rgba(13, 26, 56, 0.88), rgba(7, 15, 36, 0.82));
+  border-radius: 20px; position: relative;
+  padding: 38px 36px 30px;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6), 0 0 60px rgba(47, 107, 255, 0.12);
+}
+.nx-auth__inner::before { /* animated border sweep */
+  content: ''; position: absolute; inset: 0; border-radius: 20px; padding: 1px;
+  background: conic-gradient(from var(--nxl-ang, 0deg),
+    rgba(84, 140, 255, 0.10), var(--nxl-brand-2), rgba(84, 140, 255, 0.10) 30%,
+    rgba(84, 140, 255, 0.10) 60%, var(--nxl-brand), rgba(84, 140, 255, 0.10) 90%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: nxlBorderSpin 6s linear infinite;
+  pointer-events: none;
+}
+@property --nxl-ang { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes nxlBorderSpin { to { --nxl-ang: 360deg; } }
+
+/* brand row */
+.nx-logo { display: flex; align-items: center; gap: 13px; margin-bottom: 26px; }
+.nx-mark {
+  width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center;
+  background: linear-gradient(145deg, #2f6bff, #0946d8);
+  color: #fff;
+  box-shadow: 0 0 24px rgba(47, 107, 255, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  position: relative; overflow: hidden;
+}
+.nx-mark::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.35) 48%, transparent 62%);
+  transform: translateX(-110%); animation: nxlLogoShine 4.5s ease-in-out infinite;
+}
+@keyframes nxlLogoShine {
+  0%, 55% { transform: translateX(-110%); }
+  75%, 100% { transform: translateX(110%); }
+}
+.nx-mark--sm { width: 42px; height: 42px; border-radius: 10px; }
+.nx-wordmark { font-size: 16.5px; font-weight: 700; letter-spacing: 0.01em; color: var(--nxl-ink); margin: 0; }
+.nx-wordmark span { color: var(--nxl-brand-2); font-weight: 500; }
+.nx-tagline {
+  font-family: var(--nxl-mono); font-size: 8.5px; letter-spacing: 0.3em;
+  color: var(--nxl-ink-faint); margin: 3px 0 0; text-transform: uppercase;
 }
 
-@keyframes nxRise {
-    from { opacity: 0; transform: translateY(12px); }
-    to   { opacity: 1; transform: translateY(0); }
+.nx-auth__head { margin-bottom: 24px; }
+.nx-auth__head > .nx-mark { display: none; } /* the brand row already carries the mark */
+.nx-auth__title { font-size: 23px; font-weight: 700; letter-spacing: -0.01em; color: var(--nxl-ink); margin: 0; }
+.nx-auth__subtitle { color: var(--nxl-ink-dim); font-size: 12.5px; margin: 7px 0 0; }
+.nx-auth__subtitle::after {
+  content: '▌'; color: var(--nxl-brand-2); font-size: 11px;
+  animation: nxlBlink 1s step-end infinite; margin-left: 1px;
 }
 
-.nx-auth__head {
-    margin-bottom: 30px;
-}
+/* ══════════════════════════════════════════════════════════════
+   FORM
+   ══════════════════════════════════════════════════════════════ */
+.login-form { display: flex; flex-direction: column; }
 
-.nx-auth__head .nx-mark--sm {
-    margin-bottom: 20px;
-}
-
-.nx-auth__title {
-    margin: 0 0 6px;
-    font-size: 1.72rem;
-    font-weight: 600;
-    letter-spacing: -0.035em;
-    color: var(--nx-text-primary);
-}
-
-.nx-auth__subtitle {
-    margin: 0;
-    font-size: 0.88rem;
-    line-height: 1.55;
-    color: var(--nx-text-secondary);
-}
-
-/* Mobile-only brand strip; hidden on the split layout. */
-.nx-mobile-brand {
-    display: none;
-}
-
-/* ---- Form ---- */
-.login-form {
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-}
-
-.login-input-group {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-}
+.login-input-group { margin-bottom: 16px; }
 
 .login-input-label {
-    font-size: 0.8rem;
-    font-weight: 600;
-    letter-spacing: -0.005em;
-    color: var(--nx-text-primary);
+  display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--nxl-ink-dim); text-transform: uppercase; margin: 0 0 7px 2px;
 }
 
-.login-input-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
+.login-input-wrapper { position: relative; }
+.login-input-wrapper input,
+.nx-select {
+  width: 100%; padding: 13px 42px 13px 42px;
+  background: rgba(5, 12, 30, 0.65);
+  border: 1px solid rgba(84, 140, 255, 0.22); border-radius: 11px;
+  color: var(--nxl-ink); font-size: 13.5px; font-family: var(--font-ui);
+  outline: none; transition: border-color 0.2s, box-shadow 0.2s;
 }
-
-.login-input-wrapper .input-icon {
-    position: absolute;
-    left: 16px;
-    color: var(--nx-blue-600);
-    opacity: 0.75;
-    pointer-events: none;
-    transition: opacity 0.2s var(--nx-ease), color 0.2s var(--nx-ease);
+.login-input-wrapper input::placeholder { color: var(--nxl-ink-faint); }
+.login-input-wrapper input:focus,
+.nx-select:focus {
+  border-color: var(--nxl-brand-2);
+  box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.12), 0 0 18px rgba(0, 212, 255, 0.15);
 }
+/* inputs without a leading icon (email, OTP, new password, message) */
+.login-input-wrapper input.nx-input--plain { padding-left: 14px; }
+.nx-select { padding: 13px 14px; appearance: auto; }
+.nx-select option { background: #0a1530; color: var(--nxl-ink); }
 
-.login-input-wrapper input {
-    width: 100%;
-    height: 52px;
-    padding: 0 16px 0 46px;
-    border: 1px solid var(--nx-border);
-    border-radius: 10px;
-    background: var(--nx-surface);
-    color: var(--nx-text-primary);
-    font-family: inherit;
-    font-size: 0.94rem;
-    outline: none;
-    box-sizing: border-box;
-    transition: border-color 0.18s var(--nx-ease), box-shadow 0.18s var(--nx-ease),
-                background-color 0.18s var(--nx-ease);
+.input-icon {
+  position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  color: var(--nxl-ink-faint); pointer-events: none;
+  transition: color 0.2s;
 }
+.login-input-wrapper:focus-within .input-icon { color: var(--nxl-brand-2); }
 
-/* Inputs without a leading icon (email, OTP, message) sit flush. */
-.login-input-wrapper input.nx-input--plain {
-    padding-left: 16px;
-}
-
-/* Leave room for the visibility toggle. */
-.login-input-wrapper input.nx-input--eye {
-    padding-right: 50px;
-}
-
-.login-input-wrapper input::placeholder {
-    /* #94A3B8 would only reach 2.6:1 on white — this holds AA at 4.8:1. */
-    color: var(--nx-text-secondary);
-}
-
-.login-input-wrapper input:hover:not(:disabled) {
-    border-color: var(--nx-blue-400);
-}
-
-.login-input-wrapper input:focus-visible,
-.login-input-wrapper input:focus {
-    border-color: var(--nx-blue-600);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
-}
-
-.login-input-wrapper:focus-within .input-icon {
-    color: var(--nx-blue-700);
-    opacity: 1;
-}
-
-.login-input-wrapper input:disabled {
-    background: var(--nx-surface-muted);
-    color: var(--nx-text-secondary);
-    cursor: not-allowed;
-}
-
-.login-input-wrapper input[aria-invalid='true'] {
-    border-color: var(--nx-error);
-}
-
-.login-input-wrapper input[aria-invalid='true']:focus {
-    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15);
-}
-
-/* Keep autofill on the light surface instead of Chrome's yellow. */
-.login-input-wrapper input:-webkit-autofill,
-.login-input-wrapper input:-webkit-autofill:hover,
-.login-input-wrapper input:-webkit-autofill:focus {
-    -webkit-box-shadow: 0 0 0 40px var(--nx-surface) inset !important;
-    -webkit-text-fill-color: var(--nx-text-primary) !important;
-    caret-color: var(--nx-text-primary);
-    transition: background-color 5000s ease-in-out 0s;
-}
-
-/* Password visibility toggle */
 .nx-eye {
-    position: absolute;
-    right: 8px;
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    border: none;
-    border-radius: 9px;
-    background: transparent;
-    color: var(--nx-text-secondary);
-    cursor: pointer;
-    transition: color 0.18s var(--nx-ease), background-color 0.18s var(--nx-ease);
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  display: grid; place-items: center;
+  width: 32px; height: 32px; border: none; background: transparent;
+  color: var(--nxl-ink-faint); cursor: pointer; border-radius: 8px;
 }
+.nx-eye:hover { color: var(--nxl-brand-2); }
+.nx-eye:focus-visible { outline: 2px solid var(--nxl-brand-2); outline-offset: 1px; }
 
-.nx-eye:hover { color: var(--nx-blue-700); background: var(--nx-surface-soft); }
-.nx-eye:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 2px; }
-
-/* ---- Messages ---- */
-.login-error-banner {
-    display: flex;
-    align-items: flex-start;
-    gap: 9px;
-    padding: 12px 14px;
-    border: 1px solid rgba(220, 38, 38, 0.22);
-    border-radius: 10px;
-    background: rgba(220, 38, 38, 0.06);
-    color: #B91C1C;
-    font-size: 0.84rem;
-    font-weight: 500;
-    line-height: 1.5;
-}
-
-.nx-notice {
-    padding: 12px 14px;
-    border: 1px solid rgba(37, 99, 235, 0.24);
-    border-radius: 10px;
-    background: var(--nx-surface-soft);
-    color: var(--nx-blue-700);
-    font-size: 0.84rem;
-    font-weight: 500;
-    line-height: 1.5;
-}
-
-.nx-field-error {
-    display: block;
-    margin-top: 5px;
-    font-size: 0.76rem;
-    font-weight: 500;
-    color: var(--nx-error);
-}
-
-/* ---- Row above the button ---- */
-.nx-form-row {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    margin-top: -4px;
-}
+.nx-form-row { display: flex; justify-content: flex-end; margin: -4px 2px 18px 0; }
 
 .nx-link {
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--nx-blue-700);
-    font-family: inherit;
-    font-size: 0.82rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: color 0.18s var(--nx-ease);
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 11.5px; color: var(--nxl-brand-2); font-family: inherit;
+  text-decoration: none;
 }
+.nx-link:hover:not(:disabled) { text-decoration: underline; }
+.nx-link:focus-visible { outline: 2px solid var(--nxl-brand-2); outline-offset: 2px; border-radius: 3px; }
+.nx-link:disabled { color: var(--nxl-ink-faint); cursor: default; }
 
-.nx-link:hover:not(:disabled) { color: var(--nx-blue-600); text-decoration: underline; }
-.nx-link:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 3px; border-radius: 3px; }
-.nx-link:disabled { color: var(--nx-text-secondary); cursor: default; }
-
-/* ---- Primary button ----
-   Solid cobalt, no gradient — the drawing sheet uses one ink and so does the
-   action that signs you into it. #1D4ED8 holds white text at 6.3:1. */
+/* submit */
 .login-submit-btn {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 52px;
-    padding: 0 20px;
-    border: none;
-    border-radius: 10px;
-    background: var(--nx-blue-700);
-    color: #fff;
-    font-family: inherit;
-    font-size: 0.94rem;
-    font-weight: 600;
-    letter-spacing: -0.005em;
-    cursor: pointer;
-    overflow: hidden;
-    box-shadow: 0 12px 28px rgba(29, 78, 216, 0.26);
-    transition: transform 0.18s var(--nx-ease), box-shadow 0.22s var(--nx-ease);
+  width: 100%; padding: 14px; border: none; border-radius: 12px; cursor: pointer;
+  font-family: var(--font-ui); font-size: 14px; font-weight: 700; color: #fff;
+  background: linear-gradient(115deg, #2f6bff, #1148e0 55%, #00b7e8);
+  background-size: 200% 100%;
+  box-shadow: 0 10px 30px rgba(23, 80, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: background-position 0.4s, transform 0.15s, box-shadow 0.3s;
 }
-
-.login-submit-btn::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: var(--nx-blue-800);
-    opacity: 0;
-    transition: opacity 0.22s var(--nx-ease);
-}
-
+.login-submit-btn > span { display: flex; align-items: center; justify-content: center; gap: 9px; }
 .login-submit-btn:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 16px 34px rgba(29, 78, 216, 0.34);
+  background-position: 100% 0; transform: translateY(-1px);
+  box-shadow: 0 14px 36px rgba(23, 80, 255, 0.55);
 }
-
-.login-submit-btn:hover:not(:disabled)::before { opacity: 1; }
 .login-submit-btn:active:not(:disabled) { transform: translateY(0); }
-.login-submit-btn:focus-visible { outline: 2px solid var(--nx-blue-800); outline-offset: 3px; }
+.login-submit-btn:focus-visible { outline: 2px solid var(--nxl-brand-2); outline-offset: 2px; }
+.login-submit-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
-.login-submit-btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-    box-shadow: none;
-    transform: none;
+/* error / notice */
+.login-error-banner {
+  display: flex; gap: 8px; align-items: flex-start;
+  background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fca5a5; border-radius: 10px;
+  padding: 10px 12px; font-size: 12.5px; line-height: 1.45; margin-bottom: 14px;
 }
-
-.login-submit-btn span {
-    position: relative;
-    z-index: 1;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
+.nx-notice {
+  background: rgba(52, 211, 153, 0.1); border: 1px solid rgba(52, 211, 153, 0.35);
+  color: #6ee7b7; border-radius: 10px;
+  padding: 10px 12px; font-size: 12.5px; line-height: 1.45; margin-bottom: 14px;
 }
+.nx-field-error { display: block; margin-top: 6px; font-size: 11.5px; color: #fca5a5; }
 
-/* ---- Secondary / SSO ---- */
+/* divider + SSO */
 .nx-divider {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    color: var(--nx-text-secondary);
-    font-size: 0.76rem;
-    font-weight: 500;
+  display: flex; align-items: center; gap: 10px; margin: 18px 0 14px;
+  color: var(--nxl-ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
 }
-
-.nx-divider::before,
-.nx-divider::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--nx-border);
+.nx-divider::before, .nx-divider::after {
+  content: ''; flex: 1; height: 1px; background: rgba(84, 140, 255, 0.18);
 }
-
 .nx-sso-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    width: 100%;
-    height: 50px;
-    border: 1px solid #E2E8F0;
-    border-radius: 10px;
-    background: var(--nx-surface);
-    color: var(--nx-text-primary);
-    font-family: inherit;
-    font-size: 0.88rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: border-color 0.18s var(--nx-ease), background-color 0.18s var(--nx-ease);
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 12px; border-radius: 11px; cursor: pointer;
+  background: rgba(5, 12, 30, 0.65); border: 1px solid rgba(84, 140, 255, 0.22);
+  color: var(--nxl-ink); font-family: var(--font-ui); font-size: 13px; font-weight: 600;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-
-.nx-sso-btn:hover { border-color: var(--nx-blue-400); background: var(--nx-surface-soft); }
-.nx-sso-btn:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 2px; }
+.nx-sso-btn:hover { border-color: var(--nxl-brand-2); box-shadow: 0 0 18px rgba(0, 212, 255, 0.12); }
+.nx-sso-btn:focus-visible { outline: 2px solid var(--nxl-brand-2); outline-offset: 2px; }
 
 .login-back-btn {
-    padding: 10px;
-    border: none;
-    background: transparent;
-    color: var(--nx-text-secondary);
-    font-family: inherit;
-    font-size: 0.84rem;
-    font-weight: 500;
-    text-align: center;
-    cursor: pointer;
-    transition: color 0.18s var(--nx-ease);
+  margin-top: 16px; align-self: center;
+  background: none; border: none; padding: 4px 8px; cursor: pointer;
+  color: var(--nxl-ink-dim); font-family: inherit; font-size: 12px; border-radius: 6px;
 }
+.login-back-btn:hover { color: var(--nxl-ink); }
+.login-back-btn:focus-visible { outline: 2px solid var(--nxl-brand-2); outline-offset: 2px; }
 
-.login-back-btn:hover { color: var(--nx-blue-700); }
-.login-back-btn:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 2px; border-radius: 6px; }
-
-/* ---- Reset-password sub-flow ---- */
-.nx-steps {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-}
-
+/* forgot-password steps */
+.nx-steps { display: flex; gap: 6px; margin-bottom: 18px; }
 .nx-step-bar {
-    width: 30px;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--nx-border);
-    transition: background-color 0.25s var(--nx-ease);
+  flex: 1; height: 3px; border-radius: 2px; background: rgba(84, 140, 255, 0.18);
+  transition: background 0.3s;
 }
-
-.nx-step-bar.is-active { background: var(--nx-blue-600); }
-
-.nx-step-title {
-    margin: 0;
-    font-size: 1.05rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    text-align: center;
-    color: var(--nx-text-primary);
+.nx-step-bar.is-active {
+  background: linear-gradient(90deg, var(--nxl-brand), var(--nxl-brand-2));
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
 }
-
-.nx-step-text {
-    margin: -8px 0 0;
-    font-size: 0.84rem;
-    line-height: 1.6;
-    text-align: center;
-    color: var(--nx-text-secondary);
-}
-
-.nx-step-text strong { color: var(--nx-text-primary); font-weight: 600; }
+.nx-step-title { font-size: 18px; font-weight: 700; color: var(--nxl-ink); margin: 0 0 6px; }
+.nx-step-text { font-size: 12.5px; color: var(--nxl-ink-dim); line-height: 1.5; margin: 0 0 16px; }
+.nx-step-text strong { color: var(--nxl-ink); }
 
 .nx-otp-input {
-    font-family: var(--nx-mono);
-    letter-spacing: 0.42em;
-    text-align: center;
-    font-size: 1.15rem !important;
-    font-weight: 600;
+  font-family: var(--nxl-mono) !important; font-size: 20px !important;
+  letter-spacing: 0.4em; text-align: center;
 }
 
-.nx-pw-checks {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px 12px;
-    margin-top: -6px;
-    font-size: 0.76rem;
-    color: var(--nx-text-secondary);
-}
+.nx-pw-checks { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: -6px 0 14px; }
+.nx-pw-check { font-size: 11px; color: var(--nxl-ink-faint); }
+.nx-pw-check.is-valid { color: var(--nxl-ok); }
 
-.nx-pw-check.is-valid { color: var(--nx-blue-700); font-weight: 500; }
-
-/* ---- SSO status / request access ---- */
-.nx-status {
-    padding: 24px 8px;
-    text-align: center;
-}
-
+/* SSO status cards */
+.nx-status { text-align: center; padding: 18px 6px; }
 .nx-status__icon {
-    display: grid;
-    place-items: center;
-    width: 52px;
-    height: 52px;
-    margin: 0 auto 16px;
-    border-radius: 50%;
+  width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center;
+  margin: 0 auto 14px;
 }
-
-.nx-status__title {
-    margin: 0 0 6px;
-    font-size: 1.05rem;
-    font-weight: 600;
-    color: var(--nx-text-primary);
-}
-
-.nx-status__text {
-    margin: 0;
-    font-size: 0.85rem;
-    line-height: 1.6;
-    color: var(--nx-text-secondary);
-}
+.nx-status__title { font-size: 16px; font-weight: 700; color: var(--nxl-ink); margin: 0 0 6px; }
+.nx-status__text { font-size: 12.5px; color: var(--nxl-ink-dim); line-height: 1.5; margin: 0; }
 
 .nx-info-box {
-    padding: 12px 14px;
-    border: 1px solid var(--nx-border);
-    border-radius: 10px;
-    background: var(--nx-surface-soft);
+  background: rgba(5, 12, 30, 0.65); border: 1px solid rgba(84, 140, 255, 0.22);
+  border-radius: 11px; padding: 12px 14px; margin-bottom: 16px;
 }
+.nx-info-box__title { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--nxl-ink-dim); }
+.nx-info-box__body { font-size: 13px; color: var(--nxl-ink); margin-top: 4px; font-family: var(--nxl-mono); }
+.nx-info-box__hint { font-size: 11.5px; color: var(--nxl-ink-faint); margin-top: 6px; }
 
-.nx-info-box__title {
-    font-size: 0.83rem;
-    font-weight: 600;
-    color: var(--nx-blue-700);
-}
-
-.nx-info-box__body {
-    margin-top: 2px;
-    font-size: 0.8rem;
-    color: var(--nx-text-primary);
-}
-
-.nx-info-box__hint {
-    margin-top: 4px;
-    font-size: 0.75rem;
-    color: var(--nx-text-secondary);
-}
-
-.nx-select {
-    width: 100%;
-    height: 52px;
-    padding: 0 14px;
-    border: 1px solid var(--nx-border);
-    border-radius: 10px;
-    background: var(--nx-surface);
-    color: var(--nx-text-primary);
-    font-family: inherit;
-    font-size: 0.94rem;
-    outline: none;
-    cursor: pointer;
-    transition: border-color 0.18s var(--nx-ease), box-shadow 0.18s var(--nx-ease);
-}
-
-.nx-select:focus-visible,
-.nx-select:focus {
-    border-color: var(--nx-blue-600);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
-}
-
-/* ---- Tenant selection ---- */
-.tenant-section {
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-}
-
-.tenant-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
+/* tenant selection */
+.tenant-section { display: flex; flex-direction: column; }
+.tenant-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .tenant-header-icon {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 42px;
-    height: 42px;
-    border: 1px solid var(--nx-border);
-    border-radius: 12px;
-    background: var(--nx-surface-soft);
+  width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
+  background: rgba(47, 107, 255, 0.15); border: 1px solid rgba(84, 140, 255, 0.25);
+  flex: none;
 }
-
-.tenant-title {
-    margin: 0;
-    font-size: 1.05rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    color: var(--nx-text-primary);
-}
-
-.tenant-subtitle {
-    margin: 2px 0 0;
-    font-size: 0.8rem;
-    color: var(--nx-text-secondary);
-}
-
-.tenant-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 340px;
-    overflow-y: auto;
-}
-
+.tenant-header-icon svg { color: var(--nxl-brand-2) !important; stroke: var(--nxl-brand-2); }
+.tenant-title { font-size: 16px; font-weight: 700; color: var(--nxl-ink); margin: 0; }
+.tenant-subtitle { font-size: 12px; color: var(--nxl-ink-dim); margin: 2px 0 0; }
+.tenant-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
 .tenant-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 13px 14px;
-    border: 1px solid #E2E8F0;
-    border-radius: 10px;
-    background: var(--nx-surface);
-    font-family: inherit;
-    text-align: left;
-    cursor: pointer;
-    transition: border-color 0.18s var(--nx-ease), background-color 0.18s var(--nx-ease),
-                transform 0.18s var(--nx-ease);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 14px; border-radius: 11px; cursor: pointer; text-align: left;
+  background: rgba(5, 12, 30, 0.65); border: 1px solid rgba(84, 140, 255, 0.22);
+  font-family: inherit; transition: border-color 0.2s, box-shadow 0.2s;
 }
-
-.tenant-card:hover:not(:disabled) {
-    border-color: var(--nx-blue-400);
-    background: var(--nx-surface-soft);
-    transform: translateX(3px);
+.tenant-card:hover:not(:disabled), .tenant-card.active {
+  border-color: var(--nxl-brand-2); box-shadow: 0 0 18px rgba(0, 212, 255, 0.12);
 }
-
-.tenant-card:focus-visible { outline: 2px solid var(--nx-blue-600); outline-offset: 2px; }
-.tenant-card:disabled { cursor: default; }
-.tenant-card.active { border-color: var(--nx-blue-600); background: var(--nx-surface-soft); }
-
-.tenant-card-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-}
-
+.tenant-card:focus-visible { outline: 2px solid var(--nxl-brand-2); outline-offset: 2px; }
+.tenant-card:disabled { opacity: 0.6; cursor: default; }
+.tenant-card-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .tenant-card-icon {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-    background: var(--nx-surface-soft);
+  width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+  background: rgba(47, 107, 255, 0.15); flex: none;
 }
-
+.tenant-card-icon svg { color: var(--nxl-brand-2) !important; stroke: var(--nxl-brand-2); }
 .tenant-card-name {
-    display: block;
-    font-size: 0.89rem;
-    font-weight: 600;
-    color: var(--nx-text-primary);
+  display: block; font-size: 13px; font-weight: 600; color: var(--nxl-ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.tenant-card-meta { display: block; font-size: 11px; color: var(--nxl-ink-faint); margin-top: 2px; font-family: var(--nxl-mono); }
 
-.tenant-card-meta {
-    display: block;
-    margin-top: 1px;
-    font-size: 0.75rem;
-    color: var(--nx-text-secondary);
-}
-
-/* ---- Auth footer ---- */
+/* card footer */
 .nx-auth__foot {
-    margin-top: 26px;
-    padding-top: 20px;
-    border-top: 1px solid var(--nx-border);
-    text-align: center;
+  margin-top: 22px; padding-top: 16px; border-top: 1px solid rgba(84, 140, 255, 0.14);
+  text-align: center;
 }
-
 .nx-secure {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.76rem;
-    font-weight: 500;
-    color: var(--nx-blue-700);
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11.5px; color: var(--nxl-ink-dim);
 }
-
-.login-footer {
-    margin-top: 8px;
-    font-size: 0.72rem;
-    color: var(--nx-text-secondary);
-}
-
+.nx-secure svg { color: var(--nxl-ok); }
+.login-footer { font-size: 10px; color: var(--nxl-ink-faint); margin: 9px 0 0; }
 .nx-version {
-    display: inline-block;
-    margin-top: 10px;
-    padding: 3px 10px;
-    border: 1px solid var(--nx-border);
-    border-radius: 999px;
-    background: var(--nx-surface-soft);
-    color: var(--nx-blue-700);
-    font-family: var(--nx-mono);
-    font-size: 0.62rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+  display: inline-block; margin-top: 11px;
+  font-family: var(--nxl-mono); font-size: 8.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--nxl-brand-2);
+  border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 5px; padding: 4px 9px;
+  background: rgba(0, 212, 255, 0.05);
 }
 
-/* ---- Spinner ---- */
-@keyframes spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-}
+.spin-icon { animation: nxlSpin 1s linear infinite; }
+@keyframes nxlSpin { to { transform: rotate(360deg); } }
 
-.spin-icon { animation: spin 1s linear infinite; }
-
-/* ============================ RESPONSIVE ============================== */
-
-/* Tablet — keep the split, thin out the decoration. */
+/* ══════════════════════════════════════════════════════════════
+   RESPONSIVE + MOTION
+   ══════════════════════════════════════════════════════════════ */
 @media (max-width: 1180px) {
-    .login-page { grid-template-columns: 52fr 48fr; }
-    .nx-deck__stage { min-height: 29.5rem; }
-    .nx-viz { margin-top: 24px; }
+  .nxl-p-settle, .nxl-p-stream, .nxl-p-kpi, .nxl-p-radial { display: none; }
 }
-
-/* Below this the brand column is too narrow to hold a readable visual next to
-   the statement, so the card goes and the claim carries the panel alone. */
-@media (max-width: 900px) {
-    .nx-schematic { right: -30%; bottom: -10%; }
-    .nx-brand__mid { max-width: 24rem; }
-    .nx-baseline { gap: 8px 20px; }
-    .nx-viz { display: none; }
-    .nx-deck__stage { min-height: 15rem; }
+@media (max-width: 640px) {
+  .nxl-topbar .live { display: none; }
+  .nx-auth__inner { padding: 28px 22px 24px; }
 }
-
-/* Mobile — single column with a compact brand header. */
-@media (max-width: 760px) {
-    .login-page {
-        grid-template-columns: 1fr;
-        min-height: 100vh;
-        min-height: 100dvh;
-    }
-
-    .nx-brand { display: none; }
-
-    .nx-auth {
-        justify-content: flex-start;
-        padding: 0 0 32px;
-        background: var(--nx-surface);
-    }
-
-    .nx-mobile-brand {
-        display: block;
-        width: 100%;
-        padding: 30px 20px 34px;
-        background:
-            repeating-linear-gradient(0deg,
-                rgba(147, 197, 253, 0.08) 0, rgba(147, 197, 253, 0.08) 1px, transparent 1px, transparent 24px),
-            repeating-linear-gradient(90deg,
-                rgba(147, 197, 253, 0.08) 0, rgba(147, 197, 253, 0.08) 1px, transparent 1px, transparent 24px),
-            linear-gradient(150deg, #060F2E 0%, #0A1B4F 62%, #10276B 100%);
-        color: #fff;
-        text-align: center;
-    }
-
-    .nx-mobile-brand .nx-logo {
-        justify-content: center;
-        margin-bottom: 14px;
-    }
-
-    .nx-mobile-brand .nx-tagline { color: var(--nx-blue-300); }
-
-    .nx-mobile-brand__line {
-        margin: 0;
-        font-size: 0.88rem;
-        line-height: 1.55;
-        color: var(--nx-on-dark-soft);
-    }
-
-    .nx-auth__inner {
-        max-width: 460px;
-        margin-top: 26px;
-        padding: 0 20px;
-    }
-
-    .nx-auth__head { margin-bottom: 24px; }
-    .nx-auth__head .nx-mark--sm { display: none; }
-    .nx-auth__title { font-size: 1.5rem; }
-}
-
-@media (max-width: 380px) {
-    .nx-auth__inner { padding: 0 16px; }
-    .nx-pw-checks { grid-template-columns: 1fr; }
-    .nx-auth__title { font-size: 1.34rem; }
-}
-
-/* ============================ ACCESSIBILITY ============================ */
 
 @media (prefers-reduced-motion: reduce) {
-    .login-page *,
-    .login-page *::before,
-    .login-page *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-    }
-
-    .login-submit-btn:hover:not(:disabled),
-    .tenant-card:hover:not(:disabled) { transform: none; }
-}
-
-@media (forced-colors: active) {
-    .login-input-wrapper input,
-    .login-submit-btn,
-    .tenant-card { border: 1px solid CanvasText; }
+  .nxl-grid-floor, .nxl-rail, .nxl-node-ring, .nxl-holo,
+  .nxl-holo::after, .nxl-p-settle .recon-bar i, .nx-mark::after,
+  .nx-auth__inner::before, .nxl-p-radial .ring-fg {
+    animation: none;
+  }
+  .nxl-p-radial .ring-fg { stroke-dashoffset: 16; }
+  .nx-auth__subtitle::after { animation: none; }
 }

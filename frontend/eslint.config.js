@@ -26,7 +26,9 @@ export default [
     rules: {
       ...reactHooks.configs.recommended.rules,
       ...reactRefresh.configs.vite.rules,
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // caughtErrors: ESLint 9 flipped the default from 'none' to 'all';
+      // keep the pre-9 behavior so unused catch params stay allowed.
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]', caughtErrors: 'none' }],
     },
   },
 ]

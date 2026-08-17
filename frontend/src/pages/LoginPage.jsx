@@ -7,13 +7,13 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AfsMark } from '../components/AfsLogo';
-import BrandDeck from './BrandDeck';
+import LoginBackdrop from './LoginBackdrop';
 import './Login.css';
 
 const Brandmark = ({ small = false }) => (
     <div className="nx-logo">
         <div className={small ? 'nx-mark nx-mark--sm' : 'nx-mark'}>
-            <AfsMark size={small ? 42 : 52} />
+            <AfsMark size={small ? 26 : 30} />
         </div>
         <div>
             <p className="nx-wordmark">AFS <span>NEXUS</span></p>
@@ -310,98 +310,14 @@ const LoginPage = () => {
 
     return (
         <div className="login-page">
-            {/* ─────────────── Brand panel ─────────────── */}
-            <section className="nx-brand" aria-labelledby="nx-headline">
-                {/* Signature: a payment card drawn to spec, cropped by the corner.
-                    ISO/IEC 7810 ID-1 — 85.60 × 53.98 mm at 5 px/mm (428 × 270),
-                    R3.18 corners — with drafting-style dimension lines, oblique
-                    ticks instead of arrowheads, and mono callouts. Static. */}
-                <svg className="nx-schematic" viewBox="0 0 600 440" aria-hidden="true" focusable="false">
-                    {/* Ghost duplicate behind, dashed — a second sheet in the stack. */}
-                    <rect x="86" y="112" width="428" height="270" rx="16" fill="none"
-                        stroke="rgba(147, 197, 253, 0.16)" strokeWidth="1" strokeDasharray="5 6" />
+            {/* Animated payment-intelligence scene behind the card. */}
+            <LoginBackdrop />
 
-                    {/* The card itself. */}
-                    <rect x="66" y="92" width="428" height="270" rx="16" fill="rgba(6, 15, 46, 0.35)"
-                        stroke="rgba(191, 219, 254, 0.62)" strokeWidth="1.5" />
-
-                    {/* Chip with contact pads. */}
-                    <rect x="112" y="164" width="60" height="46" rx="7" fill="none"
-                        stroke="rgba(191, 219, 254, 0.62)" strokeWidth="1.25" />
-                    <path d="M112 179 h60 M112 195 h60 M132 164 v46 M152 164 v46"
-                        stroke="rgba(147, 197, 253, 0.35)" strokeWidth="1" fill="none" />
-
-                    {/* PAN groups as tick marks, embossing implied not spelled. */}
-                    <g stroke="rgba(147, 197, 253, 0.45)" strokeWidth="2" strokeLinecap="round">
-                        {[0, 1, 2, 3].map(g => (
-                            <g key={g}>
-                                {[0, 1, 2, 3].map(d => (
-                                    <line key={d}
-                                        x1={112 + g * 92 + d * 16} y1={266}
-                                        x2={112 + g * 92 + d * 16 + 9} y2={266} />
-                                ))}
-                            </g>
-                        ))}
-                    </g>
-
-                    {/* Centre marks. */}
-                    <path d="M280 217 v20 M270 227 h20" stroke="rgba(147, 197, 253, 0.4)" strokeWidth="1" />
-
-                    {/* Width dimension — extension lines + oblique drafting ticks. */}
-                    <g stroke="rgba(147, 197, 253, 0.45)" strokeWidth="1">
-                        <line x1="66" y1="84" x2="66" y2="56" />
-                        <line x1="494" y1="84" x2="494" y2="56" />
-                        <line x1="66" y1="64" x2="494" y2="64" />
-                        <line x1="62" y1="68" x2="70" y2="60" />
-                        <line x1="490" y1="68" x2="498" y2="60" />
-                    </g>
-                    <text x="280" y="52" textAnchor="middle">85.60</text>
-
-                    {/* Height dimension. */}
-                    <g stroke="rgba(147, 197, 253, 0.45)" strokeWidth="1">
-                        <line x1="502" y1="92" x2="530" y2="92" />
-                        <line x1="502" y1="362" x2="530" y2="362" />
-                        <line x1="522" y1="92" x2="522" y2="362" />
-                        <line x1="518" y1="96" x2="526" y2="88" />
-                        <line x1="518" y1="366" x2="526" y2="358" />
-                    </g>
-                    <text x="540" y="231" textAnchor="middle" transform="rotate(90 540 231)">53.98</text>
-
-                    {/* Corner radius callout. */}
-                    <line x1="76" y1="102" x2="36" y2="142" stroke="rgba(147, 197, 253, 0.45)" strokeWidth="1" />
-                    <text x="34" y="160" textAnchor="start">R3.18</text>
-
-                    {/* Sheet reference, bottom-left. */}
-                    <text x="66" y="404" textAnchor="start" opacity="0.75">ISO/IEC 7810 · ID-1 · SCALE 5:1</text>
-                </svg>
-
-                <header>
-                    <Brandmark />
-                </header>
-
-                <div className="nx-brand__mid">
-                    <BrandDeck />
-                </div>
-
-                <div className="nx-baseline">
-                    <span>Bank-grade security</span>
-                    <span>Role-based access</span>
-                    <span>Complete audit trail</span>
-                </div>
-            </section>
-
-            {/* ─────────────── Auth panel ─────────────── */}
+            {/* ─────────────── Sign-in card ─────────────── */}
             <main className="nx-auth">
-                <div className="nx-mobile-brand">
-                    <Brandmark small />
-                    <p className="nx-mobile-brand__line">
-                        Payment intelligence for merchant acquiring teams.
-                    </p>
-                </div>
-
                 <div className="nx-auth__inner">
+                    <Brandmark />
                     <div className="nx-auth__head">
-                        <div className="nx-mark nx-mark--sm"><AfsMark size={42} /></div>
                         <h2 className="nx-auth__title">Welcome back</h2>
                         <p className="nx-auth__subtitle">Sign in to your payment intelligence workspace</p>
                     </div>
@@ -410,26 +326,26 @@ const LoginPage = () => {
                         {ssoLoading && (
                             <motion.div key="sso-loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                                 className="nx-status">
-                                <Loader2 size={26} className="spin-icon" style={{ color: 'var(--nx-blue-600)', marginBottom: 14 }} />
+                                <Loader2 size={26} className="spin-icon" style={{ color: '#00d4ff', marginBottom: 14 }} />
                                 <p className="nx-status__text">Authenticating with Microsoft…</p>
                             </motion.div>
                         )}
 
                         {!ssoLoading && ssoStatus === 'pending' && (
                             <motion.div key="sso-pending" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                                <StatusCard icon={Loader2} iconBg="rgba(217,119,6,0.12)" iconColor="#B45309"
+                                <StatusCard icon={Loader2} iconBg="rgba(251,191,36,0.12)" iconColor="#fbbf24"
                                     title="Access pending" description="Your access request is waiting for administrator approval." />
                             </motion.div>
                         )}
                         {!ssoLoading && ssoStatus === 'rejected' && (
                             <motion.div key="sso-rejected" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                                <StatusCard icon={Lock} iconBg="rgba(220,38,38,0.1)" iconColor="#DC2626"
+                                <StatusCard icon={Lock} iconBg="rgba(248,113,113,0.12)" iconColor="#f87171"
                                     title="Access denied" description="Your request was not approved. Contact your administrator to continue." />
                             </motion.div>
                         )}
                         {!ssoLoading && ssoStatus === 'request_submitted' && (
                             <motion.div key="sso-submitted" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                                <StatusCard icon={Send} iconBg="rgba(37,99,235,0.12)" iconColor="#1D4ED8"
+                                <StatusCard icon={Send} iconBg="rgba(0,212,255,0.12)" iconColor="#00d4ff"
                                     title="Request submitted" description="An administrator will review your access request shortly." />
                             </motion.div>
                         )}
@@ -637,7 +553,7 @@ const LoginPage = () => {
                             <motion.div key="tenant-select" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
                                 className="tenant-section">
                                 <div className="tenant-header">
-                                    <div className="tenant-header-icon"><Building2 size={19} color="#1D4ED8" aria-hidden="true" /></div>
+                                    <div className="tenant-header-icon"><Building2 size={19} aria-hidden="true" /></div>
                                     <div>
                                         <h3 className="tenant-title">Select organisation</h3>
                                         <p className="tenant-subtitle">You have access to {allowedTenants.length} organisations</p>
@@ -652,7 +568,7 @@ const LoginPage = () => {
                                                 disabled={!!switchingTenant} className={`tenant-card ${isSwitching ? 'active' : ''}`}>
                                                 <div className="tenant-card-left">
                                                     <div className="tenant-card-icon">
-                                                        {isSwitching ? <Loader2 size={17} color="#1D4ED8" className="spin-icon" /> : <Building2 size={17} color="#1E40AF" />}
+                                                        {isSwitching ? <Loader2 size={17} className="spin-icon" /> : <Building2 size={17} />}
                                                     </div>
                                                     <div>
                                                         <span className="tenant-card-name">{tenant.bankName}</span>
@@ -661,7 +577,7 @@ const LoginPage = () => {
                                                         </span>
                                                     </div>
                                                 </div>
-                                                <ArrowRight size={16} color="#64748B" aria-hidden="true" />
+                                                <ArrowRight size={16} color="#8fa3c8" aria-hidden="true" />
                                             </button>
                                         );
                                     })}

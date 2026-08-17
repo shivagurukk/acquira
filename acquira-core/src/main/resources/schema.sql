@@ -202,7 +202,7 @@ ON CONFLICT (group_name) DO NOTHING;
 -- ==========================================
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
-('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
+('Executive Dashboard',      '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -217,7 +217,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Merchant Financial',       '/business/merchant-financial',      'DollarSign',      'BUSINESS',       2),
 ('Performance Trends',       '/business/performance',             'TrendingUp',      'BUSINESS',       3),
 ('Debit & Prepaid Metrics',  '/business/debit-prepaid',           'CreditCard',      'BUSINESS',       4),
-('Attrition Report',         '/business/attrition',               'TrendingDown',    'BUSINESS',       5),
+('Attrition Report',         '/business/attrition',               'TrendingDown',    'EXECUTIVE',      4),
 ('Zero Transaction Report',  '/business/zero-transaction',        'AlertTriangle',   'BUSINESS',       6),
 ('Merchant Growth Heatmap',  '/business/heatmap',                 'Grid',            'BUSINESS',       7),
 ('Daily Merchant Dashboard', '/business/daily-dashboard',         'Calendar',        'BUSINESS',       8),
@@ -2080,7 +2080,7 @@ ON CONFLICT (group_name) DO NOTHING;
 -- ==========================================
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
-('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
+('Executive Dashboard',      '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -2095,7 +2095,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Merchant Financial',       '/business/merchant-financial',      'DollarSign',      'BUSINESS',       2),
 ('Performance Trends',       '/business/performance',             'TrendingUp',      'BUSINESS',       3),
 ('Debit & Prepaid Metrics',  '/business/debit-prepaid',           'CreditCard',      'BUSINESS',       4),
-('Attrition Report',         '/business/attrition',               'TrendingDown',    'BUSINESS',       5),
+('Attrition Report',         '/business/attrition',               'TrendingDown',    'EXECUTIVE',      4),
 ('Zero Transaction Report',  '/business/zero-transaction',        'AlertTriangle',   'BUSINESS',       6),
 ('Merchant Growth Heatmap',  '/business/heatmap',                 'Grid',            'BUSINESS',       7),
 ('Daily Merchant Dashboard', '/business/daily-dashboard',         'Calendar',        'BUSINESS',       8),
@@ -3959,7 +3959,7 @@ ON CONFLICT (group_name) DO NOTHING;
 -- ==========================================
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
-('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
+('Executive Dashboard',      '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -3974,7 +3974,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Merchant Financial',       '/business/merchant-financial',      'DollarSign',      'BUSINESS',       2),
 ('Performance Trends',       '/business/performance',             'TrendingUp',      'BUSINESS',       3),
 ('Debit & Prepaid Metrics',  '/business/debit-prepaid',           'CreditCard',      'BUSINESS',       4),
-('Attrition Report',         '/business/attrition',               'TrendingDown',    'BUSINESS',       5),
+('Attrition Report',         '/business/attrition',               'TrendingDown',    'EXECUTIVE',      4),
 ('Zero Transaction Report',  '/business/zero-transaction',        'AlertTriangle',   'BUSINESS',       6),
 ('Merchant Growth Heatmap',  '/business/heatmap',                 'Grid',            'BUSINESS',       7),
 ('Daily Merchant Dashboard', '/business/daily-dashboard',         'Calendar',        'BUSINESS',       8),
@@ -5838,7 +5838,7 @@ ON CONFLICT (group_name) DO NOTHING;
 -- ==========================================
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
-('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
+('Executive Dashboard',      '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -5853,7 +5853,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Merchant Financial',       '/business/merchant-financial',      'DollarSign',      'BUSINESS',       2),
 ('Performance Trends',       '/business/performance',             'TrendingUp',      'BUSINESS',       3),
 ('Debit & Prepaid Metrics',  '/business/debit-prepaid',           'CreditCard',      'BUSINESS',       4),
-('Attrition Report',         '/business/attrition',               'TrendingDown',    'BUSINESS',       5),
+('Attrition Report',         '/business/attrition',               'TrendingDown',    'EXECUTIVE',      4),
 ('Zero Transaction Report',  '/business/zero-transaction',        'AlertTriangle',   'BUSINESS',       6),
 ('Merchant Growth Heatmap',  '/business/heatmap',                 'Grid',            'BUSINESS',       7),
 ('Daily Merchant Dashboard', '/business/daily-dashboard',         'Calendar',        'BUSINESS',       8),
@@ -7718,7 +7718,7 @@ ON CONFLICT (group_name) DO NOTHING;
 -- ==========================================
 INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 -- EXECUTIVE
-('Dashboard',                '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
+('Executive Dashboard',      '/dashboard',                        'LayoutDashboard', 'EXECUTIVE',      1),
 
 -- MERCHANT MGT
 ('Merchant Universe',        '/merchants',                        'Store',           'MERCHANT MGT',   1),
@@ -7733,7 +7733,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Merchant Financial',       '/business/merchant-financial',      'DollarSign',      'BUSINESS',       2),
 ('Performance Trends',       '/business/performance',             'TrendingUp',      'BUSINESS',       3),
 ('Debit & Prepaid Metrics',  '/business/debit-prepaid',           'CreditCard',      'BUSINESS',       4),
-('Attrition Report',         '/business/attrition',               'TrendingDown',    'BUSINESS',       5),
+('Attrition Report',         '/business/attrition',               'TrendingDown',    'EXECUTIVE',      4),
 ('Zero Transaction Report',  '/business/zero-transaction',        'AlertTriangle',   'BUSINESS',       6),
 ('Merchant Growth Heatmap',  '/business/heatmap',                 'Grid',            'BUSINESS',       7),
 ('Daily Merchant Dashboard', '/business/daily-dashboard',         'Calendar',        'BUSINESS',       8),

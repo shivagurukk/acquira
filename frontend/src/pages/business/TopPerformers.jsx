@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
 import { Box, Paper, Typography, Stack, IconButton, Tooltip } from '@mui/material';
-import { Trophy, TrendingUp, Users, Sparkles, Download, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Trophy, TrendingUp, Users, Sparkles, Download, ArrowUpRight, ArrowDownRight, Receipt, Layers } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
@@ -244,6 +244,12 @@ const TopPerformers = () => {
                         onExport={() => exportToCSV(data.topMerchantsByNetRevenue, 'top_merchants_by_net_revenue')}
                     />
                     <LeaderboardCard
+                        title="Top 10 Merchants — Transactions" icon={Receipt} color="var(--warning, #d97706)"
+                        rows={data.topMerchantsByTxns} primaryKey="name" secondaryKey="mid"
+                        valueKey="txns" valueFmt={fmt.number}
+                        onExport={() => exportToCSV(data.topMerchantsByTxns, 'top_merchants_by_txns')}
+                    />
+                    <LeaderboardCard
                         title="Top 10 RMs — Volume" icon={Users} color="var(--brand-alt, #3b82f6)"
                         rows={data.topRmsByVolume} primaryKey="salesUserId" secondaryKey="salesEmail"
                         valueKey="volume" valueFmt={fmt.currency}
@@ -254,6 +260,13 @@ const TopPerformers = () => {
                         rows={data.topRmsByNetRevenue} primaryKey="salesUserId" secondaryKey="salesEmail"
                         valueKey="netRevenue" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topRmsByNetRevenue, 'top_rms_by_net_revenue')}
+                    />
+                    <LeaderboardCard
+                        title="Top 10 MCC — Volume" icon={Layers} color="var(--brand, #2563eb)"
+                        rows={data.topMccs} primaryKey="name" secondaryKey="mcc"
+                        valueKey="volume" valueFmt={fmt.currency}
+                        emptyLabel="No MCC-level data for this window (sum_daily_full not yet populated)."
+                        onExport={() => exportToCSV(data.topMccs, 'top_mccs_by_volume')}
                     />
                     <LeaderboardCard
                         title="Top 10 New Merchants" icon={Sparkles} color="var(--brand-alt, #3b82f6)"

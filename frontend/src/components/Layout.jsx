@@ -14,9 +14,7 @@ import './sidebar.css';
 // ── Constants ──────────────────────────────────────────────────────
 const DRAWER_W    = 232;
 const COLLAPSE_W  = 56;
-const RECENT_KEY  = 'acquira_recent_pages';
 const COLLAPSE_KEY = 'acquira_sb_collapsed';
-const RECENT_MAX  = 5;
 
 // Environment tag shown beside the wordmark (PROD / UAT).
 const ENV_TAG = import.meta.env.VITE_ENV_LABEL || (import.meta.env.PROD ? 'PROD' : 'UAT');
@@ -35,21 +33,6 @@ const catLabel = (cat) => cat
     .replace('MGT', 'MANAGEMENT')
     .replace('DATA INTEGRATION', 'DATA');
 
-// ── Recent pages helpers ────────────────────────────────────────────
-function loadRecent() {
-    try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); }
-    catch { return []; }
-}
-function saveRecent(list) {
-    try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); }
-    catch { /* ignore */ }
-}
-function pushRecent(item) {
-    const prev = loadRecent().filter(r => r.path !== item.path);
-    const next = [item, ...prev].slice(0, RECENT_MAX);
-    saveRecent(next);
-    return next;
-}
 function loadCollapsed() {
     try { return localStorage.getItem(COLLAPSE_KEY) === '1'; }
     catch { return false; }
@@ -85,7 +68,6 @@ const Layout = () => {
     const [collapsed,  setCollapsedState] = useState(loadCollapsed);
     const [search,     setSearch]     = useState('');
     const [mobileOpen, setMobileOpen] = useState(false);
-    const [recent,     setRecent]     = useState(loadRecent);
     const [userMenu,   setUserMenu]   = useState(false);
     const searchRef = useRef(null);
     const footerRef = useRef(null);
@@ -182,11 +164,10 @@ const Layout = () => {
     // ── Close mobile on navigate ──────────────────────────────────
     useEffect(() => { if (isMobile) setMobileOpen(false); }, [location.pathname]);
 
-    // ── Navigate + track recent ───────────────────────────────────
+    // ── Navigate ──────────────────────────────────────────────────
     const go = useCallback((menu) => {
         navigate(menu.path);
         setSearch('');
-        setRecent(pushRecent({ path: menu.path, name: menu.menuName, iconKey: menu.iconKey }));
     }, [navigate]);
 
     const handleLogout = () => { logout(); navigate('/login'); };
@@ -291,21 +272,6 @@ const Layout = () => {
             <div className="sb__nav">
                 {(!collapsed || isMobile) ? (
                     <>
-                        {/* Recent pages */}
-                        {!search && recent.length > 0 && (
-                            <>
-                                <div className="sb__zone">Recent</div>
-                                {recent.slice(0, 3).map(r => (
-                                    <NavItem key={r.path}
-                                        menu={{ ...r, menuName: r.name }}
-                                        active={location.pathname === r.path}
-                                        muted
-                                        onClick={() => navigate(r.path)}
-                                    />
-                                ))}
-                            </>
-                        )}
-
                         {analyticsCats.map(renderGroup)}
                         {manageCats.map(renderGroup)}
 

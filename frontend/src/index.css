@@ -277,25 +277,41 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: none;
+  /* none in light (hairline structure); soft navy depth in dark */
+  box-shadow: var(--shadow-card);
 }
 
 /* ══════════════════════════════════════════════════════════════
    DARK MODE — core palette flips; the sidebar rail does not.
    ══════════════════════════════════════════════════════════════ */
 html.dark {
-  --canvas:      #0C1616;
-  --surface:     #132020;
-  --hairline:    #1F3130;
-  --ink:         #E4ECEA;
-  --muted:       #8FA3A1;
-  --primary:     #37B0A5;
-  --wash:        #16302E;
-  --negative:    #E0755C;
-  --attention:   #D9A542;
-  --projected:   #7794AE;
+  /* Navy-blue dark scheme — deep blue canvas instead of near-black,
+     with brighter teal/cyan marks so charts and deltas glow on it. */
+  --canvas:      #0A1530;
+  --surface:     #101E3C;
+  --hairline:    #20325C;
+  --ink:         #E8EEFB;
+  --muted:       #8FA5CC;
+  --primary:     #2DD4BF;
+  --wash:        #12324E;
+  --negative:    #F27B63;
+  --attention:   #E2B04A;
+  --projected:   #7FA3DB;
 
-  --shadow-pop:  0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
+  /* Chart ramp — brighter cyan sequence for dark; the light-mode teal
+     ramp reads muddy on navy. Same sequential ordering (dark → light). */
+  --chart-1: #0E7490;
+  --chart-2: #0891B2;
+  --chart-3: #22D3EE;
+  --chart-4: #67E8F9;
+  --chart-5: #A5F3FC;
+
+  --shadow-pop:  0 8px 24px rgba(2, 8, 26, 0.6), 0 2px 6px rgba(2, 8, 26, 0.4);
+
+  /* Cards get quiet depth + a hairline of cool light in dark mode
+     (still `none` in light — structure stays hairline-driven there). */
+  --shadow-card:  0 0 0 1px rgba(56, 189, 248, 0.04), 0 10px 30px rgba(2, 8, 26, 0.45);
+  --shadow-hover: 0 0 0 1px rgba(56, 189, 248, 0.08), 0 14px 38px rgba(2, 8, 26, 0.55);
 
   --bg-subtle:   color-mix(in srgb, var(--canvas) 45%, var(--surface));
   --bg-muted:    color-mix(in srgb, var(--canvas) 45%, var(--surface));
@@ -306,6 +322,30 @@ html.dark {
   --info-bg:     color-mix(in srgb, var(--projected) 14%, var(--surface));
 
   --text-disabled: color-mix(in srgb, var(--muted) 55%, var(--surface));
+
+  /* Sidebar rail — follows the navy family in dark mode (light mode
+     keeps the constant :root rail). Slightly darker than the canvas so
+     it still reads as chrome, with the teal marker for the active row. */
+  --rail-bg:          #081124;
+  --rail-edge:        #182848;
+  --rail-text:        #9FB2D8;
+  --rail-text-hover:  #DAE4F8;
+  --rail-text-active: #E8EEFB;
+  --rail-hover-bg:    #0E1C3A;
+  --rail-active-bg:   #102547;
+  --rail-marker:      #2DD4BF;
+  --rail-eyebrow:     #7389B8;
+  --rail-fresh:       #2DD4BF;
+  --rail-stale:       #E2B04A;
+}
+
+/* Navy canvas with a faint cool vignette — gives the dark scheme depth
+   without patterning behind content; cards sit on --surface as before. */
+html.dark body {
+  background:
+    radial-gradient(110% 70% at 50% 0%, rgba(31, 58, 112, 0.35), transparent 60%),
+    var(--canvas);
+  background-attachment: fixed;
 }
 
 /* ── MUI dark mode overrides ── */

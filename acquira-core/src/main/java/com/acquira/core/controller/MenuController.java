@@ -88,7 +88,8 @@ public class MenuController {
                 // 15 keeps Retention next to Attrition in the Business group.
                 {"Retention Report",       "/business/retention",        "HeartHandshake","BUSINESS",      15},
                 {"Forecasting",            "/business/forecasting",      "Gauge",        "BUSINESS",      16},
-                {"Top Performers",         "/business/top-performers",   "Trophy",       "BUSINESS",      17},
+                // Moved to EXECUTIVE by V2026_08_17_01__executive_menu_group.sql
+                {"Top Performers",         "/business/top-performers",   "Trophy",       "EXECUTIVE",      5},
                 // Safety net for V2026_08_15_01__destination_dashboard_menu.sql
                 {"Destination Dashboard",  "/business/destination-dashboard", "Globe",   "BUSINESS",      18},
                 // ── SALES suite ──────────────────────────────────────────────
@@ -98,7 +99,8 @@ public class MenuController {
                 // Hierarchy Explorer were unreachable from the sidebar. Register
                 // the full set here, idempotently, so every environment gets
                 // the complete Sales group on next startup.
-                {"Sales Executive",        "/sales/executive",           "LayoutDashboard", "SALES",       0},
+                // Moved to EXECUTIVE by V2026_08_17_01__executive_menu_group.sql
+                {"Sales Hierarchy",        "/sales/executive",           "LayoutDashboard", "EXECUTIVE",   6},
                 {"Sales Team Management",  "/sales/team-management",     "Users",        "SALES",          1},
                 {"Country Leads",          "/sales/country-management",  "Globe",        "SALES",          2},
                 {"Agent Directory",        "/sales/agents",              "Contact",      "SALES",          3},

@@ -109,11 +109,13 @@ public class TopPerformersController {
 
         response.put("topMerchantsByVolume", rank(withVolume, "volume", TOP_N));
         response.put("topMerchantsByNetRevenue", rank(withVolume, "netRevenue", TOP_N));
+        response.put("topMerchantsByTxns", rank(withVolume, "txns", TOP_N));
 
         List<Map<String, Object>> rmAgg = groupByRm(withVolume);
         response.put("topRmsByVolume", rank(rmAgg, "volume", TOP_N));
         response.put("topRmsByNetRevenue", rank(rmAgg, "netRevenue", TOP_N));
 
+        response.put("topMccs", topMccs(filter, tenantId, curWindow[0], curWindow[1]));
         response.put("topMovers", priorHasData ? computeMovers(current, prior) : null);
         response.put("topNewMerchants", computeNewMerchants(withVolume,
                 firstTxnDates(tenantId, cardGrain, curWindow[0], curWindow[1])));
@@ -285,6 +287,87 @@ public class TopPerformersController {
             m.put("txns", toDouble(row[8]));
             m.put("msf", toDouble(row[9]));
             m.put("netRevenue", toDouble(row[10]));
+            result.add(m);
+        }
+        return result;
+    }
+
+    /**
+     * Top 10 MCCs by settlement volume, from sum_daily_full — the one summary
+     * that carries mcc alongside merchant_id, the card-filter columns, AND real
+     * net revenue (msf - interchange - scheme - ecom), so both merchant-level
+     * and card-level filters apply on a single grain with no insight-table
+     * approximation. Category label resolved from ref_mcc_category; an MCC the
+     * sheet doesn't know keeps its bare code.
+     */
+    private List<Map<String, Object>> topMccs(VolumeRevenueFilterDTO f, Long tenantId,
+            LocalDate from, LocalDate to) {
+
+        boolean needMerchant = notEmpty(f.getPartnerList()) || notEmpty(f.getRmList())
+                || notEmpty(f.getTeamLeaderList()) || notEmpty(f.getMidList())
+                || (f.getMerchantName() != null && !f.getMerchantName().isBlank());
+
+        StringBuilder sql = new StringBuilder();
+        // Category resolved as a scalar subquery, NOT a join — a duplicate row in
+        // ref_mcc_category must never fan out the SUMs.
+        sql.append("SELECT s.mcc, ");
+        sql.append("       (SELECT c.category FROM ref_mcc_category c WHERE c.mcc = s.mcc LIMIT 1) AS category, ");
+        sql.append("       COALESCE(SUM(s.total_volume), 0) AS volume, ");
+        sql.append("       COALESCE(SUM(s.total_txns), 0) AS txns, ");
+        sql.append("       COALESCE(SUM(s.total_net_revenue), 0) AS netRevenue ");
+        sql.append("FROM sum_daily_full s ");
+        sql.append("WHERE s.tenant_id = :tid AND s.business_date BETWEEN :from AND :to ");
+        sql.append("  AND s.mcc IS NOT NULL ");
+        if (notEmpty(f.getSchemeList())) sql.append("  AND s.card_scheme IN (:schemes) ");
+        if (notEmpty(f.getCardTypeList())) sql.append("  AND s.card_type IN (:cardTypes) ");
+        if (notEmpty(f.getDestinationList())) sql.append("  AND s.destination IN (:destinations) ");
+        if (notEmpty(f.getChannelList())) sql.append("  AND s.channel IN (:channels) ");
+        if (notEmpty(f.getMccList())) sql.append("  AND s.mcc IN (:mccs) ");
+        if (notEmpty(f.getIndustryList())) sql.append("  AND s.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) ");
+        if (needMerchant) {
+            sql.append("  AND EXISTS (SELECT 1 FROM dim_merchant m WHERE m.merchant_id = s.merchant_id AND m.tenant_id = s.tenant_id ");
+            if (notEmpty(f.getPartnerList())) sql.append("    AND m.referral_partner IN (:partners) ");
+            if (notEmpty(f.getRmList())) sql.append("    AND m.sales_email IN (:rms) ");
+            if (notEmpty(f.getTeamLeaderList())) sql.append("    AND m.sales_user_id IN (:teamLeaders) ");
+            if (notEmpty(f.getMidList())) sql.append("    AND m.mid IN (:mids) ");
+            if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) sql.append("    AND m.name ILIKE :merchName ");
+            sql.append(") ");
+        }
+        sql.append("GROUP BY s.mcc HAVING COALESCE(SUM(s.total_volume), 0) > 0 ");
+        sql.append("ORDER BY volume DESC LIMIT ").append(TOP_N);
+
+        Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("tid", tenantId);
+        q.setParameter("from", from);
+        q.setParameter("to", to);
+        if (notEmpty(f.getSchemeList())) q.setParameter("schemes", f.getSchemeList());
+        if (notEmpty(f.getCardTypeList())) q.setParameter("cardTypes", f.getCardTypeList());
+        if (notEmpty(f.getDestinationList())) q.setParameter("destinations", f.getDestinationList());
+        if (notEmpty(f.getChannelList())) q.setParameter("channels", f.getChannelList());
+        if (notEmpty(f.getMccList())) q.setParameter("mccs", f.getMccList());
+        if (notEmpty(f.getIndustryList())) q.setParameter("industries", f.getIndustryList());
+        if (needMerchant) {
+            if (notEmpty(f.getPartnerList())) q.setParameter("partners", f.getPartnerList());
+            if (notEmpty(f.getRmList())) q.setParameter("rms", f.getRmList());
+            if (notEmpty(f.getTeamLeaderList())) q.setParameter("teamLeaders", f.getTeamLeaderList());
+            if (notEmpty(f.getMidList())) q.setParameter("mids", f.getMidList());
+            if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) q.setParameter("merchName", "%" + f.getMerchantName() + "%");
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = q.getResultList();
+        List<Map<String, Object>> result = new ArrayList<>(rows.size());
+        int rank = 1;
+        for (Object[] row : rows) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            String mcc = row[0] != null ? row[0].toString() : "—";
+            String category = (String) row[1];
+            m.put("rank", rank++);
+            m.put("mcc", mcc);
+            m.put("name", category != null && !category.isBlank() ? category : ("MCC " + mcc));
+            m.put("volume", toDouble(row[2]));
+            m.put("txns", toDouble(row[3]));
+            m.put("netRevenue", toDouble(row[4]));
             result.add(m);
         }
         return result;

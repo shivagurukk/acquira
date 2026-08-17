@@ -1,18 +1,20 @@
 // ─── Shared Chart Configuration ──────────────────────────────────────
 // Standardizes Recharts styling across all dashboard and report pages.
 
-// Brand-aligned chart color palette
+// Brand-aligned chart color palette.
+// One notch brighter than before so series stay luminous on the navy
+// dark canvas while remaining legible on the light surface.
 export const CHART_COLORS = [
-    '#2563eb', // blue
-    '#059669', // emerald
-    '#7c3aed', // violet
-    '#d97706', // amber
-    '#0891b2', // cyan
-    '#dc2626', // red
-    '#db2777', // pink
-    '#0d9488', // teal
-    '#4f46e5', // indigo
-    '#65a30d', // lime
+    '#3b82f6', // blue
+    '#10b981', // emerald
+    '#8b5cf6', // violet
+    '#f59e0b', // amber
+    '#06b6d4', // cyan
+    '#ef4444', // red
+    '#ec4899', // pink
+    '#14b8a6', // teal
+    '#6366f1', // indigo
+    '#84cc16', // lime
 ];
 
 // Tooltip container style

@@ -269,11 +269,19 @@ public class ExcelSplitterTasklet implements Tasklet {
         }
         String headerLine = headerSb.toString();
 
+        // Pre-normalize the source header names once, so embedded duplicate
+        // header lines (concatenated monthly exports) can be recognized per row.
+        String[] normalizedSourceHeaders = new String[sourceHeaders.length];
+        for (int i = 0; i < sourceHeaders.length; i++) {
+            normalizedSourceHeaders[i] = normalizeHeader(sourceHeaders[i]);
+        }
+
         try (BufferedReader reader = new BufferedReader(new FileReader(inputFile), BUFFER_SIZE)) {
             reader.readLine();
 
             int fileIndex = 1;
             int rowCount = 0;
+            long skippedHeaderRows = 0;
             BufferedWriter writer = createWriter(outputDir, fileIndex, headerLine);
             StringBuilder sb = new StringBuilder(2048);
             String line;
@@ -282,6 +290,15 @@ public class ExcelSplitterTasklet implements Tasklet {
                 if (line.trim().isEmpty()) continue;
 
                 String[] fields = parseCsvLine(line, delimiter);
+
+                // Files produced by concatenating several exports repeat the
+                // header line mid-file. Such a line would otherwise be written
+                // out as DATA ('Txn Currency' -> txn_currency VARCHAR(10) ->
+                // "value too long" aborts the whole staging insert), so drop it.
+                if (isEmbeddedHeaderLine(fields, normalizedSourceHeaders)) {
+                    skippedHeaderRows++;
+                    continue;
+                }
 
                 String splitDate = null, splitTime = null;
                 if (combinedDateTime) {
@@ -335,9 +352,25 @@ public class ExcelSplitterTasklet implements Tasklet {
             long elapsed = System.currentTimeMillis() - startTime;
             System.out.printf("CSV split complete: %,d rows -> %d files in %.1fs (%,.0f rows/sec)%n",
                     totalRows, fileIndex, elapsed / 1000.0, totalRows * 1000.0 / Math.max(elapsed, 1));
+            if (skippedHeaderRows > 0) {
+                System.out.printf("CSV split: skipped %,d embedded duplicate header line(s)%n", skippedHeaderRows);
+            }
         }
 
         return totalRows;
+    }
+
+    /**
+     * A line is a repeated header if every field it has matches the source
+     * header at the same position (normalized). Requires the full header width
+     * so a data row that merely starts with a header-like word never matches.
+     */
+    private static boolean isEmbeddedHeaderLine(String[] fields, String[] normalizedSourceHeaders) {
+        if (fields.length != normalizedSourceHeaders.length) return false;
+        for (int i = 0; i < fields.length; i++) {
+            if (!normalizeHeader(fields[i]).equals(normalizedSourceHeaders[i])) return false;
+        }
+        return true;
     }
 
     private String[] parseCsvLine(String line, char delimiter) {

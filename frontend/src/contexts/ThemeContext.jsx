@@ -29,11 +29,12 @@ const LIGHT = {
 };
 const DARK = {
   mode: 'dark',
-  bg: '#0C1616', bgCard: '#132020', bgSidebar: '#101F1E',
-  bgSubtle: '#101B1B', bgHover: '#142625',
-  text: '#E4ECEA', textSecondary: '#8FA3A1',
-  border: '#1F3130', borderLight: '#1F3130',
-  accent: '#37B0A5', accentLight: '#16302E',
+  // Navy-blue dark scheme — mirrors html.dark in index.css / theme.js.
+  bg: '#0A1530', bgCard: '#101E3C', bgSidebar: '#081124',
+  bgSubtle: '#0D1936', bgHover: '#13294E',
+  text: '#E8EEFB', textSecondary: '#8FA5CC',
+  border: '#20325C', borderLight: '#20325C',
+  accent: '#2DD4BF', accentLight: '#12324E',
 };
 
 // One theme carrying both colour schemes — never rebuilt on toggle.
