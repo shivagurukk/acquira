@@ -13,8 +13,12 @@
         <dependency><groupId>com.microsoft.playwright</groupId><artifactId>playwright</artifactId><version>1.40.0</version></dependency>
         <dependency><groupId>com.microsoft.playwright</groupId><artifactId>driver-bundle</artifactId><version>1.40.0</version></dependency>
         <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
-        <dependency><groupId>com.github.librepdf</groupId><artifactId>openpdf</artifactId><version>${openpdf.version}</version></dependency>
-        <dependency><groupId>org.jfree</groupId><artifactId>jfreechart</artifactId><version>${jfreechart.version}</version></dependency>
+        <!-- Literal versions on purpose: the CI image build copies this module
+             under a parent pom that may predate the openpdf.version /
+             jfreechart.version properties, which breaks POM parsing outright.
+             Keep in sync with the root pom's dependencyManagement. -->
+        <dependency><groupId>com.github.librepdf</groupId><artifactId>openpdf</artifactId><version>1.4.2</version></dependency>
+        <dependency><groupId>org.jfree</groupId><artifactId>jfreechart</artifactId><version>1.5.6</version></dependency>
     </dependencies>
     <build>
         <plugins>
