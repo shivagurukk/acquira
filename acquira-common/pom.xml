@@ -15,11 +15,15 @@
         <dependency><groupId>com.github.ben-manes.caffeine</groupId><artifactId>caffeine</artifactId></dependency>
         <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
         <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
-        <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-api</artifactId><version>${jjwt.version}</version></dependency>
-        <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-impl</artifactId><version>${jjwt.version}</version><scope>runtime</scope></dependency>
-        <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-jackson</artifactId><version>${jjwt.version}</version><scope>runtime</scope></dependency>
+        <!-- Literal versions on purpose: the CI image build resolves this module
+             against a parent pom copy that has pinned older versions here before
+             (jjwt 0.11.x broke JwtUtil's 0.12+ API at compile). Keep in sync
+             with the root pom's properties. -->
+        <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-api</artifactId><version>0.13.0</version></dependency>
+        <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-impl</artifactId><version>0.13.0</version><scope>runtime</scope></dependency>
+        <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-jackson</artifactId><version>0.13.0</version><scope>runtime</scope></dependency>
         <!-- Smile ML — churn RandomForest (ChurnScoringService). Pure JVM, no native BLAS for trees. -->
-        <dependency><groupId>com.github.haifengl</groupId><artifactId>smile-core</artifactId><version>${smile.version}</version></dependency>
+        <dependency><groupId>com.github.haifengl</groupId><artifactId>smile-core</artifactId><version>2.6.0</version></dependency>
     </dependencies>
     <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId><configuration><skip>true</skip></configuration></plugin></plugins></build>
 </project>
