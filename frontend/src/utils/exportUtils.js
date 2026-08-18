@@ -1,23 +1,33 @@
-export const exportToCSV = (data, filename) => {
+/**
+ * Export rows to CSV.
+ *
+ * `columns` is optional: an array of { label, key?, getter? } that controls
+ * the header names AND which fields ship, in order. `getter(row)` wins over
+ * `key`. Without it, every raw object key exports under its raw name
+ * (legacy behavior — most pages still rely on this).
+ */
+export const exportToCSV = (data, filename, columns) => {
     if (!data || !data.length) {
         alert("No data to export");
         return;
     }
 
-    // Get headers from first object
-    const headers = Object.keys(data[0]);
+    const esc = (val) => {
+        if (val === null || val === undefined) return '';
+        val = val.toString();
+        if (/[",\n]/.test(val)) val = `"${val.replace(/"/g, '""')}"`;
+        return val;
+    };
 
-    // Create CSV content
+    const spec = columns?.length
+        ? columns
+        : Object.keys(data[0]).map(k => ({ label: k, key: k }));
+
     const csvContent = [
-        headers.join(','), // Header row
-        ...data.map(row => headers.map(fieldName => {
-            // Handle null/undefined and wrap strings in quotes if they contain commas
-            let val = row[fieldName];
-            if (val === null || val === undefined) val = '';
-            val = val.toString();
-            if (val.includes(',')) val = `"${val}"`;
-            return val;
-        }).join(','))
+        spec.map(c => esc(c.label)).join(','),
+        ...data.map(row => spec.map(c =>
+            esc(c.getter ? c.getter(row) : row[c.key])
+        ).join(','))
     ].join('\n');
 
     // Create Blob and Link

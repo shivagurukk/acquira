@@ -1453,6 +1453,8 @@ public class VolumeRevenueRepository {
             if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
             if (listNonEmpty(filter.getMidList()))        sql.append("AND m.mid IN (:mids) ");
             if (listNonEmpty(filter.getIndustryList()))   sql.append("AND m.industry IN (:industries) ");
+            if (filter.getOpenDateStart() != null)        sql.append("AND m.created_date >= :openStart ");
+            if (filter.getOpenDateEnd() != null)          sql.append("AND m.created_date <= :openEnd ");
             if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                 sql.append("AND m.name ILIKE :merchName ");
             if (listNonEmpty(filter.getMccList()))        sql.append("AND st.mcc IN (:mccs) ");
@@ -1473,6 +1475,8 @@ public class VolumeRevenueRepository {
             if (listNonEmpty(filter.getTeamLeaderList())) q.setParameter("teamLeaders", filter.getTeamLeaderList());
             if (listNonEmpty(filter.getMidList()))        q.setParameter("mids", filter.getMidList());
             if (listNonEmpty(filter.getIndustryList()))   q.setParameter("industries", filter.getIndustryList());
+            if (filter.getOpenDateStart() != null)        q.setParameter("openStart", filter.getOpenDateStart());
+            if (filter.getOpenDateEnd() != null)          q.setParameter("openEnd", filter.getOpenDateEnd());
             if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                 q.setParameter("merchName", "%" + filter.getMerchantName() + "%");
             if (listNonEmpty(filter.getMccList()))        q.setParameter("mccs", filter.getMccList());
@@ -1637,6 +1641,10 @@ public class VolumeRevenueRepository {
         if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
         if (listNonEmpty(filter.getMidList()))      sql.append("AND m.mid IN (:mids) ");
         if (listNonEmpty(filter.getIndustryList())) sql.append("AND m.industry IN (:industries) ");
+        // Open-date (onboarding) range — same m.created_date column the volume
+        // report filters on. Was posted by the UI but silently ignored here.
+        if (filter.getOpenDateStart() != null)      sql.append("AND m.created_date >= :openStart ");
+        if (filter.getOpenDateEnd() != null)        sql.append("AND m.created_date <= :openEnd ");
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
             sql.append("AND m.name ILIKE :merchName ");
         // Store-dimension filters
@@ -1675,6 +1683,8 @@ public class VolumeRevenueRepository {
         if (listNonEmpty(filter.getTeamLeaderList())) query.setParameter("teamLeaders", filter.getTeamLeaderList());
         if (listNonEmpty(filter.getMidList()))        query.setParameter("mids", filter.getMidList());
         if (listNonEmpty(filter.getIndustryList()))   query.setParameter("industries", filter.getIndustryList());
+        if (filter.getOpenDateStart() != null)        query.setParameter("openStart", filter.getOpenDateStart());
+        if (filter.getOpenDateEnd() != null)          query.setParameter("openEnd", filter.getOpenDateEnd());
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
             query.setParameter("merchName", "%" + filter.getMerchantName() + "%");
         if (listNonEmpty(filter.getMccList()))        query.setParameter("mccs", filter.getMccList());
