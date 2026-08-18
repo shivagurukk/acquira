@@ -99,8 +99,8 @@ const BatchMonitoring = () => {
         const colors = {
             COMPLETED: { bg: '#dcfce7', text: '#166534' },
             FAILED:    { bg: '#fee2e2', text: '#991b1b' },
-            STARTED:   { bg: '#dbeafe', text: '#1e40af' },
-            STARTING:  { bg: '#dbeafe', text: '#1e40af' },
+            STARTED:   { bg: 'var(--wash)', text: 'var(--primary)' },
+            STARTING:  { bg: 'var(--wash)', text: 'var(--primary)' },
         };
         const c = colors[status] || colors.STARTED;
         return (
@@ -179,7 +179,7 @@ const BatchMonitoring = () => {
                     <WifiOff size={14} color="#b45309" />
                     <span style={{ color: '#92400e', fontWeight: 500 }}>
                         Live updates unavailable (SSE blocked or timed out) — falling back to 30s polling.
-                        <button onClick={connectSSE} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#1d4ed8', fontWeight: 600, fontSize: 12, padding: 0 }}>Retry live</button>
+                        <button onClick={connectSSE} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 12, padding: 0 }}>Retry live</button>
                     </span>
                 </div>
             )}
@@ -239,7 +239,7 @@ const BatchMonitoring = () => {
                                                 }}>
                                                     <div style={{
                                                         height: '100%', borderRadius: '4px',
-                                                        background: 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
+                                                        background: 'linear-gradient(90deg, var(--primary), var(--primary))',
                                                         width: `${job.progress >= 0 ? job.progress : 0}%`,
                                                         transition: 'width 0.5s ease',
                                                     }} />
@@ -299,7 +299,7 @@ const BatchMonitoring = () => {
                                             new Date(job.endTime).toLocaleString()
                                         ) : job.isLive ? (
                                             <span style={{
-                                                color: '#3b82f6', display: 'flex',
+                                                color: 'var(--primary)', display: 'flex',
                                                 alignItems: 'center', gap: '4px',
                                             }}>
                                                 <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />

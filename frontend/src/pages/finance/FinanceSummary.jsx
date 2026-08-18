@@ -322,13 +322,13 @@ const FinanceSummary = () => {
 
             {/* Custom Date Picker Popover */}
             {showCustomPicker && (
-                <div style={{ position: 'absolute', right: '120px', top: '80px', background: 'white', padding: '16px', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', zIndex: 50, border: '1px solid #e2e8f0' }}>
+                <div style={{ position: 'absolute', right: '120px', top: '80px', background: 'var(--bg-card)', padding: '16px', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', zIndex: 50, border: '1px solid #e2e8f0' }}>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
                         <input type="date" value={customRange.start} onChange={e => setCustomRange({ ...customRange, start: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
                         <ArrowRight size={16} color="#94a3b8" />
                         <input type="date" value={customRange.end} onChange={e => setCustomRange({ ...customRange, end: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
                     </div>
-                    <button onClick={handleApplyCustom} style={{ width: '100%', padding: '8px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>
+                    <button onClick={handleApplyCustom} style={{ width: '100%', padding: '8px', background: 'var(--primary)', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>
                         Apply Filter
                     </button>
                 </div>
@@ -339,14 +339,14 @@ const FinanceSummary = () => {
             {error && (
                 <div style={{ marginBottom: '12px', padding: '10px 14px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
                     <span><strong>Could not load the report.</strong> {error}</span>
-                    <button onClick={fetchData} style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #fecaca', background: 'white', color: '#b91c1c', fontWeight: 600, cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+                    <button onClick={fetchData} style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #fecaca', background: 'var(--bg-card)', color: '#b91c1c', fontWeight: 600, cursor: 'pointer', fontSize: '12px' }}>Retry</button>
                 </div>
             )}
 
             {/* Table Container */}
-            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', position: 'relative' }}>
+            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'var(--bg-card)', position: 'relative' }}>
                 <table style={{ minWidth: '1400px', width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
-                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'white' }}>
+                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg-card)' }}>
                         <tr style={{ height: '40px' }}>
                             <th style={{ position: 'sticky', left: 0, zIndex: 20, background: '#f8fafc', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', minWidth: '220px' }}></th>
                             {/* Three mutually exclusive, exhaustive buckets — every transaction

@@ -25,7 +25,7 @@ const D = {
   text:    '#f1f5f9',
   textSec: '#cbd5e1',
   textMut: '#7d8ba1',
-  accent:  '#38bdf8',
+  accent:  'var(--cat-1)',
   up:      '#34d399',
   down:    '#f87171',
   warn:    '#fbbf24',

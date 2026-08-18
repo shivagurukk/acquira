@@ -17,6 +17,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { formatMsf, formatCurrency as fmtMoney, formatCompactCurrency } from '../../utils/formatters';
 import { useDataBounds } from '../../hooks/useDataBounds';
 import DataBoundsBanner from '../../components/DataBoundsBanner';
+import { CATEGORICAL } from '../../theme/chartPalette';
 
 /* ────────────────────────────────────────────────────────────────────────────
    Debit & Prepaid Metrics
@@ -74,7 +75,7 @@ const CustomTooltip = ({ active, payload, label, formatCurrency, formatNumber })
 
 /* Chart card shell — follows the shared dashboard ChartCard conventions
    so this page sits visually consistent with the rest of Business Analytics. */
-const ChartCard = ({ title, subtitle, accent = '#6366f1', empty, children }) => (
+const ChartCard = ({ title, subtitle, accent = 'var(--projected)', empty, children }) => (
     <Paper sx={{
         position: 'relative', overflow: 'hidden',
         width: '100%',
@@ -398,19 +399,19 @@ const DebitPrepaidMetrics = () => {
 
         return [
             {
-                title: `${segLabel} Volume`, value: formatCompact(seg.volume), icon: DollarSign, color: '#3b82f6',
+                title: `${segLabel} Volume`, value: formatCompact(seg.volume), icon: DollarSign, color: 'var(--chart-2)',
                 subtitle: <ShareSubtitle badge={{ text: `${volShare.toFixed(1)}% of book`, tone: 'brand' }}
                     text={`of ${formatCompact(book.volume)} total`} />,
                 sparkData: monthSpark, trendLabel: 'MONTHLY TREND',
             },
             {
-                title: `${segLabel} Transactions`, value: formatNumber(seg.count), icon: Hash, color: '#10b981',
+                title: `${segLabel} Transactions`, value: formatNumber(seg.count), icon: Hash, color: 'var(--chart-4)',
                 subtitle: <ShareSubtitle badge={{ text: `${cntShare.toFixed(1)}% of txns`, tone: 'success' }}
                     text={`of ${formatNumber(book.count)} total`} />,
                 sparkData: monthSparkCnt, trendLabel: 'MONTHLY TREND',
             },
             {
-                title: 'Effective MSF Rate', value: formatBps(seg.msfRateBps), icon: Percent, color: '#0ea5e9',
+                title: 'Effective MSF Rate', value: formatBps(seg.msfRateBps), icon: Percent, color: 'var(--chart-alt)',
                 subtitle: <ShareSubtitle
                     badge={msfDeltaBps == null ? null : {
                         text: `${msfDeltaBps >= 0 ? '+' : ''}${msfDeltaBps.toFixed(1)} bps vs book`,
@@ -419,7 +420,7 @@ const DebitPrepaidMetrics = () => {
                     text={`book ${formatBps(book.msfRateBps)}`} />,
             },
             {
-                title: 'Avg Ticket', value: formatCurrency(seg.avgTicket), icon: Receipt, color: '#8b5cf6',
+                title: 'Avg Ticket', value: formatCurrency(seg.avgTicket), icon: Receipt, color: 'var(--chart-1)',
                 subtitle: <ShareSubtitle text={`vs ${formatCurrency(book.avgTicket)} blended book average`} />,
             },
         ];
@@ -431,21 +432,21 @@ const DebitPrepaidMetrics = () => {
         const debit = rows.find(r => r.bucket === 'DEBIT') || { volume: 0 };
         const prepaid = rows.find(r => r.bucket === 'PREPAID') || { volume: 0 };
         return [
-            { label: 'Debit', value: debit.volume, color: '#3b82f6' },
-            { label: 'Prepaid', value: prepaid.volume, color: '#f59e0b' },
+            { label: 'Debit', value: debit.volume, color: 'var(--chart-2)' },
+            { label: 'Prepaid', value: prepaid.volume, color: 'var(--chart-4)' },
         ];
     }, [summary]);
 
     const destinationSplit = useMemo(() => {
         const rows = summary?.byDestination || [];
-        const palette = { DOMESTIC: '#10b981', INTERNATIONAL: '#6366f1' };
-        return rows.slice(0, 2).map(r => ({ label: r.key, value: r.volume, color: palette[r.key] || '#94a3b8' }));
+        const palette = { DOMESTIC: 'var(--chart-2)', INTERNATIONAL: 'var(--chart-alt)' };
+        return rows.slice(0, 2).map(r => ({ label: r.key, value: r.volume, color: palette[r.key] || 'var(--chart-5)' }));
     }, [summary]);
 
     const channelSplit = useMemo(() => {
         const rows = summary?.byChannel || [];
-        const palette = { POS: '#0ea5e9', ECOM: '#8b5cf6', MOTO: '#f97316' };
-        return rows.slice(0, 3).map(r => ({ label: r.key, value: r.volume, color: palette[r.key] || '#94a3b8' }));
+        const palette = { POS: 'var(--chart-2)', ECOM: 'var(--chart-4)', MOTO: 'var(--chart-1)' };
+        return rows.slice(0, 3).map(r => ({ label: r.key, value: r.volume, color: palette[r.key] || 'var(--chart-5)' }));
     }, [summary]);
 
     const topScheme = summary?.byScheme?.[0];
@@ -471,7 +472,7 @@ const DebitPrepaidMetrics = () => {
         scheme: r.key, volume: Number(r.volume) || 0,
     })), [summary]);
 
-    const SCHEME_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444'];
+    const SCHEME_COLORS = CATEGORICAL.slice(0, 5);
 
     /* ── Table ── */
     const columns = [
@@ -505,11 +506,11 @@ const DebitPrepaidMetrics = () => {
         },
         {
             field: 'debitVolume', headerName: 'DEBIT VOL', type: 'number', width: 140, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" color="#3b82f6" fontWeight={600} sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" color="var(--chart-2)" fontWeight={600} sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
         },
         {
             field: 'prepaidVolume', headerName: 'PREPAID VOL', type: 'number', width: 140, align: 'right', headerAlign: 'right',
-            renderCell: (params) => <Typography variant="body2" color="#f59e0b" fontWeight={600} sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
+            renderCell: (params) => <Typography variant="body2" color="var(--chart-4)" fontWeight={600} sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(params.value)}</Typography>
         },
         {
             field: 'msf', headerName: 'MSF', type: 'number', width: 130, align: 'right', headerAlign: 'right',
@@ -551,7 +552,7 @@ const DebitPrepaidMetrics = () => {
             <Grid container spacing={2} sx={{ mb: 3 }}>
                 <Grid item xs={12} sm={6} md={3}>
                     <CompositionCard
-                        title="Debit vs Prepaid" icon={CreditCard} accent="#3b82f6"
+                        title="Debit vs Prepaid" icon={CreditCard} accent="var(--chart-2)"
                         headline={bucketLead.pct == null ? '—' : `${bucketLead.pct.toFixed(1)}%`}
                         caption={bucketLead.label ? `${bucketLead.label} leads the segment` : 'No volume in this window'}
                         segments={bucketSplit} formatCompact={formatCompact}
@@ -559,7 +560,7 @@ const DebitPrepaidMetrics = () => {
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
                     <CompositionCard
-                        title="Domestic vs Intl" icon={Globe} accent="#10b981"
+                        title="Domestic vs Intl" icon={Globe} accent="var(--chart-4)"
                         headline={destLead.pct == null ? '—' : `${destLead.pct.toFixed(1)}%`}
                         caption={destLead.label ? `${destLead.label} share of segment` : 'No volume in this window'}
                         segments={destinationSplit} formatCompact={formatCompact}
@@ -567,7 +568,7 @@ const DebitPrepaidMetrics = () => {
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
                     <CompositionCard
-                        title="Channel Mix" icon={Monitor} accent="#8b5cf6"
+                        title="Channel Mix" icon={Monitor} accent="var(--chart-alt)"
                         headline={chanLead.pct == null ? '—' : `${chanLead.pct.toFixed(1)}%`}
                         caption={chanLead.label ? `${chanLead.label} share of segment` : 'No volume in this window'}
                         segments={channelSplit} formatCompact={formatCompact}
@@ -575,7 +576,7 @@ const DebitPrepaidMetrics = () => {
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
                     <CompositionCard
-                        title="Top Scheme" icon={Award} accent="#f59e0b"
+                        title="Top Scheme" icon={Award} accent="var(--chart-1)"
                         formatCompact={formatCompact}
                         single={topScheme ? {
                             value: topScheme.key,

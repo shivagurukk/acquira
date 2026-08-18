@@ -227,17 +227,17 @@ const GroupReports = () => {
         const avgTicket   = totalTxns > 0 ? totalVol / totalTxns : 0;
         const marginPct   = totalMsf > 0 ? (totalNetRev / totalMsf) * 100 : 0;
         return [
-            { title: 'Groups',             value: formatNumber(groupCount),                      icon: Layers,     color: '#6366f1' },
-            { title: 'Total Volume',       value: fmtMoneyCompact(totalVol),                     icon: DollarSign, color: '#3b82f6',
+            { title: 'Groups',             value: formatNumber(groupCount),                      icon: Layers,     color: 'var(--chart-alt)' },
+            { title: 'Total Volume',       value: fmtMoneyCompact(totalVol),                     icon: DollarSign, color: 'var(--chart-2)',
               subtitle: 'settlement basis' },
-            { title: 'Transactions',       value: formatCompact(totalTxns),                      icon: Hash,       color: '#10b981' },
-            { title: 'Merchants',          value: formatNumber(totalMerch),                      icon: Users,      color: '#f59e0b' },
-            { title: 'Net Margin',        value: fmtMoneyCompact(totalNetRev),                   icon: TrendingUp, color: '#059669',
+            { title: 'Transactions',       value: formatCompact(totalTxns),                      icon: Hash,       color: 'var(--chart-3)' },
+            { title: 'Merchants',          value: formatNumber(totalMerch),                      icon: Users,      color: 'var(--warning)' },
+            { title: 'Net Margin',        value: fmtMoneyCompact(totalNetRev),                   icon: TrendingUp, color: 'var(--chart-1)',
               subtitle: `${marginPct.toFixed(1)}% margin on MSF` },
-            { title: 'MSF',                value: fmtMoneyCompact(totalMsf),                     icon: Receipt,    color: '#8b5cf6' },
-            { title: 'Blended MSF Rate',   value: `${blendedBps.toFixed(1)} bps`,                icon: Percent,    color: '#0891b2',
+            { title: 'MSF',                value: fmtMoneyCompact(totalMsf),                     icon: Receipt,    color: 'var(--chart-4)' },
+            { title: 'Blended MSF Rate',   value: `${blendedBps.toFixed(1)} bps`,                icon: Percent,    color: 'var(--chart-3)',
               subtitle: 'volume-weighted' },
-            { title: 'Avg Ticket',         value: formatCurrency(avgTicket),                     icon: Coins,      color: '#d97706' },
+            { title: 'Avg Ticket',         value: formatCurrency(avgTicket),                     icon: Coins,      color: 'var(--warning)' },
         ];
     }, [data, currencyCode, formatCurrency, fmtMoneyCompact]);
 
@@ -439,7 +439,7 @@ const GroupReports = () => {
             {errorMsg && (
                 <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, bgcolor: 'var(--danger-bg, #fef2f2)', border: '1px solid var(--danger-border, #fecaca)' }}>
                     <Stack direction="row" spacing={1.5} alignItems="center">
-                        <AlertCircle size={18} color="#b91c1c" />
+                        <AlertCircle size={18} color="var(--danger)" />
                         <Box>
                             <Typography variant="body2" fontWeight="600" sx={{ color: 'var(--danger-text, #991b1b)' }}>Failed to load report</Typography>
                             <Typography variant="caption" sx={{ color: 'var(--danger-text, #7f1d1d)' }}>{errorMsg}</Typography>

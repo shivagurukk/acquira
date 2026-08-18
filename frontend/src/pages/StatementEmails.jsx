@@ -100,7 +100,7 @@ const StatementEmails = () => {
                         style={{ padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
                     />
                     <button className="primary-btn" onClick={handleSendBulk} disabled={sending} style={{
-                        background: sending ? '#94a3b8' : '#3b82f6', color: 'white', padding: '10px 20px',
+                        background: sending ? '#94a3b8' : 'var(--primary)', color: 'white', padding: '10px 20px',
                         borderRadius: '8px', display: 'flex', gap: '8px', alignItems: 'center', cursor: sending ? 'not-allowed' : 'pointer', border: 'none'
                     }}>
                         {sending ? <RefreshCw className="spin" size={18} /> : <Send size={18} />}
@@ -111,22 +111,22 @@ const StatementEmails = () => {
 
             {/* KPIs */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '30px' }}>
-                <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '15px' }}>
+                <div style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '15px' }}>
                     <div style={{ padding: '12px', borderRadius: '12px', background: '#dcfce7', color: '#166534' }}><CheckCircle size={24} /></div>
                     <div><div style={{ fontSize: '24px', fontWeight: 'bold' }}>{stats.sent || 0}</div><div style={{ color: '#64748b' }}>Delivered</div></div>
                 </div>
-                <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '15px' }}>
+                <div style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '15px' }}>
                     <div style={{ padding: '12px', borderRadius: '12px', background: '#fee2e2', color: '#991b1b' }}><AlertCircle size={24} /></div>
                     <div><div style={{ fontSize: '24px', fontWeight: 'bold' }}>{stats.failed || 0}</div><div style={{ color: '#64748b' }}>Failed</div></div>
                 </div>
-                <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '15px' }}>
+                <div style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '15px' }}>
                     <div style={{ padding: '12px', borderRadius: '12px', background: '#e0f2fe', color: '#075985' }}><FileText size={24} /></div>
                     <div><div style={{ fontSize: '24px', fontWeight: 'bold' }}>{batchStatus ? batchStatus.status : 'Idle'}</div><div style={{ color: '#64748b' }}>Batch Status</div></div>
                 </div>
             </div>
 
             {/* Logs Table */}
-            <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+            <div style={{ background: 'var(--bg-card)', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
                 <div style={{ padding: '20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <h3 style={{ fontWeight: 'bold' }}>Email Logs</h3>
                     <button onClick={() => { fetchLogs(); fetchStats(); }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b' }}><RefreshCw size={18} /></button>
@@ -164,7 +164,7 @@ const StatementEmails = () => {
                                         {log.status === 'FAILED' && (
                                             <button onClick={() => handleRetry(log.merchantId)} style={{
                                                 padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1',
-                                                background: 'white', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px'
+                                                background: 'var(--bg-card)', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px'
                                             }}>
                                                 <RefreshCw size={12} /> Retry
                                             </button>

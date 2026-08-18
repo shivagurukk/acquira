@@ -91,19 +91,19 @@ const EmptyState = ({
                         fontWeight: 600,
                         color: 'var(--brand, #2563eb)',
                         background: 'var(--brand-50, #eff6ff)',
-                        border: '1px solid rgba(37,99,235,0.15)',
+                        border: '1px solid rgba(164, 78, 31,0.15)',
                         borderRadius: '10px',
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
                         fontFamily: 'inherit',
                     }}
                     onMouseEnter={e => {
-                        e.currentTarget.style.background = 'rgba(37,99,235,0.1)';
-                        e.currentTarget.style.borderColor = 'rgba(37,99,235,0.3)';
+                        e.currentTarget.style.background = 'rgba(164, 78, 31,0.1)';
+                        e.currentTarget.style.borderColor = 'rgba(164, 78, 31,0.3)';
                     }}
                     onMouseLeave={e => {
                         e.currentTarget.style.background = 'var(--brand-50, #eff6ff)';
-                        e.currentTarget.style.borderColor = 'rgba(37,99,235,0.15)';
+                        e.currentTarget.style.borderColor = 'rgba(164, 78, 31,0.15)';
                     }}
                 >
                     {action.label}

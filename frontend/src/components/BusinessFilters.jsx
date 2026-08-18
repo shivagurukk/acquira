@@ -26,10 +26,10 @@ const DarkTextField = (props) => (
                 color: '#F8FAFC', backgroundColor: '#1F2937',
                 '& fieldset': { borderColor: '#374151' },
                 '&:hover fieldset': { borderColor: '#64748B' },
-                '&.Mui-focused fieldset': { borderColor: '#3B82F6' },
+                '&.Mui-focused fieldset': { borderColor: 'var(--primary)' },
             },
             '& .MuiInputLabel-root': { color: '#94A3B8' },
-            '& .MuiInputLabel-root.Mui-focused': { color: '#3B82F6' },
+            '& .MuiInputLabel-root.Mui-focused': { color: 'var(--primary)' },
             ...props.sx
         }}
         {...props}
@@ -46,7 +46,7 @@ const DarkAutocomplete = ({ label, options, value, onChange, placeholder, freeSo
         renderTags={(value, getTagProps) =>
             value.map((option, index) => (
                 <Chip {...getTagProps({ index })} key={option} label={getOptionLabel ? getOptionLabel(option) : option} size="small"
-                    sx={{ bgcolor: '#3B82F6', color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white !important', opacity: 0.7 } }}
+                    sx={{ bgcolor: 'var(--primary)', color: 'white', fontWeight: 600, '& .MuiChip-deleteIcon': { color: 'white !important', opacity: 0.7 } }}
                 />
             ))
         }
@@ -125,7 +125,7 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
             {/* Header */}
             <Box sx={{ p: 3, borderBottom: '1px solid #1F2937', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Stack direction="row" spacing={1.5} alignItems="center">
-                    <Box sx={{ width: 36, height: 36, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #3B82F6 0%, #6366f1 100%)' }}>
+                    <Box sx={{ width: 36, height: 36, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, var(--primary) 0%, var(--projected) 100%)' }}>
                         <Filter size={18} color="white" />
                     </Box>
                     <Box>
@@ -144,8 +144,8 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
                 {/* ★ MID & SID — Top Priority Filters ★ */}
                 <Box mb={4}>
                     <Stack direction="row" spacing={1} alignItems="center" mb={1.5}>
-                        <Hash size={14} color="#3B82F6" />
-                        <Typography variant="overline" color="#3B82F6" fontWeight="700" letterSpacing={1}>Merchant & Store ID</Typography>
+                        <Hash size={14} color="var(--primary)" />
+                        <Typography variant="overline" color="var(--primary)" fontWeight="700" letterSpacing={1}>Merchant & Store ID</Typography>
                     </Stack>
                     <Stack spacing={2}>
                         <DarkAutocomplete
@@ -181,7 +181,7 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
                 <Box mb={4}>
                     <Typography variant="overline" color="text.secondary" fontWeight="700" display="block" mb={1} letterSpacing={1}>Date Range</Typography>
                     <ToggleButtonGroup value={dateType} exclusive onChange={(e, val) => val && setDateType(val)} fullWidth size="small"
-                        sx={{ mb: 2, '& .MuiToggleButton-root': { color: '#94A3B8', borderColor: '#374151', '&.Mui-selected': { color: '#3B82F6', bgcolor: 'rgba(59, 130, 246, 0.1)' } } }}
+                        sx={{ mb: 2, '& .MuiToggleButton-root': { color: '#94A3B8', borderColor: '#374151', '&.Mui-selected': { color: 'var(--primary)', bgcolor: 'rgba(202, 95, 40, 0.1)' } } }}
                     >
                         <ToggleButton value="TRANSACTION">Transaction Date</ToggleButton>
                         <ToggleButton value="OPEN">Open Date</ToggleButton>
@@ -252,7 +252,7 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
                     Reset
                 </Button>
                 <Button variant="contained" fullWidth onClick={handleApply} startIcon={<RefreshCw size={18} />}
-                    sx={{ bgcolor: '#3B82F6', '&:hover': { bgcolor: '#2563EB' }, fontWeight: 700 }}>
+                    sx={{ bgcolor: 'var(--primary)', '&:hover': { bgcolor: 'var(--primary)' }, fontWeight: 700 }}>
                     Apply Filters
                 </Button>
             </Box>

@@ -29,7 +29,7 @@ const GlassCard = ({ children, sx, ...props }) => (
 const StatBadge = ({ icon, label, value, color }) => (
     <Box sx={{
         display: 'flex', alignItems: 'center', gap: 2, p: 2, borderRadius: 3,
-        bgcolor: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+        bgcolor: 'var(--bg-card)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
         border: '1px solid #e2e8f0', transition: 'transform 0.2s',
         '&:hover': { transform: 'translateY(-2px)', boxShadow: '0 6px 16px rgba(0,0,0,0.06)' }
     }}>
@@ -47,7 +47,7 @@ const PremiumButton = ({ children, onClick, color = 'primary', startIcon, ...pro
             py: 1.8, px: 4, borderRadius: 3, fontWeight: 700,
             backgroundImage: color === 'warning'
                 ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
-                : 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                : 'linear-gradient(135deg, var(--projected) 0%, #4f46e5 100%)',
             boxShadow: color === 'warning'
                 ? '0 10px 20px -5px rgba(245, 158, 11, 0.4)'
                 : '0 10px 20px -5px rgba(99, 102, 241, 0.4)',
@@ -67,7 +67,7 @@ const TenantConfirmDialog = ({ open, onClose, onConfirm, activeTenant, tenants, 
             PaperProps={{ sx: { borderRadius: 4, overflow: 'hidden', boxShadow: '0 25px 60px rgba(0,0,0,0.25)' } }}
         >
             <Box sx={{
-                background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #818cf8 100%)',
+                background: 'linear-gradient(135deg, #4f46e5 0%, var(--projected) 50%, var(--projected) 100%)',
                 px: 3.5, py: 3, display: 'flex', alignItems: 'center', gap: 2
             }}>
                 <Avatar sx={{ bgcolor: 'rgba(255,255,255,0.2)', width: 52, height: 52, backdropFilter: 'blur(10px)' }}>
@@ -83,7 +83,7 @@ const TenantConfirmDialog = ({ open, onClose, onConfirm, activeTenant, tenants, 
                 </Box>
             </Box>
             <DialogContent sx={{ px: 3.5, py: 3 }}>
-                <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '2px solid #c7d2fe', bgcolor: '#eef2ff', display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '2px solid var(--chart-5)', bgcolor: '#eef2ff', display: 'flex', alignItems: 'center', gap: 2 }}>
                     <Avatar variant="rounded" sx={{ bgcolor: '#4f46e5', width: 56, height: 56 }}>
                         <Building2 size={26} color="white" />
                     </Avatar>
@@ -306,7 +306,7 @@ const MerchantReportManager = () => {
     const estimatedTime = (merchants.length * 1.5 / 60).toFixed(1);
 
     const kpis = useMemo(() => [
-        { title: 'Merchants Ready', value: merchants.length.toString(), icon: Zap, color: '#6366f1' },
+        { title: 'Merchants Ready', value: merchants.length.toString(), icon: Zap, color: 'var(--projected)' },
         { title: 'Est. Duration', value: `~${estimatedTime} min`, icon: Clock, color: '#f59e0b' },
         { title: 'Report Type', value: 'PDF Insight', icon: FileCheck, color: '#10b981' },
         ...(status === 'completed' ? [{ title: 'Success Rate', value: `${progress.total > 0 ? Math.round((progress.success / progress.total) * 100) : 0}%`, icon: FileText, color: progress.failed > 0 ? '#ef4444' : '#10b981' }] : []),
@@ -316,7 +316,7 @@ const MerchantReportManager = () => {
         <Box sx={{ p: 3, bgcolor: '#F8FAFC', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
             <PremiumReportHeader title="Merchant Report Manager" subtitle="Enterprise batch PDF generation system" icon={FileText} hideDatePresets />
 
-            <Box sx={{ mb: 2, px: 2, py: 1.5, borderRadius: 3, bgcolor: '#eef2ff', border: '1px solid #c7d2fe', display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Box sx={{ mb: 2, px: 2, py: 1.5, borderRadius: 3, bgcolor: '#eef2ff', border: '1px solid var(--chart-5)', display: 'flex', alignItems: 'center', gap: 2 }}>
                 <Building2 size={18} color="#4f46e5" />
                 <Typography variant="body2" fontWeight="700" color="#312e81">Generating for: {activeTenant?.bankName || 'Unknown Tenant'}</Typography>
                 <Chip label={activeTenant?.bankShortCode || '?'} size="small" sx={{ bgcolor: '#4f46e5', color: 'white', fontWeight: 700, fontSize: 11, ml: 'auto' }} />
@@ -334,7 +334,7 @@ const MerchantReportManager = () => {
                         <Box sx={{ p: 5, width: '100%' }}>
                             <Box display="flex" justifyContent="space-between" alignItems="center" mb={4}>
                                 <Box display="flex" alignItems="center" gap={2}>
-                                    <Avatar sx={{ bgcolor: 'white', color: 'primary.main', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}><Assessment /></Avatar>
+                                    <Avatar sx={{ bgcolor: 'var(--bg-card)', color: 'primary.main', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}><Assessment /></Avatar>
                                     <Typography variant="h6" fontWeight="800" color="text.primary">Merchant Insights</Typography>
                                 </Box>
                                 <AnimatePresence mode="wait">
@@ -370,9 +370,9 @@ const MerchantReportManager = () => {
                                                 ].map(opt => (
                                                     <Box key={opt.key} onClick={() => setScope(opt.key)} sx={{
                                                         px: 2.5, py: 1.5, borderRadius: 3, cursor: 'pointer', minWidth: 180, userSelect: 'none', textAlign: 'left', transition: 'all 0.2s',
-                                                        border: `2px solid ${scope === opt.key ? '#6366f1' : '#e2e8f0'}`,
+                                                        border: `2px solid ${scope === opt.key ? 'var(--projected)' : '#e2e8f0'}`,
                                                         background: scope === opt.key ? '#eef2ff' : '#f8fafc',
-                                                        '&:hover': { borderColor: '#818cf8', background: '#eef2ff' },
+                                                        '&:hover': { borderColor: 'var(--projected)', background: '#eef2ff' },
                                                     }}>
                                                         <Typography fontWeight="700" fontSize={13} color={scope === opt.key ? '#312e81' : 'text.secondary'}>{opt.title}</Typography>
                                                         <Typography fontSize={11} color="text.secondary">{opt.desc}</Typography>
@@ -421,10 +421,10 @@ const MerchantReportManager = () => {
                                                 <Box onClick={() => setSendEmail(v => !v)} sx={{
                                                     display: 'flex', alignItems: 'center', gap: 1.5,
                                                     px: 2.5, py: 1.5, borderRadius: 3, cursor: 'pointer',
-                                                    border: `2px solid ${sendEmail ? '#818cf8' : '#e2e8f0'}`,
+                                                    border: `2px solid ${sendEmail ? 'var(--projected)' : '#e2e8f0'}`,
                                                     background: sendEmail ? '#eef2ff' : '#f8fafc',
                                                     transition: 'all 0.2s', minWidth: 200, userSelect: 'none',
-                                                    '&:hover': { borderColor: '#818cf8', background: '#eef2ff' },
+                                                    '&:hover': { borderColor: 'var(--projected)', background: '#eef2ff' },
                                                 }}>
                                                     <Switch
                                                         checked={sendEmail}
@@ -473,7 +473,7 @@ const MerchantReportManager = () => {
                                                 ...(
                                                     !sendEmail && !sendS3 ? { border: '1px solid #e2e8f0', background: '#f1f5f9' } :
                                                     !sendEmail && sendS3  ? { border: '1px solid #a5f3fc', background: '#ecfeff' } :
-                                                    sendEmail && !sendS3  ? { border: '1px solid #c7d2fe', background: '#eef2ff' } :
+                                                    sendEmail && !sendS3  ? { border: '1px solid var(--chart-5)', background: '#eef2ff' } :
                                                     { border: '1px solid #a7f3d0', background: '#ecfdf5' }
                                                 )
                                             }}>
@@ -590,7 +590,7 @@ const MerchantReportManager = () => {
                                                         </Box>
                                                         <Box sx={{ maxHeight: 320, overflowY: 'auto' }}>
                                                             {generatedReports.map((report, i) => (
-                                                                <Box key={i} sx={{ px: 2.5, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', '&:hover': { bgcolor: '#f0f9ff' }, transition: 'background 0.15s' }}>
+                                                                <Box key={i} sx={{ px: 2.5, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', '&:hover': { bgcolor: 'var(--wash)' }, transition: 'background 0.15s' }}>
                                                                     <Box display="flex" alignItems="center" gap={1.5} flex={1} minWidth={0}>
                                                                         <FileCheck size={18} style={{ color: theme.palette.success.main, flexShrink: 0 }} />
                                                                         <Typography variant="body2" fontWeight="600" noWrap>

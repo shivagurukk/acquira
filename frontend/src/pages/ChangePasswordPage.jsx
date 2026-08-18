@@ -62,7 +62,7 @@ const ChangePasswordPage = ({ embedded = false }) => {
     const s = {
         // The page background is ALWAYS a defined deep slate/indigo gradient
         // (mirrors the LoginPage aesthetic) in BOTH modes. Previously the light
-        // gradient (#eef2ff -> #f8fafc -> #eff6ff) was so pale it read as a white
+        // gradient (#eef2ff -> #f8fafc -> var(--wash)) was so pale it read as a white
         // screen; a fixed branded backdrop fixes that and keeps the two auth
         // screens visually consistent. The CARD stays theme-adaptive on top.
         cardBg: isDark ? '#1e293b' : '#ffffff',
@@ -74,7 +74,7 @@ const ChangePasswordPage = ({ embedded = false }) => {
         textSec: isDark ? '#94a3b8' : '#64748b',
         inputBg: isDark ? '#0f172a' : '#f8fafc',
         inputBdr: isDark ? '#334155' : '#e2e8f0',
-        inputFocusBdr: '#3b82f6',
+        inputFocusBdr: 'var(--primary)',
         checkBg: isDark ? 'rgba(15,23,42,0.6)' : '#f8fafc',
     };
 
@@ -101,10 +101,10 @@ const ChangePasswordPage = ({ embedded = false }) => {
             <div style={{ textAlign: 'center', marginBottom: 28 }}>
                 <div style={{
                     width: 52, height: 52, borderRadius: 14,
-                    background: isDark ? 'rgba(59,130,246,0.15)' : '#eff6ff',
+                    background: isDark ? 'rgba(202, 95, 40,0.15)' : 'var(--wash)',
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12
                 }}>
-                    <Shield size={26} color="#3b82f6" />
+                    <Shield size={26} color="var(--primary)" />
                 </div>
                 <h1 style={{ fontSize: '1.3rem', fontWeight: 700, color: embedded ? 'var(--text)' : s.text, margin: '0 0 6px' }}>
                     {mustChangePassword ? 'Set New Password' : 'Change Password'}
@@ -219,11 +219,11 @@ const ChangePasswordPage = ({ embedded = false }) => {
                     <button type="submit" disabled={loading || !allValid || !passwordsMatch}
                         style={{
                             padding: 13, borderRadius: 12,
-                            background: (allValid && passwordsMatch) ? 'linear-gradient(135deg, #3b82f6, #6366f1)' : (isDark ? '#334155' : '#e2e8f0'),
+                            background: (allValid && passwordsMatch) ? 'linear-gradient(135deg, var(--primary), var(--projected))' : (isDark ? '#334155' : '#e2e8f0'),
                             color: (allValid && passwordsMatch) ? 'white' : '#94a3b8',
                             fontSize: '0.9rem', fontWeight: 600, border: 'none', cursor: 'pointer', marginTop: 4,
                             opacity: loading ? 0.6 : 1, transition: 'all 0.3s',
-                            boxShadow: (allValid && passwordsMatch) ? '0 8px 24px rgba(59,130,246,0.25)' : 'none',
+                            boxShadow: (allValid && passwordsMatch) ? '0 8px 24px rgba(202, 95, 40,0.25)' : 'none',
                             fontFamily: 'inherit',
                         }}>
                         {loading ? 'Changing...' : 'Update Password'}
@@ -252,7 +252,7 @@ const ChangePasswordPage = ({ embedded = false }) => {
             {/* Soft branded glows so the deep backdrop has depth (no blank fill). */}
             <div style={{
                 position: 'absolute', top: '-15%', left: '-10%', width: 480, height: 480,
-                borderRadius: '50%', background: 'radial-gradient(circle, rgba(59,130,246,0.22), transparent 70%)',
+                borderRadius: '50%', background: 'radial-gradient(circle, rgba(202, 95, 40,0.22), transparent 70%)',
                 filter: 'blur(20px)', pointerEvents: 'none',
             }} />
             <div style={{

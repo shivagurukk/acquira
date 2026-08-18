@@ -39,7 +39,7 @@ const ActiveFilterChips = ({ filters, onRemove }) => {
                 <span key={i} style={{
                     display: 'inline-flex', alignItems: 'center', gap: '5px',
                     padding: '3px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '600',
-                    background: '#eff6ff', color: '#1d4ed8', border: '1px solid #dbeafe',
+                    background: 'var(--wash)', color: 'var(--primary)', border: '1px solid var(--wash)',
                     transition: 'all 0.15s',
                 }}>
                     {f.label}
@@ -47,7 +47,7 @@ const ActiveFilterChips = ({ filters, onRemove }) => {
                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', opacity: 0.7 }}
                         onMouseEnter={e => e.target.style.opacity = 1} onMouseLeave={e => e.target.style.opacity = 0.7}
                     >
-                        <X size={11} color="#1d4ed8" />
+                        <X size={11} color="var(--primary)" />
                     </button>
                 </span>
             ))}

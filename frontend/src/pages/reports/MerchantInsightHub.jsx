@@ -225,7 +225,7 @@ const MerchantInsightHub = () => {
                         <Filter size={14} /> Filters
                     </button>
 
-                    <button onClick={handleRunReport} style={{ padding: '8px 16px', background: '#3b82f6', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+                    <button onClick={handleRunReport} style={{ padding: '8px 16px', background: 'var(--primary)', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
                         Run Report
                     </button>
                     <button onClick={handleExport} disabled={exporting}
@@ -302,9 +302,9 @@ const MerchantInsightHub = () => {
                                     key={st}
                                     onClick={() => handleFilterChange('optStatus', st)}
                                     style={{
-                                        flex: 1, padding: '8px', borderRadius: '6px', border: filters.optStatus === st ? '1px solid #3b82f6' : '1px solid #cbd5e1',
-                                        background: filters.optStatus === st ? '#eff6ff' : 'white',
-                                        color: filters.optStatus === st ? '#1d4ed8' : '#64748b',
+                                        flex: 1, padding: '8px', borderRadius: '6px', border: filters.optStatus === st ? '1px solid var(--primary)' : '1px solid #cbd5e1',
+                                        background: filters.optStatus === st ? 'var(--wash)' : 'white',
+                                        color: filters.optStatus === st ? 'var(--primary)' : '#64748b',
                                         fontSize: '11px', fontWeight: '600', cursor: 'pointer'
                                     }}
                                 >
@@ -318,9 +318,9 @@ const MerchantInsightHub = () => {
             )}
 
             {/* Table Container */}
-            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', position: 'relative' }}>
+            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'var(--bg-card)', position: 'relative' }}>
                 <table style={{ minWidth: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
-                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'white' }}>
+                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg-card)' }}>
                         <tr style={{ height: '40px', background: '#f8fafc', fontSize: '11px', color: '#64748b' }}>
                             {['Date', 'Merchant', 'Details', 'Store/Term', 'Type', 'Txns', 'Volume', 'MSR'].map((h, i) => (
                                 <th key={i} style={{ position: 'sticky', top: 0, background: '#f8fafc', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', padding: '12px', textAlign: i > 4 ? 'right' : 'left', textTransform: 'uppercase' }}>{h}</th>
@@ -334,7 +334,7 @@ const MerchantInsightHub = () => {
                             <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: error ? '#b91c1c' : '#94a3b8' }}>
                                 {error ? `${error} ` : 'No records found.'}
                                 {error && <button onClick={() => fetchReport(currentPage)}
-                                    style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: '#2563eb', background: 'white', border: '1px solid #e2e8f0', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>Retry</button>}
+                                    style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: 'var(--primary)', background: 'var(--bg-card)', border: '1px solid #e2e8f0', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>Retry</button>}
                             </td></tr>
                         ) : (
                             data.map((row, i) => (
@@ -344,7 +344,7 @@ const MerchantInsightHub = () => {
                                     <td style={{ padding: '10px', fontWeight: '600', color: '#1e293b' }}>
                                         <div>{row.merchant_name}</div>
                                         <div style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace' }}>{row.mid}</div>
-                                        {row.rm && <div style={{ fontSize: '10px', color: '#6366f1', marginTop: '2px' }}>RM: {row.rm}</div>}
+                                        {row.rm && <div style={{ fontSize: '10px', color: 'var(--projected)', marginTop: '2px' }}>RM: {row.rm}</div>}
                                     </td>
                                     <td style={{ padding: '10px', color: '#64748b' }}>
                                         <span style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', marginRight: '4px' }}>{row.mcc}</span>
@@ -370,8 +370,8 @@ const MerchantInsightHub = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderTop: '1px solid #e2e8f0', marginTop: '10px' }}>
                 <span style={{ fontSize: '12px', color: '#64748b' }}>Page {currentPage} of {pageCount || 1}</span>
                 <div style={{ display: 'flex', gap: '4px' }}>
-                    <button disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)} style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', fontSize: '12px' }}>Prev</button>
-                    <button disabled={currentPage >= pageCount} onClick={() => setCurrentPage(currentPage + 1)} style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', fontSize: '12px' }}>Next</button>
+                    <button disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)} style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'var(--bg-card)', cursor: 'pointer', fontSize: '12px' }}>Prev</button>
+                    <button disabled={currentPage >= pageCount} onClick={() => setCurrentPage(currentPage + 1)} style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'var(--bg-card)', cursor: 'pointer', fontSize: '12px' }}>Next</button>
                 </div>
             </div>
         </div>

@@ -87,9 +87,9 @@ const CHART_TYPES = [
 ];
 
 const CATS = {
-    identity:{ icon: Hash, color: '#6980f2' }, organization:{ icon: Layers, color: '#a78bfa' },
+    identity:{ icon: Hash, color: '#6980f2' }, organization:{ icon: Layers, color: 'var(--cat-5)' },
     people:{ icon: Users, color: '#f472b6' }, classification:{ icon: Tag, color: '#fbbf24' },
-    location:{ icon: MapPin, color: '#34d399' }, status:{ icon: Activity, color: '#22d3ee' },
+    location:{ icon: MapPin, color: '#34d399' }, status:{ icon: Activity, color: 'var(--cat-3)' },
     terminal:{ icon: Settings, color: '#c084fc' }, dates:{ icon: Clock, color: '#fb923c' },
     card:{ icon: CreditCard, color: '#fb7185' }, flags:{ icon: Target, color: '#a3e635' },
     amount:{ icon: DollarSign, color: '#2dd4bf' },
@@ -812,12 +812,12 @@ const ChartRenderer = ({ type, data, measureKeys, palette, onChartClick, height 
                 <Box className="qe4-scroll" sx={{ height, overflow: 'auto' }}>
                     <table style={{ borderCollapse: 'separate', borderSpacing: 3, width: '100%' }}>
                         <thead><tr>
-                            <th style={{ position: 'sticky', left: 0, background: 'white', zIndex: 1 }} />
+                            <th style={{ position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 1 }} />
                             {cSet.map(c => <th key={c} style={{ padding: '4px 6px', fontSize: 10, fontWeight: 800, color: T.td3, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c}</th>)}
                         </tr></thead>
                         <tbody>{rSet.map(rv => (
                             <tr key={rv}>
-                                <td style={{ padding: '4px 8px', fontSize: 11.5, fontWeight: 700, color: T.td, whiteSpace: 'nowrap', position: 'sticky', left: 0, background: 'white', zIndex: 1, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{rv}</td>
+                                <td style={{ padding: '4px 8px', fontSize: 11.5, fontWeight: 700, color: T.td, whiteSpace: 'nowrap', position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 1, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{rv}</td>
                                 {cSet.map(cv => {
                                     const v = cellMap[rv + '\u0000' + cv];
                                     const t = v == null ? 0 : (vMax === vMin ? 1 : (v - vMin) / (vMax - vMin));
@@ -918,7 +918,7 @@ const PivotTable = ({ rows, dims, measureKey, fmtVal, onCellClick }) => {
                 <tbody>
                     {pv.rSet.map(rv => (
                         <tr key={rv} className="qe4-row">
-                            <td onClick={() => onCellClick?.(rv)} style={{ ...tdBase, textAlign: 'left', fontWeight: 700, color: T.td, position: 'sticky', left: 0, background: 'white', zIndex: 1, cursor: 'pointer', maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis' }}>{rv}</td>
+                            <td onClick={() => onCellClick?.(rv)} style={{ ...tdBase, textAlign: 'left', fontWeight: 700, color: T.td, position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 1, cursor: 'pointer', maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis' }}>{rv}</td>
                             {pv.cSet.map(cv => { const v = pv.cell[rv + '\u0000' + cv]; return <td key={cv} style={{ ...tdBase, color: v ? T.td2 : 'rgba(15,23,42,0.18)' }}>{v ? fmtVal(v, measureKey) : '·'}</td>; })}
                             <td style={{ ...tdBase, fontWeight: 800, color: T.primary, background: `${T.primary}05` }}>{fmtVal(pv.rowTot[rv] || 0, measureKey)}</td>
                         </tr>
@@ -1547,11 +1547,11 @@ export default function DataExplorer() {
                                 {(catalog.measures || []).map(m => <SideMeasChip key={m.key} measure={m} />)}
                                 {calcMeasures.map(m => (
                                     <Box key={m.key} draggable
-                                        onDragStart={e => { DRAG_CTX = { zone: null, item: { ...m, source: 'measure', calc: true }, consumed: false }; e.dataTransfer.setData('text/plain', JSON.stringify({ ...m, source: 'measure', calc: true })); dragGhost(e, m.label, m.kind === 'agg' ? '#38bdf8' : m.kind === 'time' ? '#f59e0b' : '#c084fc'); }}
+                                        onDragStart={e => { DRAG_CTX = { zone: null, item: { ...m, source: 'measure', calc: true }, consumed: false }; e.dataTransfer.setData('text/plain', JSON.stringify({ ...m, source: 'measure', calc: true })); dragGhost(e, m.label, m.kind === 'agg' ? 'var(--cat-1)' : m.kind === 'time' ? '#f59e0b' : '#c084fc'); }}
                                         onDragEnd={() => { DRAG_CTX = null; }}
                                         onClick={() => openStudio(m)}
                                         title={m.kind === 'agg' ? `${AGG_LABELS[m.agg] || m.agg} of ${m.column}${m.filterField ? ` where ${m.filterField} ∈ (${(m.filterValues || []).length})` : ''} · click to edit` : m.kind === 'time' ? `${m.base} · ${m.comparison} · ${m.mode} · click to edit` : `${m.formula || ''} · click to edit`}
-                                        sx={{ display: 'inline-flex', alignItems: 'center', gap: '5px', px: '9px', py: '4.5px', borderRadius: '6px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', color: m.kind === 'agg' ? '#38bdf8' : m.kind === 'time' ? '#f59e0b' : '#c084fc', bgcolor: m.kind === 'agg' ? 'rgba(56,189,248,0.08)' : m.kind === 'time' ? 'rgba(245,158,11,0.08)' : 'rgba(192,132,252,0.08)', border: `1px solid ${m.kind === 'agg' ? 'rgba(56,189,248,0.22)' : m.kind === 'time' ? 'rgba(245,158,11,0.24)' : 'rgba(192,132,252,0.20)'}`, '&:hover': { filter: 'brightness(1.06)' } }}>
+                                        sx={{ display: 'inline-flex', alignItems: 'center', gap: '5px', px: '9px', py: '4.5px', borderRadius: '6px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', color: m.kind === 'agg' ? 'var(--cat-1)' : m.kind === 'time' ? '#f59e0b' : '#c084fc', bgcolor: m.kind === 'agg' ? 'rgba(224, 138, 76,0.08)' : m.kind === 'time' ? 'rgba(245,158,11,0.08)' : 'rgba(192,132,252,0.08)', border: `1px solid ${m.kind === 'agg' ? 'rgba(224, 138, 76,0.22)' : m.kind === 'time' ? 'rgba(245,158,11,0.24)' : 'rgba(192,132,252,0.20)'}`, '&:hover': { filter: 'brightness(1.06)' } }}>
                                         {m.kind === 'agg' ? <Sigma size={11} style={{ opacity: 0.8 }} /> : m.kind === 'time' ? <Clock size={11} style={{ opacity: 0.85 }} /> : <span style={{ opacity: 0.75, fontStyle: 'italic', fontWeight: 800 }}>ƒ</span>}{m.label}
                                         <Box component="span" onClick={e => { e.stopPropagation(); if (m.shared && m.masterId) { explorerApi.deleteMaster(m.masterId).then(() => setMasterItems(p => p.filter(x => x.id !== m.masterId))).catch(() => {}); } setCalcMeasures(p => p.filter(x => x.key !== m.key)); }} sx={{ display: 'flex', opacity: 0.45, '&:hover': { opacity: 1 } }}><X size={10} /></Box>
                                     </Box>
@@ -1671,7 +1671,7 @@ export default function DataExplorer() {
                 </Paper>
 
                 {/* DROP ZONES */}
-                <Box sx={{ px: 2, py: 1, bgcolor: 'white', borderBottom: `1px solid ${T.cardBorder}`, display: 'flex', gap: 1.5 }}>
+                <Box sx={{ px: 2, py: 1, bgcolor: 'var(--bg-card)', borderBottom: `1px solid ${T.cardBorder}`, display: 'flex', gap: 1.5 }}>
                     <Box sx={{ flex: 2 }}><DropZone zoneId="dims" label="Dimensions" items={dims} onChange={setDims} validate={p => (p && p.key && p.source !== 'measure' && !p.calc) ? p : null} accent={T.primary} emptyText="Drag fields here · double-click a field to add" /></Box>
                     <Box sx={{ flex: 1 }}><DropZone zoneId="meas" label="Measures" items={meas} onChange={setMeas} validate={p => (p && p.key && (p.source === 'measure' || p.calc)) ? p : null} accent={T.green} emptyText="Auto: Count, Vol, MSF"
                         renderItem={(f, i, rm) => <ZoneMeasChip key={f.key + i} measure={f} onRemove={rm} />} /></Box>
@@ -1699,7 +1699,7 @@ export default function DataExplorer() {
                             <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 1.25, mb: 0.25 }}>
                                 <Typography sx={{ fontSize: 9.5, fontWeight: 800, color: T.td3, letterSpacing: 0.5 }}>ASSOCIATIVE</Typography>
                                 <Stack direction="row" spacing={0.5} alignItems="center"><Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#009845' }} /><Typography sx={{ fontSize: 9.5, color: T.td3 }}>Selected</Typography></Stack>
-                                <Stack direction="row" spacing={0.5} alignItems="center"><Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#fff', border: '1px solid #cbd5e1' }} /><Typography sx={{ fontSize: 9.5, color: T.td3 }}>Available</Typography></Stack>
+                                <Stack direction="row" spacing={0.5} alignItems="center"><Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'var(--bg-card)', border: '1px solid #cbd5e1' }} /><Typography sx={{ fontSize: 9.5, color: T.td3 }}>Available</Typography></Stack>
                                 <Stack direction="row" spacing={0.5} alignItems="center"><Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#d1d5db' }} /><Typography sx={{ fontSize: 9.5, color: T.td3 }}>Excluded</Typography></Stack>
                             </Stack>
                         )}
@@ -1753,7 +1753,7 @@ export default function DataExplorer() {
                                         { key: 'payment_month', icon: TrendingUp, title: 'Monthly trend', sub: 'Volume over time', color: T.amber },
                                     ].map(({ key, icon: I, title, sub, color }, i) => (
                                         <Card key={key} elevation={0} onClick={() => quickStart(key)} className="qe4-rise qe4-tile"
-                                            sx={{ width: 192, cursor: 'pointer', borderRadius: `${T.radius + 1}px`, border: `1px solid ${T.cardBorder}`, bgcolor: '#fff', animationDelay: `${i * 70}ms`, '&:hover .qs-arrow': { opacity: 1, transform: 'translateX(0)' } }}>
+                                            sx={{ width: 192, cursor: 'pointer', borderRadius: `${T.radius + 1}px`, border: `1px solid ${T.cardBorder}`, bgcolor: 'var(--bg-card)', animationDelay: `${i * 70}ms`, '&:hover .qs-arrow': { opacity: 1, transform: 'translateX(0)' } }}>
                                             <CardContent sx={{ p: '18px !important', position: 'relative' }}>
                                                 <Box sx={{ width: 38, height: 38, borderRadius: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: `${color}12`, color, mb: 1.5 }}><I size={19} /></Box>
                                                 <Typography sx={{ fontSize: 13.5, fontWeight: 700, color: T.td, mb: 0.25 }}>{title}</Typography>

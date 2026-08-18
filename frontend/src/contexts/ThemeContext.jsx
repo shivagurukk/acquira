@@ -21,20 +21,20 @@ const ThemeContext = createContext(null);
 
 const LIGHT = {
   mode: 'light',
-  bg: '#EEF2F1', bgCard: '#FFFFFF', bgSidebar: '#101F1E',
-  bgSubtle: '#F5F8F7', bgHover: '#F4F9F8',
-  text: '#101F1E', textSecondary: '#5A6B6A',
-  border: '#DDE4E3', borderLight: '#DDE4E3',
-  accent: '#12706B', accentLight: '#E3F0EE',
+  bg: '#EDF1F8', bgCard: '#EAF1FA', bgSidebar: '#0E1B33',
+  bgSubtle: '#EFF4FB', bgHover: '#E3ECF8',
+  text: '#191D24', textSecondary: '#5C6675',
+  border: '#E4E7EC', borderLight: '#EBEDF0',
+  accent: '#3F63B0', accentLight: '#DCE8F7',
 };
 const DARK = {
   mode: 'dark',
-  // Navy-blue dark scheme — mirrors html.dark in index.css / theme.js.
-  bg: '#0A1530', bgCard: '#101E3C', bgSidebar: '#081124',
-  bgSubtle: '#0D1936', bgHover: '#13294E',
-  text: '#E8EEFB', textSecondary: '#8FA5CC',
-  border: '#20325C', borderLight: '#20325C',
-  accent: '#2DD4BF', accentLight: '#12324E',
+  // Graphite dark scheme — mirrors html.dark in index.css / theme.js.
+  bg: '#0E1116', bgCard: '#141B26', bgSidebar: '#0A1426',
+  bgSubtle: '#12161C', bgHover: '#1C222B',
+  text: '#E7EAEF', textSecondary: '#98A2AF',
+  border: '#272E38', borderLight: '#272E38',
+  accent: '#5E82D2', accentLight: '#1C2637',
 };
 
 // One theme carrying both colour schemes — never rebuilt on toggle.

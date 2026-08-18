@@ -9,6 +9,7 @@ import TenantSwitcher from './TenantSwitcher';
 import NotificationBell from './NotificationBell';
 import ShortcutsPanel from './ShortcutsPanel';
 import DataFreshness from './DataFreshness';
+import DashboardBackdrop from './DashboardBackdrop';
 import './sidebar.css';
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -360,7 +361,10 @@ const Layout = () => {
     // ── Topbar (breadcrumb + tenant + mobile menu) ────────────────
     const topbar = (
         <div style={{
-            height: 52, background: 'var(--bg-card)',
+            height: 52,
+            background: 'var(--glass-bg)',
+            backdropFilter: 'var(--glass-blur)',
+            WebkitBackdropFilter: 'var(--glass-blur)',
             borderBottom: '1px solid var(--border)',
             display: 'flex', alignItems: 'center', padding: '0 20px', gap: 10,
             position: 'sticky', top: 0, zIndex: 100, flexShrink: 0,
@@ -452,17 +456,21 @@ const Layout = () => {
                 </>
             )}
 
-            {/* Main content area */}
+            {/* Main content area. Transparent so the ambient backdrop shows
+                through (body carries the base canvas colour); every real
+                child is lifted above it with .dx-above. */}
             <div style={{
+                position: 'relative',
                 flex: 1,
                 transition: 'margin-left 180ms ease-out',
                 display: 'flex', flexDirection: 'column',
                 minHeight: 'var(--vh100, 100vh)',
-                background: 'var(--bg)',
+                background: 'transparent',
                 minWidth: 0,
             }}>
+                <DashboardBackdrop />
                 {topbar}
-                <div key={`tenant-${activeTenantId}-${tenantVersion}`} style={{ flex: 1 }}>
+                <div key={`tenant-${activeTenantId}-${tenantVersion}`} className="dx-above" style={{ flex: 1 }}>
                     <Outlet />
                 </div>
             </div>

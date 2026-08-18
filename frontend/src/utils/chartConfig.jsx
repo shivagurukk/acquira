@@ -1,38 +1,19 @@
 // ─── Shared Chart Configuration ──────────────────────────────────────
 // Standardizes Recharts styling across all dashboard and report pages.
+// Colour comes from theme/chartPalette so this file stays a styling
+// convenience layer rather than a second palette.
 
-// Brand-aligned chart color palette.
-// One notch brighter than before so series stay luminous on the navy
-// dark canvas while remaining legible on the light surface.
-export const CHART_COLORS = [
-    '#3b82f6', // blue
-    '#10b981', // emerald
-    '#8b5cf6', // violet
-    '#f59e0b', // amber
-    '#06b6d4', // cyan
-    '#ef4444', // red
-    '#ec4899', // pink
-    '#14b8a6', // teal
-    '#6366f1', // indigo
-    '#84cc16', // lime
-];
+import { CATEGORICAL, TOOLTIP_PROPS, prefersReducedMotion } from '../theme/chartPalette';
+
+export const CHART_COLORS = CATEGORICAL;
 
 // Tooltip container style
-export const chartTooltipStyle = {
-    background: 'var(--bg-card, #fff)',
-    border: '1px solid var(--border, #e5e7eb)',
-    borderRadius: '10px',
-    fontSize: '12px',
-    color: 'var(--text, #111827)',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
-    padding: '10px 14px',
-    lineHeight: '1.6',
-};
+export const chartTooltipStyle = TOOLTIP_PROPS.contentStyle;
 
 // Tooltip label style
 export const chartTooltipLabelStyle = {
-    color: 'var(--text-muted, #9ca3af)',
-    fontWeight: 500,
+    color: 'var(--text-muted)',
+    fontWeight: 600,
     marginBottom: 4,
     fontSize: '11px',
     textTransform: 'uppercase',
@@ -42,16 +23,15 @@ export const chartTooltipLabelStyle = {
 // Shared CartesianGrid props
 export const chartGridProps = {
     strokeDasharray: '3 6',
-    stroke: 'var(--border, #e5e7eb)',
-    strokeOpacity: 0.5,
+    stroke: 'var(--chart-grid)',
     vertical: false,
 };
 
 // Shared axis tick style
 export const chartAxisTick = {
     fontSize: 11,
-    fill: 'var(--text-muted, #9ca3af)',
-    fontFamily: 'Inter, sans-serif',
+    fill: 'var(--chart-axis)',
+    fontFamily: 'var(--font-mono)',
 };
 
 // Shared axis props
@@ -61,12 +41,31 @@ export const chartAxisProps = {
     tick: chartAxisTick,
 };
 
+// Animated border sweep shared by every card surface. Two-layer
+// background: opaque card fill over a conic border ring whose angle
+// (--dxa, registered in index.css) is animated by dxBorderSweep.
+export const cardSweep = {
+    background: `        radial-gradient(140% 90% at 50% 0%,
+          color-mix(in srgb, var(--primary) var(--dxg, 6%), transparent) 0%,
+          transparent 60%) padding-box,
+        var(--dx-card-grid),
+        conic-gradient(from var(--dxa),
+          var(--border) 0deg, var(--border) 280deg,
+          color-mix(in srgb, var(--primary) 40%, var(--border)) 310deg,
+          var(--primary) 332deg,
+          var(--border) 352deg) border-box`,
+    border: '2px solid transparent',
+    // Inline styles cannot carry a media query, so the reduced-motion
+    // guard happens here instead of in CSS.
+    animation: prefersReducedMotion() ? 'none' : 'dxBorderSweep 6s linear infinite, dxGridPulse 5s ease-in-out infinite',
+};
+
 // Card wrapper style for chart sections
 export const chartCardStyle = {
-    background: 'var(--bg-card, #fff)',
-    borderRadius: 'var(--radius-lg, 14px)',
+    ...cardSweep,
+    borderRadius: 'var(--radius-lg)',
     padding: '24px',
-    border: '1px solid var(--border, #e5e7eb)',
+    boxShadow: 'var(--shadow-card)',
 };
 
 // Compact number formatter for axes
@@ -106,7 +105,7 @@ export const ChartHeader = ({ title, subtitle, onTitleClick, legends = [], extra
                 {title}
                 {onTitleClick && (
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M2 6h8M6 2l4 4-4 4" stroke="var(--brand,#2563eb)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M2 6h8M6 2l4 4-4 4" stroke="var(--primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                 )}
             </h3>

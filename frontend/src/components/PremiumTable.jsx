@@ -4,7 +4,7 @@ import { Loader2 } from 'lucide-react';
 const PremiumTable = ({ columns, data, loading, emptyMessage = "No data available" }) => {
     return (
         <div style={{
-            background: 'white',
+            background: 'var(--bg-card)',
             borderRadius: '16px',
             boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
             border: '1px solid #f1f5f9',
@@ -39,7 +39,7 @@ const PremiumTable = ({ columns, data, loading, emptyMessage = "No data availabl
                             ))}
                         </tr>
                     </thead>
-                    <tbody style={{ background: 'white' }}>
+                    <tbody style={{ background: 'var(--bg-card)' }}>
                         {loading ? (
                             <tr>
                                 <td colSpan={columns.length} style={{ padding: '60px', textAlign: 'center' }}>

@@ -23,7 +23,7 @@ const MAX_CONSECUTIVE_ERRORS = 5;             // surface persistent failures
 const STATUS_COLORS = {
     SUCCESS:    { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
     COMPLETED:  { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
-    SUBMITTED:  { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
+    SUBMITTED:  { bg: 'var(--wash)', color: 'var(--primary)', border: 'var(--border)' },
     FAILED:     { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
     ABANDONED:  { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
     SKIPPED:    { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
@@ -305,7 +305,7 @@ const ServerFileProcessor = () => {
                             height: 4,
                             bgcolor: phase === 'done' ? (scanResult?.failed > 0 ? '#f87171' : '#4ade80')
                                 : phase === 'processing' ? '#fbbf24'
-                                    : '#6366f1',
+                                    : 'var(--projected)',
                             transition: 'background-color 0.5s'
                         }} />
 
@@ -331,7 +331,7 @@ const ServerFileProcessor = () => {
                                         startIcon={<PlayArrow />}
                                         sx={{
                                             minWidth: 140, borderRadius: 2, fontWeight: 700, textTransform: 'none',
-                                            backgroundImage: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                            backgroundImage: 'linear-gradient(135deg, var(--projected), #4f46e5)',
                                         }}
                                     >
                                         Process
@@ -354,7 +354,7 @@ const ServerFileProcessor = () => {
                                         <Chip key={p} label={p} size="small" variant="outlined"
                                             icon={<Folder sx={{ fontSize: 14 }} />}
                                             onClick={() => setServerPath(p)}
-                                            sx={{ cursor: 'pointer', fontSize: '0.75rem', '&:hover': { bgcolor: '#f0f9ff' } }}
+                                            sx={{ cursor: 'pointer', fontSize: '0.75rem', '&:hover': { bgcolor: 'var(--wash)' } }}
                                         />
                                     ))}
                                 </Stack>
@@ -384,7 +384,7 @@ const ServerFileProcessor = () => {
                                                     ? (scanResult?.failed > 0
                                                         ? 'linear-gradient(90deg, #f59e0b, #ef4444)'
                                                         : 'linear-gradient(90deg, #22c55e, #16a34a)')
-                                                    : 'linear-gradient(90deg, #6366f1, #8b5cf6)'
+                                                    : 'linear-gradient(90deg, var(--projected), #8b5cf6)'
                                             }
                                         }}
                                     />
@@ -394,7 +394,7 @@ const ServerFileProcessor = () => {
                                         {PIPELINE_STEPS.map((step, i) => {
                                             const isDone = phase === 'done' || i < activeStep;
                                             const isActive = phase !== 'done' && i === activeStep;
-                                            const color = isDone ? '#16a34a' : isActive ? '#6366f1' : '#cbd5e1';
+                                            const color = isDone ? '#16a34a' : isActive ? 'var(--projected)' : '#cbd5e1';
                                             return (
                                                 <Box key={step.key} display="flex" alignItems="center" gap={1.25}>
                                                     <Box sx={{
@@ -406,7 +406,7 @@ const ServerFileProcessor = () => {
                                                         {isDone
                                                             ? <CheckCircle sx={{ fontSize: 12, color: '#16a34a' }} />
                                                             : isActive
-                                                                ? <CircularProgress size={10} thickness={6} sx={{ color: '#6366f1' }} />
+                                                                ? <CircularProgress size={10} thickness={6} sx={{ color: 'var(--projected)' }} />
                                                                 : <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: '#cbd5e1' }} />}
                                                     </Box>
                                                     <Box>
@@ -470,8 +470,8 @@ const ServerFileProcessor = () => {
                                 </Typography>
                                 <Grid container spacing={1.5}>
                                     <Grid item xs={4}>
-                                        <Paper elevation={0} sx={{ p: 1.5, bgcolor: '#f0f9ff', borderRadius: 2, textAlign: 'center' }}>
-                                            <Typography variant="h5" fontWeight="800" color="#2563eb">{scanResult.totalFiles}</Typography>
+                                        <Paper elevation={0} sx={{ p: 1.5, bgcolor: 'var(--wash)', borderRadius: 2, textAlign: 'center' }}>
+                                            <Typography variant="h5" fontWeight="800" color="var(--primary)">{scanResult.totalFiles}</Typography>
                                             <Typography variant="caption" fontWeight="600" color="text.secondary">Total</Typography>
                                         </Paper>
                                     </Grid>
@@ -530,8 +530,8 @@ const ServerFileProcessor = () => {
                                                             <Chip label={fr.type} size="small"
                                                                 sx={{
                                                                     fontSize: '0.65rem', fontWeight: 700, height: 22,
-                                                                    bgcolor: fr.type === 'MERCHANT' ? '#dbeafe' : '#fce7f3',
-                                                                    color: fr.type === 'MERCHANT' ? '#1d4ed8' : '#be185d',
+                                                                    bgcolor: fr.type === 'MERCHANT' ? 'var(--wash)' : '#fce7f3',
+                                                                    color: fr.type === 'MERCHANT' ? 'var(--primary)' : '#be185d',
                                                                 }}
                                                             />
                                                         </TableCell>

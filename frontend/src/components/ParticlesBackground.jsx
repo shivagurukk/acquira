@@ -44,7 +44,7 @@ const ParticlesBackground = () => {
         const init = () => {
             particlesArray = [];
             const numberOfParticles = 100;
-            const colors = ['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.3)', 'rgba(29, 78, 216, 0.2)']; // White/Blueish
+            const colors = ['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.3)', 'rgba(164, 78, 31, 0.2)']; // White/Blueish
 
             for (let i = 0; i < numberOfParticles; i++) {
                 const size = (Math.random() * 3) + 1;

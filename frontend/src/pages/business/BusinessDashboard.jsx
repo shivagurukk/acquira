@@ -66,7 +66,7 @@ const DeltaChip = ({ delta, label }) => {
             fontVariantNumeric: 'tabular-nums',
             lineHeight: 1.4, whiteSpace: 'nowrap',
         }}>
-            {!near0 && <Icon size={10} strokeWidth={2.5} />}
+            {!near0 && <Icon size={10} strokeWidth={2.5} className={up ? 'dx-arrow-up' : 'dx-arrow-down'} />}
             {Math.abs(delta) >= 1000 ? '>999' : Math.abs(delta).toFixed(1)}%
         </span>
     );
@@ -265,13 +265,13 @@ const BusinessDashboard = () => {
                 title: 'Transactions',
                 caption: `as of ${shortDate(end, true)}`,
                 cards: [
-                    { span: 4, label: `${firstLabel} Transactions`, value: fmt.number(kpis.dailyCount), icon: Activity, accent: '#3b82f6',
+                    { span: 4, label: `${firstLabel} Transactions`, value: fmt.number(kpis.dailyCount), icon: Activity, accent: 'var(--chart-2)',
                       delta: pctDelta(kpis.dailyCount, kpis.prevDailyCount), deltaLabel: firstDelta,
                       sub: `${dailyCaption} · prev ${fmt.number(kpis.prevDailyCount)}` },
-                    { span: 4, label: 'MTD Transactions', value: fmt.number(kpis.mtdCount), icon: LayoutGrid, accent: '#6366f1',
+                    { span: 4, label: 'MTD Transactions', value: fmt.number(kpis.mtdCount), icon: LayoutGrid, accent: 'var(--chart-alt)',
                       delta: pctDelta(kpis.mtdCount, kpis.prevMtdCount), deltaLabel: 'vs same span last month',
                       sub: `${mtdCaption} · prev ${fmt.number(kpis.prevMtdCount)}` },
-                    { span: 4, label: 'YTD Transactions', value: fmt.number(kpis.ytdCount), icon: LayoutGrid, accent: '#8b5cf6',
+                    { span: 4, label: 'YTD Transactions', value: fmt.number(kpis.ytdCount), icon: LayoutGrid, accent: 'var(--chart-4)',
                       delta: pctDelta(kpis.ytdCount, kpis.prevYtdCount), deltaLabel: 'vs same span prior year',
                       sub: `${ytdCaption} · prev ${fmt.number(kpis.prevYtdCount)}` },
                 ],
@@ -280,13 +280,13 @@ const BusinessDashboard = () => {
                 title: 'Volume',
                 caption: filtered ? 'filtered · cardholder-currency basis' : 'cardholder-currency basis',
                 cards: [
-                    { span: 4, label: `${firstLabel} Volume`, value: fmt.currency(kpis.dailyVolume), icon: DollarSign, accent: '#10b981',
+                    { span: 4, label: `${firstLabel} Volume`, value: fmt.currency(kpis.dailyVolume), icon: DollarSign, accent: 'var(--chart-3)',
                       delta: pctDelta(kpis.dailyVolume, kpis.prevDailyVolume), deltaLabel: firstDelta,
                       sub: `${dailyCaption} · prev ${fmt.currency(kpis.prevDailyVolume)}` },
-                    { span: 4, label: 'MTD Volume', value: fmt.currency(kpis.mtdVolume), icon: TrendingUp, accent: '#059669',
+                    { span: 4, label: 'MTD Volume', value: fmt.currency(kpis.mtdVolume), icon: TrendingUp, accent: 'var(--chart-1)',
                       delta: pctDelta(kpis.mtdVolume, kpis.prevMtdVolume), deltaLabel: 'vs same span last month',
                       sub: `${mtdCaption} · prev ${fmt.currency(kpis.prevMtdVolume)}` },
-                    { span: 4, label: 'YTD Volume', value: fmt.currency(kpis.ytdVolume), icon: TrendingUp, accent: '#047857',
+                    { span: 4, label: 'YTD Volume', value: fmt.currency(kpis.ytdVolume), icon: TrendingUp, accent: 'var(--chart-1)',
                       delta: pctDelta(kpis.ytdVolume, kpis.prevYtdVolume), deltaLabel: 'vs same span prior year',
                       sub: `${ytdCaption} · prev ${fmt.currency(kpis.prevYtdVolume)}` },
                 ],
@@ -295,18 +295,18 @@ const BusinessDashboard = () => {
                 title: 'Merchants',
                 caption: custom ? `activity window ${merchantWindow}` : `active window: month-to-date (${merchantWindow})`,
                 cards: [
-                    { span: 3, label: 'Active', value: fmt.number(kpis.activeMerchants), icon: Users, accent: '#06b6d4',
+                    { span: 3, label: 'Active', value: fmt.number(kpis.activeMerchants), icon: Users, accent: 'var(--chart-pos)',
                       drillDown: '/merchants', sub: `with volume ${merchantWindow}` },
-                    { span: 3, label: 'New', value: fmt.number(kpis.newMerchants), icon: UserPlus, accent: '#22c55e',
+                    { span: 3, label: 'New', value: fmt.number(kpis.newMerchants), icon: UserPlus, accent: 'var(--success)',
                       badge: filtered ? 'tenant-wide' : null,
                       badgeTitle: 'Tenant-wide snapshot; drawer filters do not narrow this count.',
                       sub: kpis.snapshotDate ? `snapshot ${shortDate(kpis.snapshotDate)}` : null },
-                    { span: 3, label: 'Dormant', value: fmt.number(kpis.dormantMerchants), icon: UserMinus, accent: '#f97316',
+                    { span: 3, label: 'Dormant', value: fmt.number(kpis.dormantMerchants), icon: UserMinus, accent: 'var(--warning)',
                       drillDown: '/business/attrition',
                       badge: filtered ? 'tenant-wide' : null,
                       badgeTitle: 'Tenant-wide snapshot; drawer filters do not narrow this count.',
                       sub: kpis.snapshotDate ? `snapshot ${shortDate(kpis.snapshotDate)}` : null },
-                    { span: 3, label: 'Zero Sales', value: fmt.number(kpis.zeroSalesMerchants), icon: AlertCircle, accent: '#ef4444',
+                    { span: 3, label: 'Zero Sales', value: fmt.number(kpis.zeroSalesMerchants), icon: AlertCircle, accent: 'var(--danger)',
                       drillDown: '/business/zero-transaction', sub: `no volume ${merchantWindow}` },
                 ],
             },
@@ -326,13 +326,13 @@ const BusinessDashboard = () => {
                 title: 'Effective Rate',
                 caption: `${window}${revenue.filtersApplied ? ' · filtered' : ''}`,
                 cards: [
-                    { span: 4, label: 'Effective MSF Rate', value: fmtBps(revenue.msfRateBps), icon: Percent, accent: '#0ea5e9',
+                    { span: 4, label: 'Effective MSF Rate', value: fmtBps(revenue.msfRateBps), icon: Percent, accent: 'var(--chart-pos)',
                       sub: `${fmt.currency(revenue.totalMsf)} MSF on ${fmt.currency(revenue.totalVolume)}` },
-                    { span: 4, label: 'Net Take Rate', value: netTakeAvail ? fmtBps(revenue.netTakeRateBps) : '—', icon: TrendingUp, accent: '#6366f1',
+                    { span: 4, label: 'Net Take Rate', value: netTakeAvail ? fmtBps(revenue.netTakeRateBps) : '—', icon: TrendingUp, accent: 'var(--chart-alt)',
                       sub: netTakeAvail
                           ? `${fmt.currency(revenue.netRevenue)} net margin after interchange, scheme fees & VAT`
                           : 'Bank-grain metric — unavailable while filters are applied' },
-                    { span: 4, label: 'Average Ticket', value: fmt.currency(revenue.avgTicket), icon: Receipt, accent: '#8b5cf6',
+                    { span: 4, label: 'Average Ticket', value: fmt.currency(revenue.avgTicket), icon: Receipt, accent: 'var(--chart-4)',
                       sub: `${fmt.number(revenue.totalTxns)} transactions` },
                 ],
             },
@@ -340,15 +340,15 @@ const BusinessDashboard = () => {
                 title: 'Dynamic Currency Conversion',
                 caption: `${window} · merchant grain (card-level filters not applied)`,
                 cards: [
-                    { span: 3, label: 'Opt-In Rate', value: fmtPct(revenue.dccOptinRatePct), icon: ShieldCheck, accent: '#10b981',
+                    { span: 3, label: 'Opt-In Rate', value: fmtPct(revenue.dccOptinRatePct), icon: ShieldCheck, accent: 'var(--chart-3)',
                       bar: revenue.dccOptinRatePct,
                       sub: `${fmt.currency(revenue.dccOptinVolume)} of ${fmt.currency(revenue.dccEligibleVolume)} eligible` },
-                    { span: 3, label: 'DCC Penetration', value: fmtPct(revenue.dccPenetrationPct), icon: Globe, accent: '#0891b2',
+                    { span: 3, label: 'DCC Penetration', value: fmtPct(revenue.dccPenetrationPct), icon: Globe, accent: 'var(--chart-3)',
                       bar: revenue.dccPenetrationPct,
                       sub: `eligible share of ${fmt.currency(revenue.dccSourceBaseVolume)} total` },
-                    { span: 3, label: 'Opted-In Volume', value: fmt.currency(revenue.dccOptinVolume), icon: DollarSign, accent: '#059669',
+                    { span: 3, label: 'Opted-In Volume', value: fmt.currency(revenue.dccOptinVolume), icon: DollarSign, accent: 'var(--chart-1)',
                       sub: `${fmt.number(revenue.dccOptinCount)} of ${fmt.number(revenue.dccEligibleCount)} eligible txns` },
-                    { span: 3, label: 'Missed DCC Volume', value: fmt.currency(revenue.dccMissedVolume), icon: ShieldAlert, accent: '#f59e0b',
+                    { span: 3, label: 'Missed DCC Volume', value: fmt.currency(revenue.dccMissedVolume), icon: ShieldAlert, accent: 'var(--warning)',
                       sub: missedPctOfEligible !== null
                           ? `${missedPctOfEligible.toFixed(1)}% of eligible left unconverted`
                           : 'eligible but not opted-in' },

@@ -139,7 +139,7 @@ const PremiumReportHeader = ({
                             fontSize: '12px', fontWeight: 600, transition: 'all 0.15s',
                             ...(showFilters ? {
                                 bgcolor: 'var(--brand-light, #eff6ff)', color: 'var(--brand, #3b82f6)',
-                                border: '1px solid #bfdbfe',
+                                border: '1px solid var(--border)',
                             } : {
                                 bgcolor: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #64748b)',
                                 border: '1px solid var(--border, #e2e8f0)',

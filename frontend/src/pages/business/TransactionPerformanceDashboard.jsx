@@ -181,13 +181,13 @@ const TransactionPerformanceDashboard = () => {
         const avgTicket = totalCnt > 0 && totalVol > 0 ? totalVol / totalCnt : null;
         const takeRate = totalVol > 0 ? (totalMsf / totalVol) * 100 : null;
         return [
-            { title: 'Total Volume', value: formatCompactCurrency(totalVol), icon: TrendingUp, color: '#6366f1', subtitle: 'Total processed amount', sparkData: topRows.slice().reverse().map(r => r.total_vol || 0) },
-            { title: 'Total Transactions', value: formatNumber(totalCnt), icon: Hash, color: '#3b82f6', subtitle: 'Total transaction count' },
+            { title: 'Total Volume', value: formatCompactCurrency(totalVol), icon: TrendingUp, color: 'var(--projected)', subtitle: 'Total processed amount', sparkData: topRows.slice().reverse().map(r => r.total_vol || 0) },
+            { title: 'Total Transactions', value: formatNumber(totalCnt), icon: Hash, color: 'var(--primary)', subtitle: 'Total transaction count' },
             { title: 'Total MSF', value: formatCompactCurrency(totalMsf), icon: DollarSign, color: '#10b981', subtitle: 'Merchant service fee revenue' },
             { title: 'Average Ticket', value: avgTicket !== null ? formatCurrency(avgTicket) : '—', icon: Receipt, color: '#8b5cf6', subtitle: 'Volume ÷ transactions' },
             { title: 'Take Rate', value: takeRate !== null ? `${takeRate.toFixed(2)}%` : '—', icon: Percent, color: '#f59e0b', subtitle: 'MSF ÷ volume' },
             { title: 'Active Merchants', value: activeMerchants !== null ? formatNumber(activeMerchants) : '—', icon: Users, color: '#06b6d4', subtitle: 'With transactions in period' },
-            { title: 'POS Volume', value: posVol !== null ? formatCompactCurrency(posVol) : '—', icon: Monitor, color: '#0ea5e9', subtitle: posVol !== null ? `${pctOfTotal(posVol, totalVol)} of total · terminal-based` : 'Terminal-based volume' },
+            { title: 'POS Volume', value: posVol !== null ? formatCompactCurrency(posVol) : '—', icon: Monitor, color: 'var(--cat-1)', subtitle: posVol !== null ? `${pctOfTotal(posVol, totalVol)} of total · terminal-based` : 'Terminal-based volume' },
             { title: 'ECOM Volume', value: ecomVol !== null ? formatCompactCurrency(ecomVol) : '—', icon: Globe, color: '#ec4899', subtitle: ecomVol !== null ? `${pctOfTotal(ecomVol, totalVol)} of total · online` : 'Online volume' },
         ];
     }, [rows, kpiTotals, currencySymbol]);
@@ -253,7 +253,7 @@ const TransactionPerformanceDashboard = () => {
             {loading ? <SkeletonLoader variant="kpi-row" count={8} /> : <KpiCards cards={kpis} />}
             <Paper sx={{
                 ...premiumTableWrapper,
-                '& .super-header-debit': { bgcolor: '#eff6ff', color: '#1e40af', fontWeight: '700' },
+                '& .super-header-debit': { bgcolor: 'var(--wash)', color: 'var(--primary)', fontWeight: '700' },
                 '& .super-header-credit': { bgcolor: '#f0fdf4', color: '#15803d', fontWeight: '700' },
                 '& .super-header-intl': { bgcolor: '#fff7ed', color: '#c2410c', fontWeight: '700' },
             }}>

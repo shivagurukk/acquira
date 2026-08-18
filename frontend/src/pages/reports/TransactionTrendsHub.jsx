@@ -212,7 +212,7 @@ const TransactionTrendsHub = () => {
                                     onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
                                     style={{ fontSize: '11px', padding: '4px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                                 />
-                                <button onClick={fetchMonthly} style={{ fontSize: '10px', padding: '4px 8px', background: '#3b82f6', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Go</button>
+                                <button onClick={fetchMonthly} style={{ fontSize: '10px', padding: '4px 8px', background: 'var(--primary)', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Go</button>
                             </div>
                         )}
                     </div>
@@ -231,8 +231,8 @@ const TransactionTrendsHub = () => {
                 <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', marginBottom: 12,
                     borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', fontSize: 13, fontWeight: 600 }}>
                     <AlertTriangle size={15} /> {error}
-                    <button onClick={fetchMonthly} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: '#2563eb',
-                        background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>Retry</button>
+                    <button onClick={fetchMonthly} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: 'var(--primary)',
+                        background: 'var(--bg-card)', border: '1px solid #e2e8f0', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>Retry</button>
                 </div>
             )}
             {drillError && (
@@ -243,9 +243,9 @@ const TransactionTrendsHub = () => {
             )}
 
             {/* Table Container */}
-            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', position: 'relative' }}>
+            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'var(--bg-card)', position: 'relative' }}>
                 <table style={{ minWidth: '1000px', width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
-                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'white' }}>
+                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg-card)' }}>
                         <tr style={{ height: '40px', background: '#f8fafc', fontSize: '11px', color: '#64748b' }}>
                             <th style={{ position: 'sticky', left: 0, zIndex: 20, background: '#f8fafc', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', padding: '12px', textAlign: 'left', textTransform: 'uppercase' }}>Period</th>
                             <th style={{ borderBottom: '1px solid #e2e8f0', padding: '12px', textAlign: 'right', textTransform: 'uppercase' }}>Transactions</th>
@@ -268,7 +268,7 @@ const TransactionTrendsHub = () => {
                                 <React.Fragment key={monthKey}>
                                     <tr
                                         onClick={() => toggleMonth(monthKey, row.month_num, row.year)}
-                                        style={{ borderBottom: '1px solid #f1f5f9', cursor: 'pointer', background: expandedMonth === monthKey ? '#f0f9ff' : 'white' }}
+                                        style={{ borderBottom: '1px solid #f1f5f9', cursor: 'pointer', background: expandedMonth === monthKey ? 'var(--wash)' : 'white' }}
                                         className="hover:bg-slate-50 transition-colors"
                                     >
                                         <td style={{ position: 'sticky', left: 0, background: 'inherit', borderRight: '1px solid #e2e8f0', padding: '12px', fontWeight: '600', color: '#334155', borderBottom: '1px solid #f1f5f9' }}>
@@ -310,14 +310,14 @@ const TransactionTrendsHub = () => {
                                                         <>
                                                             {loadingMerchants && <tr><td colSpan="5" className="text-center py-2"><Loader2 className="animate-spin inline text-indigo-500" size={14} /></td></tr>}
                                                             {merchantData[day.date] && merchantData[day.date].totalMerchants > merchantData[day.date].rows.length && (
-                                                                <tr style={{ background: '#fff' }}>
+                                                                <tr style={{ background: 'var(--bg-card)' }}>
                                                                     <td colSpan="5" style={{ padding: '4px 6px 4px 70px', color: '#94a3b8', fontSize: '10.5px', fontStyle: 'italic' }}>
                                                                         Top {merchantData[day.date].rows.length} of {fmtInt(merchantData[day.date].totalMerchants)} merchants by volume
                                                                     </td>
                                                                 </tr>
                                                             )}
                                                             {(merchantData[day.date]?.rows || []).map((m) => (
-                                                                <tr key={m.mid} style={{ background: '#fff', borderBottom: '1px solid #f1f5f9' }}>
+                                                                <tr key={m.mid} style={{ background: 'var(--bg-card)', borderBottom: '1px solid #f1f5f9' }}>
                                                                     <td style={{ padding: '6px 6px 6px 70px', color: '#64748b', fontSize: '11px', fontStyle: 'italic', borderRight: '1px solid #f1f5f9' }}>
                                                                         {m.name || m.mid}
                                                                     </td>

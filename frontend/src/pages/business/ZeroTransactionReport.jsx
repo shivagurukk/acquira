@@ -45,8 +45,8 @@ const STATUS = {
     in7:   { color: 'var(--warning, #f59e0b)',     bg: 'var(--warning-chip, #fef3c7)', fg: 'var(--warning-text, #92400e)' },
 };
 const BUCKET_COLORS = {
-    '≤14d': 'var(--ztx-bucket-1, #3b82f6)', '15–30d': 'var(--ztx-bucket-2, #f59e0b)', '31–60d': 'var(--ztx-bucket-3, #fb923c)',
-    '61–90d': 'var(--ztx-bucket-4, #ef4444)', '90d+': 'var(--ztx-bucket-5, #b91c1c)', 'Never': 'var(--ztx-never, #64748b)',
+    '≤14d': 'var(--chart-5)', '15–30d': 'var(--chart-4)', '31–60d': 'var(--chart-3)',
+    '61–90d': 'var(--chart-2)', '90d+': 'var(--chart-1)', 'Never': 'var(--ztx-never, #64748b)',
 };
 
 const isNever = (s) => s === 'Never Transacted';
@@ -369,7 +369,7 @@ const ZeroTransactionReport = () => {
                                         </Stack>
                                     </Box>
                                     <Box sx={{ height: 6, borderRadius: 999, bgcolor: T.borderLt, overflow: 'hidden' }}>
-                                        <Box sx={{ width: `${Math.max((a.count / maxAgg) * 100, 3)}%`, height: '100%', borderRadius: 999, background: 'var(--ztx-agg-bar, linear-gradient(90deg,#6366f1,#818cf8))' }} />
+                                        <Box sx={{ width: `${Math.max((a.count / maxAgg) * 100, 3)}%`, height: '100%', borderRadius: 999, background: 'var(--ztx-agg-bar, linear-gradient(90deg,var(--projected),var(--projected)))' }} />
                                     </Box>
                                 </Box>
                             ))}

@@ -82,7 +82,7 @@ const RevenueLeakage = () => {
             { title: 'Open Flags', value: Number(s.openCount || 0).toLocaleString(), icon: ShieldAlert, color: '#ef4444' },
             { title: 'Est. Monthly at Risk', value: fmtMoney(s.totalEstImpact), icon: DollarSign, color: '#f59e0b' },
             { title: 'Critical + High', value: Number(s.highCount || 0).toLocaleString(), icon: AlertTriangle, color: '#dc2626' },
-            { title: 'Merchants Affected', value: Number(s.merchantsAffected || 0).toLocaleString(), icon: Users, color: '#6366f1' },
+            { title: 'Merchants Affected', value: Number(s.merchantsAffected || 0).toLocaleString(), icon: Users, color: 'var(--projected)' },
         ];
     }, [summary]);
 
@@ -215,7 +215,7 @@ const RevenueLeakage = () => {
                         <Box key={s} onClick={() => setStatus(s)} sx={{
                             px: 1.5, py: 0.5, borderRadius: 1.5, cursor: 'pointer', fontSize: 12, fontWeight: 600,
                             bgcolor: status === s ? '#fff' : 'transparent',
-                            color: status === s ? '#2563eb' : '#6b7280',
+                            color: status === s ? 'var(--primary)' : '#6b7280',
                             boxShadow: status === s ? '0 1px 3px rgba(0,0,0,.1)' : 'none',
                         }}>
                             {s === 'ALL' ? 'All' : s.charAt(0) + s.slice(1).toLowerCase()}

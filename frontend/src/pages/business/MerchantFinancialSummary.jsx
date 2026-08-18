@@ -56,7 +56,7 @@ const C = {
 // Sequential blue ramp for the concentration band — darkest = largest share
 // (magnitude, one hue). The tail of the portfolio is neutral slate: it is the
 // "everyone else" mass, not a sixth competitor.
-const RAMP = ['#1e40af', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'];
+const RAMP = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 const RAMP_REST = 'var(--border, #cbd5e1)';
 
 const MEDAL_COLORS = ['#b48b0b', '#8c96a3', '#b0704a'];

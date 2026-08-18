@@ -7,7 +7,7 @@ const FAST_MS = 5_000;    // poll every 5s when panel is open
 const STATUS_COLORS = {
     COMPLETED: { dot: '#10b981', bg: '#ecfdf5', text: '#065f46', label: 'Completed' },
     FAILED:    { dot: '#ef4444', bg: '#fef2f2', text: '#991b1b', label: 'Failed'    },
-    STARTED:   { dot: '#3b82f6', bg: '#eff6ff', text: '#1e40af', label: 'Running'   },
+    STARTED:   { dot: 'var(--primary)', bg: 'var(--wash)', text: 'var(--primary)', label: 'Running'   },
     ABANDONED: { dot: '#f59e0b', bg: '#fef9ec', text: '#92400e', label: 'Abandoned' },
     STOPPED:   { dot: '#94a3b8', bg: '#f1f5f9', text: '#475569', label: 'Stopped'   },
 };
@@ -96,7 +96,7 @@ const NotificationBell = () => {
                 onMouseEnter={e => e.currentTarget.style.background = 'var(--color-background-secondary)'}
                 onMouseLeave={e => e.currentTarget.style.background = open ? 'var(--color-background-info)' : 'var(--color-background-secondary)'}
             >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={open ? '#3b82f6' : 'var(--color-text-secondary)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={open ? 'var(--primary)' : 'var(--color-text-secondary)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
                 </svg>
 
@@ -116,7 +116,7 @@ const NotificationBell = () => {
                 {liveCount > 0 && unread === 0 && (
                     <span style={{
                         position: 'absolute', top: -2, right: -2,
-                        width: 8, height: 8, borderRadius: '50%', background: '#3b82f6',
+                        width: 8, height: 8, borderRadius: '50%', background: 'var(--primary)',
                     }} />
                 )}
             </button>
@@ -135,7 +135,7 @@ const NotificationBell = () => {
                     <div style={{ padding: '12px 14px 10px', borderBottom: '0.5px solid var(--color-border-tertiary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
                             Batch Jobs
-                            {liveCount > 0 && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#eff6ff', color: '#1d4ed8' }}>{liveCount} running</span>}
+                            {liveCount > 0 && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'var(--wash)', color: 'var(--primary)' }}>{liveCount} running</span>}
                         </span>
                         <button onClick={() => fetchJobs()} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--color-text-secondary)', padding: 0 }}>
                             Refresh
@@ -170,7 +170,7 @@ const NotificationBell = () => {
                                     </div>
                                     {job.status === 'STARTED' && job.progress >= 0 && (
                                         <div style={{ marginTop: 6, height: 3, borderRadius: 2, background: 'var(--color-border-tertiary)', overflow: 'hidden' }}>
-                                            <div style={{ height: '100%', background: '#3b82f6', width: `${job.progress}%`, transition: 'width 0.5s' }} />
+                                            <div style={{ height: '100%', background: 'var(--primary)', width: `${job.progress}%`, transition: 'width 0.5s' }} />
                                         </div>
                                     )}
                                 </div>
@@ -180,7 +180,7 @@ const NotificationBell = () => {
 
                     {/* Footer */}
                     <div style={{ padding: '8px 14px', borderTop: '0.5px solid var(--color-border-tertiary)' }}>
-                        <a href="/ops/batch-logs" style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', fontWeight: 600 }}>
+                        <a href="/ops/batch-logs" style={{ fontSize: 11, color: 'var(--primary)', textDecoration: 'none', fontWeight: 600 }}>
                             View all in Batch Monitoring →
                         </a>
                     </div>

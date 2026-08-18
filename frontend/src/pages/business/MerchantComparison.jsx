@@ -16,10 +16,12 @@ import { SectionLoader } from '../../components/Loaders';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt, formatCompactCurrency } from '../../utils/formatters';
 import { pageContainer } from '../../theme/dataGridStyles';
+import { CATEGORICAL } from '../../theme/chartPalette';
 
 // ── Palette: one distinct colour per merchant slot ─────────────────
-const PALETTE = ['#4f6ef7', '#00b37e', '#f59e0b', '#ef4444'];
-const PALETTE_BG = ['#eef1ff', '#e6f8f2', '#fef9ec', '#fff0f0'];
+const PALETTE = CATEGORICAL.slice(0, 4);
+const PALETTE_BG = PALETTE.map((c) => `color-mix(in srgb, ${c} 12%, transparent)`);
+const PALETTE_LINE = PALETTE.map((c) => `color-mix(in srgb, ${c} 32%, transparent)`);
 
 // ── Formatters (currency-agnostic — fmt is built inside component from tenant) ────
 const fmtCompact = (v) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(v || 0);
@@ -228,8 +230,8 @@ const MerchantComparison = () => {
             {/* ── Page header ── */}
             <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 2.5 }}>
                 <Stack direction="row" spacing={1.5} alignItems="center">
-                    <Box sx={{ width:36, height:36, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:'#eff6ff' }}>
-                        <BarChart3 size={17} color="#3b82f6" />
+                    <Box sx={{ width:36, height:36, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:'var(--wash)' }}>
+                        <BarChart3 size={17} color="var(--primary)" />
                     </Box>
                     <Box>
                         <Typography sx={{ fontSize:'1.1rem', fontWeight:700, color:'var(--color-text-primary)', letterSpacing:'-0.02em' }}>
@@ -247,11 +249,11 @@ const MerchantComparison = () => {
                     sx={{
                         display:'flex', alignItems:'center', gap:0.75, px:2, py:0.9,
                         borderRadius:'8px', cursor: selected.length < 2 || loading ? 'not-allowed' : 'pointer',
-                        bgcolor: selected.length < 2 ? 'var(--color-background-secondary)' : '#3b82f6',
+                        bgcolor: selected.length < 2 ? 'var(--color-background-secondary)' : 'var(--primary)',
                         color: selected.length < 2 ? 'var(--color-text-tertiary)' : 'white',
                         fontSize:'12px', fontWeight:700, transition:'all 0.15s',
                         opacity: loading ? 0.7 : 1,
-                        '&:hover': selected.length >= 2 && !loading ? { bgcolor:'#2563eb' } : {},
+                        '&:hover': selected.length >= 2 && !loading ? { bgcolor:'var(--primary)' } : {},
                     }}
                 >
                     {loading ? <CircularProgress size={13} color="inherit" /> : <RefreshCw size={13} />}
@@ -311,7 +313,7 @@ const MerchantComparison = () => {
                                             key={option.merchantId}
                                             label={option.name}
                                             size="small"
-                                            sx={{ fontWeight:600, fontSize:'11px', bgcolor: PALETTE_BG[index], color, border:`1px solid ${color}40`, borderRadius:'6px', height:22 }}
+                                            sx={{ fontWeight:600, fontSize:'11px', bgcolor: PALETTE_BG[index], color, border:`1px solid ${PALETTE_LINE[index]}`, borderRadius:'6px', height:22 }}
                                         />
                                     );
                                 })
@@ -332,7 +334,7 @@ const MerchantComparison = () => {
                                     px:1.25, py:0.5, borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:600,
                                     whiteSpace:'nowrap', transition:'all 0.12s',
                                     ...(preset === p.key
-                                        ? { bgcolor:'#3b82f6', color:'white' }
+                                        ? { bgcolor:'var(--primary)', color:'white' }
                                         : { bgcolor:'var(--color-background-secondary)', color:'var(--color-text-secondary)', '&:hover': { color:'var(--color-text-primary)' } }),
                                 }}
                             >
@@ -379,7 +381,7 @@ const MerchantComparison = () => {
                     <Box sx={{ display:'grid', gridTemplateColumns:`repeat(${merchants.length}, 1fr)`, gap:1.5 }}>
                         {merchants.map((m, i) => (
                             <Paper key={m.merchantId} elevation={0} sx={{
-                                border:`0.5px solid ${PALETTE[i]}40`,
+                                border:`0.5px solid ${PALETTE_LINE[i]}`,
                                 borderTop:`3px solid ${PALETTE[i]}`,
                                 borderRadius:'12px', p:2,
                             }}>
@@ -546,7 +548,7 @@ const MerchantComparison = () => {
                                     if (!winner) return null;
                                     return (
                                         <Stack key={key} direction="row" justifyContent="space-between" alignItems="center"
-                                            sx={{ p:1.25, borderRadius:'8px', bgcolor: PALETTE_BG[idx], border:`0.5px solid ${PALETTE[idx]}30` }}>
+                                            sx={{ p:1.25, borderRadius:'8px', bgcolor: PALETTE_BG[idx], border:`0.5px solid ${PALETTE_LINE[idx]}` }}>
                                             <Stack direction="row" spacing={1} alignItems="center">
                                                 <Icon size={13} color={PALETTE[idx]} />
                                                 <Box>

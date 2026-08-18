@@ -26,17 +26,25 @@ const P = {
     raised:  '#1c2538',  border:  'rgba(255,255,255,0.055)',
     bdrHvr:  'rgba(255,255,255,0.09)',
     // accents
-    accent:  '#4f8ef7', accent2: '#818cf8', teal: '#2dd4bf',
+    accent:  'var(--primary-soft)', accent2: 'var(--projected)', teal: '#2dd4bf',
     green:   '#22c55e', amber:  '#facc15', rose: '#f43f5e',
-    purple:  '#a78bfa', cyan:   '#22d3ee',
+    purple:  'var(--cat-5)', cyan:   'var(--cat-3)',
     // text
     t1: '#eef2ff', t2: 'rgba(238,242,255,0.55)', t3: 'rgba(238,242,255,0.28)', t4: 'rgba(238,242,255,0.08)',
     // gradients
-    gAccent: 'linear-gradient(135deg,#4f8ef7,#818cf8)',
-    gTeal:   'linear-gradient(135deg,#2dd4bf,#22d3ee)',
-    gPurple: 'linear-gradient(135deg,#818cf8,#c084fc)',
+    gAccent: 'linear-gradient(135deg,var(--primary-soft),var(--projected))',
+    gTeal:   'linear-gradient(135deg,#2dd4bf,var(--cat-3))',
+    gPurple: 'linear-gradient(135deg,var(--projected),#c084fc)',
 };
-const COLORS = ['#4f8ef7','#2dd4bf','#22c55e','#facc15','#a78bfa','#f43f5e','#22d3ee','#fb923c'];
+/* This page renders its own always-dark chrome (the `P` palette above),
+   independent of the app scheme, so the series cannot come from the
+   `--chart-*` tokens: in light mode those resolve to deep navies that
+   vanish against P.card. Bright blue-family literals instead, matching
+   the ramp's ordering. */
+const COLORS = [
+    'var(--primary-soft)', 'var(--primary-soft)', 'var(--projected)', 'var(--cat-3)',
+    'var(--primary-soft)', 'var(--cat-5)', 'var(--cat-1)', 'var(--chart-5)',
+];
 
 /* The assistant returns arbitrary SQL result columns, so money is identified by
    column name. Anything matching this list is rendered WITH the tenant currency
@@ -62,10 +70,9 @@ const _S = 'luma-ai-css';
 if (typeof document!=='undefined' && !document.getElementById(_S)){
     const el=document.createElement('style'); el.id=_S;
     el.textContent=`
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
-.lu{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif!important;-webkit-font-smoothing:antialiased}
+.lu{font-family:var(--font-ui)!important;-webkit-font-smoothing:antialiased}
 .lu *{font-family:inherit!important;box-sizing:border-box}
-.lu-code{font-family:'JetBrains Mono',monospace!important}
+.lu-code{font-family:var(--font-mono)!important}
 .lu::-webkit-scrollbar,.lu *::-webkit-scrollbar{width:5px;height:5px}
 .lu::-webkit-scrollbar-track,.lu *::-webkit-scrollbar-track{background:transparent}
 .lu::-webkit-scrollbar-thumb,.lu *::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.06);border-radius:8px}
@@ -131,7 +138,7 @@ const SqlBlock = ({ sql }) => {
 
     const highlight = (text) => text.split(/(\b(?:SELECT|FROM|WHERE|AND|OR|GROUP\s+BY|ORDER\s+BY|LIMIT|LEFT\s+JOIN|INNER\s+JOIN|RIGHT\s+JOIN|ON|AS|HAVING|COALESCE|SUM|COUNT|AVG|MIN|MAX|DISTINCT|CASE|WHEN|THEN|ELSE|END|IN|BETWEEN|LIKE|IS\s+NOT\s+NULL|IS\s+NULL|NOT|DESC|ASC|CAST|DATE_TRUNC|TO_CHAR|CURRENT_DATE|INTERVAL|TRUE|FALSE|NULL)\b|'[^']*'|\d+)/gi).map((p,i)=>{
         const u=p.toUpperCase().trim().replace(/\s+/g,' ');
-        if(KW.has(u)) return <span key={i} style={{color:'#93c5fd',fontWeight:600}}>{p}</span>;
+        if(KW.has(u)) return <span key={i} style={{color:'var(--primary-soft)',fontWeight:600}}>{p}</span>;
         if(p.match(/^'.*'$/)) return <span key={i} style={{color:'#86efac'}}>{p}</span>;
         if(p.match(/^\d+$/)) return <span key={i} style={{color:'#fde68a'}}>{p}</span>;
         return <span key={i}>{p}</span>;

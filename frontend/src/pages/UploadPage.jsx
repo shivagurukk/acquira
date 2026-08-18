@@ -128,7 +128,7 @@ const UploadPage = () => {
                         <div style={{
                             width: 44, height: 44, borderRadius: 12,
                             background: 'var(--brand-50,#eff6ff)',
-                            border: '1px solid rgba(37,99,235,0.1)',
+                            border: '1px solid rgba(164, 78, 31,0.1)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
                             <FileText size={20} style={{ color: 'var(--brand,#2563eb)' }} strokeWidth={1.8} />
@@ -152,7 +152,7 @@ const UploadPage = () => {
                                 onClick={uploadFile}
                                 style={{
                                     marginTop: 20, width: '100%', padding: '14px',
-                                    background: '#2563eb',
+                                    background: 'var(--primary)',
                                     color: '#fff', border: 'none',
                                     borderRadius: '12px',
                                     fontWeight: 600, fontSize: '0.95rem',
@@ -160,8 +160,8 @@ const UploadPage = () => {
                                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                                     transition: 'all 0.15s ease',
                                 }}
-                                onMouseEnter={e => { e.currentTarget.style.background = '#1d4ed8'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(37,99,235,0.25)'; }}
-                                onMouseLeave={e => { e.currentTarget.style.background = '#2563eb'; e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = 'none'; }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'var(--primary)'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(164, 78, 31,0.25)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'var(--primary)'; e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = 'none'; }}
                             >
                                 <Upload size={18} /> Process File
                             </button>
@@ -172,7 +172,7 @@ const UploadPage = () => {
                                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
                                     <FinancialLoader />
                                 </div>
-                                <ProgressBar value={uploadPercent} label="Uploading" color="#2563eb" />
+                                <ProgressBar value={uploadPercent} label="Uploading" color="var(--primary)" />
                             </div>
                         )}
 
@@ -199,7 +199,7 @@ const UploadPage = () => {
                         <ProgressBar
                         value={uploadPercent}
                         label={jobDetails.currentStep ? stepLabel(jobDetails.currentStep) : 'Overall progress'}
-                        color="#2563eb"
+                        color="var(--primary)"
                         />
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: '0.78rem', color: 'var(--text-secondary,#6b7280)' }}>
                         <span>Job: {jobDetails.jobId || jobDetails.executionId || '—'}</span>
@@ -280,7 +280,7 @@ const UploadPage = () => {
 
 /* ── Sub-components ─────────────────────────────────────────── */
 
-const ProgressBar = ({ value, label, color = '#2563eb' }) => (
+const ProgressBar = ({ value, label, color = 'var(--primary)' }) => (
     <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: '0.78rem', color: 'var(--text-secondary,#6b7280)' }}>
             <span>{label}</span>
@@ -313,8 +313,8 @@ const StageTracker = ({ stages, currentStepName, stepNumber, totalSteps, progres
                         <div style={{
                             width: 32, height: 32, borderRadius: '50%',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            background: done ? '#059669' : active ? '#2563eb' : 'var(--bg-subtle,#f3f4f6)',
-                            border: active ? '2px solid rgba(37,99,235,0.2)' : done ? 'none' : '1px solid var(--border,#e5e7eb)',
+                            background: done ? '#059669' : active ? 'var(--primary)' : 'var(--bg-subtle,#f3f4f6)',
+                            border: active ? '2px solid rgba(164, 78, 31,0.2)' : done ? 'none' : '1px solid var(--border,#e5e7eb)',
                             transition: 'all 0.3s',
                         }}>
                             {done
@@ -324,7 +324,7 @@ const StageTracker = ({ stages, currentStepName, stepNumber, totalSteps, progres
                         </div>
                         <span style={{
                             fontSize: '10px', fontWeight: active ? 600 : 400,
-                            color: done ? '#059669' : active ? '#2563eb' : 'var(--text-muted,#9ca3af)',
+                            color: done ? '#059669' : active ? 'var(--primary)' : 'var(--text-muted,#9ca3af)',
                             textAlign: 'center',
                         }}>
                             {s.label}
@@ -375,7 +375,7 @@ const SummaryModal = ({ jobDetails, onClose }) => {
         ? { bg: 'var(--success-bg,#ecfdf5)', border: 'rgba(5,150,105,0.15)', title: '#065f46', sub: '#047857' }
         : isFailed
         ? { bg: 'var(--danger-bg,#fef2f2)',  border: 'rgba(220,38,38,0.15)', title: '#991b1b', sub: '#b91c1c' }
-        : { bg: 'var(--brand-50,#eff6ff)',   border: 'rgba(37,99,235,0.15)', title: '#1e40af', sub: '#1d4ed8' };
+        : { bg: 'var(--brand-50,#eff6ff)',   border: 'rgba(164, 78, 31,0.15)', title: 'var(--primary)', sub: 'var(--primary)' };
 
     const statusLabel = isRunning ? 'Job in progress' : `Job ${jobDetails.status}`;
     const exitText = isRunning
@@ -398,7 +398,7 @@ const SummaryModal = ({ jobDetails, onClose }) => {
     const raHasNews = ra && (ra.reassigned > 0 || ra.conflicts > 0 || ra.unknownAgents > 0);
 
     const stats = [
-        { label: 'Rows read',   value: (jobDetails.readCount  || 0).toLocaleString(), color: '#2563eb' },
+        { label: 'Rows read',   value: (jobDetails.readCount  || 0).toLocaleString(), color: 'var(--primary)' },
         { label: 'Rows written',value: (jobDetails.writeCount || 0).toLocaleString(), color: '#059669' },
         { label: 'Skipped',     value: (jobDetails.skipCount  || 0).toLocaleString(), color: '#d97706' },
         { label: 'Time taken',  value: elapsed,                                        color: '#7c3aed' },
@@ -466,8 +466,8 @@ const SummaryModal = ({ jobDetails, onClose }) => {
                             </span>
                             <span style={{
                                 fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                                background: dq.loadMode === 'APPEND' ? '#eff6ff' : '#f3f4f6',
-                                color: dq.loadMode === 'APPEND' ? '#1d4ed8' : '#6b7280',
+                                background: dq.loadMode === 'APPEND' ? 'var(--wash)' : '#f3f4f6',
+                                color: dq.loadMode === 'APPEND' ? 'var(--primary)' : '#6b7280',
                             }}>
                                 {dq.loadMode === 'APPEND' ? 'APPEND (scheme-scoped)' : 'REPLACE'}
                             </span>
@@ -556,7 +556,7 @@ const SummaryModal = ({ jobDetails, onClose }) => {
                         ? <CheckCircle size={18} color="#059669" />
                         : isFailed
                         ? <AlertCircle size={18} color="#dc2626" />
-                        : <Activity size={18} color="#2563eb" />}
+                        : <Activity size={18} color="var(--primary)" />}
                     <div>
                         <p style={{ margin: 0, fontWeight: 600, fontSize: '0.88rem', color: theme.title }}>
                             {statusLabel}

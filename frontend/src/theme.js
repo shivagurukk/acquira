@@ -1,8 +1,8 @@
 import { createTheme } from '@mui/material/styles';
 
 // ═══════════════════════════════════════════════════════════
-// Acquira Design System — Ledger Theme
-// Dense · hairline structure · teal marks action + upward movement
+// Acquira Design System — Meridian Theme
+// Graphite structure · one steel accent · muted validated chart hues
 //
 // Single theme with cssVariables + colorSchemes. Both schemes are
 // declared here; MUI emits them as CSS custom properties scoped by
@@ -14,32 +14,39 @@ import { createTheme } from '@mui/material/styles';
 // properties in index.css — the one place hex values may live.
 export const TOKENS = {
     light: {
-        canvas:    '#EEF2F1',
-        surface:   '#FFFFFF',
-        hairline:  '#DDE4E3',
-        ink:       '#101F1E',
-        muted:     '#5A6B6A',
-        primary:   '#12706B',
-        wash:      '#E3F0EE',
-        negative:  '#B4442F',
-        attention: '#B5822A',
-        projected: '#3E5C76',
+        canvas:    '#EDF1F8',
+        surface:   '#EAF1FA',
+        hairline:  '#E4E7EC',
+        ink:       '#191D24',
+        muted:     '#5C6675',
+        primary:   '#3F63B0',
+        wash:      '#DCE8F7',
+        negative:  '#B3382C',
+        attention: '#8C5E12',
+        projected: '#64748B',
+        success:   '#0B6B4D',
     },
     dark: {
-        // Navy-blue dark scheme — mirrors html.dark in index.css.
-        canvas:    '#0A1530',
-        surface:   '#101E3C',
-        hairline:  '#20325C',
-        ink:       '#E8EEFB',
-        muted:     '#8FA5CC',
-        primary:   '#2DD4BF',
-        wash:      '#12324E',
-        negative:  '#F27B63',
-        attention: '#E2B04A',
-        projected: '#7FA3DB',
+        // Graphite dark scheme — mirrors html.dark in index.css.
+        canvas:    '#0E1116',
+        surface:   '#141B26',
+        hairline:  '#272E38',
+        ink:       '#E7EAEF',
+        muted:     '#98A2AF',
+        primary:   '#5E82D2',
+        wash:      '#1C2637',
+        negative:  '#E2705C',
+        attention: '#D9A03F',
+        projected: '#93A0B4',
+        success:   '#34B98A',
     },
-    // Sequential chart ramp — teal only, light → dark.
-    chartRamp: ['#0B4F4C', '#12706B', '#35948C', '#6FB3A8', '#A7CFC6'],
+    // Sequential chart ramp — steel, dark → light.
+    chartRamp:     ['#263C6E', '#33518F', '#3F63B0', '#7191CE', '#C2CFEA'],
+    chartRampDark: ['#33518F', '#4A6DC0', '#5E82D2', '#8AA5E0', '#C3D1F0'],
+    // Categorical series — CVD-validated fixed order (steel, copper,
+    // jade, brass, plum), stepped per surface.
+    categorical:     ['#3F63B0', '#CA5F28', '#0FA070', '#B08C1E', '#A85D9C'],
+    categoricalDark: ['#5E82D2', '#D5763A', '#21A176', '#B48A20', '#BA65A8'],
 };
 
 const FONT_UI   = "'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
@@ -49,7 +56,7 @@ const schemePalette = (t, mode) => ({
     mode,
     primary:   { main: t.primary, contrastText: mode === 'dark' ? t.canvas : '#FFFFFF' },
     secondary: { main: t.projected, contrastText: '#FFFFFF' },
-    success:   { main: t.primary },
+    success:   { main: t.success },
     error:     { main: t.negative },
     warning:   { main: t.attention },
     info:      { main: t.projected },
@@ -89,11 +96,15 @@ export function buildTheme() {
             // Numeric variant — currency, counts, percentages, IDs.
             mono: { fontFamily: FONT_MONO, fontVariantNumeric: 'tabular-nums' },
         },
-        shape: { borderRadius: 4 },
+        shape: { borderRadius: 10 },
         transitions: {
             duration: {
-                shortest: 100, shorter: 120, short: 150,
-                standard: 150, complex: 150, enteringScreen: 150, leavingScreen: 150,
+                shortest: 120, shorter: 150, short: 180,
+                standard: 200, complex: 260, enteringScreen: 200, leavingScreen: 180,
+            },
+            easing: {
+                easeInOut: 'cubic-bezier(0.4, 0, 0.2, 1)',
+                easeOut: 'cubic-bezier(0.22, 1, 0.36, 1)',
             },
         },
         components: {
@@ -101,18 +112,25 @@ export function buildTheme() {
                 defaultProps: { disableElevation: true },
                 styleOverrides: {
                     root: ({ theme }) => ({
-                        borderRadius: 4,
+                        borderRadius: 8,
                         boxShadow: 'none',
-                        padding: '6px 14px',
+                        padding: '7px 16px',
                         fontWeight: 500,
-                        transition: 'background-color 150ms, opacity 150ms',
+                        transition: 'background-color 200ms, box-shadow 200ms, transform 200ms, opacity 200ms',
                         '&:hover': { boxShadow: 'none' },
+                        '&:active': { transform: 'translateY(1px)' },
                         '&:focus-visible': {
                             outline: `2px solid ${theme.vars.palette.primary.main}`,
                             outlineOffset: 2,
                         },
                     }),
-                    sizeSmall: { padding: '4px 10px', fontSize: '12px' },
+                    // Primary CTA carries the brand gradient + a soft steel lift.
+                    containedPrimary: {
+                        backgroundImage: 'var(--grad-primary)',
+                        boxShadow: '0 2px 8px rgba(51, 81, 143, 0.22)',
+                        '&:hover': { boxShadow: '0 6px 18px rgba(51, 81, 143, 0.30)' },
+                    },
+                    sizeSmall: { padding: '5px 12px', fontSize: '12px' },
                 },
             },
             MuiPaper: {
@@ -120,21 +138,38 @@ export function buildTheme() {
                 styleOverrides: {
                     root: ({ theme }) => ({
                         backgroundImage: 'none',
-                        boxShadow: 'none',
+                        boxShadow: 'var(--shadow-sm)',
                         border: `1px solid ${theme.vars.palette.divider}`,
                     }),
-                    rounded: { borderRadius: 4 },
-                    // Menus / dialogs / popovers are the only elevated surfaces.
+                    rounded: { borderRadius: 12 },
+                    // Menus / dialogs / popovers are the most elevated surfaces.
                     elevation8: { boxShadow: 'var(--shadow-pop)' },
                     elevation24: { boxShadow: 'var(--shadow-pop)' },
                 },
             },
             MuiCard: {
                 styleOverrides: {
-                    root: ({ theme }) => ({
-                        borderRadius: 4,
-                        border: `1px solid ${theme.vars.palette.divider}`,
-                        boxShadow: 'none',
+                    root: () => ({
+                        borderRadius: 12,
+                        // Animated border sweep — mirrors .dx-card in index.css
+                        // (--dxa registration + dxBorderSweep keyframes live there).
+                        background: `                            radial-gradient(140% 90% at 50% 0%,
+                              color-mix(in srgb, var(--primary) var(--dxg, 6%), transparent) 0%,
+                              transparent 60%) padding-box,
+                            var(--dx-card-grid),
+                            conic-gradient(from var(--dxa),
+                              var(--border) 0deg, var(--border) 280deg,
+                              color-mix(in srgb, var(--primary) 40%, var(--border)) 310deg,
+                              var(--primary) 332deg,
+                              var(--border) 352deg) border-box`,
+                        border: '2px solid transparent',
+                        boxShadow: 'var(--shadow-card)',
+                        animation: 'dxBorderSweep 6s linear infinite, dxGridPulse 5s ease-in-out infinite',
+                        transition: 'box-shadow 220ms ease, transform 220ms ease',
+                        '&:hover': {
+                            boxShadow: 'var(--shadow-hover)',
+                        },
+                        '@media (prefers-reduced-motion: reduce)': { transition: 'none', animation: 'none' },
                     }),
                 },
             },
@@ -143,17 +178,17 @@ export function buildTheme() {
             },
             MuiDialog: {
                 styleOverrides: {
-                    paper: { borderRadius: 4, boxShadow: 'var(--shadow-pop)' },
+                    paper: { borderRadius: 14, boxShadow: 'var(--shadow-pop)' },
                 },
             },
             MuiMenu: {
                 styleOverrides: {
-                    paper: { borderRadius: 4, boxShadow: 'var(--shadow-pop)' },
+                    paper: { borderRadius: 12, boxShadow: 'var(--shadow-pop)' },
                 },
             },
             MuiPopover: {
                 styleOverrides: {
-                    paper: { borderRadius: 4, boxShadow: 'var(--shadow-pop)' },
+                    paper: { borderRadius: 12, boxShadow: 'var(--shadow-pop)' },
                 },
             },
             // Status chips: 11px mono, uppercase, 2px radius, tinted bg + solid
@@ -161,7 +196,7 @@ export function buildTheme() {
             MuiChip: {
                 styleOverrides: {
                     root: {
-                        borderRadius: 2,
+                        borderRadius: 6,
                         fontFamily: FONT_MONO,
                         fontVariantNumeric: 'tabular-nums',
                         fontSize: '11px',
@@ -175,10 +210,10 @@ export function buildTheme() {
             MuiToggleButton: {
                 styleOverrides: {
                     root: ({ theme }) => ({
-                        borderRadius: 4,
+                        borderRadius: 8,
                         textTransform: 'none',
                         fontWeight: 500,
-                        transition: 'background-color 150ms, color 150ms',
+                        transition: 'background-color 200ms, color 200ms',
                         '&.Mui-selected': {
                             backgroundColor: theme.vars.palette.action.selected,
                             color: theme.vars.palette.primary.main,
@@ -208,7 +243,7 @@ export function buildTheme() {
                 styleOverrides: {
                     root: {
                         border: 'none',
-                        borderRadius: 4,
+                        borderRadius: 12,
                         '--DataGrid-rowBorderColor': 'var(--border)',
                         fontFamily: FONT_UI,
                         '& .MuiDataGrid-cell': {
@@ -241,7 +276,7 @@ export function buildTheme() {
                 styleOverrides: {
                     tooltip: ({ theme }) => ({
                         fontSize: '12px',
-                        borderRadius: 4,
+                        borderRadius: 8,
                         padding: '6px 10px',
                         backgroundColor: theme.vars.palette.text.primary,
                         color: theme.vars.palette.background.paper,

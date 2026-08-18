@@ -39,10 +39,10 @@ const OpportunityIntelligence = () => {
         const medScore = data.filter(d => (d.score || 0) >= 50 && (d.score || 0) < 80).length;
         const avgScore = data.length > 0 ? (data.reduce((s, d) => s + (d.score || 0), 0) / data.length).toFixed(1) : 0;
         return [
-            { title: 'Total Opportunities', value: data.length.toLocaleString(), icon: Users, color: '#6366f1' },
+            { title: 'Total Opportunities', value: data.length.toLocaleString(), icon: Users, color: 'var(--projected)' },
             { title: 'High Score (80+)', value: highScore.toLocaleString(), icon: TrendingUp, color: '#10b981' },
             { title: 'Medium Score (50–79)', value: medScore.toLocaleString(), icon: Target, color: '#f59e0b' },
-            { title: 'Average Score', value: avgScore, icon: Lightbulb, color: '#3b82f6' },
+            { title: 'Average Score', value: avgScore, icon: Lightbulb, color: 'var(--primary)' },
         ];
     }, [data]);
 

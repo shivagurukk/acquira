@@ -125,7 +125,7 @@ const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterCh
                                 padding: '8px 14px',
                                 background: showFilters ? 'var(--brand-50, #eff6ff)' : 'var(--bg-subtle, #f3f4f6)',
                                 borderRadius: '10px',
-                                border: '1px solid ' + (showFilters ? 'rgba(37,99,235,0.2)' : 'var(--border, #e5e7eb)'),
+                                border: '1px solid ' + (showFilters ? 'rgba(164, 78, 31,0.2)' : 'var(--border, #e5e7eb)'),
                                 cursor: 'pointer',
                                 color: showFilters ? 'var(--brand, #2563eb)' : 'var(--text-secondary, #6b7280)',
                                 display: 'flex', alignItems: 'center', gap: '6px',

@@ -61,7 +61,7 @@
 .badge.info {
     background: var(--brand-50, #eff6ff);
     color: var(--brand, #2563eb);
-    border-color: #dbeafe;
+    border-color: var(--wash);
 }
 
 .card-desc {
@@ -103,7 +103,7 @@
 
 .status-msg.uploading {
     background: var(--info-bg, #eff6ff);
-    color: #1e40af;
+    color: var(--primary);
 }
 
 .status-msg.success {

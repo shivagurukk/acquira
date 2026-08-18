@@ -8,56 +8,75 @@
 
 export const T = {
   // surfaces
-  card:       'var(--bg-card, #ffffff)',
-  bg:         'var(--bg, #f8fafc)',
-  subtle:     'var(--bg-subtle, #f8fafc)',
-  hover:      'var(--bg-hover, #f0f7ff)',
+  card:       'var(--bg-card, #FFFFFF)',
+  bg:         'var(--bg, #F5F6F8)',
+  subtle:     'var(--bg-subtle, #F8F9FA)',
+  hover:      'var(--bg-hover, #F1F2F4)',
   // borders
-  border:     'var(--border, #e2e8f0)',
-  borderLt:   'var(--border-light, #f1f5f9)',
+  border:     'var(--border, #E4E7EC)',
+  borderLt:   'var(--border-light, #E4E7EC)',
   // text
-  text:       'var(--text, #0f172a)',
-  textSec:    'var(--text-secondary, #64748b)',
-  textMut:    'var(--text-muted, #94a3b8)',
+  text:       'var(--text, #191D24)',
+  textSec:    'var(--text-secondary, #5C6675)',
+  textMut:    'var(--text-muted, #5C6675)',
   // brand
-  brand:      'var(--brand, #2563eb)',
-  brandAlt:   'var(--brand-alt, #3b82f6)',
+  brand:      'var(--brand, #3F63B0)',
+  brandAlt:   'var(--primary-soft, #5578C4)',
   // status (foreground)
-  success:    'var(--success, #10b981)',
-  successDk:  'var(--success-dark, #059669)',
-  warning:    'var(--warning, #f59e0b)',
-  danger:     'var(--danger, #ef4444)',
-  info:       'var(--info, #3b82f6)',
-  purple:     'var(--accent-purple, #8b5cf6)',
-  // status (subtle backgrounds) — fall back to the old tints in light mode
-  successBg:  'var(--success-bg, #f0fdf4)',
-  successTx:  'var(--success-text, #166534)',
-  successCh:  'var(--success-chip, #dcfce7)',
-  warningBg:  'var(--warning-bg, #fffbeb)',
-  warningTx:  'var(--warning-text, #92400e)',
-  warningCh:  'var(--warning-chip, #fef9c3)',
-  dangerBg:   'var(--danger-bg, #fef2f2)',
-  dangerTx:   'var(--danger-text, #991b1b)',
-  dangerCh:   'var(--danger-chip, #fee2e2)',
-  infoBg:     'var(--info-bg, #eff6ff)',
-  infoTx:     'var(--info-text, #1e40af)',
-  infoCh:     'var(--info-chip, #dbeafe)',
-  indigoBg:   'var(--indigo-bg, #e0e7ff)',
-  indigoTx:   'var(--indigo-text, #3730a3)',
-  purpleBg:   'var(--purple-bg, #f5f3ff)',
+  success:    'var(--success, #3F63B0)',
+  successDk:  'var(--chart-1, #263C6E)',
+  warning:    'var(--warning, #8C5E12)',
+  danger:     'var(--danger, #B3382C)',
+  info:       'var(--info, #64748B)',
+  purple:     'var(--projected, #64748B)',
+  // status (subtle backgrounds) — fall back to the light-mode tints
+  successBg:  'var(--success-bg, #EAF0F9)',
+  successTx:  'var(--success-text, #3F63B0)',
+  successCh:  'var(--wash, #EAF0F9)',
+  warningBg:  'var(--warning-bg, #F5EDDB)',
+  warningTx:  'var(--warning-text, #8C5E12)',
+  warningCh:  'var(--warning-bg, #F5EDDB)',
+  dangerBg:   'var(--danger-bg, #F8E7E5)',
+  dangerTx:   'var(--danger-text, #B3382C)',
+  dangerCh:   'var(--danger-bg, #F8E7E5)',
+  infoBg:     'var(--info-bg, #EEF0F3)',
+  infoTx:     'var(--info-text, #64748B)',
+  infoCh:     'var(--info-bg, #EEF0F3)',
+  indigoBg:   'var(--info-bg, #EEF0F3)',
+  indigoTx:   'var(--info-text, #64748B)',
+  purpleBg:   'var(--info-bg, #EEF0F3)',
   // radii / shadow
-  radius:     'var(--radius-md, 10px)',
-  radiusLg:   'var(--radius-lg, 14px)',
-  shadowXs:   'var(--shadow-xs, 0 1px 4px rgba(16,23,38,.06))',
+  radius:     'var(--radius-md, 8px)',
+  radiusLg:   'var(--radius-lg, 12px)',
+  shadowXs:   'var(--shadow-xs, 0 1px 2px rgba(15,35,80,.05))',
+};
+
+// Animated border sweep — mirrors cardSweep in utils/chartConfig.jsx
+// (--dxa + dxBorderSweep live in index.css).
+const SWEEP = {
+  background: `      radial-gradient(140% 90% at 50% 0%,
+        color-mix(in srgb, var(--primary) var(--dxg, 6%), transparent) 0%,
+        transparent 60%) padding-box,
+      var(--dx-card-grid),
+      conic-gradient(from var(--dxa),
+        ${T.border} 0deg, ${T.border} 280deg,
+        color-mix(in srgb, var(--primary) 40%, ${T.border}) 310deg,
+        var(--primary) 332deg,
+        ${T.border} 352deg) border-box`,
+  border: '2px solid transparent',
+  // Inline styles cannot carry a media query, so reduced motion is
+  // checked here instead of in CSS.
+  animation: (typeof window !== 'undefined'
+    && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+    ? 'none' : 'dxBorderSweep 6s linear infinite, dxGridPulse 5s ease-in-out infinite',
 };
 
 // Plain-inline-style card (used by Leaderboard + Hierarchy which are not MUI).
 export const CARD = {
-  background: T.card,
+  ...SWEEP,
   borderRadius: 14,
   padding: 24,
   boxShadow: T.shadowXs,
-  border: `1px solid ${T.border}`,
 };
 
 // Plain-inline-style button factory.
@@ -69,7 +88,7 @@ export const BTN = (bg = T.brand, fg = '#fff') => ({
 
 // MUI sx object for the standard bordered card used across the management pages.
 export const cardSx = {
-  border: `1px solid ${T.border}`, boxShadow: 'none', borderRadius: 3, bgcolor: T.card,
+  ...SWEEP, boxShadow: 'none', borderRadius: 3,
 };
 
 // Status-chip colour pairs {bg, color} keyed by a small vocabulary.

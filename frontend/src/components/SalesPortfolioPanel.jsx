@@ -12,7 +12,7 @@ const fmt = (v) => v == null ? '0' : Number(v).toLocaleString('en-US', { maximum
 const fmtM = (v) => formatCompactCurrency(v);
 const fmtPct = (v) => v == null ? '—' : Number(v).toFixed(2) + '%';
 
-const CARD = { background: '#fff', borderRadius: 14, padding: 20, border: '1px solid #eef0f4', boxShadow: '0 1px 4px rgba(0,0,0,.05)' };
+const CARD = { background: 'var(--bg-card)', borderRadius: 14, padding: 20, border: '1px solid #eef0f4', boxShadow: '0 1px 4px rgba(0,0,0,.05)' };
 
 /**
  * Reusable sales portfolio panel. Works at every tier of the hierarchy.
@@ -44,7 +44,7 @@ const SalesPortfolioPanel = ({ level, id, onClose, onDrill }) => {
 
   if (loading) {
     return (
-      <div style={{ ...CARD, textAlign: 'center', padding: 48, marginBottom: 24, border: '2px solid #3b82f6' }}>
+      <div style={{ ...CARD, textAlign: 'center', padding: 48, marginBottom: 24, border: '2px solid var(--primary)' }}>
         <Loader2 size={26} className="acq-spin" />
         <style>{`.acq-spin{animation:acqspin 1s linear infinite}@keyframes acqspin{to{transform:rotate(360deg)}}`}</style>
       </div>
@@ -65,22 +65,22 @@ const SalesPortfolioPanel = ({ level, id, onClose, onDrill }) => {
     { icon: DollarSign, label: 'Volume', value: fmtM(data.totalVolume), color: '#10b981', bg: '#f0fdf4' },
     { icon: TrendingUp, label: 'MSF', value: fmtM(data.totalMsf), color: '#f59e0b', bg: '#fff7ed' },
     { icon: Percent, label: 'MSF Rate', value: fmtPct(data.msfRate), color: '#ec4899', bg: '#fdf2f8' },
-    { icon: Building2, label: 'Merchants', value: fmt(data.merchantCount), color: '#3b82f6', bg: '#eff6ff' },
+    { icon: Building2, label: 'Merchants', value: fmt(data.merchantCount), color: 'var(--primary)', bg: 'var(--wash)' },
   ];
   if (level !== 'agent') {
     stats.push({ icon: Users, label: level === 'country' ? 'Agents' : 'Agents',
       value: fmt(data.agentCount), color: '#8b5cf6', bg: '#f5f3ff' });
   }
   if (level === 'country') {
-    stats.push({ icon: Users, label: 'Teams', value: fmt(data.teamCount), color: '#0ea5e9', bg: '#f0f9ff' });
+    stats.push({ icon: Users, label: 'Teams', value: fmt(data.teamCount), color: 'var(--cat-1)', bg: 'var(--wash)' });
   }
 
   return (
-    <div style={{ ...CARD, marginBottom: 24, border: '2px solid #3b82f6' }}>
+    <div style={{ ...CARD, marginBottom: 24, border: '2px solid var(--primary)' }}>
       {/* header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>
             {level} portfolio
           </div>
           <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#0f172a' }}>{title}</h3>
@@ -111,10 +111,10 @@ const SalesPortfolioPanel = ({ level, id, onClose, onDrill }) => {
       {/* target attainment */}
       {data.target != null && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid #eef0f4', marginBottom: 18 }}>
-          <Target size={16} color="#6366f1" />
+          <Target size={16} color="var(--projected)" />
           <span style={{ fontSize: 13, color: '#374151', fontWeight: 600 }}>Target {fmtM(data.target)}</span>
           <div style={{ flex: 1, height: 8, borderRadius: 4, background: '#e2e8f0', overflow: 'hidden' }}>
-            <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(data.attainmentPct || 0, 100)}%`, background: (data.attainmentPct || 0) >= 100 ? '#10b981' : '#3b82f6' }} />
+            <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(data.attainmentPct || 0, 100)}%`, background: (data.attainmentPct || 0) >= 100 ? '#10b981' : 'var(--primary)' }} />
           </div>
           <span style={{ fontSize: 13, fontWeight: 800, color: (data.attainmentPct || 0) >= 100 ? '#10b981' : '#f59e0b' }}>
             {data.attainmentPct != null ? data.attainmentPct + '%' : '—'}
@@ -127,12 +127,12 @@ const SalesPortfolioPanel = ({ level, id, onClose, onDrill }) => {
         <div style={{ height: 200, marginBottom: 20 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={trend}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} width={78} tickFormatter={fmtM} />
               <Tooltip formatter={(v) => fmtM(v)} />
-              <Bar dataKey="volume" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Volume" />
-              <Bar dataKey="msf" fill="#f59e0b" radius={[4, 4, 0, 0]} name="MSF" />
+              <Bar dataKey="volume" fill="var(--chart-2)" radius={[4, 4, 0, 0]} name="Volume" />
+              <Bar dataKey="msf" fill="var(--chart-4)" radius={[4, 4, 0, 0]} name="MSF" />
             </BarChart>
           </ResponsiveContainer>
         </div>

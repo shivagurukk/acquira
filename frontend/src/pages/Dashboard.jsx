@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import api from '../api/axios';
 import {
     RefreshCw, TrendingUp, TrendingDown, Receipt, Wallet,
@@ -12,9 +12,12 @@ import {
 } from 'recharts';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
+import ChartGradients from '../components/ChartGradients';
 import { useAuth } from '../contexts/AuthContext';
-import { useTheme } from '../contexts/ThemeContext';
 import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
+import {
+    SERIES, GRID_PROPS, AXIS_PROPS, LEGEND_PROPS, ANIM, gradientId,
+} from '../theme/chartPalette';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Landing Dashboard — MTD (weeks 1–5) / YTD (month-wise).
@@ -47,21 +50,18 @@ import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
 const num = (v) => (v == null ? 0 : Number(v));
 
 /* ─── Chart palette ───
-   Each mode is stepped for the surface it renders on (--bg-card: #FFFFFF light,
-   #1E293B dark) and validated as a set: lightness band, chroma floor, adjacent
-   colour-vision-deficiency separation, and contrast. The MSF-composition keys
-   are listed in stacking order — validation covers *adjacent* pairs only, so
-   reordering the stack invalidates it. On the light surface schemeFee and
-   ecomFee fall below 3:1 against white; the breakdown table below the charts
-   carries those values in text, which is what makes that legal. */
-/* Primary series follows the NEXUS teal identity. Cyan-leaning (#0891B2)
-   rather than pure teal so it stays clearly separated from the green
-   scheme-fee series where the two sit adjacent in the stacked bars. */
-const CHART_COLORS = {
-    light: { volume: '#0891B2', marginPct: '#1baf7a',
-        netRevenue: '#0891B2', interchange: '#eb6834', schemeFee: '#1baf7a', ecomFee: '#eda100' },
-    dark: { volume: '#22D3EE', marginPct: '#199e70',
-        netRevenue: '#22D3EE', interchange: '#d95926', schemeFee: '#199e70', ecomFee: '#c98500' },
+   Colours come from theme/chartPalette (the shared blue system) as CSS custom
+   properties, so both schemes are handled by the stylesheet and no mode flag
+   is needed here. The MSF-composition keys are listed in stacking order and
+   step down the ramp, so adjacent segments always differ by a full ramp step;
+   reordering the stack breaks that separation. */
+const C = {
+    volume:      SERIES.volume,
+    marginPct:   SERIES.marginPct,
+    netRevenue:  SERIES.netRevenue,
+    interchange: SERIES.interchange,
+    schemeFee:   SERIES.schemeFee,
+    ecomFee:     SERIES.ecomFee,
 };
 
 /* Both panels of the small-multiple chart must share these so the volume bars
@@ -107,31 +107,34 @@ const DeltaChip = ({ pct, compareLabel, invert, suffix = '%' }) => {
             <span title={compareLabel || 'No prior-period data'} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
                 fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
-                background: 'var(--bg-subtle, rgba(148,163,184,0.14))',
-                borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap',
+                background: 'var(--bg-subtle)', fontFamily: 'var(--font-mono)',
+                borderRadius: 999, padding: '2px 9px', whiteSpace: 'nowrap',
+                border: '1px solid var(--border-light)',
             }}>
                 —
             </span>
         );
     }
     const good = invert ? pct <= 0 : pct >= 0;    // for costs, down is good
-    const color = good ? '#059669' : '#dc2626';
-    const bg = good ? 'rgba(5,150,105,0.10)' : 'rgba(220,38,38,0.10)';
+    const color = good ? 'var(--success-text)' : 'var(--danger-text)';
+    const bg = good ? 'var(--success-bg)' : 'var(--danger-bg)';
     const Icon = pct >= 0 ? TrendingUp : TrendingDown;
     return (
         <span title={compareLabel} style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             fontSize: 12, fontWeight: 600, color, background: bg,
-            borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap',
+            fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+            border: `1px solid color-mix(in srgb, ${color} 26%, transparent)`,
+            borderRadius: 999, padding: '2px 9px', whiteSpace: 'nowrap',
         }}>
-            <Icon size={12} />
+            <Icon size={12} className={pct >= 0 ? 'dx-arrow-up' : 'dx-arrow-down'} />
             {(pct >= 0 ? '+' : '') + pct.toFixed(1)}{suffix}
         </span>
     );
 };
 
 /* ─── Inline sparkline — the period's shape inside the hero tile ─── */
-const Sparkline = ({ points, color, height = 34, width = 120 }) => {
+const Sparkline = ({ points, color, sparkId, height = 34, width = 120 }) => {
     if (!points || points.length < 2) return <div style={{ height }} />;
     const vals = points.map(num);
     const min = Math.min(...vals, 0);
@@ -141,58 +144,95 @@ const Sparkline = ({ points, color, height = 34, width = 120 }) => {
     const y = (v) => height - 3 - ((v - min) / range) * (height - 6);
     const line = vals.map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * stepX).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
     const area = `${line} L${width},${height} L0,${height} Z`;
-    const gid = `sp-${color.replace('#', '')}`;
+    // The colour is a `var(--token)` string, so it cannot go in the id —
+    // the caller supplies a stable key instead.
+    const gid = `sp-${sparkId}`;
+    const lastX = (vals.length - 1) * stepX;
+    const lastY = y(vals[vals.length - 1]);
     return (
         <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }} aria-hidden="true">
             <defs>
                 <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+                    <stop offset="0%" stopColor={color} stopOpacity="0.30" />
                     <stop offset="100%" stopColor={color} stopOpacity="0" />
                 </linearGradient>
             </defs>
             <path d={area} fill={`url(#${gid})`} />
             <path d={line} fill="none" stroke={color} strokeWidth="1.8"
                 strokeLinecap="round" strokeLinejoin="round" />
-            <circle cx={(vals.length - 1) * stepX} cy={y(vals[vals.length - 1])} r="2.6" fill={color} />
+            {/* Halo + dot on the latest point — the "live" read. */}
+            <circle cx={lastX} cy={lastY} r="5" fill={color} opacity="0.18" />
+            <circle cx={lastX} cy={lastY} r="2.6" fill={color} />
         </svg>
     );
 };
 
-/* ─── Primary hero tile — big value + sparkline ─── */
-const HeroTile = ({ label, value, fullValue, deltaPct: dp, deltaSuffix, compareLabel, invertDelta,
-    icon: Icon, accent, spark, sub }) => (
-    <div className="hero-tile" style={{
-        position: 'relative', overflow: 'hidden',
-        background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 16, padding: '20px 20px 14px', minWidth: 0,
-        display: 'flex', flexDirection: 'column', gap: 8,
-        boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))',
-        transition: 'box-shadow 0.18s ease, transform 0.18s ease',
-    }}>
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3,
-            background: accent, opacity: 0.9 }} />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.07em',
-                textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{label}</span>
-            <span style={{ display: 'inline-flex', padding: 6, borderRadius: 9,
-                background: accent + '15' }}>
-                <Icon size={15} style={{ color: accent }} />
-            </span>
-        </div>
-        <div title={fullValue} style={{
-            fontSize: 30, fontWeight: 750, color: 'var(--text)',
-            fontVariantNumeric: 'tabular-nums', lineHeight: 1.05, letterSpacing: '-0.02em',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>{value}</div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 38, justifyContent: 'flex-end' }}>
-                <DeltaChip pct={dp} compareLabel={compareLabel} invert={invertDelta} suffix={deltaSuffix} />
-                {sub && <span style={{ fontSize: 11.5, color: 'var(--text-muted, var(--text-secondary))' }}>{sub}</span>}
+/* ─── Count-up — figures settle into place on load instead of snapping.
+   Skipped entirely under prefers-reduced-motion. ─── */
+const useCountUp = (target, duration = 900) => {
+    const [value, setValue] = useState(target);
+    const fromRef = useRef(target);
+    useEffect(() => {
+        const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        const to = Number(target) || 0;
+        if (reduce || !Number.isFinite(to)) { setValue(to); fromRef.current = to; return undefined; }
+        const from = Number(fromRef.current) || 0;
+        if (from === to) return undefined;
+        let raf;
+        const start = performance.now();
+        const tick = (now) => {
+            const t = Math.min((now - start) / duration, 1);
+            const eased = 1 - Math.pow(1 - t, 3);
+            setValue(from + (to - from) * eased);
+            if (t < 1) raf = requestAnimationFrame(tick);
+            else fromRef.current = to;
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, [target, duration]);
+    return value;
+};
+
+/* ─── Primary hero tile — big value + sparkline ───
+   `raw` + `format` (rather than a pre-rendered string) so the figure can
+   count up on load; `sparkId` keys the gradient because `accent` is now a
+   CSS custom property, not a hex. */
+const HeroTile = ({ label, raw, format, fullValue, deltaPct: dp, deltaSuffix, compareLabel, invertDelta,
+    icon: Icon, accent, spark, sparkId, sub, index = 0 }) => {
+    const shown = useCountUp(raw);
+    return (
+        <div className="dx-card dx-edge dx-rise hero-tile"
+            style={{
+                position: 'relative', overflow: 'hidden',
+                padding: '20px 20px 14px', minWidth: 0,
+                display: 'flex', flexDirection: 'column', gap: 8,
+                animationDelay: `${index * 70}ms`,
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.09em',
+                    textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{label}</span>
+                <span style={{ display: 'inline-flex', padding: 7, borderRadius: 10,
+                    background: `color-mix(in srgb, ${accent} 12%, transparent)`,
+                    border: `1px solid color-mix(in srgb, ${accent} 22%, transparent)` }}>
+                    <Icon size={15} style={{ color: accent }} />
+                </span>
             </div>
-            <Sparkline points={spark} color={accent} />
+            <div title={fullValue} style={{
+                fontSize: 30, fontWeight: 650, color: 'var(--text)',
+                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                lineHeight: 1.05, letterSpacing: '-0.02em', position: 'relative',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{format(shown)}</div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, position: 'relative' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 38, justifyContent: 'flex-end' }}>
+                    <DeltaChip pct={dp} compareLabel={compareLabel} invert={invertDelta} suffix={deltaSuffix} />
+                    {sub && <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{sub}</span>}
+                </div>
+                <Sparkline points={spark} color={accent} sparkId={sparkId} />
+            </div>
         </div>
-    </div>
-);
+    );
+};
 
 /* ─── Secondary metric cell (hairline rail) ─── */
 const RailMetric = ({ label, value, fullValue, sub, subTitle, deltaPct: dp, compareLabel, invertDelta, icon: Icon, hint }) => (
@@ -202,12 +242,12 @@ const RailMetric = ({ label, value, fullValue, sub, subTitle, deltaPct: dp, comp
             display: 'inline-flex', alignItems: 'center', gap: 5 }} title={hint}>
             <Icon size={12} style={{ opacity: 0.65 }} />{label}
         </span>
-        <span title={fullValue} style={{ fontSize: 17.5, fontWeight: 700, color: 'var(--text)',
-            fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em',
+        <span title={fullValue} style={{ fontSize: 17.5, fontWeight: 600, color: 'var(--text)',
+            fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
         {sub && (
             <span title={subTitle} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)',
-                fontVariantNumeric: 'tabular-nums', marginTop: -3,
+                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', marginTop: -3,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</span>
         )}
         <div style={{ minHeight: 18 }}>
@@ -219,37 +259,44 @@ const RailMetric = ({ label, value, fullValue, sub, subTitle, deltaPct: dp, comp
 /* ─── Insight pill ─── */
 const InsightPill = ({ icon: Icon, tone, title, value }) => {
     const tones = {
-        good: { c: '#059669', bg: 'rgba(5,150,105,0.08)' },
-        bad: { c: '#dc2626', bg: 'rgba(220,38,38,0.07)' },
-        info: { c: 'var(--brand, #0D9488)', bg: 'rgba(13,148,136,0.08)' },
+        good: { c: 'var(--success-text)', bg: 'var(--success-bg)' },
+        bad: { c: 'var(--danger-text)', bg: 'var(--danger-bg)' },
+        info: { c: 'var(--primary)', bg: 'var(--wash)' },
     };
     const t = tones[tone] || tones.info;
     return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
-            borderRadius: 12, background: t.bg, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px',
+            borderRadius: 'var(--radius-lg)', background: t.bg, minWidth: 0,
+            border: `1px solid color-mix(in srgb, ${t.c} 20%, transparent)` }}>
             <Icon size={16} style={{ color: t.c, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em',
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em',
                     textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{title}</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)',
-                    fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)',
+                    fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
                     overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
             </div>
         </div>
     );
 };
 
-/* ─── Recharts tooltip ─── */
+/* ─── Recharts tooltips — frosted panel, mono figures ─── */
+const GLASS_TOOLTIP = {
+    background: 'var(--glass-bg)',
+    backdropFilter: 'var(--glass-blur)',
+    WebkitBackdropFilter: 'var(--glass-blur)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-md)',
+    padding: '11px 14px',
+    boxShadow: 'var(--shadow-pop)',
+    fontSize: 12.5, color: 'var(--text)', minWidth: 210,
+};
+
 const BucketTooltip = ({ active, payload, label, fmt }) => {
     if (!active || !payload || !payload.length) return null;
     const d = payload[0].payload;
     return (
-        <div style={{
-            background: 'var(--bg-card)', border: '1px solid var(--border)',
-            borderRadius: 10, padding: '11px 14px',
-            boxShadow: 'var(--shadow-md, 0 4px 12px rgba(16,24,40,0.10))',
-            fontSize: 12.5, color: 'var(--text)', minWidth: 210,
-        }}>
+        <div style={GLASS_TOOLTIP}>
             <div style={{ fontWeight: 700, marginBottom: 7 }}>
                 {label}{d.partial ? ' · partial' : ''}
             </div>
@@ -266,7 +313,7 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
             ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, padding: '1.5px 0' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>{k}</span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{v}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{v}</span>
                 </div>
             ))}
         </div>
@@ -276,17 +323,15 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
 const CompositionTooltip = ({ active, payload, label, fmt }) => {
     if (!active || !payload || !payload.length) return null;
     return (
-        <div style={{
-            background: 'var(--bg-card)', border: '1px solid var(--border)',
-            borderRadius: 10, padding: '10px 14px',
-            boxShadow: 'var(--shadow-md, 0 4px 12px rgba(16,24,40,0.10))',
-            fontSize: 12.5, color: 'var(--text)', minWidth: 190,
-        }}>
+        <div style={{ ...GLASS_TOOLTIP, minWidth: 190 }}>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
             {payload.map((p) => (
-                <div key={p.dataKey} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '1.5px 0' }}>
-                    <span style={{ color: p.color }}>{p.name}</span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{fmt.currency(p.value)}</span>
+                <div key={p.dataKey} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '1.5px 0', alignItems: 'center' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, display: 'inline-block' }} />
+                        {p.name}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{fmt.currency(p.value)}</span>
                 </div>
             ))}
         </div>
@@ -295,12 +340,14 @@ const CompositionTooltip = ({ active, payload, label, fmt }) => {
 
 /* ─── Chart card wrapper ─── */
 const ChartCard = ({ title, subtitle, children, footer }) => (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 16, padding: '18px 18px 8px', minWidth: 0,
-        boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))' }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>
-            {title}
-            {subtitle && <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}> · {subtitle}</span>}
+    <div className="dx-card" style={{ padding: '18px 18px 8px', minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            {/* Gradient tick — marks the panel head without a heavy rule. */}
+            <span aria-hidden="true" style={{ width: 3, height: 15, borderRadius: 2, background: 'var(--grad-accent)' }} />
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)' }}>
+                {title}
+                {subtitle && <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}> · {subtitle}</span>}
+            </div>
         </div>
         {children}
         {footer}
@@ -309,9 +356,7 @@ const ChartCard = ({ title, subtitle, children, footer }) => (
 
 const Dashboard = () => {
     const { currencySymbol, currencyCode, currencyDecimals, tenantVersion } = useAuth();
-    const { isDark } = useTheme();
     const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
-    const C = CHART_COLORS[isDark ? 'dark' : 'light'];
 
     const [mode, setMode] = useState('MTD');
     // Bucket-range filter (client-side): indices into the loaded buckets.
@@ -522,20 +567,28 @@ const Dashboard = () => {
     return (
         <div style={{ padding: '24px 28px', width: '100%' }}>
             <style>{`
-                .hero-tile:hover { box-shadow: var(--shadow-md, 0 4px 14px rgba(16,24,40,0.09)); transform: translateY(-1px); }
-                @media (prefers-reduced-motion: reduce) { .hero-tile { transition: none; } .hero-tile:hover { transform: none; } }
                 .rail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-                .rail-grid > div + div { border-left: 1px solid var(--border-light, var(--border)); }
-                @media (max-width: 900px) { .rail-grid > div + div { border-left: none; border-top: 1px solid var(--border-light, var(--border)); } }
-                .exec-row:hover { background: var(--bg-hover, rgba(148,163,184,0.05)); }
+                .rail-grid > div + div { border-left: 1px solid var(--border-light); }
+                @media (max-width: 900px) { .rail-grid > div + div { border-left: none; border-top: 1px solid var(--border-light); } }
+                .exec-row { transition: background 180ms ease; }
+                .exec-row:hover { background: var(--bg-hover); }
+                .seg-btn { border: none; cursor: pointer; border-radius: 8; }
             `}</style>
 
             {/* ── Header ── */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 flexWrap: 'wrap', gap: 14, marginBottom: 20 }}>
                 <div>
-                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 750, color: 'var(--text)',
-                        letterSpacing: '-0.015em' }}>
+                    <h1 style={{
+                        margin: 0, fontSize: 24, fontWeight: 700,
+                        letterSpacing: '-0.02em',
+                        // Gradient wordmark — the one place the brand gradient
+                        // touches type, so it stays a signature rather than noise.
+                        background: 'var(--grad-primary)',
+                        WebkitBackgroundClip: 'text', backgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent', color: 'var(--text)',
+                        width: 'fit-content',
+                    }}>
                         Executive Summary
                     </h1>
                     <div style={{ marginTop: 5, fontSize: 12.5, color: 'var(--text-secondary)',
@@ -547,7 +600,9 @@ const Dashboard = () => {
                         settlement currency
                         {isFiltered && viewData.length > 0 && (
                             <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700,
-                                color: 'var(--brand, #0D9488)', background: 'rgba(13,148,136,0.10)',
+                                fontFamily: 'var(--font-mono)',
+                                color: 'var(--primary)', background: 'var(--wash)',
+                                border: '1px solid color-mix(in srgb, var(--primary) 22%, transparent)',
                                 borderRadius: 999, padding: '2px 9px' }}>
                                 {viewData[0].label} – {viewData[viewData.length - 1].label}
                             </span>
@@ -559,8 +614,10 @@ const Dashboard = () => {
                     {/* Bucket-range filter (client-side) */}
                     {chartData.length > 1 && (
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-                            background: 'var(--bg-card)', border: '1px solid var(--border)',
-                            borderRadius: 10, padding: '5px 10px', fontSize: 12.5,
+                            background: 'var(--glass-bg)', backdropFilter: 'var(--glass-blur)',
+                            WebkitBackdropFilter: 'var(--glass-blur)',
+                            border: '1px solid var(--border)', boxShadow: 'var(--shadow-xs)',
+                            borderRadius: 'var(--radius-md)', padding: '6px 12px', fontSize: 12.5,
                             color: 'var(--text-secondary)' }}>
                             <SlidersHorizontal size={13} />
                             <select value={fromIdx} aria-label={`From ${mode === 'MTD' ? 'week' : 'month'}`}
@@ -590,31 +647,27 @@ const Dashboard = () => {
                         </div>
                     )}
 
-                    <div style={{ display: 'inline-flex', background: 'var(--bg-card)',
-                        border: '1px solid var(--border)', borderRadius: 10, padding: 3 }}>
+                    <div style={{ display: 'inline-flex', background: 'var(--bg-subtle)',
+                        border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
                         {['MTD', 'YTD'].map(m => (
                             <button key={m} onClick={() => setMode(m)} style={{
-                                border: 'none', cursor: 'pointer', borderRadius: 8,
-                                padding: '6px 18px', fontSize: 13, fontWeight: 600,
-                                background: mode === m ? 'var(--brand, #0D9488)' : 'transparent',
+                                border: 'none', cursor: 'pointer', borderRadius: 999,
+                                padding: '6px 20px', fontSize: 13, fontWeight: 600,
+                                background: mode === m ? 'var(--grad-primary)' : 'transparent',
                                 color: mode === m ? '#fff' : 'var(--text-secondary)',
-                                transition: 'background 0.15s, color 0.15s',
+                                boxShadow: mode === m ? '0 2px 8px rgba(164, 78, 31,0.28)' : 'none',
+                                transition: 'background 200ms, color 200ms, box-shadow 200ms',
                             }}>{m}</button>
                         ))}
                     </div>
                     <button onClick={exportCsv} title="Export CSV (respects filter)" disabled={!hasData} style={{
-                        border: '1px solid var(--border)', background: 'var(--bg-card)',
-                        borderRadius: 10, padding: '7px 14px', cursor: hasData ? 'pointer' : 'not-allowed',
-                        color: 'var(--text)', display: 'inline-flex', alignItems: 'center', gap: 7,
+                        ...GHOST_BTN, padding: '8px 14px', gap: 7,
+                        cursor: hasData ? 'pointer' : 'not-allowed',
                         fontSize: 13, fontWeight: 600, opacity: hasData ? 1 : 0.5,
                     }}>
                         <Download size={14} /> Export
                     </button>
-                    <button onClick={load} title="Refresh" style={{
-                        border: '1px solid var(--border)', background: 'var(--bg-card)',
-                        borderRadius: 10, padding: 8, cursor: 'pointer',
-                        color: 'var(--text-secondary)', display: 'flex',
-                    }}>
+                    <button onClick={load} title="Refresh" style={{ ...GHOST_BTN, padding: 9, color: 'var(--text-secondary)' }}>
                         <RefreshCw size={15} />
                     </button>
                 </div>
@@ -628,19 +681,19 @@ const Dashboard = () => {
                     {/* ── Primary hero band (4 tiles, sparkline shape) ── */}
                     <div style={{ display: 'grid', gap: 14, marginBottom: 14,
                         gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
-                        <HeroTile label="Volume" icon={BarChart3} accent="#0D9488"
-                            value={fmt.currency(num(vt.volume))}
+                        <HeroTile label="Volume" icon={BarChart3} accent="var(--chart-3)" sparkId="volume" index={0}
+                            raw={num(vt.volume)} format={(v) => fmt.currency(v)}
                             fullValue={fullNum(vt.volume, currencySymbol)}
                             deltaPct={dpg(vt.volume, prev?.volume)} compareLabel={compareLabel}
                             spark={sparks.volume}
                             sub={`${num(vt.txns).toLocaleString()} transactions`} />
-                        <HeroTile label="Net Margin" icon={TrendingUp} accent="#10b981"
-                            value={fmt.currency(num(vt.netRevenue))}
+                        <HeroTile label="Net Margin" icon={TrendingUp} accent="var(--chart-3)" sparkId="netrev" index={1}
+                            raw={num(vt.netRevenue)} format={(v) => fmt.currency(v)}
                             fullValue={fullNum(vt.netRevenue, currencySymbol)}
                             deltaPct={dpg(vt.netRevenue, prev?.netRevenue)} compareLabel={compareLabel}
                             spark={sparks.netRevenue} />
-                        <HeroTile label="Net Margin %" icon={Percent} accent="#ef4444"
-                            value={`${num(vt.marginPct).toFixed(2)}%`}
+                        <HeroTile label="Net Margin %" icon={Percent} accent="var(--chart-3)" sparkId="marginpct" index={2}
+                            raw={num(vt.marginPct)} format={(v) => `${v.toFixed(2)}%`}
                             fullValue={`${num(vt.marginPct).toFixed(4)}% of volume`}
                             deltaPct={isFiltered ? null
                                 : (prev && num(prev.marginPct) !== 0
@@ -648,8 +701,8 @@ const Dashboard = () => {
                             deltaSuffix="" compareLabel={compareLabel}
                             spark={sparks.marginPct}
                             sub="net margin / volume" />
-                        <HeroTile label="Transactions" icon={Receipt} accent="#8b5cf6"
-                            value={fmt.number(num(vt.txns))}
+                        <HeroTile label="Transactions" icon={Receipt} accent="var(--chart-3)" sparkId="txns" index={3}
+                            raw={num(vt.txns)} format={(v) => fmt.number(Math.round(v))}
                             fullValue={fullNum(vt.txns)}
                             deltaPct={dpg(vt.txns, prev?.txns)} compareLabel={compareLabel}
                             spark={sparks.txns}
@@ -658,10 +711,8 @@ const Dashboard = () => {
 
                     {/* ── Secondary metric rail (fees + derived KPIs) ── */}
                     {derived && (
-                        <div className="rail-grid" style={{
-                            background: 'var(--bg-card)', border: '1px solid var(--border)',
-                            borderRadius: 16, marginBottom: 14, overflow: 'hidden',
-                            boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))',
+                        <div className="rail-grid dx-card dx-rise" style={{
+                            marginBottom: 14, overflow: 'hidden', animationDelay: '280ms',
                         }}>
                             <RailMetric label="MSF" icon={Wallet}
                                 value={fmt.currency(num(vt.msf))}
@@ -736,7 +787,8 @@ const Dashboard = () => {
                     )}
 
                     {/* ── Charts row ── */}
-                    <div style={{ display: 'grid', gap: 14, marginBottom: 22,
+                    <div className="dx-rise" style={{ display: 'grid', gap: 14, marginBottom: 22,
+                        animationDelay: '340ms',
                         gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))' }}>
                         <ChartCard
                             title={mode === 'MTD' ? 'Week-by-week' : 'Month-by-month'}
@@ -750,38 +802,38 @@ const Dashboard = () => {
                                 axis, Net Margin % line on the right (%) axis. */}
                             <ResponsiveContainer width="100%" height={344}>
                                 <ComposedChart data={viewData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                                    <CartesianGrid stroke="var(--border)" vertical={false} />
-                                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} />
+                                    <ChartGradients series={{ volume: C.volume }} from={0.95} to={0.25} />
+                                    <CartesianGrid {...GRID_PROPS} />
+                                    <XAxis dataKey="label" {...AXIS_PROPS} />
                                     {/* Money axis — carries the tenant currency. */}
                                     <YAxis yAxisId="vol" tickFormatter={(v) => fmt.currency(v)}
-                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} width={PANEL_Y_WIDTH} />
+                                        {...AXIS_PROPS} width={PANEL_Y_WIDTH} />
                                     <YAxis yAxisId="pct" orientation="right"
                                         tickFormatter={(v) => `${v.toFixed(1)}%`}
-                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} width={48} />
+                                        {...AXIS_PROPS} width={48} />
                                     <ReTooltip content={<BucketTooltip fmt={fmt} />}
-                                        cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
-                                    <Legend wrapperStyle={{ fontSize: 11.5 }} iconType="circle" iconSize={8} />
-                                    <Bar yAxisId="vol" dataKey="volume" name="Volume"
-                                        radius={[4, 4, 0, 0]} maxBarSize={28}>
+                                        cursor={{ fill: 'color-mix(in srgb, var(--primary) 7%, transparent)' }} />
+                                    <Legend {...LEGEND_PROPS} />
+                                    {/* `fill` is what the Legend swatch reads — the per-bar
+                                        Cells below paint the actual gradient body. */}
+                                    <Bar yAxisId="vol" dataKey="volume" name="Volume" fill={C.volume}
+                                        radius={[6, 6, 0, 0]} maxBarSize={28} {...ANIM()}>
                                         {viewData.map((b, i) => (
-                                            <Cell key={i} fill={C.volume}
-                                                fillOpacity={b.partial ? 0.45 : 1} />
+                                            <Cell key={i} fill={`url(#${gradientId('volume')})`}
+                                                fillOpacity={b.partial ? 0.6 : 1} />
                                         ))}
                                     </Bar>
                                     {mode === 'MTD' && runRate && num(runRate.projectedVolume) > 0 && (
                                         <ReferenceLine yAxisId="vol"
                                             y={num(runRate.projectedVolume) / Math.max(viewData.length, 1)}
-                                            stroke="var(--text-secondary)" strokeDasharray="5 4"
+                                            stroke="var(--chart-axis)" strokeDasharray="5 4"
                                             label={{ value: 'avg pace', position: 'insideTopRight',
-                                                fontSize: 10, fill: 'var(--text-secondary)' }} />
+                                                fontSize: 10, fill: 'var(--chart-axis)' }} />
                                     )}
                                     <Line yAxisId="pct" type="monotone" dataKey="marginPct" name="Net Margin %"
-                                        stroke={C.marginPct} strokeWidth={2}
-                                        dot={{ r: 4, strokeWidth: 2, stroke: 'var(--bg-card)', fill: C.marginPct }}
-                                        activeDot={{ r: 5, strokeWidth: 2, stroke: 'var(--bg-card)' }} />
+                                        stroke={C.marginPct} strokeWidth={2.4} {...ANIM()}
+                                        dot={{ r: 3.5, strokeWidth: 2, stroke: 'var(--bg-card)', fill: C.marginPct }}
+                                        activeDot={{ r: 5.5, strokeWidth: 2, stroke: 'var(--bg-card)' }} />
                                 </ComposedChart>
                             </ResponsiveContainer>
                         </ChartCard>
@@ -791,48 +843,43 @@ const Dashboard = () => {
                             {/* height matches the two panels + their labels next door */}
                             <ResponsiveContainer width="100%" height={344}>
                                 <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                                    <CartesianGrid stroke="var(--border)" vertical={false} />
-                                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} />
+                                    <CartesianGrid {...GRID_PROPS} />
+                                    <XAxis dataKey="label" {...AXIS_PROPS} />
                                     {/* Money axis (MSF composition) — carries the tenant currency. */}
-                                    <YAxis tickFormatter={(v) => fmt.currency(v)}
-                                        tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                                        axisLine={false} tickLine={false} width={66} />
+                                    <YAxis tickFormatter={(v) => fmt.currency(v)} {...AXIS_PROPS} width={66} />
                                     <ReTooltip content={<CompositionTooltip fmt={fmt} />}
-                                        cursor={{ fill: 'var(--border)', fillOpacity: 0.25 }} />
-                                    <Legend wrapperStyle={{ fontSize: 11.5 }} iconType="circle" iconSize={8} />
+                                        cursor={{ fill: 'color-mix(in srgb, var(--primary) 7%, transparent)' }} />
+                                    <Legend {...LEGEND_PROPS} />
                                     {/* stroke is the surface colour: it reads as a 2px gap
                                         between segments, not as an outline. */}
                                     <Bar dataKey="netRevenue" name="Net Margin" stackId="c"
                                         fill={C.netRevenue} maxBarSize={30}
-                                        stroke="var(--bg-card)" strokeWidth={2} />
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()} />
                                     <Bar dataKey="interchange" name="Interchange" stackId="c"
                                         fill={C.interchange} maxBarSize={30}
-                                        stroke="var(--bg-card)" strokeWidth={2} />
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()} />
                                     <Bar dataKey="schemeFee" name="Scheme Fee" stackId="c"
                                         fill={C.schemeFee} maxBarSize={30}
-                                        stroke="var(--bg-card)" strokeWidth={2} />
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()} />
                                     <Bar dataKey="ecomFee" name="PG Fee" stackId="c"
-                                        fill={C.ecomFee} maxBarSize={30} radius={[4, 4, 0, 0]}
-                                        stroke="var(--bg-card)" strokeWidth={2} />
+                                        fill={C.ecomFee} maxBarSize={30} radius={[6, 6, 0, 0]}
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </ChartCard>
                     </div>
 
                     {/* ── Breakdown table ── */}
-                    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)',
-                        borderRadius: 16, overflow: 'hidden',
-                        boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))' }}>
+                    <div className="dx-card" style={{ overflow: 'hidden' }}>
                         <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
-                                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
                                         {TABLE_HEADS.map((h, i) => (
                                             <th key={h.label} style={{
                                                 textAlign: i === 0 ? 'left' : 'right',
-                                                padding: '12px 16px', fontSize: 11, fontWeight: 600,
-                                                letterSpacing: '0.05em', textTransform: 'uppercase',
+                                                padding: '13px 16px', fontSize: 11, fontWeight: 600,
+                                                letterSpacing: '0.06em', textTransform: 'uppercase',
                                                 color: 'var(--text-secondary)', whiteSpace: 'nowrap',
                                             }}>
                                                 {h.label}
@@ -847,8 +894,8 @@ const Dashboard = () => {
                                 </thead>
                                 <tbody>
                                     {viewData.map((b, i) => {
-                                        const tint = i === bestIdx ? 'rgba(5,150,105,0.06)'
-                                            : i === worstIdx ? 'rgba(220,38,38,0.05)' : 'transparent';
+                                        const tint = i === bestIdx ? 'var(--success-bg)'
+                                            : i === worstIdx ? 'var(--danger-bg)' : 'transparent';
                                         const marginW = Math.min(Math.abs(b.marginPct) / maxAbsMargin, 1) * 100;
                                         return (
                                             <tr key={b.label} className="exec-row" style={{
@@ -858,7 +905,7 @@ const Dashboard = () => {
                                                     {b.label}
                                                     {b.partial && <span style={{
                                                         marginLeft: 8, fontSize: 10.5, fontWeight: 600,
-                                                        color: '#b45309', background: 'rgba(180,83,9,0.10)',
+                                                        color: 'var(--warning-text)', background: 'var(--warning-bg)',
                                                         borderRadius: 999, padding: '1px 7px',
                                                     }}>partial</span>}
                                                     {mode === 'MTD' && b.from && (
@@ -881,17 +928,18 @@ const Dashboard = () => {
                                                 </td>
                                                 <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.amount(b.ecomFee)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 600,
-                                                    color: b.netRevenue >= 0 ? 'var(--text)' : '#dc2626' }}
+                                                    color: b.netRevenue >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
                                                     title={fullNum(b.netRevenue, currencySymbol)}>{fmt.amount(b.netRevenue)}</td>
-                                                <td style={{ ...tdNum, fontWeight: 700,
-                                                    color: b.marginPct >= 0 ? '#059669' : '#dc2626' }}>
+                                                <td style={{ ...tdNum, fontWeight: 600,
+                                                    color: b.marginPct >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
                                                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
-                                                        <span style={{ width: 44, height: 4, borderRadius: 999,
-                                                            background: 'var(--bg-subtle, rgba(148,163,184,0.18))',
+                                                        <span style={{ width: 44, height: 5, borderRadius: 999,
+                                                            background: 'var(--bg-subtle)',
                                                             overflow: 'hidden', display: 'inline-block' }}>
                                                             <span style={{ display: 'block', height: '100%',
                                                                 width: `${marginW}%`, borderRadius: 999,
-                                                                background: b.marginPct >= 0 ? '#10b981' : '#ef4444' }} />
+                                                                transition: 'width 600ms cubic-bezier(0.22, 1, 0.36, 1)',
+                                                                background: b.marginPct >= 0 ? 'var(--grad-accent)' : 'var(--danger)' }} />
                                                         </span>
                                                         {b.marginPct.toFixed(2)}%
                                                     </span>
@@ -899,7 +947,7 @@ const Dashboard = () => {
                                             </tr>
                                         );
                                     })}
-                                    <tr style={{ background: 'var(--bg-hover, rgba(148,163,184,0.06))',
+                                    <tr style={{ background: 'var(--bg-subtle)',
                                         borderTop: '2px solid var(--border)' }}>
                                         <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--text)' }}>
                                             {mode} Total{isFiltered ? ' (filtered)' : ''}
@@ -919,7 +967,7 @@ const Dashboard = () => {
                                         <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.amount(num(vt.ecomFee))}</td>
                                         <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.amount(num(vt.netRevenue))}</td>
                                         <td style={{ ...tdTotal,
-                                            color: num(vt.marginPct) >= 0 ? '#059669' : '#dc2626' }}>
+                                            color: num(vt.marginPct) >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
                                             {num(vt.marginPct).toFixed(2)}%
                                         </td>
                                     </tr>
@@ -935,13 +983,26 @@ const Dashboard = () => {
 
 const tdNum = {
     padding: '11px 16px', textAlign: 'right', color: 'var(--text)',
-    fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+    fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
 };
 /* Rate lives INSIDE the fee cell it derives from — inline after the amount so
    rows stay single-height; no separate % columns. */
 const rateInline = {
     fontSize: 10.5, fontWeight: 600, color: 'var(--text-secondary)',
     fontVariantNumeric: 'tabular-nums', marginLeft: 6,
+};
+/* Frosted secondary button — export / refresh in the page header. */
+const GHOST_BTN = {
+    border: '1px solid var(--border)',
+    background: 'var(--glass-bg)',
+    backdropFilter: 'var(--glass-blur)',
+    WebkitBackdropFilter: 'var(--glass-blur)',
+    boxShadow: 'var(--shadow-xs)',
+    borderRadius: 'var(--radius-md)',
+    cursor: 'pointer',
+    color: 'var(--text)',
+    display: 'inline-flex', alignItems: 'center',
+    transition: 'box-shadow 200ms ease, border-color 200ms ease',
 };
 const selStyle = {
     border: 'none', background: 'transparent', color: 'var(--text)',

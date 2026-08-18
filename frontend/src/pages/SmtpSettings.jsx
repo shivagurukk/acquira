@@ -142,7 +142,7 @@ const SmtpSettings = () => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '20px' }}>
                 {configs.map(config => (
                     <div key={config.id} style={{
-                        background: 'white', borderRadius: '12px', padding: '24px',
+                        background: 'var(--bg-card)', borderRadius: '12px', padding: '24px',
                         boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
                         border: config.isActive ? '2px solid #10b981' : '1px solid #e2e8f0',
                         position: 'relative'
@@ -169,18 +169,18 @@ const SmtpSettings = () => {
 
                         <div style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid #f1f5f9', paddingTop: '20px' }}>
                             {!config.isActive && (
-                                <button onClick={() => handleActivate(config.id)} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontSize: '14px' }}>
+                                <button onClick={() => handleActivate(config.id)} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'var(--bg-card)', cursor: 'pointer', fontSize: '14px' }}>
                                     Activate
                                 </button>
                             )}
-                            <button onClick={() => handleTest(config.id)} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                            <button onClick={() => handleTest(config.id)} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'var(--bg-card)', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                                 {testPool[config.id] === 'TESTING' ? <RefreshCw className="spin" size={14} /> : <Shield size={14} />}
                                 {testPool[config.id] === 'SUCCESS' ? 'Passed' : testPool[config.id] === 'FAILED' ? 'Failed' : 'Test'}
                             </button>
-                            <button onClick={() => openModal(config)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', color: '#3b82f6' }}>
+                            <button onClick={() => openModal(config)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'var(--bg-card)', cursor: 'pointer', color: 'var(--primary)' }}>
                                 <Edit2 size={18} />
                             </button>
-                            <button onClick={() => handleDelete(config.id)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', color: '#ef4444' }}>
+                            <button onClick={() => handleDelete(config.id)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'var(--bg-card)', cursor: 'pointer', color: '#ef4444' }}>
                                 <Trash size={18} />
                             </button>
                         </div>
@@ -195,7 +195,7 @@ const SmtpSettings = () => {
                             initial={{ scale: 0.95, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
-                            style={{ background: 'white', padding: '30px', borderRadius: '16px', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto' }}
+                            style={{ background: 'var(--bg-card)', padding: '30px', borderRadius: '16px', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto' }}
                         >
                             <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '20px' }}>{currentConfig.id ? 'Edit Config' : 'New Config'}</h2>
                             <form onSubmit={handleSave} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -290,7 +290,7 @@ const SmtpSettings = () => {
                                 <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '20px' }}>
                                     <button type="button" onClick={handleTestCurrent}
                                         disabled={modalTest?.status === 'TESTING'}
-                                        style={{ padding: '10px 20px', borderRadius: '8px', background: 'white', border: '1px solid #cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: '#0f172a' }}>
+                                        style={{ padding: '10px 20px', borderRadius: '8px', background: 'var(--bg-card)', border: '1px solid #cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: '#0f172a' }}>
                                         {modalTest?.status === 'TESTING' ? <RefreshCw className="spin" size={16} /> : <Shield size={16} />}
                                         Test Connection
                                     </button>

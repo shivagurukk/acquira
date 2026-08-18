@@ -69,7 +69,7 @@ const DarkKpiCard = ({ title, value, growth, trend, icon: Icon }) => {
 
 // ─── Chart Card (Dark Theme) ────────────────────────────────────────
 const DarkChartCard = ({ title, children, height = 300 }) => (
-    <Paper sx={{ p: 3, borderRadius: '4px', bgcolor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+    <Paper sx={{ p: 3, borderRadius: '4px', bgcolor: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 3 }}>
             <Box sx={{ p: 0.75, bgcolor: DARK.bg, borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <LayoutGrid size={16} color="white" />
@@ -156,7 +156,7 @@ const MerchantInsights = () => {
                 position: 'sticky', top: 0, zIndex: 10,
             }}>
                 <Stack direction="row" alignItems="center" spacing={2}>
-                    <Typography variant="h6" fontWeight={800} color="#22d3ee" sx={{ letterSpacing: '0.1em' }}>
+                    <Typography variant="h6" fontWeight={800} color="var(--cat-3)" sx={{ letterSpacing: '0.1em' }}>
                         MAGNATI
                     </Typography>
                     <Box sx={{ width: 1, height: 24, bgcolor: DARK.border }} />
@@ -235,9 +235,9 @@ const MerchantInsights = () => {
                             <DarkChartCard title="Sales by Day of Week">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={data.overview.salesByDayOfWeek}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                        <XAxis dataKey="label" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                                        <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                                        <XAxis dataKey="label" stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
+                                        <YAxis stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
                                         <Tooltip content={<DarkTooltip />} />
                                         <Bar dataKey="value" name="Sales" fill={DARK.barPrimary} radius={[4, 4, 0, 0]} barSize={40} />
                                     </BarChart>
@@ -247,9 +247,9 @@ const MerchantInsights = () => {
                             <DarkChartCard title="Transactions by Day of Week">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={data.overview.transactionsByDayOfWeek}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                        <XAxis dataKey="label" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                                        <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                                        <XAxis dataKey="label" stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
+                                        <YAxis stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
                                         <Tooltip content={<DarkTooltip />} />
                                         <Bar dataKey="value" name="Transactions" fill={DARK.barSecondary} radius={[4, 4, 0, 0]} barSize={40} />
                                     </BarChart>
@@ -264,8 +264,8 @@ const MerchantInsights = () => {
                         <DarkChartCard title="Daily Sales & Count" height={350}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={data.achievements.dailySalesAndCount}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="label" stroke="#94a3b8" tickFormatter={(v) => v?.slice?.(-2) || v} />
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                                    <XAxis dataKey="label" stroke="var(--chart-axis)" tickFormatter={(v) => v?.slice?.(-2) || v} />
                                     <YAxis yAxisId="left" stroke={DARK.accent} tick={{ fontSize: 11 }} />
                                     <YAxis yAxisId="right" orientation="right" stroke={DARK.barSecondary} tick={{ fontSize: 11 }} />
                                     <Tooltip content={<DarkTooltip />} />
@@ -278,9 +278,9 @@ const MerchantInsights = () => {
                         <DarkChartCard title="Unique Customers by Day" height={250}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={data.achievements.uniqueCustomersByDay}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="label" stroke="#94a3b8" tickFormatter={(v) => v?.slice?.(-2) || v} />
-                                    <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} />
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                                    <XAxis dataKey="label" stroke="var(--chart-axis)" tickFormatter={(v) => v?.slice?.(-2) || v} />
+                                    <YAxis stroke="var(--chart-axis)" tick={{ fontSize: 11 }} />
                                     <Tooltip content={<DarkTooltip />} />
                                     <Bar dataKey="value" name="Customers" fill={DARK.barPrimary} stroke={DARK.barSecondary} strokeWidth={1} radius={[2, 2, 0, 0]} />
                                 </BarChart>

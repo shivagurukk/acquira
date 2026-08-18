@@ -187,8 +187,8 @@ const MerchantAnalyticsReport = () => {
         const totalMsf      = data.reduce((s, d) => s + (Number(d.msf)         || 0), 0);
         const totalCount    = data.reduce((s, d) => s + (Number(d.count)        || 0), 0);
         return [
-            { title: 'Total Records',   value: formatNumber(totalRows),                          icon: Layers,     color: '#6366f1', subtitle: `Page ${paginationModel.page + 1} of ${Math.ceil(totalRows / paginationModel.pageSize)}` },
-            { title: 'Page Volume',     value: formatCompactCurrency(totalVol),     icon: DollarSign, color: '#3b82f6' },
+            { title: 'Total Records',   value: formatNumber(totalRows),                          icon: Layers,     color: 'var(--projected)', subtitle: `Page ${paginationModel.page + 1} of ${Math.ceil(totalRows / paginationModel.pageSize)}` },
+            { title: 'Page Volume',     value: formatCompactCurrency(totalVol),     icon: DollarSign, color: 'var(--primary)' },
             { title: 'Page MSF',        value: formatCompactCurrency(totalMsf),     icon: BarChart2,  color: '#10b981' },
             { title: 'Page Trnx Count', value: formatCompact(totalCount),                         icon: Hash,       color: '#f59e0b' },
         ];

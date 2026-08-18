@@ -2,11 +2,13 @@ import React from 'react';
 import BenchmarkRail from './BenchmarkRail';
 
 /* ─── Inline Sparkline ────────────────────────────────────────────
-   A quiet micro-chart in the card footer: flat low-opacity area fill
-   (no gradients in this design system), hairline stroke, terminal dot.
-   Colour comes from the card's token so it stays on-token in both
-   colour schemes. */
+   A micro-chart in the card footer: gradient area fill, hairline
+   stroke, haloed terminal dot. Colour comes from the card's token so
+   it stays on-token in both colour schemes. */
 const Sparkline = ({ data = [], color = 'var(--chart-2)', width = 140, height = 36 }) => {
+    // The colour is a `var(--token)` string, so the gradient needs its own
+    // unique id rather than one derived from the colour.
+    const gid = `kpi-spark-${React.useId().replace(/:/g, '')}`;
     if (!data || data.length < 2) return null;
     const W = width, H = height;
     const pad = 3;                          // keep stroke off the top/bottom edge
@@ -21,9 +23,16 @@ const Sparkline = ({ data = [], color = 'var(--chart-2)', width = 140, height = 
     return (
         <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
             style={{ display: 'block' }} aria-hidden="true">
-            <polygon points={area} fill={color} fillOpacity="0.08" />
+            <defs>
+                <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+                    <stop offset="100%" stopColor={color} stopOpacity="0" />
+                </linearGradient>
+            </defs>
+            <polygon points={area} fill={`url(#${gid})`} />
             <polyline points={polyline} fill="none" stroke={color} strokeWidth="1.5"
                 strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+            <circle cx={lastX} cy={lastY} r="4.5" fill={color} opacity="0.2" />
             <circle cx={lastX} cy={lastY} r="2.4" fill={color} />
         </svg>
     );
@@ -54,18 +63,17 @@ const Delta = ({ value, isPositive, isNeutral, rose }) => {
             fontSize: '11px', fontWeight: 500,
             background: bg, color,
         }}>
-            {glyph} {isNeutral ? '' : `${Math.abs(Number(value)).toFixed(1)}%`}
+            <span className={isNeutral ? undefined : roseDir ? 'dx-arrow-up' : 'dx-arrow-down'}>
+                {glyph}
+            </span>
+            {isNeutral ? '' : `${Math.abs(Number(value)).toFixed(1)}%`}
         </span>
     );
 };
 
 /* ─── Skeleton Pulse ──────────────────────────────────────────── */
-const Pulse = ({ w = '100%', h = 14, r = 4 }) => (
-    <div style={{
-        width: w, height: h, borderRadius: r,
-        background: 'var(--bg-subtle)',
-        animation: 'kpiPulse 1.5s ease-in-out infinite',
-    }} />
+const Pulse = ({ w = '100%', h = 14, r = 6 }) => (
+    <div className="dx-shimmer" style={{ width: w, height: h, borderRadius: r }} />
 );
 
 /* ─── Single KPI Card ─────────────────────────────────────────────
@@ -86,12 +94,7 @@ export const KpiCard = ({
 
     if (loading) {
         return (
-            <div style={{
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)',
-                padding: '20px',
-            }}>
+            <div className="dx-card" style={{ padding: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
                     <Pulse w="45%" h={13} />
                     <Pulse w={44} h={18} />
@@ -104,6 +107,7 @@ export const KpiCard = ({
 
     return (
         <div
+            className="dx-card"
             onClick={onClick}
             role={clickable ? 'button' : undefined}
             tabIndex={clickable ? 0 : undefined}
@@ -111,22 +115,27 @@ export const KpiCard = ({
                 position: 'relative',
                 display: 'flex',
                 flexDirection: 'column',
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)',
+                // flex/minWidth are for the .dx-rise wrapper the row puts
+                // around each card; harmless when rendered standalone.
+                flex: 1, minWidth: 0,
                 padding: '20px 20px 0',
                 cursor: clickable ? 'pointer' : 'default',
                 overflow: 'hidden',
-                transition: 'background-color 150ms ease',
             }}
             onMouseEnter={e => {
                 if (clickable) e.currentTarget.style.background = 'var(--bg-hover)';
             }}
-            onMouseLeave={e => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-            }}
+            // Cleared rather than reset to a literal, so the .dx-card
+            // background (which differs per scheme) takes over again.
+            onMouseLeave={e => { e.currentTarget.style.background = ''; }}
             onKeyDown={e => { if (clickable && (e.key === 'Enter' || e.key === ' ')) onClick(); }}
         >
+            {/* Gradient accent along the card's top edge. */}
+            <span aria-hidden="true" style={{
+                position: 'absolute', top: 0, left: 0, right: 0, height: 2,
+                background: `linear-gradient(90deg, ${color}, transparent)`,
+                opacity: 0.7, pointerEvents: 'none',
+            }} />
             {/* ── Top: section title + delta ── */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
                 <div className="section-title" style={{
@@ -195,29 +204,23 @@ const KpiCards = ({ cards = [], loading, cols }) => {
     const count = cards.length || 4;
 
     return (
-        <>
-            <style>{`
-                @keyframes kpiPulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-                @media (prefers-reduced-motion: reduce) {
-                    [style*="kpiPulse"] { animation: none; }
-                }
-            `}</style>
-            <div style={{
-                display: 'grid',
-                gridTemplateColumns: `repeat(auto-fit, minmax(min(220px, 100%), 1fr))`,
-                gap: '12px',
-                marginBottom: '20px',
-            }}>
-                {loading
-                    ? Array.from({ length: count }).map((_, i) => <KpiCard key={i} loading />)
-                    : cards.map((card, i) => (
-                        <KpiCard key={i} {...card}
+        <div style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(auto-fit, minmax(min(220px, 100%), 1fr))`,
+            gap: '12px',
+            marginBottom: '20px',
+        }}>
+            {loading
+                ? Array.from({ length: count }).map((_, i) => <KpiCard key={i} loading />)
+                : cards.map((card, i) => (
+                    <div key={i} className="dx-rise" style={{ animationDelay: `${i * 60}ms`, display: 'flex' }}>
+                        <KpiCard {...card}
                             onClick={card.drillDown ? card.drillDown : undefined}
                         />
-                    ))
-                }
-            </div>
-        </>
+                    </div>
+                ))
+            }
+        </div>
     );
 };
 

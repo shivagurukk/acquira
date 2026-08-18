@@ -2,11 +2,16 @@ import React from 'react';
 
 /* ─── Shimmer pulse CSS ─────────────────────────────────────── */
 const shimmerStyle = {
-    background: 'linear-gradient(90deg, var(--bg-subtle,#f3f4f6) 25%, var(--border-light,#e5e7eb) 50%, var(--bg-subtle,#f3f4f6) 75%)',
+    background: 'linear-gradient(90deg, var(--bg-subtle) 25%, color-mix(in srgb, var(--primary) 12%, var(--bg-subtle)) 50%, var(--bg-subtle) 75%)',
     backgroundSize: '400% 100%',
     animation: 'shimmer 1.8s ease-in-out infinite',
     borderRadius: 6,
 };
+
+const SHIMMER_KEYFRAMES = `
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+    @media (prefers-reduced-motion: reduce) { [style*="shimmer"] { animation: none; } }
+`;
 
 const Bone = ({ w = '100%', h = 14, r = 6, style = {} }) => (
     <div style={{ ...shimmerStyle, width: w, height: h, borderRadius: r, flexShrink: 0, ...style }} />
@@ -90,7 +95,7 @@ const SkeletonLoader = ({ variant = 'page', ...props }) => {
         case 'kpi-row':
             return (
                 <>
-                    <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+                    <style>{SHIMMER_KEYFRAMES}</style>
                     <div style={{ display: 'flex', gap: 16, marginBottom: 28 }}>
                         {Array.from({ length: props.count || 5 }).map((_, i) => <KpiSkeleton key={i} />)}
                     </div>
@@ -99,21 +104,21 @@ const SkeletonLoader = ({ variant = 'page', ...props }) => {
         case 'chart':
             return (
                 <>
-                    <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+                    <style>{SHIMMER_KEYFRAMES}</style>
                     <ChartSkeleton height={props.height || 320} />
                 </>
             );
         case 'table':
             return (
                 <>
-                    <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+                    <style>{SHIMMER_KEYFRAMES}</style>
                     <TableSkeleton rows={props.rows || 6} cols={props.cols || 5} />
                 </>
             );
         default:
             return (
                 <>
-                    <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+                    <style>{SHIMMER_KEYFRAMES}</style>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 20, padding: '28px' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))', gap: 16 }}>
                             {Array.from({ length: 5 }).map((_, i) => <KpiSkeleton key={i} />)}
