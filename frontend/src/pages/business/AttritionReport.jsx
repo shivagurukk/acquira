@@ -1137,15 +1137,16 @@ const AttritionReport = () => {
 
             <Paper sx={{
                 ...premiumTableWrapper,
-                // The single active comparison group: a quiet uppercase label with
-                // a hairline accent underline, naming the window the three numeric
-                // columns beneath it belong to.
+                // The single active comparison group sits INSIDE the navy header
+                // bar, so it stays transparent (a light fill here would punch a
+                // pale band through the gradient) and separates itself with a
+                // translucent rule and slightly dimmed type instead.
                 '& .cmp-header-group': {
-                    bgcolor: 'var(--bg-subtle, #f8fafc)',
-                    boxShadow: 'inset 0 -2px 0 var(--brand, #2563eb)',
+                    bgcolor: 'transparent',
+                    boxShadow: 'inset 0 -1px 0 rgba(255, 255, 255, 0.22)',
                     '& .MuiDataGrid-columnHeaderTitle': {
                         fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
-                        textTransform: 'uppercase', color: 'var(--text-secondary, #6b7280)',
+                        textTransform: 'uppercase', color: 'var(--table-head-muted)',
                     },
                 },
             }}>
@@ -1161,7 +1162,17 @@ const AttritionReport = () => {
                     }}
                     pageSizeOptions={[25, 50, 100]}
                     experimentalFeatures={{ columnGrouping: true }}
-                    sx={{ ...premiumDataGridStyles, '& .MuiDataGrid-row': { cursor: 'pointer' } }}
+                    // The row rule must MERGE with the shared one, not replace it:
+                    // a bare `'& .MuiDataGrid-row': { cursor }` key overwrites the
+                    // whole selector and silently drops the shared row tint, hover
+                    // and selected styling.
+                    sx={{
+                        ...premiumDataGridStyles,
+                        '& .MuiDataGrid-row': {
+                            ...premiumDataGridStyles['& .MuiDataGrid-row'],
+                            cursor: 'pointer',
+                        },
+                    }}
                 />
             </Paper>
 

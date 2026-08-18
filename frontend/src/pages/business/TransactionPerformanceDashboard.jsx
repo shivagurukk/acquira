@@ -264,9 +264,12 @@ const TransactionPerformanceDashboard = () => {
                     slots={{ toolbar: GridToolbar }}
                     sx={{ ...premiumDataGridStyles,
                         '& .neg-vol': { color: 'var(--danger, #dc2626) !important', fontWeight: 600 },
-                        '& .row-level-1': { bgcolor: '#f8fafc !important' },
-                        '& .row-level-2': { bgcolor: '#f1f5f9 !important' },
-                        '& .row-level-3': { bgcolor: '#e2e8f0 !important' },
+                        // Hierarchy depth by tint. On tokens, not hardcoded greys:
+                        // fixed slate values ignore the theme and read as dirty
+                        // patches against the blue table rows.
+                        '& .row-level-1': { bgcolor: 'var(--table-row) !important' },
+                        '& .row-level-2': { bgcolor: 'var(--table-row-alt) !important' },
+                        '& .row-level-3': { bgcolor: 'color-mix(in srgb, var(--primary) 15%, var(--bg-card)) !important' },
                     }}
                     getRowClassName={(params) => `row-level-${params.row.level}`}
                 />
