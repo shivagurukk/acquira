@@ -115,6 +115,8 @@ export const KpiCard = ({
                 position: 'relative',
                 display: 'flex',
                 flexDirection: 'column',
+                // The border sweep light takes on this card's accent colour.
+                '--dx-sweep': color,
                 // flex/minWidth are for the .dx-rise wrapper the row puts
                 // around each card; harmless when rendered standalone.
                 flex: 1, minWidth: 0,

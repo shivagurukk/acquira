@@ -409,6 +409,15 @@ const Layout = () => {
                         {activeTenant.bankName}
                     </div>
                 )}
+                {/* Dark mode toggle */}
+                <button
+                    title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                    aria-label="Toggle dark mode"
+                    onClick={toggleTheme}
+                    style={{ width: 28, height: 28, borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                >
+                    {isDark ? <LucideIcons.Sun size={14} /> : <LucideIcons.Moon size={14} />}
+                </button>
                 {/* Keyboard shortcut hint */}
                 <button
                     title="Keyboard shortcuts (?)"

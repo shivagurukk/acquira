@@ -60,8 +60,8 @@ const SWEEP = {
       var(--dx-card-grid),
       conic-gradient(from var(--dxa),
         ${T.border} 0deg, ${T.border} 280deg,
-        color-mix(in srgb, var(--primary) 40%, ${T.border}) 310deg,
-        var(--primary) 332deg,
+        color-mix(in srgb, var(--dx-sweep, var(--primary)) 40%, ${T.border}) 310deg,
+        var(--dx-sweep, var(--primary)) 332deg,
         ${T.border} 352deg) border-box`,
   border: '2px solid transparent',
   // Inline styles cannot carry a media query, so reduced motion is

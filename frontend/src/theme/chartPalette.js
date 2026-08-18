@@ -42,15 +42,15 @@ export const CATEGORICAL = [
    stays scarce; fee components take the categorical slots. */
 export const SERIES = {
     volume:      'var(--chart-3)',
-    /* MSF composition stack — monochrome steel/grey shades (user's call:
-       modern, in-family). Identity comes from lightness steps + the
-       legend/tooltip labels: net margin mid steel, interchange deep navy,
-       PG fee light steel, scheme fee neutral slate grey. */
-    netRevenue:  'var(--chart-3)',
+    /* MSF composition stack — imperial-blue shades (user's call), deep →
+       light so segments read by lightness while the panel stays clearly
+       distinct from the steel volume chart: net margin royal --imp-2,
+       interchange deepest --imp-1, scheme fee --imp-3, PG fee --imp-4. */
+    netRevenue:  'var(--imp-2)',
     marginPct:   'var(--chart-line)',
-    interchange: 'var(--chart-1)',
-    schemeFee:   'var(--chart-alt)',
-    ecomFee:     'var(--chart-4)',
+    interchange: 'var(--imp-1)',
+    schemeFee:   'var(--imp-3)',
+    ecomFee:     'var(--imp-4)',
     other:       'var(--chart-5)',
     forecast:    'var(--chart-alt)',
     benchmark:   'var(--projected)',

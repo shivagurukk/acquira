@@ -14,11 +14,11 @@ import { createTheme } from '@mui/material/styles';
 // properties in index.css — the one place hex values may live.
 export const TOKENS = {
     light: {
-        canvas:    '#EDF1F8',
+        canvas:    '#F1F7FF',
         surface:   '#EAF1FA',
         hairline:  '#E4E7EC',
-        ink:       '#191D24',
-        muted:     '#5C6675',
+        ink:       '#14295E',
+        muted:     '#51618C',
         primary:   '#3F63B0',
         wash:      '#DCE8F7',
         negative:  '#B3382C',
@@ -159,8 +159,8 @@ export function buildTheme() {
                             var(--dx-card-grid),
                             conic-gradient(from var(--dxa),
                               var(--border) 0deg, var(--border) 280deg,
-                              color-mix(in srgb, var(--primary) 40%, var(--border)) 310deg,
-                              var(--primary) 332deg,
+                              color-mix(in srgb, var(--dx-sweep, var(--primary)) 40%, var(--border)) 310deg,
+                              var(--dx-sweep, var(--primary)) 332deg,
                               var(--border) 352deg) border-box`,
                         border: '2px solid transparent',
                         boxShadow: 'var(--shadow-card)',

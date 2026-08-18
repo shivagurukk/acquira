@@ -10,11 +10,11 @@
    ══════════════════════════════════════════════════════════════ */
 :root {
   /* ── Core palette (light) ── */
-  --canvas:      #EDF1F8;   /* page ground — light steel blue */
+  --canvas:      #F1F7FF;   /* page ground — light airy blue */
   --surface:     #EAF1FA;   /* card ground — light steel blue, never white */
   --hairline:    #E4E7EC;
-  --ink:         #191D24;
-  --muted:       #5C6675;
+  --ink:         #14295E;   /* primary text — deep navy, not black */
+  --muted:       #51618C;   /* secondary text — navy grey */
   --primary:     #3F63B0;   /* steel — actions, active nav, brand marks */
   --primary-soft:#5578C4;   /* interactive / hover accent */
   --wash:        #DCE8F7;   /* selected rows, chips, hover */
@@ -37,12 +37,19 @@
   --cat-5: #A85D9C;   /* plum   */
 
   /* ── Semantic chart marks ── */
-  --chart-line: #333B47;   /* graphite overlay lines (margin %, trends) */
+  /* Imperial ramp — the MSF composition stack, deep → light. Kept
+     separate from the steel ramp so the two chart panels never twin. */
+  --imp-1: #08207C;
+  --imp-2: #0A34C8;
+  --imp-3: #4467E4;
+  --imp-4: #93AAF4;
+  --chart-royal: var(--imp-2);
+  --chart-line: #24386B;   /* navy overlay lines (margin %, trends) */
   --chart-pos: #0FA070;
   --chart-neg: #B3382C;
   --chart-alt: #64748B;
   --chart-grid: #E9EBEE;
-  --chart-axis: #8A94A2;
+  --chart-axis: #8593AF;
 
   /* ── Typography ── */
   --font-ui:   'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -254,7 +261,7 @@ body {
   /* Neutral canvas with a faint cool bloom at the top — the static base the
      animated .dx-backdrop layers sit on. */
   background-color: var(--bg);
-  background-image: radial-gradient(120% 80% at 50% -10%, #E2EAF7 0%, transparent 62%);
+  background-image: radial-gradient(120% 80% at 50% -10%, #DCE9FC 0%, transparent 62%);
   background-attachment: fixed;
   color: var(--text);
   /* Scroll, never clip. Whatever --app-zoom cannot absorb (a wide table,
@@ -353,8 +360,8 @@ body {
     var(--dx-card-grid),
     conic-gradient(from var(--dxa),
       var(--border) 0deg, var(--border) 280deg,
-      color-mix(in srgb, var(--primary) 40%, var(--border)) 310deg,
-      var(--primary) 332deg,
+      color-mix(in srgb, var(--dx-sweep, var(--primary)) 40%, var(--border)) 310deg,
+      var(--dx-sweep, var(--primary)) 332deg,
       var(--border) 352deg) border-box;
   border: 2px solid transparent;
   border-radius: var(--radius-lg);
@@ -390,8 +397,8 @@ body {
     var(--dx-card-grid),
     conic-gradient(from var(--dxa),
       var(--border) 0deg, var(--border) 280deg,
-      color-mix(in srgb, var(--primary) 40%, var(--border)) 310deg,
-      var(--primary) 332deg,
+      color-mix(in srgb, var(--dx-sweep, var(--primary)) 40%, var(--border)) 310deg,
+      var(--dx-sweep, var(--primary)) 332deg,
       var(--border) 352deg) border-box;
   border: 2px solid transparent;
   border-radius: var(--radius-lg);
@@ -632,6 +639,11 @@ html.dark {
   --cat-4: #B48A20;
   --cat-5: #BA65A8;
 
+  --imp-1: #3550D6;
+  --imp-2: #4C6FEA;
+  --imp-3: #7D95F0;
+  --imp-4: #B4C4F8;
+  --chart-royal: var(--imp-2);
   --chart-line: #C7CFDA;
   --chart-pos: #34B98A;
   --chart-neg: #E2705C;

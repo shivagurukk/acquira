@@ -256,17 +256,21 @@ const RailMetric = ({ label, value, fullValue, sub, subTitle, deltaPct: dp, comp
     </div>
 );
 
-/* ─── Insight pill ─── */
+/* ─── Insight pill — tinted gradient wash, stronger at the icon end ─── */
 const InsightPill = ({ icon: Icon, tone, title, value }) => {
     const tones = {
-        good: { c: 'var(--success-text)', bg: 'var(--success-bg)' },
-        bad: { c: 'var(--danger-text)', bg: 'var(--danger-bg)' },
-        info: { c: 'var(--primary)', bg: 'var(--wash)' },
+        good: { c: 'var(--success-text)', g: 'var(--success)' },
+        bad: { c: 'var(--danger-text)', g: 'var(--danger)' },
+        info: { c: 'var(--primary)', g: 'var(--primary)' },
     };
     const t = tones[tone] || tones.info;
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px',
-            borderRadius: 'var(--radius-lg)', background: t.bg, minWidth: 0,
+            borderRadius: 'var(--radius-lg)', minWidth: 0,
+            background: `linear-gradient(105deg,
+                color-mix(in srgb, ${t.g} 22%, var(--bg-card)) 0%,
+                color-mix(in srgb, ${t.g} 10%, var(--bg-card)) 45%,
+                color-mix(in srgb, ${t.g} 3%, var(--bg-card)) 100%)`,
             border: `1px solid color-mix(in srgb, ${t.c} 20%, transparent)` }}>
             <Icon size={16} style={{ color: t.c, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
@@ -843,6 +847,14 @@ const Dashboard = () => {
                             {/* height matches the two panels + their labels next door */}
                             <ResponsiveContainer width="100%" height={344}>
                                 <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                                    {/* Gradient bodies for each stack segment; `to` stays high
+                                        so no segment fades out mid-stack. */}
+                                    <ChartGradients from={0.95} to={0.5} series={{
+                                        netRevenue: C.netRevenue,
+                                        interchange: C.interchange,
+                                        schemeFee: C.schemeFee,
+                                        ecomFee: C.ecomFee,
+                                    }} />
                                     <CartesianGrid {...GRID_PROPS} />
                                     <XAxis dataKey="label" {...AXIS_PROPS} />
                                     {/* Money axis (MSF composition) — carries the tenant currency. */}
@@ -851,19 +863,36 @@ const Dashboard = () => {
                                         cursor={{ fill: 'color-mix(in srgb, var(--primary) 7%, transparent)' }} />
                                     <Legend {...LEGEND_PROPS} />
                                     {/* stroke is the surface colour: it reads as a 2px gap
-                                        between segments, not as an outline. */}
+                                        between segments, not as an outline. `fill` is what the
+                                        Legend swatch reads — the Cells paint the gradients. */}
                                     <Bar dataKey="netRevenue" name="Net Margin" stackId="c"
                                         fill={C.netRevenue} maxBarSize={30}
-                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()} />
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
+                                        {viewData.map((b, i) => (
+                                            <Cell key={i} fill={`url(#${gradientId('netRevenue')})`} />
+                                        ))}
+                                    </Bar>
                                     <Bar dataKey="interchange" name="Interchange" stackId="c"
                                         fill={C.interchange} maxBarSize={30}
-                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()} />
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
+                                        {viewData.map((b, i) => (
+                                            <Cell key={i} fill={`url(#${gradientId('interchange')})`} />
+                                        ))}
+                                    </Bar>
                                     <Bar dataKey="schemeFee" name="Scheme Fee" stackId="c"
                                         fill={C.schemeFee} maxBarSize={30}
-                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()} />
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
+                                        {viewData.map((b, i) => (
+                                            <Cell key={i} fill={`url(#${gradientId('schemeFee')})`} />
+                                        ))}
+                                    </Bar>
                                     <Bar dataKey="ecomFee" name="PG Fee" stackId="c"
                                         fill={C.ecomFee} maxBarSize={30} radius={[6, 6, 0, 0]}
-                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()} />
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
+                                        {viewData.map((b, i) => (
+                                            <Cell key={i} fill={`url(#${gradientId('ecomFee')})`} />
+                                        ))}
+                                    </Bar>
                                 </BarChart>
                             </ResponsiveContainer>
                         </ChartCard>
@@ -894,8 +923,14 @@ const Dashboard = () => {
                                 </thead>
                                 <tbody>
                                     {viewData.map((b, i) => {
-                                        const tint = i === bestIdx ? 'var(--success-bg)'
-                                            : i === worstIdx ? 'var(--danger-bg)' : 'transparent';
+                                        // Same directional wash as the insight pills: strongest
+                                        // at the row label, fading out across the columns.
+                                        const rowGrad = (g) => `linear-gradient(100deg,
+                                            color-mix(in srgb, ${g} 20%, transparent) 0%,
+                                            color-mix(in srgb, ${g} 9%, transparent) 45%,
+                                            color-mix(in srgb, ${g} 2%, transparent) 100%)`;
+                                        const tint = i === bestIdx ? rowGrad('var(--success)')
+                                            : i === worstIdx ? rowGrad('var(--danger)') : 'transparent';
                                         const marginW = Math.min(Math.abs(b.marginPct) / maxAbsMargin, 1) * 100;
                                         return (
                                             <tr key={b.label} className="exec-row" style={{

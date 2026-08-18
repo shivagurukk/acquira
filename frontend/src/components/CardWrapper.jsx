@@ -17,9 +17,11 @@ const CardWrapper = ({ children, padding, hover = false, accent, onClick, sx = {
                 var(--dx-card-grid),
                 conic-gradient(from var(--dxa),
                   var(--border) 0deg, var(--border) 280deg,
-      color-mix(in srgb, var(--primary) 40%, var(--border)) 310deg,
-      var(--primary) 332deg,
+      color-mix(in srgb, var(--dx-sweep, var(--primary)) 40%, var(--border)) 310deg,
+      var(--dx-sweep, var(--primary)) 332deg,
       var(--border) 352deg) border-box`,
+            // Optional per-card accent: the sweep light picks it up.
+            ...(accent ? { '--dx-sweep': accent } : {}),
             borderRadius: 'var(--radius-lg)',
             border: '2px solid transparent',
             boxShadow: 'var(--shadow-card)',

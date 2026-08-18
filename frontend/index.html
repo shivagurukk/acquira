@@ -6,6 +6,20 @@
     <link rel="apple-touch-icon" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NEXUS</title>
+    <script>
+      // Apply the saved colour scheme BEFORE first paint. React re-applies it
+      // later (ThemeContext), but by then the page has already painted — doing
+      // it only there is what caused the light-theme flash in production.
+      (function () {
+        try {
+          var saved = localStorage.getItem('theme');
+          var dark = saved
+            ? saved === 'dark'
+            : window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) { /* storage blocked — default light */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

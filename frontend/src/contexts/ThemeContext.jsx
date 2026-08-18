@@ -21,9 +21,9 @@ const ThemeContext = createContext(null);
 
 const LIGHT = {
   mode: 'light',
-  bg: '#EDF1F8', bgCard: '#EAF1FA', bgSidebar: '#0E1B33',
+  bg: '#F1F7FF', bgCard: '#EAF1FA', bgSidebar: '#0E1B33',
   bgSubtle: '#EFF4FB', bgHover: '#E3ECF8',
-  text: '#191D24', textSecondary: '#5C6675',
+  text: '#14295E', textSecondary: '#51618C',
   border: '#E4E7EC', borderLight: '#EBEDF0',
   accent: '#3F63B0', accentLight: '#DCE8F7',
 };

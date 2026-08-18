@@ -591,7 +591,13 @@ const AttritionReport = () => {
                         {analytics.breakdown.map(s => s.count > 0 && (
                             <Box key={s.key} title={`${s.label}: ${s.count} — click to filter`}
                                 onClick={() => setStatusFilter(prev => prev === s.key ? 'ALL' : s.key)}
-                                sx={{ width: `${s.pct}%`, bgcolor: s.color, transition: 'width .5s ease, opacity .15s', cursor: 'pointer',
+                                sx={{ width: `${s.pct}%`,
+                                    // Vertical gradient body — same treatment as the chart bars.
+                                    background: `linear-gradient(180deg,
+                                        color-mix(in srgb, ${s.color} 88%, #fff) 0%,
+                                        ${s.color} 45%,
+                                        color-mix(in srgb, ${s.color} 62%, var(--bg-card)) 100%)`,
+                                    transition: 'width .5s ease, opacity .15s', cursor: 'pointer',
                                     opacity: statusFilter === 'ALL' || statusFilter === s.key ? 1 : 0.3,
                                     '&:hover': { opacity: 1 } }} />
                         ))}
@@ -607,7 +613,8 @@ const AttritionReport = () => {
                                         border: `1px solid ${active ? s.color : 'transparent'}`,
                                         bgcolor: active ? s.bg : 'transparent',
                                         '&:hover': { bgcolor: s.bg } }}>
-                                    <Box sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: s.color }} />
+                                    <Box sx={{ width: 10, height: 10, borderRadius: '3px',
+                                        background: `linear-gradient(180deg, color-mix(in srgb, ${s.color} 88%, #fff) 0%, ${s.color} 100%)` }} />
                                     <Typography variant="body2" color={active ? s.color : T.textSec} fontWeight={active ? 700 : 500}>{s.label}</Typography>
                                     <Typography variant="body2" fontWeight={700} color={T.textStr} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.count.toLocaleString()}</Typography>
                                     <Typography variant="caption" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.pct.toFixed(1)}%</Typography>
