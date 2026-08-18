@@ -231,11 +231,15 @@ export function buildTheme() {
                         borderBottom: `1px solid ${theme.vars.palette.divider}`,
                         fontSize: '13px',
                     }),
-                    head: ({ theme }) => ({
+                    // Navy header bar — the one table treatment, shared with the
+                    // DataGrid styles and the plain-table rules in index.css.
+                    head: () => ({
                         fontSize: '12px',
-                        fontWeight: 600,
-                        color: theme.vars.palette.text.secondary,
-                        backgroundColor: theme.vars.palette.background.paper,
+                        fontWeight: 700,
+                        letterSpacing: '0.03em',
+                        color: 'var(--table-head-text)',
+                        background: 'var(--table-head-bg)',
+                        borderBottom: '2px solid var(--table-head-edge)',
                     }),
                 },
             },
@@ -256,13 +260,17 @@ export function buildTheme() {
                             fontVariantNumeric: 'tabular-nums',
                         },
                         '& .MuiDataGrid-columnHeaders': {
-                            backgroundColor: 'var(--bg-card)',
-                            borderBottom: '1px solid var(--border)',
-                            color: 'var(--text-secondary)',
+                            background: 'var(--table-head-bg)',
+                            borderBottom: 'none',
+                            boxShadow: 'inset 0 -2px 0 var(--table-head-edge)',
+                            color: 'var(--table-head-text)',
                             fontSize: '12px',
-                            fontWeight: 600,
-                            letterSpacing: '0.02em',
+                            fontWeight: 700,
+                            letterSpacing: '0.03em',
                         },
+                        '& .MuiDataGrid-columnHeader': { backgroundColor: 'transparent' },
+                        '& .MuiDataGrid-columnHeaderTitle': { color: 'var(--table-head-text)', fontWeight: 700 },
+                        '& .MuiDataGrid-row': { backgroundColor: 'var(--table-row)' },
                         '& .MuiDataGrid-row:hover': {
                             backgroundColor: 'var(--bg-hover) !important',
                         },

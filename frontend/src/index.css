@@ -120,6 +120,23 @@
       transparent 1px 26px) padding-box,
     linear-gradient(var(--bg-card), var(--bg-card)) padding-box;
 
+  /* ── Tables ──────────────────────────────────────────────────────
+       One treatment for every table in the app: a deep navy header bar
+       with light type, tinted rows, and a bright hairline under the
+       header. Derived from --primary so it retints with the brand and
+       works unchanged in dark mode (both mixes land in navy). ── */
+  --table-head-bg: linear-gradient(135deg,
+      color-mix(in srgb, var(--primary) 76%, #0A1426) 0%,
+      color-mix(in srgb, var(--primary) 54%, #0A1426) 52%,
+      color-mix(in srgb, var(--primary) 72%, #0A1426) 100%);
+  --table-head-text:  #F2F6FF;
+  --table-head-muted: rgba(242, 246, 255, 0.72);
+  --table-head-edge:  color-mix(in srgb, var(--primary) 70%, #FFFFFF);
+  /* Row tint + zebra. Zebra is applied only to plain tables: the DataGrid
+     virtualises rows, so an nth-child stripe would walk while scrolling. */
+  --table-row:      color-mix(in srgb, var(--primary) 4%, var(--bg-card));
+  --table-row-alt:  color-mix(in srgb, var(--primary) 9%, var(--bg-card));
+
   /* ── Surfaces ── */
   --bg:           var(--canvas);
   --bg-card:      var(--surface);
@@ -746,6 +763,47 @@ html.dark .border-slate-100 { border-color: var(--border-light) !important; }
 /* ── No-white rule: Tailwind bg-white flattens onto the tinted
    card ground in light mode too (dark already overrides above). ── */
 .bg-white { background-color: var(--bg-card) !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   PLAIN TABLES — same navy header as the DataGrids, plus real zebra
+   (safe here: these rows are not virtualised, unlike DataGrid's).
+   Scoped to .dx-table so a component can opt out, but applied to bare
+   <table> inside cards by default so every table matches.
+   ══════════════════════════════════════════════════════════════ */
+.dx-card table thead tr,
+.card table thead tr,
+table.dx-table thead tr {
+  background: var(--table-head-bg) !important;
+}
+
+.dx-card table thead th,
+.card table thead th,
+table.dx-table thead th {
+  color: var(--table-head-text) !important;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-bottom: 2px solid var(--table-head-edge) !important;
+}
+
+/* Zebra: the odd rows carry the stronger tint so the first body row
+   reads as distinct from the header edge above it. */
+.dx-card table tbody tr:nth-child(odd),
+.card table tbody tr:nth-child(odd),
+table.dx-table tbody tr:nth-child(odd) {
+  background: var(--table-row-alt);
+}
+
+.dx-card table tbody tr:nth-child(even),
+.card table tbody tr:nth-child(even),
+table.dx-table tbody tr:nth-child(even) {
+  background: var(--table-row);
+}
+
+.dx-card table tbody tr:hover,
+.card table tbody tr:hover,
+table.dx-table tbody tr:hover {
+  background: var(--bg-hover);
+}
 
 /* ══════════════════════════════════════════════════════════════
    GLOBAL BUTTON RESET

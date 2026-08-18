@@ -929,12 +929,16 @@ const Dashboard = () => {
                                             color-mix(in srgb, ${g} 20%, transparent) 0%,
                                             color-mix(in srgb, ${g} 9%, transparent) 45%,
                                             color-mix(in srgb, ${g} 2%, transparent) 100%)`;
+                                        // null, not 'transparent': an inline background beats the
+                                        // stylesheet, so painting every ordinary row transparent
+                                        // would suppress the global table zebra.
                                         const tint = i === bestIdx ? rowGrad('var(--success)')
-                                            : i === worstIdx ? rowGrad('var(--danger)') : 'transparent';
+                                            : i === worstIdx ? rowGrad('var(--danger)') : null;
                                         const marginW = Math.min(Math.abs(b.marginPct) / maxAbsMargin, 1) * 100;
                                         return (
                                             <tr key={b.label} className="exec-row" style={{
-                                                borderBottom: '1px solid var(--border)', background: tint,
+                                                borderBottom: '1px solid var(--border)',
+                                                ...(tint ? { background: tint } : {}),
                                             }}>
                                                 <td style={{ padding: '11px 16px', fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap' }}>
                                                     {b.label}

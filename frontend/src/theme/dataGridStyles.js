@@ -11,30 +11,48 @@ export const premiumDataGridStyles = {
     '--DataGrid-rowBorderColor': 'var(--border)',
     fontFamily: 'var(--font-ui)',
 
-    // ── Header: sticky, hairline bottom, quiet label ──
+    // ── Header: deep navy bar, light type, bright hairline beneath ──
+    // The gradient is painted on the header CONTAINER and each header cell is
+    // transparent, so one continuous bar runs the full width instead of the
+    // gradient restarting inside every cell.
     '& .MuiDataGrid-columnHeaders': {
-        bgcolor: 'var(--bg-card)',
-        borderBottom: '1px solid var(--border)',
+        background: 'var(--table-head-bg)',
+        borderBottom: 'none',
+        boxShadow: 'inset 0 -2px 0 var(--table-head-edge)',
     },
     '& .MuiDataGrid-columnHeader': {
-        bgcolor: 'var(--bg-card)',
+        bgcolor: 'transparent',
         '&:focus, &:focus-within': { outline: 'none' },
     },
+    // Filler/scroll-gap cells the grid inserts past the last column.
+    '& .MuiDataGrid-filler, & .MuiDataGrid-scrollbarFiller': {
+        background: 'transparent',
+        borderColor: 'transparent',
+    },
     '& .MuiDataGrid-columnHeaderTitle': {
-        fontWeight: 600,
-        color: 'var(--text-secondary)',
+        fontWeight: 700,
+        color: 'var(--table-head-text)',
         fontSize: '12px',
-        letterSpacing: '0.02em',
+        letterSpacing: '0.03em',
     },
     '& .MuiDataGrid-columnHeader--alignRight .MuiDataGrid-columnHeaderTitle': {
         fontFamily: 'var(--font-mono)',
     },
     '& .MuiDataGrid-iconSeparator': { display: 'none' },
-    '& .MuiDataGrid-menuIcon': { color: 'var(--text-muted)' },
-    '& .MuiDataGrid-sortIcon': { color: 'var(--text-secondary)' },
+    // Header affordances must read against navy, not against the card.
+    '& .MuiDataGrid-menuIcon, & .MuiDataGrid-sortIcon, & .MuiDataGrid-filterIcon': {
+        color: 'var(--table-head-muted)',
+    },
+    '& .MuiDataGrid-columnHeader .MuiCheckbox-root': { color: 'var(--table-head-muted)' },
+    '& .MuiDataGrid-columnHeader:hover .MuiDataGrid-menuIcon, & .MuiDataGrid-columnHeader:hover .MuiDataGrid-sortIcon': {
+        color: 'var(--table-head-text)',
+    },
 
-    // ── Rows: no zebra; hover = primary wash at 40% ──
+    // ── Rows: tinted body; hover = primary wash ──
+    // Uniform tint rather than zebra: DataGrid virtualises rows, so an
+    // nth-child stripe walks as you scroll. Plain tables get real zebra.
     '& .MuiDataGrid-row': {
+        bgcolor: 'var(--table-row)',
         transition: 'background-color 150ms ease',
         '&:hover': { bgcolor: 'var(--bg-hover) !important' },
         '&.Mui-selected': {
