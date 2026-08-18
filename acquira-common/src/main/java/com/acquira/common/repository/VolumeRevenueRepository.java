@@ -1622,6 +1622,13 @@ public class VolumeRevenueRepository {
         appendVolumeMeasure(sql, "m1",     ":m1Start",     ":m1End");
         appendVolumeMeasure(sql, "m2",     ":m2Start",     ":m2End");
         appendVolumeMeasure(sql, "m3",     ":m3Start",     ":m3End");
+        // Last day this merchant actually transacted, within the span the query
+        // already reads. "Churned" answers whether to call; this answers how
+        // urgent the call is — a merchant quiet for 4 days is a different
+        // conversation from one quiet for 90. Appended LAST so the hard-coded
+        // row[] indices above stay valid. CASE rather than FILTER: same result,
+        // plain SQL. NULL when the merchant never traded in the span.
+        sql.append("MAX(CASE WHEN s.total_volume > 0 THEN s.business_date END) AS last_activity, ");
         // strip trailing comma
         sql.setLength(sql.length() - 2);
         sql.append(" FROM ").append(baseTable).append(" s ");
@@ -1771,6 +1778,22 @@ public class VolumeRevenueRepository {
             map.put("prev_m3", m3Vol);
             map.put("avg_3m_ratio_pct", ratioPct);
             map.put("status", classifyAttrition(curMon, m1Vol.doubleValue(), m2Vol.doubleValue(), m3Vol.doubleValue(), avg3));
+
+            // Last activity date, normalised to an ISO string. The JDBC driver may
+            // hand back java.sql.Date or LocalDate depending on column type and
+            // driver version, so convert defensively — this runs per row, and a
+            // ClassCastException here would fail the whole report.
+            Object lastActRaw = row.length > 21 ? row[21] : null;
+            String lastActivity = null;
+            if (lastActRaw instanceof java.sql.Date) {
+                lastActivity = ((java.sql.Date) lastActRaw).toLocalDate().toString();
+            } else if (lastActRaw instanceof java.time.LocalDate) {
+                lastActivity = lastActRaw.toString();
+            } else if (lastActRaw != null) {
+                String s = String.valueOf(lastActRaw);
+                lastActivity = s.length() >= 10 ? s.substring(0, 10) : s;
+            }
+            map.put("last_activity", lastActivity);
 
             result.add(map);
         }
