@@ -15,6 +15,10 @@ import { SectionLoader } from '../../components/Loaders';
 import { useAuth } from '../../contexts/AuthContext';
 import { T, cardSx } from '../../theme/salesTokens';
 
+// Agents only get a display_name once someone fills it in on the Agent
+// Directory, so every label falls back to the raw sales_user_id.
+const agentLabel = (u) => (u?.displayName?.trim() || u?.salesUserId || '');
+
 const SalesTeamManagement = () => {
     const { tenantVersion } = useAuth();
     const [teamLeads, setTeamLeads] = useState([]);
@@ -117,10 +121,10 @@ const SalesTeamManagement = () => {
     };
 
     const handleExportCSV = () => {
-        const rows = [['Sales User ID', 'Email', 'Status', 'Team Lead']];
+        const rows = [['Sales User ID', 'Name', 'Email', 'Status', 'Team Lead']];
         filteredUsers.forEach(u => {
             const lead = teamLeads.find(l => l.id === u.teamLeadId);
-            rows.push([u.salesUserId, u.salesUserEmail || '', u.status, lead?.teamLeadName || 'Unassigned']);
+            rows.push([u.salesUserId, u.displayName || '', u.salesUserEmail || '', u.status, lead?.teamLeadName || 'Unassigned']);
         });
         const csv = rows.map(r => r.join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv' });
@@ -131,7 +135,8 @@ const SalesTeamManagement = () => {
     // Filtered & searched users
     const filteredUsers = useMemo(() => {
         return salesUsers.filter(u => {
-            const matchesSearch = !searchQuery || u.salesUserId?.toLowerCase().includes(searchQuery.toLowerCase()) || u.salesUserEmail?.toLowerCase().includes(searchQuery.toLowerCase());
+            const q = searchQuery.toLowerCase();
+            const matchesSearch = !searchQuery || u.salesUserId?.toLowerCase().includes(q) || u.salesUserEmail?.toLowerCase().includes(q) || u.displayName?.toLowerCase().includes(q);
             const matchesStatus = statusFilter === 'ALL' || u.status === statusFilter;
             return matchesSearch && matchesStatus;
         });
@@ -261,9 +266,9 @@ const SalesTeamManagement = () => {
                                                     <Stack spacing={0.5} mt={1.5}>
                                                         {members.map(m => (
                                                             <Stack key={m.salesUserId} direction="row" spacing={1} alignItems="center" sx={{ py: 0.5, px: 1, bgcolor: T.subtle, borderRadius: 1.5 }}>
-                                                                <Avatar sx={{ width: 22, height: 22, fontSize: 10, bgcolor: T.indigoBg, color: T.indigoTx }}>{m.salesUserId?.charAt(0)?.toUpperCase()}</Avatar>
+                                                                <Avatar sx={{ width: 22, height: 22, fontSize: 10, bgcolor: T.indigoBg, color: T.indigoTx }}>{agentLabel(m).charAt(0).toUpperCase()}</Avatar>
                                                                 <Box sx={{ flex: 1, overflow: 'hidden' }}>
-                                                                    <Typography variant="caption" fontWeight={600} color={T.textSec} noWrap>{m.salesUserId}</Typography>
+                                                                    <Typography variant="caption" fontWeight={600} color={T.textSec} noWrap>{agentLabel(m)}</Typography>
                                                                     {m.salesUserEmail && <Typography variant="caption" color={T.textMut} display="block" noWrap sx={{ fontSize: 10 }}>{m.salesUserEmail}</Typography>}
                                                                 </Box>
                                                                 {m.merchantCount != null && <Chip label={m.merchantCount} size="small" sx={{ height: 18, fontSize: 10, fontWeight: 700, bgcolor: T.infoCh, color: T.infoTx }} />}
@@ -354,13 +359,16 @@ const SalesTeamManagement = () => {
                                                 </Box>
                                                 <Stack direction="row" spacing={1} alignItems="center">
                                                     <Avatar sx={{ width: 28, height: 28, fontSize: 11, fontWeight: 700, bgcolor: user.status === 'MAPPED' ? T.infoCh : T.warningCh, color: user.status === 'MAPPED' ? T.infoTx : T.warningTx }}>
-                                                        {user.salesUserId?.charAt(0)?.toUpperCase()}
+                                                        {agentLabel(user).charAt(0).toUpperCase()}
                                                     </Avatar>
                                                     <Box sx={{ overflow: 'hidden' }}>
-                                                        <Typography variant="body2" fontWeight={600} color={T.text} noWrap>{user.salesUserId}</Typography>
-                                                        {user.salesUserEmail && user.salesUserEmail !== user.salesUserId && (
-                                                            <Typography variant="caption" color={T.textMut} noWrap sx={{ fontSize: 11 }}>{user.salesUserEmail}</Typography>
-                                                        )}
+                                                        <Typography variant="body2" fontWeight={600} color={T.text} noWrap>{agentLabel(user)}</Typography>
+                                                        {(() => {
+                                                            const sub = user.salesUserEmail || (user.displayName ? user.salesUserId : null);
+                                                            return sub && sub !== agentLabel(user)
+                                                                ? <Typography variant="caption" color={T.textMut} noWrap sx={{ fontSize: 11, display: 'block' }}>{sub}</Typography>
+                                                                : null;
+                                                        })()}
                                                     </Box>
                                                 </Stack>
                                                 <Box>

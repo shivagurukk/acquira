@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CreditCard, Upload, Search, Trash2, RefreshCw } from 'lucide-react';
-import api from '../../api/axios';
+import api, { UPLOAD_TIMEOUT, isTimeoutError } from '../../api/axios';
 import { showToast } from '../../contexts/ToastContext';
 import {
   Page, Card, Button, Badge, Alert, DataTable, Input,
@@ -116,6 +116,7 @@ const BinManagement = () => {
       fd.append('file', file);
       const res = await api.post('/admin/bins/upload', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: UPLOAD_TIMEOUT,
       });
       setLastResult(res.data);
       if (res.data.status === 'PROCESSING') {
@@ -126,7 +127,11 @@ const BinManagement = () => {
       }
       load(query, rangeQuery);
     } catch (err) {
-      showToast(err.response?.data?.error || 'Upload failed', 'error');
+      // Never say "failed" on a timeout: a full BIN load REPLACES every existing
+      // mapping, so re-running one that actually landed is destructive.
+      showToast(isTimeoutError(err)
+        ? 'The server did not respond in time. The load may still be running — refresh and check the BIN counts before retrying.'
+        : (err.response?.data?.error || 'Upload failed'), 'error', 8000);
     } finally {
       setUploading(false);
     }

@@ -111,7 +111,7 @@ public class TopPerformersController {
         response.put("topMerchantsByNetRevenue", rank(withVolume, "netRevenue", TOP_N));
         response.put("topMerchantsByTxns", rank(withVolume, "txns", TOP_N));
 
-        List<Map<String, Object>> rmAgg = groupByRm(withVolume);
+        List<Map<String, Object>> rmAgg = groupByRm(withVolume, agentDisplayNames(tenantId));
         response.put("topRmsByVolume", rank(rmAgg, "volume", TOP_N));
         response.put("topRmsByNetRevenue", rank(rmAgg, "netRevenue", TOP_N));
 
@@ -404,7 +404,24 @@ public class TopPerformersController {
      * row. Merchants with no sales_user_id at all are genuinely unassigned and
      * remain excluded.
      */
-    private List<Map<String, Object>> groupByRm(List<Map<String, Object>> merchantRows) {
+    /** sales_user_id -> admin-entered display name (sales_agent_profile), for the
+     *  RM boards: the rep CODE stays the grouping key, but a human name is what
+     *  the board should SHOW. Codes without a profile name fall back to the code. */
+    private Map<String, String> agentDisplayNames(Long tenantId) {
+        Query q = entityManager.createNativeQuery(
+                "SELECT sales_user_id, display_name FROM sales_agent_profile " +
+                "WHERE tenant_id = :tid AND display_name IS NOT NULL AND display_name <> ''");
+        q.setParameter("tid", tenantId);
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = q.getResultList();
+        Map<String, String> out = new HashMap<>();
+        for (Object[] r : rows) {
+            if (r[0] != null && r[1] != null) out.put(r[0].toString(), r[1].toString());
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> groupByRm(List<Map<String, Object>> merchantRows, Map<String, String> displayNames) {
         Map<String, Map<String, Object>> byRm = new LinkedHashMap<>();
         for (Map<String, Object> r : merchantRows) {
             String rm = (String) r.get("salesUserId");
@@ -412,6 +429,7 @@ public class TopPerformersController {
             Map<String, Object> agg = byRm.computeIfAbsent(rm, k -> {
                 Map<String, Object> a = new LinkedHashMap<>();
                 a.put("salesUserId", k);
+                a.put("name", displayNames.getOrDefault(k, k));
                 a.put("salesEmail", null);
                 a.put("volume", 0.0);
                 a.put("netRevenue", 0.0);

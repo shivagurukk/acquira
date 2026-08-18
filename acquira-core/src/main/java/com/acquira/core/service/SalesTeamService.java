@@ -1,8 +1,10 @@
 package com.acquira.core.service;
 
+import com.acquira.common.model.SalesAgentProfile;
 import com.acquira.common.model.SalesTeamMapping;
 import com.acquira.common.model.SalesUserAssignment;
 import com.acquira.common.repository.MerchantRepository;
+import com.acquira.common.repository.SalesAgentProfileRepository;
 import com.acquira.common.repository.SalesTeamMappingRepository;
 import com.acquira.common.repository.SalesUserAssignmentRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ public class SalesTeamService {
     private final SalesTeamMappingRepository salesTeamMappingRepository;
     private final SalesUserAssignmentRepository salesUserAssignmentRepository;
     private final MerchantRepository merchantRepository;
+    private final SalesAgentProfileRepository agentProfileRepository;
 
     public List<SalesTeamMapping> getTeamLeads(Long tenantId) {
         return salesTeamMappingRepository.findAllByTenantId(tenantId);
@@ -79,6 +82,14 @@ public class SalesTeamService {
                 .collect(Collectors.toMap(SalesUserAssignment::getSalesUserId, SalesUserAssignment::getTeamLeadId,
                         (existing, replacement) -> existing));
 
+        // Human-readable name lives on the agent profile, not on dim_merchant —
+        // without this join the UI can only fall back to the raw sales_user_id.
+        Map<String, String> displayNames = agentProfileRepository.findAllByTenantId(tenantId).stream()
+                .filter(p -> p.getSalesUserId() != null && p.getDisplayName() != null
+                        && !p.getDisplayName().isBlank())
+                .collect(Collectors.toMap(SalesAgentProfile::getSalesUserId, SalesAgentProfile::getDisplayName,
+                        (existing, replacement) -> existing));
+
         // Get merchant count per sales user
         Map<String, Long> merchantCounts = new HashMap<>();
         try {
@@ -95,6 +106,7 @@ public class SalesTeamService {
             Map<String, Object> map = new HashMap<>();
             map.put("salesUserId", user.getSalesUserId());
             map.put("salesUserEmail", user.getSalesEmail());
+            map.put("displayName", displayNames.get(user.getSalesUserId()));
             map.put("teamLeadId", assignmentMap.get(user.getSalesUserId()));
             map.put("status", assignmentMap.containsKey(user.getSalesUserId()) ? "MAPPED" : "UNMAPPED");
             map.put("merchantCount", merchantCounts.getOrDefault(user.getSalesUserId(), 0L));

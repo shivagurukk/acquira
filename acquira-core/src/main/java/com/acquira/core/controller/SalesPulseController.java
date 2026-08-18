@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.*;
 
 /**
@@ -314,9 +315,37 @@ public class SalesPulseController {
         summary.put("salesExecutiveCount", everyone.size());
         summary.put("teamCount", teamNodes.size());
 
+        // ── Org-level monthly trend (hero chart) ─────────────────────────────
+        // Summed from the per-agent series already in memory — never a third
+        // query. Agent series are right-aligned to the momentum window's last
+        // month (leading months before an agent's first data are absent), so
+        // each series is added from the tail backwards.
+        List<Map<String, Object>> orgSeries = new ArrayList<>();
+        {
+            List<YearMonth> months = new ArrayList<>();
+            for (YearMonth m = mw.first(); !m.isAfter(mw.last()); m = m.plusMonths(1)) months.add(m);
+            double[] sums = new double[months.size()];
+            for (Map<String, Object> a : everyone) {
+                @SuppressWarnings("unchecked")
+                List<Double> s = (List<Double>) a.get("series");
+                if (s == null || s.isEmpty()) continue;
+                int offset = sums.length - s.size();   // >= 0: a series never exceeds the window
+                for (int i = Math.max(0, -offset); i < s.size(); i++) {
+                    sums[offset + i] += s.get(i) == null ? 0.0 : s.get(i);
+                }
+            }
+            for (int i = 0; i < months.size(); i++) {
+                Map<String, Object> pt = new LinkedHashMap<>();
+                pt.put("month", months.get(i).toString());
+                pt.put("sales", SalesPulseService.round1(sums[i]));
+                orgSeries.add(pt);
+            }
+        }
+
         // ── Response ─────────────────────────────────────────────────────────
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("summary", summary);
+        out.put("orgSeries", orgSeries);
         out.put("executiveInsight", pulseService.insight(growth,
                 topTeam != null ? String.valueOf(topTeam.get("teamLeadName")) : null,
                 needsAttention, longDecline));

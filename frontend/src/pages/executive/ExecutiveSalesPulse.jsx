@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Activity, RefreshCw, Loader2, Info, Target, CalendarClock } from 'lucide-react';
+import { Activity, Loader2 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCompactCurrency } from '../../utils/formatters';
 import { T, CARD } from '../../theme/salesTokens';
-import ExecutiveSummaryCards from '../../components/pulse/ExecutiveSummaryCards';
+import PulseHeroBand from '../../components/pulse/PulseHeroBand';
+import TeamRacePanel from '../../components/pulse/TeamRacePanel';
+import SpotlightPanel from '../../components/pulse/SpotlightPanel';
 import TeamLeadSection from '../../components/pulse/TeamLeadSection';
 import SalesExecutiveDetailDrawer from '../../components/pulse/SalesExecutiveDetailDrawer';
 
@@ -56,7 +58,9 @@ export default function ExecutiveSalesPulse() {
   const [countryLeads, setCountryLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
-  const [expanded, setExpanded] = useState(null);   // null = "all open" until touched
+  // Collapsed by default: the hero, race and spotlight ARE the summary — the
+  // tables are detail, opened per-team (or via the Team Race).
+  const [expanded, setExpanded] = useState(() => new Set());
   const [selected, setSelected] = useState(null);
 
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_AT);
@@ -126,15 +130,35 @@ export default function ExecutiveSalesPulse() {
   }, [data?.currency]);
 
   const teams = data?.teams || [];
-  const isOpen = (key) => (expanded === null ? true : expanded.has(String(key)));
+  const isOpen = (key) => expanded.has(String(key));
   const toggle = (key) => {
     setExpanded((prev) => {
-      const next = new Set(prev === null ? teams.map((t) => String(t.teamLeadId ?? t.teamLeadName)) : prev);
+      const next = new Set(prev);
       const k = String(key);
       if (next.has(k)) next.delete(k); else next.add(k);
       return next;
     });
   };
+
+  // Team Race → this team's detail section: make sure it is open, then scroll.
+  const focusTeam = (key) => {
+    setExpanded((prev) => new Set(prev).add(String(key)));
+    requestAnimationFrame(() => {
+      document.getElementById(`pulse-team-${key}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
+  // The spotlight reads across every team, so each row is stamped with its
+  // team lead's name on the way through.
+  const allExecutives = useMemo(
+    () => teams.flatMap((t) => (t.salesExecutives || []).map((m) => ({
+      ...m,
+      // "Unassigned" is a bucket, not a person — "Unassigned's team" reads wrong.
+      teamLeadName: t.teamLeadId != null ? t.teamLeadName : null,
+    }))),
+    [teams],
+  );
 
   const periodLabel = data?.period?.from
     ? `${data.period.from} → ${data.period.to}`
@@ -186,14 +210,10 @@ export default function ExecutiveSalesPulse() {
             ))}
           </Select>
 
-          <button onClick={fetchPulse} disabled={loading} title="Refresh"
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px',
-                    borderRadius: 8, border: `1px solid ${T.border}`, background: T.card,
-                    color: T.textSec, cursor: loading ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600,
-                  }}>
-            {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Refresh
-          </button>
+          {/* Every filter change refetches on its own; a Refresh button implied
+              the page could go stale, which it cannot. A quiet spinner covers
+              the in-flight moment. */}
+          {loading && <Loader2 size={15} className="spin" color={T.textMut} />}
         </div>
       </div>
 
@@ -203,43 +223,21 @@ export default function ExecutiveSalesPulse() {
         </div>
       )}
 
-      {/* ── Summary ─────────────────────────────────────────────────────── */}
-      <ExecutiveSummaryCards summary={data?.summary} money={money} periodLabel={periodLabel} />
-
-      {/* ── Executive insight ───────────────────────────────────────────── */}
-      {data?.executiveInsight && (
-        <div style={{
-          ...CARD, padding: '12px 14px', marginBottom: 14,
-          display: 'flex', gap: 10, alignItems: 'flex-start',
-          borderLeft: `3px solid ${T.brand}`,
-        }}>
-          <Info size={16} color={T.brand} style={{ flexShrink: 0, marginTop: 1 }} />
-          <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.text }}>
-            {data.executiveInsight}
-          </p>
-        </div>
+      {/* ── Hero band: headline, insight, org trend ─────────────────────── */}
+      {data && (
+        <PulseHeroBand data={data} money={money} periodLabel={periodLabel} narrow={narrow} />
       )}
 
-      {/* ── Context strip: momentum window + target state ───────────────── */}
+      {/* ── Race + spotlight: teams ranked on the left, people on the right.
+             Both panels hide themselves when they have nothing to say, and the
+             grid collapses around whichever remains. ──────────────────────── */}
       {data && (
         <div style={{
-          display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center',
-          marginBottom: 12, fontSize: 11.5, color: T.textMut,
+          display: 'grid', gap: 16, alignItems: 'start',
+          gridTemplateColumns: narrow ? '1fr' : 'repeat(auto-fit, minmax(360px, 1fr))',
         }}>
-          {data.momentumWindow && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <CalendarClock size={13} />
-              Momentum measured over complete months {data.momentumWindow.from} → {data.momentumWindow.to}
-            </span>
-          )}
-          {/* Stated rather than left implicit: an executive reading a column of
-              dashes deserves to know it means "not configured", not "zero". */}
-          {!data.targetsConfigured && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <Target size={13} />
-              No sales targets configured — performance is measured against each salesperson's own history
-            </span>
-          )}
+          <TeamRacePanel teams={teams} money={money} narrow={narrow} onFocusTeam={focusTeam} />
+          <SpotlightPanel executives={allExecutives} money={money} narrow={narrow} onSelect={setSelected} />
         </div>
       )}
 
@@ -259,17 +257,22 @@ export default function ExecutiveSalesPulse() {
           </div>
         </div>
       ) : (
-        teams.map((team) => (
-          <TeamLeadSection
-            key={team.teamLeadId ?? team.teamLeadName}
-            team={team}
-            money={money}
-            narrow={narrow}
-            expanded={isOpen(team.teamLeadId ?? team.teamLeadName)}
-            onToggle={toggle}
-            onSelect={setSelected}
-          />
-        ))
+        teams.map((team) => {
+          const key = team.teamLeadId ?? team.teamLeadName;
+          return (
+            /* The wrapper carries the anchor the Team Race scrolls to. */
+            <div key={key} id={`pulse-team-${key}`} style={{ scrollMarginTop: 12 }}>
+              <TeamLeadSection
+                team={team}
+                money={money}
+                narrow={narrow}
+                expanded={isOpen(key)}
+                onToggle={toggle}
+                onSelect={setSelected}
+              />
+            </div>
+          );
+        })
       )}
 
       {selected && (

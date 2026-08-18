@@ -3,7 +3,7 @@ import FileDropzone from '../components/FileDropzone';
 import FinancialLoader from '../components/FinancialLoader';
 import PageHeader from '../components/PageHeader';
 import { Upload, CheckCircle, AlertCircle, FileText, X, Zap, BarChart2, Activity } from 'lucide-react';
-import api from '../api/axios';
+import api, { UPLOAD_TIMEOUT, isTimeoutError } from '../api/axios';
 import useNotifications from '../hooks/useNotifications';
 
 // Friendly labels for the batch step bean names returned by
@@ -67,6 +67,7 @@ const UploadPage = () => {
         try {
             const response = await api.post('/upload', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: UPLOAD_TIMEOUT,
                 onUploadProgress: (e) => setUploadPercent(Math.round((e.loaded * 100) / e.total)),
             });
             setUploadPercent(100);
@@ -76,6 +77,14 @@ const UploadPage = () => {
             if (response.data.jobId) subscribeToJob(response.data.jobId);
         } catch (err) {
             setStatus('error');
+            // A timeout is NOT a failed upload — the server may have taken the
+            // file and still be ingesting it. Telling the user to retry here is
+            // how the same file gets loaded twice.
+            if (isTimeoutError(err)) {
+                setMsg('The server did not respond in time. The file may still be processing — '
+                     + 'check Batch Monitoring before uploading it again.');
+                return;
+            }
             const errMsg = err.code === 'ERR_NETWORK'
                 ? 'Batch service is not running. Please start acquira-core (port 8081) and retry.'
                 : err.response?.data?.message || err.response?.data || err.message;

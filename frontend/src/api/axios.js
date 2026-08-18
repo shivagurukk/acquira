@@ -12,6 +12,30 @@ const api = axios.create({
     timeout: 60000,
 });
 
+/**
+ * Timeout for multipart uploads, which must cover the whole file transfer PLUS
+ * whatever the server does synchronously before it hands back a jobId.
+ *
+ * The 60s default is far too short for that: axios aborts client-side while the
+ * server carries on ingesting, so the user sees a failure for an upload that
+ * actually succeeded, re-uploads, and the file lands twice. Still finite rather
+ * than 0 (no limit), because a genuinely hung request must eventually settle or
+ * the page's buttons never come back.
+ *
+ * Deliberately ABOVE nginx's proxy_read_timeout (600s in every deployed conf):
+ * when something really does stall, the proxy's 504 should reach us as a real
+ * HTTP error rather than the client aborting first and leaving us guessing.
+ */
+export const UPLOAD_TIMEOUT = 15 * 60 * 1000;
+
+/**
+ * True when axios gave up on its own — the request was aborted client-side and
+ * the server was never heard from. It says nothing about what the server did,
+ * which is exactly why callers must not report it as "upload failed".
+ */
+export const isTimeoutError = (err) =>
+    err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT';
+
 // Refresh token cache. The primary mechanism is the HttpOnly cookie set
 // by the backend; this localStorage copy is a backward-compat fallback
 // used when the cookie is unavailable (e.g. plain-HTTP dev, where the

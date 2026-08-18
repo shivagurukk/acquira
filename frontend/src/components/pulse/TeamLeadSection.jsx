@@ -1,7 +1,7 @@
 import React from 'react';
 import { ChevronDown, ChevronRight, Users, AlertTriangle } from 'lucide-react';
 import { T, CARD } from '../../theme/salesTokens';
-import { Delta, MomentumChip, SignalChip, DependencyChip, TargetCell, Sparkline } from './pulseVocab';
+import { Delta, MomentumChip, SignalChip, DependencyChip, TargetCell, Sparkline, MOMENTUM } from './pulseVocab';
 
 /*
  * One Team Lead and the sales executives beneath them.
@@ -33,13 +33,10 @@ function ExecRow({ row, money, onSelect }) {
       onMouseOver={(e) => { e.currentTarget.style.background = T.hover; }}
       onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; }}
     >
+      {/* Email lives in the drawer — a second line per row buys nothing here
+          but table height. */}
       <td style={{ ...td, textAlign: 'left' }}>
         <div style={{ fontWeight: 600, color: T.text }}>{row.name}</div>
-        {row.email && (
-          <div style={{ fontSize: 10.5, color: T.textMut, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>
-            {row.email}
-          </div>
-        )}
       </td>
       <td style={{ ...td, fontWeight: 700 }}>{money(row.sales)}</td>
       <td style={td}><Delta pct={row.growthPct} /></td>
@@ -49,9 +46,17 @@ function ExecRow({ row, money, onSelect }) {
           : `${Math.round(row.teamContribution)}%`}
       </td>
       <td style={td}><TargetCell pct={row.targetAchievement} /></td>
-      <td style={{ ...td, textAlign: 'left' }}><MomentumChip state={row.momentum} /></td>
-      <td style={{ ...td, textAlign: 'left' }}><SignalChip signal={row.signal} row={row} /></td>
-      <td style={{ ...td, width: 110 }}><Sparkline series={row.series} /></td>
+      {/* One Status cell: momentum always, the signal only when there is one.
+          Two chip columns forced the eye to parse near-synonyms side by side. */}
+      <td style={{ ...td, textAlign: 'left' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+          <MomentumChip state={row.momentum} compact />
+          {row.signal && <SignalChip signal={row.signal} row={row} compact />}
+        </span>
+      </td>
+      <td style={{ ...td, width: 110 }}>
+        <Sparkline series={row.series} stroke={MOMENTUM[row.momentum]?.fg} />
+      </td>
     </tr>
   );
 }
@@ -153,7 +158,7 @@ export default function TeamLeadSection({ team, money, narrow, expanded, onToggl
           <div>{members.map((m) => <ExecCard key={m.id} row={m} money={money} onSelect={onSelect} />)}</div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 780 }}>
               <thead>
                 <tr>
                   <th style={{ ...th, textAlign: 'left' }}>Sales Executive</th>
@@ -161,8 +166,7 @@ export default function TeamLeadSection({ team, money, narrow, expanded, onToggl
                   <th style={th}>vs Previous</th>
                   <th style={th}>Contribution</th>
                   <th style={th}>Target</th>
-                  <th style={{ ...th, textAlign: 'left' }}>Momentum</th>
-                  <th style={{ ...th, textAlign: 'left' }}>Executive Signal</th>
+                  <th style={{ ...th, textAlign: 'left' }}>Status</th>
                   <th style={th}>Trend</th>
                 </tr>
               </thead>

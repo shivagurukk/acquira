@@ -873,11 +873,11 @@ const Dashboard = () => {
                                                 <td style={tdNum} title={formatMsf(b.msf, currencySymbol)}>{fmt.amount(b.msf)}</td>
                                                 <td style={tdNum} title={`${fullNum(b.interchange, currencySymbol)} · ${ratePctTitle(b.interchange, b.volume)}`}>
                                                     {fmt.amount(b.interchange)}
-                                                    <div style={rateSub}>{ratePct(b.interchange, b.volume)}</div>
+                                                    <span style={rateInline}>({ratePct(b.interchange, b.volume)})</span>
                                                 </td>
                                                 <td style={tdNum} title={`${fullNum(b.schemeFee, currencySymbol)} · ${ratePctTitle(b.schemeFee, b.volume)}`}>
                                                     {fmt.amount(b.schemeFee)}
-                                                    <div style={rateSub}>{ratePct(b.schemeFee, b.volume)}</div>
+                                                    <span style={rateInline}>({ratePct(b.schemeFee, b.volume)})</span>
                                                 </td>
                                                 <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.amount(b.ecomFee)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 600,
@@ -910,11 +910,11 @@ const Dashboard = () => {
                                         <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.amount(num(vt.msf))}</td>
                                         <td style={tdTotal} title={`${fullNum(vt.interchange, currencySymbol)} · ${ratePctTitle(vt.interchange, vt.volume)}`}>
                                             {fmt.amount(num(vt.interchange))}
-                                            <div style={rateSub}>{ratePct(vt.interchange, vt.volume)}</div>
+                                            <span style={rateInline}>({ratePct(vt.interchange, vt.volume)})</span>
                                         </td>
                                         <td style={tdTotal} title={`${fullNum(vt.schemeFee, currencySymbol)} · ${ratePctTitle(vt.schemeFee, vt.volume)}`}>
                                             {fmt.amount(num(vt.schemeFee))}
-                                            <div style={rateSub}>{ratePct(vt.schemeFee, vt.volume)}</div>
+                                            <span style={rateInline}>({ratePct(vt.schemeFee, vt.volume)})</span>
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.amount(num(vt.ecomFee))}</td>
                                         <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.amount(num(vt.netRevenue))}</td>
@@ -937,11 +937,11 @@ const tdNum = {
     padding: '11px 16px', textAlign: 'right', color: 'var(--text)',
     fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
 };
-/* Rate lives INSIDE the fee cell it derives from (small muted sub-line under
-   the amount) — no separate % columns. */
-const rateSub = {
+/* Rate lives INSIDE the fee cell it derives from — inline after the amount so
+   rows stay single-height; no separate % columns. */
+const rateInline = {
     fontSize: 10.5, fontWeight: 600, color: 'var(--text-secondary)',
-    fontVariantNumeric: 'tabular-nums', marginTop: 1,
+    fontVariantNumeric: 'tabular-nums', marginLeft: 6,
 };
 const selStyle = {
     border: 'none', background: 'transparent', color: 'var(--text)',

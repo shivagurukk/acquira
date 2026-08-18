@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import Loader from '../components/Loader';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../api/axios';
+import api, { UPLOAD_TIMEOUT, isTimeoutError } from '../api/axios';
 
 import MerchantHierarchy from '../components/MerchantHierarchy';
 import TransactionList from '../components/TransactionList';
@@ -188,12 +188,17 @@ const MerchantUniverse = () => {
             // Shared client so the X-Tenant-Id header is attached. A raw fetch here
             // ingested merchant/transaction rows into the user's DEFAULT tenant rather
             // than the active one — silent, and awkward to undo once summaries are built.
-            const { data } = await api.post(endpoint, formData);
+            const { data } = await api.post(endpoint, formData, { timeout: UPLOAD_TIMEOUT });
             setUploadJobId(data.jobId);
             startPolling(data.jobId);
         } catch (error) {
             console.error(error);
-            alert('Upload failed');
+            // A timeout means we stopped listening, not that the ingest failed —
+            // re-uploading on this message is how a file lands twice.
+            alert(isTimeoutError(error)
+                ? 'The server did not respond in time. The file may still be processing — '
+                  + 'check Batch Monitoring before uploading it again.'
+                : 'Upload failed');
             setIsUploading(false);
         }
     };

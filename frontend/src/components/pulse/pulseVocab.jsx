@@ -176,7 +176,7 @@ export const TargetCell = ({ pct }) => {
  * some context — "Slowing, and here is the shape of it" — not to be an analytics
  * chart. The product brief is explicit that this page should not turn into one.
  */
-export const Sparkline = ({ series, width = 96, height = 26 }) => {
+export const Sparkline = ({ series, width = 96, height = 26, stroke: strokeProp }) => {
   const pts = (series || []).filter((v) => v != null).map(Number);
   if (pts.length < 2) {
     return <span style={{ fontSize: 11, color: T.textMut }}>—</span>;
@@ -189,7 +189,9 @@ export const Sparkline = ({ series, width = 96, height = 26 }) => {
   const path = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
 
   const rising = pts[pts.length - 1] >= pts[0];
-  const stroke = rising ? T.successDk : T.danger;
+  // Callers pass the momentum colour so the line tells the same story as the
+  // chip beside it; the naive first-vs-last red/green is only the fallback.
+  const stroke = strokeProp || (rising ? T.successDk : T.danger);
   const [lastX, lastY] = coords[coords.length - 1];
 
   return (

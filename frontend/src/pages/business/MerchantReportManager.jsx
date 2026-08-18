@@ -15,7 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import { PulseMark } from '../../components/Loaders';
 import KpiCards from '../../components/KpiCards';
-import api from '../../api/axios';
+import api, { UPLOAD_TIMEOUT, isTimeoutError } from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 
 const GlassCard = ({ children, sx, ...props }) => (
@@ -262,7 +262,9 @@ const MerchantReportManager = () => {
                 form.append('file', midFile);
             }
 
-            const res = await api.post('/business/insights/generate-by-mid', form);
+            // scope=ALL enumerates every merchant in the tenant before it can
+            // answer with a jobId — comfortably past 60s on a large book.
+            const res = await api.post('/business/insights/generate-by-mid', form, { timeout: UPLOAD_TIMEOUT });
             const result = res.data;
             const jobId = result.jobId;
             if (!jobId) {
@@ -291,7 +293,10 @@ const MerchantReportManager = () => {
             setLogs(startLogs);
             startPolling(jobId);
         } catch (err) {
-            const msg = err?.response?.data?.message || err.message;
+            // The batch may well have started — say so rather than implying it died.
+            const msg = isTimeoutError(err)
+                ? 'The server did not respond in time. The batch may still be running — check Batch Monitoring before starting it again.'
+                : (err?.response?.data?.message || err.message);
             setLogs([`❌ ${msg}`]);
             setStatus('completed');
         }

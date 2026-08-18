@@ -251,13 +251,13 @@ const TopPerformers = () => {
                     />
                     <LeaderboardCard
                         title="Top 10 RMs — Volume" icon={Users} color="var(--brand-alt, #3b82f6)"
-                        rows={data.topRmsByVolume} primaryKey="salesUserId" secondaryKey="salesEmail"
+                        rows={data.topRmsByVolume} primaryKey="name" secondaryKey="salesUserId"
                         valueKey="volume" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topRmsByVolume, 'top_rms_by_volume')}
                     />
                     <LeaderboardCard
                         title="Top 10 RMs — Net Margin" icon={Trophy} color="var(--warning, #d97706)"
-                        rows={data.topRmsByNetRevenue} primaryKey="salesUserId" secondaryKey="salesEmail"
+                        rows={data.topRmsByNetRevenue} primaryKey="name" secondaryKey="salesUserId"
                         valueKey="netRevenue" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topRmsByNetRevenue, 'top_rms_by_net_revenue')}
                     />
