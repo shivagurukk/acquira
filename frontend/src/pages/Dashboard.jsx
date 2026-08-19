@@ -360,6 +360,14 @@ const ChartCard = ({ title, subtitle, children, footer }) => (
     </div>
 );
 
+/* Period modes. LAST_YEAR is the complete prior calendar year, month-wise —
+   the same bucket shape as YTD, so it reuses the month rendering path. */
+const MODES = [
+    { key: 'MTD',       label: 'MTD' },
+    { key: 'YTD',       label: 'YTD' },
+    { key: 'LAST_YEAR', label: 'Last Year' },
+];
+
 const Dashboard = () => {
     const { currencySymbol, currencyCode, currencyDecimals, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
@@ -387,13 +395,19 @@ const Dashboard = () => {
     useEffect(() => { load(); }, [load, tenantVersion]);
     useEffect(() => { setRange({ from: 0, to: -1 }); }, [mode, data]);
 
-    const period = mode === 'MTD' ? data?.mtd : data?.ytd;
-    const buckets = mode === 'MTD' ? (data?.mtd?.weeks || []) : (data?.ytd?.months || []);
+    const period = mode === 'MTD' ? data?.mtd
+        : mode === 'LAST_YEAR' ? data?.lastYear
+        : data?.ytd;
+    // MTD buckets are weeks; both year modes are months.
+    const buckets = mode === 'MTD' ? (data?.mtd?.weeks || []) : (period?.months || []);
     const totals = period?.totals;
     const prev = period?.prev;
+    const modeLabel = MODES.find(m => m.key === mode)?.label || mode;
     const compareLabel = mode === 'MTD'
         ? 'vs last month, same days elapsed'
-        : 'vs last year, same period';
+        : mode === 'LAST_YEAR'
+            ? 'vs the year before, full year'
+            : 'vs last year, same period';
 
     const chartData = useMemo(() => buckets.map(b => ({
         ...b,
@@ -496,8 +510,8 @@ const Dashboard = () => {
             return /[",\n\r]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x;
         };
         const lines = [];
-        lines.push(['Executive Summary', mode].map(esc).join(','));
-        lines.push(['Period', (mode === 'MTD' ? data?.mtd?.label : data?.ytd?.label) || ''].map(esc).join(','));
+        lines.push(['Executive Summary', modeLabel].map(esc).join(','));
+        lines.push(['Period', period?.label || ''].map(esc).join(','));
         if (data?.effectiveDate) lines.push(['Through', data.effectiveDate].map(esc).join(','));
         if (isFiltered && viewData.length) lines.push(['Filter', `${viewData[0].label} to ${viewData[viewData.length - 1].label}`].map(esc).join(','));
         lines.push(['Currency', currencyCode || currencySymbol || 'UNKNOWN'].map(esc).join(','));
@@ -521,7 +535,7 @@ const Dashboard = () => {
             num(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2)]
             .map(esc).join(',');
         viewData.forEach(b => lines.push(row(b.label + (b.partial ? ' (partial)' : ''), b)));
-        lines.push(row(`${mode} Total`, t));
+        lines.push(row(`${modeLabel} Total`, t));
         if (derived) {
             lines.push('');
             lines.push(['MSF Rate %', derived.msfRate.toFixed(4)].map(esc).join(','));
@@ -536,7 +550,7 @@ const Dashboard = () => {
         a.download = `executive_summary_${mode.toLowerCase()}_${data?.effectiveDate || 'export'}.csv`;
         a.click();
         URL.revokeObjectURL(a.href);
-    }, [viewTotals, viewData, derived, mode, data, currencySymbol, currencyCode, currencyDecimals, isFiltered]);
+    }, [viewTotals, viewData, derived, mode, modeLabel, period, data, currencySymbol, currencyCode, currencyDecimals, isFiltered]);
 
     if (loading) return <SkeletonLoader type="dashboard" />;
 
@@ -633,8 +647,10 @@ const Dashboard = () => {
                     <div style={{ marginTop: 5, fontSize: 12.5, color: 'var(--text-secondary)',
                         display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <CalendarRange size={13} />
-                        {mode === 'MTD' ? (data?.mtd?.label || '') : (data?.ytd?.label || '')}
-                        {data?.effectiveDate ? ` · through ${data.effectiveDate}` : ''}
+                        {period?.label || ''}
+                        {/* "through <date>" only applies to a period still in
+                            progress — Last Year is a closed year. */}
+                        {data?.effectiveDate && mode !== 'LAST_YEAR' ? ` · through ${data.effectiveDate}` : ''}
                         <span style={{ color: 'var(--border)' }}>·</span>
                         settlement currency
                         {isFiltered && viewData.length > 0 && (
@@ -688,15 +704,15 @@ const Dashboard = () => {
 
                     <div style={{ display: 'inline-flex', background: 'var(--bg-subtle)',
                         border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
-                        {['MTD', 'YTD'].map(m => (
-                            <button key={m} onClick={() => setMode(m)} style={{
+                        {MODES.map(m => (
+                            <button key={m.key} onClick={() => setMode(m.key)} style={{
                                 border: 'none', cursor: 'pointer', borderRadius: 999,
-                                padding: '6px 20px', fontSize: 13, fontWeight: 600,
-                                background: mode === m ? 'var(--grad-primary)' : 'transparent',
-                                color: mode === m ? '#fff' : 'var(--text-secondary)',
-                                boxShadow: mode === m ? '0 2px 8px rgba(164, 78, 31,0.28)' : 'none',
+                                padding: '6px 16px', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+                                background: mode === m.key ? 'var(--grad-primary)' : 'transparent',
+                                color: mode === m.key ? '#fff' : 'var(--text-secondary)',
+                                boxShadow: mode === m.key ? '0 2px 8px rgba(164, 78, 31,0.28)' : 'none',
                                 transition: 'background 200ms, color 200ms, box-shadow 200ms',
-                            }}>{m}</button>
+                            }}>{m.label}</button>
                         ))}
                     </div>
                     <button onClick={exportCsv} title="Export CSV (respects filter)" disabled={!hasData} style={{
@@ -713,7 +729,7 @@ const Dashboard = () => {
             </div>
 
             {!hasData ? (
-                <EmptyState title={`No ${mode} data`}
+                <EmptyState title={`No ${modeLabel} data`}
                     description="No transactions found for this period yet. Upload data to populate the dashboard." />
             ) : (
                 <>

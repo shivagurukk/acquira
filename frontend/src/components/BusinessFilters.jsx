@@ -64,7 +64,7 @@ const DarkAutocomplete = ({ label, options, value, onChange, placeholder, freeSo
 );
 
 
-const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDestination = false }) => {
+const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDestination = false, hideCardType = false }) => {
     const [dateType, setDateType] = useState('TRANSACTION');
     const [options, setOptions] = useState(DEFAULT_OPTIONS);
     // MCC code -> sector/category label (from ref_mcc_category via filter-options).
@@ -235,11 +235,18 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
                             <DarkAutocomplete label="Destination" options={options.destinations} value={filters.destinationList} onChange={(v) => update('destinationList', v)} placeholder="All" />
                         )}
                         <DarkAutocomplete label="Scheme" options={options.schemes} value={filters.schemeList} onChange={(v) => update('schemeList', v)} placeholder="All" />
-                        <DarkAutocomplete label="Card Type" options={options.cardTypes} value={filters.cardTypeList} onChange={(v) => update('cardTypeList', v)} placeholder="All" />
+                        {!hideCardType && (
+                            <DarkAutocomplete label="Card Type" options={options.cardTypes} value={filters.cardTypeList} onChange={(v) => update('cardTypeList', v)} placeholder="All" />
+                        )}
                     </Box>
                     {hideDestination && (
                         <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#64748B', fontStyle: 'italic' }}>
                             Destination is controlled by the Domestic / International switcher on this page.
+                        </Typography>
+                    )}
+                    {hideCardType && (
+                        <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#64748B', fontStyle: 'italic' }}>
+                            Card type is the split dimension on this page — every card type is always shown.
                         </Typography>
                     )}
                 </Box>

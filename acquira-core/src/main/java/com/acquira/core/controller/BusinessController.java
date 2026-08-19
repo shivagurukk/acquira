@@ -303,10 +303,71 @@ public class BusinessController {
                                 toBigDecimal(prevYtd[4]), toBigDecimal(prevYtd[5]),
                                 toBigDecimal(prevYtd[6])));
 
+                // ── Last full calendar year (month-wise) ───────────────────
+                // Same shape as the YTD block so the frontend renders it with the
+                // same month-wise machinery. This is a COMPLETE past year, so no
+                // bucket is marked "current" and the comparison baseline is the
+                // whole year before it (not a same-period slice).
+                int lastYearNum = year - 1;
+                @SuppressWarnings("unchecked")
+                List<Object[]> lyRows = entityManager.createNativeQuery(
+                                "SELECT month_key, total_txns, COALESCE(total_base_volume,0), total_msf, " +
+                                "COALESCE(total_interchange,0), COALESCE(total_scheme_fee,0), COALESCE(total_ecom_fee,0), total_net_revenue " +
+                                "FROM sum_monthly_bank WHERE tenant_id = :tid AND month_key BETWEEN :a AND :b " +
+                                "ORDER BY month_key")
+                                .setParameter("tid", tenantId)
+                                .setParameter("a", lastYearNum * 100 + 1)
+                                .setParameter("b", lastYearNum * 100 + 12)
+                                .getResultList();
+
+                List<Map<String, Object>> lyMonths = new ArrayList<>();
+                long lyTxns = 0;
+                BigDecimal lyVol = BigDecimal.ZERO, lyMsf = BigDecimal.ZERO,
+                                lyIc = BigDecimal.ZERO, lySf = BigDecimal.ZERO, lyEc = BigDecimal.ZERO, lyNet = BigDecimal.ZERO;
+                for (Object[] r : lyRows) {
+                        int mk = ((Number) r[0]).intValue();
+                        int moIdx = (mk % 100) - 1;
+                        long txns = toLong(r[1]);
+                        BigDecimal vol = toBigDecimal(r[2]);
+                        BigDecimal msf = toBigDecimal(r[3]);
+                        BigDecimal ic = toBigDecimal(r[4]);
+                        BigDecimal sf = toBigDecimal(r[5]);
+                        BigDecimal ec = toBigDecimal(r[6]);
+                        BigDecimal net = toBigDecimal(r[7]);
+                        Map<String, Object> m = buildMetricBucket(
+                                        (moIdx >= 0 && moIdx < 12 ? moNames[moIdx] : String.valueOf(mk)),
+                                        txns, vol, msf, ic, sf, ec, net);
+                        m.put("monthKey", mk);
+                        m.put("current", false);
+                        lyMonths.add(m);
+                        lyTxns += txns;
+                        lyVol = lyVol.add(vol);
+                        lyMsf = lyMsf.add(msf);
+                        lyIc = lyIc.add(ic);
+                        lySf = lySf.add(sf);
+                        lyEc = lyEc.add(ec);
+                        lyNet = lyNet.add(net);
+                }
+
+                Object[] prevFullYear = singleAggregate(tenantId,
+                                LocalDate.of(lastYearNum - 1, 1, 1), LocalDate.of(lastYearNum - 1, 12, 31));
+
+                Map<String, Object> lastYear = new LinkedHashMap<>();
+                lastYear.put("label", "Last Year " + lastYearNum);
+                lastYear.put("year", lastYearNum);
+                lastYear.put("months", lyMonths);
+                lastYear.put("totals", buildMetricBucket("Last Year", lyTxns, lyVol, lyMsf, lyIc, lySf, lyEc, lyNet));
+                lastYear.put("prev", buildMetricBucket("Prev Year",
+                                toLong(prevFullYear[0]), toBigDecimal(prevFullYear[1]),
+                                toBigDecimal(prevFullYear[2]), toBigDecimal(prevFullYear[3]),
+                                toBigDecimal(prevFullYear[4]), toBigDecimal(prevFullYear[5]),
+                                toBigDecimal(prevFullYear[6])));
+
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("effectiveDate", eff.toString());
                 response.put("mtd", mtd);
                 response.put("ytd", ytd);
+                response.put("lastYear", lastYear);
                 return ResponseEntity.ok(currencyMeta.attach(response));
         }
 
