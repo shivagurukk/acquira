@@ -1405,6 +1405,19 @@ public class VolumeRevenueRepository {
      * Mirrors its window math — must stay in sync with it.
      */
     public Map<String, Object> getAttritionReportMeta(VolumeRevenueFilterDTO filter, Long tenantId) {
+        return getAttritionReportMeta(filter, tenantId, null);
+    }
+
+    /**
+     * Same as {@link #getAttritionReportMeta(VolumeRevenueFilterDTO, Long)}, but
+     * accepts an already-computed "latest loaded business date" so the combined
+     * {@code /attrition-report-with-meta} endpoint doesn't run the same
+     * MAX(business_date) query twice in one request — once here, once inside
+     * {@link #getAttritionReport}. Pass null to compute it fresh (the public
+     * overload's behavior, unchanged for the standalone endpoint).
+     */
+    public Map<String, Object> getAttritionReportMeta(VolumeRevenueFilterDTO filter, Long tenantId,
+                                                        java.time.LocalDate precomputedLatestData) {
         requireTenant(tenantId);
         java.time.LocalDate end   = filter.getEndDate()   != null ? filter.getEndDate()   : java.time.LocalDate.now();
         java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
@@ -1427,7 +1440,7 @@ public class VolumeRevenueRepository {
         // complete-month baselines). The status column needs its OWN coverage probe:
         // an empty trailing-3-month baseline makes every status read NEW/CHURNED,
         // an artifact of missing history the MoM/YoY probes below cannot see.
-        java.time.LocalDate latestData = latestBusinessDate(
+        java.time.LocalDate latestData = precomputedLatestData != null ? precomputedLatestData : latestBusinessDate(
                 canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight", tenantId);
         java.time.LocalDate classifierEnd = (latestData != null && latestData.isBefore(end)) ? latestData : end;
         int dayCut = classifierEnd.getDayOfMonth();
@@ -1523,6 +1536,37 @@ public class VolumeRevenueRepository {
      * comparisons never include other tenants' merchants.
      */
     public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter, Long tenantId) {
+        return getAttritionReport(filter, tenantId, null);
+    }
+
+    /**
+     * Combined rows+meta fetch for the /attrition-report-with-meta endpoint.
+     * Computes "latest loaded business date" exactly ONCE and threads it into
+     * both the row query and the meta probes — the two were previously run
+     * back-to-back and each ran its own identical MAX(business_date) query,
+     * doubling that round trip on every page load for no reason (routing is
+     * deterministic from the same filter, so the two calls always agreed).
+     */
+    public Map<String, Object> getAttritionReportWithMeta(VolumeRevenueFilterDTO filter, Long tenantId) {
+        requireTenant(tenantId);
+        boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
+        boolean canUseMerchantGrain = !needStore
+                && !listNonEmpty(filter.getChannelList())
+                && !listNonEmpty(filter.getSchemeList())
+                && !listNonEmpty(filter.getCardTypeList())
+                && !listNonEmpty(filter.getDestinationList());
+        java.time.LocalDate latestData = latestBusinessDate(
+                canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight", tenantId);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("rows", getAttritionReport(filter, tenantId, latestData));
+        response.put("meta", getAttritionReportMeta(filter, tenantId, latestData));
+        return response;
+    }
+
+    /** As {@link #getAttritionReport(VolumeRevenueFilterDTO, Long)}, reusing an already-computed latest-data date. */
+    public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter, Long tenantId,
+                                                          java.time.LocalDate precomputedLatestData) {
         requireTenant(tenantId);
         // ── Window definitions (all equal-length so comparisons are apples-to-apples) ──
         // Current period  : [start, end]              (the selected range)
@@ -1570,7 +1614,7 @@ public class VolumeRevenueRepository {
         // days than dayCut while the baselines were complete, biasing every ratio
         // low by (missing days / dayCut) and mass-stamping CHURNED right after
         // month start. Historical selections are unaffected (latest >= end there).
-        java.time.LocalDate latestData = latestBusinessDate(baseTable, tenantId);
+        java.time.LocalDate latestData = precomputedLatestData != null ? precomputedLatestData : latestBusinessDate(baseTable, tenantId);
         java.time.LocalDate classifierEnd = (latestData != null && latestData.isBefore(end)) ? latestData : end;
         int dayCut = classifierEnd.getDayOfMonth();
         // [FIX] When the anchored month is COMPLETE, the baselines must be complete

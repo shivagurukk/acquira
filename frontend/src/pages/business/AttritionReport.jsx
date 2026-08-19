@@ -439,8 +439,6 @@ const AttritionReport = () => {
         const ytdIsNew = totalPrev === 0 && totalCur > 0;
         const atRiskValue = data.reduce((s, d) =>
             (d.status === 'CHURNED' || d.status === 'DECLINING') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
-        const lostValue = data.reduce((s, d) =>
-            d.status === 'CHURNED' ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
         const atRiskShare = totalCur > 0 ? (atRiskValue / totalCur) * 100 : 0;
         // Merchants the classifier still reads as healthy but the model flags
         // as likely to leave — invisible in a status-only view precisely
@@ -449,9 +447,13 @@ const AttritionReport = () => {
             r.churnBand === 'HIGH' && (r.status === 'PERFORMING' || r.status === 'STABLE'));
         const silentValue = silentRisk.reduce((s, d) => s + (Number(val(d, 'ytd_current')) || 0), 0);
 
+        // Headline leads with merchant counts, not a dollar figure — a $ total
+        // pooled across thousands of merchants (many tiny) reads as an alarming
+        // but meaningless number to an exec. The money still appears, sized
+        // down, in the "at risk" tile below.
         const parts = [];
         if (churned > 0) {
-            parts.push(`${churned} of ${data.length} merchants churned, taking ${fmtMeasure(lostValue)} of year-to-date ${METRICS[metric].label.toLowerCase()} with them`);
+            parts.push(`${churned} of ${data.length} merchants have churned`);
         }
         if (declining > 0) parts.push(`${declining} more ${declining === 1 ? 'is' : 'are'} declining`);
         if (!parts.length) parts.push(`No merchants churned or declining across the ${data.length}-merchant book`);
@@ -465,6 +467,11 @@ const AttritionReport = () => {
             atRiskValue, atRiskShare, churned, declining,
             ytdChange, ytdIsNew,
             silentCount: silentRisk.length, silentValue,
+            // The good number: how much of the book is NOT at risk. Value share
+            // is 100 − at-risk share by construction, so the two always sum.
+            healthyCount: (statusCounts.STABLE || 0) + (statusCounts.PERFORMING || 0) + (statusCounts.NEW || 0),
+            healthyValue: totalCur - atRiskValue,
+            healthyShare: totalCur > 0 ? 100 - atRiskShare : 0,
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data, rows, statusCounts, metric]);
@@ -835,84 +842,126 @@ const AttritionReport = () => {
                 lost, it just stops shouting over the answer. */}
             {briefing && !loading && (
                 <Paper className="dx-rise" sx={{
-                    p: { xs: 2.5, md: 3 }, borderRadius: 'var(--radius-xl, 14px)',
+                    borderRadius: 'var(--radius-xl, 14px)', overflow: 'hidden',
                     border: `1px solid ${T.border}`, bgcolor: T.card,
-                    borderLeft: `3px solid ${briefing.tone === 'bad' ? 'var(--negative, #B3382C)' : 'var(--success, #0FA070)'}`,
                     boxShadow: 'var(--shadow-card, none)',
                 }}>
-                    <Typography sx={{
-                        fontSize: { xs: '1.15rem', md: '1.35rem' }, fontWeight: 700,
-                        color: T.text, lineHeight: 1.4, letterSpacing: '-0.01em', maxWidth: 920,
-                    }}>
-                        {briefing.headline}
-                    </Typography>
-                    {briefing.action && (
-                        <Typography sx={{ fontSize: '0.85rem', color: T.textSec, mt: 0.75, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                            <Brain size={14} style={{ flexShrink: 0, color: 'var(--attr-atrisk, #B3382C)' }} />
-                            {briefing.action}
-                        </Typography>
-                    )}
+                    {/* Tone is a hairline, not a shout: a thin gradient rule across the
+                        top replaces the old 3px solid left border. */}
+                    <Box aria-hidden sx={{
+                        height: 3,
+                        background: briefing.tone === 'bad'
+                            ? 'linear-gradient(90deg, var(--negative, #B3382C), color-mix(in srgb, var(--negative, #B3382C) 12%, transparent) 70%)'
+                            : 'linear-gradient(90deg, var(--success, #0FA070), color-mix(in srgb, var(--success, #0FA070) 12%, transparent) 70%)',
+                    }} />
+                    <Box sx={{ p: { xs: 2.5, md: 3.5 }, pt: { xs: 2.25, md: 3 } }}>
+                        {/* Masthead row: verdict prose on the left, the annual-report
+                            stat band on the right, separated by hairline column rules.
+                            The band leads with the GOOD number — book health — so the
+                            briefing reads as a balance sheet, not a casualty list. */}
+                        <Box sx={{
+                            display: 'flex', flexDirection: { xs: 'column', lg: 'row' },
+                            gap: { xs: 2.5, lg: 5 }, alignItems: { lg: 'center' },
+                        }}>
+                            <Box sx={{ flex: { lg: '0 1 420px' }, minWidth: { lg: 300 } }}>
+                                <Typography variant="caption" sx={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 0.75,
+                                    color: T.textMut, fontWeight: 700, fontSize: '0.66rem',
+                                    letterSpacing: '0.12em', textTransform: 'uppercase',
+                                }}>
+                                    <Box component="span" aria-hidden sx={{
+                                        width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                                        bgcolor: briefing.tone === 'bad' ? 'var(--negative, #B3382C)' : 'var(--success, #0FA070)',
+                                    }} />
+                                    Portfolio briefing · {selectedYear}
+                                </Typography>
+                                <Typography sx={{
+                                    fontSize: { xs: '1.15rem', md: '1.3rem' }, fontWeight: 650,
+                                    color: T.text, lineHeight: 1.35, letterSpacing: '-0.015em', mt: 0.75,
+                                }}>
+                                    {briefing.headline}
+                                </Typography>
+                                {briefing.action && (
+                                    <Typography sx={{ fontSize: '0.82rem', color: T.textSec, mt: 1, display: 'flex', alignItems: 'flex-start', gap: 0.75, lineHeight: 1.5 }}>
+                                        <Brain size={14} style={{ flexShrink: 0, marginTop: 2, color: 'var(--attr-atrisk, #B3382C)' }} />
+                                        {briefing.action}
+                                    </Typography>
+                                )}
+                            </Box>
 
-                    {/* The three numbers that matter, in mono. Everything else is caption. */}
-                    <Box sx={{ display: 'grid', gap: { xs: 2, md: 4 }, mt: 2.5,
-                        gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, auto)' }, justifyContent: 'start' }}>
-                        <Box>
-                            <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block' }}>
-                                {METRICS[metric].label} at risk
-                            </Typography>
-                            <Typography className="num" sx={{
-                                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
-                                fontSize: '1.7rem', fontWeight: 600, lineHeight: 1.25,
-                                color: briefing.atRiskValue > 0 ? 'var(--attr-atrisk, #B3382C)' : T.text,
+                            {/* Stat band — four columns, hairline-ruled like a report
+                                KPI strip. Labels whisper, numerals speak. */}
+                            <Box sx={{
+                                flex: 1, display: 'grid', ml: { lg: 'auto' },
+                                gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, minmax(0, 1fr))' },
+                                rowGap: { xs: 2, md: 0 },
+                                borderTop: { xs: `1px solid ${T.borderLt}`, lg: 'none' },
+                                pt: { xs: 2, lg: 0 },
                             }}>
-                                {fmtMeasure(briefing.atRiskValue)}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: T.textSec, display: 'block' }}>
-                                {briefing.atRiskShare.toFixed(0)}% of the book · held by churned + declining
-                            </Typography>
-                            <Typography variant="caption" sx={{
-                                display: 'inline-flex', alignItems: 'center', gap: 0.5, mt: 0.25, fontWeight: 600,
-                                fontVariantNumeric: 'tabular-nums',
-                                color: briefing.ytdIsNew ? T.textMut
-                                    : briefing.ytdChange < 0 ? 'var(--danger-text, #B3382C)' : 'var(--success-text, #0B6B4D)',
-                            }}>
-                                {briefing.ytdIsNew
-                                    ? `no ${prevYear} baseline`
-                                    : `${briefing.ytdChange < 0 ? '▼' : '▲'} ${Math.abs(briefing.ytdChange).toFixed(1)}% YTD vs ${prevYear}`}
-                            </Typography>
+                                {[
+                                    {
+                                        label: 'Book health',
+                                        value: `${briefing.healthyShare.toFixed(0)}%`,
+                                        color: 'var(--success-text, #0B6B4D)',
+                                        line1: `${briefing.healthyCount.toLocaleString()} healthy merchants`,
+                                        line2: `${fmtMeasure(briefing.healthyValue)} ${METRICS[metric].label.toLowerCase()} retained`,
+                                    },
+                                    {
+                                        label: 'At risk',
+                                        value: (briefing.churned + briefing.declining).toLocaleString(),
+                                        color: (briefing.churned + briefing.declining) > 0 ? 'var(--attr-atrisk, #B3382C)' : T.text,
+                                        line1: `${briefing.churned.toLocaleString()} churned · ${briefing.declining.toLocaleString()} declining`,
+                                        line2: `${fmtMeasure(briefing.atRiskValue)} · ${briefing.atRiskShare.toFixed(0)}% of the book`,
+                                    },
+                                    {
+                                        label: churnAvailable ? 'Call first' : 'Performing',
+                                        value: (churnAvailable ? briefing.silentCount : statusCounts.PERFORMING).toLocaleString(),
+                                        color: T.text,
+                                        line1: churnAvailable ? 'healthy today, model says leaving' : '≥90% of their 3-month average',
+                                        line2: churnAvailable && briefing.silentCount > 0 ? `${fmtMeasure(briefing.silentValue)} still saveable` : null,
+                                    },
+                                    {
+                                        label: 'YTD trend',
+                                        value: briefing.ytdIsNew ? '—' : `${briefing.ytdChange < 0 ? '▼' : '▲'} ${Math.abs(briefing.ytdChange).toFixed(1)}%`,
+                                        color: briefing.ytdIsNew ? T.textMut
+                                            : briefing.ytdChange < 0 ? 'var(--danger-text, #B3382C)' : 'var(--success-text, #0B6B4D)',
+                                        line1: briefing.ytdIsNew ? `no ${prevYear} baseline` : `book-wide, vs ${prevYear}`,
+                                        line2: null,
+                                    },
+                                ].map((s, i) => (
+                                    <Box key={s.label} sx={{
+                                        px: { xs: i % 2 === 0 ? 0 : 2, md: 3 },
+                                        '&:first-of-type': { pl: { md: 0 } },
+                                        borderLeft: {
+                                            xs: i % 2 === 1 ? `1px solid ${T.borderLt}` : 'none',
+                                            md: i === 0 ? 'none' : `1px solid ${T.borderLt}`,
+                                        },
+                                    }}>
+                                        <Typography variant="caption" sx={{
+                                            color: T.textMut, fontWeight: 700, fontSize: '0.66rem',
+                                            letterSpacing: '0.1em', textTransform: 'uppercase', display: 'block',
+                                        }}>
+                                            {s.label}
+                                        </Typography>
+                                        <Typography className="num" sx={{
+                                            fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                                            fontSize: { xs: '1.55rem', md: '1.85rem' }, fontWeight: 650,
+                                            lineHeight: 1.2, mt: 0.5, color: s.color,
+                                        }}>
+                                            {s.value}
+                                        </Typography>
+                                        <Typography variant="caption" sx={{ color: T.textSec, display: 'block', mt: 0.25, lineHeight: 1.45 }}>
+                                            {s.line1}
+                                        </Typography>
+                                        {s.line2 && (
+                                            <Typography variant="caption" sx={{ color: T.textMut, display: 'block', lineHeight: 1.45, fontVariantNumeric: 'tabular-nums' }}>
+                                                {s.line2}
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                ))}
+                            </Box>
                         </Box>
-                        <Box>
-                            <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block' }}>
-                                Merchants at risk
-                            </Typography>
-                            <Typography className="num" sx={{
-                                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
-                                fontSize: '1.7rem', fontWeight: 600, lineHeight: 1.25,
-                                color: (briefing.churned + briefing.declining) > 0 ? T.text : 'var(--success-text, #0B6B4D)',
-                            }}>
-                                {briefing.churned + briefing.declining}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: T.textSec, display: 'block' }}>
-                                {briefing.churned} churned · {briefing.declining} declining · of {data.length}
-                            </Typography>
-                        </Box>
-                        <Box>
-                            <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block' }}>
-                                {churnAvailable ? 'Call first' : 'Performing'}
-                            </Typography>
-                            <Typography className="num" sx={{
-                                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
-                                fontSize: '1.7rem', fontWeight: 600, lineHeight: 1.25, color: T.text,
-                            }}>
-                                {churnAvailable ? briefing.silentCount : statusCounts.PERFORMING}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: T.textSec, display: 'block' }}>
-                                {churnAvailable
-                                    ? 'healthy today · high predicted churn'
-                                    : '≥90% of their 3-month average'}
-                            </Typography>
-                        </Box>
-                    </Box>
 
                     {/* Footer — the two clocks, permanently stated, plus the data
                         caveats one click away. The page runs on TWO windows and
@@ -974,6 +1023,7 @@ const AttritionReport = () => {
                                 are artifacts of missing history, not real change.
                             </Typography>
                         </Popover>
+                        </Box>
                     </Box>
                 </Paper>
             )}

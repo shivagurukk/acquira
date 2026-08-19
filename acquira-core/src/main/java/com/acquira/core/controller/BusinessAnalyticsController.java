@@ -161,10 +161,10 @@ public class BusinessAnalyticsController {
     public Map<String, Object> getAttritionReportWithMeta(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);
         Long tenantId = tenantService.getCurrentTenantId();
-        Map<String, Object> response = new java.util.HashMap<>();
-        response.put("rows", volumeRevenueRepository.getAttritionReport(filters, tenantId));
-        response.put("meta", volumeRevenueRepository.getAttritionReportMeta(filters, tenantId));
-        return response;
+        // Rows + meta computed the "latest loaded business date" separately —
+        // same query, run twice, on every page load. getAttritionReportWithMeta
+        // computes it once and threads it through both.
+        return volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId);
     }
 
     @PreAuthorize("@menuAccess.canAccess('/business/retention')")
