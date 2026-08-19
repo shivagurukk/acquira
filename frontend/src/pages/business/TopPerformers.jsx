@@ -42,29 +42,163 @@ const emptyFilters = () => ({
     openDateStart: '', openDateEnd: '',
 });
 
+// ─── Leaderboard chrome: solid tinted heading, animated border, top-3 spotlight ───
+// Decorative only — collapses to a plain static card under prefers-reduced-motion.
+//
+// Colour model: every board shares one hue (--lb-c, LB_HUE below) so the page
+// reads as one set of tables, not a colour wheel. That hue drives four depths —
+// a deep heading bar (hue darkened toward navy, white type on top), a faint
+// card fill, a zebra tint, and the row hairlines — so a board reads as one
+// object rather than a white box with a coloured strip stapled on. The
+// travelling border line is a conic gradient painted on the border-box beneath
+// a padding-box fill, so the card must carry a transparent border.
+const LEADERBOARD_CSS = `
+@property --lbAngle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+
+@keyframes lbSweep  { to { --lbAngle: 360deg; } }
+@keyframes lbSheen  { 0% { transform: translateX(-60%) skewX(-18deg); } 55%, 100% { transform: translateX(420%) skewX(-18deg); } }
+@keyframes lbRowIn  { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+@keyframes lbShine  { 0% { transform: translateX(-130%); } 55%, 100% { transform: translateX(320%); } }
+@keyframes lbMedal  { 0%, 100% { transform: scale(1);   box-shadow: 0 0 0 0 color-mix(in srgb, var(--lb-m) 50%, transparent); }
+                      50%      { transform: scale(1.1); box-shadow: 0 0 0 5px color-mix(in srgb, var(--lb-m) 0%, transparent); } }
+
+.lb-card {
+  --lb-fill: color-mix(in srgb, var(--lb-c) 6%, var(--bg-card));
+  --lb-line: color-mix(in srgb, var(--lb-c) 16%, transparent);
+  position: relative;
+  border: 1.5px solid transparent !important;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--lb-c) 10%, transparent),
+              0 8px 24px color-mix(in srgb, var(--lb-c) 12%, transparent);
+  background:
+    linear-gradient(var(--lb-fill), var(--lb-fill)) padding-box,
+    conic-gradient(from var(--lbAngle),
+      var(--border) 0deg,
+      var(--border) 250deg,
+      color-mix(in srgb, var(--lb-c) 45%, var(--border)) 300deg,
+      var(--lb-c) 330deg,
+      color-mix(in srgb, var(--lb-c) 45%, var(--border)) 350deg,
+      var(--border) 360deg) border-box;
+  animation: lbSweep 6s linear infinite;
+}
+
+/* Heading: the hue darkened toward navy so white type clears AA in both
+   schemes, with a slow specular sheen travelling across it. */
+.lb-head {
+  position: relative;
+  overflow: hidden;
+  border-bottom: none !important;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--lb-c) 76%, #0A1426) 0%,
+    color-mix(in srgb, var(--lb-c) 54%, #0A1426) 52%,
+    color-mix(in srgb, var(--lb-c) 72%, #0A1426) 100%);
+}
+.lb-head::before {
+  content: '';
+  position: absolute; top: 0; bottom: 0; left: 0; width: 22%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  animation: lbSheen 7s ease-in-out infinite;
+  pointer-events: none;
+}
+/* Bright hairline along the bottom edge of the bar. */
+.lb-head::after {
+  content: '';
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--lb-c) 70%, #fff),
+    color-mix(in srgb, var(--lb-c) 30%, transparent) 72%, transparent);
+}
+.lb-title { color: #fff; position: relative; }
+.lb-icon  { background: rgba(255, 255, 255, 0.16); border: 1px solid rgba(255, 255, 255, 0.24); }
+.lb-dl    { color: rgba(255, 255, 255, 0.72) !important; }
+.lb-dl:hover { color: #fff !important; background: rgba(255, 255, 255, 0.14) !important; }
+
+/* Rows: hue-tinted hairlines + a whisper of zebra so ten lines stay scannable. */
+.lb-row {
+  position: relative;
+  border-bottom: 1px solid var(--lb-line) !important;
+  transition: background-color 140ms ease;
+  animation: lbRowIn 340ms ease-out both;
+  animation-delay: var(--lb-d, 0ms);
+}
+.lb-row:last-of-type { border-bottom: none !important; }
+.lb-row:nth-of-type(even) { background: color-mix(in srgb, var(--lb-c) 4%, transparent); }
+.lb-row:hover { background: color-mix(in srgb, var(--lb-c) 11%, transparent); }
+
+.lb-row-top {
+  overflow: hidden;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--lb-m) 26%, transparent) 0%,
+    color-mix(in srgb, var(--lb-m) 8%,  transparent) 52%,
+    transparent 100%) !important;
+}
+.lb-row-top:hover {
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--lb-m) 34%, transparent) 0%,
+    color-mix(in srgb, var(--lb-m) 12%, transparent) 52%,
+    transparent 100%) !important;
+}
+.lb-row-top::before {
+  content: '';
+  position: absolute; top: 0; bottom: 0; left: 0; width: 34%;
+  background: linear-gradient(90deg, transparent,
+    color-mix(in srgb, var(--lb-m) 30%, transparent), transparent);
+  animation: lbShine 3.8s ease-in-out infinite;
+  animation-delay: var(--lb-d, 0ms);
+  pointer-events: none;
+}
+.lb-row-top::after {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, var(--lb-m), color-mix(in srgb, var(--lb-m) 40%, transparent));
+}
+.lb-medal {
+  color: #fff;
+  background: linear-gradient(135deg, var(--lb-m), color-mix(in srgb, var(--lb-m) 58%, #000));
+  animation: lbMedal 2.6s ease-in-out infinite;
+  animation-delay: var(--lb-d, 0ms);
+}
+.lb-chip {
+  background: color-mix(in srgb, var(--lb-c) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lb-c) 22%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lb-card, .lb-head::before, .lb-row, .lb-row-top::before, .lb-medal { animation: none !important; }
+  .lb-card { border: 1.5px solid var(--border) !important;
+             background: linear-gradient(var(--lb-fill), var(--lb-fill)) padding-box; }
+}
+`;
+
+// One hue for every leaderboard on the page — the navy of the shared table header.
+const LB_HUE = 'var(--cat-1, #3F63B0)';
+
+// Gold / silver / bronze for ranks 1–3; every other row keeps the quiet chip.
+const MEDALS = ['#C9931B', '#8592A6', '#A9662F'];
+
 // ─── Reusable ranked-list card ───────────────────────────────────────
-const LeaderboardCard = ({ title, icon: Icon, color = T.brand, rows, primaryKey, secondaryKey,
+const LeaderboardCard = ({ title, icon: Icon, color = LB_HUE, rows, primaryKey, secondaryKey,
     valueKey, valueFmt, badgeKey, emptyLabel, onExport }) => (
-    <Paper sx={{ ...premiumTableWrapper, display: 'flex', flexDirection: 'column' }}>
-        <Box sx={{
-            px: 2.5, py: 1.75, borderBottom: `1px solid ${T.borderLt}`,
+    <Paper className="lb-card" style={{ '--lb-c': color }}
+        sx={{ ...premiumTableWrapper, display: 'flex', flexDirection: 'column' }}>
+        <Box className="lb-head" sx={{
+            px: 2.5, py: 1.75,
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
-            <Stack direction="row" spacing={1.2} alignItems="center">
+            <Stack direction="row" spacing={1.2} alignItems="center" sx={{ position: 'relative' }}>
                 {Icon && (
-                    <Box sx={{
+                    <Box className="lb-icon" sx={{
                         width: 30, height: 30, borderRadius: '8px', display: 'flex',
                         alignItems: 'center', justifyContent: 'center',
-                        background: `color-mix(in srgb, ${color} 10%, transparent)`,
                     }}>
-                        <Icon size={15} color={color} />
+                        <Icon size={15} color="#fff" />
                     </Box>
                 )}
-                <Typography fontWeight={700} fontSize="0.88rem" color={T.text}>{title}</Typography>
+                <Typography className="lb-title" fontWeight={700} fontSize="0.88rem"
+                    sx={{ letterSpacing: '0.015em' }}>{title}</Typography>
             </Stack>
             {onExport && rows?.length > 0 && (
                 <Tooltip title="Export CSV">
-                    <IconButton size="small" onClick={onExport} sx={{ color: T.textMut }}>
+                    <IconButton className="lb-dl" size="small" onClick={onExport} sx={{ position: 'relative' }}>
                         <Download size={14} />
                     </IconButton>
                 </Tooltip>
@@ -76,51 +210,57 @@ const LeaderboardCard = ({ title, icon: Icon, color = T.brand, rows, primaryKey,
             </Box>
         ) : (
             <Box sx={{ flex: 1 }}>
-                {rows.map((r, i) => (
-                    <Box key={i} sx={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        px: 2.5, py: 1.25, gap: 1.5,
-                        borderBottom: i < rows.length - 1 ? `1px solid ${T.borderLt}` : 'none',
-                    }}>
-                        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ minWidth: 0 }}>
-                            <Box sx={{
-                                width: 22, height: 22, borderRadius: '6px', flexShrink: 0,
-                                bgcolor: r.rank <= 3 ? `color-mix(in srgb, ${color} 14%, transparent)` : T.subtle,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: '0.68rem', fontWeight: 700,
-                                color: r.rank <= 3 ? color : T.textSec,
+                {rows.map((r, i) => {
+                    const medal = r.rank <= 3 ? MEDALS[r.rank - 1] : null;
+                    return (
+                        <Box key={i}
+                            className={`lb-row${medal ? ' lb-row-top' : ''}`}
+                            style={{ '--lb-d': `${i * 70}ms`, ...(medal ? { '--lb-m': medal } : {}) }}
+                            sx={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                px: 2.5, py: 1.25, gap: 1.5,
                             }}>
-                                {r.rank}
-                            </Box>
-                            <Box sx={{ minWidth: 0 }}>
-                                <Typography noWrap fontWeight={600} fontSize="0.82rem" color={T.text}>
-                                    {r[primaryKey] || '—'}
-                                </Typography>
-                                {secondaryKey && (
-                                    <Typography noWrap fontSize="0.7rem" color={T.textMut} fontFamily="monospace">
-                                        {r[secondaryKey] || (r.merchantCount != null ? `${r.merchantCount} merchants` : '')}
-                                    </Typography>
-                                )}
-                            </Box>
-                        </Stack>
-                        <Stack alignItems="flex-end" spacing={0.3} sx={{ flexShrink: 0 }}>
-                            <Typography fontWeight={700} fontSize="0.85rem" color={T.text} sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                                {valueFmt(r[valueKey])}
-                            </Typography>
-                            {badgeKey && r[badgeKey] != null && (
-                                <Box sx={{
-                                    display: 'inline-flex', alignItems: 'center', gap: 0.3,
-                                    px: 0.7, py: 0.1, borderRadius: '6px', fontSize: '0.62rem', fontWeight: 700,
-                                    bgcolor: r[badgeKey] >= 0 ? 'var(--success-bg, #d1fae5)' : 'var(--danger-bg, #fee2e2)',
-                                    color: r[badgeKey] >= 0 ? T.success : T.danger,
+                            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ minWidth: 0, position: 'relative' }}>
+                                <Box className={medal ? 'lb-medal' : 'lb-chip'} sx={{
+                                    width: 22, height: 22, borderRadius: '6px', flexShrink: 0,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontSize: '0.68rem', fontWeight: 700,
+                                    fontFamily: 'var(--font-mono)',
+                                    color: medal ? undefined : T.textSec,
                                 }}>
-                                    {r[badgeKey] >= 0 ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
-                                    {Math.abs(r[badgeKey]).toFixed(1)}%
+                                    {r.rank}
                                 </Box>
-                            )}
-                        </Stack>
-                    </Box>
-                ))}
+                                <Box sx={{ minWidth: 0 }}>
+                                    <Typography noWrap fontWeight={medal ? 700 : 600} fontSize="0.82rem" color={T.text}>
+                                        {r[primaryKey] || '—'}
+                                    </Typography>
+                                    {secondaryKey && (
+                                        <Typography noWrap fontSize="0.7rem" color={T.textMut} fontFamily="var(--font-mono)">
+                                            {r[secondaryKey] || (r.merchantCount != null ? `${r.merchantCount} merchants` : '')}
+                                        </Typography>
+                                    )}
+                                </Box>
+                            </Stack>
+                            <Stack alignItems="flex-end" spacing={0.3} sx={{ flexShrink: 0, position: 'relative' }}>
+                                <Typography fontWeight={700} fontSize="0.85rem" color={T.text}
+                                    sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+                                    {valueFmt(r[valueKey])}
+                                </Typography>
+                                {badgeKey && r[badgeKey] != null && (
+                                    <Box sx={{
+                                        display: 'inline-flex', alignItems: 'center', gap: 0.3,
+                                        px: 0.7, py: 0.1, borderRadius: '6px', fontSize: '0.62rem', fontWeight: 700,
+                                        bgcolor: r[badgeKey] >= 0 ? 'var(--success-bg, #d1fae5)' : 'var(--danger-bg, #fee2e2)',
+                                        color: r[badgeKey] >= 0 ? T.success : T.danger,
+                                    }}>
+                                        {r[badgeKey] >= 0 ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
+                                        {Math.abs(r[badgeKey]).toFixed(1)}%
+                                    </Box>
+                                )}
+                            </Stack>
+                        </Box>
+                    );
+                })}
             </Box>
         )}
     </Paper>
@@ -187,6 +327,7 @@ const TopPerformers = () => {
 
     return (
         <Box sx={pageContainer}>
+            <style>{LEADERBOARD_CSS}</style>
             <PremiumReportHeader
                 title="Top Performers"
                 subtitle={data ? `${data.from} → ${data.to} · settlement volume unless card filters are applied` : 'Loading…'}
@@ -232,44 +373,44 @@ const TopPerformers = () => {
             ) : (
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 2.5 }}>
                     <LeaderboardCard
-                        title="Top 10 Merchants — Volume" icon={Sparkles} color="var(--brand, #2563eb)"
+                        title="Top 10 Merchants — Volume" icon={Sparkles} color={LB_HUE}
                         rows={data.topMerchantsByVolume} primaryKey="name" secondaryKey="mid"
                         valueKey="volume" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topMerchantsByVolume, 'top_merchants_by_volume')}
                     />
                     <LeaderboardCard
-                        title="Top 10 Merchants — Net Margin" icon={TrendingUp} color="var(--success, #059669)"
+                        title="Top 10 Merchants — Net Margin" icon={TrendingUp} color={LB_HUE}
                         rows={data.topMerchantsByNetRevenue} primaryKey="name" secondaryKey="mid"
                         valueKey="netRevenue" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topMerchantsByNetRevenue, 'top_merchants_by_net_revenue')}
                     />
                     <LeaderboardCard
-                        title="Top 10 Merchants — Transactions" icon={Receipt} color="var(--warning, #d97706)"
+                        title="Top 10 Merchants — Transactions" icon={Receipt} color={LB_HUE}
                         rows={data.topMerchantsByTxns} primaryKey="name" secondaryKey="mid"
                         valueKey="txns" valueFmt={fmt.number}
                         onExport={() => exportToCSV(data.topMerchantsByTxns, 'top_merchants_by_txns')}
                     />
                     <LeaderboardCard
-                        title="Top 10 RMs — Volume" icon={Users} color="var(--brand-alt, #3b82f6)"
+                        title="Top 10 RMs — Volume" icon={Users} color={LB_HUE}
                         rows={data.topRmsByVolume} primaryKey="name" secondaryKey="salesUserId"
                         valueKey="volume" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topRmsByVolume, 'top_rms_by_volume')}
                     />
                     <LeaderboardCard
-                        title="Top 10 RMs — Net Margin" icon={Trophy} color="var(--warning, #d97706)"
+                        title="Top 10 RMs — Net Margin" icon={Trophy} color={LB_HUE}
                         rows={data.topRmsByNetRevenue} primaryKey="name" secondaryKey="salesUserId"
                         valueKey="netRevenue" valueFmt={fmt.currency}
                         onExport={() => exportToCSV(data.topRmsByNetRevenue, 'top_rms_by_net_revenue')}
                     />
                     <LeaderboardCard
-                        title="Top 10 MCC — Volume" icon={Layers} color="var(--brand, #2563eb)"
+                        title="Top 10 MCC — Volume" icon={Layers} color={LB_HUE}
                         rows={data.topMccs} primaryKey="name" secondaryKey="mcc"
                         valueKey="volume" valueFmt={fmt.currency}
                         emptyLabel="No MCC-level data for this window (sum_daily_full not yet populated)."
                         onExport={() => exportToCSV(data.topMccs, 'top_mccs_by_volume')}
                     />
                     <LeaderboardCard
-                        title="Top 10 New Merchants" icon={Sparkles} color="var(--brand-alt, #3b82f6)"
+                        title="Top 10 New Merchants" icon={Sparkles} color={LB_HUE}
                         rows={data.topNewMerchants} primaryKey="name" secondaryKey="mid"
                         valueKey="volume" valueFmt={fmt.currency}
                         emptyLabel="No merchants onboarded in this window."
@@ -277,20 +418,20 @@ const TopPerformers = () => {
                     />
 
                     {/* Movers — split up/down within one card */}
-                    <Paper sx={{ ...premiumTableWrapper, display: 'flex', flexDirection: 'column' }}>
-                        <Box sx={{ px: 2.5, py: 1.75, borderBottom: `1px solid ${T.borderLt}` }}>
+                    <Paper className="lb-card" style={{ '--lb-c': LB_HUE }}
+                        sx={{ ...premiumTableWrapper, display: 'flex', flexDirection: 'column' }}>
+                        <Box className="lb-head" sx={{ px: 2.5, py: 1.75 }}>
                             <Stack direction="row" spacing={1.2} alignItems="center">
-                                <Box sx={{
+                                <Box className="lb-icon" sx={{
                                     width: 30, height: 30, borderRadius: '8px', display: 'flex',
                                     alignItems: 'center', justifyContent: 'center',
-                                    background: 'color-mix(in srgb, var(--brand, #2563eb) 10%, transparent)',
                                 }}>
-                                    <TrendingUp size={15} color={T.brand} />
+                                    <TrendingUp size={15} color="#fff" />
                                 </Box>
-                                <Typography fontWeight={700} fontSize="0.88rem" color={T.text}>Top Movers</Typography>
+                                <Typography className="lb-title" fontWeight={700} fontSize="0.88rem">Top Movers</Typography>
                             </Stack>
                             {data?.priorFrom && (
-                                <Typography fontSize="0.68rem" color={T.textMut} sx={{ mt: 0.4 }}>
+                                <Typography fontSize="0.68rem" sx={{ mt: 0.4, position: 'relative', color: 'rgba(255,255,255,0.72)' }}>
                                     vs {data.priorFrom} → {data.priorTo}
                                 </Typography>
                             )}

@@ -1,16 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, Tooltip, Drawer, IconButton, Divider, Popover } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
-import { Activity, TrendingUp, Users, DollarSign, AlertTriangle, ShieldAlert, Brain, X, CalendarClock, ArrowRight, Info, Scale } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer, Cell } from 'recharts';
+import { Activity, AlertTriangle, Brain, X, CalendarClock, ArrowRight, Info, Scale } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
-import KpiCards from '../../components/KpiCards';
 import { exportToCSV } from '../../utils/exportUtils';
-import { premiumDataGridStyles, premiumTableWrapper, pageContainer, chartTooltipStyle } from '../../theme/dataGridStyles';
+import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useDataBounds } from '../../hooks/useDataBounds';
 import DataBoundsBanner from '../../components/DataBoundsBanner';
 
@@ -49,22 +47,27 @@ const METRICS = {
 // declining = warning (amber), stable = neutral ink, performing = success —
 // the previous purple/orange pairing made the most severe state read as a
 // brand accent instead of a problem.
+// The --attr-* tokens are defined in index.css, derived from the Meridian
+// semantic palette (negative / attention / success / primary), so they flip
+// with dark mode. Fallbacks mirror the light Meridian values.
+// `hard` marks the statuses allowed to carry full-strength colour — everything
+// else renders quiet so risk is the only thing that pops.
 const STATUS_META = {
-    CHURNED:    { label: 'Churned',    color: 'var(--attr-churned, #dc2626)',   bg: 'var(--attr-churned-bg, #fef2f2)' },
-    DECLINING:  { label: 'Declining',  color: 'var(--attr-declining, #d97706)', bg: 'var(--attr-declining-bg, #fffbeb)' },
-    STABLE:     { label: 'Stable',     color: 'var(--attr-stable, #64748b)',    bg: 'var(--attr-stable-bg, #f1f5f9)' },
-    PERFORMING: { label: 'Performing', color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #ecfdf5)' },
+    CHURNED:    { label: 'Churned',    color: 'var(--attr-churned, #B3382C)',   bg: 'var(--attr-churned-bg, #F4E4E1)',   hard: true },
+    DECLINING:  { label: 'Declining',  color: 'var(--attr-declining, #8C5E12)', bg: 'var(--attr-declining-bg, #F0E7D6)', hard: true },
+    STABLE:     { label: 'Stable',     color: 'var(--attr-stable, #51618C)',    bg: 'var(--attr-stable-bg, #E4E9F2)' },
+    PERFORMING: { label: 'Performing', color: 'var(--attr-growing, #0B6B4D)',   bg: 'var(--attr-growing-bg, #DFEFE8)' },
     // Trading this month with no trailing 3-month baseline — nothing to attrite
-    // FROM. Brand-blue: informational, neither healthy nor at-risk.
-    NEW:        { label: 'New',        color: 'var(--attr-new, #2563eb)',       bg: 'var(--attr-new-bg, #eff6ff)' },
+    // FROM. Steel: informational, neither healthy nor at-risk.
+    NEW:        { label: 'New',        color: 'var(--attr-new, #3F63B0)',       bg: 'var(--attr-new-bg, #E2E9F6)' },
 };
 
 // Predicted churn-risk band → colour. These are the ML forward-looking scores,
 // distinct from the backward-looking attrition STATUS above.
 const RISK_META = {
-    HIGH:   { label: 'High',   color: 'var(--attr-atrisk, #dc2626)',    bg: 'var(--attr-atrisk-bg, #fef2f2)' },
-    MEDIUM: { label: 'Medium', color: 'var(--attr-declining, #d97706)', bg: 'var(--attr-declining-bg, #fffbeb)' },
-    LOW:    { label: 'Low',    color: 'var(--attr-growing, #059669)',   bg: 'var(--attr-growing-bg, #ecfdf5)' },
+    HIGH:   { label: 'High',   color: 'var(--attr-atrisk, #B3382C)',    bg: 'var(--attr-atrisk-bg, #F4E4E1)' },
+    MEDIUM: { label: 'Medium', color: 'var(--attr-declining, #8C5E12)', bg: 'var(--attr-declining-bg, #F0E7D6)' },
+    LOW:    { label: 'Low',    color: 'var(--attr-growing, #0B6B4D)',   bg: 'var(--attr-growing-bg, #DFEFE8)' },
 };
 
 // ─── Status vocabulary, stated in the UI ──────────────────────────
@@ -168,15 +171,13 @@ const AttritionReport = () => {
     // Anchor for the "How statuses are decided" reference popover. Click-to-open
     // (not a hover tooltip) because it is a five-rule list people need to read.
     const [rulesAnchor, setRulesAnchor] = useState(null);
-    // ── Comparison lens ──
-    // The grid used to render Month-on-Month, Period YoY and YTD side by side:
-    // up to eleven numeric columns with "% Change" appearing three times under
-    // three different group headers. Users could not tell which comparison the
-    // page wanted them to read, so they trusted none of them. One lens at a
-    // time; YTD by default because it is both the most-asked executive question
-    // and always applicable (MoM is hidden on ranges over a month).
-    const [lens, setLens] = useState('ytd');
-
+    // Data caveats (empty comparison windows) collapse into one pill on the
+    // briefing card; this anchors the popover with the full sentences.
+    const [notesAnchor, setNotesAnchor] = useState(null);
+    // Portfolio health band sizing: share of YTD value (the executive default)
+    // or merchant count. A churned whale and a churned minnow must not look
+    // the same width.
+    const [bandBasis, setBandBasis] = useState('value');
     const [filters, setFilters] = useState({
         startDate: '', endDate: '',
         openDateStart: '', openDateEnd: '',
@@ -378,37 +379,24 @@ const AttritionReport = () => {
         return days <= 31;
     }, [meta]);
 
-    // ── Lens definitions ──
-    // Each lens names one comparison window and the row keys behind it. The grid
-    // reads whichever is active through STABLE column ids (cmp_prev/cmp_cur/
-    // cmp_pct), so switching lens re-labels and re-values the same three columns
-    // instead of swapping column identity — which keeps the sort model, column
-    // widths and any user column state intact across a switch.
-    const LENSES = useMemo(() => ({
-        mom: {
-            label: 'Month-on-Month', group: 'Month-on-Month',
-            prevHeader: 'Prev Month', curHeader: 'This Month',
-            prevKey: 'mom_prev', curKey: 'mom_current', pctKey: 'mom_pct',
-            about: 'The selected range against the same-length window one month earlier.',
-        },
-        mtd: {
-            label: 'Period YoY', group: `Period YoY · ${prevYear} vs ${selectedYear}`,
-            prevHeader: `${prevYear}`, curHeader: `${selectedYear}`,
-            prevKey: 'mtd_prev', curKey: 'mtd_current', pctKey: 'mtd_pct',
-            about: 'The selected range against the same range one year earlier.',
-        },
-        ytd: {
-            label: 'Year to date', group: `Year to date · ${prevYear} vs ${selectedYear}`,
-            prevHeader: `${prevYear} YTD`, curHeader: `${selectedYear} YTD`,
-            prevKey: 'ytd_prev', curKey: 'ytd_current', pctKey: 'ytd_pct',
-            about: 'January 1st to the end of the selected range, against the same span last year.',
-        },
-    }), [prevYear, selectedYear]);
-
-    // MoM can become inapplicable while it is selected (user widens the range),
-    // so resolve rather than trusting the raw state.
-    const activeLens = (lens === 'mom' && !momApplicable) ? 'ytd' : lens;
-    const L = LENSES[activeLens];
+    // ── Month column labels ──
+    // The grid's fixed money columns are the classifier months (current + two
+    // prior — the same latest-data clock as Status) plus last year in full and
+    // this year to date. Labels walk back from the classifier anchor, read off
+    // the ISO string (never new Date(iso) — that shifts a day, and so a month,
+    // in timezones behind UTC).
+    const monthCols = useMemo(() => {
+        const anchor = meta?.classifierAnchor ? String(meta.classifierAnchor) : '';
+        const m = anchor ? Number(anchor.slice(5, 7)) : null;
+        const y = anchor ? Number(anchor.slice(0, 4)) : null;
+        const d = anchor ? Number(anchor.slice(8, 10)) : null;
+        const name = (back) => (m ? MONTHS[((m - 1 - back) % 12 + 12) % 12] : ['2 Months Ago', 'Last Month', 'This Month'][2 - back]);
+        // Date.UTC(y, m, 0) is CONSTRUCTED, not parsed — safe. Day count of the
+        // anchor month, to label a partial month as "Aug 1–18" instead of "Aug".
+        const daysIn = (m && y) ? new Date(Date.UTC(y, m, 0)).getUTCDate() : null;
+        const cur = (m && d && daysIn && d < daysIn) ? `${name(0)} 1–${d}` : name(0);
+        return { m2: name(2), m1: name(1), cur };
+    }, [meta]);
 
     // Helpers that read the active-metric value off a row.
     const val = (row, base) => row[`${base}${suffix}`];
@@ -434,81 +422,49 @@ const AttritionReport = () => {
         return c;
     }, [data]);
 
-    // High predicted-churn count (forward-looking) — only meaningful if scores exist.
-    const highChurnCount = useMemo(
-        () => rows.filter(r => r.churnBand === 'HIGH').length,
-        [rows]
-    );
-
-    const kpis = useMemo(() => {
-        if (!data.length) return [];
-        const totalCur = data.reduce((s, d) => s + (Number(val(d, 'ytd_current')) || 0), 0);
-        const totalPrev = data.reduce((s, d) => s + (Number(val(d, 'ytd_prev')) || 0), 0);
-        // Match the backend's calculateGrowth: prev=0 & cur>0 → +100% ("new"),
-        // both zero → 0%. Previously this returned 0% while the row showed
-        // +100% for the same numbers — two answers for one dataset.
-        const ytdChange = totalPrev > 0 ? ((totalCur - totalPrev) / totalPrev) * 100 : (totalCur > 0 ? 100 : 0);
-        const ytdIsNew = totalPrev === 0 && totalCur > 0;
-        // "At risk" = the two adverse statuses under the rolling-month rules.
-        const atRisk = statusCounts.CHURNED + statusCounts.DECLINING;
-        const atRiskValue = data.reduce((s, d) =>
-            (d.status === 'CHURNED' || d.status === 'DECLINING') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
-        // Five tiles, scannable left-to-right as a sentence: how big is the
-        // book, what's at risk, what's the money exposure, how is the year
-        // going — plus the forward-looking score when the batch provides one.
-        // Per-status counts live in the Portfolio Health band below, so the
-        // cards don't repeat them.
-        const cards = [
-            { title: 'Total Merchants', value: data.length.toString(), icon: Users, color: 'var(--brand, #2563eb)' },
-            { title: 'At Risk', value: atRisk.toString(), icon: AlertTriangle, color: 'var(--attr-atrisk, #dc2626)',
-              subtitle: `${statusCounts.CHURNED} churned · ${statusCounts.DECLINING} declining` },
-            { title: `${METRICS[metric].label} at Risk`, value: fmtMeasure(atRiskValue), icon: ShieldAlert,
-              color: 'var(--attr-atrisk, #dc2626)', subtitle: 'held by churned + declining' },
-            { title: `YTD ${METRICS[metric].label} Change`, value: ytdIsNew ? 'New (+100%)' : `${ytdChange >= 0 ? '+' : ''}${ytdChange.toFixed(1)}%`,
-              icon: DollarSign, color: ytdChange >= 0 ? 'var(--success, #059669)' : 'var(--danger, #dc2626)', trend: ytdChange,
-              trendLabel: ytdIsNew ? `no ${prevYear} baseline` : `${prevYear} vs ${selectedYear}` },
-        ];
-        // Forward-looking ML tile only when scores are present.
-        if (churnAvailable) {
-            cards.push({ title: 'High Churn Risk', value: highChurnCount.toString(), icon: Brain,
-                color: 'var(--attr-atrisk, #dc2626)', subtitle: 'predicted next 30–60 days' });
-        } else {
-            cards.push({ title: 'Performing', value: statusCounts.PERFORMING.toString(), icon: TrendingUp,
-                color: 'var(--attr-growing, #059669)', subtitle: '≥90% of 3-month average' });
-        }
-        return cards;
-    }, [data, metric, statusCounts, selectedYear, prevYear, churnAvailable, highChurnCount]);
-
-    // ── Verdict ──
-    // The page's actual job stated in one sentence: who is being lost, what it
-    // costs, and where the attention should go. Everything below is the evidence
-    // for it. Built from rows already loaded — no extra request.
-    const verdict = useMemo(() => {
+    // ── The briefing ──
+    // Everything the executive layer needs, computed once from rows already
+    // loaded: the verdict sentence, the money at risk (and its share of the
+    // book), the adverse counts, the YTD trajectory, and the silent-risk call
+    // list (healthy today, model says leaving). No extra requests.
+    const briefing = useMemo(() => {
         if (!data.length) return null;
         const churned = statusCounts.CHURNED;
         const declining = statusCounts.DECLINING;
+        const totalCur = data.reduce((s, d) => s + (Number(val(d, 'ytd_current')) || 0), 0);
+        const totalPrev = data.reduce((s, d) => s + (Number(val(d, 'ytd_prev')) || 0), 0);
+        // Match the backend's calculateGrowth: prev=0 & cur>0 → +100% ("new"),
+        // both zero → 0%.
+        const ytdChange = totalPrev > 0 ? ((totalCur - totalPrev) / totalPrev) * 100 : (totalCur > 0 ? 100 : 0);
+        const ytdIsNew = totalPrev === 0 && totalCur > 0;
+        const atRiskValue = data.reduce((s, d) =>
+            (d.status === 'CHURNED' || d.status === 'DECLINING') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
         const lostValue = data.reduce((s, d) =>
             d.status === 'CHURNED' ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
-        // The most useful call list on the page: merchants the classifier still
-        // reads as healthy but the model flags as likely to leave. They are
-        // invisible in a status-only view precisely because nothing looks wrong yet.
+        const atRiskShare = totalCur > 0 ? (atRiskValue / totalCur) * 100 : 0;
+        // Merchants the classifier still reads as healthy but the model flags
+        // as likely to leave — invisible in a status-only view precisely
+        // because nothing looks wrong yet.
         const silentRisk = rows.filter(r =>
             r.churnBand === 'HIGH' && (r.status === 'PERFORMING' || r.status === 'STABLE'));
         const silentValue = silentRisk.reduce((s, d) => s + (Number(val(d, 'ytd_current')) || 0), 0);
 
         const parts = [];
         if (churned > 0) {
-            parts.push(`${churned} merchant${churned === 1 ? '' : 's'} churned, holding ${fmtMeasure(lostValue)} of year-to-date ${METRICS[metric].label.toLowerCase()}`);
+            parts.push(`${churned} of ${data.length} merchants churned, taking ${fmtMeasure(lostValue)} of year-to-date ${METRICS[metric].label.toLowerCase()} with them`);
         }
         if (declining > 0) parts.push(`${declining} more ${declining === 1 ? 'is' : 'are'} declining`);
-        if (!parts.length) parts.push('No merchants churned or declining in this view');
+        if (!parts.length) parts.push(`No merchants churned or declining across the ${data.length}-merchant book`);
 
         return {
             headline: `${parts.join(' · ')}.`,
             action: silentRisk.length > 0
-                ? `${silentRisk.length} still-healthy merchant${silentRisk.length === 1 ? '' : 's'} (${fmtMeasure(silentValue)}) ${silentRisk.length === 1 ? 'is' : 'are'} flagged high churn risk — the most useful call list here.`
+                ? `${silentRisk.length} still-healthy merchant${silentRisk.length === 1 ? '' : 's'} (${fmtMeasure(silentValue)}) ${silentRisk.length === 1 ? 'is' : 'are'} flagged high churn risk — call them first.`
                 : null,
             tone: churned > 0 || declining > 0 ? 'bad' : 'good',
+            atRiskValue, atRiskShare, churned, declining,
+            ytdChange, ytdIsNew,
+            silentCount: silentRisk.length, silentValue,
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data, rows, statusCounts, metric]);
@@ -517,11 +473,11 @@ const AttritionReport = () => {
     // filter path share one definition (no drift between what a bar shows and
     // what clicking it selects).
     const BUCKETS = useMemo(() => ([
-        { label: '≤-50%', test: p => p <= -50, color: 'var(--attr-dist-1, #b91c1c)' },
-        { label: '-50..-20%', test: p => p > -50 && p <= -20, color: 'var(--attr-dist-2, #ef4444)' },
-        { label: '-20..0%', test: p => p > -20 && p < 0, color: 'var(--attr-dist-3, #f59e0b)' },
-        { label: '0..+20%', test: p => p >= 0 && p <= 20, color: 'var(--attr-dist-4, #34d399)' },
-        { label: '>+20%', test: p => p > 20, color: 'var(--attr-dist-5, #059669)' },
+        { label: '≤ −50%', dir: -1, test: p => p <= -50, color: 'var(--attr-dist-1, #7A251C)' },
+        { label: '−50 … −20%', dir: -1, test: p => p > -50 && p <= -20, color: 'var(--attr-dist-2, #B3382C)' },
+        { label: '−20 … 0%', dir: -1, test: p => p > -20 && p < 0, color: 'var(--attr-dist-3, #8C5E12)' },
+        { label: '0 … +20%', dir: 1, test: p => p >= 0 && p <= 20, color: 'var(--attr-dist-4, #79C4A8)' },
+        { label: '> +20%', dir: 1, test: p => p > 20, color: 'var(--attr-dist-5, #0FA070)' },
     ]), []);
 
     const filteredData = useMemo(() => {
@@ -541,21 +497,49 @@ const AttritionReport = () => {
     const STATUS_BARS = ['CHURNED', 'DECLINING', 'STABLE', 'PERFORMING', 'NEW'];
     const analytics = useMemo(() => {
         const total = data.length || 1;
+        // Per-status YTD value, so the health band can be sized by money —
+        // the executive default — as well as by merchant count.
+        const valueByStatus = {};
+        data.forEach(d => {
+            valueByStatus[d.status] = (valueByStatus[d.status] || 0) + (Number(val(d, 'ytd_current')) || 0);
+        });
+        const totalValue = Object.values(valueByStatus).reduce((s, v) => s + v, 0) || 1;
         const breakdown = STATUS_BARS.map(s => ({
             key: s, ...STATUS_META[s], count: statusCounts[s] || 0,
             pct: ((statusCounts[s] || 0) / total) * 100,
+            value: valueByStatus[s] || 0,
+            pctValue: ((valueByStatus[s] || 0) / totalValue) * 100,
         }));
-        const dist = BUCKETS.map(b => ({
-            label: b.label, color: b.color,
+        const dist = BUCKETS.map((b, i) => ({
+            label: b.label, color: b.color, dir: b.dir, index: i,
             count: data.filter(d => { const p = Number(val(d, 'ytd_pct')); return !isNaN(p) && val(d, 'ytd_pct') != null && b.test(p); }).length,
         }));
-        const topDeclining = data
-            .filter(d => { const p = Number(val(d, 'ytd_pct')); return val(d, 'ytd_pct') != null && !isNaN(p) && p < 0; })
-            .sort((a, b) => Number(val(a, 'ytd_pct')) - Number(val(b, 'ytd_pct')))
-            .slice(0, 6);
-        return { breakdown, dist, topDeclining };
+        return { breakdown, dist };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data, metric, statusCounts]);
+
+    // ── Who to call first ──
+    // One ranked list instead of a "steepest decline" leaderboard: silent-risk
+    // merchants lead (healthy status + high predicted churn — still saveable),
+    // then churned by value held, then declining. Clicking a row opens the
+    // same detail panel as the grid.
+    const callList = useMemo(() => {
+        const value = (r) => Number(val(r, 'ytd_current')) || 0;
+        const silent = rows
+            .filter(r => r.churnBand === 'HIGH' && (r.status === 'PERFORMING' || r.status === 'STABLE'))
+            .sort((a, b) => value(b) - value(a))
+            .map(r => ({ row: r, why: 'silent risk' }));
+        const silentMids = new Set(silent.map(s => s.row.mid));
+        const adverse = rows
+            .filter(r => !silentMids.has(r.mid) && (r.status === 'CHURNED' || r.status === 'DECLINING'))
+            .sort((a, b) => {
+                if (a.status !== b.status) return a.status === 'CHURNED' ? -1 : 1;
+                return value(b) - value(a);
+            })
+            .map(r => ({ row: r, why: r.status === 'CHURNED' ? 'value held' : 'declining' }));
+        return [...silent, ...adverse].slice(0, 7);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [rows, metric]);
 
     const measureCell = (params) => (
         <Typography variant="body2" sx={{ color: T.textSec }}>{fmtMeasure(params.value)}</Typography>
@@ -592,22 +576,30 @@ const AttritionReport = () => {
             );
         }
         return (
-            <Typography variant="body2" sx={{ fontWeight: 'bold', color: params.value < 0 ? 'var(--danger, #ef4444)' : params.value > 0 ? 'var(--success, #10b981)' : T.textMut }}>
+            <Typography variant="body2" sx={{ fontWeight: 'bold', color: params.value < 0 ? 'var(--danger, #B3382C)' : params.value > 0 ? 'var(--success, #0FA070)' : T.textMut }}>
                 {pctFormatter(params.value)}
             </Typography>
         );
     };
-    // Status chip carries its own reasoning — the thresholds live in backend
-    // code, so without this the label is an unexplained verdict.
+    // Status renders as dot + coloured text, not a pill: two pill columns side
+    // by side turned every row into a chip carnival. It keeps its reasoning
+    // tooltip — the thresholds live in backend code, so without it the label
+    // is an unexplained verdict.
     const statusCell = (params) => {
         const m = STATUS_META[params.value] || { label: params.value, color: T.textSec, bg: T.subtle };
         const why = explainStatus(params.row, fmt.currency);
-        const chip = <Chip label={m.label} size="small" sx={{ bgcolor: m.bg, color: m.color, fontWeight: 700, cursor: why ? 'help' : 'default' }} />;
-        return why ? <Tooltip arrow title={why}>{chip}</Tooltip> : chip;
+        const cell = (
+            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.9, cursor: why ? 'help' : 'default' }}>
+                <Box sx={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, bgcolor: m.color }} />
+                <Typography variant="body2" sx={{ color: m.color, fontWeight: 700, fontSize: '12.5px' }}>{m.label}</Typography>
+            </Box>
+        );
+        return why ? <Tooltip arrow title={why}>{cell}</Tooltip> : cell;
     };
 
-    // Predicted churn-risk cell: a coloured band chip + probability, with the top
-    // driver and model/heuristic source in a tooltip. Sorts by probability.
+    // Predicted churn-risk cell. Only HIGH earns a filled pill — it is the one
+    // forward-looking alarm on the page; medium/low read as quiet text so the
+    // alarm stays an alarm. Top driver + model source in the tooltip.
     const churnCell = (params) => {
         const band = params.row.churnBand;
         if (!band) return <Typography variant="body2" sx={{ color: T.textMut }}>—</Typography>;
@@ -618,58 +610,84 @@ const AttritionReport = () => {
         const tip = `${params.row.churnReason || 'Predicted churn risk'}${src}`;
         return (
             <Tooltip title={tip} arrow>
-                <Chip label={`${m.label}${pctTxt ? ' · ' + pctTxt : ''}`} size="small"
-                    sx={{ bgcolor: m.bg, color: m.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }} />
+                {band === 'HIGH' ? (
+                    <Chip label={`High${pctTxt ? ' · ' + pctTxt : ''}`} size="small"
+                        sx={{ bgcolor: m.color, color: '#fff', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }} />
+                ) : (
+                    <Typography variant="body2" sx={{ color: m.color, fontWeight: 600, fontSize: '12.5px', fontVariantNumeric: 'tabular-nums', cursor: 'help' }}>
+                        {m.label}{pctTxt ? ` · ${pctTxt}` : ''}
+                    </Typography>
+                )}
             </Tooltip>
         );
     };
 
     const columns = useMemo(() => {
+        // Flex columns so the grid fills its card on any monitor — fixed widths
+        // left a white void to the right of the last column on wide screens.
+        // MID rides under the merchant name as a mono second line, not a column.
         const base = [
-            { field: 'mid', headerName: 'MID', width: 130,
-                renderCell: (p) => <Typography variant="body2" sx={{ fontFamily: 'monospace', color: T.textSec }}>{p.value}</Typography> },
-            { field: 'merchant_info', headerName: 'MERCHANT NAME', width: 230,
+            { field: 'merchant_info', headerName: 'MERCHANT', flex: 1.7, minWidth: 210,
                 valueGetter: (v, row) => row.name,
-                renderCell: (p) => <Typography variant="body2" sx={{ fontWeight: 600, color: T.text }}>{p.row.name}</Typography> },
+                renderCell: (p) => (
+                    <Box sx={{ minWidth: 0, lineHeight: 1.3 }}>
+                        <Typography variant="body2" noWrap sx={{ fontWeight: 600, color: T.text }}>{p.row.name}</Typography>
+                        <Typography variant="caption" noWrap sx={{ fontFamily: 'var(--font-mono)', color: T.textMut, display: 'block' }}>{p.row.mid}</Typography>
+                    </Box>
+                ) },
             // Status and Predicted Churn are two DIFFERENT questions that were
             // being read as one contradictory signal (a "Performing" merchant at
             // 80% churn risk looked like a bug rather than the most valuable row
-            // on the page). The headers now say which direction each one looks.
-            { field: 'status', headerName: 'STATUS · SO FAR', width: 140,
-                description: 'Looking back: this month\'s volume measured against this merchant\'s own average of the prior three months. Hover any chip for its numbers.',
+            // on the page). The headers say which direction each one looks.
+            { field: 'status', headerName: 'STATUS · SO FAR', flex: 1, minWidth: 130,
+                description: 'Looking back: this month\'s volume measured against this merchant\'s own average of the prior three months. Hover any status for its numbers.',
                 valueGetter: (v, row) => row.status, renderCell: statusCell },
         ];
         // Predicted churn-risk column, inserted right after Status — only when the
         // batch has produced scores for this tenant.
         if (churnAvailable) {
             base.push({
-                field: 'churn_risk', headerName: 'PREDICTED CHURN', width: 165, type: 'number',
+                field: 'churn_risk', headerName: 'PREDICTED CHURN', flex: 1, minWidth: 140, type: 'number',
                 description: 'Looking ahead: model-scored likelihood of churn in the next 30–60 days. Independent of Status — a healthy merchant can carry a high score, and that is the useful case.',
                 valueGetter: (v, row) => (row.churnProbability == null ? -1 : row.churnProbability),
                 renderCell: churnCell,
             });
         }
+        const monthDesc = 'Calendar months on the same latest-data clock as Status. While the current month is partial, the prior months are cut to the same day-of-month so the comparison stays apples-to-apples.';
         return [
             ...base,
-            // ── The one active comparison ──
-            // Fixed column ids, lens-driven labels and values. All three windows
-            // remain available (lens control above the grid, every window at once
-            // in the merchant panel and the CSV export) — they are simply no
-            // longer competing for attention in the same row of headers.
-            { field: 'cmp_prev', headerName: L.prevHeader, width: 130, type: 'number',
-                valueGetter: (v, row) => val(row, L.prevKey), renderCell: measureCell },
-            { field: 'cmp_cur', headerName: L.curHeader, width: 130, type: 'number',
-                valueGetter: (v, row) => val(row, L.curKey), renderCell: measureCellBold },
-            { field: 'cmp_pct', headerName: '% Change', width: 120, type: 'number',
-                valueGetter: (v, row) => val(row, L.pctKey), renderCell: pctCellFor(L.prevKey, L.curKey) },
+            // ── Fixed money columns ──
+            // The three classifier months (trajectory), then last year in full
+            // against this year to date (the run-rate question). MoM and Period
+            // YoY remain in the merchant panel and the CSV export.
+            { field: 'col_m2', headerName: monthCols.m2, flex: 0.9, minWidth: 105, type: 'number',
+                description: monthDesc,
+                valueGetter: (v, row) => val(row, 'prev_m2'), renderCell: measureCell },
+            { field: 'col_m1', headerName: monthCols.m1, flex: 0.9, minWidth: 105, type: 'number',
+                description: monthDesc,
+                valueGetter: (v, row) => val(row, 'prev_m1'), renderCell: measureCell },
+            { field: 'col_cur', headerName: monthCols.cur, flex: 0.9, minWidth: 110, type: 'number',
+                description: monthDesc,
+                valueGetter: (v, row) => val(row, 'cur_month'), renderCell: measureCellBold },
+            { field: 'col_pyfull', headerName: `${prevYear} Full`, flex: 1, minWidth: 115, type: 'number',
+                description: `The whole of calendar ${prevYear} (January to December).`,
+                valueGetter: (v, row) => val(row, 'py_full'), renderCell: measureCell },
+            { field: 'col_ytd', headerName: `${selectedYear} YTD`, flex: 1, minWidth: 115, type: 'number',
+                description: `January 1st ${selectedYear} to the end of the selected range.`,
+                valueGetter: (v, row) => val(row, 'ytd_current'), renderCell: measureCellBold },
+            { field: 'col_ytd_pct', headerName: 'YTD %', flex: 0.7, minWidth: 95, type: 'number',
+                description: `${selectedYear} YTD against the SAME span of ${prevYear} (January 1st to the same end day) — not against the full year, so a part-year book is not misread as collapse.`,
+                valueGetter: (v, row) => val(row, 'ytd_pct'), renderCell: pctCellFor('ytd_prev', 'ytd_current') },
         ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [metric, selectedYear, prevYear, churnAvailable, activeLens, L]);
+    }, [metric, selectedYear, prevYear, churnAvailable, monthCols]);
 
     const columnGroupingModel = useMemo(() => ([
-        { groupId: 'cmp_group', headerName: L.group, headerClassName: 'cmp-header-group',
-            children: [{ field: 'cmp_prev' }, { field: 'cmp_cur' }, { field: 'cmp_pct' }] },
-    ]), [L]);
+        { groupId: 'months_group', headerName: 'Recent Months', headerClassName: 'cmp-header-group',
+            children: [{ field: 'col_m2' }, { field: 'col_m1' }, { field: 'col_cur' }] },
+        { groupId: 'year_group', headerName: `${prevYear} Full vs ${selectedYear} YTD`, headerClassName: 'cmp-header-group',
+            children: [{ field: 'col_pyfull' }, { field: 'col_ytd' }, { field: 'col_ytd_pct' }] },
+    ]), [prevYear, selectedYear]);
 
     const panelSx = { p: 2.5, borderRadius: '14px', border: `1px solid ${T.border}`, bgcolor: T.card, height: '100%' };
     const panelTitle = (t) => (
@@ -679,7 +697,7 @@ const AttritionReport = () => {
     return (
         <Box sx={pageContainer}>
             <PremiumReportHeader
-                title="Attrition Report (MoM & YoY)" subtitle="Month-on-month and year-over-year comparison with churn classification"
+                title="Merchant Attrition" subtitle="Who is leaving, what it costs, and who to call next"
                 icon={Activity}
                 onExport={() => {
                     // Filename reflects the active narrowing so exports are self-describing.
@@ -700,6 +718,11 @@ const AttritionReport = () => {
                             { label: 'Churn Risk Band', getter: r => r.churnBand ? (RISK_META[r.churnBand]?.label || r.churnBand) : '' },
                             { label: 'Churn Top Reason', key: 'churnReason' },
                         ] : []),
+                        // The grid's fixed columns: classifier months + full prior year.
+                        { label: `${monthCols.m2} ${m}`, getter: r => val(r, 'prev_m2') },
+                        { label: `${monthCols.m1} ${m}`, getter: r => val(r, 'prev_m1') },
+                        { label: `${monthCols.cur} ${m}`, getter: r => val(r, 'cur_month') },
+                        { label: `${prevYear} Full ${m}`, getter: r => val(r, 'py_full') },
                         ...(momApplicable ? [
                             { label: `Prev Month ${m}`, getter: r => val(r, 'mom_prev') },
                             { label: `Current Month ${m}`, getter: r => val(r, 'mom_current') },
@@ -770,10 +793,10 @@ const AttritionReport = () => {
                             ml: 'auto', display: 'inline-flex', alignItems: 'center', gap: 0.5,
                             px: 1.25, py: 0.5, borderRadius: 'var(--radius-sm, 6px)', cursor: 'pointer',
                             fontSize: '0.78rem', fontWeight: 700, whiteSpace: 'nowrap',
-                            color: 'var(--brand, #2563eb)',
+                            color: 'var(--brand, #3F63B0)',
                             bgcolor: 'var(--bg-card, #ffffff)',
                             border: '1px solid var(--border, #e2e8f0)',
-                            '&:hover': { borderColor: 'var(--brand, #2563eb)' },
+                            '&:hover': { borderColor: 'var(--brand, #3F63B0)' },
                         }}
                     >
                         Use latest data month <ArrowRight size={13} />
@@ -796,102 +819,164 @@ const AttritionReport = () => {
                     </Typography>
                     <Box onClick={() => fetchData()} sx={{
                         ml: 'auto', px: 1.25, py: 0.5, borderRadius: 'var(--radius-sm, 6px)', cursor: 'pointer',
-                        fontSize: '0.78rem', fontWeight: 700, color: 'var(--brand, #2563eb)',
+                        fontSize: '0.78rem', fontWeight: 700, color: 'var(--brand, #3F63B0)',
                         bgcolor: 'var(--bg-card, #ffffff)', border: '1px solid var(--border, #e2e8f0)',
                     }}>Retry</Box>
                 </Box>
             )}
 
-            {/* ── Empty comparison-window banner ──
-                A window with NO data at all makes every merchant in it read as
-                +100% / "New". That is an artifact of missing history, not growth,
-                so name the specific window rather than letting the % columns imply
-                a result they cannot support. */}
-            {emptyWindows.length > 0 && !loading && (
-                <Box role="status" sx={{
-                    display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap',
-                    px: 1.75, py: 1, mb: 1.5, borderRadius: 'var(--radius-md, 10px)',
-                    border: '1px solid var(--warning-border, #fed7aa)',
-                    bgcolor: 'var(--warning-bg, #fffbeb)', color: 'var(--warning-text, #92400e)',
+            {/* ═══ ① THE BRIEFING — verdict, exposure, call list, caveats ═══
+                One card answers the executive's three questions before anything
+                else renders: what happened, what it costs, who to call. The old
+                verdict strip, five equal KPI cards, dual-clock bar and empty-
+                window banner all collapse into this single hierarchy. Both
+                clocks remain permanently stated (footer line) and the window
+                caveats remain one click away (data-notes pill) — nothing is
+                lost, it just stops shouting over the answer. */}
+            {briefing && !loading && (
+                <Paper className="dx-rise" sx={{
+                    p: { xs: 2.5, md: 3 }, borderRadius: 'var(--radius-xl, 14px)',
+                    border: `1px solid ${T.border}`, bgcolor: T.card,
+                    borderLeft: `3px solid ${briefing.tone === 'bad' ? 'var(--negative, #B3382C)' : 'var(--success, #0FA070)'}`,
+                    boxShadow: 'var(--shadow-card, none)',
                 }}>
-                    <AlertTriangle size={15} style={{ flexShrink: 0 }} />
-                    <Typography sx={{ fontSize: '0.82rem', fontWeight: 600, color: 'inherit' }}>
-                        No data in the {emptyWindows.join(' or ')} comparison {emptyWindows.length > 1 ? 'windows' : 'window'} —
-                        results measured against {emptyWindows.length > 1 ? 'them' : 'it'} (+100% growth, "New" statuses) are artifacts of missing history, not real change.
+                    <Typography sx={{
+                        fontSize: { xs: '1.15rem', md: '1.35rem' }, fontWeight: 700,
+                        color: T.text, lineHeight: 1.4, letterSpacing: '-0.01em', maxWidth: 920,
+                    }}>
+                        {briefing.headline}
                     </Typography>
-                </Box>
-            )}
-
-            {/* ── Verdict ──
-                The answer first, in words. The tiles, band, charts and grid below
-                are the evidence; previously a user had to assemble the answer from
-                them unaided. */}
-            {verdict && !loading && (
-                <Box sx={{
-                    px: 2, py: 1.5, mb: 1.5,
-                    borderRadius: 'var(--radius-lg, 12px)',
-                    border: `1px solid ${T.border}`,
-                    background: `linear-gradient(100deg,
-                        color-mix(in srgb, ${verdict.tone === 'bad' ? 'var(--danger)' : 'var(--success)'} 12%, var(--bg-card)) 0%,
-                        color-mix(in srgb, ${verdict.tone === 'bad' ? 'var(--danger)' : 'var(--success)'} 3%, var(--bg-card)) 55%,
-                        var(--bg-card) 100%)`,
-                }}>
-                    <Typography sx={{ fontSize: '0.95rem', fontWeight: 700, color: T.text, lineHeight: 1.45 }}>
-                        {verdict.headline}
-                    </Typography>
-                    {verdict.action && (
-                        <Typography sx={{ fontSize: '0.82rem', color: T.textSec, mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                            <Brain size={14} style={{ flexShrink: 0, color: 'var(--attr-atrisk, #dc2626)' }} />
-                            {verdict.action}
+                    {briefing.action && (
+                        <Typography sx={{ fontSize: '0.85rem', color: T.textSec, mt: 0.75, display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                            <Brain size={14} style={{ flexShrink: 0, color: 'var(--attr-atrisk, #B3382C)' }} />
+                            {briefing.action}
                         </Typography>
                     )}
-                </Box>
-            )}
 
-            {/* ── The two clocks, stated ──
-                Money columns follow the selected range; Status follows calendar
-                months anchored at the latest data. Both are named here so neither
-                is ever assumed to be the other. */}
-            {clocks && data.length > 0 && (
-                <Box sx={{
-                    display: 'flex', alignItems: 'center', gap: { xs: 0.75, sm: 2 }, flexWrap: 'wrap',
-                    px: 1.75, py: 0.9, mb: 1.5,
-                    borderRadius: 'var(--radius-md, 10px)',
-                    border: `1px solid ${T.border}`,
-                    bgcolor: T.subtle,
-                }}>
-                    <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
-                        <CalendarClock size={14} style={{ flexShrink: 0, color: 'var(--text-muted)' }} />
-                        <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                            Money columns
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: T.textStr, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-                            {clocks.money}
-                        </Typography>
+                    {/* The three numbers that matter, in mono. Everything else is caption. */}
+                    <Box sx={{ display: 'grid', gap: { xs: 2, md: 4 }, mt: 2.5,
+                        gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, auto)' }, justifyContent: 'start' }}>
+                        <Box>
+                            <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block' }}>
+                                {METRICS[metric].label} at risk
+                            </Typography>
+                            <Typography className="num" sx={{
+                                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                                fontSize: '1.7rem', fontWeight: 600, lineHeight: 1.25,
+                                color: briefing.atRiskValue > 0 ? 'var(--attr-atrisk, #B3382C)' : T.text,
+                            }}>
+                                {fmtMeasure(briefing.atRiskValue)}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: T.textSec, display: 'block' }}>
+                                {briefing.atRiskShare.toFixed(0)}% of the book · held by churned + declining
+                            </Typography>
+                            <Typography variant="caption" sx={{
+                                display: 'inline-flex', alignItems: 'center', gap: 0.5, mt: 0.25, fontWeight: 600,
+                                fontVariantNumeric: 'tabular-nums',
+                                color: briefing.ytdIsNew ? T.textMut
+                                    : briefing.ytdChange < 0 ? 'var(--danger-text, #B3382C)' : 'var(--success-text, #0B6B4D)',
+                            }}>
+                                {briefing.ytdIsNew
+                                    ? `no ${prevYear} baseline`
+                                    : `${briefing.ytdChange < 0 ? '▼' : '▲'} ${Math.abs(briefing.ytdChange).toFixed(1)}% YTD vs ${prevYear}`}
+                            </Typography>
+                        </Box>
+                        <Box>
+                            <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block' }}>
+                                Merchants at risk
+                            </Typography>
+                            <Typography className="num" sx={{
+                                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                                fontSize: '1.7rem', fontWeight: 600, lineHeight: 1.25,
+                                color: (briefing.churned + briefing.declining) > 0 ? T.text : 'var(--success-text, #0B6B4D)',
+                            }}>
+                                {briefing.churned + briefing.declining}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: T.textSec, display: 'block' }}>
+                                {briefing.churned} churned · {briefing.declining} declining · of {data.length}
+                            </Typography>
+                        </Box>
+                        <Box>
+                            <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block' }}>
+                                {churnAvailable ? 'Call first' : 'Performing'}
+                            </Typography>
+                            <Typography className="num" sx={{
+                                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                                fontSize: '1.7rem', fontWeight: 600, lineHeight: 1.25, color: T.text,
+                            }}>
+                                {churnAvailable ? briefing.silentCount : statusCounts.PERFORMING}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: T.textSec, display: 'block' }}>
+                                {churnAvailable
+                                    ? 'healthy today · high predicted churn'
+                                    : '≥90% of their 3-month average'}
+                            </Typography>
+                        </Box>
                     </Box>
-                    {clocks.status && (
-                        <>
-                            <Box sx={{ width: '1px', height: 14, bgcolor: T.border, display: { xs: 'none', sm: 'block' } }} />
-                            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
-                                <Scale size={14} style={{ flexShrink: 0, color: 'var(--text-muted)' }} />
-                                <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                    Status
-                                </Typography>
-                                <Typography variant="caption" sx={{ color: T.textStr, fontWeight: 600 }}>
-                                    {clocks.status}
-                                </Typography>
-                                <Tooltip arrow title="The status classifier always runs on whole calendar months anchored at the latest loaded data date, so it does not move with the selected date range above.">
-                                    <Box component="span" sx={{ display: 'inline-flex', color: T.textMut, cursor: 'help' }}>
-                                        <Info size={13} />
-                                    </Box>
-                                </Tooltip>
-                            </Box>
-                        </>
-                    )}
-                </Box>
-            )}
 
-            <KpiCards cards={kpis} />
+                    {/* Footer — the two clocks, permanently stated, plus the data
+                        caveats one click away. The page runs on TWO windows and
+                        conflating them was the top confusion; this line never leaves. */}
+                    <Box sx={{
+                        display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 2 }, flexWrap: 'wrap',
+                        mt: 2.5, pt: 1.5, borderTop: `1px solid ${T.borderLt}`,
+                    }}>
+                        {clocks && (
+                            <>
+                                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
+                                    <CalendarClock size={13} style={{ flexShrink: 0, color: 'var(--text-muted)' }} />
+                                    <Typography variant="caption" sx={{ color: T.textMut }}>
+                                        Range <Box component="span" sx={{ color: T.textSec, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{clocks.money}</Box>
+                                    </Typography>
+                                </Box>
+                                {clocks.status && (
+                                    <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
+                                        <Scale size={13} style={{ flexShrink: 0, color: 'var(--text-muted)' }} />
+                                        <Typography variant="caption" sx={{ color: T.textMut }}>
+                                            Status &amp; months <Box component="span" sx={{ color: T.textSec, fontWeight: 600 }}>{clocks.status}</Box>
+                                        </Typography>
+                                        <Tooltip arrow title="Status and the month columns run on calendar months anchored at the latest loaded data date, so they do not move with the selected date range. YTD runs January 1st to the end of the selected range.">
+                                            <Box component="span" sx={{ display: 'inline-flex', color: T.textMut, cursor: 'help' }}>
+                                                <Info size={12} />
+                                            </Box>
+                                        </Tooltip>
+                                    </Box>
+                                )}
+                            </>
+                        )}
+                        {emptyWindows.length > 0 && (
+                            <Box component="button" type="button"
+                                onClick={(e) => setNotesAnchor(e.currentTarget)}
+                                sx={{
+                                    ml: { sm: 'auto' }, display: 'inline-flex', alignItems: 'center', gap: 0.5,
+                                    px: 1, py: 0.4, borderRadius: 'var(--radius-pill, 999px)', cursor: 'pointer',
+                                    border: '1px solid color-mix(in srgb, var(--attention, #8C5E12) 35%, transparent)',
+                                    bgcolor: 'var(--warning-bg)', color: 'var(--warning-text, #8C5E12)',
+                                    fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
+                                }}>
+                                <AlertTriangle size={12} />
+                                {emptyWindows.length} data note{emptyWindows.length > 1 ? 's' : ''}
+                            </Box>
+                        )}
+                        <Popover
+                            open={Boolean(notesAnchor)} anchorEl={notesAnchor}
+                            onClose={() => setNotesAnchor(null)}
+                            anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                            slotProps={{ paper: { sx: { p: 2, maxWidth: 440, borderRadius: 'var(--radius-lg, 12px)' } } }}
+                        >
+                            <Typography sx={{ fontSize: '0.8rem', fontWeight: 700, color: T.text, mb: 0.75 }}>
+                                Comparison windows with no data
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: T.textSec, display: 'block', lineHeight: 1.55 }}>
+                                No data in the {emptyWindows.join(' or ')} comparison {emptyWindows.length > 1 ? 'windows' : 'window'} —
+                                results measured against {emptyWindows.length > 1 ? 'them' : 'it'} (+100% growth, "New" statuses)
+                                are artifacts of missing history, not real change.
+                            </Typography>
+                        </Popover>
+                    </Box>
+                </Paper>
+            )}
 
             {/* ═══ Portfolio health band — the page's centrepiece ═══
                 One full-width composition strip: the whole book, divided by
@@ -912,7 +997,7 @@ const AttritionReport = () => {
                                     display: 'inline-flex', alignItems: 'center', gap: 0.5,
                                     px: 0.5, py: 0.25, border: 'none', background: 'none',
                                     cursor: 'pointer', fontFamily: 'inherit',
-                                    color: 'var(--brand, #2563eb)', fontSize: '0.72rem', fontWeight: 700,
+                                    color: 'var(--brand, #3F63B0)', fontSize: '0.72rem', fontWeight: 700,
                                     '&:hover': { textDecoration: 'underline' },
                                 }}>
                                 <Info size={12} /> How statuses are decided
@@ -954,9 +1039,26 @@ const AttritionReport = () => {
                         </Popover>
                         {/* Nothing previously told users the band was interactive, so its
                             best feature went unused. Show the affordance until it is. */}
+                        {/* Sizing basis. Count-weighted composition lies to an
+                            executive — a churned whale and minnow look the same —
+                            so value share is the default. */}
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, ml: 'auto' }}>
+                            {[['value', 'By value'], ['count', 'By count']].map(([k, lbl]) => (
+                                <Box key={k} component="button" type="button" onClick={() => setBandBasis(k)}
+                                    sx={{
+                                        px: 1, py: 0.35, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                                        borderRadius: 'var(--radius-pill, 999px)', fontSize: '0.72rem',
+                                        fontWeight: bandBasis === k ? 700 : 500,
+                                        color: bandBasis === k ? 'var(--brand, #3F63B0)' : T.textMut,
+                                        bgcolor: bandBasis === k ? 'var(--wash, #DCE8F7)' : 'transparent',
+                                    }}>
+                                    {lbl}
+                                </Box>
+                            ))}
+                        </Box>
                         {statusFilter !== 'ALL' ? (
                             <Typography variant="caption" onClick={() => setStatusFilter('ALL')}
-                                sx={{ cursor: 'pointer', color: 'var(--brand, #2563eb)', fontWeight: 700 }}>
+                                sx={{ cursor: 'pointer', color: 'var(--brand, #3F63B0)', fontWeight: 700 }}>
                                 Showing {STATUS_META[statusFilter]?.label} — clear ✕
                             </Typography>
                         ) : (
@@ -965,24 +1067,33 @@ const AttritionReport = () => {
                             </Typography>
                         )}
                     </Box>
-                    <Box sx={{ display: 'flex', gap: '2px', height: 18, borderRadius: '6px', overflow: 'hidden', mb: 1.5, bgcolor: T.subtle }}>
-                        {analytics.breakdown.map(s => s.count > 0 && (
-                            <Box key={s.key} title={`${s.label}: ${s.count} — click to filter`}
-                                onClick={() => setStatusFilter(prev => prev === s.key ? 'ALL' : s.key)}
-                                sx={{ width: `${s.pct}%`,
-                                    // Vertical gradient body — same treatment as the chart bars.
-                                    background: `linear-gradient(180deg,
-                                        color-mix(in srgb, ${s.color} 88%, #fff) 0%,
-                                        ${s.color} 45%,
-                                        color-mix(in srgb, ${s.color} 62%, var(--bg-card)) 100%)`,
-                                    transition: 'width .5s ease, opacity .15s', cursor: 'pointer',
-                                    opacity: statusFilter === 'ALL' || statusFilter === s.key ? 1 : 0.3,
-                                    '&:hover': { opacity: 1 } }} />
-                        ))}
+                    <Box sx={{ display: 'flex', gap: '2px', height: 22, borderRadius: '6px', overflow: 'hidden', mb: 1.5, bgcolor: T.subtle }}>
+                        {analytics.breakdown.map(s => {
+                            const share = bandBasis === 'value' ? s.pctValue : s.pct;
+                            if (!(s.count > 0) || share <= 0) return null;
+                            return (
+                                <Box key={s.key}
+                                    title={`${s.label}: ${s.count} merchant${s.count === 1 ? '' : 's'} · ${fmtMeasure(s.value)} — click to filter`}
+                                    onClick={() => setStatusFilter(prev => prev === s.key ? 'ALL' : s.key)}
+                                    sx={{ width: `${share}%`,
+                                        // Only the adverse statuses keep full colour; healthy
+                                        // segments are tints so risk share is what pops.
+                                        background: s.hard
+                                            ? `linear-gradient(180deg,
+                                                color-mix(in srgb, ${s.color} 88%, #fff) 0%,
+                                                ${s.color} 45%,
+                                                color-mix(in srgb, ${s.color} 70%, var(--bg-card)) 100%)`
+                                            : `color-mix(in srgb, ${s.color} 30%, var(--bg-card))`,
+                                        transition: 'width .5s ease, opacity .15s', cursor: 'pointer',
+                                        opacity: statusFilter === 'ALL' || statusFilter === s.key ? 1 : 0.3,
+                                        '&:hover': { opacity: 1 } }} />
+                            );
+                        })}
                     </Box>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 3, rowGap: 0.75 }}>
                         {analytics.breakdown.map(s => {
                             const active = statusFilter === s.key;
+                            const share = bandBasis === 'value' ? s.pctValue : s.pct;
                             return (
                                 <Box key={s.key}
                                     onClick={() => setStatusFilter(active ? 'ALL' : s.key)}
@@ -992,10 +1103,10 @@ const AttritionReport = () => {
                                         bgcolor: active ? s.bg : 'transparent',
                                         '&:hover': { bgcolor: s.bg } }}>
                                     <Box sx={{ width: 10, height: 10, borderRadius: '3px',
-                                        background: `linear-gradient(180deg, color-mix(in srgb, ${s.color} 88%, #fff) 0%, ${s.color} 100%)` }} />
+                                        background: s.hard ? s.color : `color-mix(in srgb, ${s.color} 38%, var(--bg-card))` }} />
                                     <Typography variant="body2" color={active ? s.color : T.textSec} fontWeight={active ? 700 : 500}>{s.label}</Typography>
-                                    <Typography variant="body2" fontWeight={700} color={T.textStr} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.count.toLocaleString()}</Typography>
-                                    <Typography variant="caption" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>{s.pct.toFixed(1)}%</Typography>
+                                    <Typography variant="body2" fontWeight={700} color={T.textStr} sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{s.count.toLocaleString()}</Typography>
+                                    <Typography variant="caption" color={T.textMut} sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{share.toFixed(1)}%</Typography>
                                 </Box>
                             );
                         })}
@@ -1003,138 +1114,126 @@ const AttritionReport = () => {
                 </Paper>
             )}
 
-            {/* ═══ Churn analytics panels ═══ */}
+            {/* ═══ ② EVIDENCE — who to act on, and where the book moved ═══ */}
             {data.length > 0 && (
-                <Box sx={{ display: 'grid', gap: 2, mb: 2, gridTemplateColumns: { xs: '1fr', md: '1.4fr 1fr' } }}>
-                    {/* YTD % change distribution — click a bar to filter the grid to that bucket */}
+                <Box sx={{ display: 'grid', gap: 2, mb: 2, gridTemplateColumns: { xs: '1fr', md: '1.3fr 1fr' } }}>
+                    {/* Ranked call list: silent risk first (still saveable), then
+                        churned by value held, then declining. Click opens the
+                        same merchant panel as the grid. */}
                     <Paper sx={panelSx}>
-                        <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-                            {panelTitle(`YTD ${METRICS[metric].label} % Change`)}
-                            {bucketFilter != null && (
-                                <Typography variant="caption" onClick={() => setBucketFilter(null)}
-                                    sx={{ cursor: 'pointer', color: 'var(--brand, #2563eb)', fontWeight: 700 }}>
-                                    Clear ✕
-                                </Typography>
+                        {panelTitle('Who to call first')}
+                        <Stack spacing={0.25}>
+                            {callList.length === 0 && (
+                                <Typography variant="body2" color={T.textMut}>Nobody needs a call in this view.</Typography>
                             )}
-                        </Box>
-                        <Box sx={{ height: 170 }}>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={analytics.dist} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                                    <CartesianGrid strokeDasharray="3 6" stroke={T.grid} vertical={false} />
-                                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: T.axis }} interval={0} />
-                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.axis }} allowDecimals={false} width={32} />
-                                    <ReTooltip cursor={{ fill: 'var(--bg-hover, #f8fafc)' }} contentStyle={chartTooltipStyle}
-                                        formatter={(v) => [v, 'Merchants — click bar to filter']} />
-                                    <Bar dataKey="count" radius={[5, 5, 0, 0]} cursor="pointer"
-                                        onClick={(entry, index) => setBucketFilter(prev => prev === index ? null : index)}>
-                                        {analytics.dist.map((d, i) => (
-                                            <Cell key={i} fill={d.color}
-                                                fillOpacity={bucketFilter == null || bucketFilter === i ? 1 : 0.3} />
-                                        ))}
-                                    </Bar>
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </Box>
-                    </Paper>
-
-                    {/* Steepest decline — call list */}
-                    <Paper sx={panelSx}>
-                        {panelTitle('Steepest YTD Decline')}
-                        <Stack spacing={1}>
-                            {analytics.topDeclining.length === 0 && (
-                                <Typography variant="body2" color={T.textMut}>No declining merchants in range.</Typography>
-                            )}
-                            {analytics.topDeclining.map((d, i) => {
-                                const meta = STATUS_META[d.status] || { color: T.textSec, bg: T.subtle };
-                                const pct = Number(val(d, 'ytd_pct'));
+                            {callList.map(({ row: r, why }, i) => {
+                                const sm = STATUS_META[r.status] || { color: T.textSec, bg: T.subtle, label: r.status };
+                                const pct = val(r, 'ytd_pct');
+                                const pctNum = Number(pct);
+                                const whyColor = why === 'silent risk' ? 'var(--attr-atrisk, #B3382C)' : T.textMut;
                                 return (
-                                    <Box key={d.mid || i} onClick={() => setStatusFilter(d.status)}
-                                        sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, cursor: 'pointer', '&:hover .mn': { color: meta.color } }}>
-                                        <Box sx={{ minWidth: 0 }}>
-                                            <Typography className="mn" variant="body2" fontWeight={600} color={T.textSec} noWrap sx={{ maxWidth: 150, transition: 'color .15s' }}>{d.name || d.mid}</Typography>
-                                            <Typography variant="caption" color={T.textMut}>{fmtMeasure(val(d, 'ytd_current'))} now</Typography>
+                                    <Box key={r.mid || i} onClick={() => setDetailRow(r)}
+                                        sx={{
+                                            display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'center',
+                                            gap: 1.5, px: 1, py: 0.75, borderRadius: '8px', cursor: 'pointer',
+                                            '&:hover': { bgcolor: T.hover },
+                                        }}>
+                                        <Typography variant="caption" sx={{ fontFamily: 'var(--font-mono)', color: T.textMut, width: 16, textAlign: 'right' }}>
+                                            {i + 1}
+                                        </Typography>
+                                        <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Box sx={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, bgcolor: sm.color }} />
+                                            <Box sx={{ minWidth: 0 }}>
+                                                <Typography variant="body2" fontWeight={600} color={T.text} noWrap>{r.name || r.mid}</Typography>
+                                                <Typography variant="caption" sx={{ color: whyColor, fontWeight: why === 'silent risk' ? 700 : 500 }}>
+                                                    {sm.label.toLowerCase()} · {why}
+                                                </Typography>
+                                            </Box>
                                         </Box>
-                                        <Chip label={pctFormatter(pct)} size="small" sx={{ bgcolor: meta.bg, color: meta.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }} />
+                                        <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: T.textSec, textAlign: 'right' }}>
+                                            {fmtMeasure(val(r, 'ytd_current'))}
+                                        </Typography>
+                                        <Typography variant="body2" sx={{
+                                            fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+                                            width: 72, textAlign: 'right',
+                                            color: pct == null || isNaN(pctNum) ? T.textMut
+                                                : pctNum < 0 ? 'var(--danger-text, #B3382C)' : 'var(--success-text, #0B6B4D)',
+                                        }}>
+                                            {pct == null ? '—' : pctFormatter(pctNum)}
+                                        </Typography>
                                     </Box>
                                 );
                             })}
                         </Stack>
                     </Paper>
+
+                    {/* Movement — a diverging strip instead of a histogram: bucket
+                        rows around a zero line stay legible whether the book has
+                        15 merchants or 4,000. Click a row to filter the table. */}
+                    <Paper sx={panelSx}>
+                        <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                            {panelTitle(`Movement · YTD ${METRICS[metric].label} %`)}
+                            {bucketFilter != null && (
+                                <Typography variant="caption" onClick={() => setBucketFilter(null)}
+                                    sx={{ cursor: 'pointer', color: 'var(--brand, #3F63B0)', fontWeight: 700 }}>
+                                    Clear ✕
+                                </Typography>
+                            )}
+                        </Box>
+                        {(() => {
+                            const maxCount = Math.max(...analytics.dist.map(d => d.count), 1);
+                            return (
+                                <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                                    {analytics.dist.map((d) => {
+                                        const active = bucketFilter == null || bucketFilter === d.index;
+                                        const half = (d.count / maxCount) * 50;
+                                        return (
+                                            <Box key={d.label}
+                                                onClick={() => setBucketFilter(prev => prev === d.index ? null : d.index)}
+                                                title={`${d.count} merchant${d.count === 1 ? '' : 's'} — click to filter`}
+                                                sx={{
+                                                    display: 'grid', gridTemplateColumns: '92px 1fr 34px', alignItems: 'center',
+                                                    gap: 1.25, px: 0.5, py: 0.4, borderRadius: '6px', cursor: 'pointer',
+                                                    opacity: active ? 1 : 0.35, transition: 'opacity .15s',
+                                                    '&:hover': { opacity: 1, bgcolor: T.hover },
+                                                }}>
+                                                <Typography variant="caption" sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: T.textSec, whiteSpace: 'nowrap' }}>
+                                                    {d.label}
+                                                </Typography>
+                                                <Box sx={{ position: 'relative', height: 16 }}>
+                                                    {/* zero line */}
+                                                    <Box sx={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: '1px', bgcolor: T.border }} />
+                                                    {d.count > 0 && (
+                                                        <Box sx={{
+                                                            position: 'absolute', top: 2, bottom: 2,
+                                                            ...(d.dir < 0
+                                                                ? { right: '50%', width: `${half}%`, borderRadius: '4px 0 0 4px' }
+                                                                : { left: '50%', width: `${half}%`, borderRadius: '0 4px 4px 0' }),
+                                                            bgcolor: d.color, minWidth: 3,
+                                                            transition: 'width .4s ease',
+                                                        }} />
+                                                    )}
+                                                </Box>
+                                                <Typography variant="caption" sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: T.textStr, fontWeight: 600, textAlign: 'right' }}>
+                                                    {d.count}
+                                                </Typography>
+                                            </Box>
+                                        );
+                                    })}
+                                    <Typography variant="caption" sx={{ color: T.textMut, pt: 0.5 }}>
+                                        Merchants by YTD change vs {prevYear} · shrinking left, growing right
+                                    </Typography>
+                                </Stack>
+                            );
+                        })()}
+                    </Paper>
                 </Box>
             )}
 
-            {/* Metric toggle + status quick-filters */}
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} justifyContent="space-between" sx={{ mb: 2 }}>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
-                    <Box>
-                        <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', mb: 0.5 }}>
-                            Measure
-                        </Typography>
-                        <ToggleButtonGroup size="small" exclusive value={metric}
-                            onChange={(e, v) => v && setMetric(v)} aria-label="metric">
-                            {Object.entries(METRICS).map(([k, m]) => (
-                                <ToggleButton key={k} value={k} sx={{ textTransform: 'none', fontWeight: 600 }}>{m.label}</ToggleButton>
-                            ))}
-                        </ToggleButtonGroup>
-                    </Box>
-                    {/* ── Comparison lens ──
-                        One window at a time. Every window is still reachable: switch
-                        here, or open any merchant to see all of them at once. */}
-                    <Box>
-                        <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', mb: 0.5 }}>
-                            Compare against
-                        </Typography>
-                        <ToggleButtonGroup size="small" exclusive value={activeLens}
-                            onChange={(e, v) => v && setLens(v)} aria-label="comparison window">
-                            {Object.entries(LENSES).map(([k, def]) => {
-                                const disabled = k === 'mom' && !momApplicable;
-                                const btn = (
-                                    <ToggleButton key={k} value={k} disabled={disabled}
-                                        sx={{ textTransform: 'none', fontWeight: 600 }}>
-                                        {def.label}
-                                    </ToggleButton>
-                                );
-                                return disabled ? (
-                                    // A disabled control with no reason given reads as a bug.
-                                    <Tooltip key={k} arrow title="Month-on-Month needs a range of a month or less — on a longer range the shifted window overlaps the current one, so the comparison is meaningless.">
-                                        <span>{btn}</span>
-                                    </Tooltip>
-                                ) : (
-                                    <Tooltip key={k} arrow title={def.about}>{btn}</Tooltip>
-                                );
-                            })}
-                        </ToggleButtonGroup>
-                    </Box>
-                </Stack>
-                {/* One row carrying EVERY active narrowing — the in-page ones
-                    (status band, distribution bucket) and the drawer's
-                    server-side ones, which were previously invisible. */}
-                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
-                    {drawerChips.map(c => (
-                        <Chip key={c.id} size="small" onDelete={c.clear} label={c.label}
-                            sx={{ fontWeight: 600, color: T.textSec, bgcolor: T.subtle, border: `1px solid ${T.border}`,
-                                '& .MuiChip-deleteIcon': { color: T.textMut, opacity: 0.8 } }} />
-                    ))}
-                    {bucketFilter != null && BUCKETS[bucketFilter] && (
-                        <Chip size="small" onDelete={() => setBucketFilter(null)}
-                            label={`YTD ${BUCKETS[bucketFilter].label}`}
-                            sx={{ fontWeight: 700, color: 'var(--on-accent, #fff)', bgcolor: BUCKETS[bucketFilter].color,
-                                '& .MuiChip-deleteIcon': { color: 'var(--on-accent, #fff)', opacity: 0.8 } }} />
-                    )}
-                    {statusFilter !== 'ALL' && STATUS_META[statusFilter] && (
-                        <Chip size="small" onDelete={() => setStatusFilter('ALL')}
-                            label={STATUS_META[statusFilter].label}
-                            sx={{ fontWeight: 700, color: STATUS_META[statusFilter].color, bgcolor: STATUS_META[statusFilter].bg,
-                                '& .MuiChip-deleteIcon': { color: STATUS_META[statusFilter].color, opacity: 0.7 } }} />
-                    )}
-                    {/* MoM applicability is now explained on the disabled lens button
-                        itself, so the standalone note here would be a second voice. */}
-                    <Typography variant="caption" color={T.textMut} sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                        {filteredData.length.toLocaleString()} of {data.length.toLocaleString()} merchants
-                    </Typography>
-                </Stack>
-            </Stack>
-
+            {/* ═══ ③ WORKBENCH — the table, with its tools attached to it ═══
+                The Measure toggle is the grid's OWN control, so it lives on the
+                grid card as a toolbar rather than floating mid-page dressed as
+                content. Chips and the row count sit on the same line. */}
             <Paper sx={{
                 ...premiumTableWrapper,
                 // The single active comparison group sits INSIDE the navy header
@@ -1150,15 +1249,52 @@ const AttritionReport = () => {
                     },
                 },
             }}>
+                <Box sx={{
+                    display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5,
+                    px: 1.75, py: 1.25, borderBottom: `1px solid ${T.border}`, bgcolor: T.card,
+                }}>
+                    <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="caption" sx={{ color: T.textMut, fontWeight: 600 }}>Measure</Typography>
+                        <ToggleButtonGroup size="small" exclusive value={metric}
+                            onChange={(e, v) => v && setMetric(v)} aria-label="metric">
+                            {Object.entries(METRICS).map(([k, m]) => (
+                                <ToggleButton key={k} value={k} sx={{ textTransform: 'none', fontWeight: 600, py: 0.4, px: 1.25 }}>{m.label}</ToggleButton>
+                            ))}
+                        </ToggleButtonGroup>
+                    </Box>
+                    {/* Every active narrowing — in-page (status band, movement
+                        bucket) and the drawer's server-side ones — plus the count. */}
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center" sx={{ ml: 'auto' }}>
+                        {drawerChips.map(c => (
+                            <Chip key={c.id} size="small" onDelete={c.clear} label={c.label}
+                                sx={{ fontWeight: 600, color: T.textSec, bgcolor: T.subtle, border: `1px solid ${T.border}`,
+                                    '& .MuiChip-deleteIcon': { color: T.textMut, opacity: 0.8 } }} />
+                        ))}
+                        {bucketFilter != null && BUCKETS[bucketFilter] && (
+                            <Chip size="small" onDelete={() => setBucketFilter(null)}
+                                label={`YTD ${BUCKETS[bucketFilter].label}`}
+                                sx={{ fontWeight: 700, color: 'var(--on-accent, #fff)', bgcolor: BUCKETS[bucketFilter].color,
+                                    '& .MuiChip-deleteIcon': { color: 'var(--on-accent, #fff)', opacity: 0.8 } }} />
+                        )}
+                        {statusFilter !== 'ALL' && STATUS_META[statusFilter] && (
+                            <Chip size="small" onDelete={() => setStatusFilter('ALL')}
+                                label={STATUS_META[statusFilter].label}
+                                sx={{ fontWeight: 700, color: STATUS_META[statusFilter].color, bgcolor: STATUS_META[statusFilter].bg,
+                                    '& .MuiChip-deleteIcon': { color: STATUS_META[statusFilter].color, opacity: 0.7 } }} />
+                        )}
+                        <Typography variant="caption" color={T.textMut} sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+                            {filteredData.length.toLocaleString()} of {data.length.toLocaleString()}
+                        </Typography>
+                    </Stack>
+                </Box>
                 <DataGrid
                     rows={filteredData} columns={columns} columnGroupingModel={columnGroupingModel}
                     loading={loading} disableRowSelectionOnClick rowHeight={52}
                     onRowClick={(params) => setDetailRow(params.row)}
                     initialState={{
                         pagination: { paginationModel: { pageSize: 25 } },
-                        // Worst change first, on whichever comparison is in view —
-                        // the column id is lens-independent so this survives a switch.
-                        sorting: { sortModel: [{ field: 'cmp_pct', sort: 'asc' }] },
+                        // Worst YTD change first.
+                        sorting: { sortModel: [{ field: 'col_ytd_pct', sort: 'asc' }] },
                     }}
                     pageSizeOptions={[25, 50, 100]}
                     experimentalFeatures={{ columnGrouping: true }}
@@ -1369,7 +1505,7 @@ const AttritionReport = () => {
                                                         <Typography variant="body2" fontWeight={600} color={T.text} sx={{ fontVariantNumeric: 'tabular-nums' }}>{fmtBy(cur, m.kind)}</Typography>
                                                         <Typography variant="body2" fontWeight={700} sx={{
                                                             width: 64, textAlign: 'right', fontVariantNumeric: 'tabular-nums',
-                                                            color: isNaN(pctNum) || pct == null ? T.textMut : pctNum < 0 ? 'var(--danger, #ef4444)' : pctNum > 0 ? 'var(--success, #10b981)' : T.textMut,
+                                                            color: isNaN(pctNum) || pct == null ? T.textMut : pctNum < 0 ? 'var(--danger, #B3382C)' : pctNum > 0 ? 'var(--success, #0FA070)' : T.textMut,
                                                         }}>
                                                             {pct == null ? '-' : `${pctNum >= 0 ? '+' : ''}${pctNum.toFixed(1)}%`}
                                                         </Typography>

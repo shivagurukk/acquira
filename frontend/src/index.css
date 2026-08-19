@@ -173,6 +173,30 @@
   --info-bg:      color-mix(in srgb, var(--projected) 10%, var(--surface));
   --info-text:    var(--projected);
 
+  /* ── Attrition statuses — derived from the semantic tokens above so
+       they flip with the scheme automatically. Previously undefined:
+       the report rendered its hardcoded Tailwind-era fallbacks and sat
+       visibly outside the Meridian system. Only the two adverse states
+       carry full-strength colour; healthy states stay quiet. ── */
+  --attr-churned:      var(--negative);
+  --attr-churned-bg:   color-mix(in srgb, var(--negative) 12%, var(--surface));
+  --attr-declining:    var(--attention);
+  --attr-declining-bg: color-mix(in srgb, var(--attention) 14%, var(--surface));
+  --attr-stable:       var(--muted);
+  --attr-stable-bg:    color-mix(in srgb, var(--muted) 12%, var(--surface));
+  --attr-growing:      var(--success-text);
+  --attr-growing-bg:   color-mix(in srgb, var(--success) 12%, var(--surface));
+  --attr-new:          var(--primary);
+  --attr-new-bg:       color-mix(in srgb, var(--primary) 12%, var(--surface));
+  --attr-atrisk:       var(--negative);
+  --attr-atrisk-bg:    color-mix(in srgb, var(--negative) 12%, var(--surface));
+  /* YTD movement buckets, worst → best */
+  --attr-dist-1: color-mix(in srgb, var(--negative) 78%, #000000);
+  --attr-dist-2: var(--negative);
+  --attr-dist-3: var(--attention);
+  --attr-dist-4: color-mix(in srgb, var(--success) 55%, var(--surface));
+  --attr-dist-5: var(--success);
+
   /* ── Legacy compat ── */
   --accent:         var(--primary);
   --accent-light:   var(--wash);

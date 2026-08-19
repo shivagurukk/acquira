@@ -1543,6 +1543,10 @@ public class VolumeRevenueRepository {
         java.time.LocalDate prevYtdStart = prevEnd.withDayOfYear(1);
         java.time.LocalDate momStart  = start.minusMonths(1);
         java.time.LocalDate momEnd    = end.minusMonths(1);
+        // Full previous calendar year — shares prevYtdStart (Jan 1 of the prior
+        // year) as its lower bound; always <= endDate, so the WHERE upper bound
+        // needs no change.
+        java.time.LocalDate pyFullEnd = java.time.LocalDate.of(end.getYear() - 1, 12, 31);
 
         boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
         boolean canUseMerchantGrain = !needStore
@@ -1629,6 +1633,17 @@ public class VolumeRevenueRepository {
         // row[] indices above stay valid. CASE rather than FILTER: same result,
         // plain SQL. NULL when the merchant never traded in the span.
         sql.append("MAX(CASE WHEN s.total_volume > 0 THEN s.business_date END) AS last_activity, ");
+        // ── Presentation windows for the executive grid ──
+        // The FULL previous calendar year (the grid shows "<prev year> full"
+        // next to "<year> YTD"), plus the classifier months again as full
+        // vol/txn/msf so the Measure toggle works on the month columns (the
+        // volume-only versions above stay untouched — the classifier and the
+        // hard-coded row[] indices 0–21 depend on them). Appended AFTER
+        // last_activity, indices 22+.
+        appendWindowMeasures(sql, "pyfull", ":prevYtdStartDate", ":pyFullEnd");
+        appendWindowMeasures(sql, "curmonx", ":curMonStart", ":curMonEnd");
+        appendWindowMeasures(sql, "m1x", ":m1Start", ":m1End");
+        appendWindowMeasures(sql, "m2x", ":m2Start", ":m2End");
         // strip trailing comma
         sql.setLength(sql.length() - 2);
         sql.append(" FROM ").append(baseTable).append(" s ");
@@ -1674,6 +1689,7 @@ public class VolumeRevenueRepository {
         query.setParameter("prevYtdStartDate", prevYtdStart);
         query.setParameter("momStartDate", momStart);
         query.setParameter("momEndDate", momEnd);
+        query.setParameter("pyFullEnd", pyFullEnd);
         query.setParameter("curMonStart", curMonStart);
         query.setParameter("curMonEnd", classifierEnd);
         query.setParameter("m1Start", m1Start);
@@ -1717,12 +1733,22 @@ public class VolumeRevenueRepository {
             // months truncated to the same day-of-month.
             java.math.BigDecimal curMonVol = bd(row[17]);
             java.math.BigDecimal m1Vol = bd(row[18]), m2Vol = bd(row[19]), m3Vol = bd(row[20]);
+            // Presentation windows (appended after last_activity at row[21]):
+            // full previous calendar year, then the classifier months as full
+            // vol/txn/msf triples for the Measure toggle.
+            java.math.BigDecimal pyVol = bd(row[22]);
+            long pyTxn = lng(row[23]);
+            java.math.BigDecimal pyMsf = bd(row[24]);
+            long curMonTxn = lng(row[26]), m1Txn = lng(row[29]), m2Txn = lng(row[32]);
+            java.math.BigDecimal curMonMsf = bd(row[27]), m1Msf = bd(row[30]), m2Msf = bd(row[33]);
 
             // Drop merchants with no activity in ANY window — pure noise, never attrition.
             // The rolling-month windows are included so a merchant whose only activity
-            // sits in the trailing 3 months is still classified rather than silently dropped.
+            // sits in the trailing 3 months is still classified rather than silently
+            // dropped; the full prior year likewise, so a merchant who only traded in
+            // the back half of last year (after the prior-YTD cutoff) still appears.
             if (isZero(mtdVol) && isZero(mtdVolP) && isZero(ytdVol) && isZero(ytdVolP) && isZero(momVol)
-                    && isZero(curMonVol) && isZero(m1Vol) && isZero(m2Vol) && isZero(m3Vol))
+                    && isZero(curMonVol) && isZero(m1Vol) && isZero(m2Vol) && isZero(m3Vol) && isZero(pyVol))
                 continue;
 
             Map<String, Object> map = new HashMap<>();
@@ -1776,6 +1802,17 @@ public class VolumeRevenueRepository {
             map.put("prev_m1", m1Vol);
             map.put("prev_m2", m2Vol);
             map.put("prev_m3", m3Vol);
+            // Per-metric month values (same windows as the classifier months) and
+            // the full previous calendar year — the executive grid's fixed columns.
+            map.put("cur_month_txns", curMonTxn);
+            map.put("cur_month_msf", curMonMsf);
+            map.put("prev_m1_txns", m1Txn);
+            map.put("prev_m1_msf", m1Msf);
+            map.put("prev_m2_txns", m2Txn);
+            map.put("prev_m2_msf", m2Msf);
+            map.put("py_full", pyVol);
+            map.put("py_full_txns", pyTxn);
+            map.put("py_full_msf", pyMsf);
             map.put("avg_3m_ratio_pct", ratioPct);
             map.put("status", classifyAttrition(curMon, m1Vol.doubleValue(), m2Vol.doubleValue(), m3Vol.doubleValue(), avg3));
 
