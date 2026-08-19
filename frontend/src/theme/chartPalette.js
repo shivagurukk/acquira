@@ -42,15 +42,17 @@ export const CATEGORICAL = [
    stays scarce; fee components take the categorical slots. */
 export const SERIES = {
     volume:      'var(--chart-3)',
-    /* MSF composition stack — imperial-blue shades (user's call), deep →
-       light so segments read by lightness while the panel stays clearly
-       distinct from the steel volume chart: net margin royal --imp-2,
-       interchange deepest --imp-1, scheme fee --imp-3, PG fee --imp-4. */
-    netRevenue:  'var(--imp-2)',
+    /* Cost & Margin Mix stack — one hue per segment (user's call) so each
+       cost keeps its own identity and margin reads instantly as "kept":
+       margin jade-green, interchange the deep imperial it always wore,
+       scheme fee a lighter sky blue, PG fee copper. Tokens are the
+       --mix-* set in index.css, validated per mode as a categorical
+       palette; each segment body is a soft vertical gradient of its hue. */
+    netRevenue:  'var(--mix-margin)',
     marginPct:   'var(--chart-line)',
-    interchange: 'var(--imp-1)',
-    schemeFee:   'var(--imp-3)',
-    ecomFee:     'var(--imp-4)',
+    interchange: 'var(--mix-interchange)',
+    schemeFee:   'var(--mix-scheme)',
+    ecomFee:     'var(--mix-pg)',
     other:       'var(--chart-5)',
     forecast:    'var(--chart-alt)',
     benchmark:   'var(--projected)',

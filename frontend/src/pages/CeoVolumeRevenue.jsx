@@ -13,7 +13,7 @@ import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Volume & Revenue — MID x SID detail with the full fee stack:
-   MID, SID, Name, Count, Volume (settlement), MSF, Interchange, Scheme
+   SID, MID, Name, Count, Volume (settlement), MSF, Interchange, Scheme
    Fee, Net Margin, Net Margin %. Period: MTD / YTD / This Month / pick
    any month. Search, sortable columns, server pagination, CSV export.
    Data: /api/business/ceo-volume-revenue (sum_daily_terminal — summary
@@ -52,9 +52,12 @@ const pct = (v) => (v == null ? '—' : `${Number(v).toFixed(2)}%`);
 /* Colour tone for a possibly-null margin: neutral when undefined. */
 const pctTone = (v) => (v == null ? 'var(--text-secondary)' : Number(v) >= 0 ? '#059669' : '#dc2626');
 
+/* Column order is fixed here, never inferred from the API response: SID is
+   always first and MID second (business requirement — the store identifier
+   is what operations scan for; the merchant rollup key reads second). */
 const ALL_COLUMNS = [
-    { key: 'mid',         label: 'MID',            align: 'left',  sortable: true },
     { key: 'sid',         label: 'SID',            align: 'left',  sortable: false },
+    { key: 'mid',         label: 'MID',            align: 'left',  sortable: true },
     { key: 'name',        label: 'Merchant',       align: 'left',  sortable: true },
     { key: 'txns',        label: 'Count',          align: 'right', sortable: true },
     { key: 'volume',      label: 'Volume',         align: 'right', sortable: true },
@@ -240,16 +243,17 @@ const CeoVolumeRevenue = ({
             // of a hardcoded 2dp; MSF keeps its reconciliation digits.
             const dp = resolveDecimals(currencyDecimals, currencyCode);
             const msfDp = Math.max(4, dp);
+            // Header mirrors the on-screen column order: SID first, MID second.
             const header = lossOnly
                 ? ['MID', 'Merchant', 'Count', 'Volume', 'MSF',
                     'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %']
-                : ['MID', 'SID', 'Merchant', 'Count', 'Volume', 'MSF',
+                : ['SID', 'MID', 'Merchant', 'Count', 'Volume', 'MSF',
                     'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
             // The file must state its currency — the same numbers mean something
             // different in BHD (3dp) than in EGP/AED (2dp).
             const lines = [`Currency,${currencyCode || currencySymbol || 'UNKNOWN'}`, header.join(',')];
             rows.forEach(r => lines.push([
-                esc(r.mid), ...(lossOnly ? [] : [esc(r.sid)]), esc(r.name), num(r.txns),
+                ...(lossOnly ? [esc(r.mid)] : [esc(r.sid), esc(r.mid)]), esc(r.name), num(r.txns),
                 num(r.volume).toFixed(dp), num(r.msf).toFixed(msfDp),
                 num(r.interchange).toFixed(dp), num(r.schemeFee).toFixed(dp),
                 num(r.ecomFee).toFixed(dp),
@@ -361,7 +365,7 @@ const CeoVolumeRevenue = ({
                         <Search size={14} style={{ position: 'absolute', left: 10, top: '50%',
                             transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                         <input value={search} onChange={e => setSearch(e.target.value)}
-                            placeholder={lossOnly ? 'Search MID / name' : 'Search MID / SID / name'}
+                            placeholder={lossOnly ? 'Search MID / name' : 'Search SID / MID / name'}
                             style={{
                                 padding: '8px 12px 8px 30px', fontSize: 13, width: 200,
                                 background: 'var(--bg-card)', border: '1px solid var(--border)',
@@ -424,7 +428,10 @@ const CeoVolumeRevenue = ({
                 </div>
             </div>
 
-            {loading ? <SkeletonLoader type="table" /> : error ? (
+            {/* variant (not `type` — that prop never existed, so this used to
+                fall through to the full page skeleton with phantom chart
+                blocks this page doesn't have) */}
+            {loading ? <SkeletonLoader variant="table" rows={8} cols={8} /> : error ? (
                 <EmptyState title="Could not load report" message={error}
                     action={{ label: 'Retry', onClick: () => load() }} />
             ) : !rows.length ? (
@@ -530,10 +537,10 @@ const CeoVolumeRevenue = ({
                                         <tr key={`${r.mid}-${r.sid}-${i}`}
                                             style={{ borderBottom: '1px solid var(--border-light, var(--border))',
                                                 background: lossOnly ? 'rgba(220,38,38,0.03)' : 'transparent' }}>
-                                            <td style={{ ...tdText, fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{r.mid || '—'}</td>
                                             {!lossOnly && (
                                                 <td style={{ ...tdText, fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{r.sid || '—'}</td>
                                             )}
+                                            <td style={{ ...tdText, fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{r.mid || '—'}</td>
                                             <td style={{ ...tdText, maxWidth: 260, overflow: 'hidden',
                                                 textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}
                                                 title={r.name}>{r.name || '—'}</td>

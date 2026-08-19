@@ -715,7 +715,7 @@ public class MerchantMasterJobConfig {
             // the boundary keeps the row (the tail of an address is not worth a
             // failed upload); widths must track the dim_merchant DDL.
             String upsertMerchantSql = """
-                INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date, sales_user_id, sales_email, referral_partner, risk_level, mcc, contact_email, city, location)
+                INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date, date_of_onboarding, sales_user_id, sales_email, referral_partner, risk_level, mcc, contact_email, city, location)
                 SELECT
                     CAST(TID AS INTEGER),
                     LEFT(COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), 50),
@@ -723,6 +723,7 @@ public class MerchantMasterJobConfig {
                     LEFT(MAX(CASE WHEN merchant_name ~ '^[0-9.]+$' THEN NULL ELSE NULLIF(TRIM(merchant_name), '') END), 150),
                     LEFT(COALESCE(MAX(merchant_status), 'ACTIVE'), 50),
                     MAX(created_date),
+                    MAX(date_of_onboarding),
                     LEFT(MAX(sales_user_id), 50),
                     LEFT(MAX(sales_user_email), 100),
                     LEFT(MAX(referral_partner), 100),
@@ -738,6 +739,7 @@ public class MerchantMasterJobConfig {
                     name          = CASE WHEN EXCLUDED.name IS NOT NULL AND TRIM(EXCLUDED.name) <> ''
                                          THEN EXCLUDED.name ELSE dim_merchant.name END,
                     status        = COALESCE(EXCLUDED.status, dim_merchant.status),
+                    date_of_onboarding = COALESCE(EXCLUDED.date_of_onboarding, dim_merchant.date_of_onboarding),
                     sales_user_id = COALESCE(EXCLUDED.sales_user_id, dim_merchant.sales_user_id),
                     sales_email   = COALESCE(EXCLUDED.sales_email, dim_merchant.sales_email),
                     referral_partner = COALESCE(EXCLUDED.referral_partner, dim_merchant.referral_partner),

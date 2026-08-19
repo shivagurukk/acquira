@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, Tooltip, Drawer, IconButton, Divider, Popover } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
-import { Activity, AlertTriangle, Brain, X, CalendarClock, ArrowRight, Info, Scale } from 'lucide-react';
+import { Activity, AlertTriangle, X, CalendarClock, ArrowRight, Info, Scale } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
+import SkeletonLoader from '../../components/SkeletonLoader';
 import BusinessFilters from '../../components/BusinessFilters';
 import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
@@ -160,7 +161,20 @@ const AttritionReport = () => {
     const [error, setError] = useState(null);
     const [churnByMid, setChurnByMid] = useState({});
     const [churnAvailable, setChurnAvailable] = useState(false);
-    const [loading, setLoading] = useState(false);
+    /* ── Loading is split by INTENT, not just visually moved ──
+       `loading`   — a report request is in flight (any kind).
+       `initialLoaded` — the first report has settled (success OR failure).
+       Derived below: isInitialLoading drives the one-time page skeleton;
+       isReportLoading (filter re-runs) keeps the header, filters, briefing
+       and grid chrome mounted and shows progress INSIDE the grid instead
+       of collapsing the page toward the top loader. Starts true so the
+       first paint is a skeleton, not a "no rows" flash. */
+    const [loading, setLoading] = useState(true);
+    const [initialLoaded, setInitialLoaded] = useState(false);
+    // Monotonic guard: a slow older response must never overwrite a newer
+    // one (rapid filter switching), and its abort must not clear state.
+    const fetchSeqRef = useRef(0);
+    const fetchAbortRef = useRef(null);
     const [showFilters, setShowFilters] = useState(false);
     const [metric, setMetric] = useState('volume');
     const [statusFilter, setStatusFilter] = useState('ALL');
@@ -197,17 +211,28 @@ const AttritionReport = () => {
     // guarantees the request body matches what the UI shows.
     const fetchData = async (override) => {
         const body = (override && override.startDate !== undefined) ? override : filters;
+        // Cancel any in-flight report request: rapid filter changes must not
+        // let a slow older response land after (and overwrite) a newer one.
+        fetchAbortRef.current?.abort();
+        const controller = new AbortController();
+        fetchAbortRef.current = controller;
+        const seq = ++fetchSeqRef.current;
         setLoading(true);
         setError(null);
         try {
             // …-with-meta also returns the comparison-window flags, so an empty
             // prior-year window can be called out instead of silently rendering
             // as +100% growth for every merchant.
-            const res = await api.post('/business/attrition-report-with-meta', body);
+            const res = await api.post('/business/attrition-report-with-meta', body, { signal: controller.signal });
+            if (seq !== fetchSeqRef.current) return; // superseded — newer request owns the screen
             const rows = Array.isArray(res.data) ? res.data : (res.data?.rows || []);
             setData(rows.map((r, i) => ({ id: r.mid ?? `row-${i}`, ...r })));
             setMeta(Array.isArray(res.data) ? null : (res.data?.meta || null));
         } catch (e) {
+            // A cancelled request is not a failure — the newer request's states
+            // are already correct, so touch nothing (especially not loading).
+            if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') return;
+            if (seq !== fetchSeqRef.current) return;
             // Previously console.error only — a 500/403 left an empty grid that
             // looked exactly like a portfolio with no merchants.
             console.error(e);
@@ -215,8 +240,16 @@ const AttritionReport = () => {
             setMeta(null);
             setError(e?.response?.data?.error || e?.response?.statusText || e?.message || 'Could not load the attrition report.');
         }
-        finally { setLoading(false); }
+        finally {
+            if (seq === fetchSeqRef.current) {
+                setLoading(false);
+                setInitialLoaded(true); // settled either way — never stuck on the skeleton
+            }
+        }
     };
+
+    const isInitialLoading = loading && !initialLoaded;
+    const isReportLoading = loading && initialLoaded;
 
     // Seed the report window from the data bounds and fetch in ONE step.
     // Two fixes vs the previous version:
@@ -440,12 +473,6 @@ const AttritionReport = () => {
         const atRiskValue = data.reduce((s, d) =>
             (d.status === 'CHURNED' || d.status === 'DECLINING') ? s + (Number(val(d, 'ytd_current')) || 0) : s, 0);
         const atRiskShare = totalCur > 0 ? (atRiskValue / totalCur) * 100 : 0;
-        // Merchants the classifier still reads as healthy but the model flags
-        // as likely to leave — invisible in a status-only view precisely
-        // because nothing looks wrong yet.
-        const silentRisk = rows.filter(r =>
-            r.churnBand === 'HIGH' && (r.status === 'PERFORMING' || r.status === 'STABLE'));
-        const silentValue = silentRisk.reduce((s, d) => s + (Number(val(d, 'ytd_current')) || 0), 0);
 
         // Headline leads with merchant counts, not a dollar figure — a $ total
         // pooled across thousands of merchants (many tiny) reads as an alarming
@@ -460,13 +487,9 @@ const AttritionReport = () => {
 
         return {
             headline: `${parts.join(' · ')}.`,
-            action: silentRisk.length > 0
-                ? `${silentRisk.length} still-healthy merchant${silentRisk.length === 1 ? '' : 's'} (${fmtMeasure(silentValue)}) ${silentRisk.length === 1 ? 'is' : 'are'} flagged high churn risk — call them first.`
-                : null,
             tone: churned > 0 || declining > 0 ? 'bad' : 'good',
             atRiskValue, atRiskShare, churned, declining,
             ytdChange, ytdIsNew,
-            silentCount: silentRisk.length, silentValue,
             // The good number: how much of the book is NOT at risk. Value share
             // is 100 − at-risk share by construction, so the two always sum.
             healthyCount: (statusCounts.STABLE || 0) + (statusCounts.PERFORMING || 0) + (statusCounts.NEW || 0),
@@ -525,28 +548,20 @@ const AttritionReport = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data, metric, statusCounts]);
 
-    // ── Who to call first ──
-    // One ranked list instead of a "steepest decline" leaderboard: silent-risk
-    // merchants lead (healthy status + high predicted churn — still saveable),
-    // then churned by value held, then declining. Clicking a row opens the
-    // same detail panel as the grid.
-    const callList = useMemo(() => {
-        const value = (r) => Number(val(r, 'ytd_current')) || 0;
-        const silent = rows
-            .filter(r => r.churnBand === 'HIGH' && (r.status === 'PERFORMING' || r.status === 'STABLE'))
-            .sort((a, b) => value(b) - value(a))
-            .map(r => ({ row: r, why: 'silent risk' }));
-        const silentMids = new Set(silent.map(s => s.row.mid));
-        const adverse = rows
-            .filter(r => !silentMids.has(r.mid) && (r.status === 'CHURNED' || r.status === 'DECLINING'))
-            .sort((a, b) => {
-                if (a.status !== b.status) return a.status === 'CHURNED' ? -1 : 1;
-                return value(b) - value(a);
-            })
-            .map(r => ({ row: r, why: r.status === 'CHURNED' ? 'value held' : 'declining' }));
-        return [...silent, ...adverse].slice(0, 7);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [rows, metric]);
+    // MSF margin: revenue as a % of volume for one window. Reads the raw row
+    // keys (not val()) because margin is metric-independent. Null when the
+    // volume side is zero or the backend hasn't returned the window yet.
+    const marginPct = (row, msfKey, volKey) => {
+        const vol = Number(row?.[volKey]);
+        const msf = Number(row?.[msfKey]);
+        if (!vol || isNaN(vol) || vol <= 0 || row?.[msfKey] == null || isNaN(msf)) return null;
+        return (msf / vol) * 100;
+    };
+    const marginCell = (params) => (
+        <Typography variant="body2" sx={{ color: T.textSec, fontVariantNumeric: 'tabular-nums' }}>
+            {params.value == null ? '—' : `${Number(params.value).toFixed(2)}%`}
+        </Typography>
+    );
 
     const measureCell = (params) => (
         <Typography variant="body2" sx={{ color: T.textSec }}>{fmtMeasure(params.value)}</Typography>
@@ -685,6 +700,15 @@ const AttritionReport = () => {
             { field: 'col_ytd_pct', headerName: 'YTD %', flex: 0.7, minWidth: 95, type: 'number',
                 description: `${selectedYear} YTD against the SAME span of ${prevYear} (January 1st to the same end day) — not against the full year, so a part-year book is not misread as collapse.`,
                 valueGetter: (v, row) => val(row, 'ytd_pct'), renderCell: pctCellFor('ytd_prev', 'ytd_current') },
+            // ── MSF margin ── Always MSF ÷ volume regardless of the Measure
+            // toggle (a margin of txns makes no sense). Null when the volume
+            // side is zero/missing — rendered as an em dash, never 0%.
+            { field: 'col_margin_py', headerName: `${prevYear}`, flex: 0.7, minWidth: 90, type: 'number',
+                description: `MSF revenue as a % of volume across the whole of ${prevYear}.`,
+                valueGetter: (v, row) => marginPct(row, 'py_full_msf', 'py_full'), renderCell: marginCell },
+            { field: 'col_margin_ytd', headerName: `${selectedYear} YTD`, flex: 0.7, minWidth: 100, type: 'number',
+                description: `MSF revenue as a % of volume, January 1st ${selectedYear} to the end of the selected range.`,
+                valueGetter: (v, row) => marginPct(row, 'ytd_current_msf', 'ytd_current'), renderCell: marginCell },
         ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [metric, selectedYear, prevYear, churnAvailable, monthCols]);
@@ -694,6 +718,8 @@ const AttritionReport = () => {
             children: [{ field: 'col_m2' }, { field: 'col_m1' }, { field: 'col_cur' }] },
         { groupId: 'year_group', headerName: `${prevYear} Full vs ${selectedYear} YTD`, headerClassName: 'cmp-header-group',
             children: [{ field: 'col_pyfull' }, { field: 'col_ytd' }, { field: 'col_ytd_pct' }] },
+        { groupId: 'margin_group', headerName: 'MSF Margin', headerClassName: 'cmp-header-group',
+            children: [{ field: 'col_margin_py' }, { field: 'col_margin_ytd' }] },
     ]), [prevYear, selectedYear]);
 
     const panelSx = { p: 2.5, borderRadius: '14px', border: `1px solid ${T.border}`, bgcolor: T.card, height: '100%' };
@@ -730,6 +756,8 @@ const AttritionReport = () => {
                         { label: `${monthCols.m1} ${m}`, getter: r => val(r, 'prev_m1') },
                         { label: `${monthCols.cur} ${m}`, getter: r => val(r, 'cur_month') },
                         { label: `${prevYear} Full ${m}`, getter: r => val(r, 'py_full') },
+                        { label: `${prevYear} Margin %`, getter: r => { const p = marginPct(r, 'py_full_msf', 'py_full'); return p == null ? '' : p.toFixed(2); } },
+                        { label: `${selectedYear} YTD Margin %`, getter: r => { const p = marginPct(r, 'ytd_current_msf', 'ytd_current'); return p == null ? '' : p.toFixed(2); } },
                         ...(momApplicable ? [
                             { label: `Prev Month ${m}`, getter: r => val(r, 'mom_prev') },
                             { label: `Current Month ${m}`, getter: r => val(r, 'mom_current') },
@@ -840,11 +868,19 @@ const AttritionReport = () => {
                 clocks remain permanently stated (footer line) and the window
                 caveats remain one click away (data-notes pill) — nothing is
                 lost, it just stops shouting over the answer. */}
-            {briefing && !loading && (
+            {/* First visit only: a briefing-shaped skeleton holds the slot so
+                the layout below doesn't assemble in jumps. */}
+            {isInitialLoading && <SkeletonLoader variant="chart" height={230} />}
+            {briefing && !isInitialLoading && (
                 <Paper className="dx-rise" sx={{
                     borderRadius: 'var(--radius-xl, 14px)', overflow: 'hidden',
                     border: `1px solid ${T.border}`, bgcolor: T.card,
                     boxShadow: 'var(--shadow-card, none)',
+                    // Filter re-runs: the briefing stays mounted (no page-height
+                    // collapse, no scroll jump) and dims until fresh data lands.
+                    opacity: isReportLoading ? 0.55 : 1,
+                    transition: 'opacity 200ms ease',
+                    pointerEvents: isReportLoading ? 'none' : 'auto',
                 }}>
                     {/* Tone is a hairline, not a shout: a thin gradient rule across the
                         top replaces the old 3px solid left border. */}
@@ -881,12 +917,6 @@ const AttritionReport = () => {
                                 }}>
                                     {briefing.headline}
                                 </Typography>
-                                {briefing.action && (
-                                    <Typography sx={{ fontSize: '0.82rem', color: T.textSec, mt: 1, display: 'flex', alignItems: 'flex-start', gap: 0.75, lineHeight: 1.5 }}>
-                                        <Brain size={14} style={{ flexShrink: 0, marginTop: 2, color: 'var(--attr-atrisk, #B3382C)' }} />
-                                        {briefing.action}
-                                    </Typography>
-                                )}
                             </Box>
 
                             {/* Stat band — four columns, hairline-ruled like a report
@@ -914,11 +944,11 @@ const AttritionReport = () => {
                                         line2: `${fmtMeasure(briefing.atRiskValue)} · ${briefing.atRiskShare.toFixed(0)}% of the book`,
                                     },
                                     {
-                                        label: churnAvailable ? 'Call first' : 'Performing',
-                                        value: (churnAvailable ? briefing.silentCount : statusCounts.PERFORMING).toLocaleString(),
-                                        color: T.text,
-                                        line1: churnAvailable ? 'healthy today, model says leaving' : '≥90% of their 3-month average',
-                                        line2: churnAvailable && briefing.silentCount > 0 ? `${fmtMeasure(briefing.silentValue)} still saveable` : null,
+                                        label: 'Attrition rate',
+                                        value: `${(data.length > 0 ? (briefing.churned / data.length) * 100 : 0).toFixed(1)}%`,
+                                        color: briefing.churned > 0 ? 'var(--attr-atrisk, #B3382C)' : T.text,
+                                        line1: `churned share of ${data.length.toLocaleString()} merchants`,
+                                        line2: `${(data.length > 0 ? ((briefing.churned + briefing.declining) / data.length) * 100 : 0).toFixed(1)}% incl. declining`,
                                     },
                                     {
                                         label: 'YTD trend',
@@ -1164,59 +1194,9 @@ const AttritionReport = () => {
                 </Paper>
             )}
 
-            {/* ═══ ② EVIDENCE — who to act on, and where the book moved ═══ */}
+            {/* ═══ ② EVIDENCE — where the book moved ═══ */}
             {data.length > 0 && (
-                <Box sx={{ display: 'grid', gap: 2, mb: 2, gridTemplateColumns: { xs: '1fr', md: '1.3fr 1fr' } }}>
-                    {/* Ranked call list: silent risk first (still saveable), then
-                        churned by value held, then declining. Click opens the
-                        same merchant panel as the grid. */}
-                    <Paper sx={panelSx}>
-                        {panelTitle('Who to call first')}
-                        <Stack spacing={0.25}>
-                            {callList.length === 0 && (
-                                <Typography variant="body2" color={T.textMut}>Nobody needs a call in this view.</Typography>
-                            )}
-                            {callList.map(({ row: r, why }, i) => {
-                                const sm = STATUS_META[r.status] || { color: T.textSec, bg: T.subtle, label: r.status };
-                                const pct = val(r, 'ytd_pct');
-                                const pctNum = Number(pct);
-                                const whyColor = why === 'silent risk' ? 'var(--attr-atrisk, #B3382C)' : T.textMut;
-                                return (
-                                    <Box key={r.mid || i} onClick={() => setDetailRow(r)}
-                                        sx={{
-                                            display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'center',
-                                            gap: 1.5, px: 1, py: 0.75, borderRadius: '8px', cursor: 'pointer',
-                                            '&:hover': { bgcolor: T.hover },
-                                        }}>
-                                        <Typography variant="caption" sx={{ fontFamily: 'var(--font-mono)', color: T.textMut, width: 16, textAlign: 'right' }}>
-                                            {i + 1}
-                                        </Typography>
-                                        <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <Box sx={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, bgcolor: sm.color }} />
-                                            <Box sx={{ minWidth: 0 }}>
-                                                <Typography variant="body2" fontWeight={600} color={T.text} noWrap>{r.name || r.mid}</Typography>
-                                                <Typography variant="caption" sx={{ color: whyColor, fontWeight: why === 'silent risk' ? 700 : 500 }}>
-                                                    {sm.label.toLowerCase()} · {why}
-                                                </Typography>
-                                            </Box>
-                                        </Box>
-                                        <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', color: T.textSec, textAlign: 'right' }}>
-                                            {fmtMeasure(val(r, 'ytd_current'))}
-                                        </Typography>
-                                        <Typography variant="body2" sx={{
-                                            fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', fontWeight: 600,
-                                            width: 72, textAlign: 'right',
-                                            color: pct == null || isNaN(pctNum) ? T.textMut
-                                                : pctNum < 0 ? 'var(--danger-text, #B3382C)' : 'var(--success-text, #0B6B4D)',
-                                        }}>
-                                            {pct == null ? '—' : pctFormatter(pctNum)}
-                                        </Typography>
-                                    </Box>
-                                );
-                            })}
-                        </Stack>
-                    </Paper>
-
+                <Box sx={{ display: 'grid', gap: 2, mb: 2, gridTemplateColumns: '1fr' }}>
                     {/* Movement — a diverging strip instead of a histogram: bucket
                         rows around a zero line stay legible whether the book has
                         15 merchants or 4,000. Click a row to filter the table. */}
@@ -1340,6 +1320,11 @@ const AttritionReport = () => {
                 <DataGrid
                     rows={filteredData} columns={columns} columnGroupingModel={columnGroupingModel}
                     loading={loading} disableRowSelectionOnClick rowHeight={52}
+                    // Loading lives INSIDE the table: headers stay visible and
+                    // the body renders skeleton rows matched to the real column
+                    // widths — not a page-top spinner disconnected from the
+                    // content that is actually changing.
+                    slotProps={{ loadingOverlay: { variant: 'skeleton', noRowsVariant: 'skeleton' } }}
                     onRowClick={(params) => setDetailRow(params.row)}
                     initialState={{
                         pagination: { paginationModel: { pageSize: 25 } },

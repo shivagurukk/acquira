@@ -248,8 +248,11 @@ const PremiumReportHeader = ({
                 </Box>
             )}
 
-            {/* ── Row 3: Active Filter Chips ── */}
-            {filters && !loading && (
+            {/* ── Row 3: Active Filter Chips ──
+                Stays mounted while a report loads: unmounting the row collapsed
+                the header height on every refetch, so the whole page jumped and
+                the load read as a "top of page" event instead of a table one. */}
+            {filters && (
                 <ActiveFilterChips filters={filters} onRemove={handleRemoveFilter} />
             )}
         </Box>

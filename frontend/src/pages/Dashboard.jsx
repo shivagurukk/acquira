@@ -40,8 +40,9 @@ import {
    • Insight strip: best & worst bucket by margin, momentum (last two
      complete buckets).
    • Two charts: Volume bars with a Net Margin % line overlay (dual y-axes,
-     money left / % right) in a single combined panel, plus MSF composition
-     (stacked: net margin / interchange / scheme / PG fee = MSF).
+     money left / % right) in a single combined panel, plus Cost & Margin Mix
+     (stacked: interchange / scheme / PG fee costs at the base, net margin
+     capping the bar = MSF).
    • Breakdown table with inline margin bars, best/worst tint.
    Data: sum_daily_bank weekly buckets + sum_monthly_bank month rows,
    settlement currency. Tenant currency via createFmt(currencySymbol).
@@ -52,9 +53,10 @@ const num = (v) => (v == null ? 0 : Number(v));
 /* ─── Chart palette ───
    Colours come from theme/chartPalette (the shared blue system) as CSS custom
    properties, so both schemes are handled by the stylesheet and no mode flag
-   is needed here. The MSF-composition keys are listed in stacking order and
-   step down the ramp, so adjacent segments always differ by a full ramp step;
-   reordering the stack breaks that separation. */
+   is needed here. The Cost & Margin Mix stack gives every segment its own
+   hue (validated as a categorical set), so identity survives any stacking
+   order — but keep the costs at the base and margin on top: the green cap
+   is the "what we keep" read the panel is built around. */
 const C = {
     volume:      SERIES.volume,
     marginPct:   SERIES.marginPct,
@@ -569,7 +571,7 @@ const Dashboard = () => {
     const maxAbsMargin = Math.max(...viewData.map(b => Math.abs(b.marginPct)), 0.0001);
 
     return (
-        <div style={{ padding: '24px 28px', width: '100%' }}>
+        <div className="exec-lume" style={{ padding: '24px 28px', width: '100%', position: 'relative' }}>
             <style>{`
                 .rail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
                 .rail-grid > div + div { border-left: 1px solid var(--border-light); }
@@ -577,6 +579,39 @@ const Dashboard = () => {
                 .exec-row { transition: background 180ms ease; }
                 .exec-row:hover { background: var(--bg-hover); }
                 .seg-btn { border: none; cursor: pointer; border-radius: 8; }
+
+                /* ── Executive light pass ──
+                   Pure white-light overlays: not a single hue on the page
+                   changes, the surfaces are simply *lit*. Two layers:
+                   1. a daylight bloom falling from the top of the page, so
+                      the canvas brightens toward the headline and KPIs;
+                   2. a glass sheen on each card — a crisp lit top edge plus
+                      a soft interior glow confined to the upper rim, so the
+                      panels read as polished instrument glass, never a veil
+                      over the content. Dark mode keeps the same geometry at
+                      moonlight intensity. */
+                .exec-lume::before {
+                    content: ''; position: absolute; inset: 0 0 auto 0; height: 460px;
+                    pointer-events: none;
+                    background: radial-gradient(72% 100% at 50% 0%,
+                        rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.18) 45%, transparent 72%);
+                }
+                html.dark .exec-lume::before {
+                    background: radial-gradient(72% 100% at 50% 0%,
+                        rgba(255,255,255,0.05) 0%, transparent 65%);
+                }
+                .exec-lume .dx-card::after {
+                    content: ''; position: absolute; inset: 0; border-radius: inherit;
+                    pointer-events: none;
+                    box-shadow:
+                        inset 0 1px 0 rgba(255,255,255,0.85),
+                        inset 0 26px 30px -26px rgba(255,255,255,0.95);
+                }
+                html.dark .exec-lume .dx-card::after {
+                    box-shadow:
+                        inset 0 1px 0 rgba(255,255,255,0.14),
+                        inset 0 26px 30px -26px rgba(255,255,255,0.10);
+                }
             `}</style>
 
             {/* ── Header ── */}
@@ -842,8 +877,8 @@ const Dashboard = () => {
                             </ResponsiveContainer>
                         </ChartCard>
 
-                        <ChartCard title="MSF composition"
-                            subtitle="Where each period's MSF goes">
+                        <ChartCard title="Cost & Margin Mix"
+                            subtitle="Costs at the base — the green cap is what we keep">
                             {/* height matches the two panels + their labels next door */}
                             <ResponsiveContainer width="100%" height={344}>
                                 <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -857,21 +892,18 @@ const Dashboard = () => {
                                     }} />
                                     <CartesianGrid {...GRID_PROPS} />
                                     <XAxis dataKey="label" {...AXIS_PROPS} />
-                                    {/* Money axis (MSF composition) — carries the tenant currency. */}
+                                    {/* Money axis (Cost & Margin Mix) — carries the tenant currency. */}
                                     <YAxis tickFormatter={(v) => fmt.currency(v)} {...AXIS_PROPS} width={66} />
                                     <ReTooltip content={<CompositionTooltip fmt={fmt} />}
                                         cursor={{ fill: 'color-mix(in srgb, var(--primary) 7%, transparent)' }} />
                                     <Legend {...LEGEND_PROPS} />
                                     {/* stroke is the surface colour: it reads as a 2px gap
                                         between segments, not as an outline. `fill` is what the
-                                        Legend swatch reads — the Cells paint the gradients. */}
-                                    <Bar dataKey="netRevenue" name="Net Margin" stackId="c"
-                                        fill={C.netRevenue} maxBarSize={30}
-                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
-                                        {viewData.map((b, i) => (
-                                            <Cell key={i} fill={`url(#${gradientId('netRevenue')})`} />
-                                        ))}
-                                    </Bar>
+                                        Legend swatch reads — the Cells paint the gradients.
+                                        Stack order: the three costs rise from the baseline,
+                                        margin caps the bar so the green "kept" band is the
+                                        first thing the eye lands on. Legend and tooltip
+                                        inherit this order. */}
                                     <Bar dataKey="interchange" name="Interchange" stackId="c"
                                         fill={C.interchange} maxBarSize={30}
                                         stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
@@ -887,10 +919,17 @@ const Dashboard = () => {
                                         ))}
                                     </Bar>
                                     <Bar dataKey="ecomFee" name="PG Fee" stackId="c"
-                                        fill={C.ecomFee} maxBarSize={30} radius={[6, 6, 0, 0]}
+                                        fill={C.ecomFee} maxBarSize={30}
                                         stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
                                         {viewData.map((b, i) => (
                                             <Cell key={i} fill={`url(#${gradientId('ecomFee')})`} />
+                                        ))}
+                                    </Bar>
+                                    <Bar dataKey="netRevenue" name="Net Margin" stackId="c"
+                                        fill={C.netRevenue} maxBarSize={30} radius={[6, 6, 0, 0]}
+                                        stroke="var(--bg-card)" strokeWidth={2} {...ANIM()}>
+                                        {viewData.map((b, i) => (
+                                            <Cell key={i} fill={`url(#${gradientId('netRevenue')})`} />
                                         ))}
                                     </Bar>
                                 </BarChart>

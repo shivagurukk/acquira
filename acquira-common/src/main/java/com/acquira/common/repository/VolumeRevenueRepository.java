@@ -309,9 +309,9 @@ public class VolumeRevenueRepository {
             sql.append("AND s.business_date <= :endDate ");
 
         if (filter.getOpenDateStart() != null)
-            sql.append("AND m.created_date >= :openStart ");
+            sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) >= :openStart ");
         if (filter.getOpenDateEnd() != null)
-            sql.append("AND m.created_date <= :openEnd ");
+            sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) <= :openEnd ");
 
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             sql.append("AND m.referral_partner IN (:partners) ");
@@ -931,12 +931,11 @@ public class VolumeRevenueRepository {
             if (tenantId != null) qTeamLeads.setParameter("tid", tenantId);
             options.put("teamLeaders", qTeamLeads.getResultList());
 
-            // Destinations
-            Query qDest = entityManager.createNativeQuery(
-                    "SELECT DISTINCT destination FROM sum_daily_insight WHERE destination IS NOT NULL " +
-                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
-            if (tenantId != null) qDest.setParameter("tid", tenantId);
-            options.put("destinations", qDest.getResultList());
+            // Destinations. Falls back to sum_daily_full when sum_daily_insight
+            // has no rows for the tenant (e.g. a DB where only the full rollup
+            // was rebuilt) — the Executive Daily Merchant page filters on
+            // sum_daily_full, so its dropdowns must not go empty with it.
+            options.put("destinations", distinctWithFallback("destination", tenantId));
 
             // Channels
             Query qChan = entityManager.createNativeQuery(
@@ -952,25 +951,51 @@ public class VolumeRevenueRepository {
             if (tenantId != null) qTermType.setParameter("tid", tenantId);
             options.put("terminalTypes", qTermType.getResultList());
 
-            // Schemes
-            Query qScheme = entityManager.createNativeQuery(
-                    "SELECT DISTINCT card_scheme FROM sum_daily_insight WHERE card_scheme IS NOT NULL " +
-                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
-            if (tenantId != null) qScheme.setParameter("tid", tenantId);
-            options.put("schemes", qScheme.getResultList());
+            // Schemes (same sum_daily_full fallback as destinations)
+            options.put("schemes", distinctWithFallback("card_scheme", tenantId));
 
-            // Card Types
-            Query qCardType = entityManager.createNativeQuery(
-                    "SELECT DISTINCT card_type FROM sum_daily_insight WHERE card_type IS NOT NULL " +
-                    (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
-            if (tenantId != null) qCardType.setParameter("tid", tenantId);
-            options.put("cardTypes", qCardType.getResultList());
+            // Card Types (same sum_daily_full fallback as destinations)
+            options.put("cardTypes", distinctWithFallback("card_type", tenantId));
+
+            // MCC fallback: the lists above come from dim_store; if the dims are
+            // empty but daily rollups exist, offer the codes present in the data.
+            if (options.getOrDefault("mccs", List.of()).isEmpty()) {
+                List<String> mccCodes = distinctFromTable("sum_daily_full", "mcc", tenantId);
+                if (!mccCodes.isEmpty()) {
+                    options.put("mccs", mccCodes);
+                    options.remove("mccCategories"); // no longer index-aligned
+                }
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
         }
 
         return options;
+    }
+
+    /**
+     * DISTINCT values of a dimension column, from sum_daily_insight first and
+     * sum_daily_full as fallback when insight is empty for the tenant. Column
+     * names are compile-time constants at every call site — never user input.
+     */
+    private List<String> distinctWithFallback(String column, Long tenantId) {
+        List<String> vals = distinctFromTable("sum_daily_insight", column, tenantId);
+        if (vals.isEmpty()) vals = distinctFromTable("sum_daily_full", column, tenantId);
+        return vals;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> distinctFromTable(String table, String column, Long tenantId) {
+        Query q = entityManager.createNativeQuery(
+                "SELECT DISTINCT " + column + " FROM " + table +
+                " WHERE " + column + " IS NOT NULL " +
+                (tenantId != null ? "AND tenant_id = :tid " : "") + "ORDER BY 1");
+        if (tenantId != null) q.setParameter("tid", tenantId);
+        List<Object> rows = q.getResultList();
+        List<String> out = new ArrayList<>(rows.size());
+        for (Object r : rows) if (r != null) out.add(r.toString());
+        return out;
     }
 
     /**
@@ -1466,8 +1491,8 @@ public class VolumeRevenueRepository {
             if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
             if (listNonEmpty(filter.getMidList()))        sql.append("AND m.mid IN (:mids) ");
             if (listNonEmpty(filter.getIndustryList()))   sql.append("AND m.industry IN (:industries) ");
-            if (filter.getOpenDateStart() != null)        sql.append("AND m.created_date >= :openStart ");
-            if (filter.getOpenDateEnd() != null)          sql.append("AND m.created_date <= :openEnd ");
+            if (filter.getOpenDateStart() != null)        sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) >= :openStart ");
+            if (filter.getOpenDateEnd() != null)          sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) <= :openEnd ");
             if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                 sql.append("AND m.name ILIKE :merchName ");
             if (listNonEmpty(filter.getMccList()))        sql.append("AND st.mcc IN (:mccs) ");
@@ -1707,10 +1732,10 @@ public class VolumeRevenueRepository {
         if (listNonEmpty(filter.getTeamLeaderList())) sql.append("AND m.sales_user_id IN (:teamLeaders) ");
         if (listNonEmpty(filter.getMidList()))      sql.append("AND m.mid IN (:mids) ");
         if (listNonEmpty(filter.getIndustryList())) sql.append("AND m.industry IN (:industries) ");
-        // Open-date (onboarding) range — same m.created_date column the volume
-        // report filters on. Was posted by the UI but silently ignored here.
-        if (filter.getOpenDateStart() != null)      sql.append("AND m.created_date >= :openStart ");
-        if (filter.getOpenDateEnd() != null)        sql.append("AND m.created_date <= :openEnd ");
+        // Open-date (onboarding) range — true business onboarding date, falling
+        // back to created_date for merchants whose master file never carried one.
+        if (filter.getOpenDateStart() != null)      sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) >= :openStart ");
+        if (filter.getOpenDateEnd() != null)        sql.append("AND COALESCE(m.date_of_onboarding, m.created_date) <= :openEnd ");
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
             sql.append("AND m.name ILIKE :merchName ");
         // Store-dimension filters
@@ -2293,6 +2318,238 @@ public class VolumeRevenueRepository {
         response.put("content", content);
         response.put("totalElements", totalElements);
         return response;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  EXECUTIVE DAILY MERCHANT DASHBOARD  (single business date, full fee set)
+    // ════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Sort keys the executive daily merchant table may order by, mapped to the
+     * SQL expression they sort on. User input NEVER reaches the SQL string —
+     * an unknown key falls back to volume.
+     */
+    private static final Map<String, String> DAILY_MERCHANT_SORT = Map.of(
+            "sid",    "st.sid",
+            "mid",    "m.mid",
+            "name",   "m.name",
+            "volume", "SUM(s.total_volume)",
+            "count",  "SUM(s.total_txns)",
+            "msf",    "SUM(s.total_msf)",
+            "icf",    "SUM(s.total_interchange)",
+            "sf",     "SUM(s.total_scheme_fee)",
+            "pg",     "SUM(s.total_ecom_fee)",
+            "nm",     "SUM(s.total_net_revenue)");
+
+    /**
+     * One page of the Executive Daily Merchant Dashboard: per-(MID, SID) rows
+     * read from sum_daily_full — the only summary carrying MSF + interchange +
+     * scheme fee + ecom(PG) fee + net revenue together with the
+     * MCC/destination/card-type/scheme dimensions. The stored total_net_revenue
+     * IS the authoritative NM (= MSF − ICF − SF − PG, written by
+     * TransactionJobConfig); it is never recomputed here.
+     *
+     * Date selection: an explicit list of business dates (one or many — IN
+     * semantics), OR a [rangeStart, rangeEnd] window (whole-month view). The
+     * caller supplies exactly one of the two.
+     *
+     * size <= 0 means export: the whole filtered result set in sort order.
+     */
+    public Map<String, Object> getExecutiveDailyMerchant(VolumeRevenueFilterDTO filter,
+            List<java.time.LocalDate> dates, java.time.LocalDate rangeStart, java.time.LocalDate rangeEnd,
+            String search, String sort, String dir, int page, int size, Long tenantId) {
+        requireTenant(tenantId);
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT m.merchant_id, st.sid, m.mid, m.name, ");
+        sql.append("  SUM(s.total_volume)      as volume, ");
+        sql.append("  SUM(s.total_txns)        as txn_count, ");
+        sql.append("  SUM(s.total_msf)         as msf, ");
+        sql.append("  SUM(s.total_interchange) as icf, ");
+        sql.append("  SUM(s.total_scheme_fee)  as sf, ");
+        sql.append("  SUM(s.total_ecom_fee)    as pg, ");
+        sql.append("  SUM(s.total_net_revenue) as nm, ");
+        sql.append("  count(*) OVER() as total_count ");
+        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart);
+        sql.append("GROUP BY m.merchant_id, st.sid, m.mid, m.name ");
+
+        String sortExpr = DAILY_MERCHANT_SORT.getOrDefault(sort == null ? "" : sort, "SUM(s.total_volume)");
+        String sortDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
+        // Tiebreak on mid so pagination is stable when many rows share a value.
+        sql.append("ORDER BY ").append(sortExpr).append(" ").append(sortDir)
+           .append(" NULLS LAST, m.mid ASC, st.sid ASC ");
+        boolean paged = size > 0;
+        if (paged) sql.append("OFFSET :offset LIMIT :limit");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        bindDailyMerchantParams(query, filter, search, tenantId, dates, rangeStart, rangeEnd);
+        if (paged) {
+            query.setParameter("offset", (long) page * size);
+            query.setParameter("limit", size);
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> content = new ArrayList<>(rows.size());
+        long totalElements = 0;
+        for (Object[] row : rows) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("merchantId",   row[0]);
+            map.put("sid",          row[1]);
+            map.put("mid",          row[2]);
+            map.put("merchantName", row[3]);
+            map.put("volume",       row[4]);
+            map.put("count",        row[5]);
+            map.put("msf",          row[6]);
+            map.put("icf",          row[7]);
+            map.put("sf",           row[8]);
+            map.put("pg",           row[9]);
+            map.put("nm",           row[10]);
+            if (totalElements == 0) totalElements = ((Number) row[11]).longValue();
+            content.add(map);
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("content", content);
+        response.put("totalElements", paged ? totalElements : content.size());
+        return response;
+    }
+
+    /**
+     * Grand totals over the SAME filtered set as {@link #getExecutiveDailyMerchant}
+     * (no grouping, no pagination) — the KPI strip and the table always agree
+     * because both use appendDailyMerchantFromWhere.
+     */
+    public Map<String, Object> getExecutiveDailyMerchantTotals(VolumeRevenueFilterDTO filter,
+            List<java.time.LocalDate> dates, java.time.LocalDate rangeStart, java.time.LocalDate rangeEnd,
+            String search, Long tenantId) {
+        requireTenant(tenantId);
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT ");
+        sql.append("  COALESCE(SUM(s.total_volume), 0), ");
+        sql.append("  COALESCE(SUM(s.total_txns), 0), ");
+        sql.append("  COALESCE(SUM(s.total_msf), 0), ");
+        sql.append("  COALESCE(SUM(s.total_interchange), 0), ");
+        sql.append("  COALESCE(SUM(s.total_scheme_fee), 0), ");
+        sql.append("  COALESCE(SUM(s.total_ecom_fee), 0), ");
+        sql.append("  COALESCE(SUM(s.total_net_revenue), 0) ");
+        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart);
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        bindDailyMerchantParams(query, filter, search, tenantId, dates, rangeStart, rangeEnd);
+
+        Object[] row = (Object[]) query.getSingleResult();
+        Map<String, Object> totals = new HashMap<>();
+        totals.put("volume", row[0]);
+        totals.put("count",  row[1]);
+        totals.put("msf",    row[2]);
+        totals.put("icf",    row[3]);
+        totals.put("sf",     row[4]);
+        totals.put("pg",     row[5]);
+        totals.put("nm",     row[6]);
+        return totals;
+    }
+
+    /** Latest N distinct loaded business dates for the tenant (date-pill row). */
+    public List<java.time.LocalDate> getRecentBusinessDates(Long tenantId, int limit) {
+        requireTenant(tenantId);
+        Query query = entityManager.createNativeQuery(
+                "SELECT DISTINCT business_date FROM sum_daily_full " +
+                "WHERE tenant_id = :tenantId ORDER BY business_date DESC LIMIT :limit");
+        query.setParameter("tenantId", tenantId);
+        query.setParameter("limit", limit);
+        return toLocalDates(query.getResultList());
+    }
+
+    /** Months (YYYY-MM, newest first) that actually hold loaded daily data. */
+    public List<String> getBusinessMonths(Long tenantId, int limit) {
+        requireTenant(tenantId);
+        Query query = entityManager.createNativeQuery(
+                "SELECT DISTINCT TO_CHAR(business_date, 'YYYY-MM') FROM sum_daily_full " +
+                "WHERE tenant_id = :tenantId ORDER BY 1 DESC LIMIT :limit");
+        query.setParameter("tenantId", tenantId);
+        query.setParameter("limit", limit);
+        @SuppressWarnings("unchecked")
+        List<Object> rows = query.getResultList();
+        List<String> out = new ArrayList<>(rows.size());
+        for (Object r : rows) if (r != null) out.add(r.toString());
+        return out;
+    }
+
+    /** Every loaded business date inside one calendar month (ascending). */
+    public List<java.time.LocalDate> getBusinessDatesInMonth(Long tenantId,
+            java.time.LocalDate monthStart, java.time.LocalDate monthEnd) {
+        requireTenant(tenantId);
+        Query query = entityManager.createNativeQuery(
+                "SELECT DISTINCT business_date FROM sum_daily_full " +
+                "WHERE tenant_id = :tenantId AND business_date BETWEEN :monthStart AND :monthEnd " +
+                "ORDER BY business_date");
+        query.setParameter("tenantId", tenantId);
+        query.setParameter("monthStart", monthStart);
+        query.setParameter("monthEnd", monthEnd);
+        return toLocalDates(query.getResultList());
+    }
+
+    private static List<java.time.LocalDate> toLocalDates(List<?> rows) {
+        List<java.time.LocalDate> out = new ArrayList<>(rows.size());
+        for (Object r : rows) {
+            if (r instanceof java.sql.Date d) out.add(d.toLocalDate());
+            else if (r instanceof java.time.LocalDate d) out.add(d);
+        }
+        return out;
+    }
+
+    /**
+     * Shared FROM/WHERE for the executive daily merchant page + totals queries.
+     * Date predicates hit the raw partition key (equality / IN / BETWEEN — never
+     * wrapped in a function), so partition pruning and
+     * idx_sum_daily_full_tenant_date always apply. Dim joins carry the tenant
+     * predicate too (defence in depth on top of RLS).
+     */
+    private void appendDailyMerchantFromWhere(StringBuilder sql, VolumeRevenueFilterDTO filter, String search,
+            List<java.time.LocalDate> dates, java.time.LocalDate rangeStart) {
+        sql.append("FROM sum_daily_full s ");
+        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        sql.append("WHERE s.tenant_id = :tenantId ");
+        if (dates != null && !dates.isEmpty()) {
+            sql.append(dates.size() == 1 ? "AND s.business_date = :businessDate "
+                                         : "AND s.business_date IN (:businessDates) ");
+        } else if (rangeStart != null) {
+            sql.append("AND s.business_date BETWEEN :rangeStart AND :rangeEnd ");
+        }
+        if (nonEmptyList(filter.getMccList()))         sql.append("AND s.mcc IN (:mccs) ");
+        if (nonEmptyList(filter.getDestinationList())) sql.append("AND s.destination IN (:destinations) ");
+        if (nonEmptyList(filter.getCardTypeList()))    sql.append("AND s.card_type IN (:cardTypes) ");
+        if (nonEmptyList(filter.getSchemeList()))      sql.append("AND s.card_scheme IN (:schemes) ");
+        if (nonEmptyList(filter.getRmList()))          sql.append("AND m.sales_email IN (:rms) ");
+        if (search != null && !search.isBlank())
+            sql.append("AND (st.sid ILIKE :search OR m.mid ILIKE :search OR m.name ILIKE :search) ");
+    }
+
+    private void bindDailyMerchantParams(Query query, VolumeRevenueFilterDTO filter,
+            String search, Long tenantId,
+            List<java.time.LocalDate> dates, java.time.LocalDate rangeStart, java.time.LocalDate rangeEnd) {
+        query.setParameter("tenantId", tenantId);
+        if (dates != null && !dates.isEmpty()) {
+            if (dates.size() == 1) query.setParameter("businessDate", dates.get(0));
+            else query.setParameter("businessDates", dates);
+        } else if (rangeStart != null) {
+            query.setParameter("rangeStart", rangeStart);
+            query.setParameter("rangeEnd", rangeEnd);
+        }
+        if (nonEmptyList(filter.getMccList()))         query.setParameter("mccs", filter.getMccList());
+        if (nonEmptyList(filter.getDestinationList())) query.setParameter("destinations", filter.getDestinationList());
+        if (nonEmptyList(filter.getCardTypeList()))    query.setParameter("cardTypes", filter.getCardTypeList());
+        if (nonEmptyList(filter.getSchemeList()))      query.setParameter("schemes", filter.getSchemeList());
+        if (nonEmptyList(filter.getRmList()))          query.setParameter("rms", filter.getRmList());
+        if (search != null && !search.isBlank())
+            query.setParameter("search", "%" + search.trim() + "%");
+    }
+
+    private static boolean nonEmptyList(List<?> list) {
+        return list != null && !list.isEmpty();
     }
 
     // ════════════════════════════════════════════════════════════════════════

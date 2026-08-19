@@ -42,6 +42,31 @@ public class DatabaseFixer implements CommandLineRunner {
             if (updated > 0) {
                 logger.info("\u2713 Defaulted {} dim_merchant rows to generate_report_flag = 1", updated);
             }
+
+            // Business onboarding date ("Date of Onboarding" in the merchant master
+            // file). Distinct from created_date, which is the CRM/ETL record-creation
+            // stamp: a back-loaded master file stamps every merchant with the load
+            // date. Open-date filters and the signed-by-RM board key off this column.
+            jdbcTemplate.execute(
+                    "ALTER TABLE dim_merchant ADD COLUMN IF NOT EXISTS date_of_onboarding TIMESTAMP");
+            logger.info("\u2713 Ensured column date_of_onboarding exists in dim_merchant");
+
+            // One-time backfill from the retained staging rows of the last master
+            // upload. The internal_id derivation must mirror the upsert in
+            // MerchantMasterJobConfig so the join hits the same rows.
+            int backfilled = jdbcTemplate.update(
+                    "UPDATE dim_merchant d SET date_of_onboarding = s.dob " +
+                    "FROM (SELECT tenant_id, " +
+                    "             LEFT(COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), 50) AS internal_id, " +
+                    "             MAX(date_of_onboarding) AS dob " +
+                    "      FROM stg_merchant_master_raw " +
+                    "      WHERE NULLIF(TRIM(mid), '') IS NOT NULL AND date_of_onboarding IS NOT NULL " +
+                    "      GROUP BY 1, 2) s " +
+                    "WHERE d.tenant_id = s.tenant_id AND d.internal_id = s.internal_id " +
+                    "  AND d.date_of_onboarding IS NULL");
+            if (backfilled > 0) {
+                logger.info("\u2713 Backfilled date_of_onboarding on {} dim_merchant rows from staging", backfilled);
+            }
             logger.info("dim_merchant table check completed.");
         } catch (Exception e) {
             logger.error("fixDimMerchantTable failed", e);

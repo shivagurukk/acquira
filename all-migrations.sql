@@ -1871,3 +1871,40 @@ END;
 -- ';
 
 
+
+
+-- #####################################################################
+-- V2026_08_19_01__dim_merchant_date_of_onboarding.sql
+-- #####################################################################
+-- Business onboarding date ("Date of Onboarding" in the merchant master file).
+-- Distinct from created_date (CRM/ETL record-creation stamp). Open-date filters
+-- and the Top Performers signed-by-RM board key off this column.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'dim_merchant' AND column_name = 'date_of_onboarding'
+    ) THEN
+        ALTER TABLE dim_merchant ADD COLUMN date_of_onboarding TIMESTAMP;
+    END IF;
+END $$;
+
+
+-- #####################################################################
+-- V2026_08_19_02__executive_daily_merchant_menu.sql
+-- #####################################################################
+-- Executive Daily Merchant Dashboard menu (/executive/daily-merchant),
+-- EXECUTIVE order 7. New page: single business date + acquiring filters over
+-- sum_daily_full with the full fee set (Vol/Count/MSF/ICF/SF/PG/NM).
+-- Distinct from /business/daily-dashboard (month heat-grid), untouched.
+INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order)
+SELECT 'Daily Merchant Performance', '/executive/daily-merchant', 'CalendarClock', 'EXECUTIVE', 7
+WHERE NOT EXISTS (SELECT 1 FROM sys_menu WHERE path = '/executive/daily-merchant');
+
+INSERT INTO sys_group_menu (group_id, menu_id)
+SELECT g.group_id, m.menu_id
+FROM sys_user_group g
+CROSS JOIN sys_menu m
+WHERE m.path = '/executive/daily-merchant'
+  AND g.group_name IN ('Super Admin', 'Bank Admin')
+ON CONFLICT (group_id, menu_id) DO NOTHING;

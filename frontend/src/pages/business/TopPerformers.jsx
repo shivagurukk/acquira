@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
 import api from '../../api/axios';
 import { Box, Paper, Typography, Stack, IconButton, Tooltip } from '@mui/material';
-import { Trophy, TrendingUp, Users, Sparkles, Download, ArrowUpRight, ArrowDownRight, Receipt, Layers } from 'lucide-react';
+import { Trophy, TrendingUp, Users, UserPlus, Sparkles, Download, ArrowUpRight, ArrowDownRight, Receipt, Layers } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import KpiCards from '../../components/KpiCards';
@@ -320,7 +320,6 @@ const TopPerformers = () => {
         },
     ] : [];
 
-    const movers = data?.topMovers;
     const grainNote = data?.grain === 'insight'
         ? 'Card-level filters active — showing cardholder-currency volume; net margin approximated as MSF.'
         : null;
@@ -403,6 +402,13 @@ const TopPerformers = () => {
                         onExport={() => exportToCSV(data.topRmsByNetRevenue, 'top_rms_by_net_revenue')}
                     />
                     <LeaderboardCard
+                        title="Top 10 RMs — Merchants Signed" icon={UserPlus} color={LB_HUE}
+                        rows={data.topSignedByRm} primaryKey="name" secondaryKey="salesUserId"
+                        valueKey="signedCount" valueFmt={(v) => `${fmt.number(v)} signed`}
+                        emptyLabel="No merchants onboarded in this window."
+                        onExport={() => exportToCSV(data.topSignedByRm, 'top_rms_by_merchants_signed')}
+                    />
+                    <LeaderboardCard
                         title="Top 10 MCC — Volume" icon={Layers} color={LB_HUE}
                         rows={data.topMccs} primaryKey="name" secondaryKey="mcc"
                         valueKey="volume" valueFmt={fmt.currency}
@@ -416,51 +422,6 @@ const TopPerformers = () => {
                         emptyLabel="No merchants onboarded in this window."
                         onExport={() => exportToCSV(data.topNewMerchants, 'top_new_merchants')}
                     />
-
-                    {/* Movers — split up/down within one card */}
-                    <Paper className="lb-card" style={{ '--lb-c': LB_HUE }}
-                        sx={{ ...premiumTableWrapper, display: 'flex', flexDirection: 'column' }}>
-                        <Box className="lb-head" sx={{ px: 2.5, py: 1.75 }}>
-                            <Stack direction="row" spacing={1.2} alignItems="center">
-                                <Box className="lb-icon" sx={{
-                                    width: 30, height: 30, borderRadius: '8px', display: 'flex',
-                                    alignItems: 'center', justifyContent: 'center',
-                                }}>
-                                    <TrendingUp size={15} color="#fff" />
-                                </Box>
-                                <Typography className="lb-title" fontWeight={700} fontSize="0.88rem">Top Movers</Typography>
-                            </Stack>
-                            {data?.priorFrom && (
-                                <Typography fontSize="0.68rem" sx={{ mt: 0.4, position: 'relative', color: 'rgba(255,255,255,0.72)' }}>
-                                    vs {data.priorFrom} → {data.priorTo}
-                                </Typography>
-                            )}
-                        </Box>
-                        {!movers ? (
-                            <Box sx={{ p: 3 }}>
-                                <Typography variant="body2" color={T.textMut}>
-                                    No prior-period data available for comparison yet.
-                                </Typography>
-                            </Box>
-                        ) : (
-                            <Box>
-                                <Box sx={{ px: 2, py: 1, bgcolor: T.subtle }}>
-                                    <Stack direction="row" spacing={0.5} alignItems="center">
-                                        <TrendingUp size={12} color={T.success} />
-                                        <Typography fontSize="0.68rem" fontWeight={700} color={T.success}>SURGING</Typography>
-                                    </Stack>
-                                </Box>
-                                {movers.up.length === 0 ? (
-                                    <Box sx={{ p: 2 }}><Typography variant="caption" color={T.textMut}>None above the noise floor.</Typography></Box>
-                                ) : movers.up.map((r, i) => (
-                                    <Box key={i} sx={{ px: 2, py: 1, borderBottom: `1px solid ${T.borderLt}` }}>
-                                        <Typography noWrap fontSize="0.78rem" fontWeight={600} color={T.text}>{r.name}</Typography>
-                                        <Typography fontSize="0.68rem" color={T.textMut}>{fmt.currency(r.volume)}</Typography>
-                                    </Box>
-                                ))}
-                            </Box>
-                        )}
-                    </Paper>
                 </Box>
             )}
         </Box>

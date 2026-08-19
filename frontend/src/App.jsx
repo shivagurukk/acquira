@@ -48,6 +48,8 @@ const SalesLeaderboard = lazy(() => import('./pages/sales/SalesLeaderboard'));
 const SalesHierarchyTree = lazy(() => import('./pages/sales/SalesHierarchyTree'));
 const SalesExecutiveDashboard = lazy(() => import('./pages/sales/SalesExecutiveDashboard'));
 const ExecutiveSalesPulse = lazy(() => import('./pages/executive/ExecutiveSalesPulse'));
+// Executive daily view (distinct from pages/business/DailyMerchantDashboard, the month heat-grid)
+const ExecutiveDailyMerchant = lazy(() => import('./pages/executive/DailyMerchantDashboard'));
 const SalesTargetManagement = lazy(() => import('./pages/sales/SalesTargetManagement'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const TenantManagement = lazy(() => import('./pages/TenantManagement'));
@@ -108,6 +110,7 @@ function App() {
               <Route path="/business/ceo-volume-revenue" element={<CeoVolumeRevenue />} />
               <Route path="/business/loss-making" element={<LossMakingMerchants />} />
               <Route path="/executive/sales" element={<ExecutiveSalesPulse />} />
+              <Route path="/executive/daily-merchant" element={<ExecutiveDailyMerchant />} />
 
               {/* Merchant MGT */}
               <Route path="/merchants" element={<MerchantHierarchy />} />

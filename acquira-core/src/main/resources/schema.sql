@@ -541,6 +541,7 @@ CREATE TABLE IF NOT EXISTS dim_merchant (
     name VARCHAR(150),
     status VARCHAR(50),
     created_date TIMESTAMP,
+    date_of_onboarding TIMESTAMP,
     sales_user_id VARCHAR(50),
     sales_email VARCHAR(100), -- For RM Mapping
     referral_partner VARCHAR(100),
@@ -2419,6 +2420,7 @@ CREATE TABLE IF NOT EXISTS dim_merchant (
     name VARCHAR(150),
     status VARCHAR(50),
     created_date TIMESTAMP,
+    date_of_onboarding TIMESTAMP,
     sales_user_id VARCHAR(50),
     sales_email VARCHAR(100), -- For RM Mapping
     referral_partner VARCHAR(100),
@@ -4298,6 +4300,7 @@ CREATE TABLE IF NOT EXISTS dim_merchant (
     name VARCHAR(150),
     status VARCHAR(50),
     created_date TIMESTAMP,
+    date_of_onboarding TIMESTAMP,
     sales_user_id VARCHAR(50),
     sales_email VARCHAR(100), -- For RM Mapping
     referral_partner VARCHAR(100),
@@ -6177,6 +6180,7 @@ CREATE TABLE IF NOT EXISTS dim_merchant (
     name VARCHAR(150),
     status VARCHAR(50),
     created_date TIMESTAMP,
+    date_of_onboarding TIMESTAMP,
     sales_user_id VARCHAR(50),
     sales_email VARCHAR(100), -- For RM Mapping
     referral_partner VARCHAR(100),
@@ -8057,6 +8061,7 @@ CREATE TABLE IF NOT EXISTS dim_merchant (
     name VARCHAR(150),
     status VARCHAR(50),
     created_date TIMESTAMP,
+    date_of_onboarding TIMESTAMP,
     sales_user_id VARCHAR(50),
     sales_email VARCHAR(100), -- For RM Mapping
     referral_partner VARCHAR(100),

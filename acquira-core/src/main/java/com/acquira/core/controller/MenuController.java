@@ -101,6 +101,8 @@ public class MenuController {
                 // the complete Sales group on next startup.
                 // Moved to EXECUTIVE by V2026_08_17_01__executive_menu_group.sql
                 {"Sales Hierarchy",        "/sales/executive",           "LayoutDashboard", "EXECUTIVE",   6},
+                // Safety net for V2026_08_19_02__executive_daily_merchant_menu.sql
+                {"Daily Merchant Performance", "/executive/daily-merchant", "CalendarClock", "EXECUTIVE",  7},
                 {"Sales Team Management",  "/sales/team-management",     "Users",        "SALES",          1},
                 {"Country Leads",          "/sales/country-management",  "Globe",        "SALES",          2},
                 {"Agent Directory",        "/sales/agents",              "Contact",      "SALES",          3},

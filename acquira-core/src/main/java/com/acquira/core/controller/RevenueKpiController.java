@@ -190,8 +190,8 @@ public class RevenueKpiController {
         if (f.getMerchantName() != null && !f.getMerchantName().isBlank())
                                                  sql.append("  AND m.name ILIKE :merchName ");
         if (listNonEmpty(f.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
-        if (f.getOpenDateStart() != null)        sql.append("  AND CAST(m.created_date AS DATE) >= :openStart ");
-        if (f.getOpenDateEnd() != null)          sql.append("  AND CAST(m.created_date AS DATE) <= :openEnd ");
+        if (f.getOpenDateStart() != null)        sql.append("  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) >= :openStart ");
+        if (f.getOpenDateEnd() != null)          sql.append("  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) <= :openEnd ");
         if (listNonEmpty(f.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
         if (listNonEmpty(f.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
         if (listNonEmpty(f.getIndustryList()))   sql.append("  AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) ");
@@ -219,8 +219,8 @@ public class RevenueKpiController {
         if (f.getMerchantName() != null && !f.getMerchantName().isBlank())
                                                  sql.append("  AND m.name ILIKE :merchName ");
         if (listNonEmpty(f.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
-        if (f.getOpenDateStart() != null)        sql.append("  AND CAST(m.created_date AS DATE) >= :openStart ");
-        if (f.getOpenDateEnd() != null)          sql.append("  AND CAST(m.created_date AS DATE) <= :openEnd ");
+        if (f.getOpenDateStart() != null)        sql.append("  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) >= :openStart ");
+        if (f.getOpenDateEnd() != null)          sql.append("  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) <= :openEnd ");
         if (listNonEmpty(f.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
         if (listNonEmpty(f.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
         if (listNonEmpty(f.getIndustryList()))   sql.append("  AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) ");

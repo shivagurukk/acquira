@@ -47,6 +47,16 @@ export const premiumDataGridStyles = {
     '& .MuiDataGrid-columnHeader:hover .MuiDataGrid-menuIcon, & .MuiDataGrid-columnHeader:hover .MuiDataGrid-sortIcon': {
         color: 'var(--table-head-text)',
     },
+    // The sort control is an IconButton — its default hover/ripple circle and
+    // the multi-sort index badge both render as a solid light "ball" against
+    // the navy bar. Flatten the button and hide the badge.
+    '& .MuiDataGrid-columnHeader .MuiIconButton-root': {
+        color: 'var(--table-head-muted)',
+        backgroundColor: 'transparent',
+        '&:hover': { backgroundColor: 'color-mix(in srgb, #ffffff 14%, transparent)' },
+        '& .MuiTouchRipple-root': { display: 'none' },
+    },
+    '& .MuiDataGrid-columnHeader .MuiBadge-badge': { display: 'none' },
 
     // ── Rows: tinted body; hover = primary wash ──
     // Uniform tint rather than zebra: DataGrid virtualises rows, so an

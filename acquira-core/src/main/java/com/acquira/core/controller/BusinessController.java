@@ -739,8 +739,8 @@ public class BusinessController {
                 if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                                                               sql.append("  AND m.name ILIKE :merchName ");
                 if (listNonEmpty(filter.getMidList()))        sql.append("  AND m.mid IN (:mids) ");
-                if (filter.getOpenDateStart() != null)        sql.append("  AND CAST(m.created_date AS DATE) >= :openStart ");
-                if (filter.getOpenDateEnd() != null)          sql.append("  AND CAST(m.created_date AS DATE) <= :openEnd ");
+                if (filter.getOpenDateStart() != null)        sql.append("  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) >= :openStart ");
+                if (filter.getOpenDateEnd() != null)          sql.append("  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) <= :openEnd ");
                 if (listNonEmpty(filter.getMccList()))        sql.append("  AND st.mcc IN (:mccs) ");
                 if (listNonEmpty(filter.getSidList()))        sql.append("  AND st.sid IN (:sids) ");
                 if (listNonEmpty(filter.getIndustryList()))   sql.append("  AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) ");
@@ -813,8 +813,8 @@ public class BusinessController {
                 if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                                                               zsql.append("  AND m.name ILIKE :merchName ");
                 if (listNonEmpty(filter.getMidList()))        zsql.append("  AND m.mid IN (:mids) ");
-                if (filter.getOpenDateStart() != null)        zsql.append("  AND CAST(m.created_date AS DATE) >= :openStart ");
-                if (filter.getOpenDateEnd() != null)          zsql.append("  AND CAST(m.created_date AS DATE) <= :openEnd ");
+                if (filter.getOpenDateStart() != null)        zsql.append("  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) >= :openStart ");
+                if (filter.getOpenDateEnd() != null)          zsql.append("  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) <= :openEnd ");
                 if (listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList())
                                 || listNonEmpty(filter.getIndustryList())) {
                         zsql.append("  AND EXISTS (SELECT 1 FROM dim_store st ");
@@ -895,8 +895,8 @@ public class BusinessController {
                         ((filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
                                                                   ? "  AND m.name ILIKE :merchName " : "") +
                         (listNonEmpty(filter.getMidList())        ? "  AND m.mid IN (:mids) " : "") +
-                        (filter.getOpenDateStart() != null        ? "  AND CAST(m.created_date AS DATE) >= :openStart " : "") +
-                        (filter.getOpenDateEnd() != null          ? "  AND CAST(m.created_date AS DATE) <= :openEnd " : "") +
+                        (filter.getOpenDateStart() != null        ? "  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) >= :openStart " : "") +
+                        (filter.getOpenDateEnd() != null          ? "  AND CAST(COALESCE(m.date_of_onboarding, m.created_date) AS DATE) <= :openEnd " : "") +
                         (listNonEmpty(filter.getMccList())        ? "  AND st.mcc IN (:mccs) " : "") +
                         (listNonEmpty(filter.getSidList())        ? "  AND st.sid IN (:sids) " : "") +
                         (listNonEmpty(filter.getIndustryList())   ? "  AND st.mcc IN (SELECT mcc FROM ref_mcc_category WHERE category IN (:industries)) " : "") +
