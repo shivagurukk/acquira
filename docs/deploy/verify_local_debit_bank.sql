@@ -76,7 +76,7 @@ WHERE s.tenant_id = :tenant_id
 GROUP BY 1 ORDER BY volume DESC;
 
 \echo ''
-\echo '=== 6. Unmatched BINs — add these to the next upload to raise coverage ==='
+\echo '=== 6. Unmatched BINs — put these in add_or_correct_bins.sql to raise coverage ==='
 SELECT s.bin6, SUM(s.total_volume) AS volume, SUM(s.total_txns) AS txns
 FROM sum_daily_local_debit_bin s
 LEFT JOIN ref_tenant_bin_bank b ON b.tenant_id = s.tenant_id AND b.bin = s.bin6

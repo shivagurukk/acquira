@@ -2,8 +2,11 @@
 -- Local Debit Bank Dashboard — ADD or CORRECT a few BINs.
 --
 -- Use this when you need to add a handful of BINs (typically the ones the
--- dashboard's "Unmatched BIN worklist" is showing) without touching the full
--- 158-row seed in 02_seed_uae_bin_bank.sql.
+-- dashboard's "Unmatched BIN worklist" is showing) without touching the initial
+-- seed migration V2026_08_20_03__seed_uae_bin_bank.sql.
+--
+-- Rows added here SURVIVE restarts: the seed migration re-runs on every startup
+-- but is ON CONFLICT DO NOTHING, so it never overwrites what you set here.
 --
 -- HOW TO USE
 --   1. Edit the VALUES block below: one line per BIN.
