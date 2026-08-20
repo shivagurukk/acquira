@@ -8,6 +8,7 @@ environment. All scripts in this folder are idempotent — re-running is safe.
 | `01_local_debit_bank_schema.sql` | Creates `ref_tenant_bin_bank`, `sum_daily_local_debit_bin` (+partitions, indexes, RLS) and the menu entry |
 | `02_seed_uae_bin_bank.sql` | Loads the 158 UAE BINs / 40 banks (UAESWITCH, file date 2026-07-30) |
 | `03_verify_local_debit_bank.sql` | Post-rebuild checks, including the parity assertion |
+| `04_add_bins_template.sql` | Day-to-day: add or correct a handful of BINs (edit the VALUES block, run) |
 
 > **Why the BIN list matters:** bank names come *only* from `ref_tenant_bin_bank`.
 > The scheme BIN files (`ref_bin`, `ref_bin_range`) carry no issuer name and are
@@ -128,8 +129,16 @@ Finally, log in and open **Business → Local Debit Banks**.
 ## Ongoing maintenance
 
 - **Improving coverage:** the page's "Unmatched BIN worklist" chip lists the
-  highest-volume BINs with no bank. Add them to `02_seed_uae_bin_bank.sql` and
-  re-run it — all history re-labels instantly, no rebuild.
+  highest-volume BINs with no bank. Put them in `04_add_bins_template.sql` (edit
+  the VALUES block) and run it — all history re-labels instantly, no rebuild:
+
+  ```bash
+  psql -h <host> -p <port> -U <user> -d <db> -v ON_ERROR_STOP=1 -v tenant_id=1 -f 04_add_bins_template.sql
+  ```
+
+  Keep bank-name spelling identical to existing rows, or the same bank appears
+  twice on the dashboard. Check with
+  `SELECT DISTINCT bank_name FROM ref_tenant_bin_bank WHERE tenant_id = <id>;`
 - **New months:** handled automatically. Every ingest path (file upload, server
   file processing, backfill) and the summary rebuild all maintain the table.
 - **BIN format:** store 6 digits. Feeds only expose the first 6 clear PAN digits,
