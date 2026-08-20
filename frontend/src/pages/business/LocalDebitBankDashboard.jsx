@@ -5,7 +5,7 @@ import {
     ComposedChart, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
     ResponsiveContainer, Cell,
 } from 'recharts';
-import { Landmark, RefreshCw, Download, Filter, AlertTriangle, Upload, Trash2, List } from 'lucide-react';
+import { Landmark, RefreshCw, Download, Filter, AlertTriangle, BookLock } from 'lucide-react';
 import BusinessFilters from '../../components/BusinessFilters';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import useDataBounds from '../../hooks/useDataBounds';
@@ -205,13 +205,13 @@ const LocalDebitBankDashboard = () => {
     const [unmatchedLoading, setUnmatchedLoading] = useState(false);
     const [showUnmatched, setShowUnmatched] = useState(false);
 
-    // BIN list management panel
+    // BIN list panel — READ-ONLY. The BIN -> bank mapping is controlled
+    // reference data seeded through the database, never edited from the UI:
+    // names resolve at query time, so a wrong list would silently re-attribute
+    // every bank across all history the moment it landed.
     const [showBins, setShowBins] = useState(false);
     const [binList, setBinList] = useState([]);
     const [binListLoading, setBinListLoading] = useState(false);
-    const [uploadBusy, setUploadBusy] = useState(false);
-    const [uploadResult, setUploadResult] = useState(null);
-    const fileInputRef = useRef(null);
 
     const fetchKpis = useCallback(async (f) => {
         setKpiLoading(true); setKpiError(false);
@@ -458,26 +458,6 @@ const LocalDebitBankDashboard = () => {
         },
     ], [fmt]);
 
-    /* ── BIN upload ── */
-    const handleUpload = async (file) => {
-        if (!file) return;
-        setUploadBusy(true); setUploadResult(null);
-        try {
-            const form = new FormData();
-            form.append('file', file);
-            const res = await api.post('/business/local-debit-bank-dashboard/bins?mode=REPLACE', form,
-                { headers: { 'Content-Type': 'multipart/form-data' } });
-            setUploadResult(res.data);
-            fetchBinList();
-            run(); // re-run the dashboard — history re-labels instantly
-        } catch (e) {
-            setUploadResult({ error: e.response?.data?.error || e.message || 'Upload failed' });
-        } finally {
-            setUploadBusy(false);
-            if (fileInputRef.current) fileInputRef.current.value = '';
-        }
-    };
-
     const matchedPct = num(kpiData?.matchedVolumePct);
 
     return (
@@ -568,7 +548,7 @@ const LocalDebitBankDashboard = () => {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
                         <button className="ldb-focus ldb-mast-btn" onClick={() => setShowBins(s => !s)}>
-                            <Upload size={13} /> BIN list
+                            <BookLock size={13} /> BIN list
                         </button>
                         <button className="ldb-focus ldb-mast-btn" onClick={() => setShowFilters(s => !s)}>
                             <Filter size={13} /> Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
@@ -619,66 +599,29 @@ const LocalDebitBankDashboard = () => {
                 hideCardType
             />
 
-            {/* ── BIN list management panel ── */}
+            {/* ── BIN list panel — READ-ONLY (seeded via the database) ── */}
             {showBins && (
                 <section className="ldb-panel" style={{ marginBottom: 12, padding: '18px 20px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
                         flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
-                        <div>
-                            <div className="ldb-eyebrow">Tenant BIN → bank list</div>
+                        <div style={{ maxWidth: 680 }}>
+                            <div className="ldb-eyebrow">Tenant BIN → bank list · read only</div>
                             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-                                CSV or Excel, columns <b>BIN</b> + <b>BANK</b>. 6 or 8 digits — 8-digit BINs are
-                                stored as their 6-digit prefix. Upload REPLACES the current list; the whole
-                                history re-labels instantly (no rebuild needed).
+                                What this page resolves BINs against. Maintained as controlled reference data by
+                                your DBA — bank names are applied at read time, so a change here would re-attribute
+                                every bank across all history at once. Contact the administrator to add or correct
+                                a BIN.
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }}
-                                onChange={e => handleUpload(e.target.files?.[0])} />
-                            <button className="ldb-chip" disabled={uploadBusy}
-                                onClick={() => fileInputRef.current?.click()}>
-                                <Upload size={13} /> {uploadBusy ? 'Uploading…' : 'Upload file'}
-                            </button>
-                            <button className="ldb-chip" onClick={fetchBinList} disabled={binListLoading}>
-                                <List size={13} /> Refresh
-                            </button>
-                            <button className="ldb-chip" style={{ color: 'var(--danger-text, #991b1b)' }}
-                                onClick={async () => {
-                                    if (!window.confirm('Delete the entire BIN list for this tenant?')) return;
-                                    await api.delete('/business/local-debit-bank-dashboard/bins');
-                                    fetchBinList(); run();
-                                }}>
-                                <Trash2 size={13} /> Clear all
-                            </button>
+                            <span className="ldb-chip" style={{ cursor: 'default' }}>
+                                <BookLock size={13} />
+                                {binList.length > 0
+                                    ? `${binList.length} BINs · ${new Set(binList.map(b => b.bank_name)).size} banks`
+                                    : 'none configured'}
+                            </span>
                         </div>
                     </div>
-                    {uploadResult && (
-                        <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 'var(--radius-md)',
-                            fontSize: 12.5,
-                            border: `1px solid ${uploadResult.error ? 'var(--danger-border, #fecaca)' : 'var(--border)'}`,
-                            background: uploadResult.error ? 'var(--danger-bg, #fef2f2)' : 'var(--bg-hover)' }}>
-                            {uploadResult.error ? (
-                                <span style={{ color: 'var(--danger-text, #991b1b)', fontWeight: 600 }}>{uploadResult.error}</span>
-                            ) : (
-                                <>
-                                    <b>{uploadResult.loaded}</b> BINs loaded ({uploadResult.distinctBanks} banks)
-                                    {num(uploadResult.truncatedFrom8Digits) > 0 && <> · {uploadResult.truncatedFrom8Digits} truncated from 8 digits</>}
-                                    {num(uploadResult.rejected) > 0 && <> · <b>{uploadResult.rejected} rejected</b></>}
-                                    {uploadResult.prefixCollisions?.length > 0 && (
-                                        <div style={{ marginTop: 6, color: 'var(--warning-text, #92400e)' }}>
-                                            Prefix collisions (first occurrence kept):{' '}
-                                            {uploadResult.prefixCollisions.join(' · ')}
-                                        </div>
-                                    )}
-                                    {uploadResult.rejectSamples?.length > 0 && (
-                                        <div style={{ marginTop: 6, color: 'var(--text-secondary)' }}>
-                                            {uploadResult.rejectSamples.join(' · ')}
-                                        </div>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    )}
                     <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border-light, var(--border))',
                         borderRadius: 'var(--radius-md)' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -686,38 +629,26 @@ const LocalDebitBankDashboard = () => {
                                 <tr style={{ position: 'sticky', top: 0, background: 'var(--bg-card)' }}>
                                     <th style={{ textAlign: 'left', padding: '8px 12px' }} className="ldb-eyebrow">BIN</th>
                                     <th style={{ textAlign: 'left', padding: '8px 12px' }} className="ldb-eyebrow">Bank</th>
-                                    <th style={{ textAlign: 'left', padding: '8px 12px' }} className="ldb-eyebrow">Source file</th>
-                                    <th style={{ padding: '8px 12px' }} />
+                                    <th style={{ textAlign: 'left', padding: '8px 12px' }} className="ldb-eyebrow">Source</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {binListLoading ? (
-                                    <tr><td colSpan={4} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                                    <tr><td colSpan={3} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
                                 ) : binList.length === 0 ? (
-                                    <tr><td colSpan={4} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>
-                                        No BINs uploaded yet — every local debit transaction currently shows under "{OTHER}".
+                                    <tr><td colSpan={3} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>
+                                        No BINs configured for this tenant — every local debit transaction currently
+                                        shows under "{OTHER}". Ask your administrator to seed the BIN list.
                                     </td></tr>
                                 ) : binList.map(b => (
                                     <tr key={b.bin} style={{ borderTop: '1px solid var(--border-light, var(--border))' }}>
                                         <td className="ldb-num" style={{ padding: '7px 12px', fontWeight: 600 }}>{b.bin}</td>
                                         <td style={{ padding: '7px 12px' }}>{b.bank_name}</td>
                                         <td style={{ padding: '7px 12px', color: 'var(--text-muted)' }}>{b.source_file || '—'}</td>
-                                        <td style={{ padding: '4px 12px', textAlign: 'right' }}>
-                                            <button className="ldb-chip" style={{ padding: '3px 9px' }}
-                                                onClick={async () => {
-                                                    await api.delete(`/business/local-debit-bank-dashboard/bins/${b.bin}`);
-                                                    fetchBinList(); run();
-                                                }}>
-                                                <Trash2 size={11} />
-                                            </button>
-                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
-                    </div>
-                    <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--text-muted)' }}>
-                        {binList.length > 0 && `${binList.length} BINs · ${new Set(binList.map(b => b.bank_name)).size} banks`}
                     </div>
                 </section>
             )}
@@ -859,7 +790,7 @@ const LocalDebitBankDashboard = () => {
                 {showUnmatched && (
                     <div style={{ marginTop: 14, borderTop: '1px solid var(--border-light, var(--border))', paddingTop: 12 }}>
                         <div className="ldb-eyebrow" style={{ marginBottom: 8 }}>
-                            Top unmatched BINs by volume — copy these into the next upload
+                            Top unmatched BINs by volume — send these to your administrator to extend the BIN list
                         </div>
                         {unmatchedLoading ? (
                             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading…</div>

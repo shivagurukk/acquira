@@ -36,26 +36,24 @@ CREATE TABLE ref_tenant_bin_bank (
 );
 ```
 
-- **6 OR 8 digit BINs accepted at upload; stored as 6** (user decision 2026-08-20,
-  first file will be Dubai/UAE BINs, mostly 8-digit): feeds deliver only
-  first-6-clear PANs, so matching is always on `LEFT(card_number,6)`. 8-digit BINs
-  are auto-truncated to their 6-digit prefix and deduplicated; when two 8-digit
-  BINs collide on the same 6-prefix with DIFFERENT bank names, keep the first
-  occurrence and list the collisions in the upload response (user: same 6-prefix
-  is almost always the same bank — assigning to either is acceptable). Anything
-  not 6 or 8 digits is rejected.
+- **Stored as 6 digits.** Feeds deliver only first-6-clear PANs, so matching is
+  always on `LEFT(card_number,6)`; an 8-digit BIN must be reduced to its 6-digit
+  prefix before seeding. Where two 8-digit BINs share a prefix under different
+  banks, one is chosen deliberately — the data cannot tell them apart.
+- **Seeded through the database, NOT through the app** (decision revised
+  2026-08-20 after review). There is no upload/edit/delete endpoint and the UI is
+  read-only. Rationale: names resolve at QUERY time, so a wrong or partial list
+  would re-attribute every bank across all history the instant it landed, with no
+  rebuild to spread it and none to undo it. Maintain via
+  `docs/deploy/02_seed_uae_bin_bank.sql`. A guarded self-service flow
+  (validation, preview, audit, rollback) may be built later.
 - **This table is the ONLY bank source.** `ref_bin` / `ref_bin_range` are NOT
-  consulted anywhere on this dashboard — bank naming comes exclusively from the
-  user-uploaded `ref_tenant_bin_bank` rows.
-- Upload: new small endpoints on the dashboard's own controller
-  (`POST .../bins` multipart CSV/Excel with columns `BIN, BANK`;
-  `GET .../bins` list; `DELETE .../bins/{bin}`), tenant taken from session —
-  the user never supplies tenant_id in the file. Full-replace or upsert per upload
-  (choose **upsert + optional "replace all" checkbox**, default upsert).
-- Upload response reports: rows loaded, rows rejected (non-6-digit / dup within
-  file), and current match-coverage % against the last 30 days of the summary.
-- Bank name is still resolved **at query time** by joining this table — so
-  re-uploading a corrected list instantly re-labels ALL history, zero rebuilds.
+  consulted anywhere on this dashboard.
+- API surface: `GET .../bins` only — the read-only list the page displays,
+  tenant taken from the session. No write endpoint exists.
+- Bank name is resolved **at query time** by joining this table — so re-seeding a
+  corrected list instantly re-labels ALL history, zero rebuilds. This is the
+  feature's biggest strength and precisely why writes are DBA-only.
 
 ## 3. Summary table (scoped, merchant-grain)
 
@@ -136,10 +134,10 @@ Panels:
 - **Top merchants per bank**: pick a bank → top-25 merchants by volume/count
   (this is what merchant_id in the grain buys).
 - **Coverage chip**: "Matched to a bank: NN.N% of local debit volume" + count of
-  distinct unmatched BINs (click → list of top unmatched BINs by volume, ready to
-  copy into the next injection file).
-- **BIN upload panel** (same page or a tab): upload CSV, see current list,
-  delete rows.
+  distinct unmatched BINs (click → top unmatched BINs by volume, to hand to the
+  administrator for the next seed).
+- **BIN list panel**: read-only view of the configured BIN → bank rows, so users
+  can see what the page resolves against. No edit controls (see §2).
 - Filters: date presets (anchored on own bounds), merchant search. No
   destination/card-type/mcc/sid controls — scope is fixed by definition.
 - Data-quality footnote: volume of DEBIT rows with NULL/UNMAPPED destination
@@ -170,25 +168,20 @@ with the IDENTICAL INSERT (§3) — explicitly confirmed with the user 2026-08-2
 - `deleteDay`: add `sum_daily_local_debit_bin` to the delete list.
 
 ### C. Backend
-- Controller (dashboard endpoints + BIN upload/list/delete) + repository.
+- Controller (dashboard read endpoints + read-only `GET /bins`) + repository.
 
 ### D. Frontend
-- Dashboard page + upload panel; menu icon.
+- Dashboard page + read-only BIN list panel; menu icon.
 
 ### E. Runbook
-1. Apply migrations by hand (local 5433 first), restart backend.
-2. Upload the tenant BIN file; check rejects + coverage in the response.
-3. Bulk-migration summary rebuild for historical months (fact has card_number →
-   full history recoverable).
-4. Run the §5 parity SQL for 2–3 months; then UI login pass: totals vs Destination
-   and Card Type dashboards' DOMESTIC∩DEBIT cells, Others share, one bank
-   spot-checked against a direct fact query.
+See `docs/deploy/README_LOCAL_DEBIT_BANK.md` — schema script, seed script,
+rebuild, then the verification script (which includes the parity assertion).
 
-## 8. Open decisions (defaults chosen, flag if wrong)
+## 8. Decisions taken
 
-1. **§4 destination predicate**: strict `='DOMESTIC'` (default) vs
-   COALESCE-NULL-as-domestic.
-2. Upload semantics: upsert by default + explicit "replace all" option.
+1. **§4 destination predicate**: strict `='DOMESTIC'` — matches the Card Type
+   Dashboard; NULL/UNMAPPED debit is excluded and explained on-screen.
+2. **BIN list is DBA-seeded, app read-only** (revised after review — see §2).
 3. Metrics: count + volume (+MSF included cheaply); full fee stack deferred.
 4. Rows with NULL merchant_id excluded (mirrors sum_daily_full) — required for the
    parity guarantee.
@@ -213,10 +206,14 @@ so their DDL is reproduced in §11):
 | Frontend | `BusinessFilters.jsx` — new `merchantOnly` prop |
 | Config | `application.properties` + `application-prod.properties` (gitignored) schema-locations |
 
+Plus the deployment kit in `docs/deploy/` (schema, UAE seed, verification
+scripts + README) — the tracked, runnable copy of everything the gitignored
+migrations contain.
+
 Local verification passed: all endpoints 200; KPIs, share ribbon, bank ranking,
-monthly trend, per-bank merchant drill-down, unmatched-BIN worklist and the BIN
-upload panel ("158 BINs · 40 banks") all render; parity with `sum_daily_full`'s
-DOMESTIC × DEBIT slice exact (6,375,740.31 / 6,810 txns).
+monthly trend, per-bank merchant drill-down, unmatched-BIN worklist and the
+read-only BIN list panel ("158 BINs · 40 banks") all render; parity with
+`sum_daily_full`'s DOMESTIC × DEBIT slice exact (6,375,740.31 / 6,810 txns).
 
 Local caveats (dev-box only, not defects): `fact_transaction` is empty locally so
 the summary was synthesized from `sum_daily_full`; `dim_merchant` was empty and
@@ -226,17 +223,20 @@ from inside `acquira-core` (the parent POM has no mainClass).
 
 ## 10. Deployment runbook
 
-1. `psql` both migrations from §11 (they are idempotent; `db/migration/` is
-   gitignored so they do not arrive with the deploy).
-2. Confirm `application-prod.properties` schema-locations lists both (also
-   gitignored — edit on the target).
+Full version with copy-paste commands: **`docs/deploy/README_LOCAL_DEBIT_BANK.md`**.
+
+1. Deploy the code; add both migration paths to `application-prod.properties`
+   schema-locations (gitignored — edit on the target).
+2. `psql -f docs/deploy/01_local_debit_bank_schema.sql` (idempotent).
 3. Restart the backend (registers the controller + menu grant).
-4. Upload the tenant BIN → bank file on the page (BIN list → Upload), or seed via
-   SQL. Check the response for rejects and 6-prefix collisions.
+4. `psql -v tenant_id=<id> -f docs/deploy/02_seed_uae_bin_bank.sql` — the BIN list
+   is DBA-seeded; there is no upload path (§2).
 5. Run a bulk-migration **summary rebuild** for the historical months —
    `fact_transaction.card_number` carries the first 6 digits, so all history fills.
-6. Verify with the §5 parity SQL, then a UI pass against the Card Type
-   Dashboard's DOMESTIC × DEBIT figures.
+   Check the batch log for `sum_daily_local_debit_bin rebuild skipped`, which
+   means step 2 was missed (the rebuild warns and continues rather than failing).
+6. `psql -v tenant_id=<id> -f docs/deploy/03_verify_local_debit_bank.sql` —
+   `diff_volume` and `diff_txns` must both be 0.
 
 ## 11. Migration DDL (tracked copy — `db/migration/` is gitignored)
 

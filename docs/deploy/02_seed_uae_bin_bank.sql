@@ -1,0 +1,197 @@
+﻿-- ============================================================================
+-- Local Debit Bank Dashboard - STEP 2 of 3: seed the UAE tenant BIN -> bank list.
+--
+-- Source: UAESWITCH POS BIN list, file date 2026-07-30 (158 BINs, 40 banks).
+-- Provenance is stamped into ref_tenant_bin_bank.source_file
+--
+-- FIND THE TENANT ID FIRST:
+--   SELECT tenant_id, bank_name, home_country_code FROM tenant ORDER BY tenant_id;
+--
+-- RUN (substitute the UAE tenant id):
+--   psql -h <host> -p <port> -U <user> -d <db> -v ON_ERROR_STOP=1 \
+--        -v tenant_id=1 -f 02_seed_uae_bin_bank.sql
+--
+-- Idempotent: re-running refreshes bank names in place (ON CONFLICT DO UPDATE).
+-- It does NOT delete BINs added by other uploads; to start clean, first run
+--   DELETE FROM ref_tenant_bin_bank WHERE tenant_id = <id>;
+--
+-- Bank names are resolved at QUERY time by the dashboard, so running this
+-- re-labels ALL history immediately - no summary rebuild needed afterwards.
+-- ============================================================================
+
+BEGIN;
+
+INSERT INTO ref_tenant_bin_bank (tenant_id, bin, bank_name, source_file) VALUES
+(:tenant_id,'476578','AAIB','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'471388','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'471389','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'471390','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'526408','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'529192','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'529342','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'532660','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'532665','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'542018','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'554162','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'557652','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'669087','Abu Dhabi Commercial Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'425893','Abu Dhabi Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'433367','Abu Dhabi Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'471366','Abu Dhabi Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'471367','Abu Dhabi Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'471368','Abu Dhabi Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'472455','Abu Dhabi Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'669009','Abu Dhabi Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'524455','AJMAN Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'524883','AJMAN Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'532033','AJMAN Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'541824','AJMAN Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'429790','AL AHLI BANK OF KUWAIT','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'419236','Al Hilal','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'471484','Al Hilal','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'516171','Al Hilal','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'539462','Al Hilal','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'458464','AL Hilal Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'539436','AL Hilal Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'521088','Al Khaliji France S.A','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'519212','Al Maryah Community Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'546771','Al Maryah Community Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'553080','Al Maryah Community Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'539193','Al Masraf','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'549173','Al Masraf','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'447521','Arab Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'450707','Arab Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'468584','BANK OF BARODA','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'468585','BANK OF BARODA','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'519616','Bank Of Sharjah','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'415416','Banque MISR','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'532712','BLOM Bank France','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'555941','BLOM Bank France','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'412620','CBD','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'440885','CBD','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'514469','CITI','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'546529','CITI','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'557587','CITI','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'539980','Commercial Bank International','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'444463','Doha Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'423117','Dubai Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'456835','Dubai Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'457826','Dubai Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'459042','Dubai Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'480626','Emirates Islamic','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'480645','Emirates Islamic','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'480666','Emirates Islamic','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'480668','Emirates Islamic','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'529510','Emirates Islamic','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'400062','Emirates NBD PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'443911','Emirates NBD PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'443913','Emirates NBD PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'461781','Emirates NBD PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'498778','Emirates NBD PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'669071','Emirates NBD PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'432238','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'440997','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'445692','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'455081','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'458860','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'458861','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'458862','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'492096','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'493749','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'517554','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'533113','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'533191','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'535987','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'535996','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'539987','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'557661','First Abu Dhabi Bank PJSC','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'424050','Habib Bank AG Zurich','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'433958','Habib Bank AG Zurich','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'446621','Habib Bank AG Zurich','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'450604','Habib Bank AG Zurich','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'471448','Habib Bank AG Zurich','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'405042','HBL','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'405048','HBL','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'405069','HBL','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'419647','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'419648','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'419649','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'424078','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'428687','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'428688','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'428689','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'439052','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'446623','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'465821','HSBC Bank Middle East','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'511851','Invest Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'417125','JANATA BANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'403410','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'408565','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'412347','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'419797','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'421536','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'421908','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'427299','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'428324','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'478747','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'478780','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'494111','Mashreq Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'622454','Mercury','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'650053','Mercury','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'650445','Mercury','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'650447','Mercury','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'650483','Mercury','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'430255','National Bank Of Fujairah','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'430287','National Bank Of Fujairah','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'464123','National Bank Of Fujairah','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'470330','National Bank Of Fujairah','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'418767','National Bank of Kuwait','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'479734','National Bank of Umm Al Qaiwan','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'511879','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'521070','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'522707','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'522968','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'528428','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'529546','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'529549','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'533605','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'535021','RAKBANK','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'530280','Ruya Community Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'531752','Ruya Community Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'544923','Ruya Community Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'457928','SAMBA','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'458465','SAMBA','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'512970','Sharjah Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'525572','Sharjah Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'527385','Sharjah Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'527639','Sharjah Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'532425','Sharjah Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'532723','Sharjah Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'533539','Sharjah Islamic Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'403397','Standard Chartered Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'407804','Standard Chartered Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'409381','Standard Chartered Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'449197','Standard Chartered Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'458562','Standard Chartered Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'458575','Standard Chartered Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'458510','United Arab Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'544371','United Arab Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'552119','United Arab Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'669010','United Arab Bank','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'417894','United Bank Limited','UAESWITCH-POS-BIN-20260730'),
+(:tenant_id,'428226','United Bank Limited','UAESWITCH-POS-BIN-20260730')
+ON CONFLICT (tenant_id, bin) DO UPDATE
+    SET bank_name   = EXCLUDED.bank_name,
+        source_file = EXCLUDED.source_file,
+        loaded_at   = CURRENT_TIMESTAMP;
+
+COMMIT;
+
+-- Verify: expect 158 BINs / 40 banks
+SELECT COUNT(*) AS total_bins, COUNT(DISTINCT bank_name) AS distinct_banks
+FROM ref_tenant_bin_bank WHERE tenant_id = :tenant_id;
+
+SELECT bank_name, COUNT(*) AS bins
+FROM ref_tenant_bin_bank WHERE tenant_id = :tenant_id
+GROUP BY bank_name ORDER BY bins DESC, bank_name;
+
