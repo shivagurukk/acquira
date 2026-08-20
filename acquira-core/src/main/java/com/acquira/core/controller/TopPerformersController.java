@@ -9,6 +9,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -155,6 +156,33 @@ public class TopPerformersController {
             }
             default -> new LocalDate[]{ now.withDayOfMonth(1), now }; // MTD
         };
+    }
+
+    /**
+     * The comparison window preceding {@code cur}, used by callers that need a
+     * like-for-like prior period. Calendar-aligned windows step back a whole
+     * month (a full month compares with the whole previous month; a month-to-date
+     * with the same opening days, clamped for short months); anything else shifts
+     * back by its own length. Package-private: covered by TopPerformersWindowTest.
+     */
+    LocalDate[] priorWindow(LocalDate[] cur) {
+        LocalDate from = cur[0], to = cur[1];
+
+        boolean monthAligned = from.getDayOfMonth() == 1
+                && from.getMonthValue() == to.getMonthValue()
+                && from.getYear() == to.getYear();
+
+        if (monthAligned) {
+            LocalDate priorFrom = from.minusMonths(1);
+            LocalDate priorTo = to.getDayOfMonth() == to.lengthOfMonth()
+                    ? priorFrom.withDayOfMonth(priorFrom.lengthOfMonth())
+                    : priorFrom.withDayOfMonth(Math.min(to.getDayOfMonth(), priorFrom.lengthOfMonth()));
+            return new LocalDate[]{ priorFrom, priorTo };
+        }
+
+        long days = ChronoUnit.DAYS.between(from, to) + 1;
+        LocalDate priorTo = from.minusDays(1);
+        return new LocalDate[]{ priorTo.minusDays(days - 1), priorTo };
     }
 
     private boolean usesCardFilters(VolumeRevenueFilterDTO f) {
