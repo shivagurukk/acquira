@@ -136,6 +136,28 @@ public class DestinationDashboardRepository {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // 0) Data bounds — MIN/MAX business_date in THIS page's backing table.
+    //
+    // The shared /business/data-bounds endpoint is fact_transaction-anchored
+    // (insight fallback), and those tables can cover a different range than
+    // sum_daily_merchant_destination — anchoring the page's presets on the
+    // shared bounds made "This year" span months this table has no rows for
+    // (the 2-month YTD symptom). Same pattern as CardTypeDashboardRepository.
+    // ─────────────────────────────────────────────────────────────────
+    public Map<String, Object> getBounds(Long tenantId) {
+        requireTenant(tenantId);
+        Query query = entityManager.createNativeQuery(
+                "SELECT MIN(s.business_date), MAX(s.business_date) FROM sum_daily_merchant_destination s WHERE s.tenant_id = :tenantId");
+        query.setParameter("tenantId", tenantId);
+
+        Object[] r = (Object[]) query.getSingleResult();
+        Map<String, Object> out = new HashMap<>();
+        out.put("earliest", r[0] == null ? null : r[0].toString());
+        out.put("latest", r[1] == null ? null : r[1].toString());
+        return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // 1) KPIs — current vs. prior window, split domestic/international
     // ─────────────────────────────────────────────────────────────────
     public Map<String, Object> getKpis(VolumeRevenueFilterDTO filter, Long tenantId) {
@@ -156,58 +178,71 @@ public class DestinationDashboardRepository {
         LocalDate prevEnd = start.minusDays(1);
         LocalDate prevStart = prevEnd.minusDays(days);
 
-        StringBuilder sql = new StringBuilder();
-        sql.append("SELECT ");
-        // Domestic — current window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf_curr, ");
-        sql.append("COUNT(DISTINCT CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.merchant_id END) as dom_merch_curr, ");
-        // International — current window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf_curr, ");
-        sql.append("COUNT(DISTINCT CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.merchant_id END) as intl_merch_curr, ");
+        // Current and prior windows run as two SEPARATE scans instead of one
+        // combined prevStart→end scan. The combined form scanned ~2× the
+        // selected window (and for YTD, current-year + an equal-length slice
+        // of last year across two partitions) even though the prior side only
+        // needs 6 of the 18 aggregates — this was the dominant cost of the
+        // "This year"/"Last year" presets.
+        StringBuilder currSql = new StringBuilder();
+        currSql.append("SELECT ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol, ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn, ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf, ");
+        currSql.append("COUNT(DISTINCT CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.merchant_id END) as dom_merch, ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol, ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn, ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf, ");
+        currSql.append("COUNT(DISTINCT CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.merchant_id END) as intl_merch, ");
         // Real-fee extras — only available on this table, additive to the payload
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_interchange ELSE 0 END) as dom_ic_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_DOM_PRED).append(" THEN s.total_net_revenue ELSE 0 END) as dom_nr_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_interchange ELSE 0 END) as intl_ic_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DEST_INTL_PRED).append(" THEN s.total_net_revenue ELSE 0 END) as intl_nr_curr, ");
-        // Domestic — prior window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf_prev, ");
-        // International — prior window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf_prev ");
-
-        sql.append("FROM sum_daily_merchant_destination s ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_interchange ELSE 0 END) as dom_ic, ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_net_revenue ELSE 0 END) as dom_nr, ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_interchange ELSE 0 END) as intl_ic, ");
+        currSql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_net_revenue ELSE 0 END) as intl_nr ");
+        currSql.append("FROM sum_daily_merchant_destination s ");
         // LEFT: merchant_id can be NULL on this table (unmatched-merchant fact rows);
         // only merchant-level filters can be set here (routing excludes mcc/sid).
-        sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        currSql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        currSql.append("WHERE s.business_date BETWEEN :winStart AND :winEnd ");
+        currSql.append("AND s.tenant_id = :tenantId ");
+        appendCommonFilters(currSql, filter);
 
-        sql.append("WHERE s.business_date >= :prevStart AND s.business_date <= :end ");
-        sql.append("AND s.tenant_id = :tenantId ");
-        appendCommonFilters(sql, filter);
+        StringBuilder prevSql = new StringBuilder();
+        prevSql.append("SELECT ");
+        prevSql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol, ");
+        prevSql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn, ");
+        prevSql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf, ");
+        prevSql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol, ");
+        prevSql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn, ");
+        prevSql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf ");
+        prevSql.append("FROM sum_daily_merchant_destination s ");
+        prevSql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        prevSql.append("WHERE s.business_date BETWEEN :winStart AND :winEnd ");
+        prevSql.append("AND s.tenant_id = :tenantId ");
+        appendCommonFilters(prevSql, filter);
 
-        Query query = entityManager.createNativeQuery(sql.toString());
-        query.setParameter("start", start);
-        query.setParameter("end", end);
-        query.setParameter("prevStart", prevStart);
-        query.setParameter("prevEnd", prevEnd);
-        query.setParameter("tenantId", tenantId);
-        bindCommonParams(query, filter);
+        Query currQuery = entityManager.createNativeQuery(currSql.toString());
+        currQuery.setParameter("winStart", start);
+        currQuery.setParameter("winEnd", end);
+        currQuery.setParameter("tenantId", tenantId);
+        bindCommonParams(currQuery, filter);
+
+        Query prevQuery = entityManager.createNativeQuery(prevSql.toString());
+        prevQuery.setParameter("winStart", prevStart);
+        prevQuery.setParameter("winEnd", prevEnd);
+        prevQuery.setParameter("tenantId", tenantId);
+        bindCommonParams(prevQuery, filter);
 
         Map<String, Object> out = new HashMap<>();
         {
-            Object[] r = (Object[]) query.getSingleResult();
+            Object[] r = (Object[]) currQuery.getSingleResult();
+            Object[] p = (Object[]) prevQuery.getSingleResult();
             BigDecimal domVolCurr = bd(r[0]);   long domTxnCurr = lng(r[1]);   BigDecimal domMsfCurr = bd(r[2]);   long domMerchCurr = lng(r[3]);
             BigDecimal intlVolCurr = bd(r[4]);  long intlTxnCurr = lng(r[5]);  BigDecimal intlMsfCurr = bd(r[6]);  long intlMerchCurr = lng(r[7]);
             BigDecimal domIcCurr = bd(r[8]);    BigDecimal domNrCurr = bd(r[9]);
             BigDecimal intlIcCurr = bd(r[10]);  BigDecimal intlNrCurr = bd(r[11]);
-            BigDecimal domVolPrev = bd(r[12]);  long domTxnPrev = lng(r[13]);  BigDecimal domMsfPrev = bd(r[14]);
-            BigDecimal intlVolPrev = bd(r[15]); long intlTxnPrev = lng(r[16]); BigDecimal intlMsfPrev = bd(r[17]);
+            BigDecimal domVolPrev = bd(p[0]);   long domTxnPrev = lng(p[1]);   BigDecimal domMsfPrev = bd(p[2]);
+            BigDecimal intlVolPrev = bd(p[3]);  long intlTxnPrev = lng(p[4]);  BigDecimal intlMsfPrev = bd(p[5]);
 
             Map<String, Object> domBlock = kpiBlock(domVolCurr, domTxnCurr, domMsfCurr, domMerchCurr, domVolPrev, domTxnPrev, domMsfPrev);
             domBlock.put("interchange", domIcCurr);
@@ -280,57 +315,68 @@ public class DestinationDashboardRepository {
         LocalDate prevEnd = start.minusDays(1);
         LocalDate prevStart = prevEnd.minusDays(days);
 
-        StringBuilder sql = new StringBuilder();
-        sql.append("SELECT ");
-        // Domestic — current window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf_curr, ");
-        sql.append("COUNT(DISTINCT CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(DOM_PRED).append(" THEN s.merchant_id END) as dom_merch_curr, ");
-        // International — current window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf_curr, ");
-        sql.append("COUNT(DISTINCT CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(INTL_PRED).append(" THEN s.merchant_id END) as intl_merch_curr, ");
-        // DCC — international-only opt-in context (is_opt_in only meaningful for cross-border)
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end AND ").append(INTL_PRED).append(" AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as intl_optin_vol_curr, ");
-        // Domestic — prior window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf_prev, ");
-        // International — prior window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd AND ").append(INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf_prev ");
-
-        sql.append("FROM sum_daily_insight s ");
-        sql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        // Two windowed scans instead of one prevStart→end scan — same
+        // rationale as the destination fast path above.
         boolean needStore = listNonEmpty(filter.getMccList()) || listNonEmpty(filter.getSidList());
-        if (needStore) sql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
 
-        sql.append("WHERE s.business_date >= :prevStart AND s.business_date <= :end ");
-        if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
-        appendCommonFilters(sql, filter);
+        StringBuilder currSql = new StringBuilder();
+        currSql.append("SELECT ");
+        currSql.append("SUM(CASE WHEN ").append(DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol, ");
+        currSql.append("SUM(CASE WHEN ").append(DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn, ");
+        currSql.append("SUM(CASE WHEN ").append(DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf, ");
+        currSql.append("COUNT(DISTINCT CASE WHEN ").append(DOM_PRED).append(" THEN s.merchant_id END) as dom_merch, ");
+        currSql.append("SUM(CASE WHEN ").append(INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol, ");
+        currSql.append("SUM(CASE WHEN ").append(INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn, ");
+        currSql.append("SUM(CASE WHEN ").append(INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf, ");
+        currSql.append("COUNT(DISTINCT CASE WHEN ").append(INTL_PRED).append(" THEN s.merchant_id END) as intl_merch, ");
+        // DCC — international-only opt-in context (is_opt_in only meaningful for cross-border)
+        currSql.append("SUM(CASE WHEN ").append(INTL_PRED).append(" AND s.is_opt_in = true THEN s.total_volume ELSE 0 END) as intl_optin_vol ");
+        currSql.append("FROM sum_daily_insight s ");
+        currSql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        if (needStore) currSql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        currSql.append("WHERE s.business_date BETWEEN :winStart AND :winEnd ");
+        currSql.append("AND s.tenant_id = :tenantId ");
+        appendCommonFilters(currSql, filter);
 
-        Query query = entityManager.createNativeQuery(sql.toString());
-        query.setParameter("start", start);
-        query.setParameter("end", end);
-        query.setParameter("prevStart", prevStart);
-        query.setParameter("prevEnd", prevEnd);
-        if (tenantId != null) query.setParameter("tenantId", tenantId);
-        bindCommonParams(query, filter);
+        StringBuilder prevSql = new StringBuilder();
+        prevSql.append("SELECT ");
+        prevSql.append("SUM(CASE WHEN ").append(DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_vol, ");
+        prevSql.append("SUM(CASE WHEN ").append(DOM_PRED).append(" THEN s.total_txns ELSE 0 END) as dom_txn, ");
+        prevSql.append("SUM(CASE WHEN ").append(DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf, ");
+        prevSql.append("SUM(CASE WHEN ").append(INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_vol, ");
+        prevSql.append("SUM(CASE WHEN ").append(INTL_PRED).append(" THEN s.total_txns ELSE 0 END) as intl_txn, ");
+        prevSql.append("SUM(CASE WHEN ").append(INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf ");
+        prevSql.append("FROM sum_daily_insight s ");
+        prevSql.append("LEFT JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        if (needStore) prevSql.append("JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
+        prevSql.append("WHERE s.business_date BETWEEN :winStart AND :winEnd ");
+        prevSql.append("AND s.tenant_id = :tenantId ");
+        appendCommonFilters(prevSql, filter);
+
+        Query currQuery = entityManager.createNativeQuery(currSql.toString());
+        currQuery.setParameter("winStart", start);
+        currQuery.setParameter("winEnd", end);
+        currQuery.setParameter("tenantId", tenantId);
+        bindCommonParams(currQuery, filter);
+
+        Query prevQuery = entityManager.createNativeQuery(prevSql.toString());
+        prevQuery.setParameter("winStart", prevStart);
+        prevQuery.setParameter("winEnd", prevEnd);
+        prevQuery.setParameter("tenantId", tenantId);
+        bindCommonParams(prevQuery, filter);
 
         // No defensive catch here: a failed query must surface as a 500 so the
         // screen shows a real error state — a silently-zero dashboard on a
         // revenue screen reads as "no business", which is worse than an error.
         Map<String, Object> out = new HashMap<>();
         {
-            Object[] r = (Object[]) query.getSingleResult();
+            Object[] r = (Object[]) currQuery.getSingleResult();
+            Object[] p = (Object[]) prevQuery.getSingleResult();
             BigDecimal domVolCurr = bd(r[0]);   long domTxnCurr = lng(r[1]);   BigDecimal domMsfCurr = bd(r[2]);   long domMerchCurr = lng(r[3]);
             BigDecimal intlVolCurr = bd(r[4]);  long intlTxnCurr = lng(r[5]);  BigDecimal intlMsfCurr = bd(r[6]);  long intlMerchCurr = lng(r[7]);
             BigDecimal intlOptInVolCurr = bd(r[8]);
-            BigDecimal domVolPrev = bd(r[9]);   long domTxnPrev = lng(r[10]);  BigDecimal domMsfPrev = bd(r[11]);
-            BigDecimal intlVolPrev = bd(r[12]); long intlTxnPrev = lng(r[13]); BigDecimal intlMsfPrev = bd(r[14]);
+            BigDecimal domVolPrev = bd(p[0]);   long domTxnPrev = lng(p[1]);   BigDecimal domMsfPrev = bd(p[2]);
+            BigDecimal intlVolPrev = bd(p[3]);  long intlTxnPrev = lng(p[4]);  BigDecimal intlMsfPrev = bd(p[5]);
 
             out.put("domestic", kpiBlock(domVolCurr, domTxnCurr, domMsfCurr, domMerchCurr, domVolPrev, domTxnPrev, domMsfPrev));
             Map<String, Object> intlBlock = kpiBlock(intlVolCurr, intlTxnCurr, intlMsfCurr, intlMerchCurr, intlVolPrev, intlTxnPrev, intlMsfPrev);
@@ -513,16 +559,41 @@ public class DestinationDashboardRepository {
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
+
+        // Rows arrive sorted by total volume DESC. Cap the payload at the top
+        // values and fold the tail into one "Other" row — unbounded MCC lists
+        // (hundreds of values) produced an unreadable multi-thousand-pixel
+        // chart on the frontend; the fold keeps the stacked totals exact.
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Object[] r : rows) {
+        BigDecimal otherDomVol = BigDecimal.ZERO, otherIntlVol = BigDecimal.ZERO;
+        long otherDomTxn = 0L, otherIntlTxn = 0L;
+        boolean hasOther = false;
+        for (int i = 0; i < rows.size(); i++) {
+            Object[] r = rows.get(i);
+            if (i < BREAKDOWN_TOP_N) {
+                Map<String, Object> m = new HashMap<>();
+                m.put("dimensionValue", r[0]);
+                m.put("domVolume", bd(r[1])); m.put("domTxns", lng(r[2]));
+                m.put("intlVolume", bd(r[3])); m.put("intlTxns", lng(r[4]));
+                out.add(m);
+            } else {
+                hasOther = true;
+                otherDomVol = otherDomVol.add(bd(r[1]));  otherDomTxn += lng(r[2]);
+                otherIntlVol = otherIntlVol.add(bd(r[3])); otherIntlTxn += lng(r[4]);
+            }
+        }
+        if (hasOther) {
             Map<String, Object> m = new HashMap<>();
-            m.put("dimensionValue", r[0]);
-            m.put("domVolume", bd(r[1])); m.put("domTxns", lng(r[2]));
-            m.put("intlVolume", bd(r[3])); m.put("intlTxns", lng(r[4]));
+            m.put("dimensionValue", "Other");
+            m.put("domVolume", otherDomVol); m.put("domTxns", otherDomTxn);
+            m.put("intlVolume", otherIntlVol); m.put("intlTxns", otherIntlTxn);
             out.add(m);
         }
         return out;
     }
+
+    /** Max distinct dimension values a breakdown returns before folding into "Other". */
+    private static final int BREAKDOWN_TOP_N = 25;
 
     // ─────────────────────────────────────────────────────────────────
     // 4) Top merchants — dom+intl split, ranked by total volume, with

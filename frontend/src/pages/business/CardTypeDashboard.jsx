@@ -385,6 +385,16 @@ const CardTypeDashboard = () => {
         return Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
     }, [trendData]);
 
+    /* If the response covers fewer months than the requested window (data lag
+       or a summary-table gap), say so instead of rendering a silently short
+       chart — "This year = 2 bars" must read as a data condition, not a bug. */
+    const trendShortfall = useMemo(() => {
+        if (!trendData.length || !filters.endDate) return null;
+        const lastLoaded = trendData.reduce((a, d) => (String(d.month) > a ? String(d.month) : a), '');
+        const requested = String(filters.endDate).slice(0, 7);
+        return lastLoaded && lastLoaded < requested ? lastLoaded : null;
+    }, [trendData, filters.endDate]);
+
     const TrendTooltip = ({ active, payload }) => {
         if (!active || !payload?.length) return null;
         const row = payload[0].payload;
@@ -739,6 +749,11 @@ const CardTypeDashboard = () => {
                                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
                                     Volume by card type by month
                                 </div>
+                                {trendShortfall && (
+                                    <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--warning-text, #92400e)', marginTop: 4 }}>
+                                        Data loaded through {trendShortfall} — later months in this window have no data yet.
+                                    </div>
+                                )}
                             </div>
                             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                                 {trendTypes.map(t => (
@@ -821,7 +836,9 @@ const CardTypeDashboard = () => {
                                 <Bar key={t} dataKey={t} stackId="split"
                                     fill={`url(#${gradId(t, 'H')})`} maxBarSize={16}
                                     radius={i === breakdownTypes.length - 1 ? [0, 3, 3, 0] : undefined}
-                                    {...CHART_ANIM(i * 200)} />
+                                    {...(breakdownChartData.length > 15
+                                        ? { isAnimationActive: false }
+                                        : CHART_ANIM(i * 200))} />
                             ))}
                         </BarChart>
                     </ResponsiveContainer>

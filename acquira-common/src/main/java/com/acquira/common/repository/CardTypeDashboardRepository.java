@@ -157,46 +157,76 @@ public class CardTypeDashboardRepository {
         LocalDate prevEnd = start.minusDays(1);
         LocalDate prevStart = prevEnd.minusDays(days);
 
-        StringBuilder sql = new StringBuilder();
-        sql.append("SELECT ").append(CT_EXPR).append(" as ct, ");
-        // Current window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end THEN s.total_volume ELSE 0 END) as vol_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end THEN s.total_txns ELSE 0 END) as txn_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end THEN s.total_msf ELSE 0 END) as msf_curr, ");
-        sql.append("COUNT(DISTINCT CASE WHEN s.business_date BETWEEN :start AND :end THEN s.merchant_id END) as merch_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end THEN s.total_interchange ELSE 0 END) as ic_curr, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :start AND :end THEN s.total_net_revenue ELSE 0 END) as nr_curr, ");
-        // Prior window
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd THEN s.total_volume ELSE 0 END) as vol_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd THEN s.total_txns ELSE 0 END) as txn_prev, ");
-        sql.append("SUM(CASE WHEN s.business_date BETWEEN :prevStart AND :prevEnd THEN s.total_msf ELSE 0 END) as msf_prev ");
+        // Current and prior windows run as two SEPARATE scans instead of one
+        // combined prevStart→end scan. The combined form scanned ~2× the
+        // selected window (for YTD: this year + an equal slice of last year
+        // across two partitions) even though the prior side only needs
+        // vol/txn/msf — this was the dominant cost of "This year"/"Last year".
+        StringBuilder currSql = new StringBuilder();
+        currSql.append("SELECT ").append(CT_EXPR).append(" as ct, ");
+        currSql.append("SUM(s.total_volume) as vol, ");
+        currSql.append("SUM(s.total_txns) as txn, ");
+        currSql.append("SUM(s.total_msf) as msf, ");
+        currSql.append("COUNT(DISTINCT s.merchant_id) as merch, ");
+        currSql.append("SUM(s.total_interchange) as ic, ");
+        currSql.append("SUM(s.total_net_revenue) as nr ");
+        currSql.append("FROM sum_daily_full s ");
+        appendJoins(currSql, filter);
+        currSql.append("WHERE s.business_date BETWEEN :winStart AND :winEnd ");
+        currSql.append("AND s.tenant_id = :tenantId ");
+        appendCommonFilters(currSql, filter);
+        currSql.append("GROUP BY ").append(CT_EXPR).append(" ");
+        currSql.append("ORDER BY vol DESC");
 
-        sql.append("FROM sum_daily_full s ");
-        appendJoins(sql, filter);
-        sql.append("WHERE s.business_date >= :prevStart AND s.business_date <= :end ");
-        sql.append("AND s.tenant_id = :tenantId ");
-        appendCommonFilters(sql, filter);
-        sql.append("GROUP BY ").append(CT_EXPR).append(" ");
-        sql.append("ORDER BY vol_curr DESC");
+        StringBuilder prevSql = new StringBuilder();
+        prevSql.append("SELECT ").append(CT_EXPR).append(" as ct, ");
+        prevSql.append("SUM(s.total_volume) as vol, ");
+        prevSql.append("SUM(s.total_txns) as txn, ");
+        prevSql.append("SUM(s.total_msf) as msf ");
+        prevSql.append("FROM sum_daily_full s ");
+        appendJoins(prevSql, filter);
+        prevSql.append("WHERE s.business_date BETWEEN :winStart AND :winEnd ");
+        prevSql.append("AND s.tenant_id = :tenantId ");
+        appendCommonFilters(prevSql, filter);
+        prevSql.append("GROUP BY ").append(CT_EXPR);
 
-        Query query = entityManager.createNativeQuery(sql.toString());
-        query.setParameter("start", start);
-        query.setParameter("end", end);
-        query.setParameter("prevStart", prevStart);
-        query.setParameter("prevEnd", prevEnd);
-        query.setParameter("tenantId", tenantId);
-        bindCommonParams(query, filter);
+        Query currQuery = entityManager.createNativeQuery(currSql.toString());
+        currQuery.setParameter("winStart", start);
+        currQuery.setParameter("winEnd", end);
+        currQuery.setParameter("tenantId", tenantId);
+        bindCommonParams(currQuery, filter);
+
+        Query prevQuery = entityManager.createNativeQuery(prevSql.toString());
+        prevQuery.setParameter("winStart", prevStart);
+        prevQuery.setParameter("winEnd", prevEnd);
+        prevQuery.setParameter("tenantId", tenantId);
+        bindCommonParams(prevQuery, filter);
 
         @SuppressWarnings("unchecked")
-        List<Object[]> rows = query.getResultList();
+        List<Object[]> rows = currQuery.getResultList();
+        @SuppressWarnings("unchecked")
+        List<Object[]> prevRows = prevQuery.getResultList();
+
+        // Prior-window aggregates keyed by card type. A type that only has
+        // prior-window volume (present last period, gone this period) is not
+        // rendered as a block — same behavior as the old combined query's
+        // rows would have had vol_curr = 0, which sorted last and rendered
+        // as an empty segment; dropping it entirely is the cleaner read.
+        Map<String, Object[]> prevByType = new HashMap<>();
+        for (Object[] p : prevRows) prevByType.put(String.valueOf(p[0]), p);
 
         BigDecimal totalVolCurr = BigDecimal.ZERO;
         boolean priorHasData = false;
+        for (Object[] p : prevRows)
+            priorHasData = priorHasData || bd(p[1]).signum() > 0 || lng(p[2]) > 0;
         List<Map<String, Object>> blocks = new ArrayList<>();
         for (Object[] r : rows) {
             BigDecimal volCurr = bd(r[1]); long txnCurr = lng(r[2]); BigDecimal msfCurr = bd(r[3]); long merchCurr = lng(r[4]);
             BigDecimal icCurr = bd(r[5]); BigDecimal nrCurr = bd(r[6]);
-            BigDecimal volPrev = bd(r[7]); long txnPrev = lng(r[8]); BigDecimal msfPrev = bd(r[9]);
+            Object[] p = prevByType.get(String.valueOf(r[0]));
+            BigDecimal volPrev = p != null ? bd(p[1]) : BigDecimal.ZERO;
+            long txnPrev = p != null ? lng(p[2]) : 0L;
+            BigDecimal msfPrev = p != null ? bd(p[3]) : BigDecimal.ZERO;
 
             Map<String, Object> b = new HashMap<>();
             b.put("cardType", r[0]);
@@ -321,17 +351,54 @@ public class CardTypeDashboardRepository {
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
-        List<Map<String, Object>> out = new ArrayList<>();
+
+        // Cap the payload at the top dimension values by total volume and fold
+        // the remainder into a single "Other" bucket. Unbounded MCC lists (a
+        // few hundred values × N card types) produced a multi-thousand-bar
+        // chart on the frontend — the tail is unreadable there anyway, and
+        // the fold keeps the stacked totals exact.
+        Map<String, BigDecimal> dimTotals = new java.util.LinkedHashMap<>();
         for (Object[] r : rows) {
-            Map<String, Object> m = new HashMap<>();
-            m.put("dimensionValue", r[0]);
-            m.put("cardType", r[1]);
-            m.put("volume", bd(r[2]));
-            m.put("txns", lng(r[3]));
-            out.add(m);
+            String dim = String.valueOf(r[0]);
+            dimTotals.merge(dim, bd(r[2]), BigDecimal::add);
         }
+        java.util.Set<String> topDims = dimTotals.entrySet().stream()
+                .sorted(Map.Entry.<String, BigDecimal>comparingByValue().reversed())
+                .limit(BREAKDOWN_TOP_N)
+                .map(Map.Entry::getKey)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        Map<String, Map<String, Object>> otherByType = new java.util.LinkedHashMap<>();
+        for (Object[] r : rows) {
+            String dim = String.valueOf(r[0]);
+            if (topDims.contains(dim)) {
+                Map<String, Object> m = new HashMap<>();
+                m.put("dimensionValue", r[0]);
+                m.put("cardType", r[1]);
+                m.put("volume", bd(r[2]));
+                m.put("txns", lng(r[3]));
+                out.add(m);
+            } else {
+                String ct = String.valueOf(r[1]);
+                Map<String, Object> m = otherByType.computeIfAbsent(ct, k -> {
+                    Map<String, Object> x = new HashMap<>();
+                    x.put("dimensionValue", "Other");
+                    x.put("cardType", k);
+                    x.put("volume", BigDecimal.ZERO);
+                    x.put("txns", 0L);
+                    return x;
+                });
+                m.put("volume", ((BigDecimal) m.get("volume")).add(bd(r[2])));
+                m.put("txns", (Long) m.get("txns") + lng(r[3]));
+            }
+        }
+        out.addAll(otherByType.values());
         return out;
     }
+
+    /** Max distinct dimension values a breakdown returns before folding into "Other". */
+    private static final int BREAKDOWN_TOP_N = 25;
 
     // ─────────────────────────────────────────────────────────────────
     // 4) Top merchants — per-type volume columns + full fee stack,

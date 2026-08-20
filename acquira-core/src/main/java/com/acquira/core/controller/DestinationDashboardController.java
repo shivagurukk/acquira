@@ -69,6 +69,19 @@ public class DestinationDashboardController {
         }
     }
 
+    /**
+     * MIN/MAX business_date in sum_daily_merchant_destination for this tenant.
+     * The page anchors its date presets here rather than on the shared
+     * /business/data-bounds, which is fact_transaction-anchored and can point
+     * at a range this table has no rows for — anchoring there made "This
+     * year" span months with no data (the 2-month YTD symptom). Same pattern
+     * as CardTypeDashboardController.
+     */
+    @GetMapping("/bounds")
+    public Map<String, Object> getBounds() {
+        return destinationDashboardRepository.getBounds(tenantService.getCurrentTenantId());
+    }
+
     @PostMapping("/kpis")
     public Map<String, Object> getKpis(@RequestBody VolumeRevenueFilterDTO filters) {
         resolveFilters(filters);

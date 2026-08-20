@@ -182,7 +182,7 @@ const Metric = ({ label, value, sub, tone, accent, title }) => (
 const DestinationDashboard = () => {
     const { currencySymbol, currencyCode, currencyDecimals, tenantVersion } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
-    const { latest, boundsLoaded } = useDataBounds(tenantVersion);
+    const { latest: sharedLatest } = useDataBounds(tenantVersion);
 
     const [showFilters, setShowFilters] = useState(false);
     const [preset, setPreset] = useState('D30');
@@ -190,14 +190,40 @@ const DestinationDashboard = () => {
     const [filterVersion, setFilterVersion] = useState(0);
     const initRef = useRef(false);
 
-    /* First fetch waits for data-bounds, then anchors the default window on the
-       latest LOADED date — the whole reason the old page opened on zeros. */
+    /* Bounds come from THIS page's own backing table
+       (sum_daily_merchant_destination), not the shared /business/data-bounds.
+       The shared endpoint is fact_transaction-anchored and can point at a
+       range this table has no rows for — worse, when fact is empty it returns
+       null and the presets silently fell back to TODAY, so "This year" spanned
+       months past the loaded data (the 2-month YTD symptom). The shared value
+       is kept only as a last-resort fallback. */
+    const [pageBounds, setPageBounds] = useState({ latest: null, loaded: false });
     useEffect(() => {
-        if (!boundsLoaded || initRef.current) return;
+        let cancelled = false;
+        setPageBounds({ latest: null, loaded: false });
+        (async () => {
+            try {
+                const res = await api.get('/business/destination-dashboard/bounds');
+                if (!cancelled) setPageBounds({ latest: res.data?.latest || null, loaded: true });
+            } catch (e) {
+                console.error('Failed to load destination data bounds', e);
+                if (!cancelled) setPageBounds({ latest: null, loaded: true });
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [tenantVersion]);
+
+    /* The date every preset is measured back from. */
+    const latest = pageBounds.latest || sharedLatest;
+
+    /* First fetch waits for those bounds, then anchors the default window on
+       the latest date this page can actually render. */
+    useEffect(() => {
+        if (!pageBounds.loaded || initRef.current) return;
         initRef.current = true;
         setFilters(f => ({ ...f, ...computeRange('D30', latest) }));
         setFilterVersion(v => v + 1);
-    }, [boundsLoaded, latest]);
+    }, [pageBounds.loaded, latest]);
     // Tenant switch: re-anchor on the new tenant's bounds.
     useEffect(() => { initRef.current = false; }, [tenantVersion]);
 
@@ -332,6 +358,16 @@ const DestinationDashboard = () => {
             };
         });
     }, [trendData]);
+
+    /* If the response covers fewer months than the requested window (data lag
+       or a summary-table gap), say so instead of rendering a silently short
+       chart — "This year = 2 bars" must read as a data condition, not a bug. */
+    const trendShortfall = useMemo(() => {
+        if (!trendData.length || !filters.endDate) return null;
+        const lastLoaded = trendData.reduce((a, d) => (String(d.month) > a ? String(d.month) : a), '');
+        const requested = String(filters.endDate).slice(0, 7);
+        return lastLoaded && lastLoaded < requested ? lastLoaded : null;
+    }, [trendData, filters.endDate]);
 
     const TrendTooltip = ({ active, payload }) => {
         if (!active || !payload?.length) return null;
@@ -691,6 +727,11 @@ const DestinationDashboard = () => {
                                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
                                     Domestic and international volume by month
                                 </div>
+                                {trendShortfall && (
+                                    <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--warning-text, #92400e)', marginTop: 4 }}>
+                                        Data loaded through {trendShortfall} — later months in this window have no data yet.
+                                    </div>
+                                )}
                             </div>
                             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                                 {[
@@ -772,9 +813,10 @@ const DestinationDashboard = () => {
                             <YAxis type="category" dataKey="name" width={112} {...AXIS_PROPS} />
                             <Tooltip content={<BreakdownTooltip />} cursor={TOOLTIP_PROPS.cursor} />
                             <Bar dataKey="domVolume" stackId="split" fill="url(#ddGradDomH)" maxBarSize={16}
-                                {...CHART_ANIM(0)} />
+                                {...(breakdownChartData.length > 15 ? { isAnimationActive: false } : CHART_ANIM(0))} />
                             <Bar dataKey="intlVolume" stackId="split" fill="url(#ddGradIntlH)"
-                                radius={[0, 3, 3, 0]} maxBarSize={16} {...CHART_ANIM(250)} />
+                                radius={[0, 3, 3, 0]} maxBarSize={16}
+                                {...(breakdownChartData.length > 15 ? { isAnimationActive: false } : CHART_ANIM(250))} />
                         </BarChart>
                     </ResponsiveContainer>
                 )}
