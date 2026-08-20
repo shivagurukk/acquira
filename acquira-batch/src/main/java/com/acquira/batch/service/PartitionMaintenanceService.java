@@ -60,7 +60,8 @@ public class PartitionMaintenanceService {
             "sum_daily_finance",
             "sum_daily_insight",
             "sum_daily_full",
-            "sum_daily_explorer");
+            "sum_daily_explorer",
+            "sum_daily_local_debit_bin");
     // NOTE: merchant_daily_metrics is NOT partitioned — never add it here.
 
     private static final java.util.Map<String, String> PARTITION_PREFIX_OVERRIDES = java.util.Map.of(

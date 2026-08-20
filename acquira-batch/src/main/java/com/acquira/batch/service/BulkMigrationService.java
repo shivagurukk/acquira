@@ -306,6 +306,7 @@ public class BulkMigrationService {
                 "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                 "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc",
                 "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
+                "sum_daily_local_debit_bin",
                 "sum_monthly_insight",
                 "sum_monthly_bank", "sum_monthly_card", "merchant_activity_summary");
 
@@ -371,7 +372,8 @@ public class BulkMigrationService {
             // 2026-08-15: these three were missing — a deleted day survived in
             // Explorer/Full rollups (and now the destination split) until the
             // next upload for that date rebuilt them.
-            "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination"
+            "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
+            "sum_daily_local_debit_bin"
         };
         for (String tbl : dailyTables) {
             deleted.put(tbl, jdbcTemplate.update(
@@ -910,6 +912,34 @@ public class BulkMigrationService {
                 tenantId, monthStart, monthEnd);
         } catch (Exception e) {
             log.warn("[REBUILD] sum_daily_full rebuild skipped (non-fatal): {}", e.getMessage());
+        }
+
+        // 11b². sum_daily_local_debit_bin — Local Debit Bank Dashboard source.
+        // Mirrors TransactionJobConfig.populateSummary EXACTLY (same predicate:
+        // merchant NOT NULL, normalized card_type DEBIT, strict
+        // destination='DOMESTIC'; same signed settlement measures) so a rebuilt
+        // month still reconciles with sum_daily_full's DOMESTIC x DEBIT slice.
+        try {
+            jdbcTemplate.update("DELETE FROM sum_daily_local_debit_bin WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
+                tenantId, monthStart, monthEnd);
+            jdbcTemplate.update("INSERT INTO sum_daily_local_debit_bin (tenant_id, business_date, merchant_id, bin6, " +
+                "total_txns, total_volume, total_msf) " +
+                "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
+                "CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END, " +
+                "COUNT(*), SUM(f.store_base_currency_amount), SUM(COALESCE(f.msf,0)) " +
+                "FROM fact_transaction f " +
+                "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL " +
+                "AND UPPER(COALESCE(NULLIF(TRIM(f.card_type),''),'')) = 'DEBIT' " +
+                "AND f.destination = 'DOMESTIC' " +
+                "AND DATE(f.payment_date) BETWEEN ? AND ? " +
+                "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
+                "CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END " +
+                "ON CONFLICT (tenant_id, business_date, merchant_id, bin6) " +
+                "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, " +
+                "total_msf=EXCLUDED.total_msf",
+                tenantId, monthStart, monthEnd);
+        } catch (Exception e) {
+            log.warn("[REBUILD] sum_daily_local_debit_bin rebuild skipped (non-fatal): {}", e.getMessage());
         }
 
         try {

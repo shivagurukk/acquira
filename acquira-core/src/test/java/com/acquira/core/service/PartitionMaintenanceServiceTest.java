@@ -109,24 +109,24 @@ class PartitionMaintenanceServiceTest {
         svc.ensurePartitionsForYear(2025); // should be a no-op
 
         // 1 partition-strategy detection (cached per JVM after the first call)
-        // + 12 monthly + 11 yearly EXISTS checks = 24, done exactly once.
-        // (YEARLY_PARTITIONED_TABLES grew to 11 with sum_daily_explorer — the
-        // Data Explorer history pre-aggregate. Was 10/23 with sum_daily_full,
-        // 9/22 before that, and 8/20 when sum_daily_merchant_destination
-        // was added.)
-        verify(jdbc, times(24)).queryForObject(anyString(), eq(Boolean.class), any());
+        // + 12 monthly + 12 yearly EXISTS checks = 25, done exactly once.
+        // (YEARLY_PARTITIONED_TABLES grew to 12 with sum_daily_local_debit_bin
+        // — the Local Debit Bank Dashboard pre-aggregate. Was 11/24 with
+        // sum_daily_explorer, 10/23 with sum_daily_full, 9/22 before that, and
+        // 8/20 when sum_daily_merchant_destination was added.)
+        verify(jdbc, times(25)).queryForObject(anyString(), eq(Boolean.class), any());
     }
 
     @Test
-    @DisplayName("current+next year covers two distinct years (47 EXISTS checks)")
+    @DisplayName("current+next year covers two distinct years (49 EXISTS checks)")
     void currentAndNextYear() {
         JdbcTemplate jdbc = jdbcAllMissing();
         new PartitionMaintenanceService(jdbc).ensurePartitionsForCurrentAndNextYear();
 
         // 1 strategy detection (cached after the first call, so counted ONCE
-        // across both years) + 23 per year (12 monthly + 11 yearly) x 2 years
-        // = 1 + 46 = 47.
-        verify(jdbc, times(47)).queryForObject(anyString(), eq(Boolean.class), any());
+        // across both years) + 24 per year (12 monthly + 12 yearly) x 2 years
+        // = 1 + 48 = 49.
+        verify(jdbc, times(49)).queryForObject(anyString(), eq(Boolean.class), any());
     }
 
     @Test

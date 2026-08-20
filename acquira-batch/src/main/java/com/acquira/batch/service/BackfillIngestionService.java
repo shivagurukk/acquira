@@ -353,6 +353,7 @@ public class BackfillIngestionService {
                 "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                 "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
                 "sum_daily_explorer", "sum_daily_merchant_destination",
+                "sum_daily_local_debit_bin",
                 "sum_daily_merchant_attribute"}) {
             jdbcTemplate.update(
                     "DELETE FROM " + dailyTbl + " WHERE tenant_id = ? AND business_date = ?",
@@ -619,6 +620,27 @@ public class BackfillIngestionService {
                             CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
                                  THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END,
                             f.card_type, f.dcc
+                        """,
+                tenantId, date);
+
+        // 9c². sum_daily_local_debit_bin — Local Debit Bank Dashboard source,
+        // upload parity. Mirrors TransactionJobConfig.populateSummary exactly
+        // (merchant NOT NULL, normalized card_type DEBIT, strict
+        // destination='DOMESTIC', signed settlement measures).
+        jdbcTemplate.update(
+                """
+                        INSERT INTO sum_daily_local_debit_bin (tenant_id, business_date, merchant_id, bin6,
+                            total_txns, total_volume, total_msf)
+                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id,
+                            CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END,
+                            COUNT(*), SUM(f.store_base_currency_amount), SUM(COALESCE(f.msf,0))
+                        FROM fact_transaction f
+                        WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL
+                          AND UPPER(COALESCE(NULLIF(TRIM(f.card_type),''),'')) = 'DEBIT'
+                          AND f.destination = 'DOMESTIC'
+                          AND DATE(f.payment_date) = ?
+                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id,
+                            CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END
                         """,
                 tenantId, date);
 

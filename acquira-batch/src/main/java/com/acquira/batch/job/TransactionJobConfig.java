@@ -1788,6 +1788,7 @@ public class TransactionJobConfig {
                         "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                         "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
                         "sum_daily_explorer", "sum_daily_merchant_destination",
+                        "sum_daily_local_debit_bin",
                         "sum_daily_merchant_attribute"}) {
                     int del = jdbcTemplate.update(
                         "DELETE FROM " + dailyTbl +
@@ -2020,6 +2021,39 @@ public class TransactionJobConfig {
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
                         "total_ecom_fee=EXCLUDED.total_ecom_fee, total_net_revenue=EXCLUDED.total_net_revenue, " +
                         "dcc_optin_count=EXCLUDED.dcc_optin_count",
+                        tenantId)));
+
+                // sum_daily_local_debit_bin — the Local Debit Bank Dashboard
+                // pre-aggregate: day x merchant x 6-digit BIN, restricted to
+                // DOMESTIC DEBIT rows only. Same source, merchant rule, signed
+                // settlement volume/msf, and card_type normalization as
+                // sum_daily_full, so matched banks + the query-time "Other
+                // Banks" bucket reconcile exactly with that table's
+                // DOMESTIC x DEBIT cell. Strict destination='DOMESTIC' —
+                // NULL/UNMAPPED tokens must not silently count as local.
+                // Bank names are NOT stored here: the dashboard joins
+                // ref_tenant_bin_bank at query time, so a BIN re-upload
+                // re-labels all history with no rebuild. PANs not starting
+                // with 6 clear digits land in the visible '??????' bucket.
+                // Any change here MUST be mirrored in
+                // BulkMigrationService.rebuildSummaries and
+                // BackfillIngestionService.
+                phase1.add(runAsync(exec, "sum_daily_local_debit_bin", () ->
+                    jdbcTemplate.update("INSERT INTO sum_daily_local_debit_bin (tenant_id, business_date, merchant_id, bin6, " +
+                        "total_txns, total_volume, total_msf) " +
+                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
+                        "CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END, " +
+                        "COUNT(*), SUM(f.store_base_currency_amount), SUM(COALESCE(f.msf,0)) " +
+                        "FROM fact_transaction f " +
+                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL " +
+                        "AND UPPER(COALESCE(NULLIF(TRIM(f.card_type),''),'')) = 'DEBIT' " +
+                        "AND f.destination = 'DOMESTIC' " +
+                        "AND DATE(f.payment_date) IN " + dateScope +
+                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
+                        "CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END " +
+                        "ON CONFLICT (tenant_id, business_date, merchant_id, bin6) " +
+                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, " +
+                        "total_msf=EXCLUDED.total_msf",
                         tenantId)));
 
                 // sum_daily_explorer — the Data Explorer history pre-aggregate.

@@ -64,7 +64,10 @@ const DarkAutocomplete = ({ label, options, value, onChange, placeholder, freeSo
 );
 
 
-const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDestination = false, hideCardType = false }) => {
+// merchantOnly: for pages whose backing table has no store/scheme/channel/mcc
+// dims (e.g. the Local Debit Bank Dashboard) — hides SID, MCC and the whole
+// Transaction Tech section so users can't set filters the backend ignores.
+const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDestination = false, hideCardType = false, merchantOnly = false }) => {
     const [dateType, setDateType] = useState('TRANSACTION');
     const [options, setOptions] = useState(DEFAULT_OPTIONS);
     // MCC code -> sector/category label (from ref_mcc_category via filter-options).
@@ -155,13 +158,15 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
                             onChange={(v) => update('midList', v)}
                             placeholder="Search or type MIDs..."
                         />
-                        <DarkAutocomplete
-                            label="SID (Store ID)" freeSolo
-                            options={options.sids}
-                            value={filters.sidList || []}
-                            onChange={(v) => update('sidList', v)}
-                            placeholder="Search or type SIDs..."
-                        />
+                        {!merchantOnly && (
+                            <DarkAutocomplete
+                                label="SID (Store ID)" freeSolo
+                                options={options.sids}
+                                value={filters.sidList || []}
+                                onChange={(v) => update('sidList', v)}
+                                placeholder="Search or type SIDs..."
+                            />
+                        )}
                     </Stack>
                 </Box>
 
@@ -218,12 +223,20 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
                         <Typography variant="overline" color="text.secondary" fontWeight="700" letterSpacing={1}>Classification</Typography>
                     </Stack>
                     <Stack spacing={2}>
-                        <DarkAutocomplete label="MCC" options={options.mccs} value={filters.mccList} onChange={(v) => update('mccList', v)} placeholder="All MCCs" getOptionLabel={mccLabel} />
+                        {!merchantOnly && (
+                            <DarkAutocomplete label="MCC" options={options.mccs} value={filters.mccList} onChange={(v) => update('mccList', v)} placeholder="All MCCs" getOptionLabel={mccLabel} />
+                        )}
                         <DarkAutocomplete label="Industry" options={options.industries} value={filters.industryList} onChange={(v) => update('industryList', v)} placeholder="All Industries" />
                     </Stack>
                 </Box>
 
                 {/* Transaction Tech */}
+                {merchantOnly ? (
+                    <Typography variant="caption" sx={{ display: 'block', mb: 2, color: '#64748B', fontStyle: 'italic' }}>
+                        Channel, scheme, card type and destination are fixed by this page's scope
+                        (domestic debit) and cannot be filtered here.
+                    </Typography>
+                ) : (
                 <Box mb={2}>
                     <Stack direction="row" spacing={1} alignItems="center" mb={1.5}>
                         <Monitor size={14} color="#94A3B8" />
@@ -250,6 +263,7 @@ const BusinessFilters = ({ filters, onChange, onApply, isOpen, onClose, hideDest
                         </Typography>
                     )}
                 </Box>
+                )}
             </Box>
 
             {/* Footer */}
