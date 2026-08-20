@@ -543,7 +543,14 @@ public class DestinationDashboardRepository {
         sql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_volume ELSE 0 END) as dom_volume, ");
         sql.append("SUM(CASE WHEN ").append(DEST_DOM_PRED).append(" THEN s.total_msf ELSE 0 END) as dom_msf, ");
         sql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_volume ELSE 0 END) as intl_volume, ");
-        sql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf ");
+        sql.append("SUM(CASE WHEN ").append(DEST_INTL_PRED).append(" THEN s.total_msf ELSE 0 END) as intl_msf, ");
+        // Fee stack + margin across BOTH destinations — the table reads as a
+        // per-merchant P&L line. total_net_revenue is the batch-computed
+        // MSF − interchange − scheme fee − ecom fee; never recomputed here.
+        sql.append("SUM(s.total_interchange) as icf, ");
+        sql.append("SUM(s.total_scheme_fee) as sf, ");
+        sql.append("SUM(s.total_ecom_fee) as pg, ");
+        sql.append("SUM(s.total_net_revenue) as nm ");
         sql.append("FROM sum_daily_merchant_destination s ");
         // INNER, same as the insight variant — a merchant ranking has no row for NULL merchant_id.
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
@@ -572,6 +579,7 @@ public class DestinationDashboardRepository {
             BigDecimal domVol = bd(r[2]);
             BigDecimal intlVol = bd(r[4]);
             BigDecimal totalVol = domVol.add(intlVol);
+            BigDecimal nm = bd(r[9]);
             Map<String, Object> m = new HashMap<>();
             m.put("mid", r[0]);
             m.put("merchantName", r[1]);
@@ -579,6 +587,13 @@ public class DestinationDashboardRepository {
             m.put("domMsf", bd(r[3]));
             m.put("intlVolume", intlVol);
             m.put("intlMsf", bd(r[5]));
+            m.put("icf", bd(r[6]));
+            m.put("sf", bd(r[7]));
+            m.put("pg", bd(r[8]));
+            m.put("netMargin", nm);
+            // Margin % is undefined without volume — null, never a fake 0.00.
+            m.put("marginPct", totalVol.signum() > 0
+                    ? nm.doubleValue() / totalVol.doubleValue() * 100.0 : null);
             m.put("totalVolume", totalVol);
             m.put("intlSharePct", totalVol.signum() > 0 ? intlVol.doubleValue() / totalVol.doubleValue() * 100.0 : 0.0);
             out.add(m);
@@ -631,6 +646,13 @@ public class DestinationDashboardRepository {
             m.put("domMsf", bd(r[3]));
             m.put("intlVolume", intlVol);
             m.put("intlMsf", bd(r[5]));
+            // sum_daily_insight carries no fee columns — nulls, so the UI shows
+            // an honest dash instead of a fabricated zero margin.
+            m.put("icf", null);
+            m.put("sf", null);
+            m.put("pg", null);
+            m.put("netMargin", null);
+            m.put("marginPct", null);
             m.put("totalVolume", totalVol);
             m.put("intlSharePct", totalVol.signum() > 0 ? intlVol.doubleValue() / totalVol.doubleValue() * 100.0 : 0.0);
             out.add(m);

@@ -47,7 +47,7 @@ public class DataBoundsService {
         }
         Map<String, Object> response = new HashMap<>();
         try {
-            String factSql = "SELECT MIN(payment_date)::date AS earliest, MAX(payment_date)::date AS latest " +
+            String factSql = "SELECT CAST(MIN(payment_date) AS date) AS earliest, CAST(MAX(payment_date) AS date) AS latest " +
                              "FROM fact_transaction WHERE tenant_id = :tid";
             Query qFact = entityManager.createNativeQuery(factSql);
             qFact.setParameter("tid", tenantId);

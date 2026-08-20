@@ -120,6 +120,18 @@ public class ExecutiveDailyMerchantController {
                 filter, dateList, rangeStart, rangeEnd, search, tenantId);
 
         Map<String, Object> response = new HashMap<>();
+        // Context data for the month ribbon + mix strips. Skipped on export —
+        // the CSV carries rows only, so two extra scans would be pure waste.
+        if (!export) {
+            LocalDate ctxStart = rangeStart != null ? rangeStart
+                    : dateList.get(0).withDayOfMonth(1);
+            LocalDate ctxEnd = rangeEnd != null ? rangeEnd
+                    : ctxStart.withDayOfMonth(ctxStart.lengthOfMonth());
+            response.put("trend", volumeRevenueRepository.getExecutiveDailyMerchantTrend(
+                    filter, ctxStart, ctxEnd, search, tenantId));
+            response.put("mix", volumeRevenueRepository.getExecutiveDailyMerchantMix(
+                    filter, dateList, rangeStart, rangeEnd, search, tenantId, null));
+        }
         // businessDate kept for the single-date case (frontend pill highlight);
         // selection is the human-readable summary for every mode.
         response.put("businessDate",
@@ -133,6 +145,55 @@ public class ExecutiveDailyMerchantController {
         response.put("totalElements", pageResult.get("totalElements"));
         response.put("page", export ? 0 : page);
         response.put("size", size);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Scheme / card-type / destination breakdown for ONE merchant over the same
+     * date selection and filters — the drilldown drawer's detail. Read from the
+     * same summary as the table, so the parts always sum to the row.
+     */
+    @PostMapping("/executive-daily-merchant/breakdown")
+    public ResponseEntity<Map<String, Object>> getMerchantBreakdown(
+            @RequestParam Long merchantId,
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) List<String> dates,
+            @RequestParam(required = false) String month,
+            @RequestParam(required = false) String search,
+            @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
+        if (filter == null) filter = new VolumeRevenueFilterDTO();
+
+        List<LocalDate> dateList = null;
+        LocalDate rangeStart = null, rangeEnd = null;
+        try {
+            if (month != null && !month.isBlank()) {
+                java.time.YearMonth ym = java.time.YearMonth.parse(month.trim());
+                rangeStart = ym.atDay(1);
+                rangeEnd = ym.atEndOfMonth();
+            } else if (dates != null && !dates.isEmpty()) {
+                dateList = dates.stream()
+                        .flatMap(s -> java.util.Arrays.stream(s.split(",")))
+                        .map(String::trim).filter(s -> !s.isEmpty())
+                        .map(LocalDate::parse).distinct().sorted().toList();
+                if (dateList.isEmpty()) return ResponseEntity.badRequest().build();
+            } else if (date != null && !date.isBlank()) {
+                dateList = List.of(LocalDate.parse(date.trim()));
+            } else {
+                List<LocalDate> recent = volumeRevenueRepository.getRecentBusinessDates(tenantId, 1);
+                if (recent.isEmpty()) return ResponseEntity.ok(Map.of("mix", Map.of()));
+                dateList = List.of(recent.get(0));
+            }
+        } catch (java.time.format.DateTimeParseException e) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("merchantId", merchantId);
+        response.put("mix", volumeRevenueRepository.getExecutiveDailyMerchantMix(
+                filter, dateList, rangeStart, rangeEnd, search, tenantId, merchantId));
         return ResponseEntity.ok(response);
     }
 

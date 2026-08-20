@@ -115,7 +115,7 @@ public class VolumeRevenueRepository {
         boolean useMonthly = canUseMonthly(filter.getStartDate(), filter.getEndDate());
         final String S_DATE  = useMonthly ? "s.month_key" : "s.business_date";
         final String MONTH_LABEL = useMonthly
-                ? "TO_CHAR(TO_DATE(s.month_key::text, 'YYYYMM'), 'YYYY-MM')"
+                ? "TO_CHAR(TO_DATE(CAST(s.month_key AS text), 'YYYYMM'), 'YYYY-MM')"
                 : "TO_CHAR(s.business_date, 'YYYY-MM')";
         final String BASE_TABLE = useMonthly ? "sum_monthly_insight s" : "sum_daily_insight s";
         final Integer startMonthKey = useMonthly ? monthKey(filter.getStartDate()) : null;
@@ -744,8 +744,8 @@ public class VolumeRevenueRepository {
 
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT ");
-        sql.append(" TO_CHAR(TO_DATE(s.month_key::text, 'YYYYMM'), 'YYYY-MM') as row_label, ");
-        sql.append(" TO_DATE(s.month_key::text, 'YYYYMM') as sort_key, ");
+        sql.append(" TO_CHAR(TO_DATE(CAST(s.month_key AS text), 'YYYYMM'), 'YYYY-MM') as row_label, ");
+        sql.append(" TO_DATE(CAST(s.month_key AS text), 'YYYYMM') as sort_key, ");
         sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_txns ELSE 0 END) as dom_debit_cnt, ");
         sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_volume ELSE 0 END) as dom_debit_vol, ");
         sql.append(" SUM(CASE WHEN ").append(DOM_DEBIT).append(" THEN s.total_msf ELSE 0 END) as dom_debit_msf, ");
@@ -2449,6 +2449,102 @@ public class VolumeRevenueRepository {
         totals.put("pg",     row[5]);
         totals.put("nm",     row[6]);
         return totals;
+    }
+
+    /**
+     * Per-day totals across a month window, honouring the same filters/search
+     * as the table — powers the month ribbon (each loaded day is a bar whose
+     * height encodes that day's volume, and which doubles as the date picker).
+     */
+    public List<Map<String, Object>> getExecutiveDailyMerchantTrend(VolumeRevenueFilterDTO filter,
+            java.time.LocalDate monthStart, java.time.LocalDate monthEnd, String search, Long tenantId) {
+        requireTenant(tenantId);
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT s.business_date, ");
+        sql.append("  COALESCE(SUM(s.total_volume), 0), ");
+        sql.append("  COALESCE(SUM(s.total_txns), 0), ");
+        sql.append("  COALESCE(SUM(s.total_net_revenue), 0) ");
+        appendDailyMerchantFromWhere(sql, filter, search, null, monthStart);
+        sql.append("GROUP BY s.business_date ORDER BY s.business_date");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        bindDailyMerchantParams(query, filter, search, tenantId, null, monthStart, monthEnd);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+        for (Object[] r : rows) {
+            Map<String, Object> m = new HashMap<>();
+            Object d = r[0];
+            m.put("date", d instanceof java.sql.Date sd ? sd.toLocalDate().toString() : String.valueOf(d));
+            m.put("volume", r[1]);
+            m.put("count", r[2]);
+            m.put("nm", r[3]);
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * Volume/margin mix by scheme, card type and destination for the current
+     * selection — one scan via GROUPING SETS rather than three round trips.
+     * Returns {scheme:[...], cardType:[...], destination:[...]}, each entry
+     * {label, volume, count, nm}, biggest first.
+     */
+    public Map<String, List<Map<String, Object>>> getExecutiveDailyMerchantMix(VolumeRevenueFilterDTO filter,
+            List<java.time.LocalDate> dates, java.time.LocalDate rangeStart, java.time.LocalDate rangeEnd,
+            String search, Long tenantId, Long merchantId) {
+        requireTenant(tenantId);
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT GROUPING(s.card_scheme), s.card_scheme, ");
+        sql.append("       GROUPING(s.card_type), s.card_type, ");
+        sql.append("       GROUPING(s.destination), s.destination, ");
+        sql.append("       COALESCE(SUM(s.total_volume), 0), ");
+        sql.append("       COALESCE(SUM(s.total_txns), 0), ");
+        sql.append("       COALESCE(SUM(s.total_net_revenue), 0) ");
+        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart);
+        if (merchantId != null) sql.append("AND s.merchant_id = :merchantId ");
+        sql.append("GROUP BY GROUPING SETS ((s.card_scheme), (s.card_type), (s.destination))");
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        bindDailyMerchantParams(query, filter, search, tenantId, dates, rangeStart, rangeEnd);
+        if (merchantId != null) query.setParameter("merchantId", merchantId);
+
+        List<Map<String, Object>> scheme = new ArrayList<>();
+        List<Map<String, Object>> cardType = new ArrayList<>();
+        List<Map<String, Object>> destination = new ArrayList<>();
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        for (Object[] r : rows) {
+            // GROUPING() is 0 for the column this grouping set actually groups by.
+            List<Map<String, Object>> bucket;
+            Object label;
+            if (((Number) r[0]).intValue() == 0)      { bucket = scheme;      label = r[1]; }
+            else if (((Number) r[2]).intValue() == 0) { bucket = cardType;    label = r[3]; }
+            else if (((Number) r[4]).intValue() == 0) { bucket = destination; label = r[5]; }
+            else continue;
+
+            Map<String, Object> m = new HashMap<>();
+            m.put("label", label == null ? "Unclassified" : label.toString());
+            m.put("volume", r[6]);
+            m.put("count", r[7]);
+            m.put("nm", r[8]);
+            bucket.add(m);
+        }
+        java.util.Comparator<Map<String, Object>> byVolumeDesc = (a, b) -> Double.compare(
+                ((Number) b.getOrDefault("volume", 0)).doubleValue(),
+                ((Number) a.getOrDefault("volume", 0)).doubleValue());
+        scheme.sort(byVolumeDesc);
+        cardType.sort(byVolumeDesc);
+        destination.sort(byVolumeDesc);
+
+        Map<String, List<Map<String, Object>>> out = new HashMap<>();
+        out.put("scheme", scheme);
+        out.put("cardType", cardType);
+        out.put("destination", destination);
+        return out;
     }
 
     /** Latest N distinct loaded business dates for the tenant (date-pill row). */
