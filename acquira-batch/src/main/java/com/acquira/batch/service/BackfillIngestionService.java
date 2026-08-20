@@ -289,6 +289,14 @@ public class BackfillIngestionService {
         // Scope variables
         String dateScope = "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
 
+        // 0. Auto-create missing dimensions (merchant/store/terminal) from staging,
+        // BEFORE the fact insert — same SQL as the upload job's
+        // autoCreateDimensionsStep. This path used to skip creation entirely (its
+        // "auto-create" only renamed existing merchants), so every staged row whose
+        // MID wasn't already an exact dim_merchant.mid landed in fact with
+        // merchant_id NULL and vanished from all merchant-grain summaries.
+        autoCreateDimensions(tenantId);
+
         // 1. Delete Existing Fact
         jdbcTemplate.update("""
                 DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) = ?
@@ -306,7 +314,8 @@ public class BackfillIngestionService {
                             )
                             SELECT
                                 stg.tenant_id,
-                                m.merchant_id, s.store_id, t.terminal_id,
+                                COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id),
+                                COALESCE(s.store_id, s2.store_id), t.terminal_id,
                                 stg.arn, stg.rrn_number, stg.card_number, stg.auth_code,
                                 stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type,
                                 stg.card_scheme, stg.card_type, stg.dcc,
@@ -318,16 +327,14 @@ public class BackfillIngestionService {
                                      THEN -ABS(stg.msf) ELSE ABS(stg.msf) END,
                                 ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination
                             FROM stg_trnx_raw stg
-                            LEFT JOIN dim_merchant m ON stg.mid = m.mid AND m.tenant_id = ?
-                            LEFT JOIN dim_store s ON s.merchant_id = m.merchant_id
-                                AND (s.sid = stg.sid OR s.internal_id = stg.merchant_store_internal_id OR s.internal_id = CONCAT('STORE_', stg.mid))
-                                AND s.tenant_id = ?
-                            LEFT JOIN dim_terminal t ON t.store_id = s.store_id
-                                AND (t.tid = stg.tid OR t.internal_id = stg.tid OR t.internal_id = CONCAT('TERM_', stg.mid))
-                                AND t.tenant_id = ?
+                            LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '')
+                            LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '')
+                            LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id
+                                AND t.tid = NULLIF(TRIM(stg.tid), '') AND (t.store_id = s.store_id OR s.store_id IS NULL)
+                            LEFT JOIN dim_store s2 ON s2.tenant_id = stg.tenant_id AND s2.store_id = t.store_id
                             WHERE stg.tenant_id = ? AND DATE(stg.payment_date) = ?
                         """,
-                tenantId, tenantId, tenantId, tenantId, date);
+                tenantId, date);
 
         // 3. Update Summaries
         // For backfill, we can run the standard summary logic scoped to this execution
@@ -335,16 +342,29 @@ public class BackfillIngestionService {
         // we can reuse the generic 'dateScope' query which selects potentially just
         // this one date.
 
-        // 3.0 Auto-create merchant if missing (from staging) -- Essential
-        jdbcTemplate.update("""
-                UPDATE dim_merchant m SET name = sub.merchant_name
-                FROM (
-                    SELECT DISTINCT s.mid, s.merchant_name
-                    FROM stg_trnx_raw s
-                    WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL
-                ) sub
-                WHERE m.mid = sub.mid AND m.tenant_id = ? AND (m.name IS NULL OR m.name = '')
-                """, tenantId, tenantId);
+        // 3.0 Clean-slate the date's summary rows before re-aggregating — same rule
+        // as the upload job's populateSummary: the inserts below are ON CONFLICT
+        // upserts, so a (merchant/scheme/…) tuple present in an EARLIER run of this
+        // date but absent from this one would otherwise survive as a stale orphan.
+        // fact_transaction for the date was already delete+reinserted above, so a
+        // full delete+rebuild makes every summary reconcile exactly with fact.
+        for (String dailyTbl : new String[]{
+                "sum_daily_bank", "sum_daily_merchant", "sum_daily_mcc",
+                "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
+                "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
+                "sum_daily_explorer", "sum_daily_merchant_destination",
+                "sum_daily_merchant_attribute"}) {
+            jdbcTemplate.update(
+                    "DELETE FROM " + dailyTbl + " WHERE tenant_id = ? AND business_date = ?",
+                    tenantId, date);
+        }
+        int cleanMonthKey = date.getYear() * 100 + date.getMonthValue();
+        for (String monthlyTbl : new String[]{
+                "sum_monthly_bank", "sum_monthly_insight", "sum_monthly_card"}) {
+            jdbcTemplate.update(
+                    "DELETE FROM " + monthlyTbl + " WHERE tenant_id = ? AND month_key = ?",
+                    tenantId, cleanMonthKey);
+        }
 
         // 3.1 Bank
         jdbcTemplate.update("""
@@ -479,7 +499,11 @@ public class BackfillIngestionService {
                                     total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, total_ecom_fee=EXCLUDED.total_ecom_fee,
                                     total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue
                                 """,
-                tenantId, tenantId, tenantId);
+                // Exactly 2 placeholders: outer WHERE tenant_id, then the one inside
+                // monthScope. A third arg here made the driver throw "column index
+                // out of range" and silently killed every summary step after this
+                // one for the whole backfilled date (the per-date catch ate it).
+                tenantId, tenantId);
 
         // 7. sum_daily_terminal
         jdbcTemplate.update("""
@@ -548,6 +572,83 @@ public class BackfillIngestionService {
                         """,
                 tenantId, date);
 
+        // 9b. sum_daily_merchant_destination — mirrors TransactionJobConfig's
+        // populateSummary insert (summary-rebuild-drift rule). Straight off fact,
+        // NULL merchant_id kept, NULL destination lands as DOMESTIC.
+        jdbcTemplate.update(
+                """
+                        INSERT INTO sum_daily_merchant_destination (tenant_id, business_date, merchant_id, destination,
+                            total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_net_revenue)
+                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id,
+                            CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END,
+                            COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee),
+                            SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)),
+                            SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0))
+                        FROM fact_transaction f
+                        WHERE f.tenant_id = ? AND DATE(f.payment_date) = ?
+                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id,
+                            CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END
+                        """,
+                tenantId, date);
+
+        // 9c. sum_daily_full — the executive/destination/card-type dashboards'
+        // source. This path never wrote it, so backfilled dates were invisible
+        // there until a manual summary rebuild.
+        jdbcTemplate.update(
+                """
+                        INSERT INTO sum_daily_full (tenant_id, business_date, merchant_id, store_id, mcc,
+                            channel, destination, card_scheme, card_type, is_opt_in,
+                            total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee,
+                            total_net_revenue, dcc_optin_count)
+                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc,
+                            COALESCE(t.type,'POS'), f.destination,
+                            CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
+                                 THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified')
+                                 ELSE f.card_scheme END,
+                            f.card_type, f.dcc,
+                            COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf),
+                            SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)),
+                            SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)),
+                            COUNT(CASE WHEN f.dcc IS TRUE THEN 1 END)
+                        FROM fact_transaction f
+                        LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id
+                        LEFT JOIN dim_store st ON f.store_id=st.store_id AND st.tenant_id=f.tenant_id
+                        WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) = ?
+                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc,
+                            COALESCE(t.type,'POS'), f.destination,
+                            CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
+                                 THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END,
+                            f.card_type, f.dcc
+                        """,
+                tenantId, date);
+
+        // 9d. sum_daily_explorer — Data Explorer history pre-aggregate, upload parity.
+        jdbcTemplate.update(
+                """
+                        INSERT INTO sum_daily_explorer (tenant_id, business_date, merchant_id, store_id, terminal_id,
+                            transaction_type, card_scheme, card_type, destination, channel, txn_currency, store_base_currency, is_opt_in,
+                            total_txns, total_txn_currency_amount, total_base_volume, total_msf, total_vat, total_settled,
+                            total_interchange, total_scheme_fee)
+                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
+                            f.transaction_type,
+                            CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
+                                 THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified')
+                                 ELSE f.card_scheme END,
+                            f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc,
+                            COUNT(*), SUM(COALESCE(f.txn_currency_amount,0)), SUM(COALESCE(f.store_base_currency_amount,0)),
+                            SUM(COALESCE(f.msf,0)), SUM(COALESCE(f.vat,0)), SUM(COALESCE(f.total_amount_settled,0)),
+                            SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0))
+                        FROM fact_transaction f
+                        LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id
+                        WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) = ?
+                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
+                            f.transaction_type,
+                            CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
+                                 THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END,
+                            f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc
+                        """,
+                tenantId, date);
+
         // 10. Merchant attributes (CARD_SCHEME, CARD_TYPE, DESTINATION,
         // TRANSACTION_TYPE, HOUR)
         // CARD_SCHEME uses the upload job's normalization (blank/'NULL' scheme ->
@@ -574,7 +675,7 @@ public class BackfillIngestionService {
                     """
                             INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
                             SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(store_base_currency_amount)
-                            FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
+                            FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ?
                             GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(%s,'UNKNOWN'))
                             ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
                                 metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
@@ -587,7 +688,7 @@ public class BackfillIngestionService {
                 """
                         INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
                         SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(store_base_currency_amount)
-                        FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
+                        FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ? AND transaction_date IS NOT NULL
                         GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date)
                         ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
                             metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
@@ -613,7 +714,7 @@ public class BackfillIngestionService {
                                  WHEN store_base_currency_amount < 5000 THEN '1K-5K'
                                  ELSE '5K+' END,
                             COUNT(*), SUM(store_base_currency_amount)
-                        FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
+                        FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ?
                         GROUP BY tenant_id, merchant_id, DATE(payment_date),
                             CASE WHEN store_base_currency_amount < 50 THEN '< 50'
                                  WHEN store_base_currency_amount < 100 THEN '50-100'
@@ -632,12 +733,116 @@ public class BackfillIngestionService {
                 .update("""
                         INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend)
                         SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(store_base_currency_amount)
-                        FROM fact_transaction WHERE tenant_id=? AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN """
+                        FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN """
                         + monthScope + """
                                 GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date,'YYYYMM'), card_number
                                 ON CONFLICT (tenant_id, merchant_id, month_key, card_number) DO UPDATE SET
                                     visit_count=EXCLUDED.visit_count, total_spend=EXCLUDED.total_spend
-                                """, tenantId, tenantId, tenantId);
+                                """, tenantId, tenantId); // 2 placeholders (outer + monthScope), see sum_monthly_bank note
+
+        // 12. sum_monthly_insight — month-grain rollup of sum_daily_insight
+        // (upload parity; wide-range Explorer/Business queries read this).
+        jdbcTemplate.update(
+                """
+                        INSERT INTO sum_monthly_insight (tenant_id, month_key, merchant_id, store_id, terminal_id,
+                            card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf)
+                        SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), merchant_id, store_id, terminal_id,
+                            card_scheme, card_type, destination, channel, is_opt_in,
+                            SUM(total_txns), SUM(total_volume), SUM(total_msf)
+                        FROM sum_daily_insight WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN """
+                        + monthScope + """
+                                GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM'), merchant_id, store_id, terminal_id,
+                                    card_scheme, card_type, destination, channel, is_opt_in
+                                ON CONFLICT (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
+                                DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf
+                                """, tenantId, tenantId); // 2 placeholders (outer + monthScope)
+    }
+
+    /**
+     * Auto-create missing dim_merchant / dim_store / dim_terminal rows from the
+     * staged rows — an exact copy of the upload job's autoCreateDimensionsTasklet
+     * (TransactionJobConfig), so a backfilled feed resolves the SAME dimension
+     * rows a normal file upload would. Also re-syncs blank merchant names from
+     * the feed (the only thing the old "auto-create" step actually did).
+     */
+    private void autoCreateDimensions(Long tenantId) {
+        int merchantsAdded = jdbcTemplate.update(
+                """
+                        INSERT INTO dim_merchant (tenant_id, internal_id, mid, name, status, created_date)
+                        SELECT s.tenant_id,
+                          'AUTO_SID_' || TRIM(s.sid),
+                          COALESCE(NULLIF(TRIM(MAX(s.mid)), ''), 'AUTO_MID_' || TRIM(s.sid)),
+                          COALESCE(
+                            MAX(CASE WHEN s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> ''
+                                     AND s.merchant_name !~ '^[0-9.]+$' THEN s.merchant_name END),
+                            MAX(NULLIF(TRIM(s.merchant_store_legal_name), '')),
+                            MAX(NULLIF(TRIM(s.store_name), '')),
+                            'Merchant ' || TRIM(s.sid)),
+                          'ACTIVE', NOW()
+                        FROM stg_trnx_raw s
+                        WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL
+                          AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid))
+                          AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), ''))
+                        GROUP BY s.tenant_id, TRIM(s.sid)
+                        ON CONFLICT (tenant_id, internal_id) DO NOTHING
+                        """, tenantId);
+
+        int storesAdded = jdbcTemplate.update(
+                """
+                        INSERT INTO dim_store (tenant_id, internal_id, merchant_id, sid, name, status, created_date)
+                        SELECT s.tenant_id,
+                          'AUTO_STORE_SID_' || TRIM(s.sid),
+                          m.merchant_id,
+                          TRIM(s.sid),
+                          COALESCE(MAX(NULLIF(TRIM(s.store_name), '')),
+                                   MAX(NULLIF(TRIM(s.merchant_store_legal_name), '')),
+                                   MAX(NULLIF(TRIM(s.merchant_name), '')),
+                                   'Store ' || TRIM(s.sid)),
+                          'ACTIVE', NOW()
+                        FROM stg_trnx_raw s
+                        JOIN dim_merchant m ON m.tenant_id = s.tenant_id
+                          AND (m.mid = NULLIF(TRIM(s.mid), '')
+                            OR m.internal_id = 'AUTO_SID_' || TRIM(s.sid))
+                        WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL
+                          AND NOT EXISTS (SELECT 1 FROM dim_store ds
+                            WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid))
+                          AND NOT EXISTS (SELECT 1 FROM dim_terminal dt
+                            WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), ''))
+                        GROUP BY s.tenant_id, m.merchant_id, TRIM(s.sid)
+                        ON CONFLICT (tenant_id, internal_id) DO NOTHING
+                        """, tenantId);
+
+        int terminalsAdded = jdbcTemplate.update(
+                """
+                        INSERT INTO dim_terminal (tenant_id, internal_id, store_id, tid, status, created_date)
+                        SELECT s.tenant_id,
+                          'AUTO_TERM_' || TRIM(s.sid) || '_' || TRIM(s.tid),
+                          ds.store_id,
+                          TRIM(s.tid),
+                          'ACTIVE', NOW()
+                        FROM stg_trnx_raw s
+                        JOIN dim_store ds ON ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)
+                        WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL
+                          AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id
+                            AND dt.store_id = ds.store_id AND dt.tid = TRIM(s.tid))
+                        GROUP BY s.tenant_id, ds.store_id, TRIM(s.sid), TRIM(s.tid)
+                        ON CONFLICT (tenant_id, internal_id) DO NOTHING
+                        """, tenantId);
+
+        jdbcTemplate.update("""
+                UPDATE dim_merchant m SET name = sub.merchant_name
+                FROM (
+                    SELECT DISTINCT TRIM(s.mid) AS mid, s.merchant_name
+                    FROM stg_trnx_raw s
+                    WHERE s.tenant_id = ? AND NULLIF(TRIM(s.merchant_name), '') IS NOT NULL
+                ) sub
+                WHERE m.mid = sub.mid AND m.tenant_id = ? AND (m.name IS NULL OR m.name = '')
+                """, tenantId, tenantId);
+
+        if (merchantsAdded > 0 || storesAdded > 0 || terminalsAdded > 0) {
+            log.info("Backfill autoCreateDimensions: +{} merchants, +{} stores, +{} terminals",
+                    merchantsAdded, storesAdded, terminalsAdded);
+        }
     }
 
     // ===================================
