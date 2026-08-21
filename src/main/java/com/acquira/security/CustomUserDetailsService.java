@@ -34,6 +34,12 @@ public class CustomUserDetailsService implements UserDetailsService {
         roles.add("ROLE_USER"); // Default
 
         for (com.acquira.model.UserTenantAccess access : accessList) {
+            // New way: explicit role in tenant
+            if (access.getRoleInTenant() != null && !access.getRoleInTenant().isEmpty()) {
+                roles.add(access.getRoleInTenant());
+            }
+
+            // Old way: fallback to Group
             if (access.getSysUserGroup() != null) {
                 String groupName = access.getSysUserGroup().getGroupName();
                 if ("Super Admin".equalsIgnoreCase(groupName)) {

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="dayTypeContent">
+
+        <div class="section-subtitle" style="margin-bottom: 10px;">Behavioural revenue distribution and action signals</div>
+
+        <!-- ROW 1: 3 Hero KPIs -->
+        <div class="grid-3 mb-8">
+            <div class="card card-accent-blue" style="padding: 12px 14px;">
+                <div class="kpi-label">TOTAL SALES</div>
+                <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.currencyCode} + ' ' + ${dto.overview.sales.formattedValue}">AED 0</div>
+                <span style="font-size: 8.5px; color: #6B7280;">Monthly volume</span>
+            </div>
+            <div class="card" style="padding: 12px 14px; border-top: 3px solid #1E3A8A;">
+                <div class="kpi-label">WEEKDAY SHARE</div>
+                <div style="font-size: 24px; font-weight: 900; color: #1E3A8A; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.weekdayRevenuePct != null ? dto.overview.weekdayRevenuePct + '%' : '-'}">-</div>
+                <span style="font-size: 8.5px; color: #6B7280;">Mon – Fri (5 days)</span>
+            </div>
+            <div class="card" style="padding: 12px 14px; border-top: 3px solid #0D9488;">
+                <div class="kpi-label">WEEKEND SHARE</div>
+                <div style="font-size: 24px; font-weight: 900; color: #0D9488; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.weekendRevenuePct != null ? dto.overview.weekendRevenuePct + '%' : '-'}">-</div>
+                <span style="font-size: 8.5px; color: #6B7280;">Sat – Sun (2 days)</span>
+            </div>
+        </div>
+
+        <!-- ROW 2: Donut + Efficiency -->
+        <div class="grid-2 mb-8" style="height: 200px;">
+            <div class="card" style="padding: 12px;">
+                <div class="card-title">SALES BY DAY OF WEEK</div>
+                <div class="chart-container" style="position: relative;">
+                    <canvas data-chart="donut" data-field="overview.salesByDayOfWeek"></canvas>
+                    <div style="position: absolute; top: 50%; left: 38%; transform: translate(-50%, -50%); text-align: center; pointer-events: none;">
+                        <div style="font-size: 7px; color: #6B7280; font-weight: 600;">TOTAL</div>
+                        <div style="font-size: 14px; font-weight: 900; color: #111827;" th:text="${dto.overview.sales.formattedValue}">0</div>
+                    </div>
+                </div>
+            </div>
+            <div class="card" style="padding: 14px; display: flex; flex-direction: column; justify-content: center;">
+                <div class="card-title">SALES EFFICIENCY</div>
+                <!-- Weekday bar -->
+                <div style="margin-top: 8px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 8.5px; color: #374151; font-weight: 600; margin-bottom: 3px;">
+                        <span>Weekdays (Mon–Fri)</span>
+                        <th:block th:with="wdPct=${dto.overview.weekdayRevenuePct != null ? dto.overview.weekdayRevenuePct : 0}, perDay=${#numbers.formatDecimal(wdPct / 5.0, 1, 1)}">
+                            <span style="color: #1E3A8A;" th:text="${wdPct + '% · 5 days · ' + perDay + '% per day'}">-</span>
+                        </th:block>
+                    </div>
+                    <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
+                        <div th:style="'width:' + ${dto.overview.weekdayRevenuePct != null ? dto.overview.weekdayRevenuePct : 50} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 5px;'"></div>
+                    </div>
+                </div>
+                <!-- Weekend bar -->
+                <div style="margin-top: 12px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 8.5px; color: #374151; font-weight: 600; margin-bottom: 3px;">
+                        <span>Weekends (Sat–Sun)</span>
+                        <th:block th:with="wePct=${dto.overview.weekendRevenuePct != null ? dto.overview.weekendRevenuePct : 0}, perDay=${#numbers.formatDecimal(wePct / 2.0, 1, 1)}">
+                            <span style="color: #0D9488;" th:text="${wePct + '% · 2 days · ' + perDay + '% per day'}">-</span>
+                        </th:block>
+                    </div>
+                    <div style="width: 100%; height: 10px; background: #E5E7EB; border-radius: 5px; overflow: hidden;">
+                        <div th:style="'width:' + ${dto.overview.weekendRevenuePct != null ? dto.overview.weekendRevenuePct : 50} + '%; height: 100%; background: linear-gradient(90deg, #047857, #34D399); border-radius: 5px;'"></div>
+                    </div>
+                </div>
+                <!-- Insight -->
+                <div style="margin-top: 14px; padding: 8px 10px; background: #F0FDF4; border-radius: 5px; border-left: 3px solid #0D9488;">
+                    <div style="font-size: 8.5px; color: #374151; line-height: 1.5;">
+                        <strong style="color: #047857;">Weekend efficiency is higher</strong> — fewer days generate a disproportionate share of total revenue.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 3: Sales by Week of Month -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title">SALES BY WEEK OF MONTH</div>
+            <div class="chart-container">
+                <canvas data-chart="gradient-bar" data-field="overview.salesByWeekOfMonth" data-color="#1E3A8A"></canvas>
+            </div>
+        </div>
+
+        <!-- ROW 4: 3 Behavioural Insights -->
+        <div class="action-strip mb-8">
+            <div class="action-strip-item opportunity">
+                <div class="strip-label">&#9650; WEEKEND LEVERAGE</div>
+                <div class="strip-text"><span th:text="${dto.overview.weekendRevenuePct}">-</span>% of sales comes from just 2 days. If this matches your business model, great \u2014 if not, it may be worth exploring what draws customers on weekdays.</div>
+            </div>
+            <div class="action-strip-item action">
+                <div class="strip-label">&#9654; SALARY CYCLE</div>
+                <div class="strip-text">If mid-month sees higher activity, this may reflect local salary patterns \u2014 though it varies by industry and location, so your own data is the best guide.</div>
+            </div>
+            <div class="action-strip-item risk">
+                <div class="strip-label">&#9660; STAFFING GAP</div>
+                <div class="strip-text">Reviewing staffing levels against your busiest and quietest periods may help with cost management and service quality.</div>
+            </div>
+        </div>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.heatmapInsight != null ? dto.insights.heatmapInsight : 'Sales appear to peak at certain points in the month. It may be worth exploring whether those patterns repeat and whether activity can be planned around them.'}"></span>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

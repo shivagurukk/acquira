@@ -1,6 +1,7 @@
 package com.acquira.controller;
 
 import com.acquira.repository.*;
+import com.acquira.dto.VolumeRevenueFilterDTO;
 import com.acquira.model.SumDailyBank;
 import com.acquira.config.TenantContext;
 import org.springframework.data.domain.Page;
@@ -15,7 +16,6 @@ import java.util.*;
 
 @RestController
 @RequestMapping("/api/finance")
-@CrossOrigin(origins = "http://localhost:5173")
 public class FinanceController {
 
     private final SumDailyBankRepository bankRepository;
@@ -24,22 +24,86 @@ public class FinanceController {
     private final SumDailyMccRepository mccRepository;
     private final SumDailySchemeRepository schemeRepository;
     private final SumDailyChannelRepository channelRepository;
+    private final VolumeRevenueRepository volumeRevenueRepository;
 
     public FinanceController(SumDailyBankRepository bankRepository,
             SumMonthlyBankRepository monthlyBankRepository,
             SumDailyMerchantRepository merchantRepository,
             SumDailyMccRepository mccRepository,
             SumDailySchemeRepository schemeRepository,
-            SumDailyChannelRepository channelRepository) {
+            SumDailyChannelRepository channelRepository,
+            VolumeRevenueRepository volumeRevenueRepository) {
         this.bankRepository = bankRepository;
         this.monthlyBankRepository = monthlyBankRepository;
         this.merchantRepository = merchantRepository;
         this.mccRepository = mccRepository;
         this.schemeRepository = schemeRepository;
         this.channelRepository = channelRepository;
+        this.volumeRevenueRepository = volumeRevenueRepository;
     }
 
-    // A) Dashboard KPIs
+    // ── Finance Summary (drill-down: Month → Day → Merchant) ──────────────
+    @GetMapping("/summary")
+    public ResponseEntity<List<Map<String, Object>>> getFinanceSummary(
+            @RequestParam(defaultValue = "MONTH") String period,
+            @RequestParam(required = false) String groupBy,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+
+        // 1. Resolve date range from period preset
+        LocalDate now = LocalDate.now();
+        LocalDate start, end;
+
+        if (startDate != null && endDate != null && !startDate.isBlank() && !endDate.isBlank()) {
+            start = LocalDate.parse(startDate);
+            end = LocalDate.parse(endDate);
+        } else {
+            switch (period.toUpperCase()) {
+                case "TODAY":
+                    start = now; end = now; break;
+                case "MONTH":
+                    start = now.withDayOfMonth(1); end = now; break;
+                case "YEAR":
+                    start = now.withDayOfYear(1); end = now; break;
+                case "PY":
+                    start = now.minusYears(1).withDayOfYear(1);
+                    end = now.minusYears(1).withMonth(12).withDayOfMonth(31);
+                    break;
+                default: // CUSTOM with no dates -> MTD fallback
+                    start = now.withDayOfMonth(1); end = now; break;
+            }
+        }
+
+        // 2. Determine groupBy level
+        String effectiveGroupBy = (groupBy != null && !groupBy.isBlank()) ? groupBy.toUpperCase() : "MONTH";
+
+        // 3. Build filter DTO
+        VolumeRevenueFilterDTO filter = new VolumeRevenueFilterDTO();
+        filter.setStartDate(start);
+        filter.setEndDate(end);
+
+        // 4. Delegate to existing repository method
+        List<Map<String, Object>> rawData = volumeRevenueRepository.getPerformanceDashboardData(
+                filter, effectiveGroupBy, null, null);
+
+        // 5. Remap keys for frontend compatibility (row_label → month_label)
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> row : rawData) {
+            Map<String, Object> mapped = new HashMap<>(row);
+            mapped.put("month_label", row.get("row_label"));
+            if ("MERCHANT".equals(effectiveGroupBy)) {
+                String name = row.get("merchant_name") != null ? row.get("merchant_name").toString() : "";
+                String mid = row.get("row_label") != null ? row.get("row_label").toString() : "";
+                mapped.put("month_label", name.isBlank() ? mid : name + " (" + mid + ")");
+                mapped.put("merchant_id", mid);
+            }
+            result.add(mapped);
+        }
+
+        return ResponseEntity.ok(result);
+    }
+
+    // ── A) Dashboard KPIs ────────────────────────────────────────────────
     @GetMapping("/dashboard/kpis")
     public ResponseEntity<Map<String, Object>> getDashboardKpis(
             @RequestParam(required = false) LocalDate from,

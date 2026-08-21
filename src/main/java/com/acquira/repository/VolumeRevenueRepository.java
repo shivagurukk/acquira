@@ -464,10 +464,10 @@ public class VolumeRevenueRepository {
                     .createNativeQuery("SELECT DISTINCT mcc FROM dim_store WHERE mcc IS NOT NULL ORDER BY 1");
             options.put("mccs", qMcc.getResultList());
 
-            // Team Leaders - Using Sales User ID as proxy if available, or empty
-            // Creating placeholders based on user request "load from summary table"
-            // If column doesn't exist, we return empty list.
-            options.put("teamLeaders", new ArrayList<>());
+            // Team Leaders
+            Query qTeamLeads = entityManager.createNativeQuery(
+                    "SELECT DISTINCT team_lead_name FROM sales_team_mapping WHERE team_lead_name IS NOT NULL ORDER BY 1");
+            options.put("teamLeaders", qTeamLeads.getResultList());
 
             // Destinations
             Query qDest = entityManager.createNativeQuery(
@@ -497,6 +497,18 @@ public class VolumeRevenueRepository {
                     "SELECT DISTINCT card_type FROM sum_daily_insight WHERE card_type IS NOT NULL ORDER BY 1");
             options.put("cardTypes", qCardType.getResultList());
 
+            // SIDs
+            List<String> sids = entityManager.createNativeQuery(
+                    "SELECT DISTINCT sid FROM dim_store WHERE sid IS NOT NULL ORDER BY sid")
+                    .getResultList();
+            options.put("sids", sids);
+
+            // MIDs
+            List<String> mids = entityManager.createNativeQuery(
+                    "SELECT DISTINCT mid FROM dim_merchant WHERE mid IS NOT NULL ORDER BY mid")
+                    .getResultList();
+            options.put("mids", mids);
+
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -510,46 +522,39 @@ public class VolumeRevenueRepository {
         sql.append("SELECT ");
         sql.append("  m.mid as mid, ");
         sql.append("  m.name as merchant_name, ");
+        sql.append("  st.sid as sid, ");
         sql.append("  SUM(s.total_txns) as count, ");
         sql.append("  SUM(s.total_volume) as volume ");
         sql.append("FROM sum_daily_insight s ");
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
-        // Apply store join if needed
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
-            sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
-        }
+        sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
 
-        sql.append("WHERE s.destination = 'DOMESTIC' AND s.card_type IN ('DEBIT', 'PREPAID') ");
+        // Use case-insensitive matching for card_type to handle varying case in data
+        sql.append("WHERE UPPER(s.destination) = 'DOMESTIC' AND UPPER(s.card_type) IN ('DEBIT', 'PREPAID') ");
 
         if (filter.getStartDate() != null)
             sql.append("AND s.business_date >= :startDate ");
         if (filter.getEndDate() != null)
             sql.append("AND s.business_date <= :endDate ");
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            sql.append("AND st.sid IN (:sids) ");
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            sql.append("AND m.mid IN (:mids) ");
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             sql.append("AND m.referral_partner IN (:partners) ");
         if (filter.getRmList() != null && !filter.getRmList().isEmpty())
             sql.append("AND m.sales_email IN (:rms) ");
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
             sql.append("AND m.name ILIKE :merchName ");
-        // Note: Destination and Card Type filters from UI might conflict if user
-        // selects CREDIT or INTERNATIONAL
-        // But the report is specifically for Dom Debit/Prepaid. Use filters if they
-        // don't contradict?
-        // Let's apply other filters (Industry, MCC etc) if needed, but user said "same
-        // filters".
-        // Applying generic filters:
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
+        if (filter.getMccList() != null && !filter.getMccList().isEmpty())
             sql.append("AND st.mcc IN (:mccs) ");
-        }
-        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty()) {
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
             sql.append("AND m.sales_user_id IN (:teamLeaders) ");
-        }
-        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty()) {
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
             sql.append("AND s.channel IN (:channels) ");
-        }
 
-        sql.append("GROUP BY m.mid, m.name ");
-        sql.append("ORDER BY m.mid ASC");
+        sql.append("GROUP BY m.mid, m.name, st.sid ");
+        sql.append("ORDER BY m.mid ASC, st.sid ASC");
 
         Query query = entityManager.createNativeQuery(sql.toString());
 
@@ -557,6 +562,10 @@ public class VolumeRevenueRepository {
             query.setParameter("startDate", filter.getStartDate());
         if (filter.getEndDate() != null)
             query.setParameter("endDate", filter.getEndDate());
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            query.setParameter("sids", filter.getSidList());
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            query.setParameter("mids", filter.getMidList());
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
         if (filter.getRmList() != null && !filter.getRmList().isEmpty())
@@ -577,8 +586,9 @@ public class VolumeRevenueRepository {
             Map<String, Object> map = new HashMap<>();
             map.put("mid", row[0]);
             map.put("merchantName", row[1]);
-            map.put("count", row[2]);
-            map.put("volume", row[3]);
+            map.put("sid", row[2]);
+            map.put("count", row[3]);
+            map.put("volume", row[4]);
             result.add(map);
         }
 
@@ -588,68 +598,57 @@ public class VolumeRevenueRepository {
     public List<Map<String, Object>> getAttritionReport(VolumeRevenueFilterDTO filter) {
         StringBuilder sql = new StringBuilder();
 
-        // Logic:
-        // We need Current Year MTD (e.g. Jan 1 - Jan 26 2026)
-        // And Previous Year MTD (e.g. Jan 1 - Jan 26 2025)
-        // And Current YTD (Jan 1 - Jan 26 2026) - (Actually MTD is usually just month,
-        // YTD is year start to now)
-        // Let's assume input date determines "Current Month".
-        // If filter has startDate/endDate, we use that as "Current Period" (MTD range)
-        // And we calculate "Previous Period" as same dates - 1 Year.
-        // YTD is Start of Year to End Date.
-
-        // It is complex to do in one query without CTEs or complex joins.
-        // Simplified approach: Group by Merchant, and use conditional SUM based on
-        // dates.
+        // Attrition Report: Month-on-Month AND Year-on-Year comparison
+        // Current Period = startDate..endDate
+        // Previous Month = same range shifted back 1 month
+        // Previous Year  = same range shifted back 1 year
+        // YTD Current    = Jan 1 of current year..endDate
+        // YTD Previous   = Jan 1 of prev year..prevEndDate
 
         sql.append("SELECT ");
         sql.append("  m.mid as mid, ");
         sql.append("  m.name as merchant_name, ");
 
         // MTD Current (Volume in selected range)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :startDate AND s.business_date <= :endDate THEN s.total_volume ELSE 0 END) as mtd_current, ");
-        // MTD Previous (Volume in selected range - 1 Year)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :prevStartDate AND s.business_date <= :prevEndDate THEN s.total_volume ELSE 0 END) as mtd_prev, ");
+        sql.append("  SUM(CASE WHEN s.business_date >= :startDate AND s.business_date <= :endDate THEN s.total_volume ELSE 0 END) as mtd_current, ");
+        // MTD Previous Year (same range - 1 Year)
+        sql.append("  SUM(CASE WHEN s.business_date >= :prevStartDate AND s.business_date <= :prevEndDate THEN s.total_volume ELSE 0 END) as mtd_prev, ");
 
         // YTD Current (Jan 1 of EndDate Year -> EndDate)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :ytdStartDate AND s.business_date <= :endDate THEN s.total_volume ELSE 0 END) as ytd_current, ");
+        sql.append("  SUM(CASE WHEN s.business_date >= :ytdStartDate AND s.business_date <= :endDate THEN s.total_volume ELSE 0 END) as ytd_current, ");
         // YTD Previous (Jan 1 of PrevYear -> PrevEndDate)
-        sql.append(
-                "  SUM(CASE WHEN s.business_date >= :prevYtdStartDate AND s.business_date <= :prevEndDate THEN s.total_volume ELSE 0 END) as ytd_prev ");
+        sql.append("  SUM(CASE WHEN s.business_date >= :prevYtdStartDate AND s.business_date <= :prevEndDate THEN s.total_volume ELSE 0 END) as ytd_prev, ");
+
+        // MoM: Previous Month volume
+        sql.append("  SUM(CASE WHEN s.business_date >= :momStartDate AND s.business_date <= :momEndDate THEN s.total_volume ELSE 0 END) as mom_prev ");
 
         sql.append("FROM sum_daily_insight s ");
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id ");
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
+        boolean needsStoreJoin = (filter.getMccList() != null && !filter.getMccList().isEmpty())
+                || (filter.getSidList() != null && !filter.getSidList().isEmpty());
+        if (needsStoreJoin) {
             sql.append("JOIN dim_store st ON s.store_id = st.store_id ");
         }
 
-        // Filter scope: Must include data from both years.
-        // We broadly filter for "relevant" data to speed up, or just filter in HAVING?
-        // Let's filter WHERE business_date >= prevYtdStartDate (Oldest date we care
-        // about)
-        sql.append("WHERE s.business_date >= :prevYtdStartDate ");
+        // Global lower bound — includes data from both years and previous month
+        sql.append("WHERE s.business_date >= :globalStartDate ");
 
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            sql.append("AND st.sid IN (:sids) ");
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            sql.append("AND m.mid IN (:mids) ");
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             sql.append("AND m.referral_partner IN (:partners) ");
         if (filter.getRmList() != null && !filter.getRmList().isEmpty())
             sql.append("AND m.sales_email IN (:rms) ");
         if (filter.getMerchantName() != null && !filter.getMerchantName().isBlank())
             sql.append("AND m.name ILIKE :merchName ");
-
-        // Correct approach: We already joined dim_merchant. Let's join dim_store if
-        // needed.
-        if (filter.getMccList() != null && !filter.getMccList().isEmpty()) {
+        if (needsStoreJoin && filter.getMccList() != null && !filter.getMccList().isEmpty())
             sql.append("AND st.mcc IN (:mccs) ");
-        }
-        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty()) {
+        if (filter.getTeamLeaderList() != null && !filter.getTeamLeaderList().isEmpty())
             sql.append("AND m.sales_user_id IN (:teamLeaders) ");
-        }
-        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty()) {
+        if (filter.getChannelList() != null && !filter.getChannelList().isEmpty())
             sql.append("AND s.channel IN (:channels) ");
-        }
 
         sql.append("GROUP BY m.mid, m.name ");
         sql.append("ORDER BY m.mid ASC");
@@ -657,7 +656,6 @@ public class VolumeRevenueRepository {
         Query query = entityManager.createNativeQuery(sql.toString());
 
         // Date Logic
-        // Default to current month if null? Assuming UI provides dates.
         java.time.LocalDate end = filter.getEndDate() != null ? filter.getEndDate() : java.time.LocalDate.now();
         java.time.LocalDate start = filter.getStartDate() != null ? filter.getStartDate() : end.withDayOfMonth(1);
 
@@ -667,13 +665,27 @@ public class VolumeRevenueRepository {
         java.time.LocalDate ytdStart = end.withDayOfYear(1);
         java.time.LocalDate prevYtdStart = prevEnd.withDayOfYear(1);
 
+        // MoM: previous month with same day range
+        java.time.LocalDate momStart = start.minusMonths(1);
+        java.time.LocalDate momEnd = end.minusMonths(1);
+
+        // Global lower bound = earliest of prevYtdStart and momStart
+        java.time.LocalDate globalStart = prevYtdStart.isBefore(momStart) ? prevYtdStart : momStart;
+
         query.setParameter("startDate", start);
         query.setParameter("endDate", end);
         query.setParameter("prevStartDate", prevStart);
         query.setParameter("prevEndDate", prevEnd);
         query.setParameter("ytdStartDate", ytdStart);
-        query.setParameter("prevYtdStartDate", prevYtdStart); // This acts as the global lower bound for WHERE
+        query.setParameter("prevYtdStartDate", prevYtdStart);
+        query.setParameter("momStartDate", momStart);
+        query.setParameter("momEndDate", momEnd);
+        query.setParameter("globalStartDate", globalStart);
 
+        if (filter.getSidList() != null && !filter.getSidList().isEmpty())
+            query.setParameter("sids", filter.getSidList());
+        if (filter.getMidList() != null && !filter.getMidList().isEmpty())
+            query.setParameter("mids", filter.getMidList());
         if (filter.getPartnerList() != null && !filter.getPartnerList().isEmpty())
             query.setParameter("partners", filter.getPartnerList());
         if (filter.getRmList() != null && !filter.getRmList().isEmpty())
@@ -695,40 +707,35 @@ public class VolumeRevenueRepository {
             map.put("mid", row[0]);
             map.put("name", row[1]);
 
-            // Calc percentages in Java to avoid divide by zero SQL errors easily
             java.math.BigDecimal mtdCur = (java.math.BigDecimal) row[2];
             java.math.BigDecimal mtdPrev = (java.math.BigDecimal) row[3];
             java.math.BigDecimal ytdCur = (java.math.BigDecimal) row[4];
             java.math.BigDecimal ytdPrev = (java.math.BigDecimal) row[5];
+            java.math.BigDecimal momPrev = (java.math.BigDecimal) row[6];
 
             map.put("mtd_current", mtdCur);
             map.put("mtd_prev", mtdPrev);
-
-            double mtdPct = 0;
-            if (mtdPrev != null && mtdPrev.doubleValue() != 0) {
-                mtdPct = ((mtdCur != null ? mtdCur.doubleValue() : 0) - mtdPrev.doubleValue()) / mtdPrev.doubleValue()
-                        * 100;
-            } else if (mtdCur != null && mtdCur.doubleValue() > 0) {
-                mtdPct = 100; // New growth
-            }
-            map.put("mtd_pct", mtdPct);
+            map.put("mtd_pct", calcPct(mtdCur, mtdPrev));
 
             map.put("ytd_current", ytdCur);
             map.put("ytd_prev", ytdPrev);
+            map.put("ytd_pct", calcPct(ytdCur, ytdPrev));
 
-            double ytdPct = 0;
-            if (ytdPrev != null && ytdPrev.doubleValue() != 0) {
-                ytdPct = ((ytdCur != null ? ytdCur.doubleValue() : 0) - ytdPrev.doubleValue()) / ytdPrev.doubleValue()
-                        * 100;
-            } else if (ytdCur != null && ytdCur.doubleValue() > 0) {
-                ytdPct = 100;
-            }
-            map.put("ytd_pct", ytdPct);
+            map.put("mom_prev", momPrev);
+            map.put("mom_pct", calcPct(mtdCur, momPrev));
 
             result.add(map);
         }
 
         return result;
+    }
+
+    private double calcPct(java.math.BigDecimal current, java.math.BigDecimal previous) {
+        double cur = current != null ? current.doubleValue() : 0;
+        double prev = previous != null ? previous.doubleValue() : 0;
+        if (prev != 0) return ((cur - prev) / prev) * 100;
+        if (cur > 0) return 100;
+        return 0;
     }
 
     public Map<String, Object> getExecutiveMetrics(VolumeRevenueFilterDTO filter) {
@@ -832,15 +839,13 @@ public class VolumeRevenueRepository {
         sql.append("  SUM(s.total_volume) as volume, ");
         sql.append("  SUM(s.total_txns) as count, ");
         sql.append("  SUM(s.total_msf) as msf, ");
-        // Interchange - assuming it's part of MSF or separate? Let's assume 0 if not
-        // tracked, or calculated.
-        // For now returning 0 or derived to fix broken UI.
-        sql.append("  0 as interchange, ");
+        // Interchange from sum_daily_insight (added via Gap-12 fix; defaults to 0 if column doesn't exist yet)
+        sql.append("  COALESCE(SUM(s.total_interchange), 0) as interchange, ");
         sql.append("  st.mcc as mcc, ");
-        // industry? typically derived from MCC or a column. Using MCC description or
-        // category if available, or 'Retail' placeholder
-        sql.append("  'Retail' as industry, ");
-        sql.append("  m.name as legal_name, "); // Fallback to name
+        // Industry from dim_merchant (populated from merchant master); fallback to 'General'
+        sql.append("  COALESCE(NULLIF(m.industry, ''), 'General') as industry, ");
+        // Legal name from dim_store (populated from merchant master); fallback to merchant name
+        sql.append("  COALESCE(NULLIF(st.legal_name, ''), m.name) as legal_name, ");
         sql.append("  SUM(CASE WHEN s.is_opt_in = true THEN s.total_volume ELSE 0 END) as dcc_optin, ");
         sql.append("  count(*) OVER() as total_count, "); // Window function
         sql.append("  t.type as terminal_type "); // New Column

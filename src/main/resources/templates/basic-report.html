@@ -1,19 +1,38 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
+
 <head>
     <meta charset="UTF-8">
     <title th:text="|${merchantName} - Performance Report|">Report</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        @font-face { font-family: 'Inter'; font-weight: 400; src: url('/assets/fonts/Inter-Regular.ttf') format('truetype'); }
+        @font-face { font-family: 'Inter'; font-weight: 500; src: url('/assets/fonts/Inter-Medium.ttf') format('truetype'); }
+        @font-face { font-family: 'Inter'; font-weight: 600; src: url('/assets/fonts/Inter-SemiBold.ttf') format('truetype'); }
+        @font-face { font-family: 'Inter'; font-weight: 700; src: url('/assets/fonts/Inter-Bold.ttf') format('truetype'); }
+        @font-face { font-family: 'Playfair Display'; font-weight: 400; src: url('/assets/fonts/PlayfairDisplay-Regular.ttf') format('truetype'); }
+        @font-face { font-family: 'Playfair Display'; font-weight: 700; src: url('/assets/fonts/PlayfairDisplay-Bold.ttf') format('truetype'); }
+    </style>
     <link rel="stylesheet" href="/assets/report-theme.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/assets/js/chart.js"></script>
     <script th:inline="javascript">
         /*<![CDATA[*/
         window.reportData = /*[[${jsonData}]]*/ {};
         /*]]>*/
     </script>
+    <script>
+        // Unregister chartjs-plugin-datalabels — the bundled plugin auto-registers
+        // and would conflict with our custom drawBarLabels plugin. Marker: V21
+        (function () {
+            try {
+                if (typeof Chart !== 'undefined' && Chart.registry && Chart.registry.plugins) {
+                    var dl = Chart.registry.plugins.get && Chart.registry.plugins.get('datalabels');
+                    if (dl) Chart.unregister(dl);
+                }
+            } catch (e) { /* ignore */ }
+        })();
+    </script>
 </head>
+
 <body>
 
     <!-- PAGE 1: COVER -->
@@ -30,16 +49,7 @@
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 3: MONTH-OVER-MONTH COMPARISON -->
-    <div class="page" id="page-mom-compare">
-        <div th:replace="~{partials/header :: header(title='MONTH-OVER-MONTH COMPARISON', subtitle=${reportPeriod})}"></div>
-        <div class="page-content">
-            <div th:replace="~{pages/p01e-mom-compare :: momCompareContent}"></div>
-        </div>
-        <div th:replace="~{partials/footer :: footer}"></div>
-    </div>
-
-    <!-- PAGE 4: EXECUTIVE SUMMARY -->
+    <!-- PAGE 3: EXECUTIVE SUMMARY (MoM + KPIs + Actions) -->
     <div class="page" id="page-exec-summary">
         <div th:replace="~{partials/header :: header(title='EXECUTIVE SUMMARY', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
@@ -48,16 +58,7 @@
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 5: BUSINESS OVERVIEW -->
-    <div class="page" id="page-overview">
-        <div th:replace="~{partials/header :: header(title='BUSINESS OVERVIEW', subtitle=${reportPeriod})}"></div>
-        <div class="page-content">
-            <div th:replace="~{pages/p02-overview :: overviewContent}"></div>
-        </div>
-        <div th:replace="~{partials/footer :: footer}"></div>
-    </div>
-
-    <!-- PAGE 6: BUSINESS ACHIEVEMENTS -->
+    <!-- PAGE 4: BUSINESS ACHIEVEMENTS -->
     <div class="page" id="page-peak">
         <div th:replace="~{partials/header :: header(title='BUSINESS ACHIEVEMENTS', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
@@ -66,70 +67,52 @@
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 7: DAILY SALES PERFORMANCE -->
+    <!-- PAGE 5: SALES & HOURLY INTELLIGENCE -->
     <div class="page" id="page-sales-trends">
-        <div th:replace="~{partials/header :: header(title='DAILY SALES PERFORMANCE', subtitle=${reportPeriod})}"></div>
+        <div th:replace="~{partials/header :: header(title='SALES &amp; HOURLY INTELLIGENCE', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
             <div th:replace="~{pages/p04-sales-trends :: salesTrendsContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 8: REVENUE & WEEKLY INTELLIGENCE -->
-    <div class="page" id="page-revenue">
-        <div th:replace="~{partials/header :: header(title='REVENUE & WEEKLY INTELLIGENCE', subtitle=${reportPeriod})}"></div>
+    <!-- PAGE 5b: REVENUE HEATMAP & TXN SIZE DISTRIBUTION -->
+    <div class="page" id="page-heatmap">
+        <div th:replace="~{partials/header :: header(title='OPERATIONAL INTELLIGENCE', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
-            <div th:replace="~{pages/p05-revenue :: revenueContent}"></div>
+            <div th:replace="~{pages/p04b-heatmap :: heatmapContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 9: REVENUE BY DAY TYPE -->
-    <div class="page" id="page-day-type">
-        <div th:replace="~{partials/header :: header(title='REVENUE BY DAY TYPE', subtitle=${reportPeriod})}"></div>
-        <div class="page-content">
-            <div th:replace="~{pages/p06-day-type :: dayTypeContent}"></div>
-        </div>
-        <div th:replace="~{partials/footer :: footer}"></div>
-    </div>
-
-    <!-- PAGE 10: GROWTH TRAJECTORY -->
+    <!-- PAGE 6: GROWTH & SEASONALITY -->
     <div class="page" id="page-growth">
-        <div th:replace="~{partials/header :: header(title='GROWTH TRAJECTORY', subtitle=${reportPeriod})}"></div>
+        <div th:replace="~{partials/header :: header(title='GROWTH &amp; SEASONALITY', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
             <div th:replace="~{pages/p07-growth :: growthContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 11: PAYMENT ECOSYSTEM & CONSUMER LOYALTY (MERGED) -->
-    <div class="page" id="page-payment-loyalty">
-        <div th:replace="~{partials/header :: header(title='PAYMENT &amp; LOYALTY', subtitle=${reportPeriod})}"></div>
+    <!-- PAGE 7: CARD & PAYMENT ANALYTICS -->
+    <div class="page" id="page-card-analytics">
+        <div th:replace="~{partials/header :: header(title='CARD &amp; PAYMENT ANALYTICS', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
-            <div th:replace="~{pages/p08-payment-loyalty :: paymentLoyaltyContent}"></div>
+            <div th:replace="~{pages/p08-card-analytics :: cardAnalyticsContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 12: MONTHLY TRENDS -->
-    <div class="page" id="page-monthly-trends">
-        <div th:replace="~{partials/header :: header(title='MONTHLY TRENDS', subtitle=${reportPeriod})}"></div>
+    <!-- PAGE 8: CUSTOMER INTELLIGENCE -->
+    <div class="page" id="page-customer-intel">
+        <div th:replace="~{partials/header :: header(title='CUSTOMER INTELLIGENCE', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
-            <div th:replace="~{pages/p10-monthly-trends :: monthlyTrendsContent}"></div>
+            <div th:replace="~{pages/p09-customer-intel :: customerIntelContent}"></div>
         </div>
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 13: TRANSACTION TRENDS -->
-    <div class="page" id="page-transaction">
-        <div th:replace="~{partials/header :: header(title='TRANSACTION TRENDS', subtitle=${reportPeriod})}"></div>
-        <div class="page-content">
-            <div th:replace="~{pages/p11-transaction :: transactionContent}"></div>
-        </div>
-        <div th:replace="~{partials/footer :: footer}"></div>
-    </div>
-
-    <!-- PAGE 14: DCC REVENUE -->
+    <!-- PAGE 9: DCC REVENUE -->
     <div class="page" id="page-dcc">
         <div th:replace="~{partials/header :: header(title='DCC REVENUE', subtitle=${reportPeriod})}"></div>
         <div class="page-content">
@@ -138,19 +121,41 @@
         <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
-    <!-- PAGE 15: CLOSING — PERFORMANCE SCORECARD -->
+    <!-- PAGE 9b: STORE LEADERBOARD (only if multi-store) -->
+    <div class="page" id="page-store-leaderboard" th:if="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1}">
+        <div th:replace="~{partials/header :: header(title='STORE PERFORMANCE', subtitle=${reportPeriod})}"></div>
+        <div class="page-content">
+            <div th:replace="~{pages/p05b-store-leaderboard :: storeLeaderboardContent}"></div>
+        </div>
+        <div th:replace="~{partials/footer :: footer}"></div>
+    </div>
+
+    <!-- PAGE 10: CLOSING — PERFORMANCE SCORECARD -->
     <div class="page" id="page-closing">
         <div th:replace="~{pages/p99-closing :: closingContent}"></div>
+        <div th:replace="~{partials/footer :: footer}"></div>
     </div>
 
 
     <!-- =============================================
-         PREMIUM CHART ENGINE v2.0
+         PREMIUM CHART ENGINE v2.1
          Supports: sparkline, area, bar, gradient-bar,
          dual-axis, donut, horizontal-bar
          ============================================= -->
     <script>
+        function unregisterDataLabelsPlugin() {
+            try {
+                if (typeof Chart === 'undefined') return;
+                var dl = null;
+                if (Chart.registry && Chart.registry.plugins && Chart.registry.plugins.get) {
+                    dl = Chart.registry.plugins.get('datalabels');
+                }
+                if (dl) Chart.unregister(dl);
+            } catch (e) { /* ignore */ }
+        }
+
         document.addEventListener('DOMContentLoaded', function () {
+            unregisterDataLabelsPlugin();
             try {
                 if (typeof window.reportData === 'string') {
                     window.reportData = JSON.parse(window.reportData);
@@ -159,6 +164,8 @@
 
             renderCharts();
             renderHorizontalBars();
+            renderRevenueHeatmap();
+            renderTxnSizeDistribution();
         });
 
         function getNestedValue(obj, path) {
@@ -166,46 +173,104 @@
             return path.split('.').reduce((o, i) => (o ? o[i] : null), obj);
         }
 
-        /* ------ Create vertical gradient for bars ------ */
         function createGradient(ctx, color, height) {
             const grad = ctx.createLinearGradient(0, 0, 0, height || 300);
             grad.addColorStop(0, color);
-            // Lighten by mixing toward white — less wash-out (0.38 instead of 0.55)
-            const r = parseInt(color.slice(1,3),16), g = parseInt(color.slice(3,5),16), b = parseInt(color.slice(5,7),16);
-            const lr = Math.min(255, r + Math.round((255-r)*0.38));
-            const lg = Math.min(255, g + Math.round((255-g)*0.38));
-            const lb = Math.min(255, b + Math.round((255-b)*0.38));
+            const r = parseInt(color.slice(1, 3), 16), g = parseInt(color.slice(3, 5), 16), b = parseInt(color.slice(5, 7), 16);
+            const lr = Math.min(255, r + Math.round((255 - r) * 0.38));
+            const lg = Math.min(255, g + Math.round((255 - g) * 0.38));
+            const lb = Math.min(255, b + Math.round((255 - b) * 0.38));
             grad.addColorStop(1, `rgb(${lr},${lg},${lb})`);
             return grad;
         }
 
-        /* ------ Render all canvas charts ------ */
+        /* Shared bar-label drawer used by gradient-bar AND dual-axis.
+           Strategy: draw above bar normally; if too close to top of chart area,
+           draw inside bar in white; if bar too short for inside label, draw
+           above bar clamped to canvas top. */
+        function drawBarLabels(chart, datasetIdx, values, fmtLabel, dense, maxIdx) {
+            const meta = chart.getDatasetMeta(datasetIdx);
+            if (!meta) return;
+            const ctx = chart.ctx;
+            const chartArea = chart.chartArea;
+            ctx.save();
+            const fontSize = dense ? 7 : 9;
+            const maxFontSize = dense ? 8 : 10;
+            meta.data.forEach(function (bar, i) {
+                if (!bar || values[i] === 0 || values[i] == null) return;
+                const val = values[i];
+                const fmt = fmtLabel(val);
+                const isPeak = (i === maxIdx);
+                const fSize = isPeak ? maxFontSize : fontSize;
+                ctx.font = (isPeak ? '900 ' : '700 ') + fSize + 'px Inter';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'alphabetic';
+
+                const x = bar.x;
+                const aboveY = bar.y - 6;
+                const barHeight = (bar.base || chartArea.bottom) - bar.y;
+
+                let y, color;
+                if (aboveY - fSize >= chartArea.top) {
+                    y = aboveY;
+                    color = isPeak ? '#0F172A' : '#334155';
+                } else if (barHeight >= fSize + 6) {
+                    y = bar.y + fSize + 2;
+                    color = '#FFFFFF';
+                } else {
+                    y = Math.max(bar.y - 4, fSize + 2);
+                    color = isPeak ? '#0F172A' : '#334155';
+                }
+                ctx.fillStyle = color;
+                ctx.fillText(fmt, x, y);
+            });
+            ctx.restore();
+        }
+
         function renderCharts() {
+            unregisterDataLabelsPlugin();
+
             const charts = document.querySelectorAll('canvas[data-chart]');
             charts.forEach(canvas => {
                 const type = canvas.getAttribute('data-chart');
                 const fieldPath = canvas.getAttribute('data-field');
                 const color = canvas.getAttribute('data-color') || '#2563EB';
-                const color2 = canvas.getAttribute('data-color2') || '#F59E0B';
+                const color2 = canvas.getAttribute('data-color2') || '#0D9488';
                 const bg = canvas.getAttribute('data-bg') || 'rgba(37, 99, 235, 0.06)';
 
                 let rawData = getNestedValue(window.reportData, fieldPath);
                 if (!rawData || !Array.isArray(rawData)) { return; }
 
-                const labels = rawData.map(d => d && d.label ? d.label : '');
+                let labels = rawData.map(d => d && d.label ? d.label : '');
                 const values = rawData.map(d => d && d.value != null ? Number(d.value) : 0);
                 const values2 = rawData.map(d => d && d.value2 != null ? Number(d.value2) : 0);
 
-                const bf = { family: 'Inter', size: 10, weight: '600' };
+                // For daily charts, convert date labels to day numbers
+                var isDailyChart = fieldPath && (fieldPath.indexOf('daily') >= 0 || fieldPath.indexOf('Daily') >= 0 || fieldPath.indexOf('uniqueCustomersByDay') >= 0);
+                var isDayOfWeekChart = fieldPath && (fieldPath.indexOf('DayOfWeek') >= 0 || fieldPath.indexOf('dayOfWeek') >= 0);
+                if (isDailyChart && !isDayOfWeekChart) {
+                    labels = labels.map(function(lbl) {
+                        if (!lbl) return '';
+                        var s = String(lbl).trim();
+                        var parts = s.split('T')[0].split('-');
+                        if (parts.length === 3 && parts[0].length === 4) return String(parseInt(parts[2], 10));
+                        var slashParts = s.split('/');
+                        if (slashParts.length === 3) return String(parseInt(slashParts[0], 10));
+                        if (parts.length === 3 && parts[0].length <= 2) return String(parseInt(parts[0], 10));
+                        return s;
+                    });
+                }
+
                 const common = {
                     responsive: true,
                     maintainAspectRatio: false,
                     animation: false,
                     plugins: {
                         legend: { display: false },
+                        datalabels: { display: false },
                         tooltip: {
                             backgroundColor: '#111827', titleColor: '#FFF', bodyColor: '#FFF',
-                            titleFont: {size:10,family:'Inter',weight:'700'}, bodyFont: {size:10,family:'Inter',weight:'500'},
+                            titleFont: { size: 10, family: 'Inter', weight: '700' }, bodyFont: { size: 10, family: 'Inter', weight: '500' },
                             padding: 8, cornerRadius: 5, displayColors: true, boxWidth: 8, boxHeight: 8
                         }
                     }
@@ -213,194 +278,120 @@
 
                 let config = {};
 
-                /* ---- SPARKLINE ---- */
                 if (type === 'sparkline') {
                     const ctx = canvas.getContext('2d');
                     const sparkGrad = ctx.createLinearGradient(0, 0, 0, 50);
-                    // Parse hex to rgba
-                    const hr = parseInt(color.slice(1,3),16), hg = parseInt(color.slice(3,5),16), hb = parseInt(color.slice(5,7),16);
-                    sparkGrad.addColorStop(0, 'rgba('+hr+','+hg+','+hb+',0.28)');
-                    sparkGrad.addColorStop(1, 'rgba('+hr+','+hg+','+hb+',0.02)');
+                    const hr = parseInt(color.slice(1, 3), 16), hg = parseInt(color.slice(3, 5), 16), hb = parseInt(color.slice(5, 7), 16);
+                    sparkGrad.addColorStop(0, 'rgba(' + hr + ',' + hg + ',' + hb + ',0.28)');
+                    sparkGrad.addColorStop(1, 'rgba(' + hr + ',' + hg + ',' + hb + ',0.02)');
                     config = {
                         type: 'line',
-                        data: { labels, datasets: [{
-                            data: values, borderColor: color, borderWidth: 2.5,
-                            pointRadius: 0, fill: true, backgroundColor: sparkGrad, tension: 0.4
-                        }]},
-                        options: { ...common,
-                            plugins: { legend: {display:false}, tooltip: {enabled:false} },
-                            scales: { x: {display:false}, y: {display:false, min: Math.min(...values)*0.85} }
+                        data: { labels, datasets: [{ data: values, borderColor: color, borderWidth: 2.5, pointRadius: 0, fill: true, backgroundColor: sparkGrad, tension: 0.4 }] },
+                        options: {
+                            ...common,
+                            plugins: { legend: { display: false }, datalabels: { display: false }, tooltip: { enabled: false } },
+                            scales: { x: { display: false }, y: { display: false, min: Math.min(...values) * 0.85 } }
                         }
                     };
                 }
-
-                /* ---- AREA ---- */
                 else if (type === 'area') {
-                    // Highlight last point with larger radius
-                    const ptRadius = values.map((v,i) => i === values.length-1 ? 5 : 2.5);
-                    const ptBorderW = values.map((v,i) => i === values.length-1 ? 3 : 2);
+                    const ptRadius = values.map((v, i) => i === values.length - 1 ? 5 : 2.5);
+                    const ptBorderW = values.map((v, i) => i === values.length - 1 ? 3 : 2);
                     config = {
                         type: 'line',
-                        data: { labels, datasets: [{
-                            data: values, borderColor: color, backgroundColor: bg,
-                            borderWidth: 2.5, fill: true, pointRadius: ptRadius, pointBackgroundColor: '#FFF',
-                            pointBorderColor: color, pointBorderWidth: ptBorderW, tension: 0.35
-                        }]},
-                        options: { ...common,
+                        data: { labels, datasets: [{ data: values, borderColor: color, backgroundColor: bg, borderWidth: 2.5, fill: true, pointRadius: ptRadius, pointBackgroundColor: '#FFF', pointBorderColor: color, pointBorderWidth: ptBorderW, tension: 0.35 }] },
+                        options: {
+                            ...common,
                             scales: {
-                                x: { grid:{display:false}, ticks: {font:bf, color:'#6B7280', maxTicksLimit:8, maxRotation:45} },
-                                y: { grid:{color:'#E5E7EB',drawBorder:false}, ticks: {font:bf, color:'#6B7280', callback: v=>v>=1000?(v/1000).toFixed(0)+'k':v} }
+                                x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: '#1E293B', maxTicksLimit: 8, maxRotation: 45 } },
+                                y: { beginAtZero: true, grid: { color: '#E5E7EB', drawBorder: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: '#374151', callback: v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 10000 ? Math.round(v/1000)+'k' : v >= 1000 ? (v/1000).toFixed(1).replace(/\.0$/,'')+'k' : Math.round(v) } }
                             }
                         }
                     };
                 }
-
-                /* ---- FLAT BAR ---- */
                 else if (type === 'bar') {
                     config = {
                         type: 'bar',
-                        data: { labels, datasets: [{
-                            data: values, backgroundColor: color,
-                            borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8
-                        }]},
-                        options: { ...common,
+                        data: { labels, datasets: [{ data: values, backgroundColor: color, borderRadius: 4, barPercentage: 0.7, categoryPercentage: 0.8 }] },
+                        options: {
+                            ...common,
                             scales: {
-                                x: { grid:{display:false}, ticks: {font:bf, color:'#6B7280', maxRotation:45} },
-                                y: { grid:{color:'#E5E7EB',drawBorder:false}, ticks: {font:bf, color:'#6B7280', callback: v=>v>=1000?(v/1000).toFixed(0)+'k':v} }
+                                x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: '#1E293B', maxRotation: 45 } },
+                                y: { beginAtZero: true, grid: { color: '#E5E7EB', drawBorder: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: '#374151', callback: v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 10000 ? Math.round(v/1000)+'k' : v >= 1000 ? (v/1000).toFixed(1).replace(/\.0$/,'')+'k' : Math.round(v) } }
                             }
                         }
                     };
                 }
-
-                /* ---- GRADIENT BAR (with highlight + data labels) ---- */
                 else if (type === 'gradient-bar') {
                     const ctx = canvas.getContext('2d');
                     const grad = createGradient(ctx, color, canvas.parentElement.clientHeight || 200);
-                    // Highlight last bar + find max/min indices
-                    const maxIdx = values.indexOf(Math.max(...values.filter(v=>v>0)));
-                    const minIdx = values.indexOf(Math.min(...values.filter(v=>v>0)));
+                    const maxIdx = values.indexOf(Math.max(...values.filter(v => v > 0)));
                     const lastIdx = values.length - 1;
-                    // Per-bar colors: highlight last bar with brighter shade
-                    const r = parseInt(color.slice(1,3),16), g = parseInt(color.slice(3,5),16), b = parseInt(color.slice(5,7),16);
-                    const highlightColor = `rgba(${Math.min(255,r+40)},${Math.min(255,g+40)},${Math.min(255,b+40)},1)`;
+                    const r = parseInt(color.slice(1, 3), 16), g = parseInt(color.slice(3, 5), 16), b = parseInt(color.slice(5, 7), 16);
+                    const highlightColor = `rgba(${Math.min(255, r + 40)},${Math.min(255, g + 40)},${Math.min(255, b + 40)},1)`;
+                    const fmtLabel = v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 10000 ? Math.round(v/1000)+'k' : v >= 1000 ? (v/1000).toFixed(1).replace(/\.0$/,'')+'k' : Math.round(v).toLocaleString();
+                    const dense = values.length > 20;
                     const barColors = values.map((v, i) => i === lastIdx ? highlightColor : grad);
                     const barBorders = values.map((v, i) => i === lastIdx ? color : 'transparent');
                     config = {
                         type: 'bar',
-                        data: { labels, datasets: [{
-                            data: values, backgroundColor: barColors,
-                            borderColor: barBorders, borderWidth: values.map((v,i) => i === lastIdx ? 2 : 0),
-                            borderRadius: 5, barPercentage: 0.72, categoryPercentage: 0.82
-                        }]},
-                        options: { ...common,
-                            plugins: { ...common.plugins,
-                                /* Data labels on max bar */
-                                dataLabels: { maxIdx: maxIdx }
-                            },
+                        data: { labels, datasets: [{ data: values, backgroundColor: barColors, borderColor: barBorders, borderWidth: values.map((v, i) => i === lastIdx ? 2 : 0), borderRadius: 5, barPercentage: 0.72, categoryPercentage: 0.82 }] },
+                        options: {
+                            ...common,
+                            layout: { padding: { top: 28 } },
                             scales: {
-                                x: { grid:{display:false}, ticks: {font:bf, color:'#6B7280', maxRotation:45} },
-                                y: { grid:{color:'#E5E7EB',drawBorder:false}, ticks: {font:bf, color:'#6B7280', callback: v=>v>=1000?(v/1000).toFixed(0)+'k':v} }
+                                x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 10, weight: '800' }, color: '#1E293B', maxRotation: 45 } },
+                                y: { beginAtZero: true, grid: { color: '#E5E7EB', drawBorder: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: '#374151', callback: v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 10000 ? Math.round(v/1000)+'k' : v >= 1000 ? (v/1000).toFixed(1).replace(/\.0$/,'')+'k' : Math.round(v) } }
                             }
                         }
                     };
-                    // Register a plugin to draw value label on max bar
                     config.plugins = [{
-                        id: 'maxLabel',
-                        afterDraw: function(chart) {
-                            const meta = chart.getDatasetMeta(0);
-                            if (!meta || !meta.data[maxIdx]) return;
-                            const bar = meta.data[maxIdx];
-                            const ctx = chart.ctx;
-                            const val = values[maxIdx];
-                            const fmt = val >= 1000 ? (val/1000).toFixed(1)+'k' : val.toLocaleString();
-                            ctx.save();
-                            ctx.font = '700 10px Inter';
-                            ctx.fillStyle = '#111827';
-                            ctx.textAlign = 'center';
-                            ctx.fillText(fmt, bar.x, bar.y - 4);
-                            ctx.restore();
-                        }
+                        id: 'gradientBarLabels',
+                        afterDatasetsDraw: function (chart) { drawBarLabels(chart, 0, values, fmtLabel, dense, maxIdx); }
                     }];
                 }
-
-                /* ---- DUAL-AXIS (Sales bars + Count line) ---- */
                 else if (type === 'dual-axis') {
                     const ctx = canvas.getContext('2d');
                     const grad = createGradient(ctx, color, canvas.parentElement.clientHeight || 200);
+                    const currency = window.reportData.currencySymbol || window.reportData.currencyCode || 'AED';
+                    const maxIdx = values.indexOf(Math.max(...values.filter(v => v > 0)));
+                    const fmtLabel = v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 10000 ? Math.round(v/1000)+'k' : v >= 1000 ? (v/1000).toFixed(1).replace(/\.0$/,'')+'k' : Math.round(v).toLocaleString();
+                    const dense = values.length > 20;
                     config = {
                         type: 'bar',
                         data: {
                             labels,
                             datasets: [
-                                {
-                                    label: 'Sales (AED)',
-                                    data: values,
-                                    backgroundColor: grad,
-                                    borderRadius: 4,
-                                    barPercentage: 0.68,
-                                    categoryPercentage: 0.82,
-                                    yAxisID: 'y',
-                                    order: 2
-                                },
-                                {
-                                    label: 'Txn Count',
-                                    data: values2,
-                                    type: 'line',
-                                    borderColor: color2,
-                                    backgroundColor: 'transparent',
-                                    borderWidth: 2.5,
-                                    pointRadius: 3,
-                                    pointBackgroundColor: '#FFF',
-                                    pointBorderColor: color2,
-                                    pointBorderWidth: 2,
-                                    tension: 0.35,
-                                    yAxisID: 'y1',
-                                    order: 1
-                                }
+                                { label: 'Sales (' + currency + ')', data: values, backgroundColor: grad, borderRadius: 4, barPercentage: 0.68, categoryPercentage: 0.82, yAxisID: 'y', order: 2 },
+                                { label: 'Txn Count', data: values2, type: 'line', borderColor: color2, backgroundColor: 'transparent', borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: '#FFF', pointBorderColor: color2, pointBorderWidth: 2, tension: 0.35, yAxisID: 'y1', order: 1 }
                             ]
                         },
-                        options: { ...common,
-                            plugins: { ...common.plugins, legend: {
-                                display: false
-                            }},
+                        options: {
+                            ...common,
+                            layout: { padding: { top: 24 } },
                             scales: {
-                                x: { grid:{display:false}, ticks: {font:bf, color:'#6B7280', maxTicksLimit:10, maxRotation:45} },
-                                y: {
-                                    position: 'left',
-                                    grid: {color:'#E5E7EB',drawBorder:false},
-                                    ticks: {font:bf, color:'#6B7280', callback: v=>v>=1000?(v/1000).toFixed(0)+'k':v},
-                                    title: {display:true, text:'Sales (AED)', font:{size:9,family:'Inter',weight:'700'}, color:'#6B7280'}
-                                },
-                                y1: {
-                                    position: 'right',
-                                    grid: {display:false},
-                                    ticks: {font:bf, color: color2},
-                                    title: {display:true, text:'Txn Count', font:{size:9,family:'Inter',weight:'700'}, color: color2}
-                                }
+                                x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: '#1E293B', maxTicksLimit: 10, maxRotation: 45 } },
+                                y: { position: 'left', beginAtZero: true, grid: { color: '#E5E7EB', drawBorder: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: '#374151', callback: v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 10000 ? Math.round(v/1000)+'k' : v >= 1000 ? (v/1000).toFixed(1).replace(/\.0$/,'')+'k' : Math.round(v) }, title: { display: true, text: 'Sales (' + currency + ')', font: { size: 9, family: 'Inter', weight: '800' }, color: '#1E293B' } },
+                                y1: { position: 'right', grid: { display: false }, ticks: { font: { family: 'Inter', size: 10, weight: '700' }, color: color2 }, title: { display: true, text: 'Txn Count', font: { size: 9, family: 'Inter', weight: '800' }, color: color2 } }
                             }
                         }
                     };
+                    config.plugins = [{
+                        id: 'dualAxisBarLabels',
+                        afterDatasetsDraw: function (chart) { drawBarLabels(chart, 0, values, fmtLabel, dense, maxIdx); }
+                    }];
                 }
-
-                /* ---- DONUT ---- */
                 else if (type === 'donut') {
                     config = {
                         type: 'doughnut',
-                        data: { labels, datasets: [{
-                            data: values,
-                            backgroundColor: ['#1E3A8A','#2563EB','#3B82F6','#60A5FA','#93C5FD','#059669','#D97706'],
-                            borderColor: '#FFFFFF', borderWidth: 3
-                        }]},
-                        options: { ...common,
+                        data: { labels, datasets: [{ data: values, backgroundColor: ['#1E3A8A', '#2563EB', '#3B82F6', '#60A5FA', '#93C5FD', '#059669', '#D97706'], borderColor: '#FFFFFF', borderWidth: 3 }] },
+                        options: {
+                            ...common,
                             cutout: '62%',
-                            plugins: { ...common.plugins,
-                                legend: { display:true, position:'right', labels: {
-                                    font:{size:10,family:'Inter',weight:'600'}, color:'#374151', boxWidth:10, boxHeight:10, padding:8, usePointStyle:true, pointStyle:'circle'
-                                }},
-                                tooltip: { callbacks: { label: function(ctx) {
-                                    const total = ctx.dataset.data.reduce((a,b) => a+b, 0);
-                                    return ctx.label+': '+new Intl.NumberFormat().format(ctx.parsed)+' ('+ ((ctx.parsed/total)*100).toFixed(1)+'%)';
-                                }}}
+                            plugins: {
+                                legend: { display: true, position: 'right', labels: { font: { size: 10, family: 'Inter', weight: '700' }, color: '#1E293B', boxWidth: 10, boxHeight: 10, padding: 8, usePointStyle: true, pointStyle: 'circle' } },
+                                datalabels: { display: false },
+                                tooltip: { backgroundColor: '#111827', titleColor: '#FFF', bodyColor: '#FFF', callbacks: { label: function (ctx) { const total = ctx.dataset.data.reduce((a, b) => a + b, 0); return ctx.label + ': ' + new Intl.NumberFormat().format(ctx.parsed) + ' (' + ((ctx.parsed / total) * 100).toFixed(1) + '%)'; } } }
                             }
                         }
                     };
@@ -410,62 +401,129 @@
             });
         }
 
-        /* ------ Generic horizontal bar renderer ------ */
         function renderHBars(containerId, dataPath, colorSet, prefix) {
             const container = document.getElementById(containerId);
             if (!container) return;
-
             let rawData = getNestedValue(window.reportData, dataPath);
             let items = [];
-
-            // Support both Array<ChartData> and Map<String, BigDecimal>
             if (Array.isArray(rawData)) {
                 items = rawData.slice(0, 7).map(d => ({ label: d.label || '', value: Number(d.value) || 0 }));
             } else if (rawData && typeof rawData === 'object') {
                 items = Object.entries(rawData).slice(0, 7).map(([k, v]) => ({ label: k, value: Number(v) || 0 }));
             }
-
             if (items.length === 0) {
                 container.innerHTML = '<div style="color:#6B7280;font-size:9px;text-align:center;padding:20px;background:#F9FAFB;border-radius:6px;border:1px dashed #D1D5DB;"><span style="font-weight:700;">No data available</span><br/><span style="font-size:7.5px;color:#9CA3AF;margin-top:2px;display:block;">Data will appear here when transactions are recorded</span></div>';
                 return;
             }
-
-            // Sort descending
             items.sort((a, b) => b.value - a.value);
             const maxVal = items[0].value || 1;
-            const colors = colorSet || ['#1E3A8A','#2563EB','#3B82F6','#60A5FA','#93C5FD','#BFDBFE','#DBEAFE'];
+            const colors = colorSet || ['#1E3A8A', '#2563EB', '#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE', '#DBEAFE'];
             const pre = prefix || '';
-
             let html = '';
             items.forEach((d, i) => {
                 const pct = (d.value / maxVal * 100);
-                const fmt = d.value >= 1000000 ? (d.value/1000000).toFixed(1)+'M' : d.value >= 1000 ? (d.value/1000).toFixed(1)+'k' : d.value.toLocaleString();
-                html += `<div class="h-bar-row">
-                    <div class="h-bar-label">${d.label}</div>
-                    <div class="h-bar-track">
-                        <div class="h-bar-fill" style="width:${Math.max(pct, 8)}%; background: linear-gradient(90deg, ${colors[i%colors.length]}, ${colors[Math.min(i+1,colors.length-1)]});">
-                        </div>
-                    </div>
-                    <div class="h-bar-value">${pre}${fmt}</div>
-                </div>`;
+                const fmt = d.value >= 1000000 ? (d.value / 1000000).toFixed(1) + 'M' : d.value >= 1000 ? (d.value / 1000).toFixed(1) + 'k' : d.value.toLocaleString();
+                html += `<div class="h-bar-row"><div class="h-bar-label">${d.label}</div><div class="h-bar-track"><div class="h-bar-fill" style="width:${Math.max(pct, 8)}%; background: linear-gradient(90deg, ${colors[i % colors.length]}, ${colors[Math.min(i + 1, colors.length - 1)]});"></div></div><div class="h-bar-value">${pre}${fmt}</div></div>`;
             });
             container.innerHTML = html;
         }
 
-        /* ------ Render all horizontal bar sections ------ */
+        function renderRevenueHeatmap() {
+            const container = document.getElementById('revenue-heatmap-grid');
+            if (!container) return;
+            const heatmapData = getNestedValue(window.reportData, 'achievements.revenueHeatmap');
+            if (!Array.isArray(heatmapData) || heatmapData.length === 0) { container.innerHTML = '<div style="color:#6B7280;font-size:9px;text-align:center;padding:20px;">No heatmap data available</div>'; return; }
+            const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+            const hours = Array.from({length:24}, (_,i) => String(i).padStart(2,'0'));
+            const grid = {};
+            let maxVal = 0;
+            heatmapData.forEach(d => {
+                const v = Number(d.value) || 0;
+                grid[d.label] = v;
+                if (v > maxVal) maxVal = v;
+            });
+            const hourTotals = {}; const dayTotals = {};
+            days.forEach(day => { dayTotals[day] = 0; hours.forEach(h => { const k = day+'|'+h; const v = grid[k]||0; dayTotals[day]+=v; hourTotals[h]=(hourTotals[h]||0)+v; }); });
+            const peakHour = Object.entries(hourTotals).sort((a,b)=>b[1]-a[1])[0];
+            const peakDay = Object.entries(dayTotals).sort((a,b)=>b[1]-a[1])[0];
+            const deadHour = Object.entries(hourTotals).filter(e=>e[1]>0).sort((a,b)=>a[1]-b[1])[0] || Object.entries(hourTotals).sort((a,b)=>a[1]-b[1])[0];
+            const currency = window.reportData.currencySymbol || 'AED';
+            const fmt = v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(1)+'k' : Math.round(v).toLocaleString();
+            const phEl = document.getElementById('heatmap-peak-hour');
+            if (phEl && peakHour) { phEl.textContent = peakHour[0]+':00'; document.getElementById('heatmap-peak-hour-rev').textContent = currency+' '+fmt(peakHour[1])+' total'; }
+            const pdEl = document.getElementById('heatmap-peak-day');
+            if (pdEl && peakDay) { pdEl.textContent = peakDay[0]; document.getElementById('heatmap-peak-day-rev').textContent = currency+' '+fmt(peakDay[1])+' total'; }
+            const dzEl = document.getElementById('heatmap-dead-zone');
+            if (dzEl && deadHour) { dzEl.textContent = deadHour[0]+':00'; }
+            function getColor(val) {
+                if (maxVal === 0) return '#F9FAFB';
+                const pct = val / maxVal;
+                if (pct === 0) return '#F9FAFB';
+                if (pct < 0.15) return '#EFF6FF';
+                if (pct < 0.3) return '#DBEAFE';
+                if (pct < 0.5) return '#93C5FD';
+                if (pct < 0.7) return '#3B82F6';
+                if (pct < 0.85) return '#1E3A8A';
+                return '#DC2626';
+            }
+            function getTextColor(val) {
+                if (maxVal === 0) return '#CBD5E1';
+                const pct = val / maxVal;
+                return pct > 0.45 ? '#FFFFFF' : '#374151';
+            }
+            let html = '<div style="display:grid;grid-template-columns:32px repeat(24,1fr);gap:1px;font-size:6.5px;">';
+            html += '<div style="font-weight:700;color:#6B7280;display:flex;align-items:center;justify-content:center;"></div>';
+            hours.forEach(h => { html += '<div style="font-weight:700;color:#6B7280;text-align:center;padding:2px 0;">'+h+'</div>'; });
+            days.forEach(day => {
+                html += '<div style="font-weight:800;color:#1E293B;display:flex;align-items:center;padding-right:4px;">'+day+'</div>';
+                hours.forEach(h => {
+                    const k = day+'|'+h;
+                    const v = grid[k] || 0;
+                    const bg = getColor(v);
+                    const tc = getTextColor(v);
+                    const label = v > 0 ? fmt(v) : '';
+                    html += '<div style="background:'+bg+';color:'+tc+';text-align:center;padding:5px 1px;border-radius:2px;font-size:5.5px;font-weight:600;line-height:1;">'+label+'</div>';
+                });
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderTxnSizeDistribution() {
+            const container = document.getElementById('txn-size-dist-chart');
+            if (!container) return;
+            const distData = getNestedValue(window.reportData, 'achievements.txnSizeDistribution');
+            if (!Array.isArray(distData) || distData.length === 0) { container.innerHTML = '<div style="color:#6B7280;font-size:9px;text-align:center;padding:20px;">No transaction size data available</div>'; return; }
+            const maxPct = Math.max(...distData.map(d => Number(d.value2) || 0), 1);
+            const currency = window.reportData.currencySymbol || 'AED';
+            const fmt = v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(1)+'k' : Number(v).toLocaleString();
+            const colors = ['#DBEAFE','#93C5FD','#3B82F6','#2563EB','#1E3A8A','#1E40AF','#0F2042'];
+            let html = '';
+            distData.forEach((d, i) => {
+                const pct = Number(d.value2) || 0;
+                const cnt = Number(d.value) || 0;
+                const vol = Number(d.value3) || 0;
+                const barW = Math.max(pct / maxPct * 100, 8);
+                html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">';
+                html += '<div style="width:45px;font-size:8px;font-weight:700;color:#374151;text-align:right;">'+d.label+'</div>';
+                html += '<div style="flex:1;height:16px;background:#F3F4F6;border-radius:3px;overflow:hidden;position:relative;">';
+                html += '<div style="width:'+barW+'%;height:100%;background:'+colors[i%colors.length]+';border-radius:3px;display:flex;align-items:center;padding-left:6px;">';
+                html += '<span style="font-size:6.5px;font-weight:700;color:'+(barW > 30 ? 'white' : '#374151')+';">'+ pct+'%</span>';
+                html += '</div></div>';
+                html += '<div style="width:70px;font-size:7px;color:#6B7280;text-align:right;">'+fmt(cnt)+' txns</div>';
+                html += '<div style="width:70px;font-size:7px;color:#1E3A8A;font-weight:700;text-align:right;">'+currency+' '+fmt(vol)+'</div>';
+                html += '</div>';
+            });
+            container.innerHTML = html;
+        }
+
         function renderHorizontalBars() {
-            // Payment — Card Schemes (Map)
-            renderHBars('payment-card-schemes', 'demographics.cardSchemeValueSplit',
-                ['#1E3A8A','#2563EB','#3B82F6','#60A5FA','#93C5FD'], 'AED ');
-
-            // Payment — Card Types (Map)
-            renderHBars('payment-card-types', 'demographics.cardTypeValueSplit',
-                ['#047857','#059669','#34D399','#6EE7B7','#A7F3D0'], 'AED ');
-
-            // Payment — Transaction Types (Map)
-            renderHBars('payment-txn-types', 'demographics.transactionTypeValueSplit',
-                ['#7C3AED','#8B5CF6','#A78BFA','#C4B5FD','#DDD6FE'], 'AED ');
+            const currency = window.reportData.currencySymbol || 'AED';
+            renderHBars('payment-card-schemes', 'demographics.cardSchemeValueSplit', ['#1E3A8A', '#2563EB', '#3B82F6', '#60A5FA', '#93C5FD'], currency + ' ');
+            renderHBars('payment-card-types', 'demographics.cardTypeValueSplit', ['#047857', '#059669', '#34D399', '#6EE7B7', '#A7F3D0'], currency + ' ');
+            renderHBars('payment-txn-types', 'demographics.transactionTypeValueSplit', ['#7C3AED', '#8B5CF6', '#A78BFA', '#C4B5FD', '#DDD6FE'], currency + ' ');
         }
     </script>
 </body>
+
 </html>

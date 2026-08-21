@@ -37,6 +37,10 @@ public class ExcelSplitterTasklet implements Tasklet {
     @Value("#{jobParameters['fullPath']}")
     private String fullPath;
 
+    /**
+     * OUTPUT CSV column names — these are the canonical names used by the CSV reader.
+     * The alias map below handles all known Excel header variations.
+     */
     private static final String[] TARGET_HEADERS = {
             "Entity Name", "Aggregator Internal Id", "Aggregator Name", "AggregatorCode",
             "MID", "Merchant Internal Id", "Merchant Name",
@@ -49,6 +53,61 @@ public class ExcelSplitterTasklet implements Tasklet {
             "Store Base Currency Amount",
             "MSF", "VAT", "Total Amount Settled", "Interchange Fee", "Destination"
     };
+
+    /**
+     * Alias map: normalizedExcelHeader → target header index.
+     * Handles multiple Excel formats:
+     *   - Format A: spaces ("Entity Name", "Payment Date")
+     *   - Format B: underscores ("Entity_Name", "Payment_Date")
+     *   - Format C: vendor-specific ("DCC_TXN_IND", "original_currency", "MSF_And_FLAT_FEE")
+     */
+    private static final Map<String, String> HEADER_ALIASES = new LinkedHashMap<>();
+    static {
+        // Identity mappings (normalized form of TARGET_HEADERS)
+        for (String h : TARGET_HEADERS) {
+            HEADER_ALIASES.put(normalizeHeader(h), h);
+        }
+        // Format B: underscore variants
+        HEADER_ALIASES.put(normalizeHeader("Entity_Name"), "Entity Name");
+        HEADER_ALIASES.put(normalizeHeader("Aggregator_Internal_Id"), "Aggregator Internal Id");
+        HEADER_ALIASES.put(normalizeHeader("Aggregator_Name"), "Aggregator Name");
+        HEADER_ALIASES.put(normalizeHeader("Aggregator_Code"), "AggregatorCode");
+        HEADER_ALIASES.put(normalizeHeader("Merchant_Internal_Id"), "Merchant Internal Id");
+        HEADER_ALIASES.put(normalizeHeader("Merchant_Name"), "Merchant Name");
+        HEADER_ALIASES.put(normalizeHeader("Merchant_Store_Internal_Id"), "Merchant Store Internal Id");
+        HEADER_ALIASES.put(normalizeHeader("CMM_Merchant_Store_Internal_Id"), "CMM Merchant Store Internal Id");
+        HEADER_ALIASES.put(normalizeHeader("Merchant_Store_Legal_Name"), "Merchant Store Legal Name");
+        HEADER_ALIASES.put(normalizeHeader("Store_Name"), "Store Name");
+        HEADER_ALIASES.put(normalizeHeader("RRN_Number"), "RRN Number");
+        HEADER_ALIASES.put(normalizeHeader("Auth_Code"), "Auth Code");
+        HEADER_ALIASES.put(normalizeHeader("Payment_Date"), "Payment Date");
+        HEADER_ALIASES.put(normalizeHeader("Transaction_Date"), "Transaction Date");
+        HEADER_ALIASES.put(normalizeHeader("Transaction_Type"), "Transaction Type");
+        HEADER_ALIASES.put(normalizeHeader("Card_Type"), "Card Type");
+        HEADER_ALIASES.put(normalizeHeader("Interchange_Fee"), "Interchange Fee");
+        // Format C: vendor-specific column names
+        HEADER_ALIASES.put(normalizeHeader("cardScheme"), "CardScheme");
+        HEADER_ALIASES.put(normalizeHeader("card_scheme"), "CardScheme");
+        HEADER_ALIASES.put(normalizeHeader("DCC_TXN_IND"), "DCC");
+        HEADER_ALIASES.put(normalizeHeader("dcc_txn_ind"), "DCC");
+        HEADER_ALIASES.put(normalizeHeader("original_currency"), "Txn Currency");
+        HEADER_ALIASES.put(normalizeHeader("original_base_currency_amount"), "Txn Currency Amount");
+        HEADER_ALIASES.put(normalizeHeader("settled_currency"), "Store Base Currency");
+        HEADER_ALIASES.put(normalizeHeader("store_base_currency_amount"), "Store Base Currency Amount");
+        HEADER_ALIASES.put(normalizeHeader("MSF_And_FLAT_FEE"), "MSF");
+        HEADER_ALIASES.put(normalizeHeader("msf_and_flat_fee"), "MSF");
+        HEADER_ALIASES.put(normalizeHeader("tran_amount_settled"), "Total Amount Settled");
+        HEADER_ALIASES.put(normalizeHeader("Card Destination"), "Destination");
+        HEADER_ALIASES.put(normalizeHeader("card_destination"), "Destination");
+    }
+
+    /** Normalize header: lowercase, strip underscores/spaces/hyphens */
+    private static String normalizeHeader(String h) {
+        return h == null ? "" : h.trim().toLowerCase().replaceAll("[_ -]+", "");
+    }
+
+    /** Index of Transaction_Time column in Excel (-1 if not found) — handled specially */
+    private static final String TRANSACTION_TIME_HEADER = "Transaction_Time";
 
     private static final int CHUNK_SIZE = 50_000; // 5x larger = fewer files, less overhead
     private static final int BUFFER_SIZE = 256 * 1024; // 256KB write buffer
@@ -82,21 +141,65 @@ public class ExcelSplitterTasklet implements Tasklet {
                     return RepeatStatus.FINISHED;
                 }
 
-                // 1. Read header and build INDEX ARRAY (not map lookup per cell)
+                // 1. Read header and build INDEX ARRAY using ALIAS-AWARE matching
                 Row headerRow = iterator.next();
-                Map<String, Integer> headerMap = new HashMap<>();
                 int cellCount = headerRow.getCellCount();
+
+                // Build normalized-to-column-index map from Excel headers
+                Map<String, Integer> normalizedExcelMap = new HashMap<>();
+                Map<String, String> rawExcelHeaders = new HashMap<>(); // for debug logging
                 for (int i = 0; i < cellCount; i++) {
                     String val = headerRow.getCell(i).getText();
-                    if (val != null) headerMap.put(val.trim(), i);
+                    if (val != null) {
+                        String norm = normalizeHeader(val);
+                        normalizedExcelMap.put(norm, i);
+                        rawExcelHeaders.put(norm, val.trim());
+                    }
                 }
 
-                // Pre-compute: for each target column, what source index?
+                // Pre-compute: for each target column, find source index via alias map
                 int[] sourceIndexes = new int[TARGET_HEADERS.length];
+                // Build target header name -> target index lookup
+                Map<String, Integer> targetNameToIdx = new HashMap<>();
                 for (int i = 0; i < TARGET_HEADERS.length; i++) {
-                    Integer idx = headerMap.get(TARGET_HEADERS[i]);
-                    sourceIndexes[i] = (idx != null) ? idx : -1;
+                    targetNameToIdx.put(TARGET_HEADERS[i], i);
+                    sourceIndexes[i] = -1; // default: not found
                 }
+
+                // Try alias matching: for each Excel header, find its target
+                for (Map.Entry<String, Integer> excelEntry : normalizedExcelMap.entrySet()) {
+                    String normalizedExcel = excelEntry.getKey();
+                    String targetName = HEADER_ALIASES.get(normalizedExcel);
+                    if (targetName != null) {
+                        Integer targetIdx = targetNameToIdx.get(targetName);
+                        if (targetIdx != null) {
+                            sourceIndexes[targetIdx] = excelEntry.getValue();
+                        }
+                    }
+                }
+
+                // Detect Transaction_Time column (separate time column to merge with Transaction_Date)
+                int timeColumnIdx = -1;
+                for (Map.Entry<String, Integer> e : normalizedExcelMap.entrySet()) {
+                    if (e.getKey().equals(normalizeHeader(TRANSACTION_TIME_HEADER))
+                            || e.getKey().equals("transactiontime")) {
+                        timeColumnIdx = e.getValue();
+                        break;
+                    }
+                }
+                final int txnTimeColIdx = timeColumnIdx;
+                // Transaction Date target index for merging time
+                final int txnDateTargetIdx = targetNameToIdx.getOrDefault("Transaction Date", -1);
+                final int txnDateSrcIdx = txnDateTargetIdx >= 0 ? sourceIndexes[txnDateTargetIdx] : -1;
+
+                // Log mapping results
+                int matched = 0;
+                for (int i = 0; i < TARGET_HEADERS.length; i++) {
+                    if (sourceIndexes[i] >= 0) matched++;
+                    else System.out.printf("  ⚠️  Column '%s' not found in Excel%n", TARGET_HEADERS[i]);
+                }
+                System.out.printf("Header mapping: %d/%d columns matched (Transaction_Time col: %d)%n",
+                        matched, TARGET_HEADERS.length, txnTimeColIdx);
 
                 // Build CSV header string once
                 StringBuilder headerSb = new StringBuilder(512);
@@ -124,7 +227,25 @@ public class ExcelSplitterTasklet implements Tasklet {
                         int srcIdx = sourceIndexes[i];
                         if (srcIdx >= 0 && srcIdx < maxCell) {
                             String val = row.getCell(srcIdx).getText();
+                            // Fallback: getText() returns empty for date/numeric cells
+                            // stored as Excel serial numbers — use raw value instead
+                            if ((val == null || val.isEmpty())) {
+                                val = row.getCell(srcIdx).getRawValue();
+                            }
                             if (val != null && !val.isEmpty()) {
+                                val = val.trim(); // Always trim whitespace (fixes "Credit " etc.)
+
+                                // Special: merge Transaction_Time into Transaction_Date
+                                if (i == txnDateTargetIdx && txnTimeColIdx >= 0 && txnTimeColIdx < maxCell) {
+                                    String timeVal = row.getCell(txnTimeColIdx).getText();
+                                    if (timeVal != null && !timeVal.trim().isEmpty()) {
+                                        // If date doesn't already contain time, append it
+                                        if (!val.contains(":") && !val.contains("T")) {
+                                            val = val + " " + timeVal.trim();
+                                        }
+                                    }
+                                }
+
                                 // Inline CSV escape — avoid String.replace() allocation
                                 for (int c = 0; c < val.length(); c++) {
                                     char ch = val.charAt(c);

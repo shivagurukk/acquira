@@ -1,416 +1,367 @@
-import React, { useState, useEffect } from 'react';
-import {
-    Box,
-    Paper,
-    Typography,
-    Grid,
-    Autocomplete,
-    TextField,
-    Button,
-    Chip,
-    CircularProgress
-} from '@mui/material';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Box, Paper, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button, Chip, Stack, Tooltip } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { Search, RotateCcw, Filter } from 'lucide-react';
+import { BarChart2, DollarSign, Hash, Layers, AlertTriangle } from 'lucide-react';
+import PremiumReportHeader from '../../components/PremiumReportHeader';
+import BusinessFilters from '../../components/BusinessFilters';
+import KpiCards from '../../components/KpiCards';
+import { exportToCSV } from '../../utils/exportUtils';
+import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
+import { useToast } from '../../contexts/ToastContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { formatMsf, formatCurrency as fmtTenantMoney, formatCompactCurrency } from '../../utils/formatters';
+import api from '../../api/axios';
 
-import { format } from 'date-fns';
-
-const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
+// Despite the name this used to emit a BARE decimal at a hardcoded 2dp — no
+// currency at all, and wrong for BHD. It now renders the tenant's currency at
+// the tenant's precision.
+const formatCurrency = (val) => fmtTenantMoney(val);
 const formatNumber = (val) => new Intl.NumberFormat('en-US').format(val || 0);
+const formatCompact = (val) =>
+    new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val || 0);
 
-const MultiDateSelector = ({ selectedDates, onAdd, onRemove }) => {
-    const [tempDate, setTempDate] = useState(null);
+const fmtLocal = (d) => {
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const dy = String(d.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${dy}`;
+};
+
+const computeDateRange = (preset) => {
+    const now = new Date();
+    switch (preset) {
+        case 'TODAY':      return { startDate: fmtLocal(now), endDate: fmtLocal(now) };
+        case 'MONTH':      return { startDate: fmtLocal(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: fmtLocal(now) };
+        case 'LAST_MONTH': return { startDate: fmtLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1)), endDate: fmtLocal(new Date(now.getFullYear(), now.getMonth(), 0)) };
+        case 'YEAR':       return { startDate: fmtLocal(new Date(now.getFullYear(), 0, 1)), endDate: fmtLocal(now) };
+        case 'PY':         return { startDate: fmtLocal(new Date(now.getFullYear() - 1, 0, 1)), endDate: fmtLocal(new Date(now.getFullYear() - 1, 11, 31)) };
+        default:           return {};
+    }
+};
+
+// Segment code → label + colour. Routed through CSS vars so dark mode retints.
+// These are the six Phase-1 data-backed segments from MerchantSegmentationService.
+const SEGMENT_META = {
+    STRATEGIC:     { label: 'Strategic',     color: 'var(--seg-strategic, #7c3aed)', bg: 'var(--seg-strategic-bg, #f3e8ff)' },
+    VOLUME_DRIVER: { label: 'Volume Driver', color: 'var(--seg-volume, #2563eb)',    bg: 'var(--seg-volume-bg, #dbeafe)' },
+    PROFIT_DRIVER: { label: 'Profit Driver', color: 'var(--seg-profit, #059669)',    bg: 'var(--seg-profit-bg, #d1fae5)' },
+    AT_RISK:       { label: 'At Risk',       color: 'var(--seg-atrisk, #dc2626)',    bg: 'var(--seg-atrisk-bg, #fee2e2)' },
+    NEW:           { label: 'New',           color: 'var(--seg-new, #ea580c)',       bg: 'var(--seg-new-bg, #ffedd5)' },
+    LONG_TAIL:     { label: 'Long Tail',     color: 'var(--seg-longtail, #475569)',  bg: 'var(--seg-longtail-bg, #f1f5f9)' },
+    UNCLASSIFIED:  { label: 'Unclassified',  color: 'var(--text-muted, #94a3b8)',    bg: 'var(--bg-subtle, #f8fafc)' },
+};
+const SEGMENT_ORDER = ['STRATEGIC', 'VOLUME_DRIVER', 'PROFIT_DRIVER', 'AT_RISK', 'NEW', 'LONG_TAIL', 'UNCLASSIFIED'];
+
+const MerchantAnalyticsReport = () => {
+    const { show: toast } = useToast();
+    const { currencyCode, tenantVersion } = useAuth();
+    const [loading, setLoading] = useState(false);
+    const [exportLoading, setExportLoading] = useState(false);
+    const [data, setData] = useState([]);
+    const [totalRows, setTotalRows] = useState(0);
+    const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 25 });
+    const [showFilters, setShowFilters] = useState(false);
+    const [showExportDialog, setShowExportDialog] = useState(false);
+
+    // Segmentation (precomputed, fetched once per tenant switch — additive overlay).
+    const [segByMid, setSegByMid] = useState({});
+    const [segMix, setSegMix] = useState([]);
+    const [segAvailable, setSegAvailable] = useState(false);
+    const [segFilter, setSegFilter] = useState('ALL');
+
+    const [filters, setFilters] = useState(() => ({
+        datePreset: 'YEAR',
+        ...computeDateRange('YEAR'),
+    }));
+
+    // ── useRef so filter-panel Apply always sees the latest filters ──
+    const filtersRef = useRef(filters);
+    filtersRef.current = filters;
+    const paginationRef = useRef(paginationModel);
+    paginationRef.current = paginationModel;
+
+    // ── Fetch ──────────────────────────────────────────────────────
+    const fetchReport = useCallback(async (overrideFilters, overridePagination) => {
+        setLoading(true);
+        try {
+            const active = overrideFilters || filtersRef.current;
+            const pg = overridePagination || paginationRef.current;
+            const body = { ...active };
+            delete body.datePreset;
+            const res = await api.post(
+                `/business/merchant-analytics?page=${pg.page}&size=${pg.pageSize}`,
+                body
+            );
+            setData(res.data.content || []);
+            setTotalRows(res.data.totalElements || 0);
+        } catch (err) {
+            console.error(err);
+            toast('Failed to load data. Please try again.', 'error');
+        } finally {
+            setLoading(false);
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        fetchReport(undefined, paginationModel);
+    }, [paginationModel, tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Segments are precomputed and independent of the report filters/pagination, so
+    // fetch the whole tenant set once per tenant switch and decorate rows by mid.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const [listRes, mixRes] = await Promise.allSettled([
+                    api.get('/business/segments'),
+                    api.get('/business/segments/mix'),
+                ]);
+                if (cancelled) return;
+                if (listRes.status === 'fulfilled') {
+                    const map = {};
+                    (listRes.value.data || []).forEach(s => { if (s.mid != null) map[s.mid] = s; });
+                    setSegByMid(map);
+                    setSegAvailable(Object.keys(map).length > 0);
+                } else {
+                    setSegByMid({}); setSegAvailable(false);
+                }
+                setSegMix(mixRes.status === 'fulfilled' ? (mixRes.value.data || []) : []);
+            } catch (e) {
+                if (!cancelled) { setSegByMid({}); setSegMix([]); setSegAvailable(false); }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [tenantVersion]);
+
+    // ── Full export (all rows, not just current page) ──────────────
+    const handleExport = useCallback(() => {
+        if (totalRows > data.length) {
+            setShowExportDialog(true);
+        } else {
+            exportToCSV(data, 'merchant_analytics');
+            toast(`Exported ${data.length} rows.`, 'success');
+        }
+    }, [data, totalRows, toast]);
+
+    const handleExportAll = useCallback(async () => {
+        setShowExportDialog(false);
+        setExportLoading(true);
+        toast('Fetching all rows for export…', 'info');
+        try {
+            const body = { ...filtersRef.current };
+            delete body.datePreset;
+            const res = await api.post('/business/merchant-analytics?page=0&size=10000', body);
+            exportToCSV(res.data.content || [], 'merchant_analytics_full');
+            toast(`Exported ${(res.data.content || []).length} rows successfully.`, 'success');
+        } catch (err) {
+            toast('Export failed: ' + err.message, 'error');
+        } finally {
+            setExportLoading(false);
+        }
+    }, [toast]);
+
+    // ── Filter handling ────────────────────────────────────────────
+    const handleFilterChange = useCallback((keyOrObj) => {
+        if (typeof keyOrObj === 'object') setFilters(prev => ({ ...prev, ...keyOrObj }));
+    }, []);
+
+    // Decorate the current page's rows with their segment (by mid).
+    const rows = useMemo(
+        () => data.map(r => {
+            const s = segByMid[r.mid];
+            return s ? { ...r, primarySegment: s.primarySegment, secondaryTags: s.secondaryTags, segmentReason: s.segmentReason } : r;
+        }),
+        [data, segByMid]
+    );
+
+    // Client-side segment quick-filter applies to the visible page.
+    const visibleRows = useMemo(
+        () => segFilter === 'ALL' ? rows : rows.filter(r => r.primarySegment === segFilter),
+        [rows, segFilter]
+    );
+
+    // ── KPI cards ─────────────────────────────────────────────────
+    const kpis = useMemo(() => {
+        if (!data.length) return [];
+        const totalVol      = data.reduce((s, d) => s + (Number(d.volume)      || 0), 0);
+        const totalMsf      = data.reduce((s, d) => s + (Number(d.msf)         || 0), 0);
+        const totalCount    = data.reduce((s, d) => s + (Number(d.count)        || 0), 0);
+        return [
+            { title: 'Total Records',   value: formatNumber(totalRows),                          icon: Layers,     color: 'var(--projected)', subtitle: `Page ${paginationModel.page + 1} of ${Math.ceil(totalRows / paginationModel.pageSize)}` },
+            { title: 'Page Volume',     value: formatCompactCurrency(totalVol),     icon: DollarSign, color: 'var(--primary)' },
+            { title: 'Page MSF',        value: formatCompactCurrency(totalMsf),     icon: BarChart2,  color: '#10b981' },
+            { title: 'Page Trnx Count', value: formatCompact(totalCount),                         icon: Hash,       color: '#f59e0b' },
+        ];
+    }, [data, totalRows, paginationModel, currencyCode]);
+
+    // Segment mix as an ordered, coloured summary (portfolio-wide, latest calc).
+    const mixOrdered = useMemo(() => {
+        const byCode = {};
+        segMix.forEach(m => { byCode[m.segment] = Number(m.count) || 0; });
+        const total = Object.values(byCode).reduce((a, b) => a + b, 0) || 1;
+        return SEGMENT_ORDER
+            .filter(code => byCode[code] > 0)
+            .map(code => ({ code, ...SEGMENT_META[code], count: byCode[code], pct: (byCode[code] / total) * 100 }));
+    }, [segMix]);
+
+    // ── Segment cell ──────────────────────────────────────────────
+    const segmentCell = (params) => {
+        const code = params.row.primarySegment;
+        if (!code) return <Typography variant="body2" sx={{ color: 'var(--text-muted, #94a3b8)' }}>—</Typography>;
+        const m = SEGMENT_META[code] || SEGMENT_META.UNCLASSIFIED;
+        const tags = params.row.secondaryTags;
+        const tip = [params.row.segmentReason, tags ? `Also: ${tags.replace(/,/g, ', ')}` : null].filter(Boolean).join(' · ');
+        return (
+            <Tooltip title={tip || m.label} arrow>
+                <Chip label={m.label} size="small" sx={{ bgcolor: m.bg, color: m.color, fontWeight: 700 }} />
+            </Tooltip>
+        );
+    };
+
+    // ── Columns ───────────────────────────────────────────────────
+    const columns = useMemo(() => {
+        const cols = [
+            { field: 'sid',          headerName: 'SID',         width: 140 },
+            { field: 'terminalType', headerName: 'Terminal',    width: 120 },
+            { field: 'mid',          headerName: 'MID',         width: 160 },
+            { field: 'merchantName', headerName: 'Name',        flex: 1, minWidth: 180,
+                renderCell: (p) => <Typography variant="body2" fontWeight={600} color="#0f172a">{p.value}</Typography> },
+        ];
+        if (segAvailable) {
+            cols.push({
+                field: 'segment', headerName: 'Segment', width: 150, sortable: false,
+                valueGetter: (v, row) => row.primarySegment || '',
+                renderCell: segmentCell,
+            });
+        }
+        cols.push(
+            { field: 'volume',       headerName: 'Volume',      width: 140, type: 'number', valueFormatter: (v) => formatCurrency(v) },
+            { field: 'count',        headerName: 'Trnx Count',  width: 120, type: 'number', valueFormatter: (v) => formatNumber(v) },
+            { field: 'msf',          headerName: 'MSF',         width: 130, type: 'number', valueFormatter: (v) => formatMsf(v) },
+            { field: 'interchange',  headerName: 'Interchange', width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
+            { field: 'mcc',          headerName: 'MCC',         width: 90 },
+            { field: 'industry',     headerName: 'Industry',    width: 160 },
+            { field: 'legalName',    headerName: 'Legal Name',  width: 200 },
+            { field: 'dccOptin',     headerName: 'DCC Opt-In',  width: 130, type: 'number', valueFormatter: (v) => formatCurrency(v) },
+        );
+        return cols;
+    }, [segAvailable]);
 
     return (
-        <Box>
-            <DatePicker
-                label="Add Specific Date"
-                value={tempDate}
-                onChange={(newValue) => {
-                    if (newValue) {
-                        onAdd(newValue);
-                        setTempDate(null);
-                    }
-                }}
-                slotProps={{ textField: { size: 'small', fullWidth: true } }}
+        <Box sx={pageContainer}>
+            <PremiumReportHeader
+                title="Merchant Analytics Report"
+                subtitle={`Detailed performance metrics · ${formatNumber(totalRows)} total records`}
+                icon={BarChart2}
+                onExport={handleExport}
+                onRunReport={() => fetchReport()}
+                onFilterChange={handleFilterChange}
+                onApplyAfterDatePreset={(next) => fetchReport(next)}
+                loading={loading || exportLoading}
+                showFilters={showFilters}
+                onToggleFilters={() => setShowFilters(v => !v)}
+                filters={filters}
             />
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
-                {selectedDates.map((date, index) => (
-                    <Chip
-                        key={index}
-                        label={date}
-                        onDelete={() => onRemove(date)}
-                        size="small"
-                        variant="outlined"
-                    />
-                ))}
-            </Box>
+
+            <BusinessFilters
+                filters={filters}
+                onChange={setFilters}
+                onApply={() => fetchReport()}
+                isOpen={showFilters}
+                onClose={() => setShowFilters(false)}
+            />
+
+            <KpiCards cards={kpis} />
+
+            {/* Segment mix + quick-filter — only when the batch has produced segments. */}
+            {segAvailable && mixOrdered.length > 0 && (
+                <Paper sx={{ ...premiumTableWrapper, p: 2, mb: 2 }}>
+                    <Typography variant="caption" fontWeight={700}
+                        sx={{ color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1.25, display: 'block' }}>
+                        Portfolio Segments
+                    </Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        <Chip
+                            label={`All (${mixOrdered.reduce((a, b) => a + b.count, 0)})`}
+                            size="small" clickable onClick={() => setSegFilter('ALL')}
+                            sx={{
+                                fontWeight: 700,
+                                color: segFilter === 'ALL' ? 'var(--on-accent, #fff)' : 'var(--text, #0f172a)',
+                                bgcolor: segFilter === 'ALL' ? 'var(--brand, #6366f1)' : 'var(--border, #e2e8f0)',
+                            }}
+                        />
+                        {mixOrdered.map(s => {
+                            const active = segFilter === s.code;
+                            return (
+                                <Chip key={s.code}
+                                    label={`${s.label} · ${s.count} (${s.pct.toFixed(0)}%)`}
+                                    size="small" clickable onClick={() => setSegFilter(active ? 'ALL' : s.code)}
+                                    sx={{
+                                        fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                                        color: active ? 'var(--on-accent, #fff)' : s.color,
+                                        bgcolor: active ? s.color : s.bg,
+                                        border: active ? `1px solid ${s.color}` : '1px solid transparent',
+                                    }} />
+                            );
+                        })}
+                    </Stack>
+                    {segFilter !== 'ALL' && (
+                        <Typography variant="caption" sx={{ color: 'var(--text-muted, #94a3b8)', mt: 1, display: 'block' }}>
+                            Filtering the current page to {SEGMENT_META[segFilter]?.label || segFilter}. Segment counts above are portfolio-wide (latest calc).
+                        </Typography>
+                    )}
+                </Paper>
+            )}
+
+            <Paper sx={premiumTableWrapper}>
+                <DataGrid
+                    rows={visibleRows}
+                    columns={columns}
+                    getRowId={(row, i) => row.merchantId ?? `${row.sid ?? 'r'}-${i}`}
+                    rowCount={totalRows}
+                    loading={loading}
+                    paginationModel={paginationModel}
+                    paginationMode="server"
+                    onPaginationModelChange={setPaginationModel}
+                    pageSizeOptions={[25, 50, 100]}
+                    slots={{ toolbar: GridToolbar }}
+                    slotProps={{ toolbar: { showQuickFilter: true } }}
+                    sx={premiumDataGridStyles}
+                />
+            </Paper>
+
+            {/* Export confirmation dialog */}
+            <Dialog open={showExportDialog} onClose={() => setShowExportDialog(false)} maxWidth="xs" fullWidth>
+                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <AlertTriangle size={18} color="#f59e0b" />
+                    Export confirmation
+                </DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="text.secondary">
+                        You're viewing <strong>page {paginationModel.page + 1}</strong> ({data.length} rows).
+                        The full dataset has <strong>{formatNumber(totalRows)} rows</strong>.
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                        Export this page only, or fetch and export all {formatNumber(totalRows)} rows?
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => { setShowExportDialog(false); exportToCSV(data, 'merchant_analytics_page'); toast(`Exported ${data.length} rows (current page).`, 'success'); }} size="small">
+                        This page ({data.length} rows)
+                    </Button>
+                    <Button onClick={handleExportAll} variant="contained" size="small" disableElevation>
+                        Export all {formatNumber(totalRows)} rows
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 };
 
-const MerchantAnalyticsReport = () => {
-    // --- State ---
-    const [loading, setLoading] = useState(false);
-    const [data, setData] = useState([]);
-    const [totalRows, setTotalRows] = useState(0);
-    const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 20 });
-
-    // Filter Options State (Loaded from API)
-    const [options, setOptions] = useState({
-        partners: [],
-        rms: [],
-        mccs: [],
-        schemes: [],
-        cardTypes: [],
-        destinations: [],
-        merchants: [], // Searchable?
-        channels: [],
-        terminalTypes: [] // New
-    });
-
-    // Filters State
-    const [filters, setFilters] = useState({
-        startDate: null,
-        endDate: null,
-        yearList: [],
-        monthList: [],
-        preciseDateList: [],
-        destinationList: [],
-        schemeList: [],
-        mccList: [],
-        cardTypeList: [],
-        merchantName: '', // Simple search for now, could be multi-select if API supported IDs
-        partnerList: [],
-        rmList: [],
-        channelList: [],
-        terminalTypeList: [] // New
-    });
-
-    // Static Options
-    const years = [2023, 2024, 2025, 2026, 2027];
-    const months = [
-        { label: 'January', value: '01' },
-        { label: 'February', value: '02' },
-        { label: 'March', value: '03' },
-        { label: 'April', value: '04' },
-        { label: 'May', value: '05' },
-        { label: 'June', value: '06' },
-        { label: 'July', value: '07' },
-        { label: 'August', value: '08' },
-        { label: 'September', value: '09' },
-        { label: 'October', value: '10' },
-        { label: 'November', value: '11' },
-        { label: 'December', value: '12' },
-    ];
-
-    // --- Effects ---
-    useEffect(() => {
-        fetchOptions();
-    }, []);
-
-    useEffect(() => {
-        fetchReport();
-    }, [paginationModel, filters]); // Reload on filter/page change? Or manual apply?
-    // User requested "load instantly ... after choosing filters". Usually implies auto-load or FAST load.
-    // Let's debounce or use Apply button if heavy? User said "instant", so auto-refresh might be nice if fast.
-    // But for multi-selects, it's better to wait for user to finish selecting.
-    // Let's use an "Apply Filters" button effectively via manual trigger or effect on specific changes?
-    // Current pattern: Auto-load on effect is easiest for verification. We can add debounce if needed.
-
-    const fetchOptions = async () => {
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('/api/business/filter-options', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setOptions(data);
-            }
-        } catch (err) {
-            console.error(err);
-        }
-    };
-
-    const fetchReport = async () => {
-        setLoading(true);
-        try {
-            const token = localStorage.getItem('token');
-            const body = {
-                ...filters,
-                // Transform objects to values if needed (Autocompletes usually give values if configured right)
-                monthList: filters.monthList.map(m => m.value || m), // Handle object if selected from list
-            };
-
-            const res = await fetch(`/api/business/merchant-analytics?page=${paginationModel.page}&size=${paginationModel.pageSize}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify(body)
-            });
-
-            if (res.ok) {
-                const result = await res.json();
-                setData(result.content);
-                setTotalRows(result.totalElements);
-            }
-        } catch (err) {
-            console.error(err);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleFilterChange = (key, value) => {
-        setFilters(prev => ({ ...prev, [key]: value }));
-    };
-
-    const handleAddSpecificDate = (date) => {
-        try {
-            const dateStr = format(date, 'yyyy-MM-dd');
-            if (!filters.preciseDateList.includes(dateStr)) {
-                setFilters(prev => ({ ...prev, preciseDateList: [...prev.preciseDateList, dateStr] }));
-            }
-        } catch (e) {
-            console.error("Invalid date", e);
-        }
-    };
-
-    const handleRemoveSpecificDate = (dateStr) => {
-        setFilters(prev => ({ ...prev, preciseDateList: prev.preciseDateList.filter(d => d !== dateStr) }));
-    };
-
-    // --- Columns ---
-    const columns = [
-        { field: 'sid', headerName: 'SID', width: 120 },
-        { field: 'terminalType', headerName: 'Terminal Type', width: 140 }, // New Column
-        { field: 'mid', headerName: 'MID', width: 150 },
-        { field: 'merchantName', headerName: 'Name', width: 200 }, // DBA
-        { field: 'volume', headerName: 'Volume', width: 130, type: 'number', valueFormatter: (value) => formatCurrency(value) },
-        { field: 'count', headerName: 'Trnx Count', width: 120, type: 'number', valueFormatter: (value) => formatNumber(value) },
-        { field: 'msf', headerName: 'MSF', width: 120, type: 'number', valueFormatter: (value) => formatCurrency(value) },
-        { field: 'interchange', headerName: 'Interchange', width: 120, type: 'number', valueFormatter: (value) => formatCurrency(value) },
-        { field: 'mcc', headerName: 'MCC', width: 90 },
-        { field: 'industry', headerName: 'Industry', width: 150 },
-        { field: 'legalName', headerName: 'Merchant', width: 220 }, // Legal Name
-        { field: 'dccOptin', headerName: 'Dcc Optin', width: 120, type: 'number', valueFormatter: (value) => formatCurrency(value) },
-    ];
-
-    return (
-        <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <Box sx={{ p: 3, bgcolor: '#F8FAFC', minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: 3 }}>
-
-                {/* Header */}
-                <Box>
-                    <Typography variant="h4" fontWeight="800" color="#0F172A">Merchant Analytics Report</Typography>
-                    <Typography variant="body2" color="#64748B">Detailed performance metrics with advanced filtering</Typography>
-                </Box>
-
-                {/* Filters Section */}
-                <Paper sx={{ p: 3, borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-                    <Grid container spacing={2} alignItems="center">
-                        <Grid item xs={12}>
-                            <Box display="flex" alignItems="center" gap={1} mb={2}>
-                                <Filter size={20} color="#64748B" />
-                                <Typography variant="h6" fontWeight="600" color="#334155">Filters</Typography>
-                            </Box>
-                        </Grid>
-
-                        {/* Date Multi Select */}
-                        {/* Note: Standard DatePicker isn't multi-select. We can use Autocomplete for precise dates or multiple pickers.
-                            User asked for "date should be multiselect". Implementing as Autocomplete string input or just precise date list logic?
-                            Better: "Specific Dates" Autocomplete effectively allows picking multiple dates if we implement custom tag rendering? 
-                            Or simpler: Just standard Date Range + Year/Month List.
-                            Let's assume Year/Month multiselect covers most needs, and provide granular Date Range. 
-                            Implementing "Date" as a multi-select of specific dates is rare/clunky. 
-                            Let's stick to Year/Month + Date Range, and maybe a "Dates" autocomplete if strictly needed.
-                            Actually, let's just do Year and Month as requested. */}
-
-
-                        <Grid item xs={12} md={3}>
-                            <DatePicker
-                                label="Start Date"
-                                value={filters.startDate}
-                                onChange={(newValue) => handleFilterChange('startDate', newValue)}
-                                slotProps={{ textField: { size: 'small', fullWidth: true } }}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <DatePicker
-                                label="End Date"
-                                value={filters.endDate}
-                                onChange={(newValue) => handleFilterChange('endDate', newValue)}
-                                slotProps={{ textField: { size: 'small', fullWidth: true } }}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <MultiDateSelector
-                                selectedDates={filters.preciseDateList}
-                                onAdd={handleAddSpecificDate}
-                                onRemove={handleRemoveSpecificDate}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <Autocomplete
-                                multiple
-                                options={years}
-                                getOptionLabel={(option) => option.toString()}
-                                value={filters.yearList}
-                                onChange={(e, v) => handleFilterChange('yearList', v)}
-                                renderInput={(params) => <TextField {...params} label="Years" size="small" />}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <Autocomplete
-                                multiple
-                                options={months} // Objects {label, value}
-                                getOptionLabel={(option) => option.label || option}
-                                value={filters.monthList}
-                                isOptionEqualToValue={(opt, val) => opt.value === val.value || opt.value === val}
-                                onChange={(e, v) => handleFilterChange('monthList', v)}
-                                renderInput={(params) => <TextField {...params} label="Months" size="small" />}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <Autocomplete
-                                multiple
-                                options={options.destinations || []}
-                                value={filters.destinationList}
-                                onChange={(e, v) => handleFilterChange('destinationList', v)}
-                                renderInput={(params) => <TextField {...params} label="Destination" size="small" />}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <Autocomplete
-                                multiple
-                                options={options.schemes || []}
-                                value={filters.schemeList}
-                                onChange={(e, v) => handleFilterChange('schemeList', v)}
-                                renderInput={(params) => <TextField {...params} label="Scheme" size="small" />}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <Autocomplete
-                                multiple
-                                options={options.mccs || []}
-                                value={filters.mccList}
-                                onChange={(e, v) => handleFilterChange('mccList', v)}
-                                renderInput={(params) => <TextField {...params} label="MCC" size="small" />}
-                            />
-                        </Grid>
-
-                        {/* Terminal Type Filter (New) */}
-                        <Grid item xs={12} md={3}>
-                            <Autocomplete
-                                multiple
-                                options={options.terminalTypes || []}
-                                value={filters.terminalTypeList}
-                                onChange={(e, v) => handleFilterChange('terminalTypeList', v)}
-                                renderInput={(params) => <TextField {...params} label="Terminal Type" size="small" />}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <Autocomplete
-                                multiple
-                                options={options.cardTypes || []}
-                                value={filters.cardTypeList}
-                                onChange={(e, v) => handleFilterChange('cardTypeList', v)}
-                                renderInput={(params) => <TextField {...params} label="Card Type" size="small" />}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3}>
-                            <TextField
-                                fullWidth
-                                label="Merchant Name / MID"
-                                size="small"
-                                value={filters.merchantName}
-                                onChange={(e) => handleFilterChange('merchantName', e.target.value)}
-                            />
-                        </Grid>
-
-                        <Grid item xs={12} md={3} display="flex" gap={1}>
-                            <Button
-                                variant="contained"
-                                fullWidth
-                                startIcon={<Search size={18} />}
-                                onClick={fetchReport}
-                                sx={{ bgcolor: '#0F172A', '&:hover': { bgcolor: '#334155' } }}
-                            >
-                                Apply
-                            </Button>
-                            <Button
-                                variant="outlined"
-                                onClick={() => setFilters({
-                                    startDate: null, endDate: null, yearList: [], monthList: [],
-                                    preciseDateList: [], destinationList: [], schemeList: [],
-                                    mccList: [], cardTypeList: [], merchantName: '', partnerList: [], rmList: []
-                                })}
-                            >
-                                <RotateCcw size={18} />
-                            </Button>
-                        </Grid>
-
-                    </Grid>
-                </Paper>
-
-                {/* Data Grid */}
-                <Paper sx={{ flex: 1, width: '100%', borderRadius: '16px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
-                    <DataGrid
-                        rows={data}
-                        columns={columns}
-                        getRowId={(row) => `${row.mid}-${row.sid}`} // Unique ID
-                        rowCount={totalRows}
-                        loading={loading}
-                        paginationModel={paginationModel}
-                        paginationMode="server"
-                        onPaginationModelChange={setPaginationModel}
-                        slots={{ toolbar: GridToolbar }}
-                        sx={{
-                            border: 'none',
-                            '& .MuiDataGrid-columnHeaders': {
-                                bgcolor: '#F8FAFC',
-                                color: '#64748B',
-                                fontWeight: 700,
-                            },
-                            '& .MuiDataGrid-virtualScroller': {
-                                bgcolor: '#FFFFFF',
-                            }
-                        }}
-                    />
-                </Paper>
-
-            </Box>
-        </LocalizationProvider>
-    );
-};
-
 class ErrorBoundary extends React.Component {
-    constructor(props) {
-        super(props);
-        this.state = { hasError: false, error: null, errorInfo: null };
-    }
-
-    static getDerivedStateFromError(error) {
-        return { hasError: true };
-    }
-
-    componentDidCatch(error, errorInfo) {
-        this.setState({ error, errorInfo });
-        console.error("Uncaught error:", error, errorInfo);
-    }
-
+    constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+    static getDerivedStateFromError(error) { return { hasError: true, error }; }
+    componentDidCatch(error, info) { console.error('MerchantAnalyticsReport error:', error, info); }
     render() {
         if (this.state.hasError) {
             return (
@@ -418,22 +369,14 @@ class ErrorBoundary extends React.Component {
                     <Typography variant="h4" color="error" gutterBottom>Something went wrong</Typography>
                     <Paper sx={{ p: 3, bgcolor: '#FFF1F2', color: '#BE123C' }}>
                         <Typography variant="h6" fontFamily="monospace">{this.state.error?.toString()}</Typography>
-                        <pre style={{ overflow: 'auto', maxHeight: '400px' }}>
-                            {this.state.errorInfo?.componentStack}
-                        </pre>
                     </Paper>
                 </Box>
             );
         }
-
         return this.props.children;
     }
 }
 
 export default function WrappedMerchantAnalyticsReport() {
-    return (
-        <ErrorBoundary>
-            <MerchantAnalyticsReport />
-        </ErrorBoundary>
-    );
+    return <ErrorBoundary><MerchantAnalyticsReport /></ErrorBoundary>;
 }

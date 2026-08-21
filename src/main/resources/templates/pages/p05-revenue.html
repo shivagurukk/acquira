@@ -22,9 +22,9 @@
                 <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="'AED ' + ${dto.overview.dailyAverage != null ? dto.overview.dailyAverage.setScale(0, T(java.math.RoundingMode).HALF_UP) : '0'}">AED 0</div>
                 <span style="font-size: 8.5px; color: #0D9488; font-weight: 600;">Avg revenue per active day</span>
             </div>
-            <div class="card card-accent-amber" style="padding: 12px 14px;">
+            <div class="card card-accent-green" style="padding: 12px 14px;">
                 <div class="kpi-label">PEAK DAY</div>
-                <div style="font-size: 24px; font-weight: 900; color: #B45309; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakDayName != null ? dto.overview.peakDayName : '-'}">-</div>
+                <div style="font-size: 24px; font-weight: 900; color: #0D9488; margin: 4px 0 4px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakDayName != null ? dto.overview.peakDayName : '-'}">-</div>
                 <span style="font-size: 8.5px; color: #6B7280;">Highest revenue day</span>
             </div>
         </div>
@@ -60,7 +60,7 @@
                         <span>Mid-range days show consistent activity</span>
                     </div>
                     <div style="display: flex; align-items: center; gap: 8px; font-size: 9px; color: #1F2937;">
-                        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #B45309; flex-shrink: 0;"></span>
+                        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #6D28D9; flex-shrink: 0;"></span>
                         <span>Low-traffic days need promotional activation</span>
                     </div>
                 </div>
@@ -71,13 +71,13 @@
 
         <!-- ROW 3: Sales by Day of Week chart -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
-            <div class="card-title"><span>SALES &amp; TRANSACTIONS BY DAY OF WEEK</span>
-                <div style="display: flex; gap: 10px; font-size: 7.5px; align-items: center;">
-                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 2px;"></span> Sales (AED)</span>
-                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: #B45309; border-radius: 2px;"></span> Txn Count</span>
-                </div>
-            </div>
-            <div class="chart-container"><canvas data-chart="dual-axis" data-field="achievements.salesAndAtvByDayOfWeek" data-color="#1E3A8A" data-color2="#B45309"></canvas></div>
+        <div class="card-title"><span>SALES &amp; TRANSACTIONS BY DAY OF WEEK</span>
+        <div style="display: flex; gap: 10px; font-size: 7.5px; align-items: center;">
+        <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 2px;"></span> Sales (AED)</span>
+        <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 12px; height: 3px; background: #0D9488; border-radius: 2px;"></span> Txn Count</span>
+        </div>
+        </div>
+        <div class="chart-container"><canvas data-chart="dual-axis" data-field="achievements.salesAndAtvByDayOfWeek" data-color="#1E3A8A" data-color2="#0D9488"></canvas></div>
         </div>
 
         <!-- ROW 4: Action strip -->

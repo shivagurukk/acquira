@@ -1,0 +1,46 @@
+# =============================================================================
+# acquira-core image  (bundles batch + ai + pdf into one process)
+# PDF engine = Playwright 1.40.0 (driver-bundle) which manages its OWN Chromium.
+# We copy the EXACT version-matched browser from Microsoft's official Playwright
+# image (pinned to v1.40.0). No distro 'chromium' package is installed here.
+# =============================================================================
+
+# ---- Stage 1: build the fat JAR ----
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /src
+COPY . .
+RUN mvn -B -pl acquira-core -am -DskipTests package
+
+# ---- Stage 2: matching Chromium (already at /ms-playwright in this image) ----
+FROM mcr.microsoft.com/playwright/java:v1.40.0-jammy AS browsers
+
+# ---- Stage 3: runtime ----
+FROM eclipse-temurin:21-jre
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Chromium's runtime system libraries + fonts.
+# NOTE: libasound2 was renamed to libasound2t64 in newer Ubuntu; we request
+# both names with "|" so the build works on old AND new bases.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+      libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+      libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 \
+      fonts-liberation fonts-noto-color-emoji ca-certificates curl \
+    && (apt-get install -y --no-install-recommends libasound2t64 \
+        || apt-get install -y --no-install-recommends libasound2) \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bring in the version-matched browser and point Playwright at it.
+COPY --from=browsers /ms-playwright /ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+WORKDIR /app
+COPY --from=build /src/acquira-core/target/acquira-core-*.jar /app/app.jar
+
+RUN mkdir -p /opt/acquira/reports /opt/acquira/uploads
+ENV APP_REPORTS_DIR=/opt/acquira/reports
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=65 -XX:+UseContainerSupport"
+
+EXPOSE 8081
+ENTRYPOINT ["sh","-c","java $JAVA_OPTS -jar /app/app.jar"]

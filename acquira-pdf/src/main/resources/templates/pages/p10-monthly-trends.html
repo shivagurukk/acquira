@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="monthlyTrendsContent">
+        <div class="section-subtitle" style="margin-bottom: 10px;">12-month rolling performance and seasonality analysis</div>
+
+        <!-- ROW 1: 4 KPI Cards — ALL DYNAMIC -->
+        <div class="grid-4 mb-8">
+            <div class="card card-accent-blue" style="padding: 10px 12px;">
+                <div class="kpi-label">CURRENT MONTH</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.currencyCode} + ' ' + ${dto.overview.sales.formattedValue}">0</div>
+                <span th:class="${dto.overview.sales.momGrowth >= 0 ? 'trend-up' : 'trend-down'}">
+                    <span th:text="${#numbers.formatDecimal(dto.overview.sales.momGrowth, 1, 2) + '% MoM'}">0%</span>
+                </span>
+            </div>
+            <div class="card card-accent-green" style="padding: 10px 12px;">
+                <div class="kpi-label">AVG MONTHLY GROWTH</div>
+                <div style="font-size: 20px; font-weight: 900; margin: 3px 0 2px 0; letter-spacing: -0.02em;"
+                     th:style="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'color: #047857' : 'color: #E87461'}"
+                     th:text="${#numbers.formatDecimal(dto.demographics.avgMonthlyGrowthPct, 1, 1) + '%'}">0%</div>
+                <span th:class="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'trend-up' : 'trend-down'}" th:text="${dto.demographics.avgMonthlyGrowthPct >= 0 ? 'Steady' : 'Declining'}">-</span>
+            </div>
+            <div class="card card-accent-amber" style="padding: 10px 12px;">
+                <div class="kpi-label">TRANSACTIONS / MONTH</div>
+                <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.transactions.formattedValue}">0</div>
+                <span style="font-size: 8.5px; color: #6B7280;">Current period</span>
+            </div>
+            <div class="card card-accent-purple" style="padding: 10px 12px;">
+                <div class="kpi-label">BEST MONTH</div>
+                <div style="font-size: 20px; font-weight: 900; color: #6D28D9; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.demographics.bestMonth != null ? dto.demographics.bestMonth : '-'}">-</div>
+                <span style="font-size: 8.5px; color: #6B7280;">Seasonal Peak</span>
+            </div>
+        </div>
+
+        <!-- ROW 2: Annual Sales Trend -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title"><span>ANNUAL SALES TREND (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="demographics.monthlySales" data-color="#1E3A8A"></canvas></div>
+        </div>
+
+        <!-- ROW 3: Monthly Avg TXN Value -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title"><span>MONTHLY AVG TRANSACTION VALUE (<span th:text="${dto.currencyCode}">AED</span>)</span></div>
+            <div class="chart-container"><canvas data-chart="area" data-field="demographics.monthlyAtv" data-color="#6D28D9" data-bg="rgba(109,40,217,0.08)"></canvas></div>
+        </div>
+
+        <!-- ROW 4: Seasonality — DYNAMIC -->
+        <div class="grid-3 mb-8">
+            <div class="card" style="padding: 10px 12px; text-align: center; border-top: 4px solid #0D9488;">
+                <div style="font-size: 7.5px; color: #6B7280; font-weight: 700;">PEAK SEASON</div>
+                <div style="font-size: 16px; font-weight: 900; color: #0D9488; margin: 3px 0;" th:text="${dto.demographics.peakSeason != null ? dto.demographics.peakSeason : '-'}">-</div>
+                <div style="font-size: 8px; color: #6B7280;">Highest revenue months</div>
+            </div>
+            <div class="card" style="padding: 10px 12px; text-align: center; border-top: 4px solid #64748B;">
+                <div style="font-size: 7.5px; color: #6B7280; font-weight: 700;">LOW SEASON</div>
+                <div style="font-size: 16px; font-weight: 900; color: #64748B; margin: 3px 0;" th:text="${dto.demographics.lowSeason != null ? dto.demographics.lowSeason : '-'}">-</div>
+                <div style="font-size: 8px; color: #6B7280;">Slowest revenue months</div>
+            </div>
+            <div class="card" style="padding: 10px 12px; text-align: center; border-top: 4px solid #2563EB;">
+                <div style="font-size: 7.5px; color: #6B7280; font-weight: 700;">YOY GROWTH</div>
+                <div style="font-size: 16px; font-weight: 900; margin: 3px 0;"
+                     th:style="${dto.demographics.yoyGrowthPct >= 0 ? 'color: #047857' : 'color: #E87461'}"
+                     th:text="${#numbers.formatDecimal(dto.demographics.yoyGrowthPct, 1, 1) + '%'}">-</div>
+                <div style="font-size: 8px; color: #6B7280;">Annual performance</div>
+            </div>
+        </div>
+
+        <!-- AI Insight — DYNAMIC -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>Seasonality Pattern:</strong> Revenue peaks in <span th:text="${dto.demographics.peakSeason}">-</span> and dips in <span th:text="${dto.demographics.lowSeason}">-</span>. Pre-season campaigns can capture early demand and maximize peak-month performance.
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

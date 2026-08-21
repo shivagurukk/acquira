@@ -1,0 +1,55 @@
+# =============================================================================
+# Local Postgres = stand-in for RDS. On AWS you DELETE this file and point
+# SPRING_DATASOURCE_URL at your RDS endpoint instead. Nothing else changes.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: acquira-db-pvc
+  namespace: acquira
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquira-db
+  namespace: acquira
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: acquira-db }
+  template:
+    metadata:
+      labels: { app: acquira-db }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - { name: POSTGRES_USER, value: postgres }
+            - { name: POSTGRES_PASSWORD, value: postgres }
+            - { name: POSTGRES_DB, value: postgres }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          readinessProbe:
+            exec: { command: ["pg_isready","-U","postgres"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: acquira-db-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquira-db
+  namespace: acquira
+spec:
+  selector: { app: acquira-db }
+  ports:
+    - { port: 5432, targetPort: 5432 }

@@ -14,7 +14,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/business")
-@CrossOrigin(origins = "http://localhost:5173")
 public class BusinessController {
 
         private final MerchantActivitySummaryRepository activityRepository;

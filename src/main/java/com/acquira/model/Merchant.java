@@ -1,18 +1,23 @@
 package com.acquira.model;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.EqualsAndHashCode;
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "dim_merchant", uniqueConstraints = {
         @UniqueConstraint(columnNames = { "tenant_id", "internal_id" })
 })
-@Data
+@Getter
+@Setter
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Merchant {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "merchant_id")
+    @EqualsAndHashCode.Include
     private Long merchantId;
 
     @Column(name = "internal_id")
@@ -28,6 +33,9 @@ public class Merchant {
     @Column(name = "sales_user_id")
     private String salesUserId;
 
+    @Column(name = "sales_email")
+    private String salesEmail;
+
     @Column(name = "referral_partner")
     private String referralPartner;
 
@@ -41,76 +49,4 @@ public class Merchant {
     private String mcc;
     private String location;
     private String city;
-
-    public Long getMerchantId() {
-        return merchantId;
-    }
-
-    public void setMerchantId(Long merchantId) {
-        this.merchantId = merchantId;
-    }
-
-    public String getInternalId() {
-        return internalId;
-    }
-
-    public void setInternalId(String internalId) {
-        this.internalId = internalId;
-    }
-
-    public String getMid() {
-        return mid;
-    }
-
-    public void setMid(String mid) {
-        this.mid = mid;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public void setStatus(String status) {
-        this.status = status;
-    }
-
-    public LocalDateTime getCreatedDate() {
-        return createdDate;
-    }
-
-    public void setCreatedDate(LocalDateTime createdDate) {
-        this.createdDate = createdDate;
-    }
-
-    public String getSalesUserId() {
-        return salesUserId;
-    }
-
-    public void setSalesUserId(String salesUserId) {
-        this.salesUserId = salesUserId;
-    }
-
-    public String getRiskLevel() {
-        return riskLevel;
-    }
-
-    public void setRiskLevel(String riskLevel) {
-        this.riskLevel = riskLevel;
-    }
-
-    public Long getTenantId() {
-        return tenantId;
-    }
-
-    public void setTenantId(Long tenantId) {
-        this.tenantId = tenantId;
-    }
 }

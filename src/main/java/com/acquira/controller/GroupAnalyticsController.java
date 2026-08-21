@@ -2,7 +2,6 @@ package com.acquira.controller;
 
 import com.acquira.config.TenantContext;
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -17,11 +16,13 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/group-analytics")
-@CrossOrigin(origins = "http://localhost:5173")
 public class GroupAnalyticsController {
 
-    @PersistenceContext
-    private EntityManager entityManager;
+    private final EntityManager entityManager;
+
+    public GroupAnalyticsController(EntityManager entityManager) {
+        this.entityManager = entityManager;
+    }
 
     /**
      * Generic endpoint for Group Reports.

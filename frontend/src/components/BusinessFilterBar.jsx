@@ -25,7 +25,7 @@ const BusinessFilterBar = ({ onFilterChange, showMerchantSearch = false }) => {
 
     return (
         <div style={{
-            background: 'white', padding: '16px', borderRadius: '12px',
+            background: 'var(--bg-card)', padding: '16px', borderRadius: '12px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'end'
         }}>
             {/* Date Range */}
@@ -79,13 +79,13 @@ const BusinessFilterBar = ({ onFilterChange, showMerchantSearch = false }) => {
             <div style={{ display: 'flex', gap: '10px' }}>
                 <button onClick={handleApply} style={{
                     display: 'flex', alignItems: 'center', gap: '8px',
-                    padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#3b82f6', color: 'white', fontWeight: '500', cursor: 'pointer'
+                    padding: '8px 16px', borderRadius: '6px', border: 'none', background: 'var(--primary)', color: 'white', fontWeight: '500', cursor: 'pointer'
                 }}>
                     <Filter size={16} /> Apply
                 </button>
                 <button onClick={handleReset} style={{
                     display: 'flex', alignItems: 'center', gap: '8px',
-                    padding: '8px 16px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: '500', cursor: 'pointer'
+                    padding: '8px 16px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'var(--bg-card)', color: '#64748b', fontWeight: '500', cursor: 'pointer'
                 }}>
                     <RefreshCcw size={16} /> Reset
                 </button>

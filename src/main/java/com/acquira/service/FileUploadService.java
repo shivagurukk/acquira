@@ -40,18 +40,22 @@ public class FileUploadService {
     private final com.acquira.repository.TenantRepository tenantRepository;
     private final com.acquira.service.ManualIngestionService manualIngestionService;
 
+    private final com.acquira.service.NotificationService notificationService;
+
     public FileUploadService(JobLauncher jobLauncher,
             @Qualifier("merchantMasterJob") Job merchantMasterJob,
             @Qualifier("transactionLoadJob") Job transactionLoadJob,
             com.acquira.service.AuditService auditService,
             com.acquira.repository.TenantRepository tenantRepository,
-            com.acquira.service.ManualIngestionService manualIngestionService) {
+            com.acquira.service.ManualIngestionService manualIngestionService,
+            com.acquira.service.NotificationService notificationService) {
         this.jobLauncher = jobLauncher;
         this.merchantMasterJob = merchantMasterJob;
         this.transactionLoadJob = transactionLoadJob;
         this.auditService = auditService;
         this.tenantRepository = tenantRepository;
         this.manualIngestionService = manualIngestionService;
+        this.notificationService = notificationService;
 
         // Ensure upload directory exists
         try {
@@ -59,6 +63,73 @@ public class FileUploadService {
         } catch (IOException e) {
             throw new RuntimeException("Could not initialize upload folder", e);
         }
+    }
+
+    private void monitorJobProgress(org.springframework.batch.core.JobExecution jobExecution, String username) {
+        new Thread(() -> {
+            try {
+                // Initial status
+                notificationService.send(username, "UPLOAD_PROGRESS", mapJobStatus(jobExecution));
+
+                while (jobExecution.isRunning()) {
+                    Thread.sleep(1000); // Poll every 1 second
+                    notificationService.send(username, "UPLOAD_PROGRESS", mapJobStatus(jobExecution));
+                }
+
+                // Final status
+                if (jobExecution.getStatus() == org.springframework.batch.core.BatchStatus.COMPLETED) {
+                    notificationService.send(username, "UPLOAD_COMPLETE", mapJobStatus(jobExecution));
+                } else {
+                    notificationService.send(username, "UPLOAD_FAILED", mapJobStatus(jobExecution));
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    private java.util.Map<String, Object> mapJobStatus(org.springframework.batch.core.JobExecution jobExecution) {
+        java.util.Map<String, Object> status = new java.util.HashMap<>();
+        status.put("jobId", jobExecution.getId());
+        status.put("status", jobExecution.getStatus().toString());
+        status.put("exitCode", jobExecution.getExitStatus().getExitCode());
+
+        long readCount = 0;
+        long writeCount = 0;
+        long skipCount = 0;
+        for (org.springframework.batch.core.StepExecution step : jobExecution.getStepExecutions()) {
+            readCount += step.getReadCount();
+            writeCount += step.getWriteCount();
+            skipCount += step.getSkipCount();
+        }
+        status.put("readCount", readCount);
+        status.put("writeCount", writeCount);
+        status.put("skipCount", skipCount);
+
+        long totalRows = 0;
+        try {
+            totalRows = jobExecution.getExecutionContext().getLong("totalReqRows", 0);
+        } catch (Exception e) {
+        }
+
+        status.put("totalRows", totalRows);
+        int progress = 0;
+        if (totalRows > 0) {
+            progress = (int) Math.min(100, (readCount * 100) / totalRows);
+        }
+        status.put("progress", progress);
+
+        return status;
+    }
+
+    private String getCurrentUsername() {
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated()) {
+            return auth.getName();
+        }
+        return "anonymous";
     }
 
     // A helper for robust reading
@@ -160,7 +231,9 @@ public class FileUploadService {
                     .addString("fullPath", filePath)
                     .addLong("startedAt", System.currentTimeMillis())
                     .toJobParameters();
-            return jobLauncher.run(merchantMasterJob, jobParameters);
+            org.springframework.batch.core.JobExecution execution = jobLauncher.run(merchantMasterJob, jobParameters);
+            monitorJobProgress(execution, getCurrentUsername());
+            return execution;
 
         } else if ("TRANSACTION".equals(detectedType)) {
             auditService.log("BATCH_RUN",
@@ -173,13 +246,14 @@ public class FileUploadService {
                     .addLong("startedAt", System.currentTimeMillis())
                     .toJobParameters();
             org.springframework.batch.core.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
+            monitorJobProgress(execution, getCurrentUsername());
 
             // Trigger Reporting Update (Synchronous for now, or could be async)
             // Trigger Reporting Update (Multi-Date / Data-Driven)
             try {
                 manualIngestionService.processManualUpload(targetTenantId);
             } catch (Exception e) {
-                System.err.println("Failed to update Reporting DB: " + e.getMessage());
+                log.warn("Failed to update Reporting DB: {}", e.getMessage());
                 // Don't fail the upload just because reporting failed
             }
 
@@ -304,8 +378,33 @@ public class FileUploadService {
         return null;
     }
 
+    private static final java.util.Set<String> ALLOWED_EXTENSIONS = java.util.Set.of(
+            ".xlsx", ".xls", ".csv", ".tsv"
+    );
+
     private String saveFile(MultipartFile file) throws IOException {
-        String fileName = System.currentTimeMillis() + "_" + file.getOriginalFilename();
+        // ── Validation ──────────────────────────────────────────────
+        String originalName = file.getOriginalFilename();
+
+        // 1. Empty file check
+        if (file.isEmpty() || file.getSize() == 0) {
+            throw new IllegalArgumentException("Upload rejected: file is empty.");
+        }
+
+        // 2. Extension check
+        if (originalName == null || originalName.isBlank()) {
+            throw new IllegalArgumentException("Upload rejected: filename is missing.");
+        }
+        String lowerName = originalName.toLowerCase();
+        boolean allowed = ALLOWED_EXTENSIONS.stream().anyMatch(lowerName::endsWith);
+        if (!allowed) {
+            throw new IllegalArgumentException(
+                    "Upload rejected: unsupported file type. Allowed: .xlsx, .csv, .tsv, .xls");
+        }
+
+        // 3. Sanitize filename (remove path traversal characters)
+        String safeName = originalName.replaceAll("[^a-zA-Z0-9._-]", "_");
+        String fileName = System.currentTimeMillis() + "_" + safeName;
         Path path = Paths.get(UPLOAD_DIR + fileName);
         Files.copy(file.getInputStream(), path);
         return path.toAbsolutePath().toString();

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="cardAnalyticsContent">
+        <div class="section-title" style="margin-bottom: 2px;">Card &amp; Payment Analytics</div>
+        <div class="section-subtitle" style="margin-bottom: 6px;">Credit, debit &amp; prepaid breakdown with local vs international card analysis</div>
+
+        <!-- Dynamic Insight -->
+        <div th:if="${dto.insights != null and dto.insights.cardInsight != null}" style="background: linear-gradient(135deg, #FFF1F2, #FFE4E6); border: 1px solid #FECACA; border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; display: flex; gap: 8px;">
+            <div style="font-size: 12px; margin-top: 1px;">💳</div>
+            <div>
+                <p style="font-size: 8px; color: #881337; line-height: 1.5; margin: 0; font-weight: 600;" th:text="${dto.insights.cardInsight}">Card insight</p>
+                <p th:if="${dto.insights.cardTip != null}" style="font-size: 7.5px; color: #BE123C; line-height: 1.4; margin: 3px 0 0 0;" th:text="'💡 ' + ${dto.insights.cardTip}">Tip</p>
+            </div>
+        </div>
+
+        <!-- ═══ SECTION A: CARD TYPE METRICS ═══ -->
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <div style="font-size: 7.5px; font-weight: 800; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">Card Type Breakdown</div>
+            <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #DBEAFE, transparent);"></div>
+        </div>
+
+        <!-- ROW 1: Credit / Debit / Prepaid -->
+        <div class="grid-3 mb-6">
+            <!-- CREDIT -->
+            <div class="card" style="padding: 0; overflow: hidden; border: none;">
+                <div style="background: linear-gradient(135deg, #0F2042, #1E3A8A); padding: 12px 14px; color: white; border-radius: 8px 8px 0 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 7px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">Credit Cards</div>
+                            <div style="font-size: 28px; font-weight: 900; color: white; margin-top: 2px; line-height: 1;" th:text="${dto.demographics.creditPct != null ? dto.demographics.creditPct + '%' : '-'}">-</div>
+                        </div>
+                        <div style="width: 36px; height: 36px; background: rgba(255,255,255,0.1); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg>
+                        </div>
+                    </div>
+                </div>
+                <div style="padding: 8px 14px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
+                    <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280;">
+                        <span>Volume</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.creditVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.creditVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280; margin-top: 3px;">
+                        <span>Transaction Count</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.creditTxnCount != null ? #numbers.formatDecimal(dto.demographics.creditTxnCount, 1, 'COMMA', 0, 'POINT') : '-'}">-</span>
+                    </div>
+                    <div style="width: 100%; height: 6px; background: #E5E7EB; border-radius: 3px; overflow: hidden; margin-top: 6px;">
+                        <div th:style="'width:' + ${dto.demographics.creditPct != null ? dto.demographics.creditPct : 0} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 3px;'"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DEBIT -->
+            <div class="card" style="padding: 0; overflow: hidden; border: none;">
+                <div style="background: linear-gradient(135deg, #042f2e, #0D9488); padding: 12px 14px; color: white; border-radius: 8px 8px 0 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 7px; font-weight: 700; color: #99F6E4; letter-spacing: 0.06em; text-transform: uppercase;">Debit Cards</div>
+                            <div style="font-size: 28px; font-weight: 900; color: white; margin-top: 2px; line-height: 1;" th:text="${dto.demographics.debitPct != null ? dto.demographics.debitPct + '%' : '-'}">-</div>
+                        </div>
+                        <div style="width: 36px; height: 36px; background: rgba(255,255,255,0.1); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/><path d="M7 15h3"/></svg>
+                        </div>
+                    </div>
+                </div>
+                <div style="padding: 8px 14px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
+                    <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280;">
+                        <span>Volume</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.debitVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.debitVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280; margin-top: 3px;">
+                        <span>Transaction Count</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.debitTxnCount != null ? #numbers.formatDecimal(dto.demographics.debitTxnCount, 1, 'COMMA', 0, 'POINT') : '-'}">-</span>
+                    </div>
+                    <div style="width: 100%; height: 6px; background: #E5E7EB; border-radius: 3px; overflow: hidden; margin-top: 6px;">
+                        <div th:style="'width:' + ${dto.demographics.debitPct != null ? dto.demographics.debitPct : 0} + '%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 3px;'"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PREPAID -->
+            <div class="card" style="padding: 0; overflow: hidden; border: none;">
+                <div style="background: linear-gradient(135deg, #4c1d95, #6D28D9); padding: 12px 14px; color: white; border-radius: 8px 8px 0 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 7px; font-weight: 700; color: #C4B5FD; letter-spacing: 0.06em; text-transform: uppercase;">Prepaid Cards</div>
+                            <div style="font-size: 28px; font-weight: 900; color: white; margin-top: 2px; line-height: 1;" th:text="${dto.demographics.prepaidPct != null ? dto.demographics.prepaidPct + '%' : '-'}">-</div>
+                        </div>
+                        <div style="width: 36px; height: 36px; background: rgba(255,255,255,0.1); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><circle cx="12" cy="12" r="3"/></svg>
+                        </div>
+                    </div>
+                </div>
+                <div style="padding: 8px 14px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
+                    <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280;">
+                        <span>Volume</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.prepaidVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.prepaidVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 8px; color: #6B7280; margin-top: 3px;">
+                        <span>Transaction Count</span>
+                        <span style="font-weight: 700; color: #111827;" th:text="${dto.demographics.prepaidTxnCount != null ? #numbers.formatDecimal(dto.demographics.prepaidTxnCount, 1, 'COMMA', 0, 'POINT') : '-'}">-</span>
+                    </div>
+                    <div style="width: 100%; height: 6px; background: #E5E7EB; border-radius: 3px; overflow: hidden; margin-top: 6px;">
+                        <div th:style="'width:' + ${dto.demographics.prepaidPct != null ? dto.demographics.prepaidPct : 0} + '%; height: 100%; background: linear-gradient(90deg, #6D28D9, #A78BFA); border-radius: 3px;'"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ SECTION A2: AVG TICKET BY CARD TYPE ═══ -->
+        <div th:if="${dto.demographics.avgTicketByCardType != null and !dto.demographics.avgTicketByCardType.isEmpty()}">
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+                <div style="font-size: 7.5px; font-weight: 800; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">Average Ticket by Card Type</div>
+                <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #DBEAFE, transparent);"></div>
+            </div>
+            <div class="grid-3 mb-6">
+                <div th:each="ct : ${dto.demographics.avgTicketByCardType}" class="card" style="padding: 10px 14px; text-align: center;">
+                    <div style="font-size: 7px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;"
+                         th:style="${ct.label == 'CREDIT' ? 'color: #1E3A8A;' : (ct.label == 'DEBIT' ? 'color: #0D9488;' : 'color: #6D28D9;')}"
+                         th:text="${ct.label}">TYPE</div>
+                    <div style="font-size: 24px; font-weight: 900; color: #111827; margin: 4px 0 2px 0;" th:text="${dto.currencyCode} + ' ' + ${#numbers.formatDecimal(ct.value, 1, 'COMMA', dto.currencyDecimals, 'POINT')}">0</div>
+                    <div style="font-size: 7.5px; color: #6B7280;">per transaction</div>
+                    <div style="width: 100%; height: 4px; border-radius: 2px; overflow: hidden; margin-top: 6px;"
+                         th:style="'background: ' + ${ct.label == 'CREDIT' ? '#DBEAFE' : (ct.label == 'DEBIT' ? '#CCFBF1' : '#EDE9FE')} + ';'">
+                        <div style="height: 100%; border-radius: 2px;"
+                             th:style="'width: 100%; background: ' + ${ct.label == 'CREDIT' ? '#1E3A8A' : (ct.label == 'DEBIT' ? '#0D9488' : '#6D28D9')} + ';'"></div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 7px; color: #9CA3AF; margin-top: 4px;">
+                        <span th:text="${ct.value3 != null ? #numbers.formatDecimal(ct.value3, 1, 'COMMA', 0, 'POINT') + ' txns' : '-'}">0 txns</span>
+                        <span th:text="${ct.value2 != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(ct.value2, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ SECTION B: LOCAL vs INTERNATIONAL ═══ -->
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <div style="font-size: 7.5px; font-weight: 800; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">Local vs International</div>
+            <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #DBEAFE, transparent);"></div>
+        </div>
+
+        <div class="grid-2 mb-6">
+            <div class="card" style="padding: 12px 14px; border-left: 4px solid #1E3A8A;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div>
+                        <div style="font-size: 7.5px; font-weight: 700; color: #1E3A8A; letter-spacing: 0.05em; text-transform: uppercase;">Local Cards</div>
+                        <div style="font-size: 28px; font-weight: 900; color: #111827; margin: 3px 0 2px 0;" th:text="${dto.demographics.localCardPct != null ? dto.demographics.localCardPct + '%' : '-'}">-</div>
+                        <div style="font-size: 8px; color: #6B7280;">of card volume</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 8px; color: #6B7280;">Volume</div>
+                        <div style="font-size: 14px; font-weight: 900; color: #1E3A8A;" th:text="${dto.demographics.localCardVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.localCardVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</div>
+                        <div style="font-size: 8px; color: #6B7280; margin-top: 4px;">Transactions</div>
+                        <div style="font-size: 14px; font-weight: 900; color: #1E3A8A;" th:text="${dto.demographics.localCardCustomers != null ? #numbers.formatDecimal(dto.demographics.localCardCustomers, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                    </div>
+                </div>
+                <div style="width: 100%; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden; margin-top: 8px;">
+                    <div th:style="'width:' + ${dto.demographics.localCardPct != null ? dto.demographics.localCardPct : 0} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 4px;'"></div>
+                </div>
+            </div>
+
+            <div class="card" style="padding: 12px 14px; border-left: 4px solid #D97706;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div>
+                        <div style="font-size: 7.5px; font-weight: 700; color: #D97706; letter-spacing: 0.05em; text-transform: uppercase;">International Cards</div>
+                        <div style="font-size: 28px; font-weight: 900; color: #111827; margin: 3px 0 2px 0;" th:text="${dto.demographics.internationalCardPct != null ? dto.demographics.internationalCardPct + '%' : '-'}">-</div>
+                        <div style="font-size: 8px; color: #6B7280;">of card volume</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 8px; color: #6B7280;">Volume</div>
+                        <div style="font-size: 14px; font-weight: 900; color: #D97706;" th:text="${dto.demographics.internationalCardVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.demographics.internationalCardVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</div>
+                        <div style="font-size: 8px; color: #6B7280; margin-top: 4px;">Transactions</div>
+                        <div style="font-size: 14px; font-weight: 900; color: #D97706;" th:text="${dto.demographics.internationalCardCustomers != null ? #numbers.formatDecimal(dto.demographics.internationalCardCustomers, 1, 'COMMA', 0, 'POINT') : '-'}">-</div>
+                    </div>
+                </div>
+                <div style="width: 100%; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden; margin-top: 8px;">
+                    <div th:style="'width:' + ${dto.demographics.internationalCardPct != null ? dto.demographics.internationalCardPct : 0} + '%; height: 100%; background: linear-gradient(90deg, #D97706, #FBBF24); border-radius: 4px;'"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ SECTION C: CARD SCHEMES
+             FIX BUG: NULL card_scheme rows (unresolved lookups from ref_card_scheme) used to
+             render as a "NULL" bar with a large negative value. They are now bucketed as
+             "Unclassified" with an absolute value so the bar renders positively, and any
+             net-negative scheme total (net refund bucket) is suppressed entirely from the chart.
+             A footnote explains the unclassified bucket when it is non-zero. ═══ -->
+        <div class="card mb-6" style="padding: 10px;">
+            <div class="card-title">
+                CARD SCHEMES (BY VALUE)
+                <!-- FIX BUG: footnote shown only when unclassified bucket exists -->
+                <span th:if="${dto.demographics.hasUnclassifiedScheme}"
+                      style="font-size: 7px; color: #9CA3AF; font-weight: 400; margin-left: 6px;">
+                    * Unclassified = transactions where card scheme could not be matched to a known scheme code
+                </span>
+            </div>
+            <!-- data-exclude-negative="true" tells the renderer to drop any series whose total is negative
+                 data-null-label="Unclassified" renames any null/empty scheme key to "Unclassified" -->
+            <div id="payment-card-schemes"
+                 data-exclude-negative="true"
+                 data-null-label="Unclassified"
+                 style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
+        </div>
+
+        <!-- ═══ SECTION D: UNIQUE CARDS BY DAY
+             FIX UX: Y-axis now auto-scales to max+10% to eliminate wasted whitespace when
+             the peak bar is much lower than the chart maximum. The chart renderer respects
+             data-autoscale="true" to compute a tight max from the data. ═══ -->
+        <div class="card mb-6" style="padding: 10px 12px;">
+            <div class="card-title">UNIQUE CARDS BY DAY &mdash; Day of Month</div>
+            <div class="chart-container" style="max-height: 140px;">
+                <canvas data-chart="gradient-bar"
+                        data-field="achievements.uniqueCustomersByDay"
+                        data-color="#1E3A8A"
+                        data-autoscale="true"></canvas>
+            </div>
+        </div>
+
+        <!-- ═══ SECTION E: TOP INTERNATIONAL CARD COUNTRIES — REMOVED.
+             The COUNTRY attribute is proxied from the TRANSACTION CURRENCY, so it
+             only captures international transactions charged in a foreign currency
+             (essentially DCC opt-ins). Most international cards pay in the local
+             currency and never appear, which made the table show e.g. a single
+             "USD / 1 txn" row while 85 international transactions existed — and a
+             currency code is not an origin country. Do not reinstate until the
+             batch job writes a real issuer-country attribute. ═══ -->
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.cardInsight != null ? dto.insights.cardInsight : 'The payment data gives a useful view of how your customers are paying. Reviewing the domestic vs international split may help identify any DCC opportunities.'}"></span>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

@@ -1,228 +1,489 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import {
-    Box,
-    Drawer,
-    List,
-    ListItem,
-    ListItemButton,
-    ListItemIcon,
-    ListItemText,
-    Typography,
-    IconButton,
-    Avatar,
-    Divider,
-    Collapse,
-    AppBar,
-    Toolbar
-} from '@mui/material';
+import { Drawer, Tooltip, useMediaQuery } from '@mui/material';
 import * as LucideIcons from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import { prefetchRoute, prefetchCommonRoutes } from '../routePrefetch';
+import TenantSwitcher from './TenantSwitcher';
+import NotificationBell from './NotificationBell';
+import ShortcutsPanel from './ShortcutsPanel';
+import DataFreshness from './DataFreshness';
+import DashboardBackdrop from './DashboardBackdrop';
+import './sidebar.css';
 
-const DRAWER_WIDTH = 260;
+// ── Constants ──────────────────────────────────────────────────────
+const DRAWER_W    = 232;
+const COLLAPSE_W  = 56;
+const COLLAPSE_KEY = 'acquira_sb_collapsed';
 
+// Environment tag shown beside the wordmark (PROD / UAT).
+const ENV_TAG = import.meta.env.VITE_ENV_LABEL || (import.meta.env.PROD ? 'PROD' : 'UAT');
+
+// ── Category grouping ──────────────────────────────────────────────
+// Dark-rail sidebar: groups are what the user is DOING (reporting first,
+// administration after), each under a mono eyebrow label. One accent —
+// teal — reserved for the active marker.
+const CAT_ORDER = [
+    'EXECUTIVE','BUSINESS','SALES','FINANCE',
+    'MERCHANT MGT','OPERATIONS','ADMINISTRATION','DATA INTEGRATION','GENERAL',
+];
+const ANALYTICS_CATS = new Set(['EXECUTIVE','BUSINESS','SALES','FINANCE']);
+
+const catLabel = (cat) => cat
+    .replace('MGT', 'MANAGEMENT')
+    .replace('DATA INTEGRATION', 'DATA');
+
+function loadCollapsed() {
+    try { return localStorage.getItem(COLLAPSE_KEY) === '1'; }
+    catch { return false; }
+}
+
+// ── Small components ───────────────────────────────────────────────
+// Icons live in the sidebar ONLY (the collapsed rail depends on them):
+// one 18px stroke set at 1.5px.
+const NavItem = ({ menu, active, muted, onClick }) => {
+    const Icon = LucideIcons[menu.iconKey] || LucideIcons.Circle;
+    return (
+        <button
+            className={`sb__item${active ? ' sb__item--active' : ''}${muted ? ' sb__item--muted' : ''}`}
+            onClick={onClick}
+            onMouseEnter={() => prefetchRoute(menu.path)}
+            onFocus={() => prefetchRoute(menu.path)}
+            aria-current={active ? 'page' : undefined}
+        >
+            <Icon size={18} strokeWidth={1.5} />
+            <span className="sb__item-label">{menu.menuName}</span>
+        </button>
+    );
+};
+
+// ── Main Layout ────────────────────────────────────────────────────
 const Layout = () => {
-    const navigate = useNavigate();
-    const location = useLocation();
+    const navigate  = useNavigate();
+    const location  = useLocation();
+    const { menus, logout, username, activeTenant, activeTenantId, tenantVersion } = useAuth();
+    const { isDark, toggleTheme } = useTheme();
+    const isMobile  = useMediaQuery('(max-width:768px)');
 
-    // For mobile responsiveness if needed later, currently permanent
+    const [collapsed,  setCollapsedState] = useState(loadCollapsed);
+    const [search,     setSearch]     = useState('');
     const [mobileOpen, setMobileOpen] = useState(false);
+    const [userMenu,   setUserMenu]   = useState(false);
+    const searchRef = useRef(null);
+    const footerRef = useRef(null);
 
-    const handleLogout = () => {
-        localStorage.clear();
-        navigate('/');
-    };
-
-    const menus = useMemo(() => {
-        try {
-            const storedMenus = localStorage.getItem('menus');
-            let parsed = storedMenus ? JSON.parse(storedMenus) : [];
-
-            // Filter out unwanted menus
-            const menusToRemove = ['Sales Analytics', 'Zero Sales', 'Profitability', 'P&L Views', 'Sales Trends', 'Lifecycle'];
-            parsed = parsed.filter(m => !menusToRemove.includes(m.menuName));
-
-            // INJECT BUSINESS MENUS
-            const businessMenus = [
-                { menuId: 101, menuName: 'Volume & Revenue', path: '/business/volume-revenue', iconKey: 'BarChart3', category: 'BUSINESS', displayOrder: 1 },
-                { menuId: 102, menuName: 'Merchant Financial', path: '/business/merchant-financial', iconKey: 'DollarSign', category: 'BUSINESS', displayOrder: 2 },
-                { menuId: 109, menuName: 'Merchant Report Manager', path: '/business/report-manager', iconKey: 'FileText', category: 'BUSINESS', displayOrder: 9 },
-                { menuId: 103, menuName: 'Performance Trends', path: '/business/performance', iconKey: 'TrendingUp', category: 'BUSINESS', displayOrder: 3 },
-                { menuId: 104, menuName: 'Debit & Prepaid Metrics', path: '/business/debit-prepaid', iconKey: 'CreditCard', category: 'BUSINESS', displayOrder: 4 },
-                { menuId: 105, menuName: 'Attrition Report', path: '/business/attrition', iconKey: 'Activity', category: 'BUSINESS', displayOrder: 5 },
-                { menuId: 106, menuName: 'Merchant Growth Heatmap', path: '/business/heatmap', iconKey: 'Grid', category: 'BUSINESS', displayOrder: 6 },
-                { menuId: 107, menuName: 'Daily Merchant Dashboard', path: '/business/daily-dashboard', iconKey: 'Calendar', category: 'BUSINESS', displayOrder: 7 },
-                { menuId: 108, menuName: 'Merchant Analytics', path: '/business/merchant-analytics', iconKey: 'BarChart2', category: 'BUSINESS', displayOrder: 8 },
-                // Keep Executive Dashboard if needed, or remove if replaced by above
-                { menuId: 114, menuName: 'Executive Dashboard', path: '/business/executive-dashboard-v2', iconKey: 'Presentation', category: 'EXECUTIVE', displayOrder: 0 },
-            ];
-
-            // Append business menus if not existing
-            const existingPaths = new Set(parsed.map(m => m.path));
-            businessMenus.forEach(m => {
-                if (!existingPaths.has(m.path)) parsed.push(m);
-            });
-
-            return parsed;
-        } catch (e) {
-            console.error("Failed to parse menus", e);
-            return [];
-        }
+    // Collapse state persists across sessions.
+    const setCollapsed = useCallback((next) => {
+        setCollapsedState(prev => {
+            const v = typeof next === 'function' ? next(prev) : next;
+            try { localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'); } catch { /* ignore */ }
+            return v;
+        });
     }, []);
 
-    // Group menus by category
-    const groupedMenus = useMemo(() => {
-        const groups = {};
-        menus.forEach(menu => {
-            const category = menu.category || 'GENERAL';
-            // Normalize category name for simpler display
-            const normalizedCat = category.replace(' UNIVERSE', '');
-            if (!groups[normalizedCat]) groups[normalizedCat] = [];
-            groups[normalizedCat].push(menu);
-        });
+    const w = isMobile ? DRAWER_W : (collapsed ? COLLAPSE_W : DRAWER_W);
 
-        Object.keys(groups).forEach(key => {
-            groups[key].sort((a, b) => a.displayOrder - b.displayOrder);
-        });
+    // ── Idle-prefetch the common landing pages once after first paint ──
+    useEffect(() => { prefetchCommonRoutes(); }, []);
 
-        return groups;
+    // ── Auto-collapse inside the Settings hub ─────────────────────
+    // Settings has its own section nav, so the full app sidebar next to it
+    // reads as two sidebars. Collapse to the icon rail while in /settings,
+    // and restore whatever the user had when they leave.
+    const inSettings = location.pathname.startsWith('/settings');
+    const preSettingsCollapsed = useRef(null);
+    useEffect(() => {
+        if (isMobile) return;
+        if (inSettings) {
+            if (preSettingsCollapsed.current === null) {
+                preSettingsCollapsed.current = collapsed;
+                setCollapsedState(true);
+            }
+        } else if (preSettingsCollapsed.current !== null) {
+            setCollapsedState(preSettingsCollapsed.current);
+            preSettingsCollapsed.current = null;
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [inSettings, isMobile]);
+
+    // ── Grouped menus ─────────────────────────────────────────────
+    const grouped = useMemo(() => {
+        const g = {};
+        (menus || []).forEach(m => {
+            const cat = (m.category || 'GENERAL').replace(' UNIVERSE', '');
+            if (!g[cat]) g[cat] = [];
+            g[cat].push(m);
+        });
+        Object.keys(g).forEach(k => g[k].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0)));
+        return g;
     }, [menus]);
 
-    const categoryOrder = ['EXECUTIVE', 'BUSINESS', 'SALES', 'FINANCE', 'OPERATIONS', 'ADMINISTRATION', 'GENERAL'];
-    const sortedCategories = Object.keys(groupedMenus).sort((a, b) => {
-        const idxA = categoryOrder.indexOf(a);
-        const idxB = categoryOrder.indexOf(b);
-        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-        if (idxA !== -1) return -1;
-        if (idxB !== -1) return 1;
-        return a.localeCompare(b);
-    });
+    const sortedCats = useMemo(() =>
+        Object.keys(grouped).sort((a, b) => {
+            const iA = CAT_ORDER.indexOf(a), iB = CAT_ORDER.indexOf(b);
+            if (iA !== -1 && iB !== -1) return iA - iB;
+            return iA !== -1 ? -1 : iB !== -1 ? 1 : a.localeCompare(b);
+        }), [grouped]);
 
-    const allowedTenants = JSON.parse(localStorage.getItem('allowedTenants') || '[]');
-    const currentTenantId = localStorage.getItem('defaultTenantId');
+    // ── Search filter ─────────────────────────────────────────────
+    const q = search.toLowerCase();
+    const filteredCats = useMemo(() => {
+        if (!q) return sortedCats;
+        return sortedCats.filter(cat => grouped[cat]?.some(m => m.menuName.toLowerCase().includes(q)));
+    }, [q, sortedCats, grouped]);
 
-    const handleSwitchTenant = async (e) => {
-        // Implementation remains same
-        const newTenantId = e.target.value;
-        const tenant = allowedTenants.find(t => t.tenantId == newTenantId);
-        if (tenant) {
-            localStorage.setItem('defaultTenantId', tenant.tenantId);
-            try {
-                const token = localStorage.getItem('token');
-                const res = await fetch('/api/auth/switch-context', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ tenantId: tenant.tenantId })
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    localStorage.setItem('menus', JSON.stringify(data.menus));
-                    window.location.reload();
-                }
-            } catch (err) { console.error("Switch failed", err); }
+    const filterItems = useCallback((items) => {
+        if (!q) return items;
+        return items.filter(m => m.menuName.toLowerCase().includes(q));
+    }, [q]);
+
+    // ── Keyboard: Cmd+K → search ──────────────────────────────────
+    useEffect(() => {
+        const h = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                if (collapsed) setCollapsed(false);
+                setTimeout(() => searchRef.current?.focus(), 80);
+            }
+            if (e.key === 'Escape') { setSearch(''); setUserMenu(false); }
+        };
+        window.addEventListener('keydown', h);
+        return () => window.removeEventListener('keydown', h);
+    }, [collapsed, setCollapsed]);
+
+    // ── Close user menu on outside click ──────────────────────────
+    useEffect(() => {
+        if (!userMenu) return;
+        const h = (e) => {
+            if (footerRef.current && !footerRef.current.contains(e.target)) setUserMenu(false);
+        };
+        document.addEventListener('mousedown', h);
+        return () => document.removeEventListener('mousedown', h);
+    }, [userMenu]);
+
+    // ── Close mobile on navigate ──────────────────────────────────
+    useEffect(() => { if (isMobile) setMobileOpen(false); }, [location.pathname]);
+
+    // ── Navigate ──────────────────────────────────────────────────
+    const go = useCallback((menu) => {
+        navigate(menu.path);
+        setSearch('');
+    }, [navigate]);
+
+    const handleLogout = () => { logout(); navigate('/login'); };
+
+    // ── Page title for topbar ─────────────────────────────────────
+    const currentMenu = useMemo(() => {
+        for (const cat of sortedCats) {
+            const found = (grouped[cat] || []).find(m => location.pathname === m.path);
+            if (found) return { ...found, category: cat };
         }
+        return null;
+    }, [location.pathname, grouped, sortedCats]);
+
+    // ── Expanded group: mono eyebrow + items, no dividers ─────────
+    const renderGroup = (cat) => {
+        const items = filterItems(grouped[cat] || []);
+        if (!items.length) return null;
+        return (
+            <React.Fragment key={cat}>
+                <div className="sb__zone">{catLabel(cat)}</div>
+                {items.map(m => (
+                    <NavItem key={m.menuId || m.path}
+                        menu={m}
+                        active={location.pathname === m.path}
+                        onClick={() => go(m)}
+                    />
+                ))}
+            </React.Fragment>
+        );
     };
 
-    const drawerContent = (
-        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: '#0f172a', color: 'white' }}>
-            {/* Header */}
-            <Box sx={{ p: 3, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                    <Box sx={{ width: 32, height: 32, bgcolor: 'primary.main', borderRadius: 2 }} />
-                    <Typography variant="h6" fontWeight="bold">Acquira</Typography>
-                </Box>
-                {allowedTenants.length > 1 && (
-                    <select
-                        value={currentTenantId}
-                        onChange={handleSwitchTenant}
-                        style={{
-                            width: '100%',
-                            background: '#1e293b',
-                            color: '#e2e8f0',
-                            border: '1px solid #334155',
-                            padding: '8px',
-                            borderRadius: '6px',
-                            fontSize: '13px',
-                            outline: 'none',
-                            cursor: 'pointer'
-                        }}
+    // ── Collapsed rail: icon list, label as tooltip on the right ──
+    const renderCollapsedZone = (cats) => cats.flatMap(cat =>
+        (grouped[cat] || []).map(m => {
+            const active = location.pathname === m.path;
+            const MIcon = LucideIcons[m.iconKey] || LucideIcons.Circle;
+            return (
+                <Tooltip key={m.menuId || m.path} title={m.menuName} placement="right" arrow>
+                    <button
+                        className={`sb__icon-item${active ? ' sb__icon-item--active' : ''}`}
+                        aria-label={m.menuName}
+                        aria-current={active ? 'page' : undefined}
+                        onClick={() => go(m)}
+                        onMouseEnter={() => prefetchRoute(m.path)}
                     >
-                        {allowedTenants.map(t => (
-                            <option key={t.tenantId} value={t.tenantId}>{t.bankName}</option>
-                        ))}
-                    </select>
-                )}
-            </Box>
-
-            {/* Menu List */}
-            <List sx={{ flex: 1, overflowY: 'auto', px: 2, pt: 2 }}>
-                {sortedCategories.map(category => (
-                    <React.Fragment key={category}>
-                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)', fontWeight: 'bold', display: 'block', mt: 2, mb: 1, pl: 1 }}>
-                            {category}
-                        </Typography>
-                        {groupedMenus[category].map(menu => {
-                            const IconComponent = (LucideIcons && LucideIcons[menu.iconKey]) ? LucideIcons[menu.iconKey] : LucideIcons.Circle;
-                            const isActive = location.pathname === menu.path;
-                            return (
-                                <ListItem key={menu.menuId} disablePadding sx={{ mb: 0.5 }}>
-                                    <ListItemButton
-                                        onClick={() => navigate(menu.path)}
-                                        selected={isActive}
-                                        sx={{
-                                            borderRadius: 2,
-                                            '&.Mui-selected': {
-                                                bgcolor: 'rgba(255,255,255,0.1)',
-                                                color: '#60a5fa', // Blue 400
-                                                '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' }
-                                            },
-                                            '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
-                                        }}
-                                    >
-                                        <ListItemIcon sx={{ minWidth: 40, color: isActive ? '#60a5fa' : 'rgba(255,255,255,0.7)' }}>
-                                            <IconComponent size={20} />
-                                        </ListItemIcon>
-                                        <ListItemText
-                                            primary={menu.menuName}
-                                            primaryTypographyProps={{ fontSize: '0.875rem', fontWeight: isActive ? 600 : 400 }}
-                                        />
-                                    </ListItemButton>
-                                </ListItem>
-                            );
-                        })}
-                    </React.Fragment>
-                ))}
-            </List>
-
-            {/* Footer */}
-            <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                <ListItemButton onClick={handleLogout} sx={{ borderRadius: 2, color: '#ef4444', '&:hover': { bgcolor: 'rgba(239,68,68,0.1)' } }}>
-                    <ListItemIcon sx={{ minWidth: 40, color: '#ef4444' }}><LucideIcons.LogOut size={20} /></ListItemIcon>
-                    <ListItemText primary="Sign Out" />
-                </ListItemButton>
-            </Box>
-        </Box>
+                        <MIcon size={18} strokeWidth={1.5} />
+                    </button>
+                </Tooltip>
+            );
+        })
     );
 
+    const analyticsCats = filteredCats.filter(c => ANALYTICS_CATS.has(c));
+    const manageCats    = filteredCats.filter(c => !ANALYTICS_CATS.has(c));
+
+    // ── Sidebar content (lives inside the permanent Drawer paper) ──
+    const sidebarContent = (
+        <>
+            {/* ── Header: wordmark + environment tag, 56px ── */}
+            <div className="sb__header">
+                <button className="sb__brand" onClick={() => navigate('/dashboard')} title="Go to dashboard" aria-label="Go to dashboard">
+                    {(!collapsed || isMobile) ? (
+                        <>
+                            <span className="sb__brand-name">NEXUS</span>
+                            <span className="sb__env">{ENV_TAG}</span>
+                        </>
+                    ) : (
+                        <span className="sb__brand-name">NX</span>
+                    )}
+                </button>
+            </div>
+
+            {/* ── Tenant switcher ── */}
+            {(!collapsed || isMobile) && (
+                <div style={{ padding: '8px 12px 0', flexShrink: 0 }}>
+                    <TenantSwitcher />
+                </div>
+            )}
+
+            {/* ── Search ── */}
+            {(!collapsed || isMobile) && (
+                <div className="sb__search" onClick={() => searchRef.current?.focus()}>
+                    <LucideIcons.Search size={13} color="var(--rail-eyebrow)" />
+                    <input
+                        ref={searchRef}
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder="Search"
+                        aria-label="Search navigation"
+                    />
+                    {search ? (
+                        <button onClick={() => setSearch('')} aria-label="Clear search" style={{ display: 'flex', padding: 2, color: 'var(--rail-eyebrow)' }}>
+                            <LucideIcons.X size={11} />
+                        </button>
+                    ) : (
+                        <span className="sb__kbd">⌘K</span>
+                    )}
+                </div>
+            )}
+
+            {/* ── Navigation ── */}
+            <div className="sb__nav">
+                {(!collapsed || isMobile) ? (
+                    <>
+                        {analyticsCats.map(renderGroup)}
+                        {manageCats.map(renderGroup)}
+
+                        {search && filteredCats.length === 0 && (
+                            <div className="sb__empty">
+                                <div>No results for "{search}"</div>
+                            </div>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        {renderCollapsedZone(analyticsCats)}
+                        {manageCats.length > 0 && <div className="sb__zone-dot" />}
+                        {renderCollapsedZone(manageCats)}
+                    </>
+                )}
+            </div>
+
+            {/* ── Footer: user → data freshness → collapse toggle ── */}
+            <div className="sb__footer" ref={footerRef}>
+                {(!collapsed || isMobile) ? (
+                    <>
+                        {userMenu && (
+                            <div className="sb__menu" role="menu">
+                                <button className="sb__menu-item" role="menuitem" onClick={() => { setUserMenu(false); navigate('/change-password'); }}>
+                                    <LucideIcons.KeyRound size={14} /> Change password
+                                </button>
+                                <button className="sb__menu-item" role="menuitem" onClick={() => { toggleTheme(); }}>
+                                    {isDark ? <LucideIcons.Sun size={14} /> : <LucideIcons.Moon size={14} />}
+                                    {isDark ? 'Light mode' : 'Dark mode'}
+                                </button>
+                                <div className="sb__menu-sep" />
+                                <button className="sb__menu-item sb__menu-item--danger" role="menuitem" onClick={handleLogout}>
+                                    <LucideIcons.LogOut size={14} /> Sign out
+                                </button>
+                            </div>
+                        )}
+                        <button
+                            className="sb__user"
+                            onClick={() => setUserMenu(v => !v)}
+                            aria-haspopup="menu"
+                            aria-expanded={userMenu}
+                        >
+                            <div className="sb__avatar">{(username || 'U')[0].toUpperCase()}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div className="sb__user-name">{username || 'User'}</div>
+                                <div className="sb__user-sub">{activeTenant?.bankName || 'Administrator'}</div>
+                            </div>
+                            <LucideIcons.MoreHorizontal size={15} color="var(--rail-eyebrow)" />
+                        </button>
+                        <DataFreshness />
+                        {!isMobile && (
+                            <button className="sb__collapse" onClick={() => setCollapsed(true)} aria-label="Collapse sidebar">
+                                <LucideIcons.PanelLeftClose size={18} strokeWidth={1.5} />
+                                Collapse
+                            </button>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        <Tooltip title={username || 'User'} placement="right" arrow>
+                            <div className="sb__avatar">{(username || 'U')[0].toUpperCase()}</div>
+                        </Tooltip>
+                        <Tooltip title={isDark ? 'Light mode' : 'Dark mode'} placement="right" arrow>
+                            <button className="sb__icon-item" aria-label="Toggle theme" onClick={toggleTheme}>
+                                {isDark ? <LucideIcons.Sun size={18} strokeWidth={1.5} /> : <LucideIcons.Moon size={18} strokeWidth={1.5} />}
+                            </button>
+                        </Tooltip>
+                        <Tooltip title="Sign out" placement="right" arrow>
+                            <button className="sb__icon-item" aria-label="Sign out" onClick={handleLogout}>
+                                <LucideIcons.LogOut size={18} strokeWidth={1.5} />
+                            </button>
+                        </Tooltip>
+                        <DataFreshness collapsed />
+                        <Tooltip title="Expand sidebar" placement="right" arrow>
+                            <button className="sb__collapse" onClick={() => setCollapsed(false)} aria-label="Expand sidebar">
+                                <LucideIcons.PanelLeftOpen size={18} strokeWidth={1.5} />
+                            </button>
+                        </Tooltip>
+                    </>
+                )}
+            </div>
+        </>
+    );
+
+    // ── Topbar (breadcrumb + tenant + mobile menu) ────────────────
+    const topbar = (
+        <div style={{
+            height: 52,
+            background: 'var(--glass-bg)',
+            backdropFilter: 'var(--glass-blur)',
+            WebkitBackdropFilter: 'var(--glass-blur)',
+            borderBottom: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', padding: '0 20px', gap: 10,
+            position: 'sticky', top: 0, zIndex: 100, flexShrink: 0,
+        }}>
+            {/* Mobile hamburger */}
+            {isMobile && (
+                <button onClick={() => setMobileOpen(v => !v)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}>
+                    <LucideIcons.Menu size={20} />
+                </button>
+            )}
+
+            {/* Breadcrumb */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                {currentMenu ? (
+                    <>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                            {currentMenu.category.charAt(0) + currentMenu.category.slice(1).toLowerCase()}
+                        </span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>/</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {currentMenu.menuName}
+                        </span>
+                    </>
+                ) : (
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>NEXUS</span>
+                )}
+            </div>
+
+            {/* Right actions */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                {/* Tenant tag */}
+                {activeTenant?.bankName && (
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '3px 8px', borderRadius: 'var(--radius-chip)',
+                        background: 'var(--wash)',
+                        fontFamily: 'var(--font-mono)', fontSize: 11,
+                        textTransform: 'uppercase', letterSpacing: '0.02em',
+                        color: 'var(--primary)',
+                    }}>
+                        {activeTenant.bankName}
+                    </div>
+                )}
+                {/* Dark mode toggle */}
+                <button
+                    title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                    aria-label="Toggle dark mode"
+                    onClick={toggleTheme}
+                    style={{ width: 28, height: 28, borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                >
+                    {isDark ? <LucideIcons.Sun size={14} /> : <LucideIcons.Moon size={14} />}
+                </button>
+                {/* Keyboard shortcut hint */}
+                <button
+                    title="Keyboard shortcuts (?)"
+                    onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))}
+                    style={{ width: 28, height: 28, borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}
+                >?</button>
+                {/* Notification bell */}
+                <NotificationBell />
+            </div>
+        </div>
+    );
+
+    // ── Render ─────────────────────────────────────────────────────
     return (
-        <Box sx={{ display: 'flex' }}>
-            <Drawer
-                variant="permanent"
-                sx={{
-                    width: DRAWER_WIDTH,
-                    flexShrink: 0,
-                    '& .MuiDrawer-paper': {
-                        width: DRAWER_WIDTH,
-                        boxSizing: 'border-box',
-                        borderRight: 'none'
-                    },
-                }}
-            >
-                {drawerContent}
-            </Drawer>
-            <Box component="main" sx={{ flexGrow: 1, bgcolor: '#f8fafc', minHeight: '100vh', width: `calc(100% - ${DRAWER_WIDTH}px)` }}>
-                <Outlet />
-            </Box>
-        </Box>
+        <div style={{ display: 'flex', minHeight: 'var(--vh100, 100vh)' }}>
+            <ShortcutsPanel navigate={navigate} />
+
+            {/* Desktop sidebar — permanent Drawer, dark rail */}
+            {!isMobile && (
+                <Drawer
+                    variant="permanent"
+                    open
+                    sx={{
+                        width: w, flexShrink: 0,
+                        '& .MuiDrawer-paper': {
+                            width: w, border: 'none', overflow: 'hidden',
+                            transition: 'width 180ms ease-out',
+                        },
+                    }}
+                    PaperProps={{ className: `sb${collapsed ? ' sb--collapsed' : ''}`, component: 'nav', 'aria-label': 'Main navigation' }}
+                >
+                    {sidebarContent}
+                </Drawer>
+            )}
+
+            {/* Mobile drawer overlay */}
+            {isMobile && mobileOpen && (
+                <>
+                    <div onClick={() => setMobileOpen(false)}
+                        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 199 }} />
+                    <nav aria-label="Main navigation" className="sb"
+                        style={{ position: 'fixed', top: 0, left: 0, zIndex: 200, width: DRAWER_W }}>
+                        {sidebarContent}
+                    </nav>
+                </>
+            )}
+
+            {/* Main content area. Transparent so the ambient backdrop shows
+                through (body carries the base canvas colour); every real
+                child is lifted above it with .dx-above. */}
+            <div style={{
+                position: 'relative',
+                flex: 1,
+                transition: 'margin-left 180ms ease-out',
+                display: 'flex', flexDirection: 'column',
+                minHeight: 'var(--vh100, 100vh)',
+                background: 'transparent',
+                minWidth: 0,
+            }}>
+                <DashboardBackdrop />
+                {topbar}
+                <div key={`tenant-${activeTenantId}-${tenantVersion}`} className="dx-above" style={{ flex: 1 }}>
+                    <Outlet />
+                </div>
+            </div>
+        </div>
     );
 };
 

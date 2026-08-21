@@ -1,0 +1,59 @@
+# =============================================================================
+# OPTION A — Docker Compose. Run this FIRST (before kind) to prove the images
+# build and the app boots. Run from the REPO ROOT:
+#     docker compose -f deploy/docker/docker-compose.yml up --build
+# =============================================================================
+services:
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"          # matches your dev convention (5433)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  core:
+    build:
+      context: ../..                       # repo root
+      dockerfile: deploy/docker/Dockerfile.core
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/postgres
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      # For local dev you can flip init mode ON so schema.sql auto-runs and you
+      # skip the separate migration step. Remove this on AWS (prod = never).
+      SPRING_SQL_INIT_MODE: always
+      JWT_SECRET_KEY: "local-dev-only-change-me-32bytes-min"
+      APP_ENCRYPTION_KEY: "local-dev-only-32-byte-aes-key!!"   # MUST stay stable
+    ports:
+      - "8081:8081"
+    volumes:
+      - reports:/opt/acquira/reports
+      - uploads:/opt/acquira/uploads
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.frontend
+    depends_on:
+      - core
+    ports:
+      - "8080:80"            # open http://localhost:8080
+
+volumes:
+  pgdata:
+  reports:
+  uploads:

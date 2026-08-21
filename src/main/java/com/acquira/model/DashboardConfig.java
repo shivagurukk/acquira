@@ -1,21 +1,28 @@
 package com.acquira.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.EqualsAndHashCode;
 
 @Entity
 @Table(name = "dashboard_config", uniqueConstraints = {
         @UniqueConstraint(columnNames = { "tenant_id", "kpi_key" })
 })
-@Data
+@Getter
+@Setter
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class DashboardConfig {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Integer configId;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tenant_id", nullable = false)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private Tenant tenant;
 
     @Column(name = "kpi_key", nullable = false)
@@ -29,52 +36,4 @@ public class DashboardConfig {
 
     @Column(name = "display_order")
     private Integer displayOrder;
-
-    public Integer getConfigId() {
-        return configId;
-    }
-
-    public void setConfigId(Integer configId) {
-        this.configId = configId;
-    }
-
-    public Tenant getTenant() {
-        return tenant;
-    }
-
-    public void setTenant(Tenant tenant) {
-        this.tenant = tenant;
-    }
-
-    public String getKpiKey() {
-        return kpiKey;
-    }
-
-    public void setKpiKey(String kpiKey) {
-        this.kpiKey = kpiKey;
-    }
-
-    public String getDisplayLabel() {
-        return displayLabel;
-    }
-
-    public void setDisplayLabel(String displayLabel) {
-        this.displayLabel = displayLabel;
-    }
-
-    public Boolean getIsVisible() {
-        return isVisible;
-    }
-
-    public void setIsVisible(Boolean isVisible) {
-        this.isVisible = isVisible;
-    }
-
-    public Integer getDisplayOrder() {
-        return displayOrder;
-    }
-
-    public void setDisplayOrder(Integer displayOrder) {
-        this.displayOrder = displayOrder;
-    }
 }

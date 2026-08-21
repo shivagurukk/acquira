@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         Acquira Platform — Logback Configuration
+         
+         Profiles:
+           default (dev)  → colored console, DEBUG level
+           prod           → JSON file logging, INFO level, rotation
+         ═══════════════════════════════════════════════════════════ -->
+
+    <springProperty scope="context" name="APP_LOGS_DIR" source="app.logs.dir" defaultValue="logs"/>
+
+    <!-- ─── DEV PROFILE: Pretty console output + plain file ─── -->
+    <springProfile name="!prod">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) %magenta([%15.15thread]) %yellow([t=%X{tenantId:-·} %X{job:-·}/%X{step:-·}]) %cyan(%-36.36logger{35}) : %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <!-- DEV file appender so logs persist between runs and are easy to share/diff -->
+        <appender name="DEV_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${APP_LOGS_DIR}/core.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <!-- Rolled files are NOT compressed (no .gz) so yesterday's log
+                     can be opened/grepped/tailed directly without gunzip. -->
+                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+                <maxFileSize>20MB</maxFileSize>
+                <maxHistory>7</maxHistory>
+                <totalSizeCap>200MB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%15.15thread] [cid=%X{correlationId:-} t=%X{tenantId:-} %X{job:-}/%X{step:-}] %-36.36logger{35} : %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="DEV_FILE"/>
+        </root>
+
+        <logger name="com.acquira" level="DEBUG"/>
+        <logger name="org.hibernate.SQL" level="WARN"/>
+        <logger name="org.hibernate" level="ERROR"/>
+        <logger name="org.springframework.web" level="INFO"/>
+        <logger name="org.springframework.security" level="WARN"/>
+        <!-- Quiet Spring Batch's per-step/per-chunk INFO chatter (job launched,
+             executing step X, step complete) which otherwise interleaves with and
+             drowns out our own batch progress lines. WARN keeps failures visible. -->
+        <logger name="org.springframework.batch" level="WARN"/>
+        <logger name="org.springframework.jdbc" level="WARN"/>
+        <logger name="com.zaxxer.hikari" level="WARN"/>
+    </springProfile>
+
+    <!-- ─── PROD PROFILE: JSON file logging with rotation ─── -->
+    <springProfile name="prod">
+
+        <!-- Application log — structured JSON -->
+        <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${APP_LOGS_DIR}/core.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <!-- Rolled files are NOT compressed (no .gz) so they can be
+                     opened/grepped/tailed directly without gunzip. -->
+                <fileNamePattern>${APP_LOGS_DIR}/core.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+                <maxFileSize>50MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>2GB</totalSizeCap>
+            </rollingPolicy>
+            <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] [job=%X{job:-}/%X{step:-}] %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <!-- Audit log — separate file for compliance -->
+        <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${APP_LOGS_DIR}/audit.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <!-- Rolled files are NOT compressed (no .gz). -->
+                <fileNamePattern>${APP_LOGS_DIR}/audit.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+                <maxFileSize>50MB</maxFileSize>
+                <maxHistory>90</maxHistory>
+                <totalSizeCap>5GB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <!-- Error log — only errors/warnings for alerting -->
+        <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${APP_LOGS_DIR}/error.log</file>
+            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                <level>WARN</level>
+            </filter>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <!-- Rolled files are NOT compressed (no .gz). -->
+                <fileNamePattern>${APP_LOGS_DIR}/error.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+                <maxFileSize>20MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>1GB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} [%thread] %-5level [cid=%X{correlationId:-}] [user=%X{username:-}] [tenant=%X{tenantId:-}] [job=%X{job:-}/%X{step:-}] %logger{36} - %msg%n%ex</pattern>
+            </encoder>
+        </appender>
+
+        <!-- Console in prod — minimal, for systemd journal -->
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss} %-5level [%X{correlationId:-}] [t=%X{tenantId:-} %X{job:-}/%X{step:-}] %logger{20} - %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <!-- Audit logger — routes to separate audit file -->
+        <logger name="AUDIT" level="INFO" additivity="false">
+            <appender-ref ref="AUDIT_FILE"/>
+        </logger>
+
+        <root level="INFO">
+            <appender-ref ref="APP_FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+            <appender-ref ref="CONSOLE"/>
+        </root>
+
+        <logger name="com.acquira" level="INFO"/>
+        <logger name="org.hibernate" level="ERROR"/>
+        <logger name="org.hibernate.SQL" level="ERROR"/>
+        <logger name="org.springframework.web" level="WARN"/>
+        <logger name="org.springframework.security" level="WARN"/>
+        <logger name="org.springframework.batch" level="WARN"/>
+    </springProfile>
+
+</configuration>

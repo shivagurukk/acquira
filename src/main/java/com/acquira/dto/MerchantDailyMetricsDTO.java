@@ -10,6 +10,7 @@ public class MerchantDailyMetricsDTO {
     private String merchantId;
     private String merchantName;
     private String mid;
+    private String sid;
 
     private Double todayVolume;
     private Double yesterdayVolume;
@@ -34,6 +35,7 @@ public class MerchantDailyMetricsDTO {
         dto.setMerchantId(entity.getMerchantId());
         dto.setMerchantName(entity.getMerchantName());
         dto.setMid(entity.getMid());
+        dto.setSid(entity.getSid());
 
         dto.setTodayVolume(entity.getTodayVolume());
         dto.setYesterdayVolume(entity.getYesterdayVolume());

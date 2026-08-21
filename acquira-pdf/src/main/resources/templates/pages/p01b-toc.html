@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="tocContent">
+        <div style="margin-bottom: 16px;">
+            <div style="font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 900; color: #152D5B; text-transform: uppercase; letter-spacing: -0.01em;">Table of Contents</div>
+            <div style="width: 40px; height: 3px; background: linear-gradient(90deg, #2563EB, #60A5FA); margin-top: 6px; border-radius: 2px;"></div>
+            <div style="font-size: 8.5px; color: #6B7280; margin-top: 6px;" th:text="'AFS Nexus Report — ' + ${reportPeriod}">Period</div>
+        </div>
+
+        <div class="toc-item">
+            <div class="toc-num">1</div>
+            <div><div class="toc-title">Executive Summary</div><div class="toc-desc">Month-over-month comparison, key metrics and action signals</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">03</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">2</div>
+            <div><div class="toc-title">Business Achievements</div><div class="toc-desc">Peak performance records, daily Average Transaction Value (ATV) and customer traffic patterns</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">04</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">3</div>
+            <div><div class="toc-title">Sales &amp; Hourly Intelligence</div><div class="toc-desc">Day-of-week sales pattern, hourly distribution and sales value vs ATV analysis</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">05</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">4</div>
+            <div><div class="toc-title">Operational Intelligence</div><div class="toc-desc">Revenue heatmap by day &amp; hour, transaction size distribution</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">06</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">5</div>
+            <div><div class="toc-title">Growth &amp; Seasonality</div><div class="toc-desc">12-month rolling performance, YoY/MoM growth and quarterly breakdown</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">07</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">6</div>
+            <div><div class="toc-title">Card &amp; Payment Analytics</div><div class="toc-desc">Credit, Debit &amp; Prepaid card metrics with local vs international card analysis</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">08</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">7</div>
+            <div><div class="toc-title">Customer Intelligence</div><div class="toc-desc">Retention analysis, card holder patterns and loyalty segmentation</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">09</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">8</div>
+            <div><div class="toc-title">DCC Revenue Optimization</div><div class="toc-desc">DCC conversion funnel, missed revenue and improvement actions</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">10</div>
+        </div>
+        <div class="toc-item" th:if="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1}">
+            <div class="toc-num">9</div>
+            <div><div class="toc-title">Store Performance</div><div class="toc-desc">Top-performing store locations ranked by sales volume and average ticket</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page">11</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num" th:text="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1 ? '10' : '9'}">9</div>
+            <div><div class="toc-title">Glossary &amp; Definitions</div><div class="toc-desc">Key terms, metric definitions and how to read your charts</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page" th:text="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1 ? '12' : '11'}">11</div>
+        </div>
+        <div class="toc-item" style="border-bottom: none;">
+            <div class="toc-num" th:text="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1 ? '11' : '10'}">10</div>
+            <div><div class="toc-title">Performance Scorecard</div><div class="toc-desc">Overall performance score, key metrics and next month action items</div></div>
+            <div class="toc-dots"></div>
+            <div class="toc-page" th:text="${dto.storeLeaderboard != null and dto.storeLeaderboard.size() > 1 ? '13' : '12'}">12</div>
+        </div>
+
+        <div style="margin-top: auto; display: flex; align-items: center; gap: 8px;">
+            <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #E5E7EB, transparent);"></div>
+            <div style="font-size: 8px; color: #9CA3AF; letter-spacing: 0.06em;">PREPARED WITH AFS NEXUS</div>
+            <div style="flex: 1; height: 1px; background: linear-gradient(270deg, #E5E7EB, transparent);"></div>
+        </div>
+    </div>
+</body>
+</html>

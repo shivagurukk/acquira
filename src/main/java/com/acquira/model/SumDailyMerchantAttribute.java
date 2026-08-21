@@ -30,15 +30,16 @@ public class SumDailyMerchantAttribute {
     private LocalDate businessDate;
 
     /**
-     * Type of Attribute: 'HOUR', 'CARD_SCHEME', 'Design', 'CARD_TYPE',
-     * 'IS_CONTACTLESS', 'ISSUER_COUNTRY'
+     * Type of Attribute: 'HOUR', 'CARD_SCHEME', 'CARD_TYPE', 'DESTINATION',
+     * 'TRANSACTION_TYPE', 'DCC_STATUS', 'TXN_CURRENCY'
      */
     @Column(name = "attribute_type", nullable = false, length = 50)
     private String attributeType;
 
     /**
-     * Value of Attribute: '07' (Hour), 'VISA' (Scheme), 'CREDIT' (Type), 'TRUE'
-     * (Contactless)
+     * Value of Attribute: '07' (Hour), 'VISA' (Scheme), 'CREDIT' (Type),
+     * 'DOMESTIC'/'INTERNATIONAL' (Destination), 'OPT_IN'/'OPT_OUT' (DCC_STATUS),
+     * 'AED'/'USD' (TXN_CURRENCY)
      */
     @Column(name = "attribute_value", nullable = false, length = 100)
     private String attributeValue;

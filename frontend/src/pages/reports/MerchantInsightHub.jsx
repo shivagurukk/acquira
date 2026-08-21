@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Filter, Search, Calendar, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
 import { SmartEmptyState } from '../../components/CockpitControls';
+import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
+import { formatCurrency as fmt, formatMsf } from '../../utils/formatters';
 
 // --- Preset Values ---
 const PRESETS = [
@@ -12,6 +15,7 @@ const PRESETS = [
 ];
 
 const MerchantInsightHub = () => {
+    const { tenantVersion } = useAuth();
     // --- State ---
     const [filters, setFilters] = useState({
         datePreset: "PREVIOUS_YEAR",
@@ -43,27 +47,22 @@ const MerchantInsightHub = () => {
     // --- Data Fetching ---
     useEffect(() => {
         // Fetch Masters
+        // Use api/axios.js so the interceptor adds Authorization + X-Tenant-Id
+        // and so we use a relative URL (works in dev via Vite proxy AND in production).
         const fetchMasters = async () => {
-            const token = localStorage.getItem('token');
-            const headers = { 'Authorization': `Bearer ${token}` };
             try {
                 const [mccRes, rmRes, partnerRes, channelRes] = await Promise.all([
-                    fetch('http://localhost:8081/api/reports/filters/mcc', { headers }),
-                    fetch('http://localhost:8081/api/reports/filters/rm', { headers }),
-                    fetch('http://localhost:8081/api/reports/filters/partners', { headers }),
-                    fetch('http://localhost:8081/api/reports/filters/channels', { headers })
+                    api.get('/reports/filters/mcc'),
+                    api.get('/reports/filters/rm'),
+                    api.get('/reports/filters/partners'),
+                    api.get('/reports/filters/channels'),
                 ]);
 
-                const mccData = mccRes.ok ? await mccRes.json() : [];
-                const rmData = rmRes.ok ? await rmRes.json() : [];
-                const partnerData = partnerRes.ok ? await partnerRes.json() : [];
-                const channelData = channelRes.ok ? await channelRes.json() : [];
-
                 setOptions({
-                    mcc: mccData || [],
-                    rm: rmData || [],
-                    partner: partnerData || [],
-                    posEcom: channelData || [],
+                    mcc: mccRes.data || [],
+                    rm: rmRes.data || [],
+                    partner: partnerRes.data || [],
+                    posEcom: channelRes.data || [],
                     mid: [] // Loaded lazily if needed/requested, or we can add it back
                 });
 
@@ -71,38 +70,87 @@ const MerchantInsightHub = () => {
             } catch (e) { console.error("Error fetching master filters", e); }
         };
         fetchMasters();
-    }, []);
+    }, [tenantVersion]);
 
-    // Effect to refetch when page changes (but not when filters change, that's manual Run Report)
+    // Refetch on ANY page change after the initial mount. The old `> 1` guard
+    // meant Prev back to page 1 never refetched — the table kept page 2's rows
+    // while the footer said "Page 1".
+    const pageMountedRef = React.useRef(false);
     useEffect(() => {
-        if (currentPage > 1) fetchReport(currentPage);
+        if (!pageMountedRef.current) { pageMountedRef.current = true; return; }
+        fetchReport(currentPage);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentPage]);
 
+    // Discard out-of-order responses (rapid Next clicks over a slow query).
+    const reqIdRef = React.useRef(0);
+    const [error, setError] = useState(null);
+
     const fetchReport = async (pageOverride) => {
+        const reqId = ++reqIdRef.current;
         setLoading(true);
+        setError(null);
         const pageToFetch = pageOverride || currentPage;
         // If override provided (e.g. Run Report clicked), update state
         if (pageOverride && pageOverride !== currentPage) setCurrentPage(pageOverride);
 
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/reports/insight/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({
-                    ...filters,
-                    page: pageToFetch - 1,  // Backend is 0-indexed
-                    size: itemsPerPage
-                })
+            const res = await api.post('/reports/insight/generate', {
+                ...filters,
+                page: pageToFetch - 1,  // Backend is 0-indexed
+                size: itemsPerPage
             });
-            if (res.ok) {
-                const json = await res.json();
-                setData(json.content || []); // Handle new wrapper
-                setTotalElements(json.totalElements || 0);
-                setPageCount(json.totalPages || 0);
+            if (reqId !== reqIdRef.current) return;
+            const json = res.data || {};
+            setData(json.content || []); // Handle new wrapper
+            setTotalElements(json.totalElements || 0);
+            setPageCount(json.totalPages || 0);
+        } catch (err) {
+            if (reqId !== reqIdRef.current) return;
+            console.error(err);
+            // A failure used to leave the PREVIOUS report on screen under the
+            // NEW filters — stale numbers reading as a fresh result.
+            setData([]);
+            setTotalElements(0);
+            setPageCount(0);
+            setError(err?.response?.data?.error || err?.response?.statusText || 'Could not generate the report.');
+        }
+        finally { if (reqId === reqIdRef.current) setLoading(false); }
+    };
+
+    // Export the CURRENT filters as CSV — fetches up to 5000 rows in one call.
+    // (The button previously had no handler at all: it did nothing, silently.)
+    const [exporting, setExporting] = useState(false);
+    const handleExport = async () => {
+        setExporting(true);
+        setError(null);
+        try {
+            const res = await api.post('/reports/insight/generate', { ...filters, page: 0, size: 5000 });
+            const rows = res.data?.content || [];
+            const total = res.data?.totalElements || rows.length;
+            const esc = (v) => {
+                const s = String(v ?? '');
+                return `"${(/^[=+\-@]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
+            };
+            const lines = [['Date', 'Merchant', 'MID', 'RM', 'MCC', 'Intl/Local', 'POS/ECOM', 'SID', 'TID', 'Card Type', 'Opt Status', 'Txns', 'Volume', 'MSF'].join(',')];
+            rows.forEach(r => lines.push([
+                esc(r.business_date), esc(r.merchant_name), esc(r.mid), esc(r.rm), esc(r.mcc),
+                esc(r.intl_local), esc(r.pos_ecom), esc(r.sid), esc(r.tid), esc(r.card_type), esc(r.opt_status),
+                r.total_txns ?? 0, Number(r.total_volume || 0).toFixed(2), Number(r.total_msf || 0).toFixed(4),
+            ].join(',')));
+            if (total > rows.length) {
+                lines.push(esc(`TRUNCATED — first ${rows.length} of ${total} rows; narrow the filters for a complete file`));
             }
-        } catch (err) { console.error(err); }
-        finally { setLoading(false); }
+            const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'merchant-insight-report.csv';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        } catch (err) {
+            console.error(err);
+            setError('Export failed. Please try again.');
+        } finally { setExporting(false); }
     };
 
     const handleRunReport = () => {
@@ -124,11 +172,10 @@ const MerchantInsightHub = () => {
     };
 
     // Helper for formatting
-    const fmt = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
     const fmtInt = (val) => new Intl.NumberFormat('en-US').format(val || 0);
 
     return (
-        <div className="page-container" style={{ padding: '20px', color: '#1e293b', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="page-container" style={{ padding: '20px', color: '#1e293b', height: 'var(--vh100, 100vh)', display: 'flex', flexDirection: 'column' }}>
 
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -178,11 +225,14 @@ const MerchantInsightHub = () => {
                         <Filter size={14} /> Filters
                     </button>
 
-                    <button onClick={handleRunReport} style={{ padding: '8px 16px', background: '#3b82f6', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+                    <button onClick={handleRunReport} style={{ padding: '8px 16px', background: 'var(--primary)', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
                         Run Report
                     </button>
-                    <button style={{ padding: '8px 16px', background: '#0f172a', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-                        <Download size={16} /> Export
+                    <button onClick={handleExport} disabled={exporting}
+                        style={{ padding: '8px 16px', background: '#0f172a', color: 'white', borderRadius: '8px', border: 'none',
+                            cursor: exporting ? 'default' : 'pointer', opacity: exporting ? 0.6 : 1,
+                            display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                        <Download size={16} /> {exporting ? 'Exporting…' : 'Export'}
                     </button>
                 </div>
             </div>
@@ -252,9 +302,9 @@ const MerchantInsightHub = () => {
                                     key={st}
                                     onClick={() => handleFilterChange('optStatus', st)}
                                     style={{
-                                        flex: 1, padding: '8px', borderRadius: '6px', border: filters.optStatus === st ? '1px solid #3b82f6' : '1px solid #cbd5e1',
-                                        background: filters.optStatus === st ? '#eff6ff' : 'white',
-                                        color: filters.optStatus === st ? '#1d4ed8' : '#64748b',
+                                        flex: 1, padding: '8px', borderRadius: '6px', border: filters.optStatus === st ? '1px solid var(--primary)' : '1px solid #cbd5e1',
+                                        background: filters.optStatus === st ? 'var(--wash)' : 'white',
+                                        color: filters.optStatus === st ? 'var(--primary)' : '#64748b',
                                         fontSize: '11px', fontWeight: '600', cursor: 'pointer'
                                     }}
                                 >
@@ -268,9 +318,9 @@ const MerchantInsightHub = () => {
             )}
 
             {/* Table Container */}
-            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', position: 'relative' }}>
+            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'var(--bg-card)', position: 'relative' }}>
                 <table style={{ minWidth: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
-                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'white' }}>
+                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg-card)' }}>
                         <tr style={{ height: '40px', background: '#f8fafc', fontSize: '11px', color: '#64748b' }}>
                             {['Date', 'Merchant', 'Details', 'Store/Term', 'Type', 'Txns', 'Volume', 'MSR'].map((h, i) => (
                                 <th key={i} style={{ position: 'sticky', top: 0, background: '#f8fafc', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', padding: '12px', textAlign: i > 4 ? 'right' : 'left', textTransform: 'uppercase' }}>{h}</th>
@@ -281,15 +331,20 @@ const MerchantInsightHub = () => {
                         {loading ? (
                             <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}><Loader2 className="animate-spin inline" /> Loading Market Data...</td></tr>
                         ) : data.length === 0 ? (
-                            <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No records found.</td></tr>
+                            <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: error ? '#b91c1c' : '#94a3b8' }}>
+                                {error ? `${error} ` : 'No records found.'}
+                                {error && <button onClick={() => fetchReport(currentPage)}
+                                    style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: 'var(--primary)', background: 'var(--bg-card)', border: '1px solid #e2e8f0', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>Retry</button>}
+                            </td></tr>
                         ) : (
                             data.map((row, i) => (
-                                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                                <tr key={`${row.mid}-${row.sid}-${row.tid}-${row.business_date}-${row.card_type}-${i}`}
+                                    style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                                     <td style={{ padding: '10px', color: '#334155', whiteSpace: 'nowrap' }}>{row.business_date}</td>
                                     <td style={{ padding: '10px', fontWeight: '600', color: '#1e293b' }}>
                                         <div>{row.merchant_name}</div>
                                         <div style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace' }}>{row.mid}</div>
-                                        {row.rm && <div style={{ fontSize: '10px', color: '#6366f1', marginTop: '2px' }}>RM: {row.rm}</div>}
+                                        {row.rm && <div style={{ fontSize: '10px', color: 'var(--projected)', marginTop: '2px' }}>RM: {row.rm}</div>}
                                     </td>
                                     <td style={{ padding: '10px', color: '#64748b' }}>
                                         <span style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', marginRight: '4px' }}>{row.mcc}</span>
@@ -303,7 +358,7 @@ const MerchantInsightHub = () => {
                                     <td style={{ padding: '10px', color: '#64748b' }}>{row.card_type}</td>
                                     <td style={{ padding: '10px', textAlign: 'right', fontFamily: 'monospace' }}>{fmtInt(row.total_txns)}</td>
                                     <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{fmt(row.total_volume)}</td>
-                                    <td style={{ padding: '10px', textAlign: 'right', color: '#059669', background: '#ecfdf550' }}>{fmt(row.total_msf)}</td>
+                                    <td style={{ padding: '10px', textAlign: 'right', color: '#059669', background: '#ecfdf550' }}>{formatMsf(row.total_msf)}</td>
                                 </tr>
                             ))
                         )}
@@ -315,8 +370,8 @@ const MerchantInsightHub = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderTop: '1px solid #e2e8f0', marginTop: '10px' }}>
                 <span style={{ fontSize: '12px', color: '#64748b' }}>Page {currentPage} of {pageCount || 1}</span>
                 <div style={{ display: 'flex', gap: '4px' }}>
-                    <button disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)} style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', fontSize: '12px' }}>Prev</button>
-                    <button disabled={currentPage >= pageCount} onClick={() => setCurrentPage(currentPage + 1)} style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', fontSize: '12px' }}>Next</button>
+                    <button disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)} style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'var(--bg-card)', cursor: 'pointer', fontSize: '12px' }}>Prev</button>
+                    <button disabled={currentPage >= pageCount} onClick={() => setCurrentPage(currentPage + 1)} style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'var(--bg-card)', cursor: 'pointer', fontSize: '12px' }}>Next</button>
                 </div>
             </div>
         </div>

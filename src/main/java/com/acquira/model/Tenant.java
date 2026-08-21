@@ -1,20 +1,26 @@
 package com.acquira.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.EqualsAndHashCode;
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "tenant")
-@Data
+@Getter
+@Setter
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Tenant {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long tenantId;
 
     @Column(nullable = false, unique = true)
-    private String institutionId; // Logical ID, e.g., "BANK001"
+    private String institutionId;
 
     @Column(nullable = false)
     private String bankName;
@@ -23,14 +29,15 @@ public class Tenant {
     private String bankShortCode;
 
     @Column(name = "base_currency")
-    private String baseCurrency; // e.g. USD
+    private String baseCurrency;
 
-    private String country; // e.g. USA
-    private String currencyName; // e.g. US Dollar
-    private String currencySymbol; // e.g. $
+    private String country;
+    private String currencyName;
+    private String currencySymbol;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "region_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private Region region;
 
     private String status;
@@ -40,93 +47,5 @@ public class Tenant {
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
-    }
-
-    public Long getTenantId() {
-        return tenantId;
-    }
-
-    public void setTenantId(Long tenantId) {
-        this.tenantId = tenantId;
-    }
-
-    public String getInstitutionId() {
-        return institutionId;
-    }
-
-    public void setInstitutionId(String institutionId) {
-        this.institutionId = institutionId;
-    }
-
-    public String getBankName() {
-        return bankName;
-    }
-
-    public void setBankName(String bankName) {
-        this.bankName = bankName;
-    }
-
-    public String getBankShortCode() {
-        return bankShortCode;
-    }
-
-    public void setBankShortCode(String bankShortCode) {
-        this.bankShortCode = bankShortCode;
-    }
-
-    public String getBaseCurrency() {
-        return baseCurrency;
-    }
-
-    public void setBaseCurrency(String baseCurrency) {
-        this.baseCurrency = baseCurrency;
-    }
-
-    public String getCountry() {
-        return country;
-    }
-
-    public void setCountry(String country) {
-        this.country = country;
-    }
-
-    public String getCurrencyName() {
-        return currencyName;
-    }
-
-    public void setCurrencyName(String currencyName) {
-        this.currencyName = currencyName;
-    }
-
-    public String getCurrencySymbol() {
-        return currencySymbol;
-    }
-
-    public void setCurrencySymbol(String currencySymbol) {
-        this.currencySymbol = currencySymbol;
-    }
-
-    public Region getRegion() {
-        return region;
-    }
-
-    public void setRegion(Region region) {
-        this.region = region;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public void setStatus(String status) {
-        this.status = status;
-    }
-
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
-    }
-
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
     }
 }

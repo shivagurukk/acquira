@@ -1,63 +1,898 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
+/* ══════════════════════════════════════════════════════════════
+   ACQUIRA / NEXUS — Meridian Design System
+   Graphite surfaces · one steel accent · muted validated chart hues
+   Modern instrument-panel calm: near-monochrome structure, warmth
+   only where meaning lives. Every colour, radius and spacing value
+   below is a token; nothing downstream should carry its own hex.
+   ══════════════════════════════════════════════════════════════ */
 :root {
-  /* Corporate Palette */
-  --bg-dark: #f8fafc;
-  /* Light Grey Background for cleanliness */
-  --bg-panel: #ffffff;
-  --primary: #0f172a;
-  /* Deep Navy Blue */
-  --primary-glow: rgba(15, 23, 42, 0.5);
-  --accent: #3b82f6;
-  /* Trustworthy Blue */
-  --text-main: #1e293b;
-  /* Slate 800 */
-  --text-muted: #64748b;
-  /* Slate 500 */
-  --border-light: #e2e8f0;
-  --glass-border: 1px solid #e2e8f0;
-  --glass-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  /* ── Core palette (light) ── */
+  --canvas:      #F1F7FF;   /* page ground — light airy blue */
+  --surface:     #EAF1FA;   /* card ground — light steel blue, never white */
+  --hairline:    #E4E7EC;
+  --ink:         #14295E;   /* primary text — deep navy, not black */
+  --muted:       #51618C;   /* secondary text — navy grey */
+  --primary:     #3F63B0;   /* steel — actions, active nav, brand marks */
+  --primary-soft:#5578C4;   /* interactive / hover accent */
+  --wash:        #DCE8F7;   /* selected rows, chips, hover */
+  --negative:    #B3382C;
+  --attention:   #8C5E12;   /* margin risk, churn flags */
+  --projected:   #64748B;   /* forecast + benchmark series (neutral slate) */
+
+  /* ── Chart ramp — steel sequential, dark → light (magnitude) ── */
+  --chart-1: #263C6E;
+  --chart-2: #33518F;
+  --chart-3: #3F63B0;
+  --chart-4: #7191CE;
+  --chart-5: #C2CFEA;
+
+  /* ── Categorical series — CVD-validated, fixed order ── */
+  --cat-1: #3F63B0;   /* steel  */
+  --cat-2: #CA5F28;   /* copper */
+  --cat-3: #0FA070;   /* jade   */
+  --cat-4: #B08C1E;   /* brass  */
+  --cat-5: #A85D9C;   /* plum   */
+
+  /* ── Semantic chart marks ── */
+  /* Imperial ramp, deep → light. Kept
+     separate from the steel ramp so the two chart panels never twin. */
+  --imp-1: #08207C;
+  --imp-2: #0A34C8;
+  --imp-3: #4467E4;
+  --imp-4: #93AAF4;
+  --chart-royal: var(--imp-2);
+
+  /* Cost & Margin Mix stack — one hue per segment so each cost carries its
+     own identity and the green margin cap reads as "what we keep".
+     Validated as a categorical set (CVD + contrast) against --surface;
+     the deep interchange imperial is a deliberate anchor below the
+     lightness band, relieved by segment gaps, legend and the table. */
+  --mix-margin:      #0E8F64;   /* jade-deep — the kept margin */
+  --mix-interchange: var(--imp-1);
+  --mix-scheme:      #2B7FD4;   /* sky — lighter, clearly apart from imperial */
+  --mix-pg:          #CA5F28;   /* copper — PG fee */
+  --chart-line: #24386B;   /* navy overlay lines (margin %, trends) */
+  --chart-pos: #0FA070;
+  --chart-neg: #B3382C;
+  --chart-alt: #64748B;
+  --chart-grid: #E9EBEE;
+  --chart-axis: #8593AF;
+
+  /* ── Typography ── */
+  --font-ui:   'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* ── Brand aliases (legacy names, remapped to the ledger palette) ── */
+  --brand:        var(--primary);
+  --brand-dark:   var(--chart-1);
+  --brand-light:  var(--wash);
+  --brand-ring:   color-mix(in srgb, var(--primary) 20%, transparent);
+  --brand-50:     var(--wash);
+  --brand-100:    var(--wash);
+  --brand-500:    var(--primary);
+  --brand-600:    var(--primary);
+  --brand-700:    var(--chart-1);
+
+  /* ── Spacing (4px grid) ── */
+  --space-xs:   4px;
+  --space-sm:   8px;
+  --space-md:   12px;
+  --space-lg:   16px;
+  --space-xl:   20px;
+  --space-2xl:  24px;
+  --space-3xl:  32px;
+  --space-4xl:  40px;
+  --space-page: 20px;
+  --space-card: 20px;
+
+  /* ── Radii — softened for the modern surface language ── */
+  --radius-sm:  6px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  14px;
+  --radius-2xl: 16px;
+  --radius-chip: 6px;
+  --radius-pill: 999px;
+
+  /* ── Shadows — soft, neutral graphite elevation ── */
+  --shadow-xs:    0 1px 2px rgba(23, 28, 36, 0.05);
+  --shadow-sm:    0 1px 3px rgba(23, 28, 36, 0.06), 0 1px 2px rgba(23, 28, 36, 0.04);
+  --shadow-md:    0 4px 12px rgba(23, 28, 36, 0.07), 0 1px 3px rgba(23, 28, 36, 0.05);
+  --shadow-lg:    0 12px 32px rgba(23, 28, 36, 0.10), 0 2px 8px rgba(23, 28, 36, 0.05);
+  --shadow-hover: 0 10px 28px rgba(23, 28, 36, 0.10), 0 2px 6px rgba(51, 81, 143, 0.06);
+  --shadow-card:  0 1px 2px rgba(23, 28, 36, 0.04), 0 6px 20px rgba(23, 28, 36, 0.05);
+  --shadow-pop:   0 12px 32px rgba(23, 28, 36, 0.14), 0 2px 8px rgba(23, 28, 36, 0.08);
+  --ring-focus:   0 0 0 3px rgba(63, 99, 176, 0.30);
+
+  /* ── Gradients — steel reserved for the signature moments ── */
+  --grad-primary: linear-gradient(135deg, #4F71BE 0%, #33518F 100%);
+  --grad-accent:  linear-gradient(135deg, #5578C4 0%, #33518F 100%);
+  --grad-edge:    linear-gradient(90deg, transparent 0%, #3F63B0 50%, transparent 100%);
+  --glass-bg:     rgba(234, 241, 250, 0.78);
+  --glass-blur:   saturate(160%) blur(14px);
+
+  /* ── Card interior — the "instrument panel" fill ─────────────────
+       Each card's `background` stacks: the lightning nerve (below), a
+       breathing glow whose --dxg percentage animates via dxGridPulse
+       (that layer must be written directly in the card's background —
+       a var() inside a :root token resolves against :root, where the
+       animation never runs, freezing the motion), then --dx-card-grid. ── */
+
+  --dx-card-grid:
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--primary) 6%, transparent) 0 1px,
+      transparent 1px 26px) padding-box,
+    repeating-linear-gradient(0deg,
+      color-mix(in srgb, var(--primary) 6%, transparent) 0 1px,
+      transparent 1px 26px) padding-box,
+    linear-gradient(var(--bg-card), var(--bg-card)) padding-box;
+
+  /* ── Tables ──────────────────────────────────────────────────────
+       One treatment for every table in the app: a deep navy header bar
+       with light type, tinted rows, and a bright hairline under the
+       header. Derived from --primary so it retints with the brand and
+       works unchanged in dark mode (both mixes land in navy). ── */
+  --table-head-bg: linear-gradient(135deg,
+      color-mix(in srgb, var(--primary) 76%, #0A1426) 0%,
+      color-mix(in srgb, var(--primary) 54%, #0A1426) 52%,
+      color-mix(in srgb, var(--primary) 72%, #0A1426) 100%);
+  --table-head-text:  #F2F6FF;
+  --table-head-muted: rgba(242, 246, 255, 0.72);
+  --table-head-edge:  color-mix(in srgb, var(--primary) 70%, #FFFFFF);
+  /* Row tint + zebra. Zebra is applied only to plain tables: the DataGrid
+     virtualises rows, so an nth-child stripe would walk while scrolling. */
+  --table-row:      color-mix(in srgb, var(--primary) 4%, var(--bg-card));
+  --table-row-alt:  color-mix(in srgb, var(--primary) 9%, var(--bg-card));
+
+  /* ── Surfaces ── */
+  --bg:           var(--canvas);
+  --bg-card:      var(--surface);
+  --bg-subtle:    color-mix(in srgb, var(--canvas) 55%, var(--surface));
+  --bg-muted:     color-mix(in srgb, var(--canvas) 55%, var(--surface));
+  --bg-hover:     color-mix(in srgb, var(--wash) 40%, var(--surface));
+  --bg-zebra:     transparent;                 /* no zebra striping */
+
+  /* ── Text ── */
+  --text:           var(--ink);
+  --text-secondary: var(--muted);
+  --text-muted:     var(--muted);
+  --text-disabled:  color-mix(in srgb, var(--muted) 55%, var(--surface));
+
+  /* ── Borders ── */
+  --border:       var(--hairline);
+  --border-light: var(--hairline);
+  --border-focus: color-mix(in srgb, var(--primary) 40%, transparent);
+
+  /* ── Status — up/positive = jade; down = muted vermilion;
+       attention = brass; projected/benchmark = neutral slate.
+       Copper never carries good/bad meaning — it is the brand accent.
+       Chips: tinted background + solid text, never solid fill. ── */
+  --success:      #0FA070;
+  --success-bg:   color-mix(in srgb, #0FA070 10%, var(--surface));
+  --success-text: #0B6B4D;
+  --warning:      var(--attention);
+  --warning-bg:   color-mix(in srgb, var(--attention) 12%, var(--surface));
+  --warning-text: var(--attention);
+  --danger:       var(--negative);
+  --danger-bg:    color-mix(in srgb, var(--negative) 10%, var(--surface));
+  --danger-text:  var(--negative);
+  --info:         var(--projected);
+  --info-bg:      color-mix(in srgb, var(--projected) 10%, var(--surface));
+  --info-text:    var(--projected);
+
+  /* ── Attrition statuses — derived from the semantic tokens above so
+       they flip with the scheme automatically. Previously undefined:
+       the report rendered its hardcoded Tailwind-era fallbacks and sat
+       visibly outside the Meridian system. Only the two adverse states
+       carry full-strength colour; healthy states stay quiet. ── */
+  --attr-churned:      var(--negative);
+  --attr-churned-bg:   color-mix(in srgb, var(--negative) 12%, var(--surface));
+  --attr-declining:    var(--attention);
+  --attr-declining-bg: color-mix(in srgb, var(--attention) 14%, var(--surface));
+  --attr-stable:       var(--muted);
+  --attr-stable-bg:    color-mix(in srgb, var(--muted) 12%, var(--surface));
+  --attr-growing:      var(--success-text);
+  --attr-growing-bg:   color-mix(in srgb, var(--success) 12%, var(--surface));
+  --attr-new:          var(--primary);
+  --attr-new-bg:       color-mix(in srgb, var(--primary) 12%, var(--surface));
+  --attr-atrisk:       var(--negative);
+  --attr-atrisk-bg:    color-mix(in srgb, var(--negative) 12%, var(--surface));
+  /* YTD movement buckets, worst → best */
+  --attr-dist-1: color-mix(in srgb, var(--negative) 78%, #000000);
+  --attr-dist-2: var(--negative);
+  --attr-dist-3: var(--attention);
+  --attr-dist-4: color-mix(in srgb, var(--success) 55%, var(--surface));
+  --attr-dist-5: var(--success);
+
+  /* ── Legacy compat ── */
+  --accent:         var(--primary);
+  --accent-light:   var(--wash);
+  --accent-blue:    var(--projected);
+  --accent-indigo:  var(--projected);
+  --accent-cyan:    var(--chart-3);
+  --bg-dark:        var(--canvas);
+  --bg-panel:       var(--surface);
+  --text-main:      var(--ink);
+  --text-muted-alt: var(--muted);
+  --border-light-alt: var(--hairline);
+  --glass-border:   1px solid var(--hairline);
+  --glass-shadow:   var(--shadow-card);
+  --tooltip-bg:     var(--surface);
+  --tooltip-border: var(--hairline);
+  --tooltip-radius: 10px;
+  --tooltip-font:   12px;
+
+  /* ── Fit-to-screen scale ──────────────────────────────────────
+       The shell is dense by design: 232px rail + the 6-up KPI strips,
+       1.7fr/1fr chart rows and ~1000px tables want ~1400 CSS px. Below
+       that the app used to overflow and get CLIPPED (body was
+       overflow-x:hidden), so the only way to see it was to zoom the
+       browser out by hand — the common trigger being not a small monitor
+       but Windows display scaling at 125%/150%, which turns a 1920px
+       screen into a 1536/1280px CSS viewport.
+
+       --app-zoom does that zoom-out automatically, in steps, so every
+       screen gets the whole layout at 100% browser zoom. Steps (not a
+       continuous scale) keep text on predictable pixel sizes, and the
+       floor is 0.8 so nothing shrinks past legibility. Browsers without
+       `zoom` simply keep 1 and scroll — see body.overflow-x below.
+
+       Anything sized in vh must use --vh100 instead: `zoom` scales
+       viewport units along with everything else, so a raw 100vh renders
+       only 80% of the screen at 0.8 and leaves a dead band. ── */
+  --app-zoom: 1;
+  --vh100: calc(100vh / var(--app-zoom));
+
+  /* ── Sidebar rail — constant dark in BOTH colour schemes.
+       It reads as app chrome, not content, so it never flips. ── */
+  --rail-bg:          #0E1B33;
+  --rail-grad:        linear-gradient(180deg, #16264A 0%, #0E1B33 48%, #0A1327 100%);
+  --rail-edge:        #23345C;
+  --rail-text:        #A7B4CE;
+  --rail-text-hover:  #DCE4F5;
+  --rail-text-active: #EFF4FE;
+  --rail-hover-bg:    #152442;
+  --rail-active-bg:   #1B2E56;
+  --rail-marker:      #5578C4;
+  /* Muted nav items, tenant meta and the collapse toggle ride this token,
+     so it must clear AA on the rail: #7C89A8 on #0E1B33 is 5.2:1 and still
+     recedes behind rest text (#A7B4CE, 8.0:1). */
+  --rail-eyebrow:     #7C89A8;
+  --rail-fresh:       #34B98A;
+  --rail-stale:       #CFA83A;
+
+  /* legacy sidebar aliases */
+  --sidebar-bg:     var(--rail-bg);
+  --sidebar-border: var(--rail-edge);
+  --sidebar-text:   var(--rail-text);
+  --sidebar-text-secondary: var(--rail-eyebrow);
+  --sidebar-hover:  var(--rail-hover-bg);
+  --sidebar-active-bg: var(--rail-active-bg);
+  --sidebar-active-text: var(--rail-text-active);
 }
 
-* {
+/* ══════════════════════════════════════════════════════════════
+   RESET
+   ══════════════════════════════════════════════════════════════ */
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
+/* ══════════════════════════════════════════════════════════════
+   BASE
+   ══════════════════════════════════════════════════════════════ */
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+#root {
+  width: 100%;
+  min-height: var(--vh100);
+  zoom: var(--app-zoom);
+}
+
+/* Desktop only — the ≤768px breakpoint already has its own mobile layout
+   (hamburger + drawer), which fits without scaling. */
+@media (min-width: 769px) and (max-width: 1359px) { :root { --app-zoom: 0.92; } }
+@media (min-width: 769px) and (max-width: 1199px) { :root { --app-zoom: 0.85; } }
+@media (min-width: 769px) and (max-width: 1023px) { :root { --app-zoom: 0.80; } }
+
+/* Icon rotations used as UI state indicators (chevrons, disclosure arrows). */
+svg.rotate-180 { transform: rotate(180deg); }
+svg.rotate-90  { transform: rotate(90deg); }
+
 body {
-  font-family: 'Outfit', sans-serif;
-  background-color: var(--bg-dark);
-  color: var(--text-main);
-  overflow-x: hidden;
+  font-family: var(--font-ui);
+  /* Neutral canvas with a faint cool bloom at the top — the static base the
+     animated .dx-backdrop layers sit on. */
+  background-color: var(--bg);
+  background-image: radial-gradient(120% 80% at 50% -10%, #DCE9FC 0%, transparent 62%);
+  background-attachment: fixed;
+  color: var(--text);
+  /* Scroll, never clip. Whatever --app-zoom cannot absorb (a wide table,
+     a long merchant name) has to stay reachable; `hidden` here used to
+     cut it off with no way to get at it. */
+  overflow-x: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+/* ── Numerals: every amount, count, %, delta, MID/TID gets the mono
+   face with tabular figures. Apply via .num or the --font-mono token. ── */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Currency symbol / decimals rendered smaller and muted inside a figure. */
+.num-unit {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+/* Section title: sentence case, 13px/600, tracked, muted. */
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SCROLLBARS — ultra thin, minimal
+   ══════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ══════════════════════════════════════════════════════════════
+   PAGE TRANSITIONS — opacity only, ≤150ms
+   ══════════════════════════════════════════════════════════════ */
+@keyframes pageIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.page-transition {
+  animation: pageIn 0.15s ease-out;
+  will-change: opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-transition { animation: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CARD UTILITY — hairline border with the slow copper border sweep
+   ══════════════════════════════════════════════════════════════ */
+
+/* Registered so the conic angle can be animated smoothly. */
+@property --dxa {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* Breathing strength of the card's interior glow (see --dx-card-fill). */
+@property --dxg {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 6%;
+}
+
+@keyframes dxGridPulse {
+  0%, 100% { --dxg: 3%; }
+  50%      { --dxg: 11%; }
+}
+
+/* A faint copper glint that travels once around the rounded border
+   every 18s. Implemented as a border-box conic gradient beneath a
+   padding-box card fill, so it needs `border: 2px solid transparent`
+   and BOTH background layers wherever it is applied. */
+@keyframes dxBorderSweep {
+  to { --dxa: 360deg; }
+}
+
+.glass-panel,
+.card {
+  background:
+        radial-gradient(140% 90% at 50% 0%,
+      color-mix(in srgb, var(--primary) var(--dxg, 6%), transparent) 0%,
+      transparent 60%) padding-box,
+    var(--dx-card-grid),
+    conic-gradient(from var(--dxa),
+      var(--border) 0deg, var(--border) 280deg,
+      color-mix(in srgb, var(--dx-sweep, var(--primary)) 40%, var(--border)) 310deg,
+      var(--dx-sweep, var(--primary)) 332deg,
+      var(--border) 352deg) border-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  animation: dxBorderSweep 6s linear infinite, dxGridPulse 5s ease-in-out infinite;
+  transition: box-shadow 220ms ease, transform 220ms ease;
+}
+
+.glass-panel:hover,
+.card:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DIGITAL SURFACE LANGUAGE
+   Frosted panels, gradient edges and the ambient backdrop that give
+   the dashboards their modern/futuristic read. All decorative layers
+   are pointer-events:none and honour prefers-reduced-motion.
+   ══════════════════════════════════════════════════════════════ */
+
+/* Dashboard tile / chart panel.
+   Deliberately OPAQUE, not frosted: the ambient backdrop animates
+   continuously, and a backdrop-filter on every card would force the blur
+   to recompute each frame across a page that can hold 20+ of them. Glass
+   is reserved for the handful of chrome surfaces (topbar, tooltips,
+   header controls) where the cost is bounded. */
+.dx-card {
+  position: relative;
+  background:
+        radial-gradient(140% 90% at 50% 0%,
+      color-mix(in srgb, var(--primary) var(--dxg, 6%), transparent) 0%,
+      transparent 60%) padding-box,
+    var(--dx-card-grid),
+    conic-gradient(from var(--dxa),
+      var(--border) 0deg, var(--border) 280deg,
+      color-mix(in srgb, var(--dx-sweep, var(--primary)) 40%, var(--border)) 310deg,
+      var(--dx-sweep, var(--primary)) 332deg,
+      var(--border) 352deg) border-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  animation: dxBorderSweep 6s linear infinite, dxGridPulse 5s ease-in-out infinite;
+  transition: box-shadow 220ms ease, transform 220ms ease;
+}
+
+.dx-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+}
+
+/* Gradient hairline along the top edge of a tile. */
+.dx-edge::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--grad-edge);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+/* Ambient animated backdrop — fixed behind all content, very low
+   intensity so data stays the brightest thing on screen. */
+.dx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: layout paint style;
+}
+
+.dx-backdrop__grid {
+  position: absolute;
+  inset: -20%;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--ink) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--ink) 6%, transparent) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(90% 70% at 50% 0%, #000 0%, transparent 78%);
+  -webkit-mask-image: radial-gradient(90% 70% at 50% 0%, #000 0%, transparent 78%);
+  opacity: 0.5;
+  animation: dxGridDrift 60s linear infinite;
+}
+
+.dx-backdrop__orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.26;
+  will-change: transform;
+}
+
+.dx-backdrop__orb--a {
+  width: 46vw; height: 46vw;
+  top: -14vw; left: -10vw;
+  background: radial-gradient(circle at 30% 30%, #8B98A9, transparent 68%);
+  animation: dxFloatA 34s ease-in-out infinite;
+}
+
+.dx-backdrop__orb--b {
+  width: 40vw; height: 40vw;
+  top: 8vw; right: -12vw;
+  background: radial-gradient(circle at 60% 40%, #7D95C6, transparent 68%);
+  animation: dxFloatB 42s ease-in-out infinite;
+}
+
+.dx-backdrop__orb--c {
+  width: 38vw; height: 38vw;
+  bottom: -16vw; left: 34%;
+  background: radial-gradient(circle at 50% 50%, #B7C2D8, transparent 68%);
+  animation: dxFloatC 50s ease-in-out infinite;
+}
+
+/* A single scan sweep travelling down the canvas — the subtle "live
+   telemetry" cue. Extremely low contrast by design. */
+.dx-backdrop__scan {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 34vh;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--primary) 5%, transparent) 50%,
+    transparent 100%
+  );
+  animation: dxScan 18s linear infinite;
+}
+
+html.dark .dx-backdrop__orb { opacity: 0.26; }
+html.dark .dx-backdrop__grid { opacity: 0.35; }
+
+@keyframes dxGridDrift {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(46px, 46px, 0); }
+}
+
+@keyframes dxFloatA {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(6vw, 4vw, 0) scale(1.12); }
+}
+
+@keyframes dxFloatB {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.06); }
+  50%      { transform: translate3d(-7vw, 5vw, 0) scale(0.94); }
+}
+
+@keyframes dxFloatC {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.96); }
+  50%      { transform: translate3d(4vw, -5vw, 0) scale(1.1); }
+}
+
+@keyframes dxScan {
+  from { transform: translate3d(0, -40vh, 0); }
+  to   { transform: translate3d(0, 140vh, 0); }
+}
+
+/* Content must sit above the backdrop. */
+.dx-above { position: relative; z-index: 1; }
+
+/* ── Delta arrows — directional entrance on page open ──────────────
+   Growth arrows launch upward, decline arrows drop, with a visible
+   bounce. Delayed past the cards' own 420ms rise so the move is not
+   masked by the tile fading in. One-shot (`both` fill), so after
+   ~2s the chip is static and readable. */
+@keyframes dxArrowUp {
+  0%   { opacity: 0; transform: translateY(16px) scale(0.6); }
+  45%  { opacity: 1; transform: translateY(-5px) scale(1.25); }
+  65%  { transform: translateY(2px) scale(1); }
+  82%  { transform: translateY(-1px); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes dxArrowDown {
+  0%   { opacity: 0; transform: translateY(-16px) scale(0.6); }
+  45%  { opacity: 1; transform: translateY(5px) scale(1.25); }
+  65%  { transform: translateY(-2px) scale(1); }
+  82%  { transform: translateY(1px); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.dx-arrow-up,
+.dx-arrow-down {
+  display: inline-flex;
+  animation: dxArrowUp 1200ms cubic-bezier(0.22, 1, 0.36, 1) 600ms both;
+}
+
+.dx-arrow-down { animation-name: dxArrowDown; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dx-arrow-up, .dx-arrow-down { animation: none; }
+}
+
+/* Staggered tile entrance. */
+@keyframes dxRise {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+.dx-rise { animation: dxRise 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* A card that also rises must run BOTH animations — the `animation`
+   shorthand replaces, it does not compose, so without this rule the
+   entrance animation silently cancels the border sweep. */
+.dx-card.dx-rise,
+.card.dx-rise,
+.glass-panel.dx-rise {
+  animation:
+    dxRise 420ms cubic-bezier(0.22, 1, 0.36, 1) both,
+    dxBorderSweep 6s linear infinite,
+    dxGridPulse 5s ease-in-out infinite;
+}
+
+/* Blue shimmer used by loading skeletons. */
+@keyframes dxShimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+.dx-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-subtle) 25%,
+    color-mix(in srgb, var(--primary) 10%, var(--bg-subtle)) 50%,
+    var(--bg-subtle) 75%
+  );
+  background-size: 200% 100%;
+  animation: dxShimmer 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dx-backdrop__grid,
+  .dx-backdrop__orb,
+  .dx-backdrop__scan,
+  .dx-rise,
+  .dx-shimmer,
+  .dx-card,
+  .card,
+  .glass-panel { animation: none !important; }
+  .dx-backdrop__scan { display: none; }
+  .dx-card:hover { transform: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DARK MODE — core palette flips; the sidebar rail does not.
+   ══════════════════════════════════════════════════════════════ */
+html.dark {
+  /* Graphite dark scheme — warm-neutral near-black, with brighter
+     copper and jade marks so accents and deltas read on it. */
+  --canvas:      #0E1116;
+  --surface:     #141B26;   /* card ground — steel-tinted graphite */
+  --hairline:    #272E38;
+  --ink:         #E7EAEF;
+  --muted:       #98A2AF;
+  --primary:     #5E82D2;
+  --primary-soft:#8AA5E0;
+  --wash:        #1C2637;
+  --negative:    #E2705C;
+  --attention:   #D9A03F;
+  --projected:   #93A0B4;
+
+  /* Chart ramp — brighter steel sequence for dark; the light-mode
+     ramp reads muddy on graphite. Same ordering (dark → light). */
+  --chart-1: #33518F;
+  --chart-2: #4A6DC0;
+  --chart-3: #5E82D2;
+  --chart-4: #8AA5E0;
+  --chart-5: #C3D1F0;
+
+  /* Categorical series — dark-surface steps, CVD-validated. */
+  --cat-1: #5E82D2;
+  --cat-2: #D5763A;
+  --cat-3: #21A176;
+  --cat-4: #B48A20;
+  --cat-5: #BA65A8;
+
+  --imp-1: #3550D6;
+  --imp-2: #4C6FEA;
+  --imp-3: #7D95F0;
+  --imp-4: #B4C4F8;
+  --chart-royal: var(--imp-2);
+
+  /* Cost & Margin Mix stack — dark-mode steps re-picked (not auto-flipped)
+     and validated against the dark surface; all six checks pass here. */
+  --mix-margin:      #25A87B;
+  --mix-interchange: #4356E0;
+  --mix-scheme:      #3E9AE8;
+  --mix-pg:          #D5763A;
+  --chart-line: #C7CFDA;
+  --chart-pos: #34B98A;
+  --chart-neg: #E2705C;
+  --chart-alt: #93A0B4;
+  --chart-grid: #212832;
+  --chart-axis: #78828F;
+
+  --success:      #34B98A;
+  --success-bg:   color-mix(in srgb, #34B98A 14%, var(--surface));
+  --success-text: #34B98A;
+
+  --grad-primary: linear-gradient(135deg, #5E82D2 0%, #3F63B0 100%);
+  --grad-accent:  linear-gradient(135deg, #8AA5E0 0%, #4A6DC0 100%);
+  --grad-edge:    linear-gradient(90deg, transparent 0%, #5E82D2 50%, transparent 100%);
+  --glass-bg:     rgba(21, 26, 33, 0.72);
+  --ring-focus:   0 0 0 3px rgba(94, 130, 210, 0.32);
+
+  --shadow-pop:  0 8px 24px rgba(4, 6, 10, 0.6), 0 2px 6px rgba(4, 6, 10, 0.4);
+
+  /* Cards get quiet depth + a hairline of cool light in dark mode
+     (still `none` in light — structure stays hairline-driven there). */
+  --shadow-card:  0 0 0 1px rgba(94, 130, 210, 0.05), 0 10px 30px rgba(4, 6, 10, 0.45);
+  --shadow-hover: 0 0 0 1px rgba(94, 130, 210, 0.09), 0 14px 38px rgba(4, 6, 10, 0.55);
+
+  --bg-subtle:   color-mix(in srgb, var(--canvas) 45%, var(--surface));
+  --bg-muted:    color-mix(in srgb, var(--canvas) 45%, var(--surface));
+  --bg-hover:    color-mix(in srgb, var(--wash) 40%, var(--surface));
+
+  --warning-bg:  color-mix(in srgb, var(--attention) 16%, var(--surface));
+  --danger-bg:   color-mix(in srgb, var(--negative) 14%, var(--surface));
+  --info-bg:     color-mix(in srgb, var(--projected) 14%, var(--surface));
+
+  --text-disabled: color-mix(in srgb, var(--muted) 55%, var(--surface));
+
+  /* Sidebar rail — follows the graphite family in dark mode (light mode
+     keeps the constant :root rail). Slightly darker than the canvas so
+     it still reads as chrome, with the copper marker for the active row. */
+  --rail-bg:          #0A1426;
+  --rail-grad:        linear-gradient(180deg, #101F3D 0%, #0A1426 48%, #070E1C 100%);
+  --rail-edge:        #1B2A4C;
+  --rail-text:        #9AA8C5;
+  --rail-text-hover:  #D8E0F2;
+  --rail-text-active: #E9EFFB;
+  --rail-hover-bg:    #101E3B;
+  --rail-active-bg:   #142647;
+  --rail-marker:      #5E82D2;
+  --rail-eyebrow:     #6F7D9C;
+  --rail-fresh:       #34B98A;
+  --rail-stale:       #D9A03F;
+}
+
+/* Graphite canvas with a faint cool vignette — gives the dark scheme depth
+   without patterning behind content; cards sit on --surface as before. */
+html.dark body {
+  background:
+    radial-gradient(110% 70% at 50% 0%, rgba(48, 64, 96, 0.24), transparent 60%),
+    var(--canvas);
+  background-attachment: fixed;
+}
+
+/* ── MUI dark mode overrides ── */
+html.dark .MuiPaper-root {
+  background-color: var(--bg-card) !important;
+  color: var(--text) !important;
+}
+html.dark .MuiPaper-root .MuiTypography-root { color: inherit; }
+html.dark .MuiChip-outlined { border-color: var(--border) !important; }
+html.dark .MuiDataGrid-root { color: var(--text); }
+html.dark .MuiDataGrid-root .MuiDataGrid-cell { color: var(--text); }
+html.dark .MuiDataGrid-root .MuiDataGrid-columnHeader { background: var(--bg-subtle) !important; }
+html.dark .MuiTablePagination-root { color: var(--text-secondary) !important; }
+html.dark .MuiInputBase-root { color: var(--text) !important; }
+html.dark .MuiOutlinedInput-notchedOutline { border-color: var(--border) !important; }
+html.dark .MuiSelect-icon { color: var(--text-secondary) !important; }
+html.dark .MuiMenuItem-root { color: var(--text); }
+html.dark .MuiDialog-paper { background-color: var(--bg-card) !important; }
+html.dark .MuiMenu-paper { background-color: var(--bg-card) !important; }
+html.dark .MuiDrawer-paper { background-color: var(--bg-card) !important; }
+html.dark .MuiTableHead-root { background-color: var(--bg-subtle) !important; }
+html.dark .MuiTableCell-root {
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+html.dark .MuiListItemText-primary { color: var(--text) !important; }
+html.dark .MuiListItemText-secondary { color: var(--text-secondary) !important; }
+html.dark .MuiSwitch-track { background-color: var(--border) !important; }
+
+/* ── Tailwind dark overrides ── */
+html.dark .bg-white { background-color: var(--bg-card) !important; }
+html.dark .bg-slate-50 { background-color: var(--bg) !important; }
+html.dark .bg-slate-100 { background-color: var(--bg-subtle) !important; }
+html.dark .text-slate-900 { color: var(--text) !important; }
+html.dark .text-slate-800 { color: var(--text) !important; }
+html.dark .text-slate-700 { color: var(--text) !important; }
+html.dark .text-slate-600 { color: var(--text-secondary) !important; }
+html.dark .text-slate-500 { color: var(--text-secondary) !important; }
+html.dark .border-slate-200 { border-color: var(--border) !important; }
+html.dark .border-slate-100 { border-color: var(--border-light) !important; }
+
+/* ── No-white rule: Tailwind bg-white flattens onto the tinted
+   card ground in light mode too (dark already overrides above). ── */
+.bg-white { background-color: var(--bg-card) !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   PLAIN TABLES — same navy header as the DataGrids, plus real zebra
+   (safe here: these rows are not virtualised, unlike DataGrid's).
+   Scoped to .dx-table so a component can opt out, but applied to bare
+   <table> inside cards by default so every table matches.
+   ══════════════════════════════════════════════════════════════ */
+.dx-card table thead tr,
+.card table thead tr,
+table.dx-table thead tr {
+  background: var(--table-head-bg) !important;
+}
+
+.dx-card table thead th,
+.card table thead th,
+table.dx-table thead th {
+  color: var(--table-head-text) !important;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-bottom: 2px solid var(--table-head-edge) !important;
+}
+
+/* Zebra: the odd rows carry the stronger tint so the first body row
+   reads as distinct from the header edge above it. */
+.dx-card table tbody tr:nth-child(odd),
+.card table tbody tr:nth-child(odd),
+table.dx-table tbody tr:nth-child(odd) {
+  background: var(--table-row-alt);
+}
+
+.dx-card table tbody tr:nth-child(even),
+.card table tbody tr:nth-child(even),
+table.dx-table tbody tr:nth-child(even) {
+  background: var(--table-row);
+}
+
+.dx-card table tbody tr:hover,
+.card table tbody tr:hover,
+table.dx-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   GLOBAL BUTTON RESET
+   ══════════════════════════════════════════════════════════════ */
+button {
+  font-family: inherit;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
+/* ══════════════════════════════════════════════════════════════
+   FOCUS — visible teal ring, 2px offset, everywhere (rail included)
+   ══════════════════════════════════════════════════════════════ */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
-::-webkit-scrollbar-track {
-  background: var(--bg-dark);
+/* ══════════════════════════════════════════════════════════════
+   SELECTION COLOR
+   ══════════════════════════════════════════════════════════════ */
+::selection {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--text);
 }
 
-::-webkit-scrollbar-thumb {
-  background: #333;
-  border-radius: 4px;
+/* ══════════════════════════════════════════════════════════════
+   SPIN ANIMATION
+   ══════════════════════════════════════════════════════════════ */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #555;
+.spin { animation: spin 1s linear infinite; }
+
+/* ══════════════════════════════════════════════════════════════
+   FADE-IN UTILITY — opacity only, ≤150ms
+   ══════════════════════════════════════════════════════════════ */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-/* Utilities */
-.glass-panel {
-  background: var(--bg-panel);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: var(--glass-border);
-  box-shadow: var(--glass-shadow);
-  border-radius: 16px;
+.fade-in { animation: fadeIn 0.15s ease-out; }
+
+.stagger-in { animation: fadeIn 0.15s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spin, .fade-in, .stagger-in { animation: none; }
 }

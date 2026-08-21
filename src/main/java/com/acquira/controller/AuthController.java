@@ -1,34 +1,37 @@
 package com.acquira.controller;
 
 import com.acquira.security.JwtUtil;
+import com.acquira.service.RateLimiterService;
 import com.acquira.service.TenantService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "http://localhost:5173") // Allow React Frontend
 public class AuthController {
 
-    private final org.springframework.security.authentication.AuthenticationManager authenticationManager;
-    private final com.acquira.security.JwtUtil jwtUtil;
-    private final org.springframework.security.core.userdetails.UserDetailsService userDetailsService;
-    private final com.acquira.service.TenantService tenantService;
+    private final AuthenticationManager authenticationManager;
+    private final JwtUtil jwtUtil;
+    private final UserDetailsService userDetailsService;
+    private final TenantService tenantService;
     private final com.acquira.repository.SysUserGroupRepository groupRepository;
     private final com.acquira.repository.UserRepository userRepository;
     private final com.acquira.repository.UserTenantAccessRepository userTenantAccessRepository;
+    private final RateLimiterService rateLimiterService;
 
     public AuthController(JwtUtil jwtUtil, UserDetailsService userDetailsService, TenantService tenantService,
             AuthenticationManager authenticationManager,
             com.acquira.repository.SysUserGroupRepository groupRepository,
             com.acquira.repository.UserRepository userRepository,
-            com.acquira.repository.UserTenantAccessRepository userTenantAccessRepository) {
+            com.acquira.repository.UserTenantAccessRepository userTenantAccessRepository,
+            RateLimiterService rateLimiterService) {
         this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
         this.tenantService = tenantService;
@@ -36,75 +39,241 @@ public class AuthController {
         this.groupRepository = groupRepository;
         this.userRepository = userRepository;
         this.userTenantAccessRepository = userTenantAccessRepository;
+        this.rateLimiterService = rateLimiterService;
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> createAuthenticationToken(@RequestBody AuthRequest authenticationRequest)
-            throws Exception {
+    public ResponseEntity<?> createAuthenticationToken(
+            @RequestBody AuthRequest authenticationRequest,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+
+        // Input validation
+        if (authenticationRequest.getUsername() == null || authenticationRequest.getUsername().trim().isEmpty()
+                || authenticationRequest.getPassword() == null
+                || authenticationRequest.getPassword().trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Username and password are required"));
+        }
+
+        // Rate limiting
+        String clientIp = rateLimiterService.getClientIp(httpRequest);
+        if (rateLimiterService.isRateLimited(clientIp)) {
+            return ResponseEntity.status(429).body(Map.of(
+                    "error", "Too many login attempts. Please try again later."));
+        }
 
         try {
             authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(authenticationRequest.getUsername(),
+                    new UsernamePasswordAuthenticationToken(
+                            authenticationRequest.getUsername(),
                             authenticationRequest.getPassword()));
-        } catch (org.springframework.security.authentication.BadCredentialsException e) {
-            throw new Exception("Incorrect username or password", e);
+        } catch (BadCredentialsException e) {
+            rateLimiterService.recordFailedAttempt(clientIp);
+            return ResponseEntity.status(401).body(Map.of("error", "Incorrect username or password"));
         }
 
+        // Successful login — clear rate limit
+        rateLimiterService.clearAttempts(clientIp);
+
         final UserDetails userDetails = userDetailsService.loadUserByUsername(authenticationRequest.getUsername());
-        final String jwt = jwtUtil.generateToken(userDetails);
+        final String accessToken = jwtUtil.generateToken(userDetails);
+        final String refreshToken = jwtUtil.generateRefreshToken(userDetails.getUsername());
 
         // Get allowed tenants for the user
         List<com.acquira.model.Tenant> allowedTenants = tenantService
                 .getAllowedTenantsForUser(userDetails.getUsername());
         Long defaultTenantId = tenantService.getDefaultTenantIdForUser(userDetails.getUsername());
 
-        // Resolve Effective Tenant (Default or First Allowed)
         Long effectiveTenantId = defaultTenantId;
         if (effectiveTenantId == null && !allowedTenants.isEmpty()) {
             effectiveTenantId = allowedTenants.get(0).getTenantId();
         }
 
-        // Get User Group and Menus for Effective Tenant
         com.acquira.model.User user = userRepository.findByUsername(authenticationRequest.getUsername()).orElse(null);
-        java.util.Set<com.acquira.model.SysMenu> menus = new java.util.HashSet<>();
+        Set<com.acquira.model.SysMenu> menus = new HashSet<>();
 
         if (user != null && effectiveTenantId != null) {
-            java.util.Optional<com.acquira.model.UserTenantAccess> access = userTenantAccessRepository
+            Optional<com.acquira.model.UserTenantAccess> access = userTenantAccessRepository
                     .findByUserAndTenant_TenantId(user, effectiveTenantId);
             if (access.isPresent() && access.get().getSysUserGroup() != null) {
                 menus = access.get().getSysUserGroup().getMenus();
+            } else {
+                String userRole = user.getRole();
+                // SECURITY FIX: Only SUPER_ADMIN gets fallback to "Super Admin" group menus.
+                // Bank Admin without an explicit access row for this tenant gets NO menus
+                // (they shouldn't be accessing this tenant at all).
+                if ("ROLE_SUPER_ADMIN".equals(userRole)) {
+                    // Super Admin: try to find menus from any existing access, then fallback to Super Admin group
+                    List<com.acquira.model.UserTenantAccess> allAccess = userTenantAccessRepository.findByUser(user);
+                    allAccess.stream()
+                            .filter(a -> a.getSysUserGroup() != null)
+                            .findFirst()
+                            .ifPresent(a -> menus.addAll(a.getSysUserGroup().getMenus()));
+                    if (menus.isEmpty()) {
+                        groupRepository.findAll().stream()
+                                .filter(g -> "Super Admin".equalsIgnoreCase(g.getGroupName()))
+                                .findFirst()
+                                .ifPresent(g -> menus.addAll(g.getMenus()));
+                    }
+                } else if ("ROLE_ADMIN".equals(userRole)) {
+                    // Bank Admin: try to find menus from any existing access, then fallback to Bank Admin group
+                    List<com.acquira.model.UserTenantAccess> allAccess = userTenantAccessRepository.findByUser(user);
+                    allAccess.stream()
+                            .filter(a -> a.getSysUserGroup() != null)
+                            .findFirst()
+                            .ifPresent(a -> menus.addAll(a.getSysUserGroup().getMenus()));
+                    if (menus.isEmpty()) {
+                        groupRepository.findAll().stream()
+                                .filter(g -> "Bank Admin".equalsIgnoreCase(g.getGroupName()))
+                                .findFirst()
+                                .ifPresent(g -> menus.addAll(g.getMenus()));
+                    }
+                }
             }
         }
 
-        java.util.Map<String, Object> response = new java.util.HashMap<>();
-        response.put("jwt", jwt);
+        Map<String, Object> response = new HashMap<>();
+        response.put("jwt", accessToken);
+        response.put("refreshToken", refreshToken);
         response.put("allowedTenants", allowedTenants);
         response.put("defaultTenantId", defaultTenantId);
-        // Note: roles in userDetails might be stale or generic, menus drive the UI now.
         response.put("roles", userDetails.getAuthorities());
         response.put("menus", menus);
+        // Include username and role so frontend can display them without JWT decode
+        response.put("username", user != null ? user.getUsername() : authenticationRequest.getUsername());
+        response.put("userRole", user != null ? user.getRole() : "ROLE_USER");
+        response.put("displayName", user != null ? user.getDisplayName() : null);
+        response.put("mustChangePassword", user != null && Boolean.TRUE.equals(user.getMustChangePassword()));
 
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refreshToken(@RequestBody Map<String, String> payload) {
+        String refreshToken = payload.get("refreshToken");
+        if (refreshToken == null || refreshToken.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Refresh token is required"));
+        }
+
+        try {
+            if (!jwtUtil.isRefreshToken(refreshToken)) {
+                return ResponseEntity.status(401).body(Map.of("error", "Invalid refresh token"));
+            }
+
+            String username = jwtUtil.extractUsername(refreshToken);
+            UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+
+            if (!jwtUtil.validateToken(refreshToken, userDetails)) {
+                return ResponseEntity.status(401).body(Map.of("error", "Expired or invalid refresh token"));
+            }
+
+            com.acquira.model.User dbUser = userRepository.findByUsername(username).orElse(null);
+            if (dbUser == null || !dbUser.isActive()) {
+                return ResponseEntity.status(401).body(Map.of("error", "User account is disabled"));
+            }
+
+            String newAccessToken = jwtUtil.generateToken(userDetails);
+            String newRefreshToken = jwtUtil.generateRefreshToken(username);
+
+            return ResponseEntity.ok(Map.of(
+                    "jwt", newAccessToken,
+                    "refreshToken", newRefreshToken));
+        } catch (Exception e) {
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid refresh token"));
+        }
+    }
+
     @PostMapping("/switch-context")
-    public ResponseEntity<?> switchContext(@RequestBody java.util.Map<String, Long> payload) {
-        Long tenantId = payload.get("tenantId");
+    public ResponseEntity<?> switchContext(@RequestBody Map<String, Object> payload) {
+        Object tenantIdObj = payload.get("tenantId");
+        Object viewIdObj = payload.get("viewId");
+
+        Long tenantId = null;
+        if (tenantIdObj instanceof Number) {
+            tenantId = ((Number) tenantIdObj).longValue();
+        }
+
+        Long viewId = null;
+        if (viewIdObj instanceof Number) {
+            viewId = ((Number) viewIdObj).longValue();
+        }
+
         String username = org.springframework.security.core.context.SecurityContextHolder.getContext()
                 .getAuthentication().getName();
         com.acquira.model.User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        java.util.Set<com.acquira.model.SysMenu> menus = new java.util.HashSet<>();
-        if (tenantId != null) {
-            java.util.Optional<com.acquira.model.UserTenantAccess> access = userTenantAccessRepository
-                    .findByUserAndTenant_TenantId(user, tenantId);
-            if (access.isPresent() && access.get().getSysUserGroup() != null) {
-                menus = access.get().getSysUserGroup().getMenus();
+        Set<com.acquira.model.SysMenu> menus = new HashSet<>();
+
+        if (viewId != null) {
+            List<com.acquira.model.UserCombinedView> views = tenantService.getCombinedViews(username);
+            final Long finalViewId = viewId;
+            com.acquira.model.UserCombinedView view = views.stream()
+                    .filter(v -> v.getViewId().equals(finalViewId))
+                    .findFirst()
+                    .orElse(null);
+
+            if (view != null) {
+                String[] ids = view.getTenantIds().split(",");
+                if (ids.length > 0) {
+                    try {
+                        tenantId = Long.parseLong(ids[0].trim());
+                    } catch (Exception e) {
+                        // ignore parse error
+                    }
+                }
             }
         }
 
-        return ResponseEntity.ok(java.util.Map.of("menus", menus));
+        boolean isSuperAdmin = "ROLE_SUPER_ADMIN".equals(user.getRole());
+
+        if (tenantId != null) {
+            // SECURITY FIX: Validate Bank Admin has access to target tenant
+            if (!isSuperAdmin) {
+                boolean hasAccess = userTenantAccessRepository.findByUser(user).stream()
+                        .anyMatch(a -> a.getTenant().getTenantId().equals(tenantId));
+                if (!hasAccess) {
+                    return ResponseEntity.status(403).body(Map.of("error", "Access denied for this tenant"));
+                }
+            }
+
+            Optional<com.acquira.model.UserTenantAccess> access = userTenantAccessRepository
+                    .findByUserAndTenant_TenantId(user, tenantId);
+            if (access.isPresent() && access.get().getSysUserGroup() != null) {
+                menus = access.get().getSysUserGroup().getMenus();
+            } else if (isSuperAdmin) {
+                // Super Admin fallback: use menus from any access, then fallback to Super Admin group
+                List<com.acquira.model.UserTenantAccess> allAccess = userTenantAccessRepository.findByUser(user);
+                allAccess.stream()
+                        .filter(a -> a.getSysUserGroup() != null)
+                        .findFirst()
+                        .ifPresent(a -> menus.addAll(a.getSysUserGroup().getMenus()));
+                if (menus.isEmpty()) {
+                    groupRepository.findAll().stream()
+                            .filter(g -> "Super Admin".equalsIgnoreCase(g.getGroupName()))
+                            .findFirst()
+                            .ifPresent(g -> menus.addAll(g.getMenus()));
+                }
+            }
+            // Bank Admin without access row: menus stays empty (they shouldn't be here)
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("menus", menus);
+        response.put("activeTenantId", tenantId);
+
+        if (tenantId != null) {
+            Optional<com.acquira.model.UserTenantAccess> accessObj = userTenantAccessRepository
+                    .findByUserAndTenant_TenantId(user, tenantId);
+            if (accessObj.isPresent() && accessObj.get().getSysUserGroup() != null) {
+                response.put("groupName", accessObj.get().getSysUserGroup().getGroupName());
+                response.put("roleInTenant", accessObj.get().getRoleInTenant());
+            } else if (isSuperAdmin) {
+                response.put("groupName", "SUPER_ADMIN");
+                response.put("roleInTenant", "ROLE_SUPER_ADMIN");
+            }
+        }
+
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/session")
@@ -116,7 +285,7 @@ public class AuthController {
         List<com.acquira.model.Tenant> allowedTenants = tenantService.getAllowedTenantsForUser(username);
         Long defaultTenantId = tenantService.getDefaultTenantIdForUser(username);
 
-        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        Map<String, Object> response = new HashMap<>();
         response.put("allowedTenants", allowedTenants);
         response.put("defaultTenantId", defaultTenantId);
         response.put("username", username);
@@ -144,35 +313,5 @@ class AuthRequest {
 
     public void setPassword(String password) {
         this.password = password;
-    }
-}
-
-class AuthResponse {
-    private final String jwt;
-    private final List<com.acquira.model.Tenant> allowedTenants;
-    private final Long defaultTenant;
-    private final Object roles;
-
-    public AuthResponse(String jwt, List<com.acquira.model.Tenant> allowedTenants, Long defaultTenant, Object roles) {
-        this.jwt = jwt;
-        this.allowedTenants = allowedTenants;
-        this.defaultTenant = defaultTenant;
-        this.roles = roles;
-    }
-
-    public String getJwt() {
-        return jwt;
-    }
-
-    public List<com.acquira.model.Tenant> getAllowedTenants() {
-        return allowedTenants;
-    }
-
-    public Long getDefaultTenant() {
-        return defaultTenant;
-    }
-
-    public Object getRoles() {
-        return roles;
     }
 }

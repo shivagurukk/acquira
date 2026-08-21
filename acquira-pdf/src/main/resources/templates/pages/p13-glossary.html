@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="glossaryContent" style="padding: 0;">
+
+        <!-- Intro -->
+        <div style="margin-bottom: 16px;">
+            <p style="font-size: 9px; color: #6B7280; line-height: 1.5; margin: 0;">
+                This glossary explains key terms and metrics used throughout your monthly performance report.
+                Understanding these definitions will help you get the most from your data.
+            </p>
+        </div>
+
+        <!-- Two-column grid of definitions (logically ordered: basic terms first, then metrics that reference them) -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+
+            <!-- 1. Unique Customers (defined first — referenced by other terms) -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #ECFDF5; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">👥</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">Unique Customers</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    Count of distinct card numbers used at your location. One customer may use multiple cards,
+                    so this is an approximation. It provides a reliable proxy for footfall and customer reach.
+                </p>
+            </div>
+
+            <!-- 2. Total Sales Volume -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #EFF6FF; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">💰</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">Total Sales Volume</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    The total value of all transactions processed in your settlement currency during the reporting period.
+                    This uses your settlement currency, not the original transaction currency.
+                </p>
+            </div>
+
+            <!-- 3. ATV -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #F0FDF4; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">📊</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">ATV (Average Transaction Value)</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    Total sales divided by total number of transactions. A higher ATV means each customer spends more per visit.
+                    Industry benchmarks vary by sector — quick service restaurants typically see lower ATV than retail, for example.
+                </p>
+            </div>
+
+            <!-- 4. MoM Growth -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #FEF3C7; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">📈</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">MoM Growth (Month-over-Month)</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    The percentage change compared to the previous month. A positive value (green ↑) means growth,
+                    while a negative value (red ↓) indicates a decrease. Calculated as: (Current - Previous) / Previous × 100%.
+                </p>
+            </div>
+
+            <!-- 5. YoY Growth -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #EDE9FE; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">📅</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">YoY Growth (Year-over-Year)</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    Compares performance to the same month last year, eliminating seasonal bias. If 12+ months of data
+                    are unavailable, a half-year comparison is used and labelled accordingly.
+                </p>
+            </div>
+
+            <!-- 6. Customer Retention Rate (references Unique Customers — now defined above) -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #FFF1F2; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">🔁</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">Customer Retention Rate</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    The percentage of unique customers (distinct card numbers) that visited more than once during the reporting period.
+                    What constitutes a healthy rate varies by industry, location, and business type. Tracking this figure over time is often more useful than comparing it to a fixed benchmark.
+                </p>
+            </div>
+
+            <!-- 7. Peak Day / Peak Hour -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #FFF7ED; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">⭐</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">Peak Day / Peak Hour</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    The day and hour that generated the highest sales volume. Highlighted in gold on charts.
+                    Use this to plan staffing, promotions, and inventory around your busiest periods.
+                </p>
+            </div>
+
+            <!-- 8. Local vs International Cards -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #F0F9FF; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">🌍</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">Local vs International Cards</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    Local (domestic) cards are issued in the same country as your location. International cards are
+                    issued abroad — these customers are typically tourists or business travellers and are
+                    eligible for DCC.
+                </p>
+            </div>
+
+            <!-- 9. DCC -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #FEF9C3; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">💱</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">DCC (Dynamic Currency Conversion)</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    When an international cardholder pays, DCC offers them the choice to pay in their home currency.
+                    When they opt in, you earn approximately 3% of the transaction value. The conversion rate measures how many
+                    eligible customers accept DCC.
+                </p>
+            </div>
+
+            <!-- 10. Performance Scorecard -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <div style="width: 20px; height: 20px; background: #ECFDF5; border-radius: 5px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px;">💚</span>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 800; color: #1E293B;">Performance Scorecard</span>
+                </div>
+                <p style="font-size: 8.5px; color: #475569; line-height: 1.5; margin: 0;">
+                    The closing page provides a composite score (0–100) based on weighted dimensions: sales health, growth momentum,
+                    customer loyalty, payment efficiency, and DCC performance. It includes personalised action items
+                    based on your actual metrics. Focus on the top action item for maximum impact.
+                </p>
+            </div>
+
+        </div>
+
+        <!-- Reading the Charts callout -->
+        <div style="margin-top: 12px; background: linear-gradient(135deg, #EFF6FF, #F0FDF4); border: 1px solid #BFDBFE; border-radius: 8px; padding: 10px 14px;">
+            <div style="font-size: 8.5px; font-weight: 800; color: #1E3A8A; margin-bottom: 4px;">📖 Reading Your Charts</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; font-size: 8px; color: #475569; line-height: 1.4;">
+                <div><span style="font-weight: 700; color: #1E293B;">Bar charts</span> show daily performance — taller bars indicate higher values. The highest bar is highlighted with a bolder label.</div>
+                <div><span style="font-weight: 700; color: #1E293B;">Green arrows ↑</span> indicate positive MoM growth. <span style="font-weight: 700; color: #1E293B;">Red arrows ↓</span> indicate decline compared to previous month.</div>
+                <div><span style="font-weight: 700; color: #1E293B;">Heatmap intensity</span> shows sales concentration: darker blue = higher sales, red = the peak cell across the entire grid.</div>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

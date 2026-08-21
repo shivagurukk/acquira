@@ -59,9 +59,9 @@ const BankManagement = () => {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
                 {banks.map(bank => (
-                    <div key={bank.id} style={{ background: 'white', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                    <div key={bank.id} style={{ background: 'var(--bg-card)', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                            <div style={{ background: '#eff6ff', padding: '10px', borderRadius: '8px', color: '#3b82f6' }}>
+                            <div style={{ background: 'var(--wash)', padding: '10px', borderRadius: '8px', color: 'var(--primary)' }}>
                                 <Building2 size={24} />
                             </div>
                             <div>
@@ -84,7 +84,7 @@ const BankManagement = () => {
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.95 }}
-                            style={{ background: 'white', padding: '30px', borderRadius: '16px', width: '100%', maxWidth: '500px' }}
+                            style={{ background: 'var(--bg-card)', padding: '30px', borderRadius: '16px', width: '100%', maxWidth: '500px' }}
                         >
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
                                 <h2 style={{ fontSize: '20px', fontWeight: 'bold' }}>Create New Bank</h2>

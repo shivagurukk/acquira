@@ -1,0 +1,513 @@
+/**
+ * Sidebar — dark rail, constant in both colour schemes.
+ *
+ * The rail stays dark always so it reads as app chrome rather than
+ * content. All rail colour comes from the --rail-* tokens defined in
+ * index.css (:root); there is deliberately NO html.dark override here.
+ *
+ * Structure: 232px expanded / 56px collapsed icon rail. Active state is
+ * a 2px full-height teal marker flush to the item's left edge plus a
+ * background wash — no filled pill, no weight change, no chevron.
+ */
+
+.sb {
+  display: flex;
+  flex-direction: column;
+  /* --vh100, not 100vh: the rail is full-bleed dark, so under --app-zoom a
+     raw 100vh would leave a lighter band below it. */
+  height: var(--vh100, 100vh);
+  background: var(--rail-grad, var(--rail-bg, #0B1730));
+  color: var(--rail-text, #A3B4D4);
+  border-right: 1px solid var(--rail-edge, #1C2C4E);
+  overflow: hidden;
+  flex-shrink: 0;
+  /* Sidebar collapse is the one width animation permitted. */
+  transition: width 180ms ease-out;
+}
+
+/* The rail may render as a MUI Drawer paper; keep it dark and hairlined
+   even against the generic html.dark .MuiDrawer-paper overrides. */
+.sb.MuiDrawer-paper,
+html.dark .sb.MuiDrawer-paper {
+  background: var(--rail-grad, var(--rail-bg, #0B1730)) !important;
+  color: var(--rail-text, #A3B4D4) !important;
+  border-right: 1px solid var(--rail-edge, #1C2C4E) !important;
+  box-shadow: none !important;
+}
+
+/* Every interactive element shares the same reset + focus treatment.
+   Focus ring stays teal and visible against the dark rail.
+
+   `:where(button)` contributes ZERO specificity, so this reset weighs the
+   same as a single class. Without it the reset is (0,1,1) and silently
+   beats every single-class state rule below — `.sb__item--active`,
+   `--muted`, `.sb__collapse`, `.sb__tenant-trigger`, `.sb__icon-item--active`
+   — flattening the whole rail to one grey with no active wash. */
+.sb :where(button) {
+  font-family: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  border-radius: 4px;
+  transition: background-color 150ms, color 150ms;
+}
+.sb button:focus-visible {
+  outline: 2px solid var(--rail-marker, #3B82F6);
+  outline-offset: 2px;
+}
+
+/* ── Header: wordmark + environment tag, 56px, bottom hairline ────── */
+.sb__header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rail-edge, #1C2C4E);
+  flex-shrink: 0;
+}
+.sb--collapsed .sb__header {
+  justify-content: center;
+  padding: 0;
+}
+.sb__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+  text-align: left;
+}
+.sb__brand-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rail-text-active, #F0F5FF);
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+.sb__env {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--rail-eyebrow, #7C8FB5);
+  line-height: 1;
+  user-select: none;
+}
+
+/* ── Search field ─────────────────────────────────────────────────── */
+.sb__search {
+  margin: 10px 12px 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--rail-edge, #1C2C4E);
+  border-radius: 4px;
+  background: transparent;
+  cursor: text;
+  flex-shrink: 0;
+}
+.sb__search:focus-within {
+  border-color: var(--rail-marker, #3B82F6);
+}
+.sb__search input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--rail-text-active, #F0F5FF);
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+  caret-color: var(--rail-marker, #3B82F6);
+  font-family: inherit;
+}
+.sb__search input::placeholder {
+  color: var(--rail-eyebrow, #7C8FB5);
+}
+.sb__kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--rail-eyebrow, #7C8FB5);
+  border: 1px solid var(--rail-edge, #1C2C4E);
+  border-radius: 2px;
+  padding: 1px 4px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* ── Scrollable nav — scrollbar hidden until hover ────────────────── */
+.sb__nav {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 8px 8px;
+  scrollbar-width: none;
+}
+.sb__nav::-webkit-scrollbar { width: 4px; }
+.sb__nav::-webkit-scrollbar-thumb { background: transparent; }
+.sb__nav:hover { scrollbar-width: thin; scrollbar-color: var(--rail-edge) transparent; }
+.sb__nav:hover::-webkit-scrollbar-thumb { background: var(--rail-edge, #1C2C4E); }
+
+/* Group eyebrow — mono, 10px, uppercase, no divider lines. */
+.sb__zone {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rail-eyebrow, #7C8FB5);
+  padding: 0 8px 4px;
+  margin-top: 20px;
+  user-select: none;
+}
+.sb__zone:first-child {
+  margin-top: 8px;
+}
+
+/* Nav item — 36px, 13px/500, 12px icon gap, 4px radius. */
+.sb__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px 0 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--rail-text, #A3B4D4);
+  text-align: left;
+}
+.sb__item:hover {
+  background: var(--rail-hover-bg, #132140);
+  color: var(--rail-text-hover, #DCE6F8);
+}
+.sb__item svg {
+  color: inherit;
+  flex-shrink: 0;
+}
+.sb__item-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+/* ACTIVE: 2px full-height teal marker flush to the left edge + wash +
+   brightened text. No pill, no weight change, no chevron. */
+.sb__item--active,
+.sb__item--active:hover {
+  background: var(--rail-active-bg, #17294E);
+  color: var(--rail-text-active, #F0F5FF);
+}
+.sb__item--active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 0;
+  background: var(--rail-marker, #3B82F6);
+}
+.sb__item--muted {
+  color: var(--rail-eyebrow, #7C8FB5);
+}
+
+/* Empty search result */
+.sb__empty {
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--rail-eyebrow, #7C8FB5);
+  font-size: 12px;
+}
+
+/* ── Footer stack: user → freshness → collapse toggle ─────────────── */
+.sb__footer {
+  border-top: 1px solid var(--rail-edge, #1C2C4E);
+  padding: 8px 8px 6px;
+  flex-shrink: 0;
+  position: relative;
+}
+.sb__user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+}
+.sb__user:hover {
+  background: var(--rail-hover-bg, #132140);
+}
+.sb__avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--rail-active-bg, #17294E);
+  color: var(--rail-marker, #3B82F6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.sb__user-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--rail-text-hover, #DCE6F8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.sb__user-sub {
+  font-size: 11px;
+  color: var(--rail-eyebrow, #7C8FB5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+/* Data freshness stamp — mono 11px + status dot. */
+.sb__fresh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: default;
+}
+.sb__fresh--collapsed {
+  justify-content: center;
+  padding: 6px 0;
+}
+.sb__fresh-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--rail-fresh, #38BDF8);
+  flex-shrink: 0;
+}
+.sb__fresh-dot--stale {
+  background: var(--rail-stale, #E2B04A);
+}
+.sb__fresh-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rail-text, #A3B4D4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Collapse toggle — bottom of the rail, not a header hamburger. */
+.sb__collapse {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--rail-eyebrow, #7C8FB5);
+}
+.sb__collapse:hover {
+  background: var(--rail-hover-bg, #132140);
+  color: var(--rail-text-hover, #DCE6F8);
+}
+.sb--collapsed .sb__collapse {
+  justify-content: center;
+  padding: 0;
+}
+
+/* Popover menu (user actions) — the one elevated surface in the rail. */
+.sb__menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 8px;
+  right: 8px;
+  background: var(--rail-bg, #0B1730);
+  border: 1px solid var(--rail-edge, #1C2C4E);
+  border-radius: 4px;
+  padding: 4px;
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
+  z-index: 300;
+}
+.sb__menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--rail-text-hover, #DCE6F8);
+}
+.sb__menu-item svg {
+  color: var(--rail-text, #A3B4D4);
+}
+.sb__menu-item:hover {
+  background: var(--rail-hover-bg, #132140);
+}
+.sb__menu-item--danger,
+.sb__menu-item--danger svg {
+  color: var(--rail-stale, #E2B04A);
+}
+.sb__menu-item--danger:hover {
+  background: var(--rail-hover-bg, #132140);
+}
+.sb__menu-sep {
+  height: 1px;
+  background: var(--rail-edge, #1C2C4E);
+  margin: 4px 6px;
+}
+
+/* ── Collapsed rail (56px): icons centred, marker still visible ───── */
+.sb__icon-item {
+  position: relative;
+  width: 40px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 1px auto;
+  border-radius: 4px;
+  color: var(--rail-text, #A3B4D4);
+}
+.sb__icon-item:hover {
+  background: var(--rail-hover-bg, #132140);
+  color: var(--rail-text-hover, #DCE6F8);
+}
+.sb__icon-item--active {
+  background: var(--rail-active-bg, #17294E);
+  color: var(--rail-text-active, #F0F5FF);
+}
+.sb__icon-item--active::before {
+  content: '';
+  position: absolute;
+  left: -8px;              /* flush to the rail edge (nav has 8px padding) */
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--rail-marker, #3B82F6);
+}
+.sb__zone-dot {
+  width: 16px;
+  height: 1px;
+  background: var(--rail-edge, #1C2C4E);
+  margin: 10px auto;
+}
+.sb--collapsed .sb__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 6px;
+}
+
+/* ── Tenant switcher (rendered inside .sb, shares rail tokens) ────── */
+.sb__tenant {
+  position: relative;
+  width: 100%;
+}
+.sb__tenant-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--rail-text, #A3B4D4);
+  text-align: left;
+}
+.sb__tenant-trigger:hover,
+.sb__tenant-trigger--open {
+  background: var(--rail-hover-bg, #132140);
+  color: var(--rail-text-hover, #DCE6F8);
+}
+.sb__tenant-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.sb__tenant-chev {
+  color: var(--rail-eyebrow, #7C8FB5);
+  flex-shrink: 0;
+  transition: transform 150ms ease-out;
+}
+.sb__tenant-chev--open {
+  transform: rotate(180deg);
+}
+.sb__tenant-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 300;
+  background: var(--rail-bg, #0B1730);
+  border: 1px solid var(--rail-edge, #1C2C4E);
+  border-radius: 4px;
+  padding: 4px;
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
+  max-height: 300px;
+  overflow-y: auto;
+}
+.sb__tenant-menu-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rail-eyebrow, #7C8FB5);
+  padding: 6px 10px 4px;
+}
+.sb__tenant-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  color: var(--rail-text-hover, #DCE6F8);
+}
+.sb__tenant-item:hover {
+  background: var(--rail-hover-bg, #132140);
+}
+.sb__tenant-item--active {
+  background: var(--rail-active-bg, #17294E);
+  color: var(--rail-text-active, #F0F5FF);
+}
+.sb__tenant-item--active svg {
+  color: var(--rail-marker, #3B82F6);
+}
+.sb__tenant-item-name {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.sb__tenant-item-meta {
+  font-size: 11px;
+  color: var(--rail-eyebrow, #7C8FB5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+/* ── Motion discipline ────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .sb,
+  .sb * {
+    transition: none !important;
+  }
+}

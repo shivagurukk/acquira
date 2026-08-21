@@ -44,7 +44,7 @@ const ParticlesBackground = () => {
         const init = () => {
             particlesArray = [];
             const numberOfParticles = 100;
-            const colors = ['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.3)', 'rgba(29, 78, 216, 0.2)']; // White/Blueish
+            const colors = ['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.3)', 'rgba(164, 78, 31, 0.2)']; // White/Blueish
 
             for (let i = 0; i < numberOfParticles; i++) {
                 const size = (Math.random() * 3) + 1;
@@ -58,13 +58,17 @@ const ParticlesBackground = () => {
         }
 
         const animate = () => {
-            requestAnimationFrame(animate);
-            ctx.clearRect(0, 0, innerWidth, innerHeight);
+            try {
+                requestAnimationFrame(animate);
+                ctx.clearRect(0, 0, innerWidth, innerHeight);
 
-            for (let i = 0; i < particlesArray.length; i++) {
-                particlesArray[i].update();
+                for (let i = 0; i < particlesArray.length; i++) {
+                    particlesArray[i].update();
+                }
+                connect();
+            } catch (e) {
+                console.error("Animation error:", e);
             }
-            connect();
         }
 
         const connect = () => {
@@ -87,8 +91,12 @@ const ParticlesBackground = () => {
             }
         }
 
-        init();
-        animate();
+        try {
+            init();
+            animate();
+        } catch (e) {
+            console.error("Params check error:", e);
+        }
 
         const handleResize = () => {
             canvas.width = window.innerWidth;

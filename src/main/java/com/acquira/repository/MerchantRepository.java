@@ -21,4 +21,20 @@ public interface MerchantRepository extends JpaRepository<Merchant, Long>,
         long countByTenantIdAndStatus(Long tenantId, String status);
 
         Optional<Merchant> findByName(String name);
+
+        public interface SalesUserProjection {
+                String getSalesUserId();
+
+                String getSalesEmail();
+        }
+
+        @org.springframework.data.jpa.repository.Query("SELECT DISTINCT m.salesUserId as salesUserId, m.salesEmail as salesEmail FROM Merchant m WHERE m.tenantId = :tenantId AND m.salesUserId IS NOT NULL")
+        java.util.List<SalesUserProjection> findDistinctSalesUserInfoByTenantId(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId);
+
+        @org.springframework.data.jpa.repository.Query("SELECT DISTINCT m.salesUserId FROM Merchant m WHERE m.tenantId = :tenantId AND m.salesUserId IS NOT NULL")
+        java.util.List<String> findDistinctSalesUserIdsByTenantId(
+                        @org.springframework.data.repository.query.Param("tenantId") Long tenantId);
+
+        Optional<Merchant> findByMerchantIdAndTenantId(Long merchantId, Long tenantId);
 }

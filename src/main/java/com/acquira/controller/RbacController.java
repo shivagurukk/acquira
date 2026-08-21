@@ -13,7 +13,7 @@ import java.util.HashSet;
 
 @RestController
 @RequestMapping("/api/admin/rbac")
-@CrossOrigin(origins = "http://localhost:5173")
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('SUPER_ADMIN')")
 public class RbacController {
 
     private final SysUserGroupRepository groupRepository;

@@ -1,69 +1,160 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Filter, Calendar, CreditCard, ChevronLeft, ChevronRight, X, Download } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Filter, ChevronLeft, ChevronRight, X, Download, AlertTriangle } from 'lucide-react';
+import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
 import Loader from './Loader';
+import { decimalsForCurrency, getDefaultCurrency, resolveDecimals } from '../utils/formatters';
+
+/* Per-ROW currency: a transaction can settle in a currency that is not the
+   tenant's base currency, so the cardholder amount must use ITS OWN minor-unit
+   precision (BHD/KWD/OMR = 3, JPY = 0, everything else = 2). Falls back to the
+   tenant currency when the row does not carry one, and never renders a bare
+   number with no code. */
+const rowAmount = (val, code) => {
+    if (val == null) return '';
+    const ccy = code || getDefaultCurrency();
+    const d = decimalsForCurrency(ccy);
+    const n = Number(val).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+    return ccy ? `${ccy} ${n}` : n;
+};
+
+/* MSF is a SETTLEMENT figure — always the tenant's currency, so its precision
+   is the tenant's (3dp for BHD) and the code is stated once in the column
+   header rather than repeated on every row. Reconciliation digits (4dp) are
+   kept when the tenant's own precision is coarser. */
+const msfCell = (val) => {
+    if (val == null) return '';
+    const d = Math.max(2, resolveDecimals());
+    return Number(val).toLocaleString('en-US',
+        { minimumFractionDigits: d, maximumFractionDigits: Math.max(4, d) });
+};
+
+const EMPTY_FILTERS = {
+    mid: '', sid: '', tid: '',
+    paymentDateFrom: '', paymentDateTo: '',
+    transactionDateFrom: '', transactionDateTo: ''
+};
 
 const TransactionList = () => {
+    // tenantVersion increments on every super-admin tenant switch. This list is
+    // tenant-scoped (backend filters by the active tenant via the X-Tenant-Id
+    // header), so on a switch we MUST reset to page 1 and re-fetch — otherwise the
+    // grid keeps showing the previous tenant's rows (a cross-tenant data leak to
+    // the viewer). See the tenantVersion effect below.
+    const { tenantVersion } = useAuth();
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(false);
 
-    // Pagination
-    const [page, setPage] = useState(0);
+    // ── Keyset (cursor) pagination ──────────────────────────────────────────
+    // The fact table can hold billions of rows, so the old offset/Page approach
+    // (which forced a COUNT(*) over the whole filtered set on every page) is gone.
+    // We page forward with an opaque cursor (paymentDate + transactionId of the
+    // last row), and keep a stack of previous cursors so "Previous" works without
+    // any total/count. There is intentionally no "Page X of Y" — that requires a
+    // count we no longer pay for.
     const [size, setSize] = useState(20);
-    const [totalPages, setTotalPages] = useState(0);
-    const [totalElements, setTotalElements] = useState(0);
+    const [hasMore, setHasMore] = useState(false);
+    const [nextCursor, setNextCursor] = useState(null);   // {date, id} for the NEXT page
+    const [pageIndex, setPageIndex] = useState(0);          // 0-based, for display only
+    // Stack of cursors that START each page. cursorStack[i] is the cursor that
+    // produced page i (null for page 0). Lets us walk back.
+    const cursorStackRef = useRef([null]);
+
+    const [isExporting, setIsExporting] = useState(false);
+    const [error, setError] = useState(null);
 
     // Filters
-    const [filters, setFilters] = useState({
-        mid: '',
-        sid: '',
-        tid: '',
-        paymentDateFrom: '',
-        paymentDateTo: '',
-        transactionDateFrom: '',
-        transactionDateTo: ''
-    });
+    const [filters, setFilters] = useState({ ...EMPTY_FILTERS });
+    const filtersRef = useRef(filters);
+    filtersRef.current = filters;
 
-    useEffect(() => {
-        fetchTransactions();
-    }, [page, size]);
-
-    const fetchTransactions = async () => {
+    // Fetch one page given a starting cursor ({date,id} or null for the first page).
+    // Uses the shared api client: Authorization + X-Tenant-Id + the 401
+    // refresh-token flow all come from the interceptor (the old raw fetch
+    // bypassed it, so an expired token rendered as "No transactions found").
+    const fetchPage = useCallback(async (startCursor, overrideFilters) => {
         setLoading(true);
+        setError(null);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
+            const activeFilters = overrideFilters || filtersRef.current;
 
-            const params = new URLSearchParams();
-            params.append('page', page);
-            params.append('size', size);
+            const params = { size };
+            if (activeFilters.mid) params.mid = activeFilters.mid;
+            if (activeFilters.sid) params.sid = activeFilters.sid;
+            if (activeFilters.tid) params.tid = activeFilters.tid;
+            if (activeFilters.paymentDateFrom) params.paymentDateFrom = activeFilters.paymentDateFrom;
+            if (activeFilters.paymentDateTo) params.paymentDateTo = activeFilters.paymentDateTo;
+            // Transaction-date filters route the backend onto its bounded
+            // spec path (they can't ride the payment-date cursor index). They
+            // used to be silently dropped while the export honoured them.
+            if (activeFilters.transactionDateFrom) params.transactionDateFrom = activeFilters.transactionDateFrom;
+            if (activeFilters.transactionDateTo) params.transactionDateTo = activeFilters.transactionDateTo;
 
-            if (filters.mid) params.append('mid', filters.mid);
-            if (filters.sid) params.append('sid', filters.sid);
-            if (filters.tid) params.append('tid', filters.tid);
-
-            if (filters.paymentDateFrom) params.append('paymentDateFrom', filters.paymentDateFrom);
-            if (filters.paymentDateTo) params.append('paymentDateTo', filters.paymentDateTo);
-            if (filters.transactionDateFrom) params.append('transactionDateFrom', filters.transactionDateFrom);
-            if (filters.transactionDateTo) params.append('transactionDateTo', filters.transactionDateTo);
-
-            const res = await fetch(`/api/transactions?${params.toString()}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'X-Tenant-Id': tenantId
-                }
-            });
-
-            if (res.ok) {
-                const data = await res.json();
-                setTransactions(data.content);
-                setTotalPages(data.totalPages);
-                setTotalElements(data.totalElements);
+            if (startCursor && startCursor.date) {
+                params.cursorPaymentDate = startCursor.date;
+                if (startCursor.id != null) params.cursorTxnId = startCursor.id;
             }
-        } catch (error) {
-            console.error("Failed to fetch transactions", error);
+
+            const res = await api.get('/transactions/keyset', { params });
+            const data = res.data || {};
+            setTransactions(data.content || []);
+            setHasMore(!!data.hasMore);
+            setNextCursor(
+                data.nextCursorDate != null
+                    ? { date: data.nextCursorDate, id: data.nextCursorId }
+                    : null
+            );
+        } catch (e) {
+            console.error("Failed to fetch transactions", e);
+            setTransactions([]);
+            setHasMore(false);
+            setError(e?.response?.data?.error || e?.response?.statusText || 'Could not load transactions.');
         } finally {
             setLoading(false);
         }
+    }, [size]);
+
+    // Reset to the first page (used on mount, size change, and filter apply/clear).
+    const resetToFirstPage = useCallback((overrideFilters) => {
+        cursorStackRef.current = [null];
+        setPageIndex(0);
+        fetchPage(null, overrideFilters);
+    }, [fetchPage]);
+
+    useEffect(() => {
+        resetToFirstPage();
+    }, [size]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // On tenant switch: clear any filters carried over from the previous tenant
+    // (MID/SID/TID belong to that tenant and won't match here) and reload page 1
+    // for the newly-active tenant. Skips the initial mount (tenantVersion starts
+    // at 0) so we don't double-fetch alongside the [size] effect above.
+    const didMountRef = useRef(false);
+    useEffect(() => {
+        if (!didMountRef.current) {
+            didMountRef.current = true;
+            return;
+        }
+        const cleared = { ...EMPTY_FILTERS };
+        setFilters(cleared);
+        resetToFirstPage(cleared);
+    }, [tenantVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const goNext = () => {
+        if (!hasMore || !nextCursor) return;
+        // Push the cursor that starts the NEXT page, then fetch it.
+        cursorStackRef.current.push(nextCursor);
+        setPageIndex(i => i + 1);
+        fetchPage(nextCursor);
+    };
+
+    const goPrev = () => {
+        if (pageIndex === 0) return;
+        // Pop current page's start cursor; the new top is the previous page's start.
+        cursorStackRef.current.pop();
+        const prevStart = cursorStackRef.current[cursorStackRef.current.length - 1];
+        setPageIndex(i => i - 1);
+        fetchPage(prevStart);
     };
 
     const handleFilterChange = (key, value) => {
@@ -71,204 +162,178 @@ const TransactionList = () => {
     };
 
     const applyFilters = () => {
-        setPage(0); // Reset to first page
-        fetchTransactions();
+        resetToFirstPage();
     };
 
     const clearFilters = () => {
-        setFilters({
-            mid: '', sid: '', tid: '',
-            paymentDateFrom: '', paymentDateTo: '',
-            transactionDateFrom: '', transactionDateTo: ''
-        });
-        setPage(0);
-        setTimeout(() => {
-            // We need to trigger fetch, but state update is async. 
-            // A better way is dependency on a 'trigger' or just rely on manual 'Apply' but user expects clear to fetch.
-            // For now, simple timeout or just let user click apply after clear? 
-            // Let's force fetch by calling with empty filters directly or just triggering.
-            // Actually, best to just reset state and let user click apply, OR call fetch with cleared params.
-            // Let's call fetch manually with defaults.
-            // But fetchTransactions uses state. 
-            // Standard pattern: setFilters then useEffect or explicit call.
-            // We'll leave it to user to click apply or auto-apply? 
-            // Auto-apply on clear is better UX.
-        }, 0);
-        // Hack: Direct fetch not clean due to closure. 
-        // We will just reload page 0 with empty params by setting state and ensuring useEffect doesn't fire double?
-        // Actually, just set Filters and trigger a reload flag?
-        // Let's just use a ref or simple "Appy" button is required.
+        const cleared = { ...EMPTY_FILTERS };
+        setFilters(cleared);
+        resetToFirstPage(cleared);
     };
 
-    // Auto-fetch on clear?
-    // Let's just create a wrapper that uses current state.
-
-    const exportData = async () => {
+    // Export CSV from the transactions endpoint that actually exists. The old
+    // handler called /api/export/excel — a controller that is not part of any
+    // deployed module — so the button 404'd silently on every click.
+    const handleExport = async () => {
+        setIsExporting(true);
+        setError(null);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
-
-            const params = new URLSearchParams();
-            if (filters.mid) params.append('mid', filters.mid);
-            if (filters.sid) params.append('sid', filters.sid);
-            if (filters.tid) params.append('tid', filters.tid);
-            if (filters.paymentDateFrom) params.append('paymentDateFrom', filters.paymentDateFrom);
-            if (filters.paymentDateTo) params.append('paymentDateTo', filters.paymentDateTo);
-            if (filters.transactionDateFrom) params.append('transactionDateFrom', filters.transactionDateFrom);
-            if (filters.transactionDateTo) params.append('transactionDateTo', filters.transactionDateTo);
-
-            const response = await fetch(`/api/transactions/export/csv?${params.toString()}`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'X-Tenant-Id': tenantId
-                }
-            });
-
-            if (response.ok) {
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
+            const params = {};
+            for (const k of ['mid', 'sid', 'tid', 'paymentDateFrom', 'paymentDateTo', 'transactionDateFrom', 'transactionDateTo']) {
+                if (filters[k]) params[k] = filters[k];
             }
-        } catch (error) {
-            console.error('Export error', error);
+            const res = await api.get('/transactions/export/csv', { params, responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error("Export failed", e);
+            setError(e?.response?.status === 403
+                ? 'Export requires an admin role.'
+                : 'Export failed. Please try again.');
+        } finally {
+            setIsExporting(false);
         }
     };
 
     return (
-        <div style={{ padding: '24px', background: '#f8fafc', minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div className="tx-root">
 
-            {/* Header & Filters */}
-            <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a' }}>Transaction Data</h2>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                        <button onClick={exportData} style={{ fontSize: '0.9rem', color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: '600' }}>
-                            <Download size={16} /> Export CSV
+            {/* ── Filter card ── */}
+            <div className="tx-card" style={{ padding: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
+                        Filters
+                    </span>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={handleExport} disabled={isExporting} className="tx-export">
+                            <Download size={15} /> {isExporting ? 'Exporting…' : 'Export Excel'}
                         </button>
-                        <button onClick={() => { clearFilters(); setTimeout(fetchTransactions, 50); }} style={{ fontSize: '0.9rem', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <X size={16} /> Clear
+                        <button onClick={clearFilters} className="tx-clear">
+                            <X size={14} /> Clear
                         </button>
                     </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', alignItems: 'end' }}>
-
-                    {/* Specific ID Filters */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, alignItems: 'end' }}>
                     <div>
-                        <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', display: 'block' }}>Merchant (MID)</label>
-                        <input type="text" placeholder="MID" value={filters.mid} onChange={(e) => handleFilterChange('mid', e.target.value)} style={inputStyle} />
+                        <label className="tx-label">Merchant (MID)</label>
+                        <input type="text" placeholder="MID" value={filters.mid} onChange={(e) => handleFilterChange('mid', e.target.value)} className="tx-input" />
                     </div>
                     <div>
-                        <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', display: 'block' }}>Store (SID)</label>
-                        <input type="text" placeholder="SID" value={filters.sid} onChange={(e) => handleFilterChange('sid', e.target.value)} style={inputStyle} />
+                        <label className="tx-label">Store (SID)</label>
+                        <input type="text" placeholder="SID" value={filters.sid} onChange={(e) => handleFilterChange('sid', e.target.value)} className="tx-input" />
                     </div>
                     <div>
-                        <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', display: 'block' }}>Terminal (TID)</label>
-                        <input type="text" placeholder="TID" value={filters.tid} onChange={(e) => handleFilterChange('tid', e.target.value)} style={inputStyle} />
+                        <label className="tx-label">Terminal (TID)</label>
+                        <input type="text" placeholder="TID" value={filters.tid} onChange={(e) => handleFilterChange('tid', e.target.value)} className="tx-input" />
                     </div>
 
-                    {/* Payment Date */}
                     <div style={{ gridColumn: 'span 2' }}>
-                        <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', display: 'block' }}>Payment Date Range</label>
-                        <div style={{ display: 'flex', gap: '5px' }}>
-                            <input type="date" value={filters.paymentDateFrom} onChange={(e) => handleFilterChange('paymentDateFrom', e.target.value)} style={dateInputStyle} />
-                            <span style={{ alignSelf: 'center', color: '#94a3b8' }}>-</span>
-                            <input type="date" value={filters.paymentDateTo} onChange={(e) => handleFilterChange('paymentDateTo', e.target.value)} style={dateInputStyle} />
+                        <label className="tx-label">Payment Date Range</label>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <input type="date" value={filters.paymentDateFrom} onChange={(e) => handleFilterChange('paymentDateFrom', e.target.value)} className="tx-input" />
+                            <span style={{ color: 'var(--text-muted)' }}>–</span>
+                            <input type="date" value={filters.paymentDateTo} onChange={(e) => handleFilterChange('paymentDateTo', e.target.value)} className="tx-input" />
                         </div>
                     </div>
 
-                    {/* Transaction Date */}
                     <div style={{ gridColumn: 'span 2' }}>
-                        <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', marginBottom: '4px', display: 'block' }}>Transaction Date Range</label>
-                        <div style={{ display: 'flex', gap: '5px' }}>
-                            <input type="date" value={filters.transactionDateFrom} onChange={(e) => handleFilterChange('transactionDateFrom', e.target.value)} style={dateInputStyle} />
-                            <span style={{ alignSelf: 'center', color: '#94a3b8' }}>-</span>
-                            <input type="date" value={filters.transactionDateTo} onChange={(e) => handleFilterChange('transactionDateTo', e.target.value)} style={dateInputStyle} />
+                        <label className="tx-label">Transaction Date Range</label>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <input type="date" value={filters.transactionDateFrom} onChange={(e) => handleFilterChange('transactionDateFrom', e.target.value)} className="tx-input" />
+                            <span style={{ color: 'var(--text-muted)' }}>–</span>
+                            <input type="date" value={filters.transactionDateTo} onChange={(e) => handleFilterChange('transactionDateTo', e.target.value)} className="tx-input" />
                         </div>
                     </div>
 
-                    <button
-                        onClick={applyFilters}
-                        style={{
-                            background: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px',
-                            padding: '0 20px', cursor: 'pointer', fontWeight: 'bold',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', height: '38px'
-                        }}
-                    >
-                        <Filter size={16} /> Apply Filters
+                    <button onClick={applyFilters} className="tx-apply">
+                        <Filter size={15} /> Apply Filters
                     </button>
                 </div>
             </div>
 
-            {/* Data Table */}
-            <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
+            {/* Request failure — was console-only, so a 403/500/expired session
+                looked identical to a tenant with no transactions. */}
+            {error && (
+                <div role="alert" style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+                    borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--danger-border, #fecaca)',
+                    background: 'var(--danger-bg, #fef2f2)', color: 'var(--danger-text, #991b1b)',
+                    fontSize: '0.82rem', fontWeight: 600,
+                }}>
+                    <AlertTriangle size={15} /> {error}
+                    <button onClick={() => fetchPage(cursorStackRef.current[cursorStackRef.current.length - 1])}
+                        style={{ marginLeft: 'auto', fontSize: '0.78rem', fontWeight: 700, color: 'var(--brand, #2563eb)',
+                            background: 'var(--bg-card, #fff)', border: '1px solid var(--border, #e2e8f0)',
+                            borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>Retry</button>
+                </div>
+            )}
+
+            {/* ── Data table ── */}
+            <div className="tx-card" style={{ overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', padding: 0 }}>
                 {loading ? <Loader /> : (
                     <>
                         <div style={{ overflowX: 'auto', flex: 1 }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                                <thead style={{ background: '#f8fafc', color: '#64748b', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>
+                            <table className="tx-table">
+                                <thead>
                                     <tr>
-                                        <th style={thStyle}>Date</th>
-                                        <th style={thStyle}>ARN</th>
-                                        <th style={thStyle}>Merchant</th>
-                                        <th style={thStyle}>Store</th>
-                                        <th style={thStyle}>Terminal</th>
-                                        <th style={thStyle}>Card</th>
-                                        <th style={thStyle}>Amount</th>
-                                        <th style={thStyle}>Fee (MSF)</th>
-                                        <th style={thStyle}>DCC</th>
-                                        <th style={thStyle}>Type</th>
-                                        <th style={thStyle}>Destination</th>
+                                        {/* "Amount" carries the row's own currency code inline (it can
+                                            differ per transaction); MSF is settlement, so the tenant
+                                            currency is stated once here. */}
+                                        {['Date', 'ARN', 'Merchant', 'Store', 'Terminal', 'Card',
+                                          'Amount (txn ccy)',
+                                          `Fee (MSF)${getDefaultCurrency() ? ` — ${getDefaultCurrency()}` : ''}`,
+                                          'DCC', 'Type', 'Destination'].map(h => (
+                                            <th key={h}>{h}</th>
+                                        ))}
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {transactions.length === 0 ? (
-                                        <tr><td colSpan="11" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No transactions found.</td></tr>
+                                        <tr><td colSpan="11" style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>No transactions found.</td></tr>
                                     ) : (
                                         transactions.map(t => (
-                                            <tr key={t.transactionId} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                <td style={tdStyle}>
-                                                    <div>{formatDate(t.paymentDate)}</div>
-                                                    <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{formatDate(t.transactionDate)}</div>
+                                            <tr key={t.transactionId}>
+                                                <td>
+                                                    <div style={{ color: 'var(--text)' }}>{formatDate(t.paymentDate)}</div>
+                                                    <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{formatDate(t.transactionDate)}</div>
                                                 </td>
-                                                <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{t.arn}</td>
-                                                <td style={tdStyle}>
-                                                    <div style={{ fontWeight: '500', color: '#0f172a' }}>{t.merchant ? t.merchant.name : '-'}</div>
-                                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{t.merchant ? t.merchant.mid : t.merchantId}</div>
+                                                <td className="tx-mono">{t.arn}</td>
+                                                <td>
+                                                    <div style={{ fontWeight: 600, color: 'var(--text)' }}>{t.merchant ? t.merchant.name : '-'}</div>
+                                                    <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>{t.merchant ? t.merchant.mid : t.merchantId}</div>
                                                 </td>
-                                                <td style={tdStyle}>
-                                                    <div>{t.store ? t.store.name : '-'}</div>
-                                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{t.store ? t.store.sid : t.storeId}</div>
+                                                <td>
+                                                    <div style={{ color: 'var(--text)' }}>{t.store ? t.store.name : '-'}</div>
+                                                    <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>{t.store ? t.store.sid : t.storeId}</div>
                                                 </td>
-                                                <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{t.terminal ? t.terminal.tid : t.terminalId}</td>
-                                                <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{t.cardNumber}</td>
-                                                <td style={tdStyle}>
-                                                    <div style={{ fontWeight: '600' }}>{t.txnCurrency} {t.txnCurrencyAmount?.toFixed(3)}</div>
+                                                <td className="tx-mono">{t.terminal ? t.terminal.tid : t.terminalId}</td>
+                                                <td className="tx-mono">{t.cardNumber}</td>
+                                                {/* Cardholder amount is in the ROW's own currency, so its
+                                                    precision comes from that code (BHD 3dp, JPY 0dp, …) —
+                                                    not from a hardcoded .toFixed(3). MSF is a settlement
+                                                    figure and follows the tenant currency. */}
+                                                <td>
+                                                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>
+                                                        {rowAmount(t.txnCurrencyAmount, t.txnCurrency)}
+                                                    </span>
                                                 </td>
-                                                <td style={{ ...tdStyle, color: '#dc2626' }}>
-                                                    {t.msf?.toFixed(3)}
-                                                </td>
-                                                <td style={tdStyle}>{t.dcc ? 'Yes' : 'No'}</td>
-                                                <td style={tdStyle}>
-                                                    <span style={{
-                                                        padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold',
-                                                        background: t.transactionType === 'Purchase' ? '#dcfce7' : '#fee2e2',
-                                                        color: t.transactionType === 'Purchase' ? '#166534' : '#991b1b'
+                                                <td style={{ color: 'var(--danger)', fontWeight: 600 }}>{msfCell(t.msf)}</td>
+                                                <td style={{ color: 'var(--text-secondary)' }}>{t.dcc ? 'Yes' : 'No'}</td>
+                                                <td>
+                                                    <span className="tx-pill" style={{
+                                                        background: t.transactionType === 'Purchase' ? 'var(--success-bg)' : 'var(--danger-bg)',
+                                                        color: t.transactionType === 'Purchase' ? 'var(--success-text)' : 'var(--danger-text)',
                                                     }}>
                                                         {t.transactionType}
                                                     </span>
                                                 </td>
-                                                <td style={tdStyle}>
-                                                    <span style={{
-                                                        padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold',
-                                                        background: '#e0f2fe', color: '#0369a1'
-                                                    }}>
+                                                <td>
+                                                    <span className="tx-pill" style={{ background: 'var(--info-bg)', color: 'var(--info-text)' }}>
                                                         {t.destination || '-'}
                                                     </span>
                                                 </td>
@@ -279,16 +344,17 @@ const TransactionList = () => {
                             </table>
                         </div>
 
-                        {/* Pagination Footer */}
-                        <div style={{ padding: '15px 20px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
-                                Total: {totalElements} | Page {page + 1} of {totalPages}
+                        {/* Pagination — keyset (no total count) */}
+                        <div className="tx-pager">
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                Page {pageIndex + 1}
+                                {transactions.length > 0 ? ` • showing ${transactions.length}` : ''}
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                                 <select
                                     value={size}
-                                    onChange={(e) => { setSize(Number(e.target.value)); setPage(0); }}
-                                    style={{ padding: '5px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}
+                                    onChange={(e) => setSize(Number(e.target.value))}
+                                    className="tx-select"
                                 >
                                     <option value="10">10 / page</option>
                                     <option value="20">20 / page</option>
@@ -296,19 +362,11 @@ const TransactionList = () => {
                                     <option value="50">50 / page</option>
                                 </select>
 
-                                <div style={{ display: 'flex', gap: '5px' }}>
-                                    <button
-                                        disabled={page === 0}
-                                        onClick={() => setPage(p => p - 1)}
-                                        style={paginationBtnStyle(page === 0)}
-                                    >
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                    <button disabled={pageIndex === 0} onClick={goPrev} className="tx-page-btn">
                                         <ChevronLeft size={16} />
                                     </button>
-                                    <button
-                                        disabled={page >= totalPages - 1}
-                                        onClick={() => setPage(p => p + 1)}
-                                        style={paginationBtnStyle(page >= totalPages - 1)}
-                                    >
+                                    <button disabled={!hasMore} onClick={goNext} className="tx-page-btn">
                                         <ChevronRight size={16} />
                                     </button>
                                 </div>
@@ -317,6 +375,73 @@ const TransactionList = () => {
                     </>
                 )}
             </div>
+
+            <style>{`
+                .tx-root { display: flex; flex-direction: column; gap: 18px; height: 100%; padding: 24px; }
+                .tx-card {
+                    background: var(--bg-card); border: 1px solid var(--border);
+                    border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
+                }
+                .tx-label {
+                    display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+                    letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 5px;
+                }
+                .tx-input {
+                    width: 100%; padding: 8px 11px; border-radius: var(--radius-md);
+                    border: 1px solid var(--border); background: var(--bg-card); color: var(--text);
+                    font-size: 0.84rem; font-family: inherit; box-sizing: border-box; transition: border-color 0.15s;
+                }
+                .tx-input::placeholder { color: var(--text-muted); }
+                .tx-input:focus { outline: none; border-color: var(--brand); }
+                .tx-apply {
+                    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+                    background: var(--brand); color: #fff; border: none; border-radius: var(--radius-md);
+                    padding: 0 20px; cursor: pointer; font-weight: 600; font-size: 0.84rem; height: 38px;
+                    transition: background 0.15s; white-space: nowrap;
+                }
+                .tx-apply:hover { background: var(--brand-dark); }
+                .tx-export {
+                    display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 600;
+                    color: var(--success-text); background: var(--success-bg);
+                    border: 1px solid var(--border-light);
+                    padding: 7px 13px; border-radius: var(--radius-md); cursor: pointer; transition: opacity 0.15s;
+                }
+                .tx-export:disabled { opacity: 0.6; cursor: default; }
+                .tx-clear {
+                    display: inline-flex; align-items: center; gap: 5px; font-size: 0.82rem; font-weight: 600;
+                    color: var(--text-secondary); background: none; border: none; cursor: pointer; transition: color 0.15s;
+                }
+                .tx-clear:hover { color: var(--danger); }
+
+                .tx-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+                .tx-table thead th {
+                    position: sticky; top: 0; background: var(--bg-subtle); text-align: left;
+                    padding: 12px 15px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+                    letter-spacing: 0.04em; color: var(--text-secondary);
+                    border-bottom: 1px solid var(--border); white-space: nowrap; z-index: 2;
+                }
+                .tx-table tbody td { padding: 11px 15px; vertical-align: middle; color: var(--text-secondary); border-bottom: 1px solid var(--border-light); white-space: nowrap; }
+                .tx-table tbody tr { transition: background 0.12s; }
+                .tx-table tbody tr:hover { background: var(--bg-hover); }
+                .tx-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-secondary); }
+                .tx-pill { padding: 3px 9px; border-radius: 999px; font-size: 0.7rem; font-weight: 700; display: inline-block; }
+
+                .tx-pager {
+                    padding: 13px 20px; border-top: 1px solid var(--border); display: flex;
+                    justify-content: space-between; align-items: center; background: var(--bg-subtle); flex-wrap: wrap; gap: 10px;
+                }
+                .tx-select {
+                    padding: 6px 10px; border-radius: var(--radius-md); border: 1px solid var(--border);
+                    background: var(--bg-card); color: var(--text); font-size: 0.82rem; font-family: inherit; cursor: pointer;
+                }
+                .tx-page-btn {
+                    padding: 6px 10px; border-radius: var(--radius-md); border: 1px solid var(--border);
+                    background: var(--bg-card); color: var(--text-secondary); cursor: pointer;
+                    display: flex; align-items: center; transition: all 0.15s;
+                }
+                .tx-page-btn:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+                .tx-page-btn:disabled { color: var(--text-disabled); cursor: not-allowed; opacity: 0.6; }
+            `}</style>
         </div>
     );
 };
@@ -325,20 +450,5 @@ const formatDate = (dateString) => {
     if (!dateString) return '-';
     return new Date(dateString).toLocaleDateString();
 };
-
-const inputStyle = {
-    padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', width: '100%', fontSize: '0.85rem'
-};
-const dateInputStyle = {
-    padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', width: '100%', fontSize: '0.85rem', fontFamily: 'inherit'
-};
-const thStyle = { padding: '12px 15px', fontWeight: 'bold' };
-const tdStyle = { padding: '10px 15px', verticalAlign: 'middle', color: '#475569' };
-const paginationBtnStyle = (disabled) => ({
-    padding: '6px 10px', borderRadius: '6px', border: '1px solid #e2e8f0',
-    background: disabled ? '#f1f5f9' : 'white',
-    color: disabled ? '#cbd5e1' : '#334155', cursor: disabled ? 'not-allowed' : 'pointer',
-    display: 'flex', alignItems: 'center'
-});
 
 export default TransactionList;

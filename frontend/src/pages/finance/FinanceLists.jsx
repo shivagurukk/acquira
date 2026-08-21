@@ -1,26 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import axios from '../../api/axios';
-import { AlertCircle, TrendingDown, ArrowRight } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { AlertCircle, TrendingDown, ArrowRight, Download, Loader } from 'lucide-react';
+import useExcelExport from '../../hooks/useExcelExport';
+import { formatCurrency } from '../../utils/formatters';
+import SkeletonLoader from '../../components/SkeletonLoader';
 
 const FinanceLists = () => {
+    const { tenantVersion } = useAuth();
     const [activeTab, setActiveTab] = useState('loss-making');
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
-    const tenantId = 1;
+    const { exportExcel, isExporting } = useExcelExport();
 
     useEffect(() => {
         fetchList();
-    }, [activeTab]);
+    }, [activeTab, tenantVersion]);
 
     const fetchList = async () => {
         setLoading(true);
         try {
             const endpoint = activeTab === 'loss-making'
-                ? '/api/finance/loss-making-merchants'
-                : '/api/finance/high-volume-low-margin?minVolume=5000&maxMarginPct=0.8'; // Defaults
+                ? '/finance/loss-making-merchants'
+                : '/finance/high-volume-low-margin?minVolume=5000&maxMarginPct=0.8';
 
-            const response = await axios.get(endpoint, { headers: { 'X-Tenant-Id': tenantId } });
-            setData(response.data.content);
+            // axios interceptor already attaches Authorization and X-Tenant-Id headers
+            const response = await axios.get(endpoint);
+            setData(response.data.content || response.data || []);
         } catch (error) {
             console.error("Error fetching list", error);
         } finally {
@@ -28,11 +34,19 @@ const FinanceLists = () => {
         }
     };
 
-    const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
-
     return (
         <div className="p-8 bg-gray-50 min-h-screen font-sans">
-            <h1 className="text-2xl font-bold text-gray-900 mb-6">Finance Actions & Alerts</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl font-bold text-gray-900">Finance Actions & Alerts</h1>
+                <button
+                    onClick={() => exportExcel(activeTab === 'loss-making' ? 'FINANCE_LOSS_MAKING' : 'FINANCE_LOW_MARGIN')}
+                    disabled={isExporting || loading}
+                    className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                    {isExporting ? <Loader size={16} className="animate-spin" /> : <Download size={16} />}
+                    {isExporting ? 'Exporting...' : 'Export List'}
+                </button>
+            </div>
 
             <div className="flex gap-4 mb-6 border-b border-gray-200">
                 <button
@@ -53,13 +67,16 @@ const FinanceLists = () => {
                 </button>
             </div>
 
+            {loading ? (
+                <SkeletonLoader variant="table" rows={6} cols={5} />
+            ) : (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <table className="w-full text-left">
                     <thead className="bg-gray-50 text-gray-600 text-xs uppercase font-semibold">
                         <tr>
                             <th className="p-4">Merchant ID</th>
                             <th className="p-4">Total Volume</th>
-                            <th className="p-4">Net Revenue</th>
+                            <th className="p-4">Net Margin</th>
                             <th className="p-4">Margin %</th>
                             <th className="p-4">Action</th>
                         </tr>
@@ -95,6 +112,7 @@ const FinanceLists = () => {
                     </tbody>
                 </table>
             </div>
+            )}
         </div>
     );
 };

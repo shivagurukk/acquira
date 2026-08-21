@@ -1,0 +1,49 @@
+﻿<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="footer" class="report-footer">
+
+        <!-- LEFT: Acquira Brand Mark — refined with gold icon + dual-line type -->
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <!-- Logo image removed: the AFS_Logo_*.png files are not present in
+                 static/images/, so the <img> only rendered a broken placeholder.
+                 The "AFS NEXUS" wordmark below already serves as the brand mark. -->
+            <!-- Brand name + descriptor -->
+            <div style="display: flex; flex-direction: column; gap: 0px;">
+                <span style="font-family: 'Playfair Display', Georgia, serif; font-size: 8px; font-weight: 800; color: #60A5FA; letter-spacing: 0.08em;">AFS NEXUS</span>
+                <span style="font-size: 6.5px; color: #94A3B8; letter-spacing: 0.05em; font-weight: 500;">Connecting Your Business Intelligence</span>
+            </div>
+            <!-- Separator -->
+            <div style="width: 1px; height: 18px; background: linear-gradient(180deg, transparent, rgba(201,169,98,0.25), transparent); margin: 0 4px;"></div>
+            <!-- Confidential badge -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <div style="width: 4px; height: 4px; background: linear-gradient(135deg, #C9A962, #D4B878); border-radius: 50%; box-shadow: 0 0 5px rgba(201,169,98,0.3);"></div>
+                <span style="font-size: 7px; color: #94A3B8; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Confidential</span>
+            </div>
+        </div>
+
+        <!-- CENTER: Generated date with elegant gold separators -->
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 24px; height: 1px; background: linear-gradient(90deg, transparent, rgba(201,169,98,0.3));"></div>
+            <span style="font-size: 7px; color: #94A3B8; letter-spacing: 0.06em; font-weight: 500;" th:text="${generatedDate != null ? 'Generated ' + generatedDate : reportPeriod}">DATE</span>
+            <div style="width: 24px; height: 1px; background: linear-gradient(90deg, rgba(201,169,98,0.3), transparent);"></div>
+        </div>
+
+        <!-- RIGHT: Page badge + Powered by -->
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-family: 'Inter', sans-serif; font-size: 7px; font-weight: 500; color: #94A3B8; letter-spacing: 0.05em;">Page</span>
+            <!-- Premium page number badge -->
+            <div style="background: linear-gradient(135deg, #EFF6FF 0%, #E8ECF4 100%); border: 1px solid rgba(30,58,138,0.12); border-radius: 5px; padding: 3px 9px; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(15,32,66,0.05), inset 0 1px 0 rgba(255,255,255,0.9);">
+                <span class="page-number" style="font-family: 'Playfair Display', Georgia, serif; font-size: 9px; font-weight: 800; color: #1E3A8A;"></span>
+            </div>
+            <!-- Separator -->
+            <div style="width: 1px; height: 16px; background: linear-gradient(180deg, transparent, rgba(201,169,98,0.2), transparent); margin: 0 2px;"></div>
+            <!-- Powered by -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <span style="font-size: 6.5px; color: #94A3B8; letter-spacing: 0.05em; font-weight: 500;">Powered by</span>
+                <span style="font-family: 'Playfair Display', Georgia, serif; font-size: 8px; font-weight: 700; color: #60A5FA; letter-spacing: 0.03em;">AFS Nexus</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

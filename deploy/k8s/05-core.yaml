@@ -1,0 +1,67 @@
+# =============================================================================
+# acquira-core. PINNED to replicas: 1 ON PURPOSE.
+# This one process runs EmailQueueProcessor, the external DB pulls, the alert
+# schedulers and the nightly maintenance job. Running 2+ identical copies would
+# duplicate emails / pulls and collide on Spring Batch jobs. Horizontal scaling
+# needs the Phase-2 web/worker split (a code change) — not done here.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquira-core
+  namespace: acquira
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # don't run two cores at once during rollout
+  selector:
+    matchLabels: { app: acquira-core }
+  template:
+    metadata:
+      labels: { app: acquira-core }
+    spec:
+      containers:
+        - name: core
+          image: acquira-core:local     # loaded into kind via `kind load`
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8081 }]
+          envFrom:
+            - configMapRef: { name: acquira-config }
+            - secretRef:    { name: acquira-secrets }
+          volumeMounts:
+            - name: reports
+              mountPath: /opt/acquira/reports
+            - name: reports
+              mountPath: /opt/acquira/uploads
+              subPath: uploads
+          resources:
+            requests: { cpu: "500m", memory: "2Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }   # Chromium + JVM + batch
+          # ---- Probes ----
+          # Actuator is NOT on the classpath in this build, so we use TCP checks
+          # (is something listening on 8081) rather than /actuator/health.
+          # startupProbe is generous: boot does partition maintenance + menu
+          # seeding + Chromium warm-up, so first-ready can take a while.
+          startupProbe:
+            tcpSocket: { port: 8081 }
+            failureThreshold: 30
+            periodSeconds: 10        # allows up to ~5 min to boot
+          readinessProbe:
+            tcpSocket: { port: 8081 }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 8081 }
+            periodSeconds: 20
+      volumes:
+        - name: reports
+          persistentVolumeClaim: { claimName: acquira-reports-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquira-core
+  namespace: acquira
+spec:
+  selector: { app: acquira-core }
+  ports:
+    - { port: 8081, targetPort: 8081 }

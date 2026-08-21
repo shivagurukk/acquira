@@ -3,53 +3,54 @@ import { RefreshCw, Download, Calendar, ArrowRight, Filter } from 'lucide-react'
 import ActiveFilterChips from './ActiveFilterChips';
 
 const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterChange, loading, showFilters, onToggleFilters, filters }) => {
-    const [period, setPeriod] = useState('MONTH'); // TODAY, MONTH, YEAR, PY, CUSTOM
+    const [period, setPeriod] = useState('MONTH');
     const [customRange, setCustomRange] = useState({ start: '', end: '' });
     const [showCustomPicker, setShowCustomPicker] = useState(false);
 
-    // Calculate dates on period change
+    // Local-date formatter — toISOString() converts to UTC which can shift
+    // the date by one day in non-UTC timezones (e.g. IST). See PremiumReportHeader
+    // for the full explanation of this bug.
+    const fmtLocal = (d) => {
+        const yr = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        return `${yr}-${mo}-${dy}`;
+    };
+
     useEffect(() => {
         if (period === 'CUSTOM') return;
-
         const today = new Date();
-        let start = '';
-        let end = '';
-
+        let start = '', end = '';
         if (period === 'TODAY') {
-            const dateStr = today.toISOString().split('T')[0];
-            start = dateStr;
-            end = dateStr;
+            const dateStr = fmtLocal(today);
+            start = dateStr; end = dateStr;
         } else if (period === 'MONTH') {
-            start = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-            end = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+            start = fmtLocal(new Date(today.getFullYear(), today.getMonth(), 1));
+            end = fmtLocal(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+        } else if (period === 'LAST_MONTH') {
+            // First and last day of the previous calendar month.
+            start = fmtLocal(new Date(today.getFullYear(), today.getMonth() - 1, 1));
+            end   = fmtLocal(new Date(today.getFullYear(), today.getMonth(), 0));
         } else if (period === 'YEAR') {
-            start = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
-            end = new Date(today.getFullYear(), 11, 31).toISOString().split('T')[0];
+            start = fmtLocal(new Date(today.getFullYear(), 0, 1));
+            end = fmtLocal(new Date(today.getFullYear(), 11, 31));
         } else if (period === 'PY') {
-            start = new Date(today.getFullYear() - 1, 0, 1).toISOString().split('T')[0];
-            end = new Date(today.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
+            start = fmtLocal(new Date(today.getFullYear() - 1, 0, 1));
+            end = fmtLocal(new Date(today.getFullYear() - 1, 11, 31));
         }
-
-        if (onFilterChange) {
-            onFilterChange({ startDate: start, endDate: end });
-        }
+        if (onFilterChange) onFilterChange({ startDate: start, endDate: end });
         setTimeout(() => { if (onRefresh) onRefresh(); }, 50);
-
     }, [period]);
 
     const handleApplyCustom = () => {
-        if (onFilterChange) {
-            onFilterChange({ startDate: customRange.start, endDate: customRange.end });
-        }
+        if (onFilterChange) onFilterChange({ startDate: customRange.start, endDate: customRange.end });
         setShowCustomPicker(false);
         if (onRefresh) onRefresh();
     };
 
     const handleRemoveFilter = (key, value) => {
         if (!filters || !onFilterChange) return;
-
         if (key === 'ALL') {
-            // Reset all known filters to empty
             onFilterChange({
                 startDate: '', endDate: '', openDateStart: '', openDateEnd: '',
                 partnerList: [], mccList: [], industryList: [], rmList: [], teamLeaderList: [],
@@ -58,52 +59,59 @@ const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterCh
             });
             return;
         }
-
         if (key === 'startDate' || key === 'endDate' || key === 'openDateStart' || key === 'openDateEnd' || key === 'merchantName') {
             onFilterChange({ [key]: '' });
         } else if (Array.isArray(filters[key])) {
-            const newList = filters[key].filter(item => item !== value);
-            onFilterChange({ [key]: newList });
+            onFilterChange({ [key]: filters[key].filter(item => item !== value) });
         }
-
-        // Trigger refresh if needed? Usually parent handles it or user clicks Refresh. 
-        // For chips, instant refresh is nice.
         setTimeout(() => { if (onRefresh) onRefresh(); }, 50);
     };
 
+    const periodBtn = (p, label) => (
+        <button
+            key={p}
+            onClick={() => { setPeriod(p); setShowCustomPicker(false); }}
+            style={{
+                padding: '7px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
+                border: 'none', cursor: 'pointer',
+                background: period === p ? 'var(--bg-card, #fff)' : 'transparent',
+                color: period === p ? 'var(--text, #111827)' : 'var(--text-secondary, #6b7280)',
+                boxShadow: period === p ? '0 1px 2px rgba(0,0,0,0.04)' : 'none',
+                transition: 'all 0.15s',
+            }}
+        >
+            {label || p}
+        </button>
+    );
+
     return (
         <div style={{ marginBottom: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: 12 }}>
                 <div>
-                    <h1 style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.5px' }}>{title}</h1>
-                    <p style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>{subtitle}</p>
+                    <h1 style={{ fontSize: '1.3rem', fontWeight: '700', color: 'var(--text, #111827)', letterSpacing: '-0.03em', margin: 0 }}>{title}</h1>
+                    <p style={{ color: 'var(--text-muted, #9ca3af)', fontSize: '0.82rem', marginTop: '4px', margin: '4px 0 0' }}>{subtitle}</p>
                 </div>
 
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', position: 'relative' }}>
-                    <div style={{ background: '#f1f5f9', padding: '4px', borderRadius: '8px', display: 'flex', gap: '4px' }}>
-                        {['TODAY', 'MONTH', 'YEAR', 'PY'].map(p => (
-                            <button
-                                key={p}
-                                onClick={() => { setPeriod(p); setShowCustomPicker(false); }}
-                                style={{
-                                    padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', border: 'none', cursor: 'pointer',
-                                    background: period === p ? 'white' : 'transparent',
-                                    color: period === p ? '#0f172a' : '#64748b',
-                                    boxShadow: period === p ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
-                                    transition: 'all 0.2s'
-                                }}
-                            >
-                                {p === 'PY' ? 'Prev Year' : p}
-                            </button>
-                        ))}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'relative' }}>
+                    <div style={{
+                        background: 'var(--bg-subtle, #f3f4f6)', padding: '4px',
+                        borderRadius: '10px', display: 'flex', gap: '2px',
+                        border: '1px solid var(--border, #e5e7eb)',
+                    }}>
+                        {periodBtn('TODAY', 'Today')}
+                        {periodBtn('MONTH', 'This Month')}
+                        {periodBtn('LAST_MONTH', 'Last Month')}
+                        {periodBtn('YEAR', 'This Year')}
+                        {periodBtn('PY', 'Last Year')}
                         <button
                             onClick={() => setShowCustomPicker(!showCustomPicker)}
                             style={{
-                                padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', border: 'none', cursor: 'pointer',
-                                background: period === 'CUSTOM' ? 'white' : 'transparent',
-                                color: period === 'CUSTOM' ? '#0f172a' : '#64748b',
-                                boxShadow: period === 'CUSTOM' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
-                                display: 'flex', alignItems: 'center', gap: '4px'
+                                padding: '7px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
+                                border: 'none', cursor: 'pointer',
+                                background: period === 'CUSTOM' ? 'var(--bg-card, #fff)' : 'transparent',
+                                color: period === 'CUSTOM' ? 'var(--text, #111827)' : 'var(--text-secondary, #6b7280)',
+                                boxShadow: period === 'CUSTOM' ? '0 1px 2px rgba(0,0,0,0.04)' : 'none',
+                                display: 'flex', alignItems: 'center', gap: '4px',
                             }}
                         >
                             Custom <Calendar size={12} />
@@ -114,12 +122,18 @@ const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterCh
                         <button
                             onClick={onToggleFilters}
                             style={{
-                                padding: '8px 12px', background: showFilters ? '#e2e8f0' : '#f1f5f9', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                                color: showFilters ? '#0f172a' : '#64748b', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '600'
+                                padding: '8px 14px',
+                                background: showFilters ? 'var(--brand-50, #eff6ff)' : 'var(--bg-subtle, #f3f4f6)',
+                                borderRadius: '10px',
+                                border: '1px solid ' + (showFilters ? 'rgba(164, 78, 31,0.2)' : 'var(--border, #e5e7eb)'),
+                                cursor: 'pointer',
+                                color: showFilters ? 'var(--brand, #2563eb)' : 'var(--text-secondary, #6b7280)',
+                                display: 'flex', alignItems: 'center', gap: '6px',
+                                fontSize: '13px', fontWeight: '600',
+                                transition: 'all 0.15s',
                             }}
-                            title="Toggle Advanced Filters"
                         >
-                            <Filter size={16} /> Filters
+                            <Filter size={15} /> Filters
                         </button>
                     )}
 
@@ -127,30 +141,58 @@ const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterCh
                         onClick={onRefresh}
                         disabled={loading}
                         style={{
-                            padding: '8px', background: '#f1f5f9', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                            opacity: loading ? 0.7 : 1
+                            padding: '9px', background: 'var(--bg-subtle, #f3f4f6)',
+                            borderRadius: '10px', border: '1px solid var(--border, #e5e7eb)',
+                            cursor: 'pointer', opacity: loading ? 0.6 : 1,
+                            display: 'flex', alignItems: 'center',
+                            transition: 'all 0.15s',
                         }}>
-                        <RefreshCw size={16} color="#64748b" className={loading ? 'animate-spin' : ''} />
+                        <RefreshCw size={15} color="var(--text-secondary, #6b7280)" className={loading ? 'spin' : ''} />
                     </button>
 
                     <button
                         onClick={onExport}
                         style={{
-                            padding: '8px 16px', background: '#0f172a', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px',
-                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
-                        }}>
-                        <Download size={16} /> Export
+                            padding: '8px 18px', background: 'var(--text, #111827)',
+                            color: 'white', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', fontWeight: 600,
+                            transition: 'all 0.15s',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.opacity = '0.85'; }}
+                        onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
+                    >
+                        <Download size={15} /> Export
                     </button>
 
-                    {/* Custom Date Picker Popover */}
                     {showCustomPicker && (
-                        <div style={{ position: 'absolute', right: '0', top: '120%', background: 'white', padding: '16px', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', zIndex: 50, border: '1px solid #e2e8f0', minWidth: '300px' }}>
-                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
-                                <input type="date" value={customRange.start} onChange={e => setCustomRange({ ...customRange, start: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%', fontSize: '13px' }} />
-                                <ArrowRight size={16} color="#94a3b8" />
-                                <input type="date" value={customRange.end} onChange={e => setCustomRange({ ...customRange, end: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%', fontSize: '13px' }} />
+                        <div style={{
+                            position: 'absolute', right: '0', top: '120%',
+                            background: 'var(--bg-card, #fff)', padding: '18px',
+                            borderRadius: '14px', boxShadow: 'var(--shadow-lg)',
+                            zIndex: 50, border: '1px solid var(--border, #e5e7eb)', minWidth: '300px',
+                        }}>
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '14px' }}>
+                                <input type="date" value={customRange.start}
+                                    onChange={e => setCustomRange({ ...customRange, start: e.target.value })}
+                                    style={{
+                                        padding: '9px 12px', borderRadius: '10px', border: '1px solid var(--border, #e5e7eb)',
+                                        width: '100%', fontSize: '13px', fontFamily: 'inherit',
+                                        background: 'var(--bg-subtle, #f3f4f6)', color: 'var(--text, #111827)',
+                                    }} />
+                                <ArrowRight size={16} color="var(--text-muted, #9ca3af)" style={{ flexShrink: 0 }} />
+                                <input type="date" value={customRange.end}
+                                    onChange={e => setCustomRange({ ...customRange, end: e.target.value })}
+                                    style={{
+                                        padding: '9px 12px', borderRadius: '10px', border: '1px solid var(--border, #e5e7eb)',
+                                        width: '100%', fontSize: '13px', fontFamily: 'inherit',
+                                        background: 'var(--bg-subtle, #f3f4f6)', color: 'var(--text, #111827)',
+                                    }} />
                             </div>
-                            <button onClick={handleApplyCustom} style={{ width: '100%', padding: '8px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' }}>
+                            <button onClick={handleApplyCustom} style={{
+                                width: '100%', padding: '9px', background: 'var(--brand, #2563eb)',
+                                color: 'white', border: 'none', borderRadius: '10px',
+                                fontWeight: '600', cursor: 'pointer', fontSize: '13px', fontFamily: 'inherit',
+                            }}>
                                 Apply Filter
                             </button>
                         </div>
@@ -158,7 +200,6 @@ const StandardReportHeader = ({ title, subtitle, onExport, onRefresh, onFilterCh
                 </div>
             </div>
 
-            {/* Active Filters Display */}
             {filters && !loading && (
                 <ActiveFilterChips filters={filters} onRemove={handleRemoveFilter} />
             )}

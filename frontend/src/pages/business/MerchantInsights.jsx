@@ -1,249 +1,296 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Calendar, ArrowUp, ArrowDown, ChevronRight, ChevronLeft, CreditCard, LayoutGrid, Users, Award, PieChart } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { useAuth } from '../../contexts/AuthContext';
+import api from '../../api/axios';
+import { Download, ChevronRight, ChevronLeft, CreditCard, LayoutGrid, Users, Award, PieChart } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Box, Typography, Stack, Paper, IconButton, Tabs, Tab } from '@mui/material';
+
+// ─── Dark Theme Palette ──────────────────────────────────────────────
+const DARK = {
+    bg: '#0B1630', card: '#0F2347', border: '#1F3B6D', accent: '#FF5A5F',
+    textPrimary: '#FFFFFF', textSecondary: '#B9C6DD', textMuted: '#64789A',
+    barPrimary: '#0B1630', barSecondary: '#7CB4FF',
+};
+
+// ─── Custom Tooltip ──────────────────────────────────────────────────
+const DarkTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    return (
+        <Box sx={{ bgcolor: DARK.card, borderRadius: '8px', px: 2, py: 1.5, border: `1px solid ${DARK.border}`, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+            <Typography variant="caption" color={DARK.textSecondary} fontWeight={600}>{label}</Typography>
+            {payload.map((p, i) => (
+                <Typography key={i} variant="body2" fontWeight={700} sx={{ color: p.color || '#fff', mt: 0.5 }}>
+                    {p.name}: {typeof p.value === 'number' ? p.value.toLocaleString() : p.value}
+                </Typography>
+            ))}
+        </Box>
+    );
+};
+
+// ─── KPI Card (Dark Theme) ──────────────────────────────────────────
+const DarkKpiCard = ({ title, value, growth, trend, icon: Icon }) => {
+    const isUp = trend === 'UP';
+    const isFlat = trend === 'FLAT';
+    const trendColor = isFlat ? DARK.textMuted : isUp ? '#10b981' : '#ef4444';
+
+    return (
+        <Paper sx={{
+            flex: 1, minWidth: 200, p: 2.5, borderRadius: '4px',
+            bgcolor: DARK.card, border: `1px solid ${DARK.border}`, borderTop: `3px solid ${DARK.border}`,
+            position: 'relative', overflow: 'hidden',
+            transition: 'all 0.2s ease',
+            '&:hover': { borderTopColor: DARK.accent },
+        }}>
+            {Icon && (
+                <Box sx={{ position: 'absolute', top: 20, right: 20, opacity: 0.2 }}>
+                    <Icon size={32} color={DARK.textSecondary} />
+                </Box>
+            )}
+            <Typography variant="caption" fontWeight={700} color={DARK.textSecondary}
+                sx={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: '0.65rem' }}>
+                {title}
+            </Typography>
+            <Typography variant="h4" fontWeight={800} color={DARK.textPrimary} sx={{ mt: 1, mb: 1.5, letterSpacing: '-0.02em' }}>
+                {value}
+            </Typography>
+            {growth !== null && growth !== undefined && (
+                <Stack direction="row" alignItems="center" spacing={0.5}>
+                    <Typography variant="body2" fontWeight={700} color={trendColor}>
+                        {isFlat ? '—' : `${isUp ? '+' : ''}${Number(growth).toFixed(1)}%`}
+                    </Typography>
+                    <Typography variant="caption" color={DARK.textMuted} sx={{ fontSize: '0.6rem', textTransform: 'uppercase' }}>
+                        MoM Growth
+                    </Typography>
+                </Stack>
+            )}
+        </Paper>
+    );
+};
+
+// ─── Chart Card (Dark Theme) ────────────────────────────────────────
+const DarkChartCard = ({ title, children, height = 300 }) => (
+    <Paper sx={{ p: 3, borderRadius: '4px', bgcolor: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 3 }}>
+            <Box sx={{ p: 0.75, bgcolor: DARK.bg, borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <LayoutGrid size={16} color="white" />
+            </Box>
+            <Typography variant="subtitle2" fontWeight={800} color={DARK.bg}
+                sx={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: '0.75rem' }}>
+                {title}
+            </Typography>
+        </Stack>
+        <Box sx={{ height }}>
+            {children}
+        </Box>
+    </Paper>
+);
 
 const MerchantInsights = () => {
-    const [activeTab, setActiveTab] = useState('overview');
+    const { currencyCode, tenantVersion } = useAuth();
+    const [activeTab, setActiveTab] = useState(0);
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [monthOffset, setMonthOffset] = useState(1); // 1 = Last Month
+    const [monthOffset, setMonthOffset] = useState(1);
 
-    useEffect(() => {
-        fetchInsights();
-    }, [monthOffset]);
+    useEffect(() => { fetchInsights(); }, [monthOffset, tenantVersion]);
 
     const fetchInsights = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
-
-            // Calculate Year/Month based on offset
             const date = new Date();
             date.setMonth(date.getMonth() - monthOffset);
             const year = date.getFullYear();
             const month = date.getMonth() + 1;
-
-            const res = await fetch(`/api/business/insights/overview?year=${year}&month=${month}`, {
-                headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }
-            });
-            if (res.ok) setData(await res.json());
-        } catch (error) {
-            console.error("Failed to fetch insights", error);
-        } finally {
-            setLoading(false);
-        }
+            const res = await api.get(`/business/insights/overview?year=${year}&month=${month}`);
+            setData(res.data);
+        } catch (error) { console.error('Failed to fetch insights', error); }
+        finally { setLoading(false); }
     };
 
     const downloadPdf = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const tenantId = localStorage.getItem('tenantId');
-
             const date = new Date();
             date.setMonth(date.getMonth() - monthOffset);
             const year = date.getFullYear();
             const month = date.getMonth() + 1;
-
-            const response = await fetch(`/api/business/insights/pdf?year=${year}&month=${month}`, {
-                headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-Id': tenantId }
-            });
-
-            if (response.ok) {
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `Merchant_Insight_${year}_${month}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-            }
-        } catch (error) {
-            console.error("Download failed", error);
-        }
+            const response = await api.get(`/business/insights/pdf?year=${year}&month=${month}`, { responseType: 'blob' });
+            const url = window.URL.createObjectURL(response.data);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Merchant_Insight_${year}_${month}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (error) { console.error('Download failed', error); }
     };
 
     const currentDate = new Date();
     currentDate.setMonth(currentDate.getMonth() - monthOffset);
     const monthLabel = currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
 
-    if (loading) return <div className="min-h-screen bg-[#0B1630] flex items-center justify-center text-white">Loading Insights...</div>;
-    if (!data) return <div className="min-h-screen bg-[#0B1630] flex items-center justify-center text-white">No Data Available</div>;
+    if (loading) return (
+        <Box sx={{ minHeight: '100vh', bgcolor: DARK.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Typography color={DARK.textPrimary} fontWeight={600}>Loading Insights...</Typography>
+        </Box>
+    );
+    if (!data) return (
+        <Box sx={{ minHeight: '100vh', bgcolor: DARK.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Typography color={DARK.textSecondary}>No Data Available</Typography>
+        </Box>
+    );
+
+    const TABS = [
+        { label: 'Business Overview', icon: <LayoutGrid size={16} /> },
+        { label: 'Business Achievements', icon: <Award size={16} /> },
+        { label: 'Consumer Loyalty', icon: <Users size={16} /> },
+        { label: 'Who Are Your Customers?', icon: <PieChart size={16} /> },
+    ];
 
     return (
-        <div className="min-h-screen bg-[#0B1630] text-white font-sans">
+        <Box sx={{ minHeight: '100vh', bgcolor: DARK.bg }}>
             {/* Header */}
-            <div className="bg-[#0B1630] border-b border-[#1F3B6D] p-4 flex justify-between items-center sticky top-0 z-10">
-                <div className="flex items-center gap-4">
-                    <div className="text-xl font-bold tracking-wider text-cyan-400">MAGNATI</div>
-                    <div className="h-6 w-px bg-[#1F3B6D]"></div>
-                    <div className="text-sm text-gray-400">Payment into Possibilities</div>
-                </div>
+            <Box sx={{
+                bgcolor: DARK.bg, borderBottom: `1px solid ${DARK.border}`,
+                px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                position: 'sticky', top: 0, zIndex: 10,
+            }}>
+                <Stack direction="row" alignItems="center" spacing={2}>
+                    <Typography variant="h6" fontWeight={800} color="var(--cat-3)" sx={{ letterSpacing: '0.1em' }}>
+                        MAGNATI
+                    </Typography>
+                    <Box sx={{ width: 1, height: 24, bgcolor: DARK.border }} />
+                    <Typography variant="caption" color={DARK.textMuted}>Payment into Possibilities</Typography>
+                </Stack>
 
-                <div className="flex items-center gap-4">
-                    <div className="flex items-center bg-[#0F2347] rounded-lg border border-[#1F3B6D] p-1">
-                        <button onClick={() => setMonthOffset(m => m + 1)} className="p-1 hover:bg-[#1F3B6D] rounded text-gray-300"><ChevronLeft size={16} /></button>
-                        <span className="px-4 text-sm font-semibold min-w-[120px] text-center">{monthLabel}</span>
-                        <button onClick={() => setMonthOffset(m => Math.max(0, m - 1))} className="p-1 hover:bg-[#1F3B6D] rounded text-gray-300"><ChevronRight size={16} /></button>
-                    </div>
+                <Stack direction="row" alignItems="center" spacing={2}>
+                    {/* Month Navigator */}
+                    <Box sx={{
+                        display: 'flex', alignItems: 'center',
+                        bgcolor: DARK.card, borderRadius: '8px', border: `1px solid ${DARK.border}`, p: '2px',
+                    }}>
+                        <IconButton size="small" onClick={() => setMonthOffset(m => m + 1)} sx={{ color: DARK.textSecondary }}>
+                            <ChevronLeft size={16} />
+                        </IconButton>
+                        <Typography variant="body2" fontWeight={700} color={DARK.textPrimary}
+                            sx={{ px: 2, minWidth: 130, textAlign: 'center', fontSize: '13px' }}>
+                            {monthLabel}
+                        </Typography>
+                        <IconButton size="small" onClick={() => setMonthOffset(m => Math.max(0, m - 1))} sx={{ color: DARK.textSecondary }}>
+                            <ChevronRight size={16} />
+                        </IconButton>
+                    </Box>
 
-                    <button
-                        onClick={downloadPdf}
-                        className="flex items-center gap-2 bg-[#FF5A5F] hover:bg-[#E0484D] text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors">
-                        <Download size={16} /> DOWNLOAD REPORT
-                    </button>
-                </div>
-            </div>
+                    {/* Download Button */}
+                    <Box onClick={downloadPdf}
+                        sx={{
+                            display: 'flex', alignItems: 'center', gap: 1,
+                            px: 2, py: 1, borderRadius: '8px', cursor: 'pointer',
+                            bgcolor: DARK.accent, color: 'white', fontSize: '13px', fontWeight: 700,
+                            transition: 'all 0.15s', '&:hover': { bgcolor: '#e04950' },
+                        }}>
+                        <Download size={14} /> DOWNLOAD REPORT
+                    </Box>
+                </Stack>
+            </Box>
 
             {/* Navigation Tabs */}
-            <div className="flex border-b border-[#1F3B6D] bg-[#0F2347]/50">
-                <NavTab active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={LayoutGrid} label="BUSINESS OVERVIEW" />
-                <NavTab active={activeTab === 'achievements'} onClick={() => setActiveTab('achievements')} icon={Award} label="BUSINESS ACHIEVEMENTS" />
-                <NavTab active={activeTab === 'loyalty'} onClick={() => setActiveTab('loyalty')} icon={Users} label="CONSUMER LOYALTY" />
-                <NavTab active={activeTab === 'customers'} onClick={() => setActiveTab('customers')} icon={PieChart} label="WHO ARE YOUR CUSTOMERS?" />
-            </div>
+            <Box sx={{ bgcolor: `${DARK.card}80`, borderBottom: `1px solid ${DARK.border}` }}>
+                <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}
+                    variant="scrollable" scrollButtons="auto"
+                    sx={{
+                        '& .MuiTab-root': {
+                            color: DARK.textMuted, fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.06em',
+                            textTransform: 'uppercase', minHeight: 56,
+                        },
+                        '& .Mui-selected': { color: `${DARK.textPrimary} !important` },
+                        '& .MuiTabs-indicator': { bgcolor: DARK.accent, height: 3 },
+                    }}>
+                    {TABS.map((tab, i) => (
+                        <Tab key={i} label={tab.label} icon={tab.icon} iconPosition="start" />
+                    ))}
+                </Tabs>
+            </Box>
 
-            {/* Content Area */}
-            <div className="p-6 max-w-[1600px] mx-auto">
-                {activeTab === 'overview' && <OverviewTab data={data.overview} />}
-                {activeTab === 'achievements' && <AchievementsTab data={data.achievements} />}
-            </div>
-        </div>
+            {/* Content */}
+            <Box sx={{ p: 3, maxWidth: 1600, mx: 'auto' }}>
+                {activeTab === 0 && data.overview && (
+                    <Stack spacing={3}>
+                        {/* KPI Row 1 */}
+                        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                            <DarkKpiCard title={`SALES${currencyCode ? ` (${currencyCode})` : ''}`} value={data.overview.sales?.formattedValue} growth={data.overview.sales?.momGrowth} trend={data.overview.sales?.trend} icon={CreditCard} />
+                            <DarkKpiCard title="TRANSACTIONS" value={data.overview.transactions?.formattedValue} growth={data.overview.transactions?.momGrowth} trend={data.overview.transactions?.trend} icon={LayoutGrid} />
+                            <DarkKpiCard title="CUSTOMERS" value={data.overview.customers?.formattedValue} growth={data.overview.customers?.momGrowth} trend={data.overview.customers?.trend} icon={Users} />
+                        </Box>
+
+                        {/* KPI Row 2 */}
+                        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                            <DarkKpiCard title={`MAX DAILY SALES${currencyCode ? ` (${currencyCode})` : ''}`} value={data.overview.peakStats?.maxDailySales?.formattedValue} growth={data.overview.peakStats?.maxDailySales?.momGrowth} trend={data.overview.peakStats?.maxDailySales?.trend} />
+                            <DarkKpiCard title="MAX NO. OF TXNS IN A DAY" value={data.overview.peakStats?.maxTxnsInDay?.formattedValue} growth={data.overview.peakStats?.maxTxnsInDay?.momGrowth} trend={data.overview.peakStats?.maxTxnsInDay?.trend} />
+                            <DarkKpiCard title={`HIGHEST TXN VALUE${currencyCode ? ` (${currencyCode})` : ''}`} value={data.overview.peakStats?.highestTxnValue?.formattedValue} growth={data.overview.peakStats?.highestTxnValue?.momGrowth} trend={data.overview.peakStats?.highestTxnValue?.trend} />
+                        </Box>
+
+                        {/* Charts */}
+                        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 2.5 }}>
+                            <DarkChartCard title="Sales by Day of Week">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={data.overview.salesByDayOfWeek}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                                        <XAxis dataKey="label" stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
+                                        <YAxis stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
+                                        <Tooltip content={<DarkTooltip />} />
+                                        <Bar dataKey="value" name="Sales" fill={DARK.barPrimary} radius={[4, 4, 0, 0]} barSize={40} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </DarkChartCard>
+
+                            <DarkChartCard title="Transactions by Day of Week">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={data.overview.transactionsByDayOfWeek}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                                        <XAxis dataKey="label" stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
+                                        <YAxis stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
+                                        <Tooltip content={<DarkTooltip />} />
+                                        <Bar dataKey="value" name="Transactions" fill={DARK.barSecondary} radius={[4, 4, 0, 0]} barSize={40} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </DarkChartCard>
+                        </Box>
+                    </Stack>
+                )}
+
+                {activeTab === 1 && data.achievements && (
+                    <Stack spacing={3}>
+                        <DarkChartCard title="Daily Sales & Count" height={350}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={data.achievements.dailySalesAndCount}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                                    <XAxis dataKey="label" stroke="var(--chart-axis)" tickFormatter={(v) => v?.slice?.(-2) || v} />
+                                    <YAxis yAxisId="left" stroke={DARK.accent} tick={{ fontSize: 11 }} />
+                                    <YAxis yAxisId="right" orientation="right" stroke={DARK.barSecondary} tick={{ fontSize: 11 }} />
+                                    <Tooltip content={<DarkTooltip />} />
+                                    <Bar yAxisId="left" dataKey="value" name="Sales" fill={DARK.accent} radius={[2, 2, 0, 0]} />
+                                    <Bar yAxisId="right" dataKey="value2" name="Txn Count" fill={DARK.barSecondary} radius={[2, 2, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </DarkChartCard>
+
+                        <DarkChartCard title="Unique Customers by Day" height={250}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={data.achievements.uniqueCustomersByDay}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
+                                    <XAxis dataKey="label" stroke="var(--chart-axis)" tickFormatter={(v) => v?.slice?.(-2) || v} />
+                                    <YAxis stroke="var(--chart-axis)" tick={{ fontSize: 11 }} />
+                                    <Tooltip content={<DarkTooltip />} />
+                                    <Bar dataKey="value" name="Customers" fill={DARK.barPrimary} stroke={DARK.barSecondary} strokeWidth={1} radius={[2, 2, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </DarkChartCard>
+                    </Stack>
+                )}
+            </Box>
+        </Box>
     );
 };
-
-const NavTab = ({ active, onClick, icon: Icon, label }) => (
-    <button
-        onClick={onClick}
-        className={`flex items-center gap-2 px-6 py-4 text-sm font-bold border-b-2 transition-colors ${active
-                ? 'border-[#FF5A5F] text-white bg-[#1F3B6D]/20'
-                : 'border-transparent text-gray-400 hover:text-white hover:bg-[#1F3B6D]/10'
-            }`}
-    >
-        <Icon size={18} className={active ? 'text-[#FF5A5F]' : ''} />
-        {label}
-    </button>
-);
-
-const OverviewTab = ({ data }) => {
-    return (
-        <div className="flex flex-col gap-6">
-            {/* KPI Row 1 */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <KpiCard title="SALES (AED)" value={data.sales.formattedValue} growth={data.sales.momGrowth} trend={data.sales.trend} icon={CreditCard} />
-                <KpiCard title="TRANSACTIONS" value={data.transactions.formattedValue} growth={data.transactions.momGrowth} trend={data.transactions.trend} icon={LayoutGrid} />
-                <KpiCard title="CUSTOMERS" value={data.customers.formattedValue} growth={data.customers.momGrowth} trend={data.customers.trend} icon={Users} />
-            </div>
-
-            {/* KPI Row 2 - Peak Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <KpiCard title="MAX DAILY SALES (AED)" value={data.peakStats.maxDailySales.formattedValue} growth={data.peakStats.maxDailySales.momGrowth} trend={data.peakStats.maxDailySales.trend} />
-                <KpiCard title="MAX NO. OF TXNS IN A DAY" value={data.peakStats.maxTxnsInDay.formattedValue} growth={data.peakStats.maxTxnsInDay.momGrowth} trend={data.peakStats.maxTxnsInDay.trend} />
-                <KpiCard title="HIGHEST TRANSACTION VALUE (AED)" value={data.peakStats.highestTxnValue.formattedValue} growth={data.peakStats.highestTxnValue.momGrowth} trend={data.peakStats.highestTxnValue.trend} />
-            </div>
-
-            {/* Charts Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
-                <ChartCard title="SALES BY DAY OF WEEK">
-                    <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={data.salesByDayOfWeek}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1F3B6D" />
-                            <XAxis dataKey="label" stroke="#B9C6DD" tick={{ fontSize: 12 }} />
-                            <YAxis stroke="#B9C6DD" tick={{ fontSize: 12 }} />
-                            <Tooltip
-                                contentStyle={{ backgroundColor: '#0F2347', borderColor: '#1F3B6D', color: '#fff' }}
-                                cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                            />
-                            <Bar dataKey="value" fill="#0B1630" radius={[4, 4, 0, 0]} barSize={40} />
-                        </BarChart>
-                    </ResponsiveContainer>
-                </ChartCard>
-
-                <ChartCard title="TRANSACTIONS BY DAY OF WEEK">
-                    <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={data.transactionsByDayOfWeek}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1F3B6D" />
-                            <XAxis dataKey="label" stroke="#B9C6DD" tick={{ fontSize: 12 }} />
-                            <YAxis stroke="#B9C6DD" tick={{ fontSize: 12 }} />
-                            <Tooltip
-                                contentStyle={{ backgroundColor: '#0F2347', borderColor: '#1F3B6D', color: '#fff' }}
-                                cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                            />
-                            <Bar dataKey="value" fill="#7CB4FF" radius={[4, 4, 0, 0]} barSize={40} />
-                        </BarChart>
-                    </ResponsiveContainer>
-                </ChartCard>
-            </div>
-        </div>
-    );
-};
-
-const AchievementsTab = ({ data }) => (
-    <div className="flex flex-col gap-6">
-        <ChartCard title="DAILY SALES & COUNT">
-            <ResponsiveContainer width="100%" height={350}>
-                <BarChart data={data.dailySalesAndCount}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1F3B6D" />
-                    <XAxis dataKey="label" stroke="#B9C6DD" tickFormatter={(v) => v.slice(-2)} />
-                    <YAxis yAxisId="left" stroke="#FF5A5F" />
-                    <YAxis yAxisId="right" orientation="right" stroke="#7CB4FF" />
-                    <Tooltip contentStyle={{ backgroundColor: '#0F2347', borderColor: '#1F3B6D', color: '#fff' }} />
-                    <Bar yAxisId="left" dataKey="value" name="Sales" fill="#FF5A5F" radius={[2, 2, 0, 0]} />
-                    <Bar yAxisId="right" dataKey="value2" name="Txn Count" fill="#7CB4FF" radius={[2, 2, 0, 0]} />
-                </BarChart>
-            </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="UNIQUE CUSTOMERS BY DAY">
-            <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data.uniqueCustomersByDay}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1F3B6D" />
-                    <XAxis dataKey="label" stroke="#B9C6DD" tickFormatter={(v) => v.slice(-2)} />
-                    <YAxis stroke="#B9C6DD" />
-                    <Tooltip contentStyle={{ backgroundColor: '#0F2347', borderColor: '#1F3B6D', color: '#fff' }} />
-                    <Bar dataKey="value" fill="#0B1630" stroke="#7CB4FF" strokeWidth={1} radius={[2, 2, 0, 0]} />
-                </BarChart>
-            </ResponsiveContainer>
-        </ChartCard>
-    </div>
-);
-
-const KpiCard = ({ title, value, growth, trend, icon: Icon }) => {
-    const isUp = trend === 'UP';
-    const isFlat = trend === 'FLAT';
-
-    return (
-        <div className="bg-[#0F2347] p-5 rounded-sm border-t-4 border-[#1F3B6D] hover:border-[#FF5A5F] transition-colors relative shadow-lg">
-            {Icon && <Icon className="absolute top-5 right-5 text-[#1F3B6D]" size={32} />}
-            <div className="text-[#B9C6DD] text-xs font-bold uppercase tracking-wider mb-2">{title}</div>
-            <div className="text-3xl font-bold text-white mb-4">{value}</div>
-
-            {growth !== null && (
-                <div className="flex items-center gap-2">
-                    {isFlat ? (
-                        <span className="text-gray-400 font-bold text-lg">-</span>
-                    ) : (
-                        isUp ? <ArrowUp className="text-green-500" size={24} /> : <ArrowDown className="text-red-500" size={24} />
-                    )}
-                    <span className={`text-xl font-bold ${isUp ? 'text-green-500' : isFlat ? 'text-gray-400' : 'text-red-500'}`}>
-                        {Math.abs(growth).toFixed(1)} %
-                    </span>
-                    <span className="text-[#B9C6DD] text-[10px] uppercase font-semibold mt-1">Month on Month Growth</span>
-                </div>
-            )}
-        </div>
-    );
-};
-
-const ChartCard = ({ title, children }) => (
-    <div className="bg-[#FFFFFF] p-6 rounded-sm shadow-sm">
-        <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-[#0B1630] rounded text-white"><LayoutGrid size={18} /></div>
-            <h3 className="text-[#0B1630] font-bold text-sm tracking-wider uppercase">{title}</h3>
-        </div>
-        {children}
-    </div>
-);
 
 export default MerchantInsights;

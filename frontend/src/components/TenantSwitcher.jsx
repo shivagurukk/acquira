@@ -1,94 +1,119 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronDown, Building2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { showToast } from '../contexts/ToastContext';
+import { Building2, ChevronDown, Check, Loader2 } from 'lucide-react';
 
+/**
+ * TenantSwitcher — compact, theme-aware organization switcher.
+ *
+ * Rendered inside the sidebar (.sb), so all colour comes from the shared
+ * --sb-* tokens in sidebar.css and flips with light/dark automatically.
+ * Single tenant renders as a static row; multiple tenants get a dropdown.
+ */
 const TenantSwitcher = () => {
-    const [tenants, setTenants] = useState([]);
-    const [currentTenantId, setCurrentTenantId] = useState('');
+    const { tenants, activeTenantId, activeTenant, switchTenant } = useAuth();
     const [isOpen, setIsOpen] = useState(false);
+    const [switching, setSwitching] = useState(null); // tenantId being switched to
+    const dropdownRef = useRef(null);
 
+    // Close on click outside
     useEffect(() => {
-        const storedTenants = localStorage.getItem('allowedTenants');
-        const storedCurrent = localStorage.getItem('tenantId');
+        if (!isOpen) return;
+        const handleClickOutside = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isOpen]);
 
-        if (storedTenants) {
-            setTenants(JSON.parse(storedTenants));
-        }
-        if (storedCurrent) {
-            setCurrentTenantId(storedCurrent);
-        }
+    // Close on Escape
+    useEffect(() => {
+        const handleEsc = (e) => { if (e.key === 'Escape') setIsOpen(false); };
+        document.addEventListener('keydown', handleEsc);
+        return () => document.removeEventListener('keydown', handleEsc);
     }, []);
 
-    const handleSwitch = (tenantId) => {
-        localStorage.setItem('tenantId', tenantId);
-        setCurrentTenantId(tenantId);
-        setIsOpen(false);
-        window.location.reload(); // Simple reload to refresh data with new Tenant ID
+    // Single tenant — static row, no switcher needed
+    if (!tenants || tenants.length <= 1) {
+        return (
+            <div className="sb__tenant-trigger" style={{ cursor: 'default' }}>
+                <Building2 size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+                <span className="sb__tenant-name">{activeTenant?.bankName || 'Default Bank'}</span>
+            </div>
+        );
+    }
+
+    const handleSwitch = async (tenantId) => {
+        if (String(tenantId) === String(activeTenantId)) {
+            setIsOpen(false);
+            return;
+        }
+        setSwitching(tenantId);
+        try {
+            // switchTenant never throws — it reports {success, error}. Keep the
+            // dropdown open and tell the user when the switch didn't happen.
+            const result = await switchTenant(tenantId);
+            if (result?.success) {
+                setIsOpen(false);
+            } else {
+                showToast(result?.error || 'Could not switch organization. Please try again.', 'error', 5000);
+            }
+        } finally {
+            setSwitching(null);
+        }
     };
 
-    if (tenants.length <= 1) return null; // Don't show if only 1 tenant
-
     return (
-        <div className="relative inline-block text-left">
-            <div>
-                <button
-                    type="button"
-                    className="inline-flex items-center justify-between w-full h-10 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 transition-all duration-200"
-                    onClick={() => setIsOpen(!isOpen)}
-                >
-                    <div className="flex items-center">
-                        <div className="p-1 mr-2 bg-slate-100 rounded-md">
-                            <Building2 className="w-4 h-4 text-slate-500" />
-                        </div>
-                        {(() => {
-                            const current = tenants.find(t => String(t.tenantId || t) === String(currentTenantId));
-                            return (
-                                <span className="truncate max-w-[150px]">
-                                    {current ? (current.bankName || `Tenant ${currentTenantId}`) : 'Select Tenant'}
-                                </span>
-                            );
-                        })()}
-                    </div>
-                    <ChevronDown className={`w-4 h-4 ml-2 transition-transform duration-200 text-slate-400 ${isOpen ? 'transform rotate-180' : ''}`} />
-                </button>
-            </div>
+        <div ref={dropdownRef} className="sb__tenant">
+            <button
+                className={`sb__tenant-trigger${isOpen ? ' sb__tenant-trigger--open' : ''}`}
+                onClick={() => setIsOpen(v => !v)}
+                aria-haspopup="listbox"
+                aria-expanded={isOpen}
+                title="Switch organization"
+            >
+                <Building2 size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+                <span className="sb__tenant-name">{activeTenant?.bankName || 'Select organization'}</span>
+                <ChevronDown size={13} className={`sb__tenant-chev${isOpen ? ' sb__tenant-chev--open' : ''}`} />
+            </button>
 
             {isOpen && (
-                <div className="absolute right-0 z-50 w-64 mt-2 origin-top-right bg-white rounded-lg shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none border border-slate-100 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <div className="p-1">
-                        <div className="px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                            Switch Organization
-                        </div>
-                        {tenants.map((tenant) => (
+                <div className="sb__tenant-menu" role="listbox" aria-label="Organizations">
+                    <div className="sb__tenant-menu-label">Switch organization</div>
+                    {tenants.map((tenant) => {
+                        const isActive = String(tenant.tenantId) === String(activeTenantId);
+                        const isLoading = switching === tenant.tenantId;
+                        return (
                             <button
-                                key={tenant.tenantId || tenant}
-                                onClick={() => handleSwitch(tenant.tenantId || tenant)}
-                                className={`flex items-center w-full px-3 py-2 text-sm rounded-md transition-colors duration-150 group
-                                    ${String(tenant.tenantId || tenant) === String(currentTenantId)
-                                        ? 'bg-slate-100 text-slate-900'
-                                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                                    }`}
+                                key={tenant.tenantId}
+                                className={`sb__tenant-item${isActive ? ' sb__tenant-item--active' : ''}`}
+                                onClick={() => handleSwitch(tenant.tenantId)}
+                                disabled={isLoading}
+                                role="option"
+                                aria-selected={isActive}
+                                style={isLoading ? { opacity: 0.6, cursor: 'wait' } : undefined}
                             >
-                                <div className={`flex items-center justify-center w-8 h-8 mr-3 rounded-md ${String(tenant.tenantId || tenant) === String(currentTenantId) ? 'bg-white shadow-sm text-blue-600' : 'bg-slate-100 text-slate-500 group-hover:bg-white group-hover:shadow-sm'}`}>
-                                    <Building2 className="w-4 h-4" />
+                                {isLoading
+                                    ? <Loader2 size={14} style={{ flexShrink: 0, animation: 'sb-spin 1s linear infinite' }} />
+                                    : <Building2 size={14} style={{ flexShrink: 0, opacity: isActive ? 1 : 0.6 }} />}
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div className="sb__tenant-item-name">{tenant.bankName}</div>
+                                    <div className="sb__tenant-item-meta">
+                                        {tenant.bankShortCode}
+                                        {tenant.country ? ` · ${tenant.country}` : ''}
+                                        {tenant.baseCurrency ? ` · ${tenant.baseCurrency}` : ''}
+                                    </div>
                                 </div>
-                                <div className="flex flex-col items-start">
-                                    <span className="font-medium text-left line-clamp-1">
-                                        {tenant.bankName || `Tenant ${tenant}`}
-                                    </span>
-                                    {tenant.institutionId && (
-                                        <span className="text-xs text-slate-400 font-mono">
-                                            {tenant.institutionId}
-                                        </span>
-                                    )}
-                                </div>
-                                {String(tenant.tenantId || tenant) === String(currentTenantId) && (
-                                    <div className="ml-auto w-2 h-2 bg-green-500 rounded-full"></div>
-                                )}
+                                {isActive && !isLoading && <Check size={13} style={{ flexShrink: 0 }} />}
                             </button>
-                        ))}
-                    </div>
+                        );
+                    })}
                 </div>
             )}
+
+            <style>{`@keyframes sb-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
         </div>
     );
 };

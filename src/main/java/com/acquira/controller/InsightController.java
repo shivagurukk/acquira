@@ -9,7 +9,6 @@ import com.acquira.config.TenantContext;
 
 @RestController
 @RequestMapping("/api/reports/insight")
-@CrossOrigin(origins = "*")
 public class InsightController {
 
     private final JdbcTemplate jdbcTemplate;

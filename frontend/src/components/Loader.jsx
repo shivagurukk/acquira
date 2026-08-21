@@ -1,18 +1,13 @@
 import React from 'react';
-import './Loader.css';
+import { PageLoader } from './Loaders';
 
-const Loader = ({ fullScreen = true }) => {
-    return (
-        <div className={`loader-container ${fullScreen ? 'fullscreen' : ''}`}>
-            <div className="orbital-spinner">
-                <div className="loader-ring loader-ring-1"></div>
-                <div className="loader-ring loader-ring-2"></div>
-                <div className="loader-ring loader-ring-3"></div>
-                <div className="core"></div>
-            </div>
-            <div className="loader-text">Loading System...</div>
-        </div>
-    );
-};
+/**
+ * Legacy entry point — now renders the shared Acquira data-pulse loader
+ * from Loaders.jsx so every screen shows the same branded visual.
+ * Kept so existing imports (`import Loader from '.../Loader'`) keep working.
+ */
+const Loader = ({ fullScreen = true, label = 'Loading' }) => (
+    <PageLoader overlay={fullScreen} label={label} />
+);
 
 export default Loader;

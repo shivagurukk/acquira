@@ -1,0 +1,12 @@
+// DEPRECATED — DELETE THIS FILE
+//
+// This is a stale backup of an earlier MerchantReportJobConfig from before that
+// job was retired/refactored. It is not referenced by any live code path.
+// Extension is .java.bak, so the Java compiler ignores it — but it shows up in
+// grep, confuses new contributors, and bloats the source tree.
+//
+// To delete:
+//   PowerShell:  Remove-Item MerchantReportJobConfig.java.bak
+//   bash:        rm MerchantReportJobConfig.java.bak
+//
+// Tracked under audit finding P3-3.

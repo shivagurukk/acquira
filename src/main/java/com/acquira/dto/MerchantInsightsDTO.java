@@ -12,17 +12,28 @@ public class MerchantInsightsDTO {
     private ConsumerLoyalty loyalty;
     private CustomerDemographics demographics;
     private DccPerformance dccPerformance;
+    // NEW: Currency support
+    private String currencySymbol;
+    private String currencyCode;
+    // NEW: Store-level leaderboard (top stores by volume)
+    private List<ChartData> storeLeaderboard; // label=storeName, value=volume, value2=txnCount, value3=avgTicket
+
+    public List<ChartData> getStoreLeaderboard() { return storeLeaderboard; }
+    public void setStoreLeaderboard(List<ChartData> v) { this.storeLeaderboard = v; }
 
     public MerchantInsightsDTO() {
     }
 
     public MerchantInsightsDTO(BusinessOverview overview, BusinessAchievements achievements, ConsumerLoyalty loyalty,
-            CustomerDemographics demographics, DccPerformance dccPerformance) {
+            CustomerDemographics demographics, DccPerformance dccPerformance, String currencySymbol,
+            String currencyCode) {
         this.overview = overview;
         this.achievements = achievements;
         this.loyalty = loyalty;
         this.demographics = demographics;
         this.dccPerformance = dccPerformance;
+        this.currencySymbol = currencySymbol;
+        this.currencyCode = currencyCode;
     }
 
     public BusinessOverview getOverview() {
@@ -65,6 +76,22 @@ public class MerchantInsightsDTO {
         this.dccPerformance = dccPerformance;
     }
 
+    public String getCurrencySymbol() {
+        return currencySymbol;
+    }
+
+    public void setCurrencySymbol(String currencySymbol) {
+        this.currencySymbol = currencySymbol;
+    }
+
+    public String getCurrencyCode() {
+        return currencyCode;
+    }
+
+    public void setCurrencyCode(String currencyCode) {
+        this.currencyCode = currencyCode;
+    }
+
     public static MerchantInsightsDTOBuilder builder() {
         return new MerchantInsightsDTOBuilder();
     }
@@ -75,6 +102,8 @@ public class MerchantInsightsDTO {
         private ConsumerLoyalty loyalty;
         private CustomerDemographics demographics;
         private DccPerformance dccPerformance;
+        private String currencySymbol;
+        private String currencyCode;
 
         public MerchantInsightsDTOBuilder overview(BusinessOverview overview) {
             this.overview = overview;
@@ -101,8 +130,19 @@ public class MerchantInsightsDTO {
             return this;
         }
 
+        public MerchantInsightsDTOBuilder currencySymbol(String currencySymbol) {
+            this.currencySymbol = currencySymbol;
+            return this;
+        }
+
+        public MerchantInsightsDTOBuilder currencyCode(String currencyCode) {
+            this.currencyCode = currencyCode;
+            return this;
+        }
+
         public MerchantInsightsDTO build() {
-            return new MerchantInsightsDTO(overview, achievements, loyalty, demographics, dccPerformance);
+            return new MerchantInsightsDTO(overview, achievements, loyalty, demographics, dccPerformance,
+                    currencySymbol, currencyCode);
         }
     }
 
@@ -238,24 +278,77 @@ public class MerchantInsightsDTO {
             this.transactionsByWeekOfMonth = transactionsByWeekOfMonth;
         }
 
-        public Kpi getPrevSales() { return prevSales; }
-        public void setPrevSales(Kpi v) { this.prevSales = v; }
-        public Kpi getPrevTransactions() { return prevTransactions; }
-        public void setPrevTransactions(Kpi v) { this.prevTransactions = v; }
-        public Kpi getPrevCustomers() { return prevCustomers; }
-        public void setPrevCustomers(Kpi v) { this.prevCustomers = v; }
-        public Kpi getPrevAvgTxnValue() { return prevAvgTxnValue; }
-        public void setPrevAvgTxnValue(Kpi v) { this.prevAvgTxnValue = v; }
-        public Kpi getPrevMaxDailySales() { return prevMaxDailySales; }
-        public void setPrevMaxDailySales(Kpi v) { this.prevMaxDailySales = v; }
-        public BigDecimal getWeekdayRevenuePct() { return weekdayRevenuePct; }
-        public void setWeekdayRevenuePct(BigDecimal v) { this.weekdayRevenuePct = v; }
-        public BigDecimal getWeekendRevenuePct() { return weekendRevenuePct; }
-        public void setWeekendRevenuePct(BigDecimal v) { this.weekendRevenuePct = v; }
-        public String getPeakDayName() { return peakDayName; }
-        public void setPeakDayName(String v) { this.peakDayName = v; }
-        public BigDecimal getDailyAverage() { return dailyAverage; }
-        public void setDailyAverage(BigDecimal v) { this.dailyAverage = v; }
+        public Kpi getPrevSales() {
+            return prevSales;
+        }
+
+        public void setPrevSales(Kpi v) {
+            this.prevSales = v;
+        }
+
+        public Kpi getPrevTransactions() {
+            return prevTransactions;
+        }
+
+        public void setPrevTransactions(Kpi v) {
+            this.prevTransactions = v;
+        }
+
+        public Kpi getPrevCustomers() {
+            return prevCustomers;
+        }
+
+        public void setPrevCustomers(Kpi v) {
+            this.prevCustomers = v;
+        }
+
+        public Kpi getPrevAvgTxnValue() {
+            return prevAvgTxnValue;
+        }
+
+        public void setPrevAvgTxnValue(Kpi v) {
+            this.prevAvgTxnValue = v;
+        }
+
+        public Kpi getPrevMaxDailySales() {
+            return prevMaxDailySales;
+        }
+
+        public void setPrevMaxDailySales(Kpi v) {
+            this.prevMaxDailySales = v;
+        }
+
+        public BigDecimal getWeekdayRevenuePct() {
+            return weekdayRevenuePct;
+        }
+
+        public void setWeekdayRevenuePct(BigDecimal v) {
+            this.weekdayRevenuePct = v;
+        }
+
+        public BigDecimal getWeekendRevenuePct() {
+            return weekendRevenuePct;
+        }
+
+        public void setWeekendRevenuePct(BigDecimal v) {
+            this.weekendRevenuePct = v;
+        }
+
+        public String getPeakDayName() {
+            return peakDayName;
+        }
+
+        public void setPeakDayName(String v) {
+            this.peakDayName = v;
+        }
+
+        public BigDecimal getDailyAverage() {
+            return dailyAverage;
+        }
+
+        public void setDailyAverage(BigDecimal v) {
+            this.dailyAverage = v;
+        }
 
         public static BusinessOverviewBuilder builder() {
             return new BusinessOverviewBuilder();
@@ -332,25 +425,69 @@ public class MerchantInsightsDTO {
             private Kpi prevSales, prevTransactions, prevCustomers, prevAvgTxnValue, prevMaxDailySales;
             private BigDecimal weekdayRevenuePct, weekendRevenuePct, dailyAverage;
             private String peakDayName;
-            public BusinessOverviewBuilder prevSales(Kpi v) { this.prevSales = v; return this; }
-            public BusinessOverviewBuilder prevTransactions(Kpi v) { this.prevTransactions = v; return this; }
-            public BusinessOverviewBuilder prevCustomers(Kpi v) { this.prevCustomers = v; return this; }
-            public BusinessOverviewBuilder prevAvgTxnValue(Kpi v) { this.prevAvgTxnValue = v; return this; }
-            public BusinessOverviewBuilder prevMaxDailySales(Kpi v) { this.prevMaxDailySales = v; return this; }
-            public BusinessOverviewBuilder weekdayRevenuePct(BigDecimal v) { this.weekdayRevenuePct = v; return this; }
-            public BusinessOverviewBuilder weekendRevenuePct(BigDecimal v) { this.weekendRevenuePct = v; return this; }
-            public BusinessOverviewBuilder peakDayName(String v) { this.peakDayName = v; return this; }
-            public BusinessOverviewBuilder dailyAverage(BigDecimal v) { this.dailyAverage = v; return this; }
+
+            public BusinessOverviewBuilder prevSales(Kpi v) {
+                this.prevSales = v;
+                return this;
+            }
+
+            public BusinessOverviewBuilder prevTransactions(Kpi v) {
+                this.prevTransactions = v;
+                return this;
+            }
+
+            public BusinessOverviewBuilder prevCustomers(Kpi v) {
+                this.prevCustomers = v;
+                return this;
+            }
+
+            public BusinessOverviewBuilder prevAvgTxnValue(Kpi v) {
+                this.prevAvgTxnValue = v;
+                return this;
+            }
+
+            public BusinessOverviewBuilder prevMaxDailySales(Kpi v) {
+                this.prevMaxDailySales = v;
+                return this;
+            }
+
+            public BusinessOverviewBuilder weekdayRevenuePct(BigDecimal v) {
+                this.weekdayRevenuePct = v;
+                return this;
+            }
+
+            public BusinessOverviewBuilder weekendRevenuePct(BigDecimal v) {
+                this.weekendRevenuePct = v;
+                return this;
+            }
+
+            public BusinessOverviewBuilder peakDayName(String v) {
+                this.peakDayName = v;
+                return this;
+            }
+
+            public BusinessOverviewBuilder dailyAverage(BigDecimal v) {
+                this.dailyAverage = v;
+                return this;
+            }
 
             public BusinessOverview build() {
-                BusinessOverview o = new BusinessOverview(sales, transactions, customers, avgSpendPerCustomer, avgTxnValue,
-                        avgTxnsPerCustomer, peakStats, salesByDayOfWeek, transactionsByDayOfWeek, salesByWeekOfMonth, transactionsByWeekOfMonth);
-                o.prevSales = prevSales; o.prevTransactions = prevTransactions; o.prevCustomers = prevCustomers;
-                o.prevAvgTxnValue = prevAvgTxnValue; o.prevMaxDailySales = prevMaxDailySales;
-                o.weekdayRevenuePct = weekdayRevenuePct; o.weekendRevenuePct = weekendRevenuePct;
-                o.peakDayName = peakDayName; o.dailyAverage = dailyAverage;
+                BusinessOverview o = new BusinessOverview(sales, transactions, customers, avgSpendPerCustomer,
+                        avgTxnValue,
+                        avgTxnsPerCustomer, peakStats, salesByDayOfWeek, transactionsByDayOfWeek, salesByWeekOfMonth,
+                        transactionsByWeekOfMonth);
+                o.prevSales = prevSales;
+                o.prevTransactions = prevTransactions;
+                o.prevCustomers = prevCustomers;
+                o.prevAvgTxnValue = prevAvgTxnValue;
+                o.prevMaxDailySales = prevMaxDailySales;
+                o.weekdayRevenuePct = weekdayRevenuePct;
+                o.weekendRevenuePct = weekendRevenuePct;
+                o.peakDayName = peakDayName;
+                o.dailyAverage = dailyAverage;
                 return o;
             }
+
             public BusinessOverview buildLegacy() {
                 return new BusinessOverview(sales, transactions, customers, avgSpendPerCustomer, avgTxnValue,
                         avgTxnsPerCustomer, peakStats, salesByDayOfWeek, transactionsByDayOfWeek, salesByWeekOfMonth,
@@ -584,6 +721,9 @@ public class MerchantInsightsDTO {
         private List<ChartData> salesTimeOfDay;
         private List<ChartData> salesByDayOfMonth;
         private List<ChartData> salesAndAtvByDayOfWeek;
+        // NEW: Revenue Heatmap (Day×Hour), Txn Size Distribution
+        private List<ChartData> revenueHeatmap; // label="Mon|09", value=volume
+        private List<ChartData> txnSizeDistribution; // label="0-50", value=count, value2=pct
 
         public BusinessAchievements() {
         }
@@ -646,6 +786,11 @@ public class MerchantInsightsDTO {
         public void setSalesAndAtvByDayOfWeek(List<ChartData> salesAndAtvByDayOfWeek) {
             this.salesAndAtvByDayOfWeek = salesAndAtvByDayOfWeek;
         }
+
+        public List<ChartData> getRevenueHeatmap() { return revenueHeatmap; }
+        public void setRevenueHeatmap(List<ChartData> v) { this.revenueHeatmap = v; }
+        public List<ChartData> getTxnSizeDistribution() { return txnSizeDistribution; }
+        public void setTxnSizeDistribution(List<ChartData> v) { this.txnSizeDistribution = v; }
 
         public static BusinessAchievementsBuilder builder() {
             return new BusinessAchievementsBuilder();
@@ -710,6 +855,14 @@ public class MerchantInsightsDTO {
         private BigDecimal retentionRate;
         private BigDecimal totalUniqueCards;
         private BigDecimal repeatCardPct;
+        // NEW: Customer Intelligence metrics for p09
+        private BigDecimal avgVisitsPerMonth;
+        private Long singleVisitCards;
+        private BigDecimal singleVisitPct;
+        private BigDecimal singleVisitRevenue;
+        private Long repeatVisitCards;
+        private BigDecimal repeatVisitPct;
+        private BigDecimal repeatVisitRevenue;
 
         public BigDecimal getRetentionRate() { return retentionRate; }
         public void setRetentionRate(BigDecimal v) { this.retentionRate = v; }
@@ -717,6 +870,20 @@ public class MerchantInsightsDTO {
         public void setTotalUniqueCards(BigDecimal v) { this.totalUniqueCards = v; }
         public BigDecimal getRepeatCardPct() { return repeatCardPct; }
         public void setRepeatCardPct(BigDecimal v) { this.repeatCardPct = v; }
+        public BigDecimal getAvgVisitsPerMonth() { return avgVisitsPerMonth; }
+        public void setAvgVisitsPerMonth(BigDecimal v) { this.avgVisitsPerMonth = v; }
+        public Long getSingleVisitCards() { return singleVisitCards; }
+        public void setSingleVisitCards(Long v) { this.singleVisitCards = v; }
+        public BigDecimal getSingleVisitPct() { return singleVisitPct; }
+        public void setSingleVisitPct(BigDecimal v) { this.singleVisitPct = v; }
+        public BigDecimal getSingleVisitRevenue() { return singleVisitRevenue; }
+        public void setSingleVisitRevenue(BigDecimal v) { this.singleVisitRevenue = v; }
+        public Long getRepeatVisitCards() { return repeatVisitCards; }
+        public void setRepeatVisitCards(Long v) { this.repeatVisitCards = v; }
+        public BigDecimal getRepeatVisitPct() { return repeatVisitPct; }
+        public void setRepeatVisitPct(BigDecimal v) { this.repeatVisitPct = v; }
+        public BigDecimal getRepeatVisitRevenue() { return repeatVisitRevenue; }
+        public void setRepeatVisitRevenue(BigDecimal v) { this.repeatVisitRevenue = v; }
 
         public ConsumerLoyalty() {
         }
@@ -872,16 +1039,33 @@ public class MerchantInsightsDTO {
             }
 
             private BigDecimal retentionRate, totalUniqueCards, repeatCardPct;
-            public ConsumerLoyaltyBuilder retentionRate(BigDecimal v) { this.retentionRate = v; return this; }
-            public ConsumerLoyaltyBuilder totalUniqueCards(BigDecimal v) { this.totalUniqueCards = v; return this; }
-            public ConsumerLoyaltyBuilder repeatCardPct(BigDecimal v) { this.repeatCardPct = v; return this; }
+
+            public ConsumerLoyaltyBuilder retentionRate(BigDecimal v) {
+                this.retentionRate = v;
+                return this;
+            }
+
+            public ConsumerLoyaltyBuilder totalUniqueCards(BigDecimal v) {
+                this.totalUniqueCards = v;
+                return this;
+            }
+
+            public ConsumerLoyaltyBuilder repeatCardPct(BigDecimal v) {
+                this.repeatCardPct = v;
+                return this;
+            }
 
             public ConsumerLoyalty build() {
-                ConsumerLoyalty l = new ConsumerLoyalty(visitFrequency, spendBands, domesticVsInternational, customerCategoryTrend,
-                        customerCategorySplit, monthlyVisitFreqTrend, monthlySpendBandTrend, customerCategoryCountSplit, customerCategoryValueSplit);
-                l.retentionRate = retentionRate; l.totalUniqueCards = totalUniqueCards; l.repeatCardPct = repeatCardPct;
+                ConsumerLoyalty l = new ConsumerLoyalty(visitFrequency, spendBands, domesticVsInternational,
+                        customerCategoryTrend,
+                        customerCategorySplit, monthlyVisitFreqTrend, monthlySpendBandTrend, customerCategoryCountSplit,
+                        customerCategoryValueSplit);
+                l.retentionRate = retentionRate;
+                l.totalUniqueCards = totalUniqueCards;
+                l.repeatCardPct = repeatCardPct;
                 return l;
             }
+
             public ConsumerLoyalty buildLegacy() {
                 return new ConsumerLoyalty(visitFrequency, spendBands, domesticVsInternational, customerCategoryTrend,
                         customerCategorySplit, monthlyVisitFreqTrend, monthlySpendBandTrend, customerCategoryCountSplit,
@@ -918,25 +1102,130 @@ public class MerchantInsightsDTO {
         private String peakSeason;
         private String lowSeason;
         private BigDecimal yoyGrowthPct;
+        // NEW: Credit/Debit/Prepaid card type metrics
+        private BigDecimal creditPct;
+        private BigDecimal creditVolume;
+        private Long creditTxnCount;
+        private BigDecimal debitPct;
+        private BigDecimal debitVolume;
+        private Long debitTxnCount;
+        private BigDecimal prepaidPct;
+        private BigDecimal prepaidVolume;
+        private Long prepaidTxnCount;
+        // NEW: Local vs International card metrics
+        private BigDecimal localCardPct;
+        private BigDecimal localCardVolume;
+        private Long localCardCustomers;
+        private BigDecimal internationalCardPct;
+        private BigDecimal internationalCardVolume;
+        private Long internationalCardCustomers;
+        // NEW: Avg Ticket by Card Type
+        private List<ChartData> avgTicketByCardType; // label=CREDIT/DEBIT/PREPAID, value=ATV, value2=volume, value3=count
 
-        public String getCreditDebitRatio() { return creditDebitRatio; }
-        public void setCreditDebitRatio(String v) { this.creditDebitRatio = v; }
-        public BigDecimal getWalletUsagePct() { return walletUsagePct; }
-        public void setWalletUsagePct(BigDecimal v) { this.walletUsagePct = v; }
-        public BigDecimal getCardPenetrationPct() { return cardPenetrationPct; }
-        public void setCardPenetrationPct(BigDecimal v) { this.cardPenetrationPct = v; }
-        public List<ChartData> getQuarterlyBreakdown() { return quarterlyBreakdown; }
-        public void setQuarterlyBreakdown(List<ChartData> v) { this.quarterlyBreakdown = v; }
-        public String getBestMonth() { return bestMonth; }
-        public void setBestMonth(String v) { this.bestMonth = v; }
-        public BigDecimal getAvgMonthlyGrowthPct() { return avgMonthlyGrowthPct; }
-        public void setAvgMonthlyGrowthPct(BigDecimal v) { this.avgMonthlyGrowthPct = v; }
-        public String getPeakSeason() { return peakSeason; }
-        public void setPeakSeason(String v) { this.peakSeason = v; }
-        public String getLowSeason() { return lowSeason; }
-        public void setLowSeason(String v) { this.lowSeason = v; }
-        public BigDecimal getYoyGrowthPct() { return yoyGrowthPct; }
-        public void setYoyGrowthPct(BigDecimal v) { this.yoyGrowthPct = v; }
+        public BigDecimal getCreditPct() { return creditPct; }
+        public void setCreditPct(BigDecimal v) { this.creditPct = v; }
+        public BigDecimal getCreditVolume() { return creditVolume; }
+        public void setCreditVolume(BigDecimal v) { this.creditVolume = v; }
+        public Long getCreditTxnCount() { return creditTxnCount; }
+        public void setCreditTxnCount(Long v) { this.creditTxnCount = v; }
+        public BigDecimal getDebitPct() { return debitPct; }
+        public void setDebitPct(BigDecimal v) { this.debitPct = v; }
+        public BigDecimal getDebitVolume() { return debitVolume; }
+        public void setDebitVolume(BigDecimal v) { this.debitVolume = v; }
+        public Long getDebitTxnCount() { return debitTxnCount; }
+        public void setDebitTxnCount(Long v) { this.debitTxnCount = v; }
+        public BigDecimal getPrepaidPct() { return prepaidPct; }
+        public void setPrepaidPct(BigDecimal v) { this.prepaidPct = v; }
+        public BigDecimal getPrepaidVolume() { return prepaidVolume; }
+        public void setPrepaidVolume(BigDecimal v) { this.prepaidVolume = v; }
+        public Long getPrepaidTxnCount() { return prepaidTxnCount; }
+        public void setPrepaidTxnCount(Long v) { this.prepaidTxnCount = v; }
+        public BigDecimal getLocalCardPct() { return localCardPct; }
+        public void setLocalCardPct(BigDecimal v) { this.localCardPct = v; }
+        public BigDecimal getLocalCardVolume() { return localCardVolume; }
+        public void setLocalCardVolume(BigDecimal v) { this.localCardVolume = v; }
+        public Long getLocalCardCustomers() { return localCardCustomers; }
+        public void setLocalCardCustomers(Long v) { this.localCardCustomers = v; }
+        public BigDecimal getInternationalCardPct() { return internationalCardPct; }
+        public void setInternationalCardPct(BigDecimal v) { this.internationalCardPct = v; }
+        public BigDecimal getInternationalCardVolume() { return internationalCardVolume; }
+        public void setInternationalCardVolume(BigDecimal v) { this.internationalCardVolume = v; }
+        public Long getInternationalCardCustomers() { return internationalCardCustomers; }
+        public void setInternationalCardCustomers(Long v) { this.internationalCardCustomers = v; }
+        public List<ChartData> getAvgTicketByCardType() { return avgTicketByCardType; }
+        public void setAvgTicketByCardType(List<ChartData> v) { this.avgTicketByCardType = v; }
+
+        public String getCreditDebitRatio() {
+            return creditDebitRatio;
+        }
+
+        public void setCreditDebitRatio(String v) {
+            this.creditDebitRatio = v;
+        }
+
+        public BigDecimal getWalletUsagePct() {
+            return walletUsagePct;
+        }
+
+        public void setWalletUsagePct(BigDecimal v) {
+            this.walletUsagePct = v;
+        }
+
+        public BigDecimal getCardPenetrationPct() {
+            return cardPenetrationPct;
+        }
+
+        public void setCardPenetrationPct(BigDecimal v) {
+            this.cardPenetrationPct = v;
+        }
+
+        public List<ChartData> getQuarterlyBreakdown() {
+            return quarterlyBreakdown;
+        }
+
+        public void setQuarterlyBreakdown(List<ChartData> v) {
+            this.quarterlyBreakdown = v;
+        }
+
+        public String getBestMonth() {
+            return bestMonth;
+        }
+
+        public void setBestMonth(String v) {
+            this.bestMonth = v;
+        }
+
+        public BigDecimal getAvgMonthlyGrowthPct() {
+            return avgMonthlyGrowthPct;
+        }
+
+        public void setAvgMonthlyGrowthPct(BigDecimal v) {
+            this.avgMonthlyGrowthPct = v;
+        }
+
+        public String getPeakSeason() {
+            return peakSeason;
+        }
+
+        public void setPeakSeason(String v) {
+            this.peakSeason = v;
+        }
+
+        public String getLowSeason() {
+            return lowSeason;
+        }
+
+        public void setLowSeason(String v) {
+            this.lowSeason = v;
+        }
+
+        public BigDecimal getYoyGrowthPct() {
+            return yoyGrowthPct;
+        }
+
+        public void setYoyGrowthPct(BigDecimal v) {
+            this.yoyGrowthPct = v;
+        }
 
         public CustomerDemographics() {
         }
@@ -1233,17 +1522,79 @@ public class MerchantInsightsDTO {
         private BigDecimal dccOptoutVolume;
         private BigDecimal dccConversionRate;
         private BigDecimal dccMissedRevenue;
+        // NEW: Opt-in/Opt-out counts and revenue for p09-customer-intel
+        private Long optInCount;
+        private BigDecimal optInRevenue;
+        private Long optOutCount;
+        private BigDecimal optOutRevenue;
+        private BigDecimal optOutDeclineRate;
+        private Long dccEligibleCount;
+        private Long dccOptinCountLong;
 
-        public BigDecimal getDccEligibleVolume() { return dccEligibleVolume; }
-        public void setDccEligibleVolume(BigDecimal v) { this.dccEligibleVolume = v; }
-        public BigDecimal getDccOptinVolume() { return dccOptinVolume; }
-        public void setDccOptinVolume(BigDecimal v) { this.dccOptinVolume = v; }
-        public BigDecimal getDccOptoutVolume() { return dccOptoutVolume; }
-        public void setDccOptoutVolume(BigDecimal v) { this.dccOptoutVolume = v; }
-        public BigDecimal getDccConversionRate() { return dccConversionRate; }
-        public void setDccConversionRate(BigDecimal v) { this.dccConversionRate = v; }
-        public BigDecimal getDccMissedRevenue() { return dccMissedRevenue; }
-        public void setDccMissedRevenue(BigDecimal v) { this.dccMissedRevenue = v; }
+        public Long getOptInCount() { return optInCount; }
+        public void setOptInCount(Long v) { this.optInCount = v; }
+        public BigDecimal getOptInRevenue() { return optInRevenue; }
+        public void setOptInRevenue(BigDecimal v) { this.optInRevenue = v; }
+        public Long getOptOutCount() { return optOutCount; }
+        public void setOptOutCount(Long v) { this.optOutCount = v; }
+        public BigDecimal getOptOutRevenue() { return optOutRevenue; }
+        public void setOptOutRevenue(BigDecimal v) { this.optOutRevenue = v; }
+        public BigDecimal getOptOutDeclineRate() { return optOutDeclineRate; }
+        public void setOptOutDeclineRate(BigDecimal v) { this.optOutDeclineRate = v; }
+        public Long getDccEligibleCount() { return dccEligibleCount; }
+        public void setDccEligibleCount(Long v) { this.dccEligibleCount = v; }
+        public Long getDccOptinCountLong() { return dccOptinCountLong; }
+        public void setDccOptinCountLong(Long v) { this.dccOptinCountLong = v; }
+        // NEW: DCC Funnel — total international txn volume for the funnel top
+        private Long totalIntlTxnCount;
+        private BigDecimal totalIntlVolume;
+        private BigDecimal dccRevenueGenerated; // actual margin earned from DCC opt-ins
+        public Long getTotalIntlTxnCount() { return totalIntlTxnCount; }
+        public void setTotalIntlTxnCount(Long v) { this.totalIntlTxnCount = v; }
+        public BigDecimal getTotalIntlVolume() { return totalIntlVolume; }
+        public void setTotalIntlVolume(BigDecimal v) { this.totalIntlVolume = v; }
+        public BigDecimal getDccRevenueGenerated() { return dccRevenueGenerated; }
+        public void setDccRevenueGenerated(BigDecimal v) { this.dccRevenueGenerated = v; }
+
+        public BigDecimal getDccEligibleVolume() {
+            return dccEligibleVolume;
+        }
+
+        public void setDccEligibleVolume(BigDecimal v) {
+            this.dccEligibleVolume = v;
+        }
+
+        public BigDecimal getDccOptinVolume() {
+            return dccOptinVolume;
+        }
+
+        public void setDccOptinVolume(BigDecimal v) {
+            this.dccOptinVolume = v;
+        }
+
+        public BigDecimal getDccOptoutVolume() {
+            return dccOptoutVolume;
+        }
+
+        public void setDccOptoutVolume(BigDecimal v) {
+            this.dccOptoutVolume = v;
+        }
+
+        public BigDecimal getDccConversionRate() {
+            return dccConversionRate;
+        }
+
+        public void setDccConversionRate(BigDecimal v) {
+            this.dccConversionRate = v;
+        }
+
+        public BigDecimal getDccMissedRevenue() {
+            return dccMissedRevenue;
+        }
+
+        public void setDccMissedRevenue(BigDecimal v) {
+            this.dccMissedRevenue = v;
+        }
 
         public DccPerformance() {
         }
@@ -1304,16 +1655,38 @@ public class MerchantInsightsDTO {
             }
 
             private BigDecimal dccEligibleVolume, dccOptinVolume, dccOptoutVolume, dccConversionRate, dccMissedRevenue;
-            public DccPerformanceBuilder dccEligibleVolume(BigDecimal v) { this.dccEligibleVolume = v; return this; }
-            public DccPerformanceBuilder dccOptinVolume(BigDecimal v) { this.dccOptinVolume = v; return this; }
-            public DccPerformanceBuilder dccOptoutVolume(BigDecimal v) { this.dccOptoutVolume = v; return this; }
-            public DccPerformanceBuilder dccConversionRate(BigDecimal v) { this.dccConversionRate = v; return this; }
-            public DccPerformanceBuilder dccMissedRevenue(BigDecimal v) { this.dccMissedRevenue = v; return this; }
+
+            public DccPerformanceBuilder dccEligibleVolume(BigDecimal v) {
+                this.dccEligibleVolume = v;
+                return this;
+            }
+
+            public DccPerformanceBuilder dccOptinVolume(BigDecimal v) {
+                this.dccOptinVolume = v;
+                return this;
+            }
+
+            public DccPerformanceBuilder dccOptoutVolume(BigDecimal v) {
+                this.dccOptoutVolume = v;
+                return this;
+            }
+
+            public DccPerformanceBuilder dccConversionRate(BigDecimal v) {
+                this.dccConversionRate = v;
+                return this;
+            }
+
+            public DccPerformanceBuilder dccMissedRevenue(BigDecimal v) {
+                this.dccMissedRevenue = v;
+                return this;
+            }
 
             public DccPerformance build() {
                 DccPerformance d = new DccPerformance(missedOpportunityTrend, eligibilityTrend, optOutOptInTrend);
-                d.dccEligibleVolume = dccEligibleVolume; d.dccOptinVolume = dccOptinVolume;
-                d.dccOptoutVolume = dccOptoutVolume; d.dccConversionRate = dccConversionRate;
+                d.dccEligibleVolume = dccEligibleVolume;
+                d.dccOptinVolume = dccOptinVolume;
+                d.dccOptoutVolume = dccOptoutVolume;
+                d.dccConversionRate = dccConversionRate;
                 d.dccMissedRevenue = dccMissedRevenue;
                 return d;
             }

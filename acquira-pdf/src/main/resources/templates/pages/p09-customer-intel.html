@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="customerIntelContent">
+        <div class="section-title" style="margin-bottom: 2px;">Customer Intelligence</div>
+        <div class="section-subtitle" style="margin-bottom: 6px;">Customer retention, opt-in behaviour and loyalty segmentation</div>
+
+        <!-- Dynamic Insight -->
+        <div th:if="${dto.insights != null and dto.insights.customerInsight != null}" style="background: linear-gradient(135deg, #F0FDFA, #CCFBF1); border: 1px solid #99F6E4; border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; display: flex; gap: 8px;">
+            <div style="font-size: 12px; margin-top: 1px;">👥</div>
+            <div>
+                <p style="font-size: 8px; color: #134E4A; line-height: 1.5; margin: 0; font-weight: 600;" th:text="${dto.insights.customerInsight}">Customer insight</p>
+                <p th:if="${dto.insights.customerTip != null}" style="font-size: 8px; color: #0F766E; line-height: 1.4; margin: 3px 0 0 0;" th:text="'💡 ' + ${dto.insights.customerTip}">Tip</p>
+            </div>
+        </div>
+
+        <!-- ROW 1: 3 KPI Cards -->
+        <div class="grid-3 mb-6">
+            <div class="card" style="padding: 8px 10px; border-top: 3px solid #0D9488;">
+                <div style="font-size: 8px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em;">RETENTION RATE</div>
+                <div style="font-size: 22px; font-weight: 900; color: #0D9488; margin: 2px 0;" th:text="${dto.loyalty.retentionRate != null ? dto.loyalty.retentionRate + '%' : '-'}">-</div>
+                <span style="font-size:8px;color:#6B7280;">Cards returning 2+ times this period</span>
+            </div>
+            <div class="card" style="padding: 8px 10px; border-top: 3px solid #2563EB;">
+                <div style="font-size: 8px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em;">UNIQUE CARDS</div>
+                <div style="font-size: 22px; font-weight: 900; color: #111827; margin: 2px 0;" th:text="${dto.loyalty.totalUniqueCards != null ? dto.loyalty.totalUniqueCards.toBigInteger() : '-'}">-</div>
+                <span style="font-size: 8px; color: #6B7280;">Distinct cards transacted this period</span>
+            </div>
+            <div class="card" style="padding: 8px 10px; border-top: 3px solid #6D28D9;">
+                <div style="font-size: 8px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em;">AVG VISITS / CARD</div>
+                <div style="font-size: 22px; font-weight: 900; color: #111827; margin: 2px 0;" th:text="${dto.overview.avgTxnsPerCustomer != null ? dto.overview.avgTxnsPerCustomer.formattedValue : '-'}">-</div>
+                <span style="font-size: 8px; color: #6B7280;">Avg transactions per unique card</span>
+            </div>
+        </div>
+
+        <!-- ═══ SECTION: DCC BEHAVIOUR ═══ -->
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <div style="font-size: 8px; font-weight: 800; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">DCC Currency Choice (International Cardholders)</div>
+            <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #DBEAFE, transparent);"></div>
+        </div>
+
+        <!-- ROW 2: Opt-In vs Opt-Out -->
+        <div class="grid-2 mb-6">
+            <div class="card" style="padding: 0; overflow: hidden; border: none;">
+                <div style="background: linear-gradient(135deg, #042f2e, #059669); padding: 14px 16px; color: white; border-radius: 8px 8px 0 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 8px; font-weight: 700; color: #A7F3D0; letter-spacing: 0.06em; text-transform: uppercase;">&#10003; Opted In</div>
+                            <div style="font-size: 32px; font-weight: 900; color: white; margin-top: 2px; line-height: 1;" th:text="${dto.dccPerformance.optInCount != null ? dto.dccPerformance.optInCount : '0'}">0</div>
+                            <div style="font-size: 8px; color: rgba(255,255,255,0.6); margin-top: 2px;">customers accepted DCC</div>
+                        </div>
+                        <div style="width: 48px; height: 48px; background: rgba(255,255,255,0.1); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        </div>
+                    </div>
+                </div>
+                <div style="padding: 10px 16px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
+                    <div style="display: flex; justify-content: space-between; font-size: 8.5px; margin-bottom: 4px;">
+                        <span style="color: #6B7280;">Opt-In Volume</span>
+                        <span style="font-weight: 800; color: #059669;" th:text="${dto.dccPerformance.dccOptinVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptinVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 8.5px;">
+                        <span style="color: #6B7280;">Conversion Rate</span>
+                        <span style="font-weight: 800; color: #059669;" th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '-'}">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="padding: 0; overflow: hidden; border: none;">
+                <div style="background: linear-gradient(135deg, #450a0a, #DC2626); padding: 14px 16px; color: white; border-radius: 8px 8px 0 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 8px; font-weight: 700; color: #FECACA; letter-spacing: 0.06em; text-transform: uppercase;">&#10007; Opted Out</div>
+                            <div style="font-size: 32px; font-weight: 900; color: white; margin-top: 2px; line-height: 1;" th:text="${dto.dccPerformance.optOutCount != null ? dto.dccPerformance.optOutCount : '0'}">0</div>
+                            <div style="font-size: 8px; color: rgba(255,255,255,0.6); margin-top: 2px;">customers declined DCC</div>
+                        </div>
+                        <div style="width: 48px; height: 48px; background: rgba(255,255,255,0.1); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                        </div>
+                    </div>
+                </div>
+                <div style="padding: 10px 16px; background: white; border-radius: 0 0 8px 8px; border: 1px solid #E5E7EB; border-top: none;">
+                    <div style="display: flex; justify-content: space-between; font-size: 8.5px; margin-bottom: 4px;">
+                        <span style="color: #6B7280;">Opt-Out Volume</span>
+                        <span style="font-weight: 800; color: #DC2626;" th:text="${dto.dccPerformance.dccOptoutVolume != null ? dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccOptoutVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '-'}">-</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 8.5px;">
+                        <span style="color: #6B7280;">Decline Rate</span>
+                        <span style="font-weight: 800; color: #DC2626;" th:text="${dto.dccPerformance.optOutDeclineRate != null ? dto.dccPerformance.optOutDeclineRate + '%' : '-'}">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 3: Opt-In/Opt-Out Trend Chart
+             FIX UX: both opt-out (bars, left axis) and opt-in (line, right axis) now shown
+             together so the merchant can see if the opt-in rate is improving over time.
+             data-label / data-label2 drive the right-axis title in the dual-axis renderer. -->
+        <div class="card mb-6" style="padding: 10px 12px;">
+            <div class="card-title"><span>OPT-IN vs OPT-OUT TREND</span>
+                <div style="display: flex; gap: 10px; font-size: 8px; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 10px; height: 8px; background: #1E3A8A; border-radius: 2px;"></span> Opt-Out Vol (<span th:text="${dto.currencyCode}">AED</span>)</span>
+                    <span style="display: flex; align-items: center; gap: 3px;"><span style="width: 10px; height: 3px; background: #0D9488; border-radius: 2px;"></span> Opt-In Rate (%)</span>
+                </div>
+            </div>
+            <!-- FIX UX: switched from dual-axis (vol/vol) to dual-axis-bar-line (vol/rate)
+                 so the conversion-rate % line is visible even when opt-in volumes are small.
+                 data-field2 = "dccPerformance.optInConversionRateTrend" carries the monthly
+                 conversion % so the right-axis scale is 0–100% instead of raw AED.
+                 That series is count-based (optin/eligible) and omits months with fewer
+                 than 5 eligible transactions, so the line breaks rather than showing a
+                 0%/100% reading derived from one or two transactions. -->
+            <div class="chart-container" style="max-height: 130px;">
+                <canvas data-chart="dual-axis-bar-line"
+                        data-field="dccPerformance.optOutOptInTrend"
+                        data-field2="dccPerformance.optInConversionRateTrend"
+                        data-color="#1E3A8A"
+                        data-color2="#0D9488"
+                        data-label="Opt-Out Volume"
+                        data-label2="Opt-In Rate (%)"></canvas>
+            </div>
+        </div>
+
+        <!-- ═══ SECTION: LOYALTY SEGMENTATION
+             FIX NEW: added "Lapsed" third segment — cards seen in prior months but not
+             this month. Populated by PdfGenerationService joining sum_monthly_card for
+             current and prior month. dto.loyalty.lapsedCardCount drives the new row. ═══ -->
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <div style="font-size: 8px; font-weight: 800; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">Customer Loyalty Segments</div>
+            <div style="flex: 1; height: 1px; background: linear-gradient(90deg, #DBEAFE, transparent);"></div>
+        </div>
+
+        <th:block th:with="repeatPct=${dto.loyalty.repeatCardPct != null ? dto.loyalty.repeatCardPct : 0},
+                           lapsedPct=${dto.loyalty.lapsedCardPct != null ? dto.loyalty.lapsedCardPct : 0},
+                           tier2Pct=${dto.loyalty.repeatTier2Pct != null ? dto.loyalty.repeatTier2Pct : 0},
+                           tier35Pct=${dto.loyalty.repeatTier35Pct != null ? dto.loyalty.repeatTier35Pct : 0},
+                           tier6Pct=${dto.loyalty.repeatTier6Pct != null ? dto.loyalty.repeatTier6Pct : 0},
+                           hasTiers=${dto.loyalty.repeatTier2Pct != null}">
+        <div class="card mb-6" style="padding: 0; overflow: hidden;">
+            <table class="data-table" style="font-size: 8.5px;">
+                <thead>
+                    <tr>
+                        <th style="width: 20%; padding: 5px 10px;">Segment</th>
+                        <th style="width: 12%;">Share</th>
+                        <th style="width: 38%;">Distribution</th>
+                        <th style="width: 30%;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- FIX NEW: repeat cohort split into visit-depth tiers (2 / 3–5 / 6+).
+                         Falls back to a single combined Repeat(2+) row when tier data is
+                         unavailable (hasTiers=false). Loyal 6+ first so the most valuable
+                         segment reads top-down. -->
+                    <th:block th:if="${hasTiers}">
+                    <tr th:if="${tier6Pct > 0}">
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #0F766E; font-size: 9px;">&#9679; Loyal (6+)</span></td>
+                        <td style="font-weight: 700;" th:text="${tier6Pct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${tier6Pct} + '%; height: 100%; background: linear-gradient(90deg, #0F766E, #2DD4BF); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-teal">VIP &amp; Reward</span></td>
+                    </tr>
+                    <tr th:if="${tier35Pct > 0}">
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #0D9488; font-size: 9px;">&#9679; Core (3–5)</span></td>
+                        <td style="font-weight: 700;" th:text="${tier35Pct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${tier35Pct} + '%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-teal">Nurture</span></td>
+                    </tr>
+                    <tr th:if="${tier2Pct > 0}">
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #14B8A6; font-size: 9px;">&#9679; Occasional (2)</span></td>
+                        <td style="font-weight: 700;" th:text="${tier2Pct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${tier2Pct} + '%; height: 100%; background: linear-gradient(90deg, #14B8A6, #99F6E4); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-teal">Encourage Return</span></td>
+                    </tr>
+                    </th:block>
+                    <tr th:unless="${hasTiers}">
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #0D9488; font-size: 9px;">&#9679; Repeat (2+)</span></td>
+                        <td style="font-weight: 700;" th:text="${repeatPct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${repeatPct} + '%; height: 100%; background: linear-gradient(90deg, #0D9488, #5EEAD4); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-teal">Reward &amp; Retain</span></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #1E3A8A; font-size: 9px;">&#9679; Single Visit</span></td>
+                        <th:block th:with="singlePct=${100 - repeatPct - lapsedPct}">
+                        <td style="font-weight: 700;" th:text="${singlePct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${singlePct} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #3B82F6); border-radius: 4px;'"></div></div></td>
+                        </th:block>
+                        <td><span class="pill pill-navy">Convert to Repeat</span></td>
+                    </tr>
+                    <!-- FIX NEW: Lapsed segment — cards seen in a prior month but not this month.
+                         Only shown when lapsedCardCount > 0 (requires prior-month sum_monthly_card data). -->
+                    <tr th:if="${dto.loyalty.lapsedCardCount != null and dto.loyalty.lapsedCardCount > 0}">
+                        <td style="padding: 6px 10px;"><span style="font-weight: 800; color: #D97706; font-size: 9px;">&#9679; Lapsed</span></td>
+                        <td style="font-weight: 700;" th:text="${lapsedPct + '%'}">0%</td>
+                        <td><div style="width: 100%; height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden;"><div th:style="'width:' + ${lapsedPct} + '%; height: 100%; background: linear-gradient(90deg, #D97706, #FCD34D); border-radius: 4px;'"></div></div></td>
+                        <td><span class="pill pill-amber">Win Back</span></td>
+                    </tr>
+                </tbody>
+            </table>
+            <!-- Lapsed segment explanation note -->
+            <div th:if="${dto.loyalty.lapsedCardCount != null and dto.loyalty.lapsedCardCount > 0}"
+                 style="padding: 4px 10px 6px; font-size: 7.5px; color: #9CA3AF; border-top: 1px solid #F3F4F6; font-style: italic;">
+                Lapsed = cards seen in prior months but not transacted this month. Count: <span th:text="${dto.loyalty.lapsedCardCount}">0</span> cards.
+            </div>
+        </div>
+        </th:block>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.customerInsight != null ? dto.insights.customerInsight : 'Your customer data gives a view of repeat card holder patterns. Engaging with first-time visitors and understanding what brings customers back is often a useful starting point.'}"></span>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

@@ -1,240 +1,1196 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit2, Trash, X, Check, Shield, Power } from 'lucide-react';
-import '../UserManagement.css';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Plus, Edit2, X, Unlock, KeyRound, User as UserIcon,
+  Eye, EyeOff, Building2, Trash2, Star, Globe, Clock,
+  CheckCircle, XCircle, Users, Inbox, Download, ShieldCheck, Check,
+} from 'lucide-react';
+import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
+import { showToast } from '../contexts/ToastContext';
+import {
+  Page, Stack, Card, Button, Badge, StatusBadge, Alert, Tabs, DataTable, Modal,
+  FormField, FormGrid, Input, Textarea, Select, Checkbox, Switch, useConfirm,
+} from '../components/ui';
 
-const MOCK_ENTITIES = [];
+/**
+ * Users & access.
+ *
+ * Renders as the /users route and as the "Users & Access" panel inside
+ * SettingsHub. Two concerns:
+ *   1. Users — CRUD, activation, account expiry, password reset, unlock and
+ *      per-user tenant access grants.
+ *   2. Access requests — approve (creates the user) or reject SSO sign-in
+ *      requests.
+ *
+ * Tenant and group option lists come straight from the tenant-scoped
+ * /banks and /admin/rbac/groups endpoints. The server is the authority on what
+ * the caller may grant; nothing here widens those lists.
+ */
 
-const UserManagement = () => {
-    const [users, setUsers] = useState([]);
-    const [banks, setBanks] = useState([]);
-    const [groups, setGroups] = useState([]); // New state for Groups
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    // Updated default state to include sysUserGroup
-    const [currentUser, setCurrentUser] = useState({ username: '', sysUserGroup: null, active: true, password: '', id: null });
-    const [selectedBankId, setSelectedBankId] = useState(null);
-    const [selectedGroupId, setSelectedGroupId] = useState(''); // Local state for Select
+const PAGE_SIZE = 25;
 
-    useEffect(() => {
-        fetchUsers();
-        fetchBanks();
-        fetchGroups(); // Fetch groups
-    }, []);
+/**
+ * Input with a trailing icon button (reveal / clear). Sits directly inside a
+ * FormField and forwards the id / aria-* / invalid props FormField injects
+ * down to the real <input>, so they never land on the positioning wrapper.
+ */
+const AffixField = ({ id, invalid, action, 'aria-describedby': describedBy, 'aria-invalid': ariaInvalid, ...inputProps }) => (
+  <div style={{ position: 'relative' }}>
+    <Input
+      id={id}
+      invalid={invalid}
+      aria-describedby={describedBy}
+      aria-invalid={ariaInvalid}
+      style={{ paddingRight: action ? 36 : undefined }}
+      {...inputProps}
+    />
+    {action}
+  </div>
+);
 
-    const fetchUsers = async () => {
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/users', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) setUsers(await res.json());
-        } catch (e) { console.error(e); }
-    };
+const affixButtonStyle = { position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)' };
 
-    const fetchBanks = async () => {
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/banks', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) setBanks(await res.json());
-        } catch (e) { console.error(e); }
-    };
+/**
+ * Titled section inside the user modal: icon + label eyebrow, hairline rule,
+ * then the fields. Gives the form a scannable Identity / Access / Security
+ * structure instead of one undifferentiated stack.
+ */
+const FormSection = ({ icon: Icon, title, action, children }) => (
+  <div>
+    <div className="ui-row ui-row--between" style={{ marginBottom: 10 }}>
+      <div className="ui-row" style={{ gap: 7 }}>
+        <Icon size={13} style={{ color: 'var(--brand)' }} />
+        <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+          {title}
+        </span>
+      </div>
+      {action}
+    </div>
+    <div className="ui-stack ui-stack--sm">{children}</div>
+  </div>
+);
 
-    const fetchGroups = async () => {
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8081/api/admin/rbac/groups', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) setGroups(await res.json());
-        } catch (e) { console.error(e); }
-    };
+const sectionDividerStyle = { height: 1, background: 'var(--border)', margin: '18px 0 16px', border: 'none' };
 
-    const openModal = (user = null) => {
-        if (user) {
-            setCurrentUser({ ...user, password: '' });
-            setSelectedGroupId(''); // Reset group selection as it's for new assignment
-            setSelectedBankId('');
-        } else {
-            setCurrentUser({ username: '', active: true, password: '', id: null });
-            setSelectedGroupId('');
-            setSelectedBankId('');
-        }
-        setIsModalOpen(true);
-    };
-
-    const handleSave = async (e) => {
-        e.preventDefault();
-        const method = currentUser.id ? 'PUT' : 'POST';
-        const url = currentUser.id ? `http://localhost:8081/api/users/${currentUser.id}` : 'http://localhost:8081/api/users';
-
-        // Prepare payload (User only)
-        const payload = {
-            ...currentUser,
-            // Group is not part of User anymore
-        };
-        delete payload.sysUserGroup;
-        delete payload.role;
-
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(url, {
-                method: method,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (res.ok) {
-                const savedUser = await res.json();
-
-                // Assign Tenant and Group if both selected
-                if (selectedBankId && selectedGroupId) {
-                    await fetch(`http://localhost:8081/api/users/${savedUser.id}/assign`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                        },
-                        body: JSON.stringify({
-                            bankId: selectedBankId,
-                            groupId: selectedGroupId
-                        })
-                    });
-                } else if (selectedBankId && !selectedGroupId) {
-                    alert("Please select a Group when assigning a Bank.");
-                }
-
-                fetchUsers();
-                setIsModalOpen(false);
-            }
-        } catch (error) { console.error(error); }
-    };
-
-    const handleToggleActive = async (user) => {
-        const updated = { ...user, active: !user.active };
-        try {
-            const token = localStorage.getItem('token');
-            await fetch(`http://localhost:8081/api/users/${user.id}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(updated)
-            });
-            fetchUsers();
-        } catch (error) { console.error(error); }
-    };
-
-    return (
-        <div className="page-container" style={{ padding: '40px', color: '#1e293b' }}>
-            <div className="header-row" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '30px' }}>
-                <h1 style={{ fontWeight: 'bold', fontSize: '24px' }}>User Management</h1>
-                <button className="primary-btn" onClick={() => openModal()} style={{ background: '#0f172a', color: 'white', padding: '10px 20px', borderRadius: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <Plus size={18} /> Add User
-                </button>
-            </div>
-
-            <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                        <tr>
-                            <th style={{ padding: '16px', textAlign: 'left', color: '#64748b' }}>Username</th>
-                            <th style={{ padding: '16px', textAlign: 'left', color: '#64748b' }}>Group / Role</th>
-                            <th style={{ padding: '16px', textAlign: 'left', color: '#64748b' }}>Status</th>
-                            <th style={{ padding: '16px', textAlign: 'left', color: '#64748b' }}>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {users.map(user => (
-                            <tr key={user.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                <td style={{ padding: '16px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <div style={{ width: '32px', height: '32px', background: '#e2e8f0', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>
-                                            {user.username?.[0]?.toUpperCase()}
-                                        </div>
-                                        <span style={{ fontWeight: '500' }}>{user.username}</span>
-                                    </div>
-                                </td>
-                                <td style={{ padding: '16px' }}>
-                                    <span style={{ padding: '4px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: '600', background: '#f1f5f9', color: '#475569' }}>
-                                        {/* Groups are tenant specific now */}
-                                        Tenant Access
-                                    </span>
-                                </td>
-                                <td style={{ padding: '16px' }}>
-                                    <div
-                                        onClick={() => handleToggleActive(user)}
-                                        style={{
-                                            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
-                                            color: user.active ? '#10b981' : '#ef4444', fontWeight: '500', fontSize: '14px'
-                                        }}
-                                    >
-                                        <Power size={16} /> {user.active ? 'Active' : 'Inactive'}
-                                    </div>
-                                </td>
-                                <td style={{ padding: '16px' }}>
-                                    <button onClick={() => openModal(user)} style={{ marginRight: '10px', color: '#3b82f6', background: 'transparent', border: 'none', cursor: 'pointer' }}><Edit2 size={18} /></button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-
-            <AnimatePresence>
-                {isModalOpen && (
-                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 50 }}>
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            style={{ background: 'white', padding: '30px', borderRadius: '16px', width: '100%', maxWidth: '450px' }}
-                        >
-                            <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '20px' }}>{currentUser.id ? 'Edit User' : 'New User'}</h2>
-                            <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                                <div>
-                                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Username</label>
-                                    <input value={currentUser.username} onChange={e => setCurrentUser({ ...currentUser, username: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} required disabled={!!currentUser.id} />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Password {currentUser.id && '(Leave empty to keep)'}</label>
-                                    <input type="password" value={currentUser.password} onChange={e => setCurrentUser({ ...currentUser, password: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Group</label>
-                                    <select value={selectedGroupId} onChange={e => setSelectedGroupId(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
-                                        <option value="">Select Group...</option>
-                                        {groups.map(g => (
-                                            <option key={g.id} value={g.id}>{g.groupName}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>Assign Bank (Tenant)</label>
-                                    <select onChange={e => setSelectedBankId(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
-                                        <option value="">Select Bank to Assign...</option>
-                                        {banks.map(b => (
-                                            <option key={b.tenantId} value={b.tenantId}>{b.bankName}</option>
-                                        ))}
-                                    </select>
-                                    {currentUser.id && <p style={{ fontSize: '0.8rem', color: 'gray', marginTop: '4px' }}>* Selecting a bank will add user to that tenant.</p>}
-                                </div>
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                                    <button type="button" onClick={() => setIsModalOpen(false)} style={{ padding: '10px 20px', borderRadius: '8px', background: '#f1f5f9', border: 'none', cursor: 'pointer' }}>Cancel</button>
-                                    <button type="submit" style={{ padding: '10px 20px', borderRadius: '8px', background: '#0f172a', color: 'white', border: 'none', cursor: 'pointer' }}>Save</button>
-                                </div>
-                            </form>
-                        </motion.div>
-                    </div>
-                )}
-            </AnimatePresence>
+/**
+ * Segmented password-strength meter: one segment per rule, a verdict label,
+ * and the rule checklist. Shared by the create-user and reset-password
+ * modals so strength always looks the same.
+ */
+const PasswordStrength = ({ checks }) => {
+  const ok = checks.filter(c => c.ok).length;
+  const level = ok === checks.length
+    ? { label: 'Strong', color: 'var(--success)' }
+    : ok >= 3
+      ? { label: 'Medium', color: 'var(--warning)' }
+      : { label: 'Weak', color: 'var(--danger)' };
+  return (
+    <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
+        <div style={{ display: 'flex', gap: 3, flex: 1 }}>
+          {checks.map((_, i) => (
+            <div key={i} style={{
+              flex: 1, height: 4, borderRadius: 2,
+              background: i < ok ? level.color : 'var(--border)',
+              transition: 'background 0.25s ease',
+            }} />
+          ))}
         </div>
-    );
+        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: level.color, minWidth: 46, textAlign: 'right' }}>
+          {level.label}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '3px 10px' }}>
+        {checks.map((c, i) => (
+          <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: c.ok ? 'var(--success)' : 'var(--text-muted)' }}>
+            {c.ok ? <Check size={11} /> : <X size={11} />} {c.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const UserManagement = ({ embedded = false }) => {
+  const { tenantVersion, username: currentUsername } = useAuth();
+  const confirm = useConfirm();
+
+  const [users, setUsers] = useState([]);
+  const [banks, setBanks] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('users'); // users | requests
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [exporting, setExporting] = useState(false);
+
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalUser, setModalUser] = useState(null);
+  const [formData, setFormData] = useState({ username: '', email: '', displayName: '', password: '', active: true, tenantAssignments: [{ tenantId: '', groupId: '', isDefault: true }] });
+  const [formErrors, setFormErrors] = useState({});
+  const [savingUser, setSavingUser] = useState(false);
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Tenant assignment state
+  const [accessUser, setAccessUser] = useState(null); // user whose grants are open
+  const [userAccesses, setUserAccesses] = useState([]);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [addingAccess, setAddingAccess] = useState(false);
+  const [newAccess, setNewAccess] = useState({ tenantId: '', groupId: '', isDefault: false });
+
+  // Reset password modal
+  const [resetModal, setResetModal] = useState(null);
+  const [resetPw, setResetPw] = useState('');
+  const [showResetPw, setShowResetPw] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  // Approve modal
+  const [approveModal, setApproveModal] = useState(null);
+  const [approveData, setApproveData] = useState({ tenantId: '', groupId: '', reviewNotes: '' });
+  const [approving, setApproving] = useState(false);
+
+  // Reject modal (replaces window.prompt)
+  const [rejectModal, setRejectModal] = useState(null);
+  const [rejectNotes, setRejectNotes] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Reset to page 1 whenever the result set changes (fixes empty-page bug)
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter, activeTab]);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [u, b, g, r] = await Promise.all([
+        api.get('/users/enriched'),
+        api.get('/banks'),
+        api.get('/admin/rbac/groups'),
+        api.get('/admin/access-requests').catch(() => ({ data: [] }))
+      ]);
+      setUsers(u.data); setBanks(b.data); setGroups(g.data); setRequests(r.data);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchAll(); }, [fetchAll, tenantVersion]);
+
+  // ─── Filter users ─────────────────────────────────────
+  const filteredUsers = users.filter(u => {
+    const q = searchQuery.toLowerCase();
+    const matchesSearch = !q || u.username?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.displayName?.toLowerCase().includes(q);
+    const matchesStatus = statusFilter === 'ALL'
+      || (statusFilter === 'ACTIVE' && u.active)
+      || (statusFilter === 'INACTIVE' && !u.active)
+      || (statusFilter === 'SSO' && u.ssoProvider)
+      || (statusFilter === 'PENDING' && u.approvalStatus === 'PENDING');
+    return matchesSearch && matchesStatus;
+  });
+
+  const pendingCount = requests.filter(r => r.status === 'PENDING').length;
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  // Clamp: the result set can shrink under the current page (a user is
+  // deactivated out of the filter, a refetch returns fewer rows) and the page
+  // would render empty with no way back except changing the filter.
+  const safePage = Math.min(currentPage, totalPages);
+  // DataTable only sorts — filtering and paging stay here.
+  const pagedUsers = filteredUsers.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const isFiltered = !!searchQuery || statusFilter !== 'ALL';
+
+  // ─── Export users (server-side CSV, tenant-scoped) ─────
+  // The backend applies the same tenant isolation as the list, so we don't
+  // build the CSV client-side (that would only cover the current page / the
+  // loaded set). We stream the file as a blob and trigger a download.
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const res = await api.get('/users/export/csv', { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      // Prefer the server's filename from Content-Disposition; fall back to a dated default.
+      const cd = res.headers?.['content-disposition'] || '';
+      const match = /filename="?([^"]+)"?/.exec(cd);
+      const filename = match ? match[1] : `users-${new Date().toISOString().slice(0, 10)}.csv`;
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      a.remove(); window.URL.revokeObjectURL(url);
+    } catch (e) {
+      showToast(e.response?.data?.error || 'Failed to export users', 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // ─── User CRUD ─────────────────────────────────────────
+  const openCreateModal = () => {
+    setModalUser(null);
+    // If the admin only has one tenant available (typical for a bank admin now
+    // that /banks is tenant-scoped), pre-select it so they don't have to.
+    const onlyTenantId = banks.length === 1 ? String(banks[0].tenantId) : '';
+    setFormData({ username: '', email: '', displayName: '', password: '', active: true, accountExpiresAt: '', tenantAssignments: [{ tenantId: onlyTenantId, groupId: '', isDefault: true }] });
+    setFormErrors({});
+    setShowPassword(false);
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (user) => {
+    setModalUser(user);
+    setFormData({ username: user.username, email: user.email || '', displayName: user.displayName || '', password: '', active: user.active, accountExpiresAt: toLocalInput(user.accountExpiresAt) });
+    setFormErrors({});
+    setShowPassword(false);
+    setIsModalOpen(true);
+  };
+
+  const handleSaveUser = async (e) => {
+    e?.preventDefault();
+    const errors = {};
+    if (!formData.username?.trim()) errors.username = 'Required';
+    // Email is optional; only validate format when something was entered.
+    if (formData.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) errors.email = 'Invalid email';
+    if (!modalUser && !formData.password?.trim()) errors.password = 'Required for new user';
+    // Pre-validate strength so the user sees the problem next to the badges
+    // instead of a server rejection after submit.
+    else if (!modalUser && !pwChecks.every(c => c.ok)) errors.password = 'Password does not meet all requirements';
+    if (!modalUser) {
+      const validAssignments = (formData.tenantAssignments || []).filter(a => a.tenantId && a.groupId);
+      if (validAssignments.length === 0) errors.tenants = 'At least one tenant assignment is required';
+    }
+    setFormErrors(errors);
+    if (Object.keys(errors).length) return;
+
+    setSavingUser(true);
+    try {
+      // The backend column is a zone-less LocalDateTime compared against the
+      // server clock, so send the wall-clock value the picker produced
+      // ("2026-08-05T14:00") as-is. Converting with toISOString() shifted it by
+      // the browser's UTC offset, so a saved expiry came back displayed — and
+      // enforced — hours away from what the admin typed. Blank → null (no expiry).
+      const payloadExpiry = formData.accountExpiresAt || null;
+      if (modalUser) {
+        await api.put(`/users/${modalUser.id}`, { ...formData, id: modalUser.id, accountExpiresAt: payloadExpiry });
+        showToast('User updated', 'success');
+      } else {
+        // Create user then assign all selected tenants.
+        const res = await api.post('/users', { ...formData, accountExpiresAt: payloadExpiry });
+        const newUserId = res.data?.id;
+        const validAssignments = (formData.tenantAssignments || []).filter(a => a.tenantId && a.groupId);
+        let assignedOk = 0;
+        const failed = [];
+        if (newUserId) {
+          for (const assignment of validAssignments) {
+            try {
+              await api.post(`/users/${newUserId}/tenant-access`, {
+                tenantId: assignment.tenantId,
+                groupId: assignment.groupId,
+                isDefault: assignment.isDefault || false
+              });
+              assignedOk++;
+            } catch (te) {
+              // Tenant-isolation: the server rejects assigning a tenant the
+              // caller doesn't administer. Surface it instead of silently
+              // leaving an orphaned (tenant-less, invisible) user.
+              const bank = banks.find(b => String(b.tenantId) === String(assignment.tenantId));
+              failed.push(bank?.bankName || `tenant ${assignment.tenantId}`);
+            }
+          }
+        }
+
+        if (validAssignments.length > 0 && assignedOk === 0) {
+          // Every assignment failed → the user exists but has no tenant access
+          // and won't appear in a bank admin's scoped list. Tell the truth.
+          showToast(`User created, but tenant assignment failed: ${failed.join(', ')}. ` +
+                    `You may not have permission to assign those tenants.`, 'error');
+        } else if (failed.length > 0) {
+          showToast(`User created. Some tenant assignments failed: ${failed.join(', ')}.`, 'error');
+        } else {
+          showToast('User created', 'success');
+        }
+      }
+      setIsModalOpen(false);
+      fetchAll();
+    } catch (e) {
+      setFormErrors({ _: e.response?.data?.error || 'Failed to save' });
+    } finally {
+      setSavingUser(false);
+    }
+  };
+
+  // Focused payload (no longer spreads tenants/role into the PUT)
+  const doToggleActive = async (user) => {
+    try {
+      await api.put(`/users/${user.id}`, {
+        id: user.id, username: user.username, email: user.email,
+        displayName: user.displayName, active: !user.active, password: ''
+        // accountExpiresAt is deliberately omitted: the controller now applies
+        // only the fields actually present in the payload, so an activate /
+        // deactivate leaves the stored expiry untouched.
+      });
+      showToast(user.active ? 'User deactivated' : 'User activated', 'success');
+      fetchAll();
+    } catch (e) { showToast(e.response?.data?.error || 'Failed to update status', 'error'); }
+  };
+
+  const requestToggleActive = async (user) => {
+    const who = user.displayName || user.username;
+    const ok = await confirm({
+      title: user.active ? 'Deactivate user' : 'Activate user',
+      message: user.active
+        ? `${who} will be unable to sign in until reactivated.`
+        : `${who} will be able to sign in again.`,
+      confirmLabel: user.active ? 'Deactivate' : 'Activate',
+      tone: user.active ? 'danger' : 'info',
+    });
+    if (!ok) return;
+    doToggleActive(user);
+  };
+
+  // ─── Tenant Access ─────────────────────────────────────
+  const openAccessPanel = async (user) => {
+    setAccessUser(user);
+    setNewAccess({ tenantId: '', groupId: '', isDefault: false });
+    setUserAccesses([]);
+    setAccessLoading(true);
+    try {
+      const res = await api.get(`/users/${user.id}/tenant-access`);
+      setUserAccesses(res.data);
+    } catch (e) {
+      console.error(e);
+      showToast('Failed to load tenant access', 'error');
+    } finally {
+      setAccessLoading(false);
+    }
+  };
+
+  const addTenantAccess = async (userId) => {
+    if (!newAccess.tenantId || !newAccess.groupId) return;
+    setAddingAccess(true);
+    try {
+      await api.post(`/users/${userId}/tenant-access`, newAccess);
+      showToast('Tenant access added', 'success');
+      const res = await api.get(`/users/${userId}/tenant-access`);
+      setUserAccesses(res.data);
+      setNewAccess({ tenantId: '', groupId: '', isDefault: false });
+      fetchAll();
+    } catch (e) { showToast(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setAddingAccess(false); }
+  };
+
+  const doRemoveTenantAccess = async (userId, accessId) => {
+    try {
+      await api.delete(`/users/${userId}/tenant-access/${accessId}`);
+      const res = await api.get(`/users/${userId}/tenant-access`);
+      setUserAccesses(res.data);
+      fetchAll();
+    } catch (e) { showToast(e.response?.data?.error || 'Failed to remove access', 'error'); }
+  };
+
+  const requestRemoveTenantAccess = async (userId, accessId, tenantName) => {
+    const ok = await confirm({
+      title: 'Remove tenant access',
+      message: `Remove access to ${tenantName || 'this tenant'}? The user will lose visibility of its data.`,
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    doRemoveTenantAccess(userId, accessId);
+  };
+
+  // ─── Password Reset ────────────────────────────────────
+  const handleResetPassword = async (e) => {
+    e?.preventDefault();
+    if (!resetPwValid) return;
+    setResetting(true);
+    try {
+      await api.post(`/users/${resetModal.id}/reset-password`, { newPassword: resetPw });
+      showToast('Password reset', 'success');
+      setResetModal(null); setResetPw('');
+      // A reset sets must_change_password and clears any lockout, so the row's
+      // badges are now stale — reload rather than leave the table lying.
+      fetchAll();
+    } catch (e) { showToast(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setResetting(false); }
+  };
+
+  const handleUnlock = async (user) => {
+    try {
+      await api.post(`/users/${user.id}/unlock`);
+      showToast('Account unlocked', 'success');
+      fetchAll();
+    } catch (e) {
+      // Was swallowed to the console: a failed unlock looked like nothing happened.
+      showToast(e.response?.data?.error || 'Failed to unlock account', 'error');
+    }
+  };
+
+  // ─── Access Requests ───────────────────────────────────
+  const handleApprove = async (e) => {
+    e?.preventDefault();
+    if (!approveData.tenantId || !approveData.groupId) { showToast('Select tenant and group', 'error'); return; }
+    // Approving provisions an account and grants tenant access — confirm first.
+    const bank = banks.find(b => String(b.tenantId) === String(approveData.tenantId));
+    const group = groups.find(g => String(g.groupId || g.id) === String(approveData.groupId));
+    const who = approveModal.displayName || approveModal.email;
+    const ok = await confirm({
+      title: 'Approve access request',
+      message: `${who} will get an account with ${group?.groupName || 'the selected group'} access to ${bank?.bankName || 'the selected tenant'}.`,
+      confirmLabel: 'Approve and create user',
+      tone: 'warning',
+    });
+    if (!ok) return;
+
+    setApproving(true);
+    try {
+      await api.post(`/admin/access-requests/${approveModal.requestId}/approve`, approveData);
+      showToast('Request approved, user created', 'success');
+      setApproveModal(null);
+      fetchAll();
+    } catch (e) { showToast(e.response?.data?.error || 'Failed', 'error'); }
+    finally { setApproving(false); }
+  };
+
+  const handleReject = async (e) => {
+    e?.preventDefault();
+    setRejecting(true);
+    try {
+      await api.post(`/admin/access-requests/${rejectModal.requestId}/reject`, { reviewNotes: rejectNotes || '' });
+      showToast('Request rejected', 'success');
+      setRejectModal(null); setRejectNotes('');
+      fetchAll();
+    } catch (e) { showToast(e.response?.data?.error || 'Failed to reject', 'error'); }
+    finally { setRejecting(false); }
+  };
+
+  const isSelf = (u) => !!currentUsername && u.username === currentUsername;
+  const isLocked = (u) => u.lockedUntil && new Date(u.lockedUntil) > new Date();
+  const isExpired = (u) => u.accountExpiresAt && new Date(u.accountExpiresAt) <= new Date();
+  // ISO/string → value for <input type="datetime-local"> (local time, no seconds/zone).
+  const toLocalInput = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  // ─── Password strength ─────────────────────────────────
+  // The "Special" set mirrors the backend policy exactly. The old check
+  // accepted ANY non-alphanumeric, so characters like ~ or € showed a green
+  // badge and were then rejected by the server.
+  const passwordChecks = (value) => [
+    { label: '8+ chars', ok: value.length >= 8 }, { label: 'Upper', ok: /[A-Z]/.test(value) },
+    { label: 'Lower', ok: /[a-z]/.test(value) }, { label: 'Number', ok: /[0-9]/.test(value) },
+    { label: 'Special', ok: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(value) },
+  ];
+  const pw = formData.password || '';
+  const pwChecks = passwordChecks(pw);
+  const resetChecks = passwordChecks(resetPw);
+  const resetPwValid = resetChecks.every(c => c.ok);
+
+  const tenantOptions = banks.map(b => ({ value: b.tenantId, label: b.bankName }));
+  const groupOptions = groups.map(g => ({ value: g.groupId || g.id, label: g.groupName }));
+
+  // ─── Column definitions ────────────────────────────────
+  const userColumns = [
+    {
+      key: 'displayName',
+      header: 'User',
+      sortable: true,
+      sortValue: u => u.displayName || u.username || '',
+      render: (user) => (
+        <div className="ui-row" style={{ gap: 10, flexWrap: 'nowrap', minWidth: 0 }}>
+          <div
+            aria-hidden="true"
+            style={{
+              width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 13, fontWeight: 700,
+              background: user.ssoProvider ? 'var(--brand-50)' : 'var(--bg-subtle)',
+              color: user.ssoProvider ? 'var(--brand)' : 'var(--text-secondary)',
+            }}
+          >
+            {user.ssoProvider ? <Globe size={15} /> : (user.username?.[0]?.toUpperCase() || '?')}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div className="ui-row" style={{ gap: 6 }}>
+              <strong>{user.displayName || user.username}</strong>
+              {user.ssoProvider && <Badge tone="brand">SSO</Badge>}
+              {user.mustChangePassword && !user.ssoProvider && <Badge tone="warning">Must change password</Badge>}
+              {isLocked(user) && <Badge tone="danger">Locked</Badge>}
+              {isExpired(user) && <Badge tone="danger">Expired</Badge>}
+              {!isExpired(user) && user.accountExpiresAt && (
+                <Badge tone="warning" icon={Clock} title={new Date(user.accountExpiresAt).toLocaleString()}>
+                  Expires {new Date(user.accountExpiresAt).toLocaleDateString()}
+                </Badge>
+              )}
+            </div>
+            <div className="ui-td--muted" style={{ fontSize: '0.76rem' }}>{user.email || user.username}</div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'tenants',
+      header: 'Tenants',
+      render: (user) => (
+        (user.tenants || []).length === 0
+          ? <span className="ui-td--muted">No tenant</span>
+          : (
+            <div className="ui-row" style={{ gap: 4 }}>
+              {(user.tenants || []).map((t, i) => (
+                <Badge key={i} tone="info" icon={Building2}>
+                  {t.tenantName?.substring(0, 15)}
+                  {t.isDefault && <Star size={9} fill="var(--warning)" color="var(--warning)" />}
+                </Badge>
+              ))}
+            </div>
+          )
+      ),
+    },
+    {
+      key: 'role',
+      header: 'Role',
+      sortable: true,
+      // Read-only. Roles are granted through group membership, not from here.
+      render: (user) => <Badge>{user.role?.replace('ROLE_', '') || 'USER'}</Badge>,
+    },
+    {
+      key: 'active',
+      header: 'Status',
+      sortable: true,
+      nowrap: true,
+      render: (user) => (
+        <Switch
+          checked={!!user.active}
+          onChange={() => requestToggleActive(user)}
+          // Deactivating yourself is rejected by the server; don't offer it.
+          disabled={isSelf(user)}
+          title={isSelf(user) ? 'You cannot deactivate your own account' : undefined}
+          label={user.active ? 'Active' : 'Inactive'}
+          aria-label={user.active ? `Deactivate ${user.username}` : `Activate ${user.username}`}
+        />
+      ),
+    },
+    {
+      key: '_actions',
+      header: '',
+      align: 'right',
+      nowrap: true,
+      render: (user) => (
+        <>
+          <Button
+            variant="ghost" size="sm" iconOnly icon={Building2}
+            onClick={() => openAccessPanel(user)}
+            aria-label={`Tenant access for ${user.username}`} title="Tenant access"
+          />
+          <Button
+            variant="ghost" size="sm" iconOnly icon={Edit2}
+            onClick={() => openEditModal(user)}
+            aria-label={`Edit ${user.username}`} title="Edit"
+          />
+          {/* GAP-14: Hide Reset PW for SSO-only users */}
+          {!user.ssoProvider && (
+            <Button
+              variant="ghost" size="sm" iconOnly icon={KeyRound}
+              onClick={() => { setResetModal(user); setResetPw(''); setShowResetPw(false); }}
+              aria-label={`Reset password for ${user.username}`} title="Reset password"
+            />
+          )}
+          {isLocked(user) && (
+            <Button
+              variant="danger-ghost" size="sm" iconOnly icon={Unlock}
+              onClick={() => handleUnlock(user)}
+              aria-label={`Unlock ${user.username}`} title="Unlock"
+            />
+          )}
+        </>
+      ),
+    },
+  ];
+
+  const requestColumns = [
+    {
+      key: 'displayName',
+      header: 'Requester',
+      sortable: true,
+      sortValue: r => r.displayName || r.email || '',
+      render: (r) => (
+        <div style={{ minWidth: 0 }}>
+          <div className="ui-row" style={{ gap: 6 }}>
+            <strong>{r.displayName || r.email}</strong>
+            {r.ssoProvider && <Badge tone="brand" icon={Globe}>{r.ssoProvider}</Badge>}
+          </div>
+          <div className="ui-td--muted" style={{ fontSize: '0.76rem' }}>{r.email}</div>
+        </div>
+      ),
+    },
+    { key: 'status', header: 'Status', sortable: true, render: (r) => <StatusBadge status={r.status} /> },
+    {
+      key: 'tenantName',
+      header: 'Requested tenant',
+      sortable: true,
+      muted: true,
+      render: (r) => r.tenantName || '—',
+    },
+    {
+      key: 'message',
+      header: 'Message',
+      muted: true,
+      render: (r) => (
+        <span style={{ display: 'block', maxWidth: 260, wordBreak: 'break-word' }}>
+          {r.message ? <em>&ldquo;{r.message}&rdquo;</em> : (r.reviewNotes ? `Note: ${r.reviewNotes}` : '—')}
+        </span>
+      ),
+    },
+    {
+      key: 'createdAt',
+      header: 'Submitted',
+      sortable: true,
+      nowrap: true,
+      muted: true,
+      render: (r) => (r.createdAt ? new Date(r.createdAt).toLocaleString() : '—'),
+    },
+    {
+      key: '_actions',
+      header: '',
+      align: 'right',
+      nowrap: true,
+      render: (r) => (
+        r.status === 'PENDING' ? (
+          <>
+            <Button
+              size="sm" variant="primary" icon={CheckCircle}
+              onClick={() => { setApproveModal(r); setApproveData({ tenantId: r.tenantId || '', groupId: '', reviewNotes: '' }); }}
+            >
+              Approve
+            </Button>
+            <Button
+              size="sm" variant="danger-ghost" icon={XCircle}
+              onClick={() => { setRejectModal(r); setRejectNotes(''); }}
+            >
+              Reject
+            </Button>
+          </>
+        ) : null
+      ),
+    },
+  ];
+
+  const accessColumns = [
+    { key: 'tenantName', header: 'Tenant', sortable: true },
+    {
+      key: 'groupName',
+      header: 'Group',
+      render: (a) => <Badge tone="success">{a.groupName || '—'}</Badge>,
+    },
+    {
+      key: 'isDefault',
+      header: 'Default',
+      render: (a) => (a.isDefault
+        ? <Star size={14} fill="var(--warning)" color="var(--warning)" aria-label="Default tenant" />
+        : <span className="ui-td--muted">—</span>),
+    },
+    {
+      key: '_actions',
+      header: '',
+      align: 'right',
+      width: 60,
+      render: (a) => (
+        <Button
+          variant="danger-ghost" size="sm" iconOnly icon={Trash2}
+          onClick={() => requestRemoveTenantAccess(accessUser.id, a.accessId, a.tenantName)}
+          aria-label={`Remove access to ${a.tenantName}`} title="Remove access"
+        />
+      ),
+    },
+  ];
+
+  const tabs = [
+    { key: 'users', label: 'Users', icon: UserIcon, count: users.length },
+    { key: 'requests', label: 'Access requests', icon: Clock, count: pendingCount },
+  ];
+
+  return (
+    <Page
+      flush={embedded}
+      title="Users and access"
+      subtitle="Users, tenant assignments, SSO access and approval requests."
+      icon={Users}
+      actions={
+        <Button variant="primary" icon={Plus} onClick={openCreateModal}>Create user</Button>
+      }
+    >
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+
+      {/* ═══════ USERS TAB ═══════ */}
+      {activeTab === 'users' && (
+        <Stack gap="sm">
+          <Card>
+            <DataTable
+              columns={userColumns}
+              rows={pagedUsers}
+              rowKey={u => u.id}
+              loading={loading}
+              search={{ value: searchQuery, onChange: setSearchQuery, placeholder: 'Search users' }}
+              toolbarLeft={
+                <Select
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value)}
+                  aria-label="Filter by status"
+                  style={{ width: 160 }}
+                  options={[
+                    { value: 'ALL', label: 'All users' },
+                    { value: 'ACTIVE', label: 'Active' },
+                    { value: 'INACTIVE', label: 'Inactive' },
+                    { value: 'SSO', label: 'SSO users' },
+                    { value: 'PENDING', label: 'Pending approval' },
+                  ]}
+                />
+              }
+              toolbarRight={
+                /* Download the full (tenant-scoped) user list as CSV — server-side so it
+                   covers every user, not just the loaded page. */
+                <Button
+                  icon={Download}
+                  onClick={handleExportCsv}
+                  disabled={exporting || loading}
+                  loading={exporting}
+                  title="Download users as CSV"
+                >
+                  {exporting ? 'Exporting' : 'Download'}
+                </Button>
+              }
+              empty={
+                <div style={{ padding: 'var(--space-3xl)', textAlign: 'center' }}>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 14 }}>
+                    {isFiltered
+                      ? 'No users match the current search or filter.'
+                      : 'No users yet. Create the first one to get started.'}
+                  </p>
+                  {isFiltered
+                    ? <Button variant="subtle" onClick={() => { setSearchQuery(''); setStatusFilter('ALL'); }}>Clear filters</Button>
+                    : <Button variant="subtle" icon={Plus} onClick={openCreateModal}>Create user</Button>}
+                </div>
+              }
+            />
+          </Card>
+
+          {/* GAP-20: Pagination — kept on the page, DataTable does not paginate. */}
+          {!loading && filteredUsers.length > PAGE_SIZE && (
+            <div className="ui-row" style={{ justifyContent: 'center' }}>
+              <Button size="sm" onClick={() => setCurrentPage(Math.max(1, safePage - 1))} disabled={safePage === 1}>
+                Previous
+              </Button>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                Page {safePage} of {totalPages} ({filteredUsers.length} users)
+              </span>
+              <Button size="sm" onClick={() => setCurrentPage(Math.min(totalPages, safePage + 1))} disabled={safePage >= totalPages}>
+                Next
+              </Button>
+            </div>
+          )}
+        </Stack>
+      )}
+
+      {/* ═══════ ACCESS REQUESTS TAB ═══════ */}
+      {activeTab === 'requests' && (
+        <Card>
+          <DataTable
+            columns={requestColumns}
+            rows={requests}
+            rowKey={r => r.requestId}
+            loading={loading}
+            defaultSort={{ key: 'createdAt', dir: 'desc' }}
+            empty={
+              <div style={{ padding: 'var(--space-3xl)', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                <Inbox size={22} style={{ color: 'var(--text-muted)' }} aria-hidden="true" />
+                <p style={{ marginTop: 10 }}>No access requests. Approval requests from SSO sign-ins appear here.</p>
+              </div>
+            }
+          />
+        </Card>
+      )}
+
+      {/* ═══════ CREATE / EDIT USER MODAL ═══════ */}
+      <Modal
+        as="form"
+        onSubmit={handleSaveUser}
+        open={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        size="lg"
+        title={modalUser ? 'Edit user' : 'Create user'}
+        subtitle={modalUser
+          ? `Editing ${modalUser.displayName || modalUser.username}`
+          : 'New users must change their password at first sign-in.'}
+        footer={
+          <>
+            <Button type="button" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={savingUser}>
+              {modalUser ? 'Save changes' : 'Create user'}
+            </Button>
+          </>
+        }
+      >
+        <div>
+          {formErrors._ && <div style={{ marginBottom: 14 }}><Alert tone="danger">{formErrors._}</Alert></div>}
+
+          {/* ── Identity ── */}
+          <FormSection icon={UserIcon} title="Identity">
+            <FormGrid cols={2}>
+              <FormField label="Username" required error={formErrors.username}>
+                <Input
+                  value={formData.username}
+                  disabled={!!modalUser}
+                  autoComplete="off"
+                  placeholder="e.g. j.haddad"
+                  onChange={e => setFormData({ ...formData, username: e.target.value })}
+                />
+              </FormField>
+              <FormField label="Display name">
+                <Input
+                  value={formData.displayName}
+                  onChange={e => setFormData({ ...formData, displayName: e.target.value })}
+                  placeholder="Optional"
+                />
+              </FormField>
+            </FormGrid>
+            <FormField label="Email" error={formErrors.email}>
+              <Input
+                type="email"
+                value={formData.email}
+                autoComplete="off"
+                onChange={e => setFormData({ ...formData, email: e.target.value })}
+                placeholder="name@bank.com (optional)"
+              />
+            </FormField>
+          </FormSection>
+
+          {/* ── Tenant access (create only) ── */}
+          {!modalUser && (
+            <>
+              <hr style={sectionDividerStyle} />
+              <FormSection
+                icon={Building2}
+                title="Tenant access"
+                action={
+                  <Button
+                    type="button" variant="ghost" size="sm" icon={Plus}
+                    onClick={() => setFormData({ ...formData, tenantAssignments: [...formData.tenantAssignments, { tenantId: '', groupId: '', isDefault: false }] })}
+                  >
+                    Add tenant
+                  </Button>
+                }
+              >
+                {formErrors.tenants && <Alert tone="danger">{formErrors.tenants}</Alert>}
+                {/* Column header row — labels once, not repeated per row. */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 64px 32px', gap: 8, padding: '0 2px' }}>
+                  <span className="ui-field__hint">Tenant</span>
+                  <span className="ui-field__hint">Group</span>
+                  <span className="ui-field__hint" style={{ textAlign: 'center' }}>Default</span>
+                  <span />
+                </div>
+                {formData.tenantAssignments.map((assignment, idx) => (
+                  <div
+                    key={idx}
+                    style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 64px 32px', gap: 8, alignItems: 'center' }}
+                  >
+                    <Select
+                      aria-label="Tenant"
+                      value={assignment.tenantId}
+                      onChange={e => {
+                        const updated = [...formData.tenantAssignments];
+                        updated[idx] = { ...updated[idx], tenantId: e.target.value };
+                        setFormData({ ...formData, tenantAssignments: updated });
+                      }}
+                      placeholder="Select tenant"
+                      options={banks
+                        .filter(b => !formData.tenantAssignments.some((a, i) => i !== idx && a.tenantId === String(b.tenantId)))
+                        .map(b => ({ value: b.tenantId, label: b.bankName }))}
+                    />
+                    <Select
+                      aria-label="Group"
+                      value={assignment.groupId}
+                      onChange={e => {
+                        const updated = [...formData.tenantAssignments];
+                        updated[idx] = { ...updated[idx], groupId: e.target.value };
+                        setFormData({ ...formData, tenantAssignments: updated });
+                      }}
+                      placeholder="Select group"
+                      options={groupOptions}
+                    />
+                    {/* Default-tenant picker: one star per row, radio semantics. */}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={assignment.isDefault}
+                      aria-label={`Make row ${idx + 1} the default tenant`}
+                      title={assignment.isDefault ? 'Default tenant' : 'Make default'}
+                      onClick={() => {
+                        const updated = formData.tenantAssignments.map((a, i) => ({ ...a, isDefault: i === idx }));
+                        setFormData({ ...formData, tenantAssignments: updated });
+                      }}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        display: 'flex', justifyContent: 'center', padding: 6,
+                      }}
+                    >
+                      <Star
+                        size={16}
+                        fill={assignment.isDefault ? 'var(--warning)' : 'none'}
+                        color={assignment.isDefault ? 'var(--warning)' : 'var(--text-muted)'}
+                      />
+                    </button>
+                    {formData.tenantAssignments.length > 1 ? (
+                      <Button
+                        type="button" variant="danger-ghost" size="sm" iconOnly icon={Trash2}
+                        aria-label="Remove tenant assignment"
+                        onClick={() => {
+                          const updated = formData.tenantAssignments.filter((_, i) => i !== idx);
+                          if (assignment.isDefault && updated.length > 0) updated[0].isDefault = true;
+                          setFormData({ ...formData, tenantAssignments: updated });
+                        }}
+                      />
+                    ) : <span />}
+                  </div>
+                ))}
+              </FormSection>
+            </>
+          )}
+
+          {/* ── Security ── */}
+          <hr style={sectionDividerStyle} />
+          <FormSection icon={ShieldCheck} title="Security">
+            {!modalUser && (
+              <FormField label="Temporary password" required error={formErrors.password}>
+                <AffixField
+                  type={showPassword ? 'text' : 'password'}
+                  value={formData.password}
+                  autoComplete="new-password"
+                  onChange={e => setFormData({ ...formData, password: e.target.value })}
+                  placeholder="Set a strong temporary password"
+                  action={
+                    <Button
+                      type="button" variant="ghost" size="sm" iconOnly
+                      icon={showPassword ? EyeOff : Eye}
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      style={affixButtonStyle}
+                    />
+                  }
+                />
+              </FormField>
+            )}
+
+            {/* Strength meter + checklist (replaces the old badge row). */}
+            {!modalUser && pw.length > 0 && <PasswordStrength checks={pwChecks} />}
+
+            <FormField
+              label="Account expiry"
+              hint="Optional — after this time the account is blocked and deactivated."
+            >
+              <AffixField
+                type="datetime-local"
+                value={formData.accountExpiresAt || ''}
+                onChange={e => setFormData({ ...formData, accountExpiresAt: e.target.value })}
+                action={formData.accountExpiresAt ? (
+                  <Button
+                    type="button" variant="ghost" size="sm" iconOnly icon={X}
+                    onClick={() => setFormData({ ...formData, accountExpiresAt: '' })}
+                    aria-label="Clear expiry" title="Clear expiry"
+                    style={affixButtonStyle}
+                  />
+                ) : null}
+              />
+            </FormField>
+          </FormSection>
+        </div>
+      </Modal>
+
+      {/* ═══════ TENANT ACCESS MODAL ═══════ */}
+      <Modal
+        open={!!accessUser}
+        onClose={() => setAccessUser(null)}
+        size="lg"
+        title="Tenant access"
+        subtitle={accessUser ? `Grants for ${accessUser.username}` : undefined}
+        footer={<Button onClick={() => setAccessUser(null)}>Close</Button>}
+      >
+        <div className="ui-stack ui-stack--sm">
+          <DataTable
+            columns={accessColumns}
+            rows={userAccesses}
+            rowKey={a => a.accessId}
+            loading={accessLoading}
+            compact
+            empty={
+              <div style={{ padding: 'var(--space-2xl)', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                No tenant access yet. Without a grant the user cannot see any data.
+              </div>
+            }
+          />
+
+          <div className="ui-row">
+            <Select
+              aria-label="Select tenant"
+              value={newAccess.tenantId}
+              onChange={e => setNewAccess({ ...newAccess, tenantId: e.target.value })}
+              placeholder="Select tenant"
+              options={tenantOptions}
+              style={{ minWidth: 170 }}
+            />
+            <Select
+              aria-label="Select group"
+              value={newAccess.groupId}
+              onChange={e => setNewAccess({ ...newAccess, groupId: e.target.value })}
+              placeholder="Select group"
+              options={groupOptions}
+              style={{ minWidth: 170 }}
+            />
+            <Checkbox
+              checked={newAccess.isDefault}
+              onChange={e => setNewAccess({ ...newAccess, isDefault: e.target.checked })}
+              label="Default"
+            />
+            <Button
+              variant="primary" size="sm" icon={Plus}
+              onClick={() => addTenantAccess(accessUser.id)}
+              disabled={!newAccess.tenantId || !newAccess.groupId}
+              loading={addingAccess}
+            >
+              Add
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ═══════ RESET PASSWORD MODAL ═══════ */}
+      <Modal
+        as="form"
+        onSubmit={handleResetPassword}
+        open={!!resetModal}
+        onClose={() => setResetModal(null)}
+        size="sm"
+        title="Reset password"
+        footer={
+          <>
+            <Button type="button" onClick={() => setResetModal(null)}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={!resetPwValid} loading={resetting}>Reset</Button>
+          </>
+        }
+      >
+        <div className="ui-stack ui-stack--sm">
+          <Alert tone="warning">
+            Setting a new password for <strong>{resetModal?.username}</strong>.
+          </Alert>
+          <FormField label="New password" required>
+            <AffixField
+              type={showResetPw ? 'text' : 'password'}
+              value={resetPw}
+              autoComplete="new-password"
+              onChange={e => setResetPw(e.target.value)}
+              placeholder="New password"
+              autoFocus
+              action={
+                <Button
+                  type="button" variant="ghost" size="sm" iconOnly
+                  icon={showResetPw ? EyeOff : Eye}
+                  onClick={() => setShowResetPw(!showResetPw)}
+                  aria-label={showResetPw ? 'Hide password' : 'Show password'}
+                  style={affixButtonStyle}
+                />
+              }
+            />
+          </FormField>
+          {resetPw.length > 0 && <PasswordStrength checks={resetChecks} />}
+        </div>
+      </Modal>
+
+      {/* ═══════ APPROVE REQUEST MODAL ═══════ */}
+      <Modal
+        as="form"
+        onSubmit={handleApprove}
+        open={!!approveModal}
+        onClose={() => setApproveModal(null)}
+        title="Approve access request"
+        subtitle="Approving creates the account and grants the selected access."
+        footer={
+          <>
+            <Button type="button" onClick={() => setApproveModal(null)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={approving}>Approve and create user</Button>
+          </>
+        }
+      >
+        <div className="ui-stack ui-stack--sm">
+          <Alert tone="info" title={approveModal?.displayName || approveModal?.email}>
+            {approveModal?.email}
+            {approveModal?.message && (
+              <div style={{ marginTop: 6, fontStyle: 'italic' }}>&ldquo;{approveModal.message}&rdquo;</div>
+            )}
+          </Alert>
+
+          <FormField label="Assign to tenant" required>
+            <Select
+              value={approveData.tenantId}
+              onChange={e => setApproveData({ ...approveData, tenantId: e.target.value })}
+              placeholder="Select tenant"
+              options={tenantOptions}
+            />
+          </FormField>
+          <FormField label="Assign group" required>
+            <Select
+              value={approveData.groupId}
+              onChange={e => setApproveData({ ...approveData, groupId: e.target.value })}
+              placeholder="Select group"
+              options={groupOptions}
+            />
+          </FormField>
+          <FormField label="Notes" hint="Optional.">
+            <Input
+              value={approveData.reviewNotes}
+              onChange={e => setApproveData({ ...approveData, reviewNotes: e.target.value })}
+              placeholder="Approval notes"
+            />
+          </FormField>
+        </div>
+      </Modal>
+
+      {/* ═══════ REJECT REQUEST MODAL ═══════ */}
+      <Modal
+        as="form"
+        onSubmit={handleReject}
+        open={!!rejectModal}
+        onClose={() => setRejectModal(null)}
+        size="sm"
+        title="Reject request"
+        footer={
+          <>
+            <Button type="button" onClick={() => setRejectModal(null)}>Cancel</Button>
+            <Button type="submit" variant="danger" loading={rejecting}>Reject</Button>
+          </>
+        }
+      >
+        <div className="ui-stack ui-stack--sm">
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
+            Rejecting the request from <strong style={{ color: 'var(--text)' }}>{rejectModal?.displayName || rejectModal?.email}</strong>.
+          </p>
+          <FormField label="Reason" hint="Optional.">
+            <Textarea
+              value={rejectNotes}
+              onChange={e => setRejectNotes(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Let the requester know why"
+            />
+          </FormField>
+        </div>
+      </Modal>
+    </Page>
+  );
 };
 
 export default UserManagement;

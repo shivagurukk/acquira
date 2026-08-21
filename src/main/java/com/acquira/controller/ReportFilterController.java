@@ -9,7 +9,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/reports/filters")
-@CrossOrigin(origins = "*")
 public class ReportFilterController {
 
     private final JdbcTemplate jdbcTemplate;

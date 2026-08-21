@@ -36,7 +36,54 @@
             </div>
         </div>
 
-        <!-- ROW 2: Charts -->
+        <!-- ROW 2: DCC CONVERSION FUNNEL -->
+        <div class="card mb-8" style="padding: 16px 20px;">
+            <div class="card-title" style="margin-bottom: 10px;"><span>DCC CONVERSION FUNNEL</span></div>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 0; padding: 4px 0;">
+                <div style="text-align: center; flex: 1;">
+                    <div style="background: linear-gradient(135deg, #1E3A8A, #2563EB); color: white; padding: 12px 8px; border-radius: 8px 0 0 8px; clip-path: polygon(0 0, 90% 0, 100% 50%, 90% 100%, 0 100%);">
+                        <div style="font-size: 7px; font-weight: 700; color: #93C5FD; text-transform: uppercase; letter-spacing: 0.05em;">Total Intl Txns</div>
+                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.totalIntlTxnCount != null ? #numbers.formatDecimal(dto.dccPerformance.totalIntlTxnCount, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
+                        <div style="font-size: 7px; color: #93C5FD; margin-top: 1px;" th:text="${dto.dccPerformance.totalIntlVolume != null ? 'AED ' + #numbers.formatDecimal(dto.dccPerformance.totalIntlVolume, 1, 'COMMA', 0, 'POINT') : 'AED 0'}">AED 0</div>
+                    </div>
+                </div>
+                <div style="font-size: 14px; color: #CBD5E1; margin: 0 -6px; z-index: 1;">&#9654;</div>
+                <div style="text-align: center; flex: 1;">
+                    <div style="background: linear-gradient(135deg, #2563EB, #3B82F6); color: white; padding: 12px 8px; clip-path: polygon(0 10%, 10% 0, 90% 0, 100% 50%, 90% 100%, 10% 100%, 0 90%);">
+                        <div style="font-size: 7px; font-weight: 700; color: #BFDBFE; text-transform: uppercase; letter-spacing: 0.05em;">DCC Eligible</div>
+                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccEligibleCount != null ? #numbers.formatDecimal(dto.dccPerformance.dccEligibleCount, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
+                        <div style="font-size: 7px; color: #BFDBFE; margin-top: 1px;" th:text="${dto.dccPerformance.dccEligibleVolume != null ? 'AED ' + #numbers.formatDecimal(dto.dccPerformance.dccEligibleVolume, 1, 'COMMA', 0, 'POINT') : 'AED 0'}">AED 0</div>
+                    </div>
+                </div>
+                <div style="font-size: 14px; color: #CBD5E1; margin: 0 -6px; z-index: 1;">&#9654;</div>
+                <div style="text-align: center; flex: 1;">
+                    <div style="background: linear-gradient(135deg, #047857, #059669); color: white; padding: 12px 8px; clip-path: polygon(0 10%, 10% 0, 90% 0, 100% 50%, 90% 100%, 10% 100%, 0 90%);">
+                        <div style="font-size: 7px; font-weight: 700; color: #6EE7B7; text-transform: uppercase; letter-spacing: 0.05em;">Opted In</div>
+                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccOptinCountLong != null ? #numbers.formatDecimal(dto.dccPerformance.dccOptinCountLong, 1, 'COMMA', 0, 'POINT') : '0'}">0</div>
+                        <div style="font-size: 7px; color: #6EE7B7; margin-top: 1px;" th:text="${dto.dccPerformance.dccOptinVolume != null ? 'AED ' + #numbers.formatDecimal(dto.dccPerformance.dccOptinVolume, 1, 'COMMA', 0, 'POINT') : 'AED 0'}">AED 0</div>
+                    </div>
+                </div>
+                <div style="font-size: 14px; color: #CBD5E1; margin: 0 -6px; z-index: 1;">&#9654;</div>
+                <div style="text-align: center; flex: 1;">
+                    <div style="background: linear-gradient(135deg, #C9A962, #D4B878); color: white; padding: 12px 8px; border-radius: 0 8px 8px 0; clip-path: polygon(0 10%, 10% 0, 100% 0, 100% 100%, 10% 100%, 0 90%);">
+                        <div style="font-size: 7px; font-weight: 700; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.05em;">Revenue Earned</div>
+                        <div style="font-size: 20px; font-weight: 900; margin-top: 2px;" th:text="${dto.dccPerformance.dccRevenueGenerated != null ? 'AED ' + #numbers.formatDecimal(dto.dccPerformance.dccRevenueGenerated, 1, 'COMMA', 0, 'POINT') : 'AED 0'}">AED 0</div>
+                        <div style="font-size: 7px; color: rgba(255,255,255,0.7); margin-top: 1px;">~3.5% DCC margin</div>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 8px; padding: 6px 0;">
+                <div style="display: flex; justify-content: space-between; font-size: 7.5px; color: #6B7280; margin-bottom: 3px;">
+                    <span>Funnel Conversion</span>
+                    <span style="font-weight: 800; color: #1E3A8A;" th:text="${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate + '%' : '0%'}">0%</span>
+                </div>
+                <div style="width: 100%; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden;">
+                    <div th:style="'width:' + ${dto.dccPerformance.dccConversionRate != null ? dto.dccPerformance.dccConversionRate : 0} + '%; height: 100%; background: linear-gradient(90deg, #1E3A8A, #059669, #C9A962); border-radius: 4px;'"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 3: Charts -->
         <div class="card mb-8" style="flex: 1; min-height: 0;">
             <div class="card-title"><span>DCC MISSED OPPORTUNITY TREND</span></div>
             <div class="chart-container"><canvas data-chart="gradient-bar" data-field="dccPerformance.missedOpportunityTrend" data-color="#1E3A8A"></canvas></div>
@@ -46,13 +93,13 @@
             <div class="card-title"><span>OPT-IN vs OPT-OUT TREND</span>
                 <div style="display: flex; gap: 12px; font-size: 7.5px; align-items: center;">
                     <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #1E3A8A; border-radius: 2px;"></span> Opt-Out</span>
-                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #B45309; border-radius: 2px;"></span> Opt-In</span>
+                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #0D9488; border-radius: 2px;"></span> Opt-In</span>
                 </div>
             </div>
-            <div class="chart-container"><canvas data-chart="dual-axis" data-field="dccPerformance.optOutOptInTrend" data-color="#1E3A8A" data-color2="#B45309"></canvas></div>
+            <div class="chart-container"><canvas data-chart="dual-axis" data-field="dccPerformance.optOutOptInTrend" data-color="#1E3A8A" data-color2="#0D9488"></canvas></div>
         </div>
 
-        <!-- ROW 3: Recovery Roadmap -->
+        <!-- Recovery Roadmap -->
         <div class="card mb-8" style="padding: 0; overflow: hidden;">
             <div style="padding: 8px 14px; background: linear-gradient(135deg, #F8FAFF 0%, #EFF6FF 100%); border-bottom: 1px solid #E5E7EB;">
                 <div style="font-size: 8px; font-weight: 800; color: #1E3A8A; letter-spacing: 0.06em; text-transform: uppercase;">RECOVERY ROADMAP</div>

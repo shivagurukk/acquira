@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+    <div th:fragment="paymentContent">
+
+        <div class="section-subtitle" th:text="'Payment breakdown for ' + ${reportPeriod}" style="margin-bottom: 10px;">Payment breakdown</div>
+
+        <!-- ROW 1: 3 KPI Cards with icons — dynamic from DTO -->
+        <div class="grid-3 mb-8">
+            <div class="card" style="flex-direction: row; align-items: center; gap: 10px; padding: 12px; border-top: 4px solid #059669;">
+                <div class="icon-circle icon-circle-green" style="width: 32px; height: 32px;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+                </div>
+                <div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700;">CONTACTLESS / WALLET</div>
+                    <div style="font-size: 18px; font-weight: 900; color: #111827;" th:text="${dto.demographics.walletUsagePct != null ? dto.demographics.walletUsagePct + '%' : '-'}">-</div>
+                </div>
+            </div>
+            <div class="card" style="flex-direction: row; align-items: center; gap: 10px; padding: 12px; border-top: 4px solid #D97706;">
+                <div class="icon-circle icon-circle-amber" style="width: 32px; height: 32px;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
+                </div>
+                <div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700;">CREDIT / DEBIT</div>
+                    <div style="font-size: 18px; font-weight: 900; color: #111827;" th:text="${dto.demographics.creditDebitRatio != null ? dto.demographics.creditDebitRatio : '-'}">-</div>
+                </div>
+            </div>
+            <div class="card" style="flex-direction: row; align-items: center; gap: 10px; padding: 12px; border-top: 4px solid #2563EB;">
+                <div class="icon-circle icon-circle-blue" style="width: 32px; height: 32px;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </div>
+                <div>
+                    <div style="font-size: 8px; color: #4B5563; font-weight: 700;">LOCAL / INTERNATIONAL</div>
+                    <div style="font-size: 18px; font-weight: 900; color: #111827;" th:text="${dto.demographics.localCardPct != null ? dto.demographics.localCardPct + ' / ' + dto.demographics.internationalCardPct : '-'}">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROW 2: Card Schemes + Card Types (horizontal bars) -->
+        <div class="grid-2 mb-8" style="min-height: 120px;">
+            <div class="card" style="padding: 12px;">
+                <div class="card-title">CARD SCHEMES (BY VALUE)</div>
+                <div id="payment-card-schemes" style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
+            </div>
+            <div class="card" style="padding: 12px;">
+                <div class="card-title">CARD TYPES (BY VALUE)</div>
+                <div id="payment-card-types" style="flex: 1; display: flex; flex-direction: column; justify-content: center;"></div>
+            </div>
+        </div>
+
+        <!-- ROW 4: Transaction Value Bands chart — FILLS remaining space -->
+        <div class="card mb-8" style="flex: 1; min-height: 0;">
+            <div class="card-title">TRANSACTION VALUE DISTRIBUTION</div>
+            <div class="chart-container"><canvas data-chart="gradient-bar" data-field="demographics.txnValueBands" data-color="#6D28D9"></canvas></div>
+        </div>
+
+        <!-- ROW 5: Monetization + Optimization signals -->
+        <div class="grid-2 mb-8">
+            <div class="action-strip-item opportunity" style="padding: 10px 12px;">
+                <div class="strip-label">&#9650; MONETIZATION SIGNAL</div>
+                <div class="strip-text"><span th:text="${dto.insights != null and dto.insights.cardInsight != null ? dto.insights.cardInsight : 'Your payment mix shows a breakdown of how customers prefer to pay. This may be useful context for terminal configuration or promotional planning.'}"></span></div>
+            </div>
+            <div class="action-strip-item action" style="padding: 10px 12px;">
+                <div class="strip-label">&#9654; PAYMENT OPTIMIZATION</div>
+                <div class="strip-text"><span th:text="${dto.insights != null and dto.insights.cardTip != null ? dto.insights.cardTip : 'Reviewing whether your current terminal configuration supports all common payment methods may be worthwhile.'}"></span></div>
+            </div>
+        </div>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+            <div class="ai-insight-icon">&#9733;</div>
+            <div class="ai-insight-text">
+                <strong>Insight:</strong> <span th:text="${dto.insights != null and dto.insights.cardInsight != null ? dto.insights.cardInsight : 'The payment data gives a useful view of how your customers are paying. Reviewing the domestic vs international split may help identify any DCC opportunities.'}"></span>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>
