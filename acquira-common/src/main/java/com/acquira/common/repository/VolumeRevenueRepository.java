@@ -2629,7 +2629,13 @@ public class VolumeRevenueRepository {
         sql.append("SELECT s.business_date, ");
         sql.append("  COALESCE(SUM(s.total_volume), 0), ");
         sql.append("  COALESCE(SUM(s.total_txns), 0), ");
-        sql.append("  COALESCE(SUM(s.total_net_revenue), 0) ");
+        sql.append("  COALESCE(SUM(s.total_net_revenue), 0), ");
+        // Fee stack per day — the KPI tiles draw a sparkline and a
+        // period-over-period delta for every headline figure, not just volume.
+        sql.append("  COALESCE(SUM(s.total_msf), 0), ");
+        sql.append("  COALESCE(SUM(s.total_interchange), 0), ");
+        sql.append("  COALESCE(SUM(s.total_scheme_fee), 0), ");
+        sql.append("  COALESCE(SUM(s.total_ecom_fee), 0) ");
         appendDailyMerchantFromWhere(sql, filter, search, null, monthStart);
         sql.append("GROUP BY s.business_date ORDER BY s.business_date");
 
@@ -2646,6 +2652,10 @@ public class VolumeRevenueRepository {
             m.put("volume", r[1]);
             m.put("count", r[2]);
             m.put("nm", r[3]);
+            m.put("msf", r[4]);
+            m.put("icf", r[5]);
+            m.put("sf", r[6]);
+            m.put("pg", r[7]);
             out.add(m);
         }
         return out;

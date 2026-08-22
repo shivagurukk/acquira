@@ -8,7 +8,6 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { cachedGet } from '../../api/apiCache';
 import EmptyState from '../../components/EmptyState';
-import SkeletonLoader from '../../components/SkeletonLoader';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
 import { createFmt, formatMsf, resolveDecimals } from '../../utils/formatters';
@@ -71,6 +70,9 @@ const FEE_LABELS = {
 };
 
 const PAGE_SIZES = [25, 50, 100];
+
+/* Cost of sale for one trend day — the three pay-away fees. */
+const costOf = (t) => num(t.icf) + num(t.sf) + num(t.pg);
 
 const EMPTY_FILTERS = () => ({
     mccList: [], destinationList: [], cardTypeList: [], schemeList: [], rmList: [],
@@ -282,30 +284,136 @@ const FilterSelect = ({ label, options, selected, onChange }) => {
 };
 
 /* ── Metric: micro-label, mono value, one line of context ── */
-const Metric = ({ label, value, sub, tone, title, wide = false }) => (
-    <div title={title} style={{ padding: wide ? '15px 20px' : '13px 18px', minWidth: 0 }}>
-        <div className="edm-eyebrow">{label}</div>
-        <div style={{
-            marginTop: 7, fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
-            fontSize: wide ? 23 : 18, fontWeight: 600, letterSpacing: '-0.02em',
-            color: tone === 'danger' ? 'var(--danger-text)'
-                : tone === 'success' ? 'var(--success-text)' : 'var(--text)',
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}>
-            {value}
-        </div>
-        {sub && (
-            <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                {sub}
+/* ── Motion ──────────────────────────────────────────────────────────
+   Every animation on this page is decorative: it tells you WHAT changed
+   (a figure rolling to its new value, a bar growing to its new share)
+   without ever moving layout. All of it is switched off under
+   prefers-reduced-motion, both here and in the stylesheet. ── */
+const REDUCED_MOTION = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false;
+
+/* Count-up: the displayed number rolls from the previous value to the new
+   one over ~650ms with an ease-out, so a selection change reads as a
+   movement rather than a swap. A non-finite target (no data) shows as-is. */
+const useCountUp = (target, duration = 650) => {
+    const [shown, setShown] = useState(target);
+    const shownRef = useRef(target);
+    useEffect(() => {
+        const from = shownRef.current;
+        if (REDUCED_MOTION || typeof requestAnimationFrame !== 'function'
+            || !Number.isFinite(target) || !Number.isFinite(from)) {
+            shownRef.current = target; setShown(target); return undefined;
+        }
+        const delta = target - from;
+        if (delta === 0) return undefined;
+        let raf;
+        const t0 = performance.now();
+        const tick = (now) => {
+            const p = Math.min((now - t0) / duration, 1);
+            const eased = 1 - Math.pow(1 - p, 3);
+            const v = p >= 1 ? target : from + delta * eased;
+            shownRef.current = v;
+            setShown(v);
+            if (p < 1) raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, [target, duration]);
+    return shown;
+};
+
+/* Sparkline: the metric across the month's loaded days. Drawn with
+   pathLength=1 so the stroke can "write itself" in CSS on mount. */
+const Sparkline = ({ series, color = 'var(--cat-1)', width = 84, height = 26, animKey }) => {
+    const pts = (series || []).filter(v => Number.isFinite(v));
+    if (pts.length < 2) return null;
+    const lo = Math.min(...pts, 0), hi = Math.max(...pts, 0);
+    const span = (hi - lo) || 1;
+    const x = (i) => (i / (pts.length - 1)) * width;
+    const y = (v) => height - 2 - ((v - lo) / span) * (height - 4);
+    const d = pts.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    const area = `${d} L${width.toFixed(1)},${height} L0,${height} Z`;
+    const last = pts.length - 1;
+    return (
+        <svg key={animKey} className="edm-spark" width={width} height={height}
+            viewBox={`0 0 ${width} ${height}`} aria-hidden="true" focusable="false">
+            <path d={area} fill={color} className="edm-spark-area" />
+            <path d={d} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round"
+                strokeLinecap="round" pathLength="1" className="edm-spark-line" />
+            <circle cx={x(last)} cy={y(pts[last])} r="2.2" fill={color} className="edm-spark-dot" />
+        </svg>
+    );
+};
+
+/* Delta chip: ▲ 4.2% / ▼ 1.8% against a stated baseline. `invert` flips the
+   colouring for figures where up is bad (cost of sale). */
+const DeltaChip = ({ pct, label, invert = false }) => {
+    if (pct == null || !Number.isFinite(pct)) return null;
+    const up = pct >= 0;
+    const flat = Math.abs(pct) < 0.05;
+    const good = invert ? !up : up;
+    const tone = flat ? 'flat' : good ? 'good' : 'bad';
+    const capped = Math.min(Math.abs(pct), 999);
+    return (
+        <span className={`edm-delta edm-delta-${tone}`} title={`${up ? '+' : '−'}${capped.toFixed(1)}% ${label}`}>
+            <span aria-hidden="true">{flat ? '•' : up ? '▲' : '▼'}</span>
+            {capped.toFixed(1)}%
+            <span className="edm-delta-lbl">{label}</span>
+        </span>
+    );
+};
+
+/* KPI tile. `raw` + `format` gives a count-up figure; `value` is a
+   pre-formatted fallback for text-only tiles. `hero` promotes the tile to
+   the headline treatment (bigger numeral, accent rule, tinted ground). */
+const Metric = ({
+    label, value, raw, format, sub, tone, title, wide = false, hero = false,
+    delta, deltaLabel, invertDelta = false, series, sparkColor, animKey,
+}) => {
+    const animated = useCountUp(Number.isFinite(raw) ? raw : null);
+    const text = Number.isFinite(raw) && format ? format(animated) : value;
+    const colour = tone === 'danger' ? 'var(--danger-text)'
+        : tone === 'success' ? 'var(--success-text)' : 'var(--text)';
+    return (
+        <div title={title}
+            className={`edm-tile${hero ? ' edm-tile-hero' : ''}${hero && tone ? ` edm-tile-${tone}` : ''}`}
+            style={{ padding: hero ? '16px 22px 14px' : wide ? '15px 20px' : '13px 18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div className="edm-eyebrow">{label}</div>
+                <DeltaChip pct={delta} label={deltaLabel} invert={invertDelta} />
             </div>
-        )}
-    </div>
-);
+            <div className="edm-tile-value" style={{
+                marginTop: hero ? 8 : 7,
+                fontSize: hero ? 32 : wide ? 23 : 18,
+                fontWeight: hero ? 700 : 600,
+                color: colour,
+            }}>
+                {text}
+            </div>
+            {sub && (
+                <div style={{
+                    marginTop: 3, fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap',
+                    overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                    {sub}
+                </div>
+            )}
+            {series && (
+                <div className="edm-tile-spark">
+                    <Sparkline series={series} color={sparkColor || colour} animKey={animKey}
+                        width={hero ? 112 : 84} height={hero ? 32 : 26} />
+                </div>
+            )}
+        </div>
+    );
+};
 
 /* ── Fee ribbon: MSF decomposed into what is paid away and what is kept.
    Segments are proportional to the gross fee pool; a loss is shown as a
-   distinct overflow segment rather than a negative width. ── */
-const FeeRibbon = ({ totals, money, share, compact = false }) => {
+   distinct overflow segment rather than a negative width. Segments wide
+   enough to hold it carry their own share label. ── */
+const FeeRibbon = ({ totals, money, share, compact = false, animKey }) => {
     const icf = num(totals?.icf), sf = num(totals?.sf), pg = num(totals?.pg), nm = num(totals?.nm);
     const pool = icf + sf + pg + Math.max(nm, 0);
     if (pool <= 0) return null;
@@ -323,23 +431,22 @@ const FeeRibbon = ({ totals, money, share, compact = false }) => {
 
     return (
         <div>
-            <div style={{
-                display: 'flex', height: compact ? 8 : 10, borderRadius: 999,
-                overflow: 'hidden', background: 'var(--border-light, var(--border))',
-            }}>
-                {drawn.map(s => (
-                    <div key={s.key}
-                        title={`${s.label} · ${money(s.value)} · ${share(s.value, pool)}`}
-                        style={{
-                            width: `${(s.value / pool) * 100}%`,
-                            background: s.color,
-                            opacity: s.overflow ? 0.9 : 1,
-                            borderRight: '1px solid var(--bg-card)',
-                        }} />
-                ))}
+            <div key={animKey} className="edm-ribbon" style={{ height: compact ? 10 : 16 }}>
+                {drawn.map(s => {
+                    const pct = (s.value / pool) * 100;
+                    return (
+                        <div key={s.key} className="edm-ribbon-seg"
+                            title={`${s.label} · ${money(s.value)} · ${share(s.value, pool)}`}
+                            style={{ width: `${pct}%`, background: s.color, opacity: s.overflow ? 0.9 : 1 }}>
+                            {!compact && pct >= 11 && (
+                                <span className="edm-ribbon-lbl">{pct.toFixed(0)}%</span>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
             <div style={{
-                display: 'flex', flexWrap: 'wrap', gap: compact ? '4px 12px' : '5px 18px', marginTop: 9,
+                display: 'flex', flexWrap: 'wrap', gap: compact ? '4px 12px' : '6px 18px', marginTop: 10,
             }}>
                 {segs.map(s => (
                     <span key={s.key} style={{
@@ -350,7 +457,7 @@ const FeeRibbon = ({ totals, money, share, compact = false }) => {
                         <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }} />
                         <span style={{ fontWeight: 600, color: 'var(--text)' }}>{s.label}</span>
                         <span className="edm-num">{money(s.value)}</span>
-                        <span style={{ opacity: 0.72 }}>{share(s.value, pool)}</span>
+                        <span className="edm-pill">{share(s.value, pool)}</span>
                     </span>
                 ))}
             </div>
@@ -358,8 +465,9 @@ const FeeRibbon = ({ totals, money, share, compact = false }) => {
     );
 };
 
-/* ── Mix strip: hue encodes the dimension, opacity encodes rank ── */
-const MixStrip = ({ title, hue, rows, money, share }) => {
+/* ── Mix strip: hue encodes the dimension, opacity encodes rank. Bars grow
+   in from the left, staggered top-to-bottom, whenever the selection changes. ── */
+const MixStrip = ({ title, hue, rows, money, share, animKey }) => {
     const items = (rows || []).slice(0, 5);
     const total = (rows || []).reduce((a, r) => a + num(r.volume), 0);
     if (!items.length || total <= 0) return null;
@@ -368,33 +476,34 @@ const MixStrip = ({ title, hue, rows, money, share }) => {
 
     return (
         <div style={{ minWidth: 0 }}>
-            <div className="edm-eyebrow" style={{ marginBottom: 10 }}>{title}</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            <div className="edm-eyebrow edm-eyebrow-rule" style={{ marginBottom: 10 }}>{title}</div>
+            <div key={animKey} style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                 {items.map((r, i) => (
-                    <div key={r.label}>
+                    <div key={r.label} className="edm-mix-row" style={{ '--i': i }}>
                         <div style={{
-                            display: 'flex', justifyContent: 'space-between', gap: 10,
+                            display: 'flex', alignItems: 'center', gap: 8,
                             fontSize: 11.5, marginBottom: 4,
                         }}>
+                            <span className="edm-rank">{String(i + 1).padStart(2, '0')}</span>
                             <span style={{
-                                color: 'var(--text)', fontWeight: 500,
+                                flex: 1, color: 'var(--text)', fontWeight: 500,
                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                             }} title={r.label}>{r.label}</span>
-                            <span className="edm-num" style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            <span className="edm-pill" title={money(r.volume)}>
                                 {share(r.volume, total)}
                             </span>
                         </div>
-                        <div style={{ height: 5, borderRadius: 999, background: 'var(--border-light, var(--border))' }}>
-                            <div title={`${r.label} · ${money(r.volume)}`} style={{
+                        <div className="edm-track">
+                            <div className="edm-mix-fill" title={`${r.label} · ${money(r.volume)}`} style={{
                                 width: `${Math.max((num(r.volume) / max) * 100, 1.5)}%`,
-                                height: '100%', borderRadius: 999, background: hue,
-                                opacity: 1 - i * 0.16,
+                                background: `linear-gradient(90deg, ${hue}, color-mix(in srgb, ${hue} 70%, #fff))`,
+                                opacity: 1 - i * 0.14,
                             }} />
                         </div>
                     </div>
                 ))}
                 {rest > 0 && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', paddingLeft: 26 }}>
                         + {(rows.length - 5)} more · {share(rest, total)}
                     </div>
                 )}
@@ -410,9 +519,11 @@ const MixStrip = ({ title, hue, rows, money, share }) => {
 
    The server always returns `trend` for the WHOLE month (see the controller's
    ctxStart/ctxEnd), never just the selection, so the shape stays stable while
-   days are picked and dropped. ── */
-const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week, height = 132 }) => {
+   days are picked and dropped. Hovering a bar lifts a card with that day's
+   figures; the bars themselves rise in when the month changes. ── */
+const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week, height = 132, animKey }) => {
     const picked = useMemo(() => new Set(selectedDates), [selectedDates]);
+    const [hover, setHover] = useState(null);
     const rows = useMemo(() => days.map((d) => {
         const t = trendByDate.get(d);
         return { date: d, vol: num(t?.volume), count: num(t?.count), nm: num(t?.nm), has: !!t };
@@ -442,6 +553,11 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
 
     const anySelected = selectedDates.length > 0;
     const zeroY = nmLo < 0 && nmHi > 0 ? nmY(0) : null;
+    const hov = hover != null ? rows[hover] : null;
+    // Card anchored to the bar; flips to the left past the two-thirds mark
+    // so it never hangs outside the chart.
+    const hovLeft = hover != null ? xAt(hover) : 0;
+    const hovFlip = hovLeft > 66;
 
     return (
         <div style={{ minWidth: 0, flex: '1 1 320px' }}>
@@ -449,7 +565,7 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
                 display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
                 gap: 10, marginBottom: 10, flexWrap: 'wrap',
             }}>
-                <span className="edm-eyebrow">Month shape</span>
+                <span className="edm-eyebrow edm-eyebrow-rule">Month shape</span>
                 <span style={{ display: 'flex', gap: 14, fontSize: 10.5, color: 'var(--text-muted)' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                         <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--cat-1)' }} />
@@ -462,26 +578,28 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
                 </span>
             </div>
 
-            <div className="edm-chart" style={{ height }}>
-                <div className="edm-chart-bars">
-                    {rows.map((r) => {
+            <div className="edm-chart" style={{ height }} onMouseLeave={() => setHover(null)}>
+                <div key={animKey} className="edm-chart-bars">
+                    {rows.map((r, i) => {
                         const on = picked.has(r.date);
                         const dim = anySelected && !on;
                         const loss = r.has && r.nm < 0;
                         const pct = r.has ? Math.max((r.vol / maxVol) * 100, 1.5) : 0;
                         return (
                             <button key={r.date} type="button"
-                                className={`edm-bar${on ? ' edm-bar-on' : ''}`}
+                                className={`edm-bar${on ? ' edm-bar-on' : ''}${hover === i ? ' edm-bar-hov' : ''}`}
                                 onClick={() => onToggle(r.date)}
+                                onMouseEnter={() => setHover(i)}
+                                onFocus={() => setHover(i)}
+                                onBlur={() => setHover(h => (h === i ? null : h))}
                                 aria-pressed={on}
-                                aria-label={`${longDate(r.date)}${week.isWeekend(r.date) ? ', weekend' : ''}`}
-                                title={r.has
-                                    ? `${longDate(r.date)}${week.isWeekend(r.date) ? ' · weekend' : ''}\nVolume ${money(r.vol)}\nTransactions ${r.count.toLocaleString()}\nNet Margin ${money(r.nm)}`
-                                    : `${longDate(r.date)}${week.isWeekend(r.date) ? ' · weekend' : ''}\nNo transactions loaded`}>
-                                <span className="edm-bar-fill" style={{
+                                aria-label={r.has
+                                    ? `${longDate(r.date)}${week.isWeekend(r.date) ? ', weekend' : ''}, volume ${money(r.vol)}, net margin ${money(r.nm)}`
+                                    : `${longDate(r.date)}${week.isWeekend(r.date) ? ', weekend' : ''}, no transactions loaded`}>
+                                <span className={`edm-bar-fill${loss ? ' edm-bar-loss' : ''}`} style={{
                                     height: `${pct}%`,
-                                    background: loss ? 'var(--danger)' : 'var(--cat-1)',
                                     opacity: dim ? 0.3 : 1,
+                                    '--i': i,
                                 }} />
                                 {week.isWeekend(r.date) && <span className="edm-bar-we" aria-hidden="true" />}
                             </button>
@@ -496,20 +614,43 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
                             vectorEffect="non-scaling-stroke" opacity="0.45" />
                     )}
                     {segments.map((pts, i) => (
-                        <polyline key={i} points={pts.join(' ')} fill="none"
+                        <polyline key={`${animKey}-${i}`} points={pts.join(' ')} fill="none"
                             stroke="var(--chart-4, #7191CE)" strokeWidth="1.75"
                             strokeLinejoin="round" strokeLinecap="round"
-                            vectorEffect="non-scaling-stroke" />
+                            vectorEffect="non-scaling-stroke" pathLength="1"
+                            className="edm-chart-trace" />
                     ))}
                 </svg>
+                {hov && (
+                    <div className={`edm-tip${hovFlip ? ' edm-tip-flip' : ''}`}
+                        style={{ left: `${hovLeft}%` }} role="presentation">
+                        <div className="edm-tip-date">
+                            {longDate(hov.date)}{week.isWeekend(hov.date) ? ' · weekend' : ''}
+                        </div>
+                        {hov.has ? (
+                            <>
+                                <div className="edm-tip-row"><span>Volume</span><span className="edm-num">{money(hov.vol)}</span></div>
+                                <div className="edm-tip-row"><span>Transactions</span><span className="edm-num">{hov.count.toLocaleString()}</span></div>
+                                <div className="edm-tip-row">
+                                    <span>Net Margin</span>
+                                    <span className="edm-num" style={{ color: hov.nm >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
+                                        {money(hov.nm)}
+                                    </span>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="edm-tip-row" style={{ color: 'var(--text-muted)' }}>No transactions loaded</div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Only the first, last and every 5th day get a tick — a 31-label
-                axis at this width is a grey smear. */}
+                axis at this width is a grey smear. The hovered day always shows. */}
             <div className="edm-chart-axis">
                 {rows.map((r, i) => (
-                    <span key={r.date}>
-                        {(i === 0 || i === rows.length - 1 || (i + 1) % 5 === 0) ? dayNum(r.date) : ''}
+                    <span key={r.date} className={hover === i ? 'edm-axis-hov' : undefined}>
+                        {(hover === i || i === 0 || i === rows.length - 1 || (i + 1) % 5 === 0) ? dayNum(r.date) : ''}
                     </span>
                 ))}
             </div>
@@ -520,7 +661,7 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
 /* ── Weekday vs weekend, using the tenant's own working week. Two days out of
    seven carry a very different mix in this market, and the split is the
    quickest read on whether a month's shortfall is trading or calendar. ── */
-const WeekSplit = ({ days, trendByDate, week, money, share }) => {
+const WeekSplit = ({ days, trendByDate, week, money, share, animKey }) => {
     const stats = useMemo(() => {
         const blank = () => ({ days: 0, volume: 0, count: 0, nm: 0 });
         const acc = { weekday: blank(), weekend: blank() };
@@ -546,12 +687,12 @@ const WeekSplit = ({ days, trendByDate, week, money, share }) => {
 
     return (
         <div style={{ minWidth: 0 }}>
-            <div className="edm-eyebrow" style={{ marginBottom: 10 }}>
+            <div className="edm-eyebrow edm-eyebrow-rule" style={{ marginBottom: 10 }}>
                 Weekday vs weekend
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                {bars.map(b => (
-                    <div key={b.key}>
+            <div key={animKey} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                {bars.map((b, i) => (
+                    <div key={b.key} className="edm-mix-row" style={{ '--i': i }}>
                         <div style={{
                             display: 'flex', justifyContent: 'space-between', gap: 10,
                             fontSize: 11.5, marginBottom: 4,
@@ -563,14 +704,12 @@ const WeekSplit = ({ days, trendByDate, week, money, share }) => {
                                     {' · '}{b.days} day{b.days === 1 ? '' : 's'}
                                 </span>
                             </span>
-                            <span className="edm-num" style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                                {share(b.volume, total)}
-                            </span>
+                            <span className="edm-pill">{share(b.volume, total)}</span>
                         </div>
-                        <div style={{ height: 5, borderRadius: 999, background: 'var(--border-light, var(--border))' }}>
-                            <div title={`${b.label} · ${money(b.volume)}`} style={{
+                        <div className="edm-track">
+                            <div className="edm-mix-fill" title={`${b.label} · ${money(b.volume)}`} style={{
                                 width: `${Math.max((b.volume / total) * 100, 1.5)}%`,
-                                height: '100%', borderRadius: 999, background: b.hue,
+                                background: `linear-gradient(90deg, ${b.hue}, color-mix(in srgb, ${b.hue} 70%, #fff))`,
                             }} />
                         </div>
                         <div className="edm-num" style={{ marginTop: 4, fontSize: 10.5, color: 'var(--text-muted)' }}>
@@ -586,6 +725,78 @@ const WeekSplit = ({ days, trendByDate, week, money, share }) => {
         </div>
     );
 };
+
+/* ── First-load skeleton that mirrors the real layout — five tiles, the fee
+   ribbon, the ratio row, the mix panel and the table — so the page does not
+   jump when the figures arrive. ── */
+const Bone = ({ w = '100%', h = 12, r = 5, style }) => (
+    <div className="edm-bone" style={{ width: w, height: h, borderRadius: r, ...style }} />
+);
+const LedgerSkeleton = () => (
+    <div aria-busy="true" aria-label="Loading the dashboard">
+        <section className="edm-panel" style={{ marginBottom: 12, overflow: 'hidden' }}>
+            <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(168px, 1fr))',
+                borderBottom: '1px solid var(--border-light, var(--border))',
+            }}>
+                {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} style={{ padding: '15px 20px', ...(i < 4 ? cellDiv : {}) }}>
+                        <Bone w={70} h={9} />
+                        <Bone w="62%" h={22} style={{ marginTop: 10 }} />
+                        <Bone w="45%" h={9} style={{ marginTop: 8 }} />
+                    </div>
+                ))}
+            </div>
+            <div style={{ padding: '15px 20px 16px' }}>
+                <Bone w={120} h={9} style={{ marginBottom: 12 }} />
+                <Bone w="100%" h={16} r={999} />
+                <div style={{ display: 'flex', gap: 18, marginTop: 12 }}>
+                    {Array.from({ length: 4 }).map((_, i) => <Bone key={i} w={120} h={10} />)}
+                </div>
+            </div>
+            <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                borderTop: '1px solid var(--border-light, var(--border))',
+            }}>
+                {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} style={{ padding: '13px 18px', ...(i < 4 ? cellDiv : {}) }}>
+                        <Bone w={80} h={9} />
+                        <Bone w="50%" h={18} style={{ marginTop: 9 }} />
+                    </div>
+                ))}
+            </div>
+        </section>
+        <section className="edm-panel" style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+            gap: 26, padding: '16px 20px', marginBottom: 12,
+        }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i}>
+                    <Bone w={90} h={9} style={{ marginBottom: 14 }} />
+                    {Array.from({ length: 4 }).map((_, j) => (
+                        <div key={j} style={{ marginBottom: 11 }}>
+                            <Bone w={`${78 - j * 12}%`} h={10} style={{ marginBottom: 5 }} />
+                            <Bone w={`${90 - j * 18}%`} h={5} r={999} />
+                        </div>
+                    ))}
+                </div>
+            ))}
+        </section>
+        <section className="edm-panel" style={{ overflow: 'hidden' }}>
+            <div style={{ display: 'flex', gap: 14, padding: '13px 14px', background: 'var(--bg-subtle)' }}>
+                {Array.from({ length: 10 }).map((_, i) => <Bone key={i} w={i < 3 ? 90 : 64} h={10} />)}
+            </div>
+            {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} style={{
+                    display: 'flex', gap: 14, padding: '12px 14px',
+                    borderBottom: '1px solid var(--border-light, var(--border))',
+                }}>
+                    {Array.from({ length: 10 }).map((_, j) => <Bone key={j} w={j < 3 ? 90 : 64} h={12} />)}
+                </div>
+            ))}
+        </section>
+    </div>
+);
 
 const FILTER_DEFS = [
     { key: 'mccList',         label: 'MCC',         optKey: 'mccs' },
@@ -628,6 +839,7 @@ const DailyMerchantDashboard = () => {
     const [exporting, setExporting] = useState(false);
     const [detailRow, setDetailRow] = useState(null);
     const [detailMix, setDetailMix] = useState(null);
+    const [lastRefresh, setLastRefresh] = useState(null);
 
     /* Money at tenant precision (BHD is 3dp — never assume 2). */
     const dp = resolveDecimals(currencyDecimals, currencyCode);
@@ -679,6 +891,7 @@ const DailyMerchantDashboard = () => {
                 params: { ...dateParams, page, size: pageSize, sort, dir },
             });
             setData(res.data);
+            setLastRefresh(new Date());
         } catch (e) {
             if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') return;
             setError(e?.response?.data?.message || 'Could not load the dashboard.');
@@ -943,6 +1156,66 @@ const DailyMerchantDashboard = () => {
     const costRatio = totals && num(totals.msf) ? (costTotal / num(totals.msf)) * 100 : null;
     const daysCovered = selectedDates.length || trend.length;
 
+    /* One key per SELECTION (dates + filters). Anything that re-animates —
+       ribbon wipe, bar growth, sparkline draw — is keyed on this, so a sort or
+       page turn never replays motion on figures that did not change. */
+    const animKey = `${dateParams.dates || dateParams.month || ''}|${JSON.stringify(filters)}`;
+
+    /* Per-metric daily series across the month's loaded days, for the tile
+       sparklines. Cost of sale is the three pay-away fees summed per day. */
+    const loadedDays = useMemo(
+        () => allMonthDays.map(d => trendByDate.get(d)).filter(Boolean), [allMonthDays, trendByDate]);
+    const kpiSeries = useMemo(() => ({
+        volume: loadedDays.map(t => num(t.volume)),
+        count:  loadedDays.map(t => num(t.count)),
+        msf:    loadedDays.map(t => num(t.msf)),
+        cost:   loadedDays.map(costOf),
+        nm:     loadedDays.map(t => num(t.nm)),
+    }), [loadedDays]);
+
+    /* Period-over-period deltas, computed on a per-day basis from the month
+       trend (same filters as the figures on screen):
+         · a selection compares to the SAME NUMBER of loaded days immediately
+           before its first day — "vs prior 5 days";
+         · if the month has no earlier days, it compares to the month's own
+           per-day average;
+         · the whole month carries no delta — there is nothing in the payload
+           to compare it to, and a fake baseline is worse than none. */
+    const deltas = useMemo(() => {
+        if (!selectedDates.length || !loadedDays.length) return null;
+        const first = [...selectedDates].sort()[0];
+        const sel = loadedDays.filter(t => selectedDates.includes(t.date));
+        if (!sel.length) return null;
+        const prior = loadedDays.filter(t => t.date < first).slice(-selectedDates.length);
+        const base = prior.length ? prior : loadedDays;
+        const label = prior.length
+            ? `vs prior ${prior.length} day${prior.length === 1 ? '' : 's'}`
+            : 'vs month avg/day';
+        const avg = (arr, f) => arr.reduce((a, t) => a + f(t), 0) / arr.length;
+        const pct = (f) => {
+            const b = avg(base, f);
+            if (!b) return null;
+            return ((avg(sel, f) - b) / Math.abs(b)) * 100;
+        };
+        return {
+            label,
+            volume: pct(t => num(t.volume)),
+            count:  pct(t => num(t.count)),
+            msf:    pct(t => num(t.msf)),
+            cost:   pct(costOf),
+            nm:     pct(t => num(t.nm)),
+        };
+    }, [selectedDates, loadedDays]);
+
+    /* Per-day net margin tone for the selection chips. */
+    const dayTone = (d) => {
+        const t = trendByDate.get(d);
+        if (!t) return 'none';
+        return num(t.nm) >= 0 ? 'good' : 'bad';
+    };
+    const refreshedAt = lastRefresh
+        ? lastRefresh.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : null;
+
     /* Every selected day is one with no transactions loaded — say so plainly
        instead of blaming the filters. */
     const noTxnSelection = selectedDates.length > 0
@@ -951,6 +1224,13 @@ const DailyMerchantDashboard = () => {
     /* In-cell volume bar is scaled to the biggest row on THIS page. */
     const pageMaxVolume = useMemo(
         () => rows.reduce((a, r) => Math.max(a, num(r.volume)), 0) || 1, [rows]);
+    /* Net margin heat is scaled to the strongest positive row on this page:
+       4% tint at the bottom, 18% at the top, so the column reads as a scale. */
+    const pageMaxNm = useMemo(
+        () => rows.reduce((a, r) => Math.max(a, num(r.nm)), 0) || 1, [rows]);
+    const nmHeat = (v) => (num(v) <= 0 ? 0 : 4 + Math.round((num(v) / pageMaxNm) * 14));
+    /* Rows re-stagger only when the result set itself changes. */
+    const rowsKey = `${animKey}|${page}|${sort}|${dir}|${pageSize}`;
 
     const NmCell = ({ v, bold = false }) => {
         const n = num(v);
@@ -1107,7 +1387,159 @@ const DailyMerchantDashboard = () => {
 
                 .edm-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
                 .edm-panel { background: var(--bg-card); border: 1px solid var(--border);
-                    border-radius: var(--radius-xl); }
+                    border-radius: var(--radius-xl); box-shadow: var(--shadow-card, 0 1px 2px rgba(0,0,0,.04));
+                    transition: box-shadow .2s ease, transform .2s ease; }
+                .edm-panel-lift:hover { box-shadow: var(--shadow-hover, 0 10px 28px rgba(0,0,0,.10));
+                    transform: translateY(-1px); }
+
+                /* ── Entrance: panels rise in once, staggered top to bottom. ── */
+                @keyframes edm-fadeup { from { opacity: 0; transform: translateY(8px); }
+                    to { opacity: 1; transform: none; } }
+                @keyframes edm-growx { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+                @keyframes edm-growy { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+                @keyframes edm-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+                @keyframes edm-wipe { from { clip-path: inset(0 100% 0 0 round 999px); }
+                    to { clip-path: inset(0 0 0 0 round 999px); } }
+                @keyframes edm-pop { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
+                @keyframes edm-sheen { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; }
+                    100% { background-position: 0% 50%; } }
+                @keyframes edm-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+                @keyframes edm-pulse { 0%, 100% { box-shadow: 0 0 0 3px rgba(52,185,138,0.22); }
+                    50% { box-shadow: 0 0 0 6px rgba(52,185,138,0.08); } }
+                .edm-enter { animation: edm-fadeup .55s cubic-bezier(.2,.8,.2,1) both;
+                    animation-delay: calc(var(--i, 0) * 70ms); }
+                .edm-live { animation: edm-pulse 2.4s ease-in-out infinite; }
+
+                /* ── Section eyebrows carry a copper hairline — the Meridian mark. ── */
+                .edm-eyebrow-rule { display: inline-flex; align-items: center; gap: 7px; }
+                .edm-eyebrow-rule::before { content: ''; width: 14px; height: 2px; border-radius: 2px;
+                    background: var(--cat-2, #CA5F28); flex-shrink: 0; }
+
+                /* ── KPI tiles ── */
+                .edm-tile { position: relative; min-width: 0; overflow: hidden;
+                    transition: background .15s ease; }
+                .edm-tile:hover { background: var(--bg-hover); }
+                .edm-tile-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+                    letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                    position: relative; z-index: 1; }
+                .edm-tile-spark { position: absolute; right: 14px; bottom: 10px; opacity: .55;
+                    pointer-events: none; transition: opacity .2s ease; }
+                .edm-tile:hover .edm-tile-spark { opacity: .9; }
+                .edm-tile-hero { background: color-mix(in srgb, var(--success) 7%, var(--bg-card));
+                    box-shadow: inset 4px 0 0 var(--success); }
+                .edm-tile-hero.edm-tile-danger { background: color-mix(in srgb, var(--danger) 7%, var(--bg-card));
+                    box-shadow: inset 4px 0 0 var(--danger); }
+                /* A slow sheen drifts across the headline tile — ambient, not alarming. */
+                .edm-tile-hero::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+                    background: linear-gradient(115deg, transparent 30%,
+                        color-mix(in srgb, var(--success) 10%, transparent) 50%, transparent 70%);
+                    background-size: 250% 100%; animation: edm-sheen 9s ease-in-out infinite; }
+                .edm-tile-hero.edm-tile-danger::after { background-image: linear-gradient(115deg, transparent 30%,
+                    color-mix(in srgb, var(--danger) 10%, transparent) 50%, transparent 70%); }
+                .edm-tile-hero .edm-tile-spark { opacity: .7; }
+                .edm-spark-area { opacity: .12; }
+                .edm-spark-line { stroke-dasharray: 1; stroke-dashoffset: 0;
+                    animation: edm-draw 1s cubic-bezier(.2,.8,.2,1) both; }
+                .edm-spark-dot { animation: edm-pop .3s ease-out both; animation-delay: .9s; }
+
+                /* ── Delta chips ── */
+                .edm-delta { display: inline-flex; align-items: center; gap: 4px;
+                    padding: 2px 7px; border-radius: 999px; font-family: var(--font-mono);
+                    font-variant-numeric: tabular-nums; font-size: 10.5px; font-weight: 700;
+                    white-space: nowrap; animation: edm-pop .3s ease-out both; }
+                .edm-delta-good { color: var(--success-text); background: var(--success-bg); }
+                .edm-delta-bad { color: var(--danger-text); background: var(--danger-bg); }
+                .edm-delta-flat { color: var(--text-secondary); background: var(--bg-subtle); }
+                .edm-delta-lbl { font-family: var(--font-ui); font-weight: 500; font-size: 9.5px;
+                    opacity: .75; margin-left: 1px; }
+                .edm-pill { display: inline-flex; align-items: center; padding: 1px 7px;
+                    border-radius: 999px; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+                    font-size: 10.5px; font-weight: 600; color: var(--text-secondary);
+                    background: var(--bg-subtle); border: 1px solid var(--border-light, var(--border));
+                    white-space: nowrap; }
+
+                /* ── Fee ribbon ── */
+                .edm-ribbon { display: flex; border-radius: 999px; overflow: hidden;
+                    background: var(--border-light, var(--border));
+                    animation: edm-wipe .8s cubic-bezier(.2,.8,.2,1) both; }
+                .edm-ribbon-seg { position: relative; display: flex; align-items: center; justify-content: center;
+                    border-right: 1px solid var(--bg-card); min-width: 0;
+                    box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 -1px 0 rgba(0,0,0,.10);
+                    transition: filter .15s ease; }
+                .edm-ribbon-seg:hover { filter: brightness(1.08); }
+                .edm-ribbon-lbl { font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
+                    color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.25); letter-spacing: .02em; }
+
+                /* ── Mix strips ── */
+                .edm-rank { font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
+                    color: var(--text-muted); letter-spacing: .04em; width: 18px; flex-shrink: 0; }
+                .edm-track { height: 6px; border-radius: 999px; overflow: hidden;
+                    background: var(--border-light, var(--border)); }
+                .edm-mix-fill { height: 100%; border-radius: 999px; transform-origin: left center;
+                    animation: edm-growx .6s cubic-bezier(.2,.8,.2,1) both;
+                    animation-delay: calc(var(--i, 0) * 60ms); }
+                .edm-mix-row { animation: edm-fadeup .4s ease-out both;
+                    animation-delay: calc(var(--i, 0) * 50ms); }
+
+                /* ── Selection chips: border tone = that day's net margin ── */
+                .edm-daychip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+                    border-radius: 999px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+                    color: var(--text); background: var(--bg-card); border: 1px solid var(--border);
+                    cursor: pointer; animation: edm-pop .25s ease-out both; transition: background .12s ease; }
+                .edm-daychip:hover { background: var(--bg-hover); }
+                .edm-daychip::before { content: ''; width: 6px; height: 6px; border-radius: 50%;
+                    background: var(--border); }
+                .edm-daychip-good { border-color: color-mix(in srgb, var(--success) 55%, var(--border)); }
+                .edm-daychip-good::before { background: var(--success); }
+                .edm-daychip-bad { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+                .edm-daychip-bad::before { background: var(--danger); }
+
+                /* ── Masthead context strip ── */
+                .edm-mast-ctx { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0;
+                    margin-top: 10px; font-family: var(--font-mono); font-size: 10.5px;
+                    color: color-mix(in srgb, var(--table-head-text, #EEF3FC) 62%, transparent); }
+                .edm-mast-ctx > span + span::before { content: '·'; margin: 0 8px; opacity: .6; }
+                .edm-mast-ctx b { font-weight: 600; color: var(--table-head-text, #EEF3FC); }
+
+                /* ── Drawer head: same navy as the page masthead ── */
+                .edm-drawer-head { background: var(--table-head-bg,
+                        linear-gradient(135deg, #24386B 0%, #16264A 55%, #0A1426 100%));
+                    color: var(--table-head-text, #EEF3FC); padding: 18px 20px;
+                    display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+                .edm-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+                    border-radius: 5px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+                    color: var(--table-head-text, #EEF3FC); background: rgba(255,255,255,.10);
+                    border: 1px solid rgba(255,255,255,.18); }
+                .edm-badge small { font-size: 8.5px; letter-spacing: .12em; opacity: .6; font-weight: 700; }
+
+                /* ── Skeleton bones ── */
+                .edm-bone { background: linear-gradient(90deg, var(--bg-subtle) 25%,
+                        color-mix(in srgb, var(--primary) 12%, var(--bg-subtle)) 50%, var(--bg-subtle) 75%);
+                    background-size: 400% 100%; animation: edm-shimmer 1.8s ease-in-out infinite; }
+
+                /* ── Chart: gradient bars that rise in; hover card ── */
+                .edm-bar-fill { background: linear-gradient(180deg, var(--cat-1),
+                        color-mix(in srgb, var(--cat-1) 55%, transparent));
+                    transform-origin: bottom center;
+                    animation: edm-growy .55s cubic-bezier(.2,.8,.2,1) both;
+                    animation-delay: calc(var(--i, 0) * 14ms); }
+                .edm-bar-loss { background: linear-gradient(180deg, var(--danger),
+                        color-mix(in srgb, var(--danger) 55%, transparent)); }
+                .edm-bar-hov .edm-bar-fill { filter: brightness(1.12); }
+                .edm-chart-trace { stroke-dasharray: 1; animation: edm-draw 1.1s ease-out both; }
+                .edm-axis-hov { color: var(--text); font-weight: 700; }
+                .edm-tip { position: absolute; bottom: calc(100% + 8px); transform: translateX(-50%);
+                    min-width: 168px; padding: 9px 11px; border-radius: var(--radius-md);
+                    background: var(--bg-card); border: 1px solid var(--border);
+                    box-shadow: var(--shadow-pop); z-index: 5; pointer-events: none;
+                    animation: edm-pop .15s ease-out both; font-size: 11px; }
+                .edm-tip-flip { transform: translateX(-100%); }
+                .edm-tip-date { font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
+                    letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted);
+                    margin-bottom: 5px; }
+                .edm-tip-row { display: flex; justify-content: space-between; gap: 14px;
+                    color: var(--text-secondary); padding: 1.5px 0; }
+                .edm-tip-row .edm-num { color: var(--text); font-weight: 600; }
                 .edm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden;
                     clip: rect(0 0 0 0); white-space: nowrap; }
                 .edm-focus:focus-visible, .edm-cell:focus-visible, .edm-th:focus-visible {
@@ -1190,7 +1622,25 @@ const DailyMerchantDashboard = () => {
                    scaled to the largest merchant on this page. */
                 .edm-vol { position: relative; }
                 .edm-vol-bar { position: absolute; right: 0; bottom: 3px; height: 3px;
-                    border-radius: 999px; background: var(--cat-1); opacity: 0.5; }
+                    border-radius: 999px; opacity: 0.6; transform-origin: right center;
+                    background: linear-gradient(90deg, color-mix(in srgb, var(--cat-1) 35%, transparent), var(--cat-1));
+                    animation: edm-growx .5s cubic-bezier(.2,.8,.2,1) both; }
+                /* Zebra at 3% keeps a 10-column row readable across the scroll box. */
+                .edm-table tbody tr:nth-child(even):not(.edm-total-row) td { background:
+                    color-mix(in srgb, var(--text) 3%, var(--bg-card)); }
+                .edm-table tbody tr:nth-child(even):not(.edm-total-row) .edm-c1,
+                .edm-table tbody tr:nth-child(even):not(.edm-total-row) .edm-c2,
+                .edm-table tbody tr:nth-child(even):not(.edm-total-row) .edm-c3 { background:
+                    color-mix(in srgb, var(--text) 3%, var(--bg-card)); }
+                .edm-table tbody tr:hover td, .edm-table tbody tr:hover .edm-c1,
+                .edm-table tbody tr:hover .edm-c2, .edm-table tbody tr:hover .edm-c3 { background: var(--bg-hover); }
+                /* Net margin cells are tinted on a diverging scale — the table scans
+                   as a heatmap: deeper green = stronger margin, red = a loss row. */
+                .edm-nm-cell { box-shadow: inset 0 0 0 100vw
+                    color-mix(in srgb, var(--success) calc(var(--heat, 0) * 1%), transparent); }
+                .edm-nm-loss { box-shadow: inset 0 0 0 100vw color-mix(in srgb, var(--danger) 14%, transparent); }
+                .edm-row-in { animation: edm-fadeup .35s ease-out both;
+                    animation-delay: calc(min(var(--i, 0), 18) * 22ms); }
                 /* Totals stay pinned to the bottom of the scroll box — the figure
                    you are checking a row against should never scroll away. */
                 .edm-total-row td { position: sticky; bottom: 0; z-index: 2;
@@ -1201,18 +1651,23 @@ const DailyMerchantDashboard = () => {
                     .edm-table .edm-c3 { position: static; box-shadow: none; min-width: 150px; }
                 }
                 @media (prefers-reduced-motion: reduce) {
-                    .edm-cell, .edm-table tbody tr { transition: none; }
+                    .edm-cell, .edm-table tbody tr, .edm-panel, .edm-tile { transition: none; }
+                    .edm-enter, .edm-live, .edm-spark-line, .edm-spark-dot, .edm-delta, .edm-ribbon,
+                    .edm-mix-fill, .edm-mix-row, .edm-daychip, .edm-bone, .edm-bar-fill,
+                    .edm-chart-trace, .edm-tip, .edm-vol-bar, .edm-row-in, .edm-tile-hero::after {
+                        animation: none; }
+                    .edm-panel-lift:hover { transform: none; }
                 }
             `}</style>
 
             {/* ── Masthead + command bar: one executive header block.
                 NO overflow:hidden here — it would clip the filter dropdowns;
                 the corner rounding is done per child instead. ── */}
-            <section className="edm-panel edm-hdrblock" style={{ marginBottom: 12 }}>
+            <section className="edm-panel edm-hdrblock edm-enter" style={{ marginBottom: 12, '--i': 0 }}>
                 <div className="edm-mast">
                     <div>
                         <div className="edm-mast-eyebrow" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{
+                            <span className="edm-live" style={{
                                 width: 6, height: 6, borderRadius: '50%', background: 'var(--rail-fresh, #34B98A)',
                                 boxShadow: '0 0 0 3px rgba(52,185,138,0.22)',
                             }} />
@@ -1222,6 +1677,14 @@ const DailyMerchantDashboard = () => {
                         <p className="edm-mast-sub">
                             Daily merchant volume, transaction and profitability performance
                         </p>
+                        {/* Freshness first: how current the figures are, before what they say. */}
+                        <div className="edm-mast-ctx">
+                            <span>Latest loaded <b>{latest ? longDate(latest) : '—'}</b></span>
+                            {month && allMonthDays.length > 0 && (
+                                <span><b>{monthDates.length}</b> of {allMonthDays.length} days loaded in {monthLabel(month)}</span>
+                            )}
+                            {refreshedAt && <span>Refreshed <b>{refreshedAt}</b></span>}
+                        </div>
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
@@ -1279,13 +1742,13 @@ const DailyMerchantDashboard = () => {
             </section>
 
             {/* ── Month ribbon: the picker IS the month's volume shape ── */}
-            <section className="edm-panel" style={{ padding: '14px 18px 12px', marginBottom: 12 }}>
+            <section className="edm-panel edm-enter" style={{ padding: '14px 18px 12px', marginBottom: 12, '--i': 1 }}>
                 <div style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     gap: 12, flexWrap: 'wrap', marginBottom: 12,
                 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                        <span className="edm-eyebrow">Business date</span>
+                        <span className="edm-eyebrow edm-eyebrow-rule">Business date</span>
                         {/* UI face, not mono: a month name is a word, and mono at this
                             size crowded the native select arrow. */}
                         <select className="edm-focus" value={month} onChange={e => pickMonth(e.target.value)}
@@ -1412,6 +1875,26 @@ const DailyMerchantDashboard = () => {
                                 <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-secondary)' }}>
                                     Click a day · drag to sweep a range · ⇧-click extends
                                 </div>
+                                {/* The picked days as chips, each wearing its own margin tone —
+                                    the selection tells its story before the figures load. */}
+                                {selectedDates.length > 0 && (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+                                        {selectedDates.slice(0, 8).map((d, i) => (
+                                            <button key={d} type="button"
+                                                className={`edm-daychip edm-daychip-${dayTone(d)}`}
+                                                style={{ animationDelay: `${i * 30}ms` }}
+                                                onClick={() => toggleDate(d)}
+                                                title={`Remove ${longDate(d)} from the selection`}
+                                                aria-label={`Remove ${longDate(d)} from the selection`}>
+                                                {pillLabel(d)}
+                                                <X size={9} style={{ opacity: .6 }} />
+                                            </button>
+                                        ))}
+                                        {selectedDates.length > 8 && (
+                                            <span className="edm-pill">+{selectedDates.length - 8}</span>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             <div style={{
                                 display: 'flex', flexDirection: 'column', gap: 6,
@@ -1444,7 +1927,7 @@ const DailyMerchantDashboard = () => {
                         {/* The month as a curve — same click target as the grid. */}
                         <DayTrendChart days={allMonthDays} trendByDate={trendByDate}
                             selectedDates={selectedDates} onToggle={toggleDate}
-                            money={money} week={week} />
+                            money={money} week={week} animKey={`${month}|${JSON.stringify(filters)}`} />
                     </div>
                 ) : (
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '18px 0' }}>
@@ -1459,7 +1942,7 @@ const DailyMerchantDashboard = () => {
                 sort and page turn — very visible against the dark theme. Once
                 there is something to show, the existing figures stay on screen
                 and simply dim while the next set arrives. */}
-            {firstLoad ? <SkeletonLoader variant="table" rows={10} cols={10} /> : error ? (
+            {firstLoad ? <LedgerSkeleton /> : error ? (
                 <EmptyState title="Could not load the dashboard" message={error}
                     action={{ label: 'Try again', onClick: () => load() }} />
             ) : !rows.length ? (
@@ -1480,49 +1963,67 @@ const DailyMerchantDashboard = () => {
                 <div className={refreshing ? 'edm-refreshing' : undefined} aria-busy={refreshing}>
                     {/* ── Ledger summary: headline figures, the fee ribbon, ratios ── */}
                     {totals && (
-                        <section className="edm-panel" style={{ marginBottom: 12, overflow: 'hidden' }}>
+                        <section className="edm-panel edm-enter" style={{ marginBottom: 12, overflow: 'hidden', '--i': 2 }}>
+                            {/* Net margin leads: the one figure an executive reads first
+                                gets the hero treatment; the other four support it. */}
                             <div style={{
                                 display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fit, minmax(168px, 1fr))',
+                                gridTemplateColumns: 'minmax(220px, 1.35fr) repeat(auto-fit, minmax(160px, 1fr))',
                                 borderBottom: '1px solid var(--border-light, var(--border))',
                             }}>
                                 <div style={cellDiv}>
-                                    <Metric wide label="Volume" value={fmt.currency(num(totals.volume))}
+                                    <Metric hero label="Net margin"
+                                        raw={num(totals.nm)} format={fmt.currency}
+                                        sub={marginPct == null ? 'no volume' : `${marginPct.toFixed(2)}% of volume · ${daysCovered} day${daysCovered === 1 ? '' : 's'}`}
+                                        tone={num(totals.nm) >= 0 ? 'success' : 'danger'}
+                                        title={fullNum(totals.nm, currencySymbol)}
+                                        delta={deltas?.nm} deltaLabel={deltas?.label}
+                                        series={kpiSeries.nm} animKey={animKey}
+                                        sparkColor={num(totals.nm) >= 0 ? 'var(--success)' : 'var(--danger)'} />
+                                </div>
+                                <div style={cellDiv}>
+                                    <Metric wide label="Volume"
+                                        raw={num(totals.volume)} format={fmt.currency}
                                         sub={`${currencyCode || currencySymbol || ''} · ${daysCovered} day${daysCovered === 1 ? '' : 's'}`}
-                                        title={fullNum(totals.volume, currencySymbol)} />
+                                        title={fullNum(totals.volume, currencySymbol)}
+                                        delta={deltas?.volume} deltaLabel={deltas?.label}
+                                        series={kpiSeries.volume} sparkColor="var(--cat-1)" animKey={animKey} />
                                 </div>
                                 <div style={cellDiv}>
-                                    <Metric wide label="Transactions" value={num(totals.count).toLocaleString()}
-                                        sub={`${totalRows.toLocaleString()} merchant row${totalRows === 1 ? '' : 's'}`} />
+                                    <Metric wide label="Transactions"
+                                        raw={num(totals.count)} format={(v) => Math.round(v).toLocaleString()}
+                                        sub={`${totalRows.toLocaleString()} merchant row${totalRows === 1 ? '' : 's'}`}
+                                        delta={deltas?.count} deltaLabel={deltas?.label}
+                                        series={kpiSeries.count} sparkColor="var(--chart-4, #7191CE)" animKey={animKey} />
                                 </div>
                                 <div style={cellDiv}>
-                                    <Metric wide label="MSF" value={fmt.currency(num(totals.msf))}
-                                        sub="gross fee income" title={formatMsf(totals.msf, currencySymbol)} />
-                                </div>
-                                <div style={cellDiv}>
-                                    <Metric wide label="Cost of sale" value={fmt.currency(costTotal)}
-                                        sub="interchange + scheme + gateway"
-                                        title={fullNum(costTotal, currencySymbol)} />
+                                    <Metric wide label="MSF"
+                                        raw={num(totals.msf)} format={fmt.currency}
+                                        sub="gross fee income" title={formatMsf(totals.msf, currencySymbol)}
+                                        delta={deltas?.msf} deltaLabel={deltas?.label}
+                                        series={kpiSeries.msf} sparkColor="var(--cat-4, #B08C1E)" animKey={animKey} />
                                 </div>
                                 <div>
-                                    <Metric wide label="Net margin" value={fmt.currency(num(totals.nm))}
-                                        sub={marginPct == null ? 'no volume' : `${marginPct.toFixed(2)}% of volume`}
-                                        tone={num(totals.nm) >= 0 ? 'success' : 'danger'}
-                                        title={fullNum(totals.nm, currencySymbol)} />
+                                    <Metric wide label="Cost of sale"
+                                        raw={costTotal} format={fmt.currency}
+                                        sub="interchange + scheme + gateway"
+                                        title={fullNum(costTotal, currencySymbol)}
+                                        delta={deltas?.cost} deltaLabel={deltas?.label} invertDelta
+                                        series={kpiSeries.cost} sparkColor="var(--cat-2, #CA5F28)" animKey={animKey} />
                                 </div>
                             </div>
 
                             <div style={{ padding: '15px 20px 16px' }}>
                                 <div style={{
-                                    display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10,
+                                    display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12,
                                     flexWrap: 'wrap',
                                 }}>
-                                    <span className="edm-eyebrow">Where the MSF went</span>
+                                    <span className="edm-eyebrow edm-eyebrow-rule">Where the MSF went</span>
                                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                                         every {currencyCode || 'unit'} of fee income, split into what was paid away and what was kept
                                     </span>
                                 </div>
-                                <FeeRibbon totals={totals} money={money} share={share} />
+                                <FeeRibbon totals={totals} money={money} share={share} animKey={animKey} />
                             </div>
 
                             <div style={{
@@ -1561,20 +2062,20 @@ const DailyMerchantDashboard = () => {
 
                     {/* ── Mix: hue per dimension, opacity per rank ── */}
                     {mix && (mix.scheme?.length || mix.cardType?.length || mix.destination?.length) ? (
-                        <section className="edm-panel" style={{
+                        <section className="edm-panel edm-panel-lift edm-enter" style={{
                             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
-                            gap: 26, padding: '16px 20px', marginBottom: 12,
+                            gap: 26, padding: '16px 20px', marginBottom: 12, '--i': 3,
                         }}>
-                            <MixStrip title="Scheme" hue="var(--cat-1)" rows={mix.scheme} money={money} share={share} />
-                            <MixStrip title="Card type" hue="var(--chart-4, #7191CE)" rows={mix.cardType} money={money} share={share} />
-                            <MixStrip title="Destination" hue="var(--chart-alt, #64748B)" rows={mix.destination} money={money} share={share} />
+                            <MixStrip title="Scheme" hue="var(--cat-1)" rows={mix.scheme} money={money} share={share} animKey={animKey} />
+                            <MixStrip title="Card type" hue="var(--chart-4, #7191CE)" rows={mix.cardType} money={money} share={share} animKey={animKey} />
+                            <MixStrip title="Destination" hue="var(--chart-alt, #64748B)" rows={mix.destination} money={money} share={share} animKey={animKey} />
                             <WeekSplit days={allMonthDays} trendByDate={trendByDate}
-                                week={week} money={money} share={share} />
+                                week={week} money={money} share={share} animKey={animKey} />
                         </section>
                     ) : null}
 
                     {/* ── Merchant table ── */}
-                    <div className="edm-panel" style={{ overflow: 'hidden' }}>
+                    <div className="edm-panel edm-enter" style={{ overflow: 'hidden', '--i': 4 }}>
                         <div style={{ overflowX: 'auto', maxHeight: '62vh', overflowY: 'auto' }}>
                             <table className="edm-table">
                                 <thead>
@@ -1597,9 +2098,10 @@ const DailyMerchantDashboard = () => {
                                         })}
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody key={rowsKey}>
                                     {rows.map((r, i) => (
-                                        <tr key={`${r.mid}-${r.sid}-${i}`} onClick={() => setDetailRow(r)}>
+                                        <tr key={`${r.mid}-${r.sid}-${i}`} onClick={() => setDetailRow(r)}
+                                            className="edm-row-in" style={{ '--i': i }}>
                                             <td className="edm-c1 edm-num" style={{ fontSize: 12.5 }}>{r.sid || '—'}</td>
                                             <td className="edm-c2 edm-num" style={{ fontSize: 12.5 }}>{r.mid || '—'}</td>
                                             <td className="edm-c3" style={{
@@ -1618,7 +2120,10 @@ const DailyMerchantDashboard = () => {
                                             <td className="edm-cell-num" title={fullNum(r.icf, currencySymbol)}>{money(r.icf)}</td>
                                             <td className="edm-cell-num" title={fullNum(r.sf, currencySymbol)}>{money(r.sf)}</td>
                                             <td className="edm-cell-num" title={fullNum(r.pg, currencySymbol)}>{money(r.pg)}</td>
-                                            <td className="edm-cell-num"><NmCell v={r.nm} /></td>
+                                            <td className={`edm-cell-num ${num(r.nm) < 0 ? 'edm-nm-loss' : 'edm-nm-cell'}`}
+                                                style={{ '--heat': nmHeat(r.nm) }}>
+                                                <NmCell v={r.nm} />
+                                            </td>
                                         </tr>
                                     ))}
                                     {totals && (
@@ -1688,29 +2193,28 @@ const DailyMerchantDashboard = () => {
                 } }}>
                 {detailRow && (
                     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                        <div style={{
-                            padding: '18px 20px', borderBottom: '1px solid var(--border)',
-                            display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10,
-                        }}>
+                        <div className="edm-drawer-head">
                             <div style={{ minWidth: 0 }}>
-                                <div className="edm-eyebrow">Merchant</div>
+                                <div className="edm-mast-eyebrow">Merchant</div>
                                 <div style={{
-                                    marginTop: 5, fontSize: 16, fontWeight: 700, color: 'var(--text)',
-                                    overflow: 'hidden', textOverflow: 'ellipsis',
+                                    marginTop: 6, fontSize: 17, fontWeight: 700, letterSpacing: '-0.015em',
+                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                                 }}>
                                     {detailRow.merchantName || '—'}
                                 </div>
-                                <div className="edm-num" style={{
-                                    marginTop: 4, fontSize: 12, color: 'var(--text-secondary)',
-                                }}>
-                                    MID {detailRow.mid || '—'} · SID {detailRow.sid || '—'}
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                                    <span className="edm-badge"><small>MID</small>{detailRow.mid || '—'}</span>
+                                    <span className="edm-badge"><small>SID</small>{detailRow.sid || '—'}</span>
                                 </div>
-                                <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-muted)' }}>
+                                <div style={{
+                                    marginTop: 8, fontSize: 11.5,
+                                    color: 'color-mix(in srgb, var(--table-head-text, #EEF3FC) 62%, transparent)',
+                                }}>
                                     {selectionText !== '—' ? selectionText : ''}
                                 </div>
                             </div>
                             <IconButton size="small" onClick={() => setDetailRow(null)}
-                                sx={{ color: 'var(--text-secondary)' }} aria-label="Close">
+                                sx={{ color: 'var(--table-head-text, #EEF3FC)', opacity: .8 }} aria-label="Close">
                                 <X size={16} />
                             </IconButton>
                         </div>
@@ -1739,8 +2243,9 @@ const DailyMerchantDashboard = () => {
                             </div>
 
                             <div style={{ marginTop: 20 }}>
-                                <div className="edm-eyebrow" style={{ marginBottom: 10 }}>Fee stack</div>
-                                <FeeRibbon totals={detailRow} money={money} share={share} compact />
+                                <div className="edm-eyebrow edm-eyebrow-rule" style={{ marginBottom: 10 }}>Fee stack</div>
+                                <FeeRibbon totals={detailRow} money={money} share={share} compact
+                                    animKey={`${detailRow.mid}-${detailRow.sid}`} />
                                 <div style={{
                                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                                     marginTop: 14, paddingTop: 12,
