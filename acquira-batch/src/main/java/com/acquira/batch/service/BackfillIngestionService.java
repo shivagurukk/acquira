@@ -387,7 +387,7 @@ public class BackfillIngestionService {
                 "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                 "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
                 "sum_daily_explorer", "sum_daily_merchant_destination",
-                "sum_daily_local_debit_bin",
+                "sum_daily_local_debit_bin", "sum_daily_finance_rollup",
                 "sum_daily_merchant_attribute"}) {
             jdbcTemplate.update(
                     "DELETE FROM " + dailyTbl + " WHERE tenant_id = ? AND business_date = ?",
@@ -656,6 +656,10 @@ public class BackfillIngestionService {
                             f.card_type, f.dcc
                         """,
                 tenantId, date);
+
+        // 9c¹. sum_daily_finance_rollup — Finance Summary fast path. Reads the
+        // just-written sum_daily_insight (9) and sum_daily_full (9c) for this day.
+        com.acquira.common.service.FinanceRollupSql.rebuildRange(jdbcTemplate, tenantId, date, date);
 
         // 9c². sum_daily_local_debit_bin — Local Debit Bank Dashboard source,
         // upload parity. Mirrors TransactionJobConfig.populateSummary exactly

@@ -1846,7 +1846,7 @@ public class TransactionJobConfig {
                         "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                         "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
                         "sum_daily_explorer", "sum_daily_merchant_destination",
-                        "sum_daily_local_debit_bin",
+                        "sum_daily_local_debit_bin", "sum_daily_finance_rollup",
                         "sum_daily_merchant_attribute"}) {
                     int del = jdbcTemplate.update(
                         "DELETE FROM " + dailyTbl +
@@ -2280,6 +2280,14 @@ public class TransactionJobConfig {
                         "ON CONFLICT (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +
                         "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf",
                         tenantId)));
+                // sum_daily_finance_rollup — the Finance Summary screen's fast
+                // path (one row per tenant-day: pivot measures + fee stack).
+                // Reads phase1's sum_daily_insight AND sum_daily_full, hence
+                // phase2. Contiguous date runs collapse to one statement.
+                phase2.add(runAsync(exec, "sum_daily_finance_rollup", () ->
+                    com.acquira.common.service.FinanceRollupSql.rebuildDates(jdbcTemplate, tenantId,
+                        distinctDates.stream().map(java.sql.Date::toLocalDate)
+                            .collect(java.util.stream.Collectors.toList()))));
                 phase2.add(runAsync(exec, "top_spending_customer", () ->
                     jdbcTemplate.update("WITH DailyCustSpend AS (SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number, " +
                         "SUM(store_base_currency_amount) as total_spend FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +

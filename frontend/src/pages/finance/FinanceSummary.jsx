@@ -50,8 +50,13 @@ const num = (v) => (v == null ? 0 : Number(v) || 0);
 const MIX = {
     interchange: 'var(--mix-interchange)',
     scheme: 'var(--mix-scheme)',
+    pg: 'var(--mix-pg)',
     margin: 'var(--mix-margin)',
 };
+
+/* Net margin = the settlement summary's own MSF less all three costs.
+   The same formula as the CEO Volume & Revenue screen, so the two agree. */
+const netOf = (r) => num(r.fee_basis_msf) - num(r.total_ic) - num(r.total_sf) - num(r.total_pg);
 
 /* Bucket identity for the three column groups. A 3px underline on the
    group header, not a pastel background wash — every other table in the
@@ -126,14 +131,15 @@ const RowRail = ({ row }) => {
     if (!row.fees_available || basis <= 0) return <div style={{ height: 3 }} />;
     const ic = num(row.total_ic);
     const sf = num(row.total_sf);
-    const margin = Math.max(0, basis - ic - sf);
-    const tot = ic + sf + margin || 1;
+    const pg = num(row.total_pg);
+    const margin = Math.max(0, basis - ic - sf - pg);
+    const tot = ic + sf + pg + margin || 1;
     const seg = (w, c) => <div style={{ width: `${(w / tot) * 100}%`, background: c }} />;
     return (
         <div aria-hidden="true" style={{
             height: 3, display: 'flex', borderRadius: 2, overflow: 'hidden', background: 'var(--border)',
         }}>
-            {seg(ic, MIX.interchange)}{seg(sf, MIX.scheme)}{seg(margin, MIX.margin)}
+            {seg(ic, MIX.interchange)}{seg(sf, MIX.scheme)}{seg(pg, MIX.pg)}{seg(margin, MIX.margin)}
         </div>
     );
 };
@@ -206,8 +212,9 @@ const DataRow = ({ row, isExpanded, onClick, level = 1, feeDetail, fmt }) => {
             <td style={numCell({ fontWeight: 600, color: 'var(--text-secondary)' })}>{fmt.msf(row.total_msf)}</td>
             <td style={numCell({ color: MIX.interchange })}>{row.fees_available ? fmt.msf(row.total_ic) : '—'}</td>
             <td style={numCell({ color: MIX.scheme })}>{row.fees_available ? fmt.msf(row.total_sf) : '—'}</td>
+            <td style={numCell({ color: MIX.pg })}>{row.fees_available ? fmt.msf(row.total_pg) : '—'}</td>
             <td style={numCell({ color: MIX.margin, fontWeight: 650 })}>
-                {row.fees_available ? fmt.msf(num(row.fee_basis_msf) - num(row.total_ic) - num(row.total_sf)) : '—'}
+                {row.fees_available ? fmt.msf(netOf(row)) : '—'}
             </td>
             <td style={numCell({ color: 'var(--text-muted)' })}>{takeRate(row.total_msf, row.total_vol)}</td>
         </tr>
@@ -221,13 +228,15 @@ const TakeRail = ({ totals, fmt, feesAvailable, netMargin, msfDrift, hasRows }) 
     const basis = num(totals.fee_basis_msf);
     const ic = num(totals.total_ic);
     const sf = num(totals.total_sf);
+    const pg = num(totals.total_pg);
     const margin = Math.max(0, netMargin);
-    const denom = ic + sf + margin || 1;
+    const denom = ic + sf + pg + margin || 1;
     const share = (v) => (v / denom) * 100;
 
     const legs = [
         { key: 'ic', label: 'Interchange', help: 'Paid to the issuing bank', value: ic, color: MIX.interchange },
         { key: 'sf', label: 'Scheme fee', help: 'Paid to the card scheme', value: sf, color: MIX.scheme },
+        { key: 'pg', label: 'PG fee', help: 'Paid to the payment gateway (e-com)', value: pg, color: MIX.pg },
         { key: 'ma', label: 'Net margin', help: 'Kept by the bank', value: margin, color: MIX.margin },
     ];
 
@@ -322,7 +331,7 @@ const TakeRail = ({ totals, fmt, feesAvailable, netMargin, msfDrift, hasRows }) 
                     <span>
                         {!hasRows
                             ? 'Pick a period with transactions to see the fee stack.'
-                            : 'Interchange and scheme fee have not been built for this period yet. Volume and MSF below are complete; rebuild the daily summaries to fill in the fee columns.'}
+                            : 'Interchange, scheme fee and PG fee have not been built for this period yet. Volume and MSF below are complete; rebuild the daily summaries to fill in the fee columns.'}
                     </span>
                 </p>
             )}
@@ -389,7 +398,7 @@ const SUM_KEYS = [
     'dom_debit_cnt', 'dom_debit_vol', 'dom_debit_msf', 'dom_debit_ic', 'dom_debit_sf',
     'dom_credit_cnt', 'dom_credit_vol', 'dom_credit_msf', 'dom_credit_ic', 'dom_credit_sf',
     'int_cnt', 'int_vol', 'int_msf', 'int_optin', 'int_ic', 'int_sf',
-    'total_vol', 'total_msf', 'total_ic', 'total_sf', 'fee_basis_msf',
+    'total_vol', 'total_msf', 'total_ic', 'total_sf', 'total_pg', 'fee_basis_msf',
 ];
 
 const FinanceSummary = () => {
@@ -534,7 +543,7 @@ const FinanceSummary = () => {
     // period the warehouse has volume for but no fee rows yet must say so rather
     // than render a zero margin that looks like a catastrophic month.
     const feesAvailable = data.length > 0 && data.some(r => r.fees_available);
-    const netMargin = num(totals.fee_basis_msf) - num(totals.total_ic) - num(totals.total_sf);
+    const netMargin = netOf(totals);
     // The overlay's MSF vs the pivot's MSF. Same transactions, different
     // aggregation tables; a material gap means one of them is stale.
     const msfDrift = num(totals.total_msf)
@@ -565,7 +574,7 @@ const FinanceSummary = () => {
             'Local Credit Interchange', 'Local Credit Scheme Fee', 'Local Credit Volume %',
             'International Count', 'International Volume', 'International MSF',
             'International Interchange', 'International Scheme Fee', 'International Volume %', 'International Opt-in Volume',
-            'Total Volume', 'Total MSF', 'Total Interchange', 'Total Scheme Fee', 'Net Margin', 'Take Rate %',
+            'Total Volume', 'Total MSF', 'Total Interchange', 'Total Scheme Fee', 'Total PG Fee', 'Net Margin', 'Take Rate %',
         ];
         const pct = (v, t) => (!num(t) ? '0.00' : ((num(v) / num(t)) * 100).toFixed(2));
         const line = (label, r) => [
@@ -573,8 +582,8 @@ const FinanceSummary = () => {
             num(r.dom_debit_cnt), num(r.dom_debit_vol), num(r.dom_debit_msf), num(r.dom_debit_ic), num(r.dom_debit_sf), pct(r.dom_debit_vol, r.total_vol),
             num(r.dom_credit_cnt), num(r.dom_credit_vol), num(r.dom_credit_msf), num(r.dom_credit_ic), num(r.dom_credit_sf), pct(r.dom_credit_vol, r.total_vol),
             num(r.int_cnt), num(r.int_vol), num(r.int_msf), num(r.int_ic), num(r.int_sf), pct(r.int_vol, r.total_vol), num(r.int_optin),
-            num(r.total_vol), num(r.total_msf), num(r.total_ic), num(r.total_sf),
-            num(r.fee_basis_msf) - num(r.total_ic) - num(r.total_sf),
+            num(r.total_vol), num(r.total_msf), num(r.total_ic), num(r.total_sf), num(r.total_pg),
+            netOf(r),
             pct(r.total_msf, r.total_vol),
         ].map(cell).join(',');
 
@@ -784,8 +793,8 @@ const FinanceSummary = () => {
                                 title="Domestic destination, card type CREDIT (includes any unmapped domestic card type)" />
                             <GroupTh label="International" span={feeDetail ? 7 : 5} color={BUCKETS.intl}
                                 title="Any non-domestic destination, all card types" />
-                            <GroupTh label="Total & fee stack" span={6} color="var(--primary-soft)"
-                                title="MSF less interchange and scheme fee is the margin the bank keeps" />
+                            <GroupTh label="Total & fee stack" span={7} color="var(--primary-soft)"
+                                title="MSF less interchange, scheme fee and PG fee is the margin the bank keeps" />
                         </tr>
                         <tr style={{ background: 'var(--table-head-bg)' }}>
                             <th style={{
@@ -809,7 +818,7 @@ const FinanceSummary = () => {
                             <SubTh label="Volume %" /><SubTh label="Opt-in vol" edge />
 
                             <SubTh label="Volume" /><SubTh label="MSF" />
-                            <SubTh label="Interchange" /><SubTh label="Scheme fee" /><SubTh label="Net margin" /><SubTh label="Take rate" />
+                            <SubTh label="Interchange" /><SubTh label="Scheme fee" /><SubTh label="PG fee" /><SubTh label="Net margin" /><SubTh label="Take rate" />
                         </tr>
                     </thead>
 
@@ -939,6 +948,7 @@ const FinanceSummary = () => {
                             <FootTd>{fmt.msf(totals.total_msf)}</FootTd>
                             <FootTd style={{ color: MIX.interchange }}>{feesAvailable ? fmt.msf(totals.total_ic) : '—'}</FootTd>
                             <FootTd style={{ color: MIX.scheme }}>{feesAvailable ? fmt.msf(totals.total_sf) : '—'}</FootTd>
+                            <FootTd style={{ color: MIX.pg }}>{feesAvailable ? fmt.msf(totals.total_pg) : '—'}</FootTd>
                             <FootTd style={{ color: MIX.margin }}>{feesAvailable ? fmt.msf(netMargin) : '—'}</FootTd>
                             <FootTd>{takeRate(totals.total_msf, totals.total_vol)}</FootTd>
                         </tr>
@@ -948,8 +958,8 @@ const FinanceSummary = () => {
 
             <p style={{ margin: '10px 2px 0', fontSize: 11, color: 'var(--text-muted)' }}>
                 Rows expand month → day → merchant. Volume, count and MSF come from the transaction
-                summaries; interchange and scheme fee come from the settlement summary, and net margin
-                is that summary&rsquo;s MSF less both fees.
+                summaries; interchange, scheme fee and PG (gateway) fee come from the settlement summary,
+                and net margin is that summary&rsquo;s MSF less all three fees.
             </p>
         </div>
     );

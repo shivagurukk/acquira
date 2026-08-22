@@ -330,7 +330,7 @@ public class BulkMigrationService {
                 "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
                 "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc",
                 "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
-                "sum_daily_local_debit_bin",
+                "sum_daily_local_debit_bin", "sum_daily_finance_rollup",
                 "sum_monthly_insight",
                 "sum_monthly_bank", "sum_monthly_card", "merchant_activity_summary");
 
@@ -397,7 +397,7 @@ public class BulkMigrationService {
             // Explorer/Full rollups (and now the destination split) until the
             // next upload for that date rebuilt them.
             "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
-            "sum_daily_local_debit_bin"
+            "sum_daily_local_debit_bin", "sum_daily_finance_rollup"
         };
         for (String tbl : dailyTables) {
             deleted.put(tbl, jdbcTemplate.update(
@@ -936,6 +936,15 @@ public class BulkMigrationService {
                 tenantId, monthStart, monthEnd);
         } catch (Exception e) {
             log.warn("[REBUILD] sum_daily_full rebuild skipped (non-fatal): {}", e.getMessage());
+        }
+
+        // 11b¹. sum_daily_finance_rollup — Finance Summary fast path, one row
+        // per tenant-day from the month's freshly rebuilt sum_daily_insight (9)
+        // and sum_daily_full (11b). Non-fatal like its sources.
+        try {
+            com.acquira.common.service.FinanceRollupSql.rebuildRange(jdbcTemplate, tenantId, monthStart, monthEnd);
+        } catch (Exception e) {
+            log.warn("[REBUILD] sum_daily_finance_rollup rebuild skipped (non-fatal): {}", e.getMessage());
         }
 
         // 11b². sum_daily_local_debit_bin — Local Debit Bank Dashboard source.

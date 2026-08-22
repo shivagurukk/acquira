@@ -79,7 +79,8 @@ public class VolumeRevenueRepository {
         }
         sql.append(" SUM(COALESCE(s.total_interchange,0)) as total_ic, ");
         sql.append(" SUM(COALESCE(s.total_scheme_fee,0)) as total_sf, ");
-        sql.append(" SUM(COALESCE(s.total_msf,0)) as fee_basis_msf ");
+        sql.append(" SUM(COALESCE(s.total_msf,0)) as fee_basis_msf, ");
+        sql.append(" SUM(COALESCE(s.total_ecom_fee,0)) as total_pg ");   // PG / gateway fee, whole row only
         sql.append("FROM sum_daily_full s ");
         if (needMerchant)
             sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
@@ -96,13 +97,86 @@ public class VolumeRevenueRepository {
         List<Object[]> rows = query.getResultList();
         Map<String, Map<String, Object>> out = new HashMap<>();
         String[] cols = { "dom_debit_ic", "dom_debit_sf", "dom_credit_ic", "dom_credit_sf",
-                "int_ic", "int_sf", "total_ic", "total_sf", "fee_basis_msf" };
+                "int_ic", "int_sf", "total_ic", "total_sf", "fee_basis_msf", "total_pg" };
         for (Object[] row : rows) {
             if (row[0] == null) continue;
             Map<String, Object> m = new HashMap<>();
             for (int i = 0; i < cols.length; i++)
                 m.put(cols[i], row[i + 1]);
             out.put(row[0].toString(), m);
+        }
+        return out;
+    }
+
+    /**
+     * Finance Summary MONTH / DAY grain served from sum_daily_finance_rollup
+     * (one row per tenant-day — see {@link com.acquira.common.service.FinanceRollupSql}).
+     * Returns rows in the SAME shape as the pivot + fee overlay merged
+     * (row_label, sort_date, the 14 pivot measures, merchant_name, the 9 fee
+     * columns, fees_available), so FinanceSummaryService can use either path
+     * interchangeably. A year is at most 365 input rows.
+     *
+     * Empty result means "rollup not built for this tenant/range" as much as
+     * "no data" — the caller falls back to the detail-table queries, which
+     * answer that question authoritatively.
+     *
+     * @param groupBy MONTH or DAY; anything else returns an empty list.
+     */
+    public List<Map<String, Object>> getFinanceSummaryFromRollup(
+            java.time.LocalDate start, java.time.LocalDate end, String groupBy, Long tenantId) {
+        requireTenant(tenantId);
+        if (start == null || end == null || start.isAfter(end)) return new ArrayList<>();
+
+        final String label;
+        final String order;
+        if ("MONTH".equals(groupBy)) {
+            label = "TO_CHAR(r.business_date, 'YYYY-MM')";
+            order = "DESC";   // matches the pivot: newest month first
+        } else if ("DAY".equals(groupBy)) {
+            label = "TO_CHAR(r.business_date, 'YYYY-MM-DD')";
+            order = "ASC";
+        } else {
+            return new ArrayList<>();
+        }
+
+        String[] pivotCols = com.acquira.common.service.FinanceRollupSql.PIVOT_COLS;
+        String[] feeCols = com.acquira.common.service.FinanceRollupSql.FEE_COLS;
+
+        StringBuilder sql = new StringBuilder("SELECT ").append(label).append(" AS row_label, ");
+        sql.append("MIN(r.business_date) AS sort_key");
+        for (String c : pivotCols) sql.append(", SUM(r.").append(c).append(")");
+        for (String c : feeCols) sql.append(", SUM(r.").append(c).append(")");
+        sql.append(", BOOL_OR(r.fees_built) ");
+        sql.append("FROM ").append(com.acquira.common.service.FinanceRollupSql.TABLE).append(" r ");
+        sql.append("WHERE r.tenant_id = :tenantId AND r.business_date >= :startDate AND r.business_date <= :endDate ");
+        sql.append("GROUP BY ").append(label);
+        // Same row set as the old pivot: a period is listed only if
+        // sum_daily_insight had at least one day in it. Fee-only days still
+        // contribute their fees to the period (the overlay summed the whole
+        // range too) but never create a row of their own.
+        sql.append(" HAVING BOOL_OR(r.pivot_built)");
+        sql.append(" ORDER BY row_label ").append(order);
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("tenantId", tenantId);
+        query.setParameter("startDate", start);
+        query.setParameter("endDate", end);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+        for (Object[] row : rows) {
+            if (row[0] == null) continue;
+            Map<String, Object> m = new HashMap<>();
+            int col = 0;
+            m.put("row_label", row[col++]);
+            m.put("sort_date", row[col] != null ? row[col].toString() : "");
+            col++;
+            for (String c : pivotCols) m.put(c, row[col++]);
+            m.put("merchant_name", null);
+            for (String c : feeCols) m.put(c, row[col++]);
+            m.put("fees_available", Boolean.TRUE.equals(row[col]));
+            out.add(m);
         }
         return out;
     }
