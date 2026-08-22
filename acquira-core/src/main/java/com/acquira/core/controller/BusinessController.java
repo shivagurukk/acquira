@@ -30,6 +30,9 @@ public class BusinessController {
         private final com.acquira.common.security.MenuAccessEvaluator menuAccess;
         /** Stamps the tenant's currency onto every money-bearing response. */
         private final CurrencyMeta currencyMeta;
+        /** Executive screens serve identical payloads to every viewer of a
+         *  tenant until the next ingest clears the report caches. */
+        private final com.acquira.common.service.ReportCache reportCache;
 
         @PersistenceContext
         private EntityManager entityManager;
@@ -38,12 +41,14 @@ public class BusinessController {
                         MerchantOpportunityScoreRepository opportunityRepository,
                         com.acquira.common.repository.SumDailyBankRepository dailyBankRepository,
                         com.acquira.common.security.MenuAccessEvaluator menuAccess,
-                        CurrencyMeta currencyMeta) {
+                        CurrencyMeta currencyMeta,
+                        com.acquira.common.service.ReportCache reportCache) {
                 this.activityRepository = activityRepository;
                 this.opportunityRepository = opportunityRepository;
                 this.dailyBankRepository = dailyBankRepository;
                 this.menuAccess = menuAccess;
                 this.currencyMeta = currencyMeta;
+                this.reportCache = reportCache;
         }
 
         // SECURITY: use only the filter-validated TenantContext, never the raw
@@ -142,7 +147,13 @@ public class BusinessController {
         public ResponseEntity<Map<String, Object>> getCeoSummary() {
                 Long tenantId = resolveTenant();
                 if (tenantId == null) return ResponseEntity.status(403).build();
+                return ResponseEntity.ok(reportCache.get(
+                                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                                "ceoSummary:" + tenantId,
+                                () -> buildCeoSummary(tenantId)));
+        }
 
+        private Map<String, Object> buildCeoSummary(Long tenantId) {
                 // Anchor on latest available data.
                 Object maxD = entityManager
                                 .createNativeQuery("SELECT MAX(business_date) FROM sum_daily_bank WHERE tenant_id = :tid")
@@ -368,7 +379,7 @@ public class BusinessController {
                 response.put("mtd", mtd);
                 response.put("ytd", ytd);
                 response.put("lastYear", lastYear);
-                return ResponseEntity.ok(currencyMeta.attach(response));
+                return currencyMeta.attach(response);
         }
 
         /**
@@ -419,6 +430,37 @@ public class BusinessController {
                         return ResponseEntity.status(403).body(Map.of("message",
                                         "You do not have access to this report."));
 
+                // Cache the common shapes only: exports return the full result set
+                // (large, rare) and search keys would churn the small reportData
+                // cap one debounced keystroke at a time.
+                boolean cacheable = !export && (search == null || search.isBlank());
+                if (!cacheable) {
+                        return ResponseEntity.ok(buildCeoVolumeRevenue(
+                                        tenantId, mode, page, size, sort, dir, search, lossOnly, month, export));
+                }
+                // Key components are NORMALIZED to the same canonical values the
+                // build method resolves them to, never raw request text. Raw
+                // free-text mode/sort in a ':'-joined key would let a crafted
+                // value collide with a different legitimate tuple (poisoning
+                // colleagues' reads), and randomized values would churn the
+                // small reportData cap one request at a time.
+                String periodKey = (month != null && month.matches("\\d{4}-\\d{2}")) ? month
+                                : "YTD".equalsIgnoreCase(mode) ? "YTD"
+                                : "THIS_MONTH".equalsIgnoreCase(mode) ? "THIS_MONTH" : "MTD";
+                String sortKey = java.util.Set.of("volume", "txns", "msf", "interchange",
+                                "schemeFee", "ecomFee", "net", "margin", "name", "mid")
+                                .contains(sort) ? sort : "volume";
+                String dirKey = "asc".equalsIgnoreCase(dir) ? "asc" : "desc";
+                String key = "ceoVolRev:" + tenantId + ":" + lossOnly + ":" + periodKey
+                                + ":" + page + ":" + size + ":" + sortKey + ":" + dirKey;
+                return ResponseEntity.ok(reportCache.get(
+                                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                                () -> buildCeoVolumeRevenue(tenantId, mode, page, size, sort, dir,
+                                                search, lossOnly, month, export)));
+        }
+
+        private Map<String, Object> buildCeoVolumeRevenue(Long tenantId, String mode, int page, int size,
+                        String sort, String dir, String search, boolean lossOnly, String month, boolean export) {
                 // Anchor the period windows to the table this report actually READS.
                 // This used to come from sum_daily_bank while every figure below is
                 // read from sum_daily_terminal. Those are two independent, concurrent
@@ -655,7 +697,7 @@ public class BusinessController {
                 response.put("totalRows", totalRows);
                 response.put("totals", totals);
                 response.put("rows", out);
-                return ResponseEntity.ok(currencyMeta.attach(response));
+                return currencyMeta.attach(response);
         }
 
         /** One-row SUM aggregate over sum_daily_bank for a date window (settlement volume). */

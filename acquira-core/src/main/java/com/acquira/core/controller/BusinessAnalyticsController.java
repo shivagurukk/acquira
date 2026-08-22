@@ -25,6 +25,22 @@ public class BusinessAnalyticsController {
     @Autowired
     private com.acquira.common.service.DataBoundsService dataBoundsService;
 
+    @Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    /** Serializes the resolved filter DTO into a stable cache-key suffix. */
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    private String filterKey(VolumeRevenueFilterDTO filters) {
+        try {
+            return objectMapper.writeValueAsString(filters);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // Unkeyable filters just mean an uncached (direct) execution.
+            return null;
+        }
+    }
+
     private void resolveFilters(VolumeRevenueFilterDTO filters) {
         if (filters.getTeamLeaderList() != null && !filters.getTeamLeaderList().isEmpty()) {
             Long tenantId = tenantService.getCurrentTenantId();
@@ -164,7 +180,17 @@ public class BusinessAnalyticsController {
         // Rows + meta computed the "latest loaded business date" separately —
         // same query, run twice, on every page load. getAttritionReportWithMeta
         // computes it once and threads it through both.
-        return volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId);
+        // Cached on the POST-resolveFilters DTO (canonical: team-leader names
+        // and industries are already resolved to ids/MCCs), so two spellings of
+        // the same effective filter share an entry.
+        String fk = filterKey(filters);
+        if (fk == null) {
+            return volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId);
+        }
+        return reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "attritionMeta:" + tenantId + ":" + fk,
+                () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
     }
 
     @PreAuthorize("@menuAccess.canAccess('/business/retention')")
@@ -213,6 +239,13 @@ public class BusinessAnalyticsController {
     public Map<String, List<String>> getFilterOptions() {
         // Pass tenant context so dropdown lists are scoped to the user's tenant.
         // Falls through to the unscoped variant when tenantId is null.
+        // DO NOT wrap this call in ReportCache.get: the repository method is
+        // itself @Cacheable on CACHE_LOOKUPS, and nesting a cache write inside
+        // Caffeine's compute on the same cache violates ConcurrentHashMap's
+        // no-recursive-update rule (IllegalStateException on a bin collision).
+        // The inner @Cacheable also carries unless="#result.isEmpty()" so a
+        // transient DB failure is not pinned — an outer unconditional cache
+        // would hold the empty map for the full TTL.
         Long tenantId = tenantService.getCurrentTenantId();
         return volumeRevenueRepository.getFilterOptions(tenantId);
     }

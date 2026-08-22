@@ -36,9 +36,12 @@ public class ChurnRiskController {
     private EntityManager entityManager;
 
     private final com.acquira.core.service.TenantService tenantService;
+    private final com.acquira.common.service.ReportCache reportCache;
 
-    public ChurnRiskController(com.acquira.core.service.TenantService tenantService) {
+    public ChurnRiskController(com.acquira.core.service.TenantService tenantService,
+                               com.acquira.common.service.ReportCache reportCache) {
         this.tenantService = tenantService;
+        this.reportCache = reportCache;
     }
 
     /**
@@ -69,7 +72,16 @@ public class ChurnRiskController {
         // binding with a 400 before any of this ran.
         Long tenantId = resolveTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
+        // merchant_churn_score only changes when the weekly retrain (or an
+        // ingest-triggered rescore) writes new calc_date rows — both end in a
+        // report-cache clear, so serving repeats from memory is safe.
+        return ResponseEntity.ok(reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "churnRisk:" + tenantId,
+                () -> loadChurnRisk(tenantId)));
+    }
 
+    private List<Map<String, Object>> loadChurnRisk(Long tenantId) {
         // One row per merchant = the most recent calc_date for that merchant.
         // Correlated MAX keeps it dialect-agnostic. dim_merchant join is tenant-scoped.
         String sql =
@@ -101,7 +113,7 @@ public class ChurnRiskController {
             m.put("calcDate", r[7] == null ? null : r[7].toString());
             out.add(m);
         }
-        return ResponseEntity.ok(out);
+        return out;
     }
 
     private static Double toDouble(Object o) {

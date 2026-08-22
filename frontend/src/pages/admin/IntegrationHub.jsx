@@ -459,6 +459,7 @@ const ReportsTab = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [validating, setValidating] = useState(null);
+  const [approving, setApproving] = useState(null);
   const [preview, setPreview] = useState(null);
   // In-modal dry-run (validate BEFORE saving) — separate state so it doesn't clash
   // with the card-level Validate flow.
@@ -475,6 +476,50 @@ const ReportsTab = () => {
   useEffect(() => { load(); }, [tenantVersion]);
 
   const filtered = subTab === 'ALL' ? reports : reports.filter((r) => r.reportType === subTab);
+
+  // Approval is what lets a report's SQL run against the source database, so
+  // it is a deliberate, separately-audited action rather than part of the edit
+  // form. Super Admin only — the API returns 403 for anyone else.
+  const approve = async (r) => {
+    const ok = await confirm({
+      title: 'Approve this SQL for execution?',
+      message: `"${r.name}" will be allowed to run against ${r.connection?.name || 'the source database'} on its schedule. `
+          + 'Review the SQL first — it executes with the stored service credentials. '
+          + 'Editing the SQL later automatically revokes this approval.',
+      confirmLabel: 'Approve',
+    });
+    if (!ok) return;
+    setApproving(r.id);
+    try {
+      await api.post(`/admin/integration/reports/${r.id}/approve`);
+      showToast('Report approved', 'success');
+      load();
+    } catch (e) {
+      showToast(e?.response?.status === 403
+        ? 'Only a Super Admin can approve report SQL'
+        : 'Could not approve report', 'error');
+    } finally { setApproving(null); }
+  };
+
+  const revokeApproval = async (r) => {
+    const ok = await confirm({
+      title: 'Revoke approval?',
+      message: `"${r.name}" will stop running until it is approved again. Any scheduled pull will fail with a clear message.`,
+      confirmLabel: 'Revoke approval',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setApproving(r.id);
+    try {
+      await api.delete(`/admin/integration/reports/${r.id}/approve`);
+      showToast('Approval revoked', 'success');
+      load();
+    } catch (e) {
+      showToast(e?.response?.status === 403
+        ? 'Only a Super Admin can change report approval'
+        : 'Could not revoke approval', 'error');
+    } finally { setApproving(null); }
+  };
 
   const openAdd = () => {
     setForm({ ...emptyReport, connectionId: connections[0]?.id || '' });
@@ -568,6 +613,31 @@ const ReportsTab = () => {
       sortValue: (r) => r.connection?.name,
       render: (r) => r.connection?.name || '—',
     },
+    {
+      // A report only runs once its SQL is approved — the backend blocks the
+      // pull otherwise, so this is the single most important thing to see here.
+      key: 'approvedBy',
+      header: 'Approval',
+      sortable: true,
+      sortValue: (r) => (r.approvedBy ? 1 : 0),
+      render: (r) => {
+        if (!r.approvedBy) {
+          return <Badge tone="warning" title="This report will not run until a Super Admin approves its SQL.">Not approved</Badge>;
+        }
+        if (r.approvedBy === 'LEGACY-PRE-APPROVAL') {
+          return (
+            <Badge tone="info" title="Approved automatically during the upgrade. Review and re-approve for a clean audit trail.">
+              Legacy
+            </Badge>
+          );
+        }
+        return (
+          <Badge tone="success" title={`Approved by ${r.approvedBy}${r.approvedAt ? ` on ${new Date(r.approvedAt).toLocaleString()}` : ''}`}>
+            Approved
+          </Badge>
+        );
+      },
+    },
     { key: 'description', header: 'Description', muted: true, render: (r) => r.description || 'No description' },
     {
       key: 'sqlText',
@@ -592,6 +662,9 @@ const ReportsTab = () => {
       nowrap: true,
       render: (r) => (
         <>
+          {r.approvedBy
+            ? <Button size="sm" variant="ghost" loading={approving === r.id} onClick={() => revokeApproval(r)}>Revoke</Button>
+            : <Button size="sm" variant="primary" loading={approving === r.id} onClick={() => approve(r)}>Approve</Button>}
           <Button size="sm" icon={TestTube} loading={validating === r.id} onClick={() => validate(r.id)}>Validate</Button>
           <Button size="sm" variant="ghost" iconOnly icon={Edit2} onClick={() => openEdit(r)} aria-label={`Edit ${r.name}`} />
           <Button size="sm" variant="danger-ghost" iconOnly icon={Trash2} onClick={() => remove(r)} aria-label={`Deactivate ${r.name}`} />
@@ -682,7 +755,7 @@ const ReportsTab = () => {
             <div className="ui-form-grid--span">
               <FormField
                 label="SQL query"
-                hint="Use :year :month :dateFrom :dateTo as parameters."
+                hint="Use :year :month :dateFrom :dateTo as parameters. Changing this SQL revokes the report's approval — a Super Admin must approve it again before it will run."
               >
                 <Textarea
                   mono

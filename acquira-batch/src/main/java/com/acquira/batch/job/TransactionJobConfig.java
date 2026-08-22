@@ -81,6 +81,12 @@ public class TransactionJobConfig {
     @org.springframework.beans.factory.annotation.Autowired
     private CacheEvictionJobListener cacheEvictionJobListener;
 
+    // Shared bulk rebuild of sum_monthly_merchant_metrics (also used by
+    // BulkMigrationService and BackfillIngestionService, which previously each
+    // carried their own per-merchant N+1 copy of this logic).
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.MonthlyMetricsRebuilder monthlyMetricsRebuilder;
+
     public TransactionJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate,
             MerchantMetricCalculator merchantMetricCalculator,
@@ -106,6 +112,32 @@ public class TransactionJobConfig {
     // PERF FIX: compiled once at class-load time, not per buildSafeDateInList() call.
     private static final java.util.regex.Pattern ISO_DATE_PATTERN =
         java.util.regex.Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+
+    /**
+     * Sargable partition-pruning range over the RAW payment_date column, ready to
+     * be prepended to a {@code DATE(payment_date) IN (...)} predicate.
+     *
+     * WHY BOTH: fact_transaction is RANGE-partitioned on payment_date (monthly).
+     * {@code DATE(payment_date)} wraps the partition key in a function, so
+     * Postgres can neither prune partitions nor range-scan
+     * idx_fact_txn_tenant_date — every such query scanned the tenant's ENTIRE
+     * history, which meant ingest cost grew with every month of data retained
+     * rather than staying proportional to the day being loaded. The raw-column
+     * range prunes to the affected partitions; the exact IN list is kept because
+     * the dates inside the range may be sparse.
+     *
+     * @param alias table alias including the dot ("f.", "ft.") or "" for none
+     * @return e.g. {@code " f.payment_date >= DATE '2026-08-01' AND f.payment_date < DATE '2026-08-03' + INTERVAL '1 day' AND "}
+     *         — note the trailing AND: callers splice this immediately before
+     *         the DATE(...) IN predicate.
+     */
+    private static String dateRangeClause(java.util.List<java.sql.Date> sortedDates, String alias) {
+        String first = sortedDates.get(0).toString();
+        String last = sortedDates.get(sortedDates.size() - 1).toString();
+        String col = alias + "payment_date";
+        return " " + col + " >= DATE '" + first + "' AND "
+             + col + " < DATE '" + last + "' + INTERVAL '1 day' AND ";
+    }
 
     private static Boolean parseDccFlag(String raw) {
         if (raw == null) return Boolean.FALSE;
@@ -406,6 +438,11 @@ public class TransactionJobConfig {
     @Bean public Step masterIngestStep(Step csvWorkerStep, CsvPartitioner partitioner,
             @org.springframework.beans.factory.annotation.Qualifier("transactionPartitionExecutor")
             org.springframework.core.task.TaskExecutor partitionExecutor) {
+        // NOTE: gridSize is INERT here — CsvPartitioner.partition(int) ignores its
+        // argument and returns one partition per part_NNN.csv on disk. The real
+        // concurrency limit is transactionPartitionExecutor's pool size (8); the
+        // partition COUNT is (rows / ExcelSplitterTasklet.CHUNK_SIZE). Left at 8
+        // only because Spring Batch requires a value.
         return new StepBuilder("masterIngestStep", jobRepository).partitioner("csvWorkerStep", partitioner)
                 .step(csvWorkerStep).taskExecutor(partitionExecutor).gridSize(8).listener(mdcStepListener).build();
     }
@@ -419,7 +456,17 @@ public class TransactionJobConfig {
             new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
         executor.setCorePoolSize(8);
         executor.setMaxPoolSize(8);
-        executor.setQueueCapacity(0);
+        // CRITICAL: the queue must hold EVERY partition, not zero.
+        // CsvPartitioner creates one partition per part_NNN.csv (50k rows each,
+        // see ExcelSplitterTasklet.CHUNK_SIZE), so a 1M-row file produces ~20
+        // partitions — gridSize(8) below is ignored by that partitioner. With
+        // queueCapacity=0 the 9th and later partitions were REJECTED by the pool
+        // and run by CallerRunsPolicy inline on the partition-manager thread, one
+        // at a time, while the manager was then too busy to feed workers that had
+        // gone idle: parallelism decayed toward serial past 400k rows.
+        // 256 covers a ~12.8M-row file; beyond that CallerRunsPolicy still keeps
+        // the job correct (just slower) rather than failing it.
+        executor.setQueueCapacity(256);
         executor.setThreadNamePrefix("batch-ingest-");
         // Propagate the manager thread's MDC (tenant/job/step/correlationId set by
         // MdcStepListener on masterIngestStep) onto each partition worker thread,
@@ -1103,10 +1150,9 @@ public class TransactionJobConfig {
             // batch. We keep the exact DATE(...) IN (...) filter too (dates may be
             // sparse within the range) — the range prunes partitions, the IN keeps it
             // exact. `dateRange` is prefixed with the correct table alias per query.
-            final String firstDate = distinctDates.get(0).toString();
-            final String lastDate = distinctDates.get(distinctDates.size() - 1).toString();
-            final String dateRangeF = " f.payment_date >= DATE '" + firstDate + "' AND f.payment_date < DATE '" + lastDate + "' + INTERVAL '1 day' ";
-            final String dateRangeFt = " ft.payment_date >= DATE '" + firstDate + "' AND ft.payment_date < DATE '" + lastDate + "' + INTERVAL '1 day' ";
+            final String rngBare = dateRangeClause(distinctDates, "");
+            final String rngF = dateRangeClause(distinctDates, "f.");
+            final String rngFt = dateRangeClause(distinctDates, "ft.");
 
             String updateNameSql = "UPDATE dim_merchant m SET name = sub.merchant_name " +
                 "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
@@ -1180,7 +1226,7 @@ public class TransactionJobConfig {
                     args[0] = tenantId;
                     for (int i = 0; i < uploadSchemes.size(); i++) args[i + 1] = uploadSchemes.get(i);
                     deleted += jdbcTemplate.update(
-                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
+                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " AND UPPER(TRIM(card_scheme)) IN (" + placeholders + ")", args);
                 }
                 Boolean stagingHasBlankScheme = jdbcTemplate.queryForObject(
@@ -1189,7 +1235,7 @@ public class TransactionJobConfig {
                     Boolean.class, tenantId);
                 if (Boolean.TRUE.equals(stagingHasBlankScheme)) {
                     deleted += jdbcTemplate.update(
-                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
+                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " AND NULLIF(TRIM(card_scheme), '') IS NULL", tenantId);
                 }
                 if (uploadSchemes.isEmpty() && !Boolean.TRUE.equals(stagingHasBlankScheme)) {
@@ -1202,7 +1248,7 @@ public class TransactionJobConfig {
                 }
             } else {
                 jdbcTemplate.update(
-                    "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope,
+                    "DELETE FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope,
                     tenantId);
                 log.info(String.format("Deleted existing fact rows in %.1fs", (System.currentTimeMillis() - tDel) / 1000.0));
             }
@@ -1312,7 +1358,7 @@ public class TransactionJobConfig {
                 "SELECT COUNT(*) AS total, " +
                 "COUNT(*) FILTER (WHERE merchant_id IS NOT NULL) AS matched " +
                 "FROM fact_transaction WHERE tenant_id = ? " +
-                "AND DATE(payment_date) IN " + dateScope, tenantId);
+                "AND " + rngBare + "DATE(payment_date) IN " + dateScope, tenantId);
             Integer total   = counts.get("total")   == null ? 0 : ((Number) counts.get("total")).intValue();
             Integer matched = counts.get("matched") == null ? 0 : ((Number) counts.get("matched")).intValue();
             if (total != null && total > 0) {
@@ -1350,7 +1396,7 @@ public class TransactionJobConfig {
             Boolean anyNullStore = jdbcTemplate.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM fact_transaction f WHERE f.tenant_id = ? " +
                 "AND f.store_id IS NULL AND f.merchant_id IS NOT NULL " +
-                "AND DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
+                "AND " + rngF + "DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
             if (Boolean.TRUE.equals(anyNullStore)) {
                 storeFixed = jdbcTemplate.update(
                     "UPDATE fact_transaction f SET store_id = s.store_id " +
@@ -1360,13 +1406,13 @@ public class TransactionJobConfig {
                     "AND s.merchant_id = f.merchant_id " +
                     "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
                     "AND s.internal_id = CONCAT('STORE_', stg.mid) " +
-                    "AND DATE(f.payment_date) IN " + dateScope,
+                    "AND " + rngF + "DATE(f.payment_date) IN " + dateScope,
                     tenantId, tenantId, tenantId);
             }
             Boolean anyNullTerm = jdbcTemplate.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM fact_transaction f WHERE f.tenant_id = ? " +
                 "AND f.terminal_id IS NULL AND f.store_id IS NOT NULL " +
-                "AND DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
+                "AND " + rngF + "DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
             if (Boolean.TRUE.equals(anyNullTerm)) {
                 termFixed = jdbcTemplate.update(
                     "UPDATE fact_transaction f SET terminal_id = t.terminal_id " +
@@ -1376,7 +1422,7 @@ public class TransactionJobConfig {
                     "AND t.store_id = f.store_id " +
                     "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
                     "AND t.internal_id = CONCAT('TERM_', stg.mid) " +
-                    "AND DATE(f.payment_date) IN " + dateScope,
+                    "AND " + rngF + "DATE(f.payment_date) IN " + dateScope,
                     tenantId, tenantId, tenantId);
             }
             if (storeFixed + termFixed > 0) {
@@ -1664,7 +1710,7 @@ public class TransactionJobConfig {
                 "      AND (e.tenant_id IS NULL OR e.tenant_id = ft.tenant_id) " +
                 "    ORDER BY (e.tenant_id IS NOT NULL) DESC LIMIT 1 " +
                 "  ) eff ON TRUE " +
-                "  WHERE ft.tenant_id = ? AND " + dateRangeFt + " AND DATE(ft.payment_date) IN " + dateScope +
+                "  WHERE ft.tenant_id = ? AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope +
                 " ) r " +
                 "WHERE f.tenant_id = ? AND f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
                 tenantId, tenantId);
@@ -1678,7 +1724,7 @@ public class TransactionJobConfig {
             try {
                 java.util.List<java.util.Map<String, Object>> byStatus = jdbcTemplate.queryForList(
                     "SELECT fee_resolution_status AS st, COUNT(*) AS n FROM fact_transaction " +
-                    "WHERE tenant_id = ? AND " + dateRangeFt + " AND DATE(payment_date) IN " + dateScope +
+                    "WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                     " GROUP BY 1 ORDER BY 2 DESC", tenantId);
                 long unresolved = 0;
                 StringBuilder sb = new StringBuilder();
@@ -1694,9 +1740,15 @@ public class TransactionJobConfig {
                     log.warn("FEE RESOLUTION GAPS for tenant {}: {} row(s) not priced -> {}",
                         tenantId, unresolved, sb.toString().trim());
                     log.warn("  Unmapped destination tokens seen: {}", jdbcTemplate.queryForList(
+                        // BUGFIX: this and the status rollup above interpolated the
+                        // ft-aliased range into queries that select FROM an UNALIASED
+                        // fact_transaction, so Postgres raised "missing FROM-clause
+                        // entry for table ft" and the whole fee-resolution report was
+                        // swallowed by the non-fatal catch below — the pricing-gap
+                        // warning this exists to raise has never actually fired.
                         "SELECT DISTINCT destination_raw FROM fact_transaction WHERE tenant_id = ? " +
-                        "AND fee_resolution_status = 'UNMAPPED_DESTINATION' AND " + dateRangeFt +
-                        " LIMIT 20", String.class, tenantId));
+                        "AND fee_resolution_status = 'UNMAPPED_DESTINATION' AND " + rngBare +
+                        "DATE(payment_date) IN " + dateScope + " LIMIT 20", String.class, tenantId));
                 } else {
                     log.info("Fee resolution: {}", sb.toString().trim());
                 }
@@ -1753,6 +1805,12 @@ public class TransactionJobConfig {
                 return RepeatStatus.FINISHED;
             }
             final String dateScope = buildSafeDateInList(distinctDates);
+            // Sargable companions to dateScope — see dateRangeClause(). Without
+            // these every aggregation below scanned the tenant's whole fact
+            // history instead of the days being loaded.
+            final String rngBare = dateRangeClause(distinctDates, "");
+            final String rngF = dateRangeClause(distinctDates, "f.");
+            final String rngFt = dateRangeClause(distinctDates, "ft.");
             java.util.Set<Integer> monthSet = new java.util.LinkedHashSet<>();
             for (java.sql.Date d : distinctDates) {
                 java.time.LocalDate ld = d.toLocalDate();
@@ -1811,7 +1869,7 @@ public class TransactionJobConfig {
                         "SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(store_base_currency_amount), SUM(store_base_currency_amount), SUM(msf), " +
                         "SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), SUM(COALESCE(ecom_fee,0)), SUM(vat), " +
                         "SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - COALESCE(scheme_fee,0) - COALESCE(ecom_fee,0)) " +
-                        "FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
+                        "FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date) " +
                         "ON CONFLICT (tenant_id, business_date) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, " +
@@ -1836,7 +1894,7 @@ public class TransactionJobConfig {
                         "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN 1 END), " +
                         "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END) " +
                         "FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id AND m.tenant_id = f.tenant_id " +
-                        "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN " + dateScope +
+                        "WHERE f.tenant_id = ? AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, m.sales_user_id " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, " +
@@ -1866,7 +1924,7 @@ public class TransactionJobConfig {
                         "SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
                         "FROM fact_transaction f " +
-                        "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN " + dateScope +
+                        "WHERE f.tenant_id = ? AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
                         "CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id, destination) DO UPDATE SET " +
@@ -1881,7 +1939,7 @@ public class TransactionJobConfig {
                         "SUM(COALESCE(f.scheme_fee,0)), " +
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
                         "FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id AND s.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope +
+                        "WHERE f.tenant_id=? AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme " +
                         "ON CONFLICT (tenant_id, business_date, mcc, card_scheme) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
@@ -1897,7 +1955,7 @@ public class TransactionJobConfig {
                         "COUNT(*), SUM(store_base_currency_amount), SUM(msf), " +
                         "SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), " +
                         "SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)-COALESCE(ecom_fee,0)) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope +
+                        "FROM fact_transaction WHERE tenant_id=? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date), " +
                         "  CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
                         "       THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') ELSE card_scheme END " +
@@ -1914,7 +1972,7 @@ public class TransactionJobConfig {
                         "SUM(f.msf), SUM(f.interchange_fee), SUM(COALESCE(f.scheme_fee,0)), " +
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
                         "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope +
+                        "WHERE f.tenant_id=? AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS') " +
                         "ON CONFLICT (tenant_id, business_date, channel) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
@@ -1927,7 +1985,7 @@ public class TransactionJobConfig {
                         "SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id, COUNT(*), SUM(store_base_currency_amount), " +
                         "SUM(store_base_currency_amount), SUM(msf), SUM(COALESCE(interchange_fee,0)), SUM(COALESCE(scheme_fee,0)), SUM(COALESCE(ecom_fee,0)), " +
                         "SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)-COALESCE(ecom_fee,0)) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
+                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, " +
@@ -1954,7 +2012,7 @@ public class TransactionJobConfig {
                         "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN msf ELSE 0 END), " +
                         "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END), " +
                         "SUM(store_base_currency_amount), SUM(msf) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope +
+                        "FROM fact_transaction WHERE tenant_id=? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, DATE(payment_date) " +
                         "ON CONFLICT (tenant_id, business_date) DO UPDATE SET " +
                         "dom_debit_cnt=EXCLUDED.dom_debit_cnt, dom_debit_vol=EXCLUDED.dom_debit_vol, " +
@@ -1973,7 +2031,7 @@ public class TransactionJobConfig {
                         "     ELSE f.card_scheme END, " +
                         "f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc, COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf) " +
                         "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
+                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
                         "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
                         "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END, " +
@@ -2010,7 +2068,7 @@ public class TransactionJobConfig {
                         "FROM fact_transaction f " +
                         "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
                         "LEFT JOIN dim_store st ON f.store_id=st.store_id AND st.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
+                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
                         "COALESCE(t.type,'POS'), f.destination, " +
                         "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
@@ -2048,7 +2106,7 @@ public class TransactionJobConfig {
                         "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL " +
                         "AND UPPER(COALESCE(NULLIF(TRIM(f.card_type),''),'')) = 'DEBIT' " +
                         "AND f.destination = 'DOMESTIC' " +
-                        "AND DATE(f.payment_date) IN " + dateScope +
+                        "AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
                         "CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END " +
                         "ON CONFLICT (tenant_id, business_date, merchant_id, bin6) " +
@@ -2086,7 +2144,7 @@ public class TransactionJobConfig {
                         "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)) " +
                         "FROM fact_transaction f " +
                         "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
+                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
                         "f.transaction_type, " +
                         "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
@@ -2109,7 +2167,7 @@ public class TransactionJobConfig {
                     totalRows += jdbcTemplate.update(
                         "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                         "SELECT tenant_id, merchant_id, DATE(payment_date), 'CARD_SCHEME', " + schemeExpr + ", COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
+                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, merchant_id, DATE(payment_date), " + schemeExpr +
                         " ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                         "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
@@ -2118,7 +2176,10 @@ public class TransactionJobConfig {
                         totalRows += jdbcTemplate.update(String.format(
                             "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                             "SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(store_base_currency_amount) " +
-                            "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN %s " +
+                            // rngBare spliced via concatenation, NOT a %s slot — it contains no
+                            // format specifiers but keeping it out of the format string entirely
+                            // means a future edit can't accidentally reorder the %s arguments.
+                            "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND " + rngBare + "DATE(payment_date) IN %s " +
                             "GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(%s,'UNKNOWN')) " +
                             "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                             "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume",
@@ -2127,7 +2188,7 @@ public class TransactionJobConfig {
                     totalRows += jdbcTemplate.update(
                         "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                         "SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND transaction_date IS NOT NULL AND DATE(payment_date) IN " + dateScope +
+                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND transaction_date IS NOT NULL AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date) " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                         "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
@@ -2165,14 +2226,14 @@ public class TransactionJobConfig {
                         "    AND (b.max_amount IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  b.max_amount) " +
                         "  ORDER BY (b.tenant_id IS NOT NULL) DESC, b.seq ASC LIMIT 1 " +
                         ") tb " +
-                        "WHERE ft.tenant_id=? AND ft.merchant_id IS NOT NULL AND DATE(ft.payment_date) IN " + dateScope +
+                        "WHERE ft.tenant_id=? AND ft.merchant_id IS NOT NULL AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope +
                         " GROUP BY ft.tenant_id, ft.merchant_id, DATE(ft.payment_date), tb.label " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                         "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
                     totalRows += jdbcTemplate.update(
                         "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
                         "SELECT tenant_id, merchant_id, DATE(payment_date), 'COUNTRY', UPPER(TRIM(txn_currency)), COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
+                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " AND UPPER(destination) = 'INTERNATIONAL' AND NULLIF(TRIM(txn_currency), '') IS NOT NULL " +
                         "GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(TRIM(txn_currency)) HAVING COUNT(*) > 0 " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
@@ -2221,7 +2282,7 @@ public class TransactionJobConfig {
                         tenantId)));
                 phase2.add(runAsync(exec, "top_spending_customer", () ->
                     jdbcTemplate.update("WITH DailyCustSpend AS (SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number, " +
-                        "SUM(store_base_currency_amount) as total_spend FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
+                        "SUM(store_base_currency_amount) as total_spend FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " GROUP BY tenant_id, merchant_id, DATE(payment_date), card_number), " +
                         "Ranked AS (SELECT *, ROW_NUMBER() OVER(PARTITION BY tenant_id, merchant_id, b_date ORDER BY total_spend DESC) as rn FROM DailyCustSpend) " +
                         "UPDATE sum_daily_merchant s SET top_spending_customer_id=r.card_number, top_spending_amount=r.total_spend " +
@@ -2291,6 +2352,8 @@ public class TransactionJobConfig {
                 return RepeatStatus.FINISHED;
             }
             String dateScope = buildSafeDateInList(distinctDates);
+            // Sargable companion for the fact_transaction scan below — see dateRangeClause().
+            final String rngBare = dateRangeClause(distinctDates, "");
 
             // FIX: clean-slate the affected calc_dates before re-inserting. These two
             // tables are ON CONFLICT (tenant, merchant, calc_date) DO UPDATE and only
@@ -2333,7 +2396,7 @@ public class TransactionJobConfig {
                 "  AND f.payment_date <  d.target_date + INTERVAL '1 day' " +
                 "WHERE m.tenant_id = ? " +
                 "AND m.merchant_id IN (SELECT DISTINCT merchant_id FROM fact_transaction WHERE tenant_id = ? " +
-                "  AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope + ") " +
+                "  AND merchant_id IS NOT NULL AND " + rngBare + "DATE(payment_date) IN " + dateScope + ") " +
                 "GROUP BY m.tenant_id, m.merchant_id, d.target_date " +
                 "ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET " +
                 "first_txn_date=EXCLUDED.first_txn_date, last_txn_date=EXCLUDED.last_txn_date, " +
@@ -2458,55 +2521,20 @@ public class TransactionJobConfig {
 
             int totalSaved = 0;
             for (String monthYear : monthSet) {
-                String[] parts = monthYear.split("-");
-                int year = Integer.parseInt(parts[0]); int month = Integer.parseInt(parts[1]);
-                LocalDate monthStart = LocalDate.of(year, month, 1);
-                LocalDate monthEnd = monthStart.withDayOfMonth(monthStart.lengthOfMonth());
-
-                List<SumDailyMerchant> dailyRecs = dailyMerchantRepo.findByTenantIdAndDateRange(tenantId, monthStart, monthEnd);
-                if (dailyRecs.isEmpty()) continue;
-
                 // FIX: clean-slate this month's monthly-merchant-metrics before rebuild.
                 // sum_daily_merchant was just cleanly rebuilt in populateSummary, so
                 // deleting the month here and re-deriving guarantees no orphan merchant
                 // rows survive from an earlier upload that touched a different day of
                 // the same month. month_year is the YYYY-MM VARCHAR key.
-                int delMonthly = jdbcTemplate.update(
-                    "DELETE FROM sum_monthly_merchant_metrics WHERE tenant_id = ? AND month_year = ?",
-                    tenantId, monthYear);
-                if (delMonthly > 0) log.warn("  [dashboardMetrics] clean-slate {} monthly rows for {}", delMonthly, monthYear);
-
-                java.util.Map<Long, List<SumDailyMerchant>> grouped = dailyRecs.stream()
-                        .collect(java.util.stream.Collectors.groupingBy(SumDailyMerchant::getMerchantId));
-
-                java.util.Map<Long, SumMonthlyMerchantMetrics> existingByMerchant = new java.util.HashMap<>();
-                try {
-                    java.util.List<SumMonthlyMerchantMetrics> existingRows = monthlyMetricsRepo.findAllByTenantAndMonth(tenantId, monthYear);
-                    for (SumMonthlyMerchantMetrics e : existingRows) existingByMerchant.put(e.getMerchantId(), e);
-                } catch (Exception ex) {
-                    log.warn("bulk fetch of monthly metrics failed, falling back: {}", ex.getMessage());
-                    for (Long mId : grouped.keySet()) {
-                        monthlyMetricsRepo.findByMerchantAndMonth(tenantId, mId, monthYear)
-                            .ifPresent(e -> existingByMerchant.put(mId, e));
-                    }
-                }
-
-                java.util.List<SumMonthlyMerchantMetrics> toSave = new java.util.ArrayList<>(grouped.size());
-                for (java.util.Map.Entry<Long, List<SumDailyMerchant>> entry : grouped.entrySet()) {
-                    Long merchantId = entry.getKey();
-                    SumMonthlyMerchantMetrics newMetrics = merchantMetricCalculator.calculateMetrics(
-                        entry.getValue(), tenantId, merchantId, monthYear);
-                    SumMonthlyMerchantMetrics existing = existingByMerchant.get(merchantId);
-                    if (existing != null) {
-                        newMetrics.setMetricId(existing.getMetricId());
-                        newMetrics.setCreatedAt(existing.getCreatedAt());
-                    }
-                    toSave.add(newMetrics);
-                }
-                if (!toSave.isEmpty()) {
-                    monthlyMetricsRepo.saveAll(toSave);
-                    totalSaved += toSave.size();
-                }
+                // Passed as the beforeWrite hook so it still fires ONLY when the month
+                // has daily rows to rebuild from — deleting for an empty month would
+                // discard good metrics rather than refresh them.
+                totalSaved += monthlyMetricsRebuilder.rebuildMonth(tenantId, monthYear, () -> {
+                    int delMonthly = jdbcTemplate.update(
+                        "DELETE FROM sum_monthly_merchant_metrics WHERE tenant_id = ? AND month_year = ?",
+                        tenantId, monthYear);
+                    if (delMonthly > 0) log.warn("  [dashboardMetrics] clean-slate {} monthly rows for {}", delMonthly, monthYear);
+                });
             }
             log.info(String.format("dashboardMetrics completed in %.1fs (saved %d rows across %d months)",
                 (System.currentTimeMillis() - start) / 1000.0, totalSaved, monthSet.size()));

@@ -89,6 +89,30 @@ public class IntegrationPullService {
         this.taskScheduler = taskScheduler;
     }
 
+    /**
+     * Self-reference through the Spring proxy, used ONLY by scheduleRetry.
+     *
+     * WHY: executePull is @Async, but calling it as this.executePull(...) from
+     * inside this class bypasses the proxy entirely — the retry then ran
+     * SYNCHRONOUSLY on the shared 'integration-cron-' TaskScheduler thread
+     * (pool size 5), holding it for the whole pull plus up to 2h of batch
+     * polling. A few concurrent retries would starve every @Scheduled bean in
+     * the application (email queue, report runner, DB maintenance, alerts).
+     * Going through the proxy puts the retry back on the async executor.
+     * @Lazy breaks the self-referential construction cycle.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private IntegrationPullService self;
+
+    /**
+     * Fallback lookback for a caller that passes no window. Mirrors
+     * DynamicSchedulerService.lookbackDays (same property) — scheduled runs
+     * always pass an explicit window, so this only covers stray callers.
+     */
+    @org.springframework.beans.factory.annotation.Value("${acquira.integration.lookback-days:3}")
+    private int lookbackDays;
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     /** Hard ceiling so a runaway report query can't materialise unbounded rows in
@@ -118,7 +142,9 @@ public class IntegrationPullService {
      * Execute a DB pull for a given report configuration.
      * This is the main entry point — called by Run Now, Scheduler, and Retry.
      */
-    @Async
+    // Named executor on purpose — see BatchConfig.integrationPullExecutor.
+    // A bare @Async here resolved to an unbounded SimpleAsyncTaskExecutor.
+    @Async("integrationPullExecutor")
     public void executePull(IntegrationReport report, IntegrationSchedule schedule,
                             IntegrationRunLog.TriggerType triggerType,
                             LocalDate dateFrom, LocalDate dateTo,
@@ -150,6 +176,26 @@ public class IntegrationPullService {
 
         long startMs = System.currentTimeMillis();
 
+        // SEPARATION OF DUTIES: a report's sqlText executes against the
+        // CUSTOMER's production database with the stored service credentials,
+        // and setReadOnly is a no-op on the Oracle and MSSQL drivers — so the
+        // approval recorded by a SUPER_ADMIN is the control that decides which
+        // statements may ever run there. Enforced HERE, not only in the
+        // controller, so the scheduler, Run Now and retries are all covered.
+        // Editing sqlText clears the approval, so an approved-then-swapped
+        // query cannot slip through.
+        if (!report.isApproved()) {
+            log.warn("[Integration] Pull '{}' (tenant {}) BLOCKED — report SQL is not approved.",
+                    report.getName(), tenantId);
+            runLog.setStatus(IntegrationRunLog.Status.FAILED);
+            runLog.setErrorMessage("Report SQL is not approved. A SUPER_ADMIN must approve this report "
+                    + "(Integration Hub > Report Configs > Approve) before it can run against the source database. "
+                    + "Note that editing the SQL revokes an existing approval.");
+            finishRunLog(runLog, startMs);
+            org.slf4j.MDC.clear();
+            return;
+        }
+
         ReentrantLock lock = tenantLocks.computeIfAbsent(tenantId, t -> new ReentrantLock());
         if (!lock.tryLock()) {
             log.warn("[Integration] Pull '{}' for tenant {} rejected — another pull for this tenant is in progress.",
@@ -164,6 +210,12 @@ public class IntegrationPullService {
         try {
             // 2. Build params
             Map<String, Object> params = buildParams(dateFrom, dateTo);
+
+            // Record the RESOLVED window (a caller may have passed nulls), so the
+            // run log always shows the period this run actually covered.
+            runLog.setDateRangeFrom((LocalDate) params.get("dateFrom"));
+            runLog.setDateRangeTo((LocalDate) params.get("dateTo"));
+            warnIfMonthGranular(report, (LocalDate) params.get("dateFrom"), (LocalDate) params.get("dateTo"));
 
             // 2b. Optional upstream-readiness gate: run the schedule's precondition
             //     query against the SAME external connection and only pull when it
@@ -187,14 +239,16 @@ public class IntegrationPullService {
                         runLog.setStatus(IntegrationRunLog.Status.RETRYING);
                         runLog.setErrorMessage("Upstream batch not complete yet (precondition returned "
                                 + cell + ") — pull deferred, will re-check.");
-                        scheduleRetry(report, schedule, dateFrom, dateTo, attemptNumber + 1);
+                        // Resolved window, so a defer that crosses midnight still
+                        // pulls the period this run was scheduled for.
+                        scheduleRetry(report, schedule,
+                                runLog.getDateRangeFrom(), runLog.getDateRangeTo(), attemptNumber + 1);
                     } else {
                         runLog.setStatus(IntegrationRunLog.Status.FAILED);
                         runLog.setErrorMessage("Upstream batch never reported complete after "
                                 + attemptNumber + " checks (precondition returned " + cell + ").");
                     }
-                    org.slf4j.MDC.clear();
-                    return; // finally still unlocks + persists the run log
+                    return; // finally unlocks, persists the run log, and clears MDC
                 }
                 log.info("[Integration] Precondition met for '{}' (tenant {}) — proceeding with pull.",
                         report.getName(), tenantId);
@@ -207,12 +261,23 @@ public class IntegrationPullService {
             List<Map<String, Object>> rawRows = executeExternalQuery(conn, report.getSqlText(), params);
             runLog.setRowsFetched(rawRows.size());
 
+            // A pull that hit the row ceiling is a PARTIAL extract. Loading it
+            // would silently publish an incomplete day/month to the warehouse
+            // (REPLACE mode deletes the real rows first), and the run would be
+            // recorded SUCCESS — the worst possible combination. Fail loudly and
+            // make the operator narrow the window instead.
+            if (rawRows.size() >= MAX_PULL_ROWS) {
+                throw new IllegalStateException(
+                    "Source query returned at least " + MAX_PULL_ROWS + " rows and was TRUNCATED at the safety cap. "
+                    + "Nothing was loaded, because a partial extract would overwrite complete data. "
+                    + "Narrow the report's date window (or split the schedule) and re-run.");
+            }
+
             if (rawRows.isEmpty()) {
                 log.warn("[Integration] No rows returned for report '{}', tenant {}", report.getName(), tenantId);
                 runLog.setStatus(IntegrationRunLog.Status.SUCCESS);
                 runLog.setRowsProcessed(0);
-                finishRunLog(runLog, startMs);
-                return;
+                return; // finally persists the run log — calling finishRunLog here too saved it twice
             }
 
             // 4. Parse column mapping
@@ -270,22 +335,36 @@ public class IntegrationPullService {
             runLog.setStatus(IntegrationRunLog.Status.FAILED);
             runLog.setErrorMessage(e.getMessage());
 
-            // Schedule retry if attempts remaining
+            // Schedule retry if attempts remaining. Retry the RESOLVED window, not
+            // the caller's raw arguments: a retry can fire up to 30 minutes later
+            // and possibly past midnight, so re-deriving the window from the clock
+            // would silently retry a DIFFERENT period than the run that failed.
             if (attemptNumber < runLog.getMaxRetries()) {
-                scheduleRetry(report, schedule, dateFrom, dateTo, attemptNumber + 1);
+                scheduleRetry(report, schedule,
+                        runLog.getDateRangeFrom(), runLog.getDateRangeTo(), attemptNumber + 1);
                 runLog.setStatus(IntegrationRunLog.Status.RETRYING);
             }
         } finally {
             lock.unlock();
             finishRunLog(runLog, startMs);
-        }
 
-        // Update schedule last run time
-        if (schedule != null) {
-            schedule.setLastRunAt(LocalDateTime.now());
-            scheduleRepo.save(schedule);
+            // Bookkeeping MUST be in the finally block. It used to sit after the
+            // try/finally, so every early `return` inside the try — empty result
+            // set, precondition not met — skipped it: lastRunAt went stale (which
+            // matters now that it is the operator's evidence that a schedule is
+            // alive) and the MDC context leaked onto the next task to reuse this
+            // pool thread, mislabelling its log lines with this tenant.
+            if (schedule != null) {
+                try {
+                    schedule.setLastRunAt(LocalDateTime.now());
+                    scheduleRepo.save(schedule);
+                } catch (Exception e) {
+                    log.warn("[Integration] Could not update lastRunAt for schedule #{}: {}",
+                            schedule.getId(), e.getMessage());
+                }
+            }
+            org.slf4j.MDC.clear();
         }
-        org.slf4j.MDC.clear();
     }
 
     // ─── External query execution ─────────────────────────────
@@ -706,8 +785,9 @@ public class IntegrationPullService {
 
         log.info("[Integration] Scheduling retry #{} for '{}' in {}ms", nextAttempt, report.getName(), delayMs);
 
+        // Through the proxy (self), NOT this.executePull — see the `self` field.
         taskScheduler.schedule(
-                () -> executePull(report, schedule, IntegrationRunLog.TriggerType.RETRY, dateFrom, dateTo, nextAttempt),
+                () -> self.executePull(report, schedule, IntegrationRunLog.TriggerType.RETRY, dateFrom, dateTo, nextAttempt),
                 Instant.now().plusMillis(delayMs));
     }
 
@@ -728,15 +808,72 @@ public class IntegrationPullService {
                 || s.equals("SUCCESS") || s.equals("DONE");
     }
 
+    /**
+     * Build the bind values offered to the report SQL.
+     *
+     * The window is the caller's — SCHEDULED runs pass a rolling lookback window
+     * computed in the SCHEDULE's timezone (DynamicSchedulerService), MANUAL runs
+     * pass the operator's dates, and RETRY reuses the original run's window so a
+     * retry re-pulls the same days rather than a window that has since shifted.
+     *
+     * ':year'/':month'/':today' are derived from the window's END, not from
+     * LocalDate.now(): deriving them from the wall clock made a retry (which can
+     * fire hours later, possibly past midnight) silently pull a different period
+     * than the run it was retrying. ':yearFrom'/':monthFrom' expose the window's
+     * START so a month-granular report can cover a window that spans a month
+     * boundary — see warnIfMonthGranular.
+     *
+     * Extra entries are harmless: NamedParamBinder binds only the placeholders
+     * that actually appear in the SQL.
+     */
     private Map<String, Object> buildParams(LocalDate dateFrom, LocalDate dateTo) {
+        LocalDate to = dateTo != null ? dateTo : LocalDate.now();
+        // Fallback only — every real caller passes a window. Kept as a rolling
+        // lookback (NOT the old 1st-of-month default, which never re-pulled the
+        // previous month's last day).
+        LocalDate from = dateFrom != null ? dateFrom : to.minusDays(Math.max(0, lookbackDays));
+
+        if (from.isAfter(to)) {
+            throw new IllegalArgumentException(
+                "Invalid pull window: dateFrom (" + from + ") is after dateTo (" + to + ").");
+        }
+
         Map<String, Object> params = new HashMap<>();
-        LocalDate now = LocalDate.now();
-        params.put("year", now.getYear());
-        params.put("month", now.getMonthValue());
-        params.put("today", now);
-        params.put("dateFrom", dateFrom != null ? dateFrom : now.withDayOfMonth(1));
-        params.put("dateTo", dateTo != null ? dateTo : now);
+        params.put("year", to.getYear());
+        params.put("month", to.getMonthValue());
+        params.put("yearFrom", from.getYear());
+        params.put("monthFrom", from.getMonthValue());
+        params.put("today", to);
+        params.put("dateFrom", from);
+        params.put("dateTo", to);
         return params;
+    }
+
+    /**
+     * Warn when a report filters by month but the run's window spans two months.
+     *
+     * A report written as "WHERE YEAR(d) = :year AND MONTH(d) = :month" ignores
+     * :dateFrom/:dateTo entirely, so the rolling lookback cannot pull the tail of
+     * the previous month for it — the month-end gap the lookback exists to close
+     * stays open. Such a report should filter on ":dateFrom AND :dateTo", or
+     * additionally accept ":yearFrom"/":monthFrom".
+     */
+    private void warnIfMonthGranular(IntegrationReport report, LocalDate from, LocalDate to) {
+        String sql = report.getSqlText();
+        if (sql == null || from == null || to == null) return;
+        boolean sameMonth = from.getYear() == to.getYear() && from.getMonthValue() == to.getMonthValue();
+        if (sameMonth) return;
+
+        String lower = sql.toLowerCase();
+        boolean usesMonth = lower.contains(":month");
+        boolean usesWindow = lower.contains(":datefrom") || lower.contains(":dateto")
+                || lower.contains(":monthfrom");
+        if (usesMonth && !usesWindow) {
+            log.warn("[Integration] Report '{}' filters on :month but the pull window {}..{} spans two months. "
+                    + "The earlier month's days will NOT be pulled. Rewrite the report to filter between "
+                    + ":dateFrom and :dateTo (or also accept :yearFrom/:monthFrom).",
+                    report.getName(), from, to);
+        }
     }
 
     /**
@@ -814,6 +951,24 @@ public class IntegrationPullService {
         if (val instanceof LocalDateTime ldt) return Timestamp.valueOf(ldt);
         if (val instanceof LocalDate ld) return Timestamp.valueOf(ld.atStartOfDay());
         if (val instanceof java.time.OffsetDateTime odt) return Timestamp.valueOf(odt.toLocalDateTime());
+        if (val instanceof java.time.ZonedDateTime zdt) return Timestamp.valueOf(zdt.toLocalDateTime());
+        if (val instanceof java.time.Instant inst) return Timestamp.from(inst);
+
+        // ORACLE: oracle.sql.TIMESTAMP / oracle.sql.DATE are Datum subclasses —
+        // NOT java.util.Date — and their toString() ("2026-8-21 0:0:0.0") matches
+        // none of the parsers below, so payment_date came back null and
+        // insertTransactionStaging SILENTLY DROPPED the row. Every Oracle-sourced
+        // transaction pull could therefore ingest zero rows while reporting
+        // SUCCESS. Reflection keeps this driver-agnostic (no compile-time
+        // dependency on ojdbc, and it also covers other vendors' Datum types).
+        try {
+            java.lang.reflect.Method m = val.getClass().getMethod("timestampValue");
+            Object ts = m.invoke(val);
+            if (ts instanceof Timestamp t) return t;
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            // Not an Oracle Datum (or TIMESTAMPTZ, whose timestampValue needs a
+            // Connection) — fall through to the string parsers.
+        }
 
         String s = val.toString().trim();
         if (s.isEmpty()) return null;

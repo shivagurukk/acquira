@@ -41,6 +41,18 @@ const LoginPage = () => {
     const [requestForm, setRequestForm] = useState({ message: '', tenantId: '' });
     const [availableTenants, setAvailableTenants] = useState([]);
 
+    // ===== Login MFA (email OTP second factor) =====
+    // Raised only when the tenant requires MFA. The password was already accepted
+    // at this point; mfaTicket names the pending challenge and is the only thing
+    // that gets us a session, so its presence is what switches the card to the
+    // code step.
+    const [mfaTicket, setMfaTicket] = useState(null);
+    const [mfaCode, setMfaCode] = useState('');
+    const [mfaEmailHint, setMfaEmailHint] = useState('');
+    const [mfaTtl, setMfaTtl] = useState(5);
+    const [mfaLoading, setMfaLoading] = useState(false);
+    const [mfaResendIn, setMfaResendIn] = useState(0);
+
     // ===== Forgot-password OTP flow =====
     // step: 'email' -> request OTP | 'otp' -> verify code | 'password' -> set new pw
     const [showForgotPw, setShowForgotPw] = useState(false);
@@ -72,6 +84,19 @@ const LoginPage = () => {
         const id = setTimeout(() => setResendIn(resendIn - 1), 1000);
         return () => clearTimeout(id);
     }, [resendIn]);
+
+    // Separate ticker for the MFA step — the two flows never run at once, but
+    // sharing one counter would leak a cooldown from one into the other.
+    useEffect(() => {
+        if (mfaResendIn <= 0) return;
+        const id = setTimeout(() => setMfaResendIn(mfaResendIn - 1), 1000);
+        return () => clearTimeout(id);
+    }, [mfaResendIn]);
+
+    const resetMfaState = () => {
+        setMfaTicket(null); setMfaCode(''); setMfaEmailHint('');
+        setMfaResendIn(0); setError(null);
+    };
 
     const resetForgotState = () => {
         setShowForgotPw(false); setFpStep('email'); setError(null); setForgotMsg(null);
@@ -120,6 +145,19 @@ const LoginPage = () => {
         setCredentials({ ...credentials, [e.target.name]: e.target.value });
     };
 
+    // Shared landing for a completed sign-in, whether it came straight from
+    // /login or from /login/verify-mfa — both receive the same session payload.
+    const completeLogin = (data) => {
+        login(data);
+        if (data.mustChangePassword) { navigate('/change-password'); return; }
+        if (data.allowedTenants?.length > 1) {
+            setAllowedTenants(data.allowedTenants);
+            setShowTenantModal(true);
+            return;
+        }
+        navigate('/dashboard');
+    };
+
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
@@ -132,10 +170,18 @@ const LoginPage = () => {
             });
             if (response.ok) {
                 const data = await response.json();
-                login(data);
-                if (data.mustChangePassword) { navigate('/change-password'); return; }
-                if (data.allowedTenants?.length > 1) { setAllowedTenants(data.allowedTenants); setShowTenantModal(true); return; }
-                navigate('/dashboard');
+                // MFA gate: the password was accepted but no session was issued.
+                // Hold here and swap the card to the code step.
+                if (data.mfaRequired) {
+                    setMfaTicket(data.mfaTicket);
+                    setMfaEmailHint(data.emailHint || 'your registered email');
+                    setMfaTtl(data.expiresInMinutes || 5);
+                    setMfaCode('');
+                    setMfaResendIn(30);
+                    setLoginNotice(null);
+                    return;
+                }
+                completeLogin(data);
             } else {
                 const errData = await response.json().catch(() => ({}));
                 // Distinguish a genuine credential rejection from a backend that is
@@ -164,6 +210,51 @@ const LoginPage = () => {
             setError('Unable to reach the server. Please check your connection and try again.');
         }
         finally { setLoading(false); }
+    };
+
+    // Exchange the challenge ticket + emailed code for the real session.
+    const handleVerifyMfa = async (e) => {
+        if (e) e.preventDefault();
+        if (mfaCode.trim().length !== 6) { setError('Enter the 6-digit code.'); return; }
+        setMfaLoading(true); setError(null);
+        try {
+            const res = await fetch('/api/auth/login/verify-mfa', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mfaTicket, otp: mfaCode.trim() })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.jwt) {
+                resetMfaState();
+                completeLogin(data);
+            } else {
+                setError(data.error || 'Invalid or expired verification code.');
+                // Only the server can say whether the ticket is finished — a wrong
+                // code leaves it live, so the user stays on this step and retries.
+                if (data.challengeDead) { setMfaTicket(null); setMfaCode(''); }
+            }
+        } catch { setError('Unable to reach the server. Please try again.'); }
+        finally { setMfaLoading(false); }
+    };
+
+    const handleResendMfa = async () => {
+        if (mfaResendIn > 0 || !mfaTicket) return;
+        setMfaLoading(true); setError(null);
+        try {
+            const res = await fetch('/api/auth/login/resend-mfa', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mfaTicket })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                setMfaCode(''); setMfaResendIn(30);
+                setLoginNotice(null);
+                setMfaTtl(data.expiresInMinutes || mfaTtl);
+            } else {
+                setError(data.error || 'Could not resend the code.');
+                if (data.challengeDead) { setMfaTicket(null); setMfaCode(''); }
+            }
+        } catch { setError('Unable to reach the server. Please try again.'); }
+        finally { setMfaLoading(false); }
     };
 
     const handleSsoLogin = () => {
@@ -384,7 +475,40 @@ const LoginPage = () => {
                             </motion.div>
                         )}
 
-                        {!ssoLoading && !ssoStatus && !showTenantModal && !showForgotPw && (
+                        {!ssoLoading && !ssoStatus && !showTenantModal && !showForgotPw && mfaTicket && (
+                            <motion.form key="mfa-step" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                                onSubmit={handleVerifyMfa} className="login-form">
+                                <h3 className="nx-step-title">Two-factor verification</h3>
+                                <p className="nx-step-text">
+                                    We sent a 6-digit code to <strong>{mfaEmailHint}</strong>. It expires in {mfaTtl} minutes.
+                                </p>
+                                {error && <ErrorBanner />}
+                                <div className="login-input-group">
+                                    <label className="login-input-label" htmlFor="nx-mfa">Verification code</label>
+                                    <div className="login-input-wrapper">
+                                        <input id="nx-mfa" name="mfaOtp" type="text" inputMode="numeric" maxLength={6} autoFocus
+                                            autoComplete="one-time-code" className="nx-input--plain nx-otp-input"
+                                            placeholder="000000" value={mfaCode}
+                                            onChange={e => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                            aria-describedby={describedBy} aria-invalid={error ? true : undefined} />
+                                    </div>
+                                </div>
+                                <button type="submit" disabled={mfaLoading || mfaCode.length !== 6} className="login-submit-btn">
+                                    <span>
+                                        {mfaLoading ? (<><Loader2 size={17} className="spin-icon" aria-hidden="true" /> Verifying…</>)
+                                            : (<><ShieldCheck size={17} aria-hidden="true" /> Verify and sign in</>)}
+                                    </span>
+                                </button>
+                                <button type="button" className="nx-link" style={{ alignSelf: 'center' }}
+                                    disabled={mfaResendIn > 0 || mfaLoading} onClick={handleResendMfa}>
+                                    {mfaResendIn > 0 ? `Resend code in ${mfaResendIn}s` : 'Resend code'}
+                                </button>
+                                <button type="button" onClick={() => { resetMfaState(); setCredentials({ ...credentials, password: '' }); }}
+                                    className="login-back-btn">← Back to sign in</button>
+                            </motion.form>
+                        )}
+
+                        {!ssoLoading && !ssoStatus && !showTenantModal && !showForgotPw && !mfaTicket && (
                             <motion.form key="login-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
                                 onSubmit={handleLogin} className="login-form">
                                 {loginNotice && <div className="nx-notice" role="status">{loginNotice}</div>}

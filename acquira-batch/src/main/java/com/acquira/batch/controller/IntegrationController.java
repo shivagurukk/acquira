@@ -17,11 +17,41 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 
+/**
+ * AUTHORIZATION MODEL (added 2026-08-22 — this controller previously had NO
+ * method security at all and relied solely on the blanket
+ * SecurityConfig rule "/api/admin/** = ADMIN or SUPER_ADMIN").
+ *
+ * Two tiers, because the endpoints are not equally dangerous:
+ *
+ *  TIER 1 — configuration & operations (class-level menu grant).
+ *    Connections, schedules, run history, overview. Gated on the DB-driven
+ *    sys_group_menu grant for /admin/integration, so WHO may administer feeds
+ *    is a Security-Settings decision per user group rather than a hardcoded
+ *    role — consistent with the rest of the product's RBAC.
+ *
+ *  TIER 2 — SQL authoring & execution (SUPER_ADMIN, method-level).
+ *    Creating/editing a report's sqlText, approving it, and the ad-hoc query
+ *    executor. This SQL runs against the CUSTOMER's production database with
+ *    the stored service credentials, and Connection.setReadOnly is a no-op on
+ *    the Oracle and MSSQL drivers — so an authoring right is effectively a
+ *    query console into a third party's core system. Sibling controllers
+ *    (MigrationController, BackfillController) already step up the same way.
+ *
+ * Reads stay at tier 1 so tenant admins can still see and operate their feeds.
+ *
+ * NOTE: the application layer is not the real boundary. The source database
+ * account must be granted SELECT only, on only the tables a feed needs.
+ */
 @RestController
 @RequestMapping("/api/admin/integration")
 @RequiredArgsConstructor
 @Slf4j
+@org.springframework.security.access.prepost.PreAuthorize("@menuAccess.canAccess('/admin/integration')")
 public class IntegrationController {
+
+    /** Tier 2 gate — see the class javadoc. */
+    private static final String SQL_AUTHORING = "hasRole('SUPER_ADMIN')";
 
     private final IntegrationConnectionRepository connectionRepo;
     private final IntegrationReportRepository reportRepo;
@@ -161,6 +191,7 @@ public class IntegrationController {
         return ResponseEntity.ok(reportRepo.findByTenantIdOrderByNameAsc(tenantId));
     }
 
+    @org.springframework.security.access.prepost.PreAuthorize(SQL_AUTHORING)
     @PostMapping("/reports")
     public ResponseEntity<?> createReport(@RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -173,7 +204,12 @@ public class IntegrationController {
         report.setColumnMapping((String) body.get("columnMapping"));
         report.setDescription((String) body.get("description"));
         report.setParamSchema((String) body.get("paramSchema"));
-        report.setApprovedBy((String) body.get("approvedBy"));
+        // approvedBy is NEVER taken from the request body — that would let the
+        // author approve their own SQL and defeat the separation of duties.
+        // A new report starts unapproved and cannot be executed until someone
+        // calls POST /reports/{id}/approve.
+        report.setApprovedBy(null);
+        report.setApprovedAt(null);
         report.setAmountsMinorUnits(body.get("amountsMinorUnits") != null ? (Boolean) body.get("amountsMinorUnits") : false);
         report.setIsActive(body.get("isActive") != null ? (Boolean) body.get("isActive") : true);
         report.setCreatedAt(LocalDateTime.now());
@@ -190,6 +226,7 @@ public class IntegrationController {
         return ResponseEntity.ok(reportRepo.save(report));
     }
 
+    @org.springframework.security.access.prepost.PreAuthorize(SQL_AUTHORING)
     @PutMapping("/reports/{id}")
     public ResponseEntity<?> updateReport(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -197,11 +234,24 @@ public class IntegrationController {
                 .filter(r -> r.getTenantId().equals(tenantId))
                 .map(existing -> {
                     if (body.containsKey("name")) existing.setName((String) body.get("name"));
-                    if (body.containsKey("sqlText")) existing.setSqlText((String) body.get("sqlText"));
+                    // Changing the SQL REVOKES the approval — the new statement
+                    // has not been reviewed, and silently inheriting the old
+                    // approval would make the whole gate cosmetic (author an
+                    // innocuous query, get it approved, then swap the body).
+                    if (body.containsKey("sqlText")) {
+                        String newSql = (String) body.get("sqlText");
+                        if (!java.util.Objects.equals(newSql, existing.getSqlText())) {
+                            existing.setApprovedBy(null);
+                            existing.setApprovedAt(null);
+                            log.info("[Integration] Report {} SQL changed — approval revoked, re-approval required", id);
+                        }
+                        existing.setSqlText(newSql);
+                    }
                     if (body.containsKey("columnMapping")) existing.setColumnMapping((String) body.get("columnMapping"));
                     if (body.containsKey("description")) existing.setDescription((String) body.get("description"));
                     if (body.containsKey("paramSchema")) existing.setParamSchema((String) body.get("paramSchema"));
-                    if (body.containsKey("approvedBy")) existing.setApprovedBy((String) body.get("approvedBy"));
+                    // approvedBy deliberately NOT settable here — use the
+                    // dedicated approve/revoke endpoints below.
                     if (body.containsKey("amountsMinorUnits")) existing.setAmountsMinorUnits((Boolean) body.get("amountsMinorUnits"));
                     if (body.containsKey("isActive")) existing.setIsActive((Boolean) body.get("isActive"));
                     if (body.containsKey("connectionId")) {
@@ -233,6 +283,57 @@ public class IntegrationController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    /**
+     * Approve a report's SQL for execution. Separation of duties: the approver
+     * is recorded from the SECURITY CONTEXT, never from the request body, and
+     * this endpoint is SUPER_ADMIN-only while a tenant admin may author.
+     * Any later edit to sqlText revokes this automatically.
+     */
+    @org.springframework.security.access.prepost.PreAuthorize(SQL_AUTHORING)
+    @PostMapping("/reports/{id}/approve")
+    public ResponseEntity<?> approveReport(@PathVariable Long id) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        String approver = currentUsername();
+        return reportRepo.findById(id)
+                .filter(r -> r.getTenantId().equals(tenantId))
+                .map(r -> {
+                    r.setApprovedBy(approver);
+                    r.setApprovedAt(LocalDateTime.now());
+                    r.setUpdatedAt(LocalDateTime.now());
+                    reportRepo.save(r);
+                    log.warn("[Integration] Report {} ('{}') SQL APPROVED by {}", id, r.getName(), approver);
+                    return ResponseEntity.ok(Map.of(
+                            "message", "Report approved for execution",
+                            "approvedBy", approver));
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /** Withdraw approval — the report stops running until re-approved. */
+    @org.springframework.security.access.prepost.PreAuthorize(SQL_AUTHORING)
+    @DeleteMapping("/reports/{id}/approve")
+    public ResponseEntity<?> revokeReportApproval(@PathVariable Long id) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        return reportRepo.findById(id)
+                .filter(r -> r.getTenantId().equals(tenantId))
+                .map(r -> {
+                    r.setApprovedBy(null);
+                    r.setApprovedAt(null);
+                    r.setUpdatedAt(LocalDateTime.now());
+                    reportRepo.save(r);
+                    log.warn("[Integration] Report {} ('{}') approval REVOKED by {}", id, r.getName(), currentUsername());
+                    return ResponseEntity.ok(Map.of("message", "Approval revoked — this report will not run until re-approved"));
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    private String currentUsername() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        return auth != null ? auth.getName() : "unknown";
+    }
+
+    @org.springframework.security.access.prepost.PreAuthorize(SQL_AUTHORING)
     @PostMapping("/reports/{id}/validate")
     public ResponseEntity<?> validateReport(@PathVariable Long id) {
         Long tenantId = TenantContext.getCurrentTenant();
@@ -264,10 +365,17 @@ public class IntegrationController {
      * request body ({"connectionId":.., "sqlText":".."}) so the composer modal
      * can test the query without first persisting a possibly-broken config.
      * Tenant-isolation: the connection must belong to the caller's tenant.
+     *
+     * HIGHEST-RISK ENDPOINT IN THIS CONTROLLER: it executes caller-supplied SQL
+     * against the customer's production database and returns the ROWS in the
+     * response — a query console, not a config screen. SUPER_ADMIN only, and
+     * every use is logged with the caller's identity.
      */
+    @org.springframework.security.access.prepost.PreAuthorize(SQL_AUTHORING)
     @PostMapping("/reports/validate-adhoc")
     public ResponseEntity<?> validateAdhoc(@RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
+        log.warn("[Integration] AD-HOC external query executed by {} (tenant {})", currentUsername(), tenantId);
 
         Object connIdRaw = body.get("connectionId");
         String sqlText = (String) body.get("sqlText");

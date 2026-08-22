@@ -69,6 +69,13 @@ public class TopPerformersController {
     @Autowired
     private CurrencyMeta currencyMeta;
 
+    @Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    /** Serializes the resolved filter DTO into a stable cache-key suffix. */
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
     private void resolveFilters(VolumeRevenueFilterDTO filters, Long tenantId) {
         if (notEmpty(filters.getTeamLeaderList()) && tenantId != null) {
             List<String> ids = salesTeamService.getSalesUserIdsByTeamLeadNames(tenantId, filters.getTeamLeaderList());
@@ -88,8 +95,33 @@ public class TopPerformersController {
         if (filter == null) filter = new VolumeRevenueFilterDTO();
         resolveFilters(filter, tenantId);
 
+        // Key on the RESOLVED window (period defaults derive from today's date)
+        // and the resolved filter DTO, so equivalent requests share an entry.
         LocalDate[] curWindow = resolveWindow(period, from, to);
         boolean cardGrain = usesCardFilters(filter);
+        final VolumeRevenueFilterDTO f = filter;
+        String fk;
+        try {
+            fk = objectMapper.writeValueAsString(filter);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            fk = null;
+        }
+        if (fk == null) {
+            return buildTopPerformers(f, tenantId, cardGrain, curWindow, period);
+        }
+        // period is part of the key even though the window is already resolved:
+        // the payload echoes response.put("period", period), so period=MTD and
+        // an equivalent explicit from/to must not share an entry or one caller
+        // reads the other's period label.
+        return reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "topPerformers:" + tenantId + ":" + curWindow[0] + ":" + curWindow[1]
+                        + ":" + cardGrain + ":" + period + ":" + fk,
+                () -> buildTopPerformers(f, tenantId, cardGrain, curWindow, period));
+    }
+
+    private Map<String, Object> buildTopPerformers(VolumeRevenueFilterDTO filter, Long tenantId,
+            boolean cardGrain, LocalDate[] curWindow, String period) {
 
         List<Map<String, Object>> current = runAggregate(filter, tenantId, cardGrain, curWindow[0], curWindow[1]);
 

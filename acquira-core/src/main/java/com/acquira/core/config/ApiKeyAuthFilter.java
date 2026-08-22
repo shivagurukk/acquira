@@ -66,12 +66,46 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     @Value("${external.api.allow-static-key:false}")
     private boolean allowStaticKey;
 
+    private final ApiUsageRecorder usageRecorder;
+
+    /**
+     * Static-key tenant lookup cache. The static break-glass path resolved its
+     * tenant with tenantRepository.findAll() on EVERY request; the tenant list
+     * is tiny and changes about never, so a short TTL removes that scan without
+     * making a code deploy necessary to pick up a new tenant.
+     *
+     * Caches the two SCALARS this path reads (id + short code), never the
+     * detached JPA entities — entities shared across request threads for 60s
+     * would turn any future lazy field on Tenant into a LazyInitialization
+     * landmine here rather than at the query site. Staleness window: a tenant
+     * deleted or re-coded stays resolvable by the static key for up to 60s.
+     */
+    private static final long TENANT_CACHE_TTL_MS = 60_000;
+    private record TenantRef(Long tenantId, String shortCode) {}
+    private volatile List<TenantRef> cachedTenants = null;
+    private volatile long cachedTenantsAt = 0L;
+
     public ApiKeyAuthFilter(JdbcTemplate jdbc, PasswordEncoder passwordEncoder,
-                            TenantRepository tenantRepository, ApiRateLimiter rateLimiter) {
+                            TenantRepository tenantRepository, ApiRateLimiter rateLimiter,
+                            ApiUsageRecorder usageRecorder) {
         this.jdbc = jdbc;
         this.passwordEncoder = passwordEncoder;
         this.tenantRepository = tenantRepository;
         this.rateLimiter = rateLimiter;
+        this.usageRecorder = usageRecorder;
+    }
+
+    private List<TenantRef> tenantsCached() {
+        long now = System.currentTimeMillis();
+        List<TenantRef> snapshot = cachedTenants;
+        if (snapshot == null || now - cachedTenantsAt > TENANT_CACHE_TTL_MS) {
+            snapshot = tenantRepository.findAll().stream()
+                    .map(t -> new TenantRef(t.getTenantId(), t.getBankShortCode()))
+                    .toList();
+            cachedTenants = snapshot;
+            cachedTenantsAt = now;
+        }
+        return snapshot;
     }
 
     @Override
@@ -201,12 +235,12 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             if (requestedTenantCode == null || requestedTenantCode.isBlank()) {
                 return AuthResult.fail(400, "tenantCode is required when using the static API key");
             }
-            Tenant t = tenantRepository.findAll().stream()
-                    .filter(x -> requestedTenantCode.equalsIgnoreCase(x.getBankShortCode()))
+            TenantRef t = tenantsCached().stream()
+                    .filter(x -> requestedTenantCode.equalsIgnoreCase(x.shortCode()))
                     .findFirst().orElse(null);
             if (t == null) return AuthResult.fail(403, "Invalid tenant code");
             log.warn("[API-AUTH] static all-tenant key used for tenant '{}'. Prefer DB-issued keys.", requestedTenantCode);
-            ApiKeyPrincipal p = new ApiKeyPrincipal(null, t.getTenantId(), t.getBankShortCode(), Set.of(), true);
+            ApiKeyPrincipal p = new ApiKeyPrincipal(null, t.tenantId(), t.shortCode(), Set.of(), true);
             return AuthResult.ok(p, Integer.MAX_VALUE);
         }
 
@@ -216,21 +250,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     // ─── Usage logging (best-effort; never fails the request) ──────────
 
     private void recordUsage(ApiKeyPrincipal p, HttpServletRequest req, int status, String clientIp, long latencyMs) {
-        try {
-            jdbc.update(
-                "INSERT INTO api_request_log (tenant_id, key_id, method, endpoint, status, client_ip, latency_ms) " +
-                "VALUES (?,?,?,?,?,?,?)",
-                p.getTenantId(), p.getKeyId(), req.getMethod(),
-                truncate(req.getRequestURI(), 300), status, truncate(clientIp, 64), (int) latencyMs);
-            if (p.getKeyId() != null) {
-                jdbc.update(
-                    "UPDATE api_key SET last_used = CURRENT_TIMESTAMP, last_used_ip = ?, " +
-                    "request_count = COALESCE(request_count,0) + 1 WHERE key_id = ?",
-                    truncate(clientIp, 64), p.getKeyId());
-            }
-        } catch (Exception e) {
-            log.debug("[API-AUTH] usage log skipped: {}", e.getMessage());
-        }
+        // Buffered, not written inline. The two statements this used to issue
+        // per request cost two round trips AND serialized every concurrent
+        // caller of the same key on the api_key row lock — see ApiUsageRecorder.
+        usageRecorder.record(p.getTenantId(), p.getKeyId(), req.getMethod(),
+                truncate(req.getRequestURI(), 300), status, truncate(clientIp, 64), latencyMs);
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────

@@ -882,6 +882,19 @@ button {
 .spin { animation: spin 1s linear infinite; }
 
 /* ══════════════════════════════════════════════════════════════
+   SHIMMER — the loading-placeholder sweep.
+   Lived only inside SkeletonLoader, which injects it in a <style>
+   tag. That works for its own components but not for a skeleton a
+   page has to render itself (a <table> cannot host a nested
+   SkeletonLoader). Defined globally so any placeholder can use it;
+   SkeletonLoader's own copy stays harmless.
+   ══════════════════════════════════════════════════════════════ */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ══════════════════════════════════════════════════════════════
    FADE-IN UTILITY — opacity only, ≤150ms
    ══════════════════════════════════════════════════════════════ */
 @keyframes fadeIn {
@@ -895,4 +908,5 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .spin, .fade-in, .stagger-in { animation: none; }
+  [style*="shimmer"] { animation: none; }
 }

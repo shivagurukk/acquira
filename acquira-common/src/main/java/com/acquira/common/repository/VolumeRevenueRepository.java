@@ -16,6 +16,97 @@ public class VolumeRevenueRepository {
     @PersistenceContext
     private EntityManager entityManager;
 
+    /**
+     * Fee overlay for the Finance Summary — interchange + scheme fee at the
+     * same grain and in the same three buckets as
+     * {@link #getPerformanceDashboardData}.
+     *
+     * WHY A SEPARATE QUERY RATHER THAN EXTRA COLUMNS ON THE PIVOT
+     * -----------------------------------------------------------
+     * The pivot reads sum_daily_insight / sum_monthly_insight, and NEITHER
+     * carries an interchange or scheme-fee column — the only day-grain summary
+     * that does AND still carries destination + card_type is sum_daily_full.
+     * Rather than repoint the pivot (which would change every count / volume /
+     * MSF figure the screen has ever shown, since the two tables are built at
+     * different grains), the fee stack is fetched as a strictly ADDITIVE
+     * overlay and merged onto the existing rows by label. If sum_daily_full has
+     * no rows for the range the overlay is simply empty and the report renders
+     * exactly as it did before, with zeroed fee columns.
+     *
+     * BUCKETS: the same partition expressions as the pivot, so a fee column
+     * always lines up with the volume column beside it.
+     *
+     * fee_basis_msf: sum_daily_full's OWN MSF for the row. The UI nets margin
+     * against this rather than against the pivot's MSF, so all three terms of
+     * the margin come from one table and can never disagree; it also lets the
+     * screen flag a row where the two MSF figures diverge materially.
+     *
+     * @param groupBy MONTH | DAY | MERCHANT — anything else yields an empty map.
+     * @return row label -> fee columns, keyed exactly as the pivot's row_label.
+     */
+    public Map<String, Map<String, Object>> getFinanceFeeOverlay(
+            java.time.LocalDate start, java.time.LocalDate end, String groupBy, Long tenantId) {
+        requireTenant(tenantId);
+        if (start == null || end == null) return new HashMap<>();
+
+        final String label;
+        final boolean needMerchant;
+        if ("MONTH".equals(groupBy)) {
+            label = "TO_CHAR(s.business_date, 'YYYY-MM')";
+            needMerchant = false;
+        } else if ("DAY".equals(groupBy)) {
+            label = "TO_CHAR(s.business_date, 'YYYY-MM-DD')";
+            needMerchant = false;
+        } else if ("MERCHANT".equals(groupBy)) {
+            label = "m.mid";
+            needMerchant = true;
+        } else {
+            return new HashMap<>();
+        }
+
+        // Identical to the pivot's partition — see getPerformanceDashboardDataDaily.
+        final String DOM_DEBIT = "UPPER(COALESCE(s.destination,'')) = 'DOMESTIC' AND UPPER(COALESCE(s.card_type,'')) IN ('DEBIT','PREPAID')";
+        final String DOM_CREDIT = "UPPER(COALESCE(s.destination,'')) = 'DOMESTIC' AND UPPER(COALESCE(s.card_type,'')) NOT IN ('DEBIT','PREPAID')";
+        final String INTL = "UPPER(COALESCE(s.destination,'')) <> 'DOMESTIC'";
+
+        StringBuilder sql = new StringBuilder("SELECT ").append(label).append(" as row_label, ");
+        String[][] buckets = { { "dom_debit", DOM_DEBIT }, { "dom_credit", DOM_CREDIT }, { "int", INTL } };
+        for (String[] b : buckets) {
+            sql.append(" SUM(CASE WHEN ").append(b[1])
+               .append(" THEN COALESCE(s.total_interchange,0) ELSE 0 END) as ").append(b[0]).append("_ic, ");
+            sql.append(" SUM(CASE WHEN ").append(b[1])
+               .append(" THEN COALESCE(s.total_scheme_fee,0) ELSE 0 END) as ").append(b[0]).append("_sf, ");
+        }
+        sql.append(" SUM(COALESCE(s.total_interchange,0)) as total_ic, ");
+        sql.append(" SUM(COALESCE(s.total_scheme_fee,0)) as total_sf, ");
+        sql.append(" SUM(COALESCE(s.total_msf,0)) as fee_basis_msf ");
+        sql.append("FROM sum_daily_full s ");
+        if (needMerchant)
+            sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        sql.append("WHERE s.tenant_id = :tenantId ");
+        sql.append("AND s.business_date >= :startDate AND s.business_date <= :endDate ");
+        sql.append("GROUP BY ").append(label);
+
+        Query query = entityManager.createNativeQuery(sql.toString());
+        query.setParameter("tenantId", tenantId);
+        query.setParameter("startDate", start);
+        query.setParameter("endDate", end);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        Map<String, Map<String, Object>> out = new HashMap<>();
+        String[] cols = { "dom_debit_ic", "dom_debit_sf", "dom_credit_ic", "dom_credit_sf",
+                "int_ic", "int_sf", "total_ic", "total_sf", "fee_basis_msf" };
+        for (Object[] row : rows) {
+            if (row[0] == null) continue;
+            Map<String, Object> m = new HashMap<>();
+            for (int i = 0; i < cols.length; i++)
+                m.put(cols[i], row[i + 1]);
+            out.put(row[0].toString(), m);
+        }
+        return out;
+    }
+
     /** Fail closed: a null tenant must never silently widen a query to every tenant. */
     private static void requireTenant(Long tenantId) {
         if (tenantId == null)

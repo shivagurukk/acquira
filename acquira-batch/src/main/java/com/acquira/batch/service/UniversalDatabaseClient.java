@@ -21,28 +21,85 @@ public class UniversalDatabaseClient {
     private final CryptoService cryptoService;
 
     /**
+     * Hard cap on rows pulled in one call. mapResultSet materialises every row
+     * into a HashMap in heap, so without this a mistyped query against a
+     * customer's core-banking table is an OOM of the Acquira JVM, not a slow
+     * query. Mirrors IntegrationPullService.MAX_PULL_ROWS.
+     */
+    private static final int MAX_ROWS = 2_000_000;
+
+    /** Rows fetched per network round trip — without this some drivers buffer the whole result. */
+    private static final int FETCH_SIZE = 5_000;
+
+    /** Per-statement ceiling; a runaway external query must not pin this thread forever. */
+    private static final int QUERY_TIMEOUT_SECONDS = 300;
+
+    /**
      * Executes a query against any supported DB (Oracle, Postgres, MSSQL).
-     * 
+     *
      * @param config The DB connection details.
      * @param sql    The SQL query to execute.
      * @param params Parameter map (e.g. "dateFrom" -> LocalDate).
      * @return List of Maps (Rows).
      */
     public List<Map<String, Object>> executeQuery(DataSourceConfig config, String sql, Map<String, Object> params) {
+        // SECURITY: this client executes SQL supplied by an operator (backfill
+        // sourceQueries, report_query_config.sql_text) against a THIRD-PARTY
+        // production database. It previously had none of the guards its sibling
+        // IntegrationPullService already applied, so a stacked payload like
+        // "SELECT 1; DROP TABLE ..." would have run writes/DDL on the customer's
+        // system. Reject stacked statements before we connect.
+        assertSingleStatement(sql);
+
         String url = config.getJdbcUrl();
         log.info("Connecting to {} ({})", config.getName(), config.getDbType());
 
         try (Connection conn = DriverManager.getConnection(url, config.getUsername(),
-                    cryptoService.decrypt(config.getEncryptedPassword()));
-                PreparedStatement ps = prepareStatement(conn, sql, params)) {
+                    cryptoService.decrypt(config.getEncryptedPassword()))) {
 
-            try (ResultSet rs = ps.executeQuery()) {
-                return mapResultSet(rs);
+            // Advisory on Postgres, no-op on Oracle/MSSQL — worth setting, but
+            // it is NOT the control: the source account must be read-only.
+            try {
+                conn.setReadOnly(true);
+            } catch (SQLException ignored) {
+                log.debug("Driver rejected setReadOnly for {} — relying on the source account's grants",
+                        config.getDbType());
+            }
+
+            try (PreparedStatement ps = prepareStatement(conn, sql, params)) {
+                ps.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
+                ps.setMaxRows(MAX_ROWS);
+                ps.setFetchSize(FETCH_SIZE);
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<Map<String, Object>> rows = mapResultSet(rs);
+                    if (rows.size() >= MAX_ROWS) {
+                        log.warn("Query against {} hit the {}-row cap — result is TRUNCATED. "
+                                + "Narrow the query's date range.", config.getName(), MAX_ROWS);
+                    }
+                    return rows;
+                }
             }
 
         } catch (SQLException e) {
             log.error("Execution failed for {}: {}", config.getName(), e.getMessage());
             throw new RuntimeException("DB Connection Error: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Reject multi-statement (stacked) SQL. Strips one optional trailing
+     * semicolon, then fails if any ';' remains. Pragmatic guard, not a SQL
+     * parser (a ';' inside a string literal is a false positive — rare in a
+     * read query) — defense-in-depth on top of a read-only source account.
+     * Mirrors IntegrationPullService.assertSingleStatement.
+     */
+    private void assertSingleStatement(String sql) {
+        if (sql == null) return;
+        String trimmed = sql.strip();
+        if (trimmed.endsWith(";")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+        if (trimmed.contains(";")) {
+            throw new IllegalArgumentException(
+                "Source query must be a single statement (stacked ';'-separated statements are not allowed).");
         }
     }
 

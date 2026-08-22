@@ -12,6 +12,7 @@ import SkeletonLoader from '../../components/SkeletonLoader';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
 import { createFmt, formatMsf, resolveDecimals } from '../../utils/formatters';
+import { weekRules } from '../../utils/weekRules';
 
 /* ════════════════════════════════════════════════════════════════════
    Executive Daily Merchant Dashboard — the acquiring day, read as a
@@ -55,16 +56,18 @@ const COLUMNS = [
     { key: 'icf',    label: 'Interchange Fee',      align: 'right', wrap: true },
     { key: 'sf',     label: 'Scheme Fee',           align: 'right', wrap: true },
     { key: 'pg',     label: 'Payment Gateway Fee',  align: 'right', wrap: true },
-    { key: 'nm',     label: 'NM',    align: 'right' },
+    { key: 'nm',     label: 'Net Margin',           align: 'right', wrap: true },
 ];
 
-/* Fee vocabulary — one source for the table, the fee ribbon and the export. */
+/* Fee vocabulary — one source for the table, the fee ribbon and the export.
+   Every term is spelled out: this page is read by people who do not live in
+   the abbreviations, so "Net Margin" never appears as "NM". */
 const FEE_LABELS = {
     msf: 'MSF',
     icf: 'Interchange Fee',
     sf:  'Scheme Fee',
     pg:  'Payment Gateway Fee',
-    nm:  'NM',
+    nm:  'Net Margin',
 };
 
 const PAGE_SIZES = [25, 50, 100];
@@ -80,12 +83,6 @@ const parseDay = (iso) => {
     return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
 };
 const dayNum = (iso) => (iso || '').slice(8, 10).replace(/^0/, '');
-/* Gulf market week: Friday + Saturday are the weekend, Sunday opens the week. */
-const WEEKEND_DAYS = [5, 6]; // getDay(): 5 = Friday, 6 = Saturday
-const isWeekend = (iso) => {
-    const d = parseDay(iso);
-    return d ? WEEKEND_DAYS.includes(d.getDay()) : false;
-};
 const pillLabel = (iso) => {
     const d = parseDay(iso);
     return d ? d.toLocaleDateString('en-US', { day: '2-digit', month: 'short' }) : iso;
@@ -101,33 +98,72 @@ const monthLabel = (ym) => {
 };
 
 /* ── Multi-select dropdown, drawn entirely from Meridian tokens (the shared
-   components/MultiSelect.jsx is hardcoded to Tailwind blues). ── */
+   components/MultiSelect.jsx is hardcoded to Tailwind blues).
+
+   Ticks are collected into a DRAFT and applied once — on Apply, or when the
+   panel is dismissed. Committing per tick meant picking six MCCs fired six
+   full dashboard reloads and the figures thrashed while you were still
+   choosing. Escape abandons the draft.
+
+   Options already chosen are pinned to the top of the list, but only as the
+   panel OPENS: re-sorting live would make rows jump out from under the
+   cursor mid-tick. ── */
+const sameSet = (a, b) => a.length === b.length && a.every(v => b.includes(v));
+
 const FilterSelect = ({ label, options, selected, onChange }) => {
     const [open, setOpen] = useState(false);
     const [q, setQ] = useState('');
+    const [draft, setDraft] = useState(selected);
+    const [pinned, setPinned] = useState([]);
     const ref = useRef(null);
 
+    // The document listeners below fire outside React's render cycle, so they
+    // read the live values through refs rather than a stale closure.
+    const draftRef = useRef(draft);   draftRef.current = draft;
+    const selRef = useRef(selected);  selRef.current = selected;
+
+    const commit = useCallback(() => {
+        if (!sameSet(draftRef.current, selRef.current)) onChange(draftRef.current);
+    }, [onChange]);
+
+    const openPanel = () => {
+        setDraft(selected); setPinned(selected); setQ(''); setOpen(true);
+    };
+    const applyAndClose = () => { setOpen(false); commit(); };
+    const cancelAndClose = () => { setOpen(false); setDraft(selRef.current); };
+
     useEffect(() => {
-        const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-        const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+        if (!open) return;
+        const onDoc = (e) => {
+            if (ref.current && !ref.current.contains(e.target)) { setOpen(false); commit(); }
+        };
+        const onEsc = (e) => {
+            if (e.key === 'Escape') { setOpen(false); setDraft(selRef.current); }
+        };
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('keydown', onEsc);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('keydown', onEsc);
         };
-    }, []);
+    }, [open, commit]);
 
+    const all = useMemo(() => options || [], [options]);
     const shown = useMemo(() => {
-        const list = options || [];
-        if (!q.trim()) return list;
         const needle = q.trim().toLowerCase();
-        return list.filter(o => String(o).toLowerCase().includes(needle));
-    }, [options, q]);
+        const list = needle ? all.filter(o => String(o).toLowerCase().includes(needle)) : all;
+        if (!pinned.length) return list;
+        const isPinned = new Set(pinned);
+        return [...list.filter(o => isPinned.has(o)), ...list.filter(o => !isPinned.has(o))];
+    }, [all, q, pinned]);
 
     const toggle = (opt) =>
-        onChange(selected.includes(opt) ? selected.filter(v => v !== opt) : [...selected, opt]);
+        setDraft(d => (d.includes(opt) ? d.filter(v => v !== opt) : [...d, opt]));
+    const selectAllShown = () => setDraft(d => [...new Set([...d, ...shown])]);
+    const allShownOn = shown.length > 0 && shown.every(o => draft.includes(o));
+
     const active = selected.length > 0;
+    const dirty = !sameSet(draft, selected);
 
     // The value line reads like a report parameter: "All", the single choice,
     // or how many are combined.
@@ -138,9 +174,13 @@ const FilterSelect = ({ label, options, selected, onChange }) => {
     return (
         <div ref={ref} style={{ position: 'relative', display: 'flex' }}>
             <button className={`edm-focus edm-fbtn${active ? ' edm-fbtn-on' : ''}`}
-                onClick={() => setOpen(o => !o)}
-                aria-expanded={open} aria-haspopup="listbox">
-                <span className="edm-fbtn-label">{label}</span>
+                onClick={() => (open ? applyAndClose() : openPanel())}
+                aria-expanded={open} aria-haspopup="listbox"
+                title={active ? `${label}: ${selected.join(', ')}` : `${label}: all`}>
+                <span className="edm-fbtn-label">
+                    {label}
+                    {active && <span className="edm-fbtn-count">{selected.length}</span>}
+                </span>
                 <span className="edm-fbtn-value">
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 148 }}>
                         {valueText}
@@ -152,30 +192,52 @@ const FilterSelect = ({ label, options, selected, onChange }) => {
             </button>
 
             {open && (
-                <div role="listbox" style={{
+                <div role="listbox" aria-multiselectable="true" className="edm-pop" style={{
                     position: 'absolute', top: 'calc(100% + 5px)', left: 0, zIndex: 60,
-                    minWidth: 224, maxWidth: 320, background: 'var(--bg-card)',
+                    width: 320, maxWidth: '90vw', background: 'var(--bg-card)',
                     border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
                     boxShadow: 'var(--shadow-pop)', overflow: 'hidden',
                 }}>
-                    {(options?.length || 0) > 8 && (
-                        <div style={{ padding: 8, borderBottom: '1px solid var(--border-light, var(--border))' }}>
+                    <div style={{ padding: 9, borderBottom: '1px solid var(--border-light, var(--border))' }}>
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                            <Search size={12} style={{
+                                position: 'absolute', left: 9, color: 'var(--text-muted)', pointerEvents: 'none' }} />
                             <input autoFocus value={q} onChange={e => setQ(e.target.value)}
                                 placeholder={`Search ${label.toLowerCase()}`}
+                                aria-label={`Search ${label}`}
                                 style={{
-                                    width: '100%', boxSizing: 'border-box', padding: '6px 9px',
-                                    fontSize: 12, background: 'var(--bg-subtle, var(--bg))',
+                                    width: '100%', boxSizing: 'border-box', padding: '7px 9px 7px 26px',
+                                    fontSize: 12.5, background: 'var(--bg-subtle, var(--bg))',
                                     border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
                                     color: 'var(--text)', outline: 'none',
                                 }} />
                         </div>
-                    )}
-                    <div style={{ maxHeight: 244, overflowY: 'auto', padding: '4px 0' }}>
+                        <div style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            gap: 8, marginTop: 8,
+                        }}>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                {draft.length} of {all.length} selected
+                            </span>
+                            <span style={{ display: 'flex', gap: 12 }}>
+                                <button className="edm-link" onClick={selectAllShown} disabled={allShownOn}
+                                    style={{ opacity: allShownOn ? 0.4 : 1 }}>
+                                    {q.trim() ? 'Select matches' : 'Select all'}
+                                </button>
+                                <button className="edm-link edm-link-danger" onClick={() => setDraft([])}
+                                    disabled={!draft.length} style={{ opacity: draft.length ? 1 : 0.4 }}>
+                                    Clear
+                                </button>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div style={{ maxHeight: 268, overflowY: 'auto', padding: '4px 0' }}>
                         {shown.map(opt => {
-                            const on = selected.includes(opt);
+                            const on = draft.includes(opt);
                             return (
                                 <div key={opt} role="option" aria-selected={on} onClick={() => toggle(opt)}
-                                    className="edm-opt" style={{
+                                    className="edm-opt" title={String(opt)} style={{
                                         display: 'flex', alignItems: 'center', gap: 9,
                                         padding: '7px 12px', fontSize: 12.5, cursor: 'pointer',
                                         color: on ? 'var(--primary)' : 'var(--text)',
@@ -190,7 +252,7 @@ const FilterSelect = ({ label, options, selected, onChange }) => {
                                     }}>
                                         {on && <Check size={10} color="#fff" strokeWidth={3.2} />}
                                     </span>
-                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                         {String(opt)}
                                     </span>
                                 </div>
@@ -198,20 +260,21 @@ const FilterSelect = ({ label, options, selected, onChange }) => {
                         })}
                         {!shown.length && (
                             <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-                                Nothing matches
+                                {all.length ? 'Nothing matches' : 'No options for this tenant'}
                             </div>
                         )}
                     </div>
-                    {active && (
-                        <button onClick={() => onChange([])} style={{
-                            display: 'block', width: '100%', textAlign: 'left',
-                            padding: '8px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
-                            color: 'var(--danger)', background: 'transparent',
-                            border: 'none', borderTop: '1px solid var(--border-light, var(--border))',
-                        }}>
-                            Clear {label}
+
+                    <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
+                        padding: '9px 10px', background: 'var(--bg-subtle, var(--bg))',
+                        borderTop: '1px solid var(--border-light, var(--border))',
+                    }}>
+                        <button className="edm-popbtn" onClick={cancelAndClose}>Cancel</button>
+                        <button className="edm-popbtn edm-popbtn-primary" onClick={applyAndClose}>
+                            {dirty ? 'Apply' : 'Done'}
                         </button>
-                    )}
+                    </div>
                 </div>
             )}
         </div>
@@ -340,6 +403,190 @@ const MixStrip = ({ title, hue, rows, money, share }) => {
     );
 };
 
+/* ── Month shape: one bar per day of the month (volume) with the net margin
+   drawn over it as a line. The bars are the SAME control as the calendar —
+   clicking one includes/excludes that date — so the month can be read either
+   as a grid or as a curve without learning a second interaction.
+
+   The server always returns `trend` for the WHOLE month (see the controller's
+   ctxStart/ctxEnd), never just the selection, so the shape stays stable while
+   days are picked and dropped. ── */
+const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week, height = 132 }) => {
+    const picked = useMemo(() => new Set(selectedDates), [selectedDates]);
+    const rows = useMemo(() => days.map((d) => {
+        const t = trendByDate.get(d);
+        return { date: d, vol: num(t?.volume), count: num(t?.count), nm: num(t?.nm), has: !!t };
+    }), [days, trendByDate]);
+
+    if (!rows.length) return null;
+
+    const maxVol = rows.reduce((a, r) => Math.max(a, r.vol), 0) || 1;
+    const withData = rows.filter(r => r.has);
+    const nmHi = withData.reduce((a, r) => Math.max(a, r.nm), 0);
+    const nmLo = withData.reduce((a, r) => Math.min(a, r.nm), 0);
+    const nmSpan = (nmHi - nmLo) || 1;
+    /* Net margin is drawn in a 0–100 box that the SVG stretches to fit; the
+       stroke is non-scaling so the distortion never thickens the line. */
+    const nmY = (v) => 100 - ((v - nmLo) / nmSpan) * 100;
+    const xAt = (i) => ((i + 0.5) / rows.length) * 100;
+
+    /* Break the line wherever a day has no data — joining across a gap would
+       draw a margin trend through days that were never processed. */
+    const segments = [];
+    let run = [];
+    rows.forEach((r, i) => {
+        if (r.has) run.push(`${xAt(i).toFixed(3)},${nmY(r.nm).toFixed(3)}`);
+        else { if (run.length > 1) segments.push(run); run = []; }
+    });
+    if (run.length > 1) segments.push(run);
+
+    const anySelected = selectedDates.length > 0;
+    const zeroY = nmLo < 0 && nmHi > 0 ? nmY(0) : null;
+
+    return (
+        <div style={{ minWidth: 0, flex: '1 1 320px' }}>
+            <div style={{
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                gap: 10, marginBottom: 10, flexWrap: 'wrap',
+            }}>
+                <span className="edm-eyebrow">Month shape</span>
+                <span style={{ display: 'flex', gap: 14, fontSize: 10.5, color: 'var(--text-muted)' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--cat-1)' }} />
+                        Volume
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 12, height: 2, borderRadius: 2, background: 'var(--chart-4, #7191CE)' }} />
+                        Net Margin
+                    </span>
+                </span>
+            </div>
+
+            <div className="edm-chart" style={{ height }}>
+                <div className="edm-chart-bars">
+                    {rows.map((r) => {
+                        const on = picked.has(r.date);
+                        const dim = anySelected && !on;
+                        const loss = r.has && r.nm < 0;
+                        const pct = r.has ? Math.max((r.vol / maxVol) * 100, 1.5) : 0;
+                        return (
+                            <button key={r.date} type="button"
+                                className={`edm-bar${on ? ' edm-bar-on' : ''}`}
+                                onClick={() => onToggle(r.date)}
+                                aria-pressed={on}
+                                aria-label={`${longDate(r.date)}${week.isWeekend(r.date) ? ', weekend' : ''}`}
+                                title={r.has
+                                    ? `${longDate(r.date)}${week.isWeekend(r.date) ? ' · weekend' : ''}\nVolume ${money(r.vol)}\nTransactions ${r.count.toLocaleString()}\nNet Margin ${money(r.nm)}`
+                                    : `${longDate(r.date)}${week.isWeekend(r.date) ? ' · weekend' : ''}\nNo transactions loaded`}>
+                                <span className="edm-bar-fill" style={{
+                                    height: `${pct}%`,
+                                    background: loss ? 'var(--danger)' : 'var(--cat-1)',
+                                    opacity: dim ? 0.3 : 1,
+                                }} />
+                                {week.isWeekend(r.date) && <span className="edm-bar-we" aria-hidden="true" />}
+                            </button>
+                        );
+                    })}
+                </div>
+                <svg className="edm-chart-line" viewBox="0 0 100 100"
+                    preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                    {zeroY != null && (
+                        <line x1="0" y1={zeroY} x2="100" y2={zeroY}
+                            stroke="var(--danger)" strokeWidth="1" strokeDasharray="3 3"
+                            vectorEffect="non-scaling-stroke" opacity="0.45" />
+                    )}
+                    {segments.map((pts, i) => (
+                        <polyline key={i} points={pts.join(' ')} fill="none"
+                            stroke="var(--chart-4, #7191CE)" strokeWidth="1.75"
+                            strokeLinejoin="round" strokeLinecap="round"
+                            vectorEffect="non-scaling-stroke" />
+                    ))}
+                </svg>
+            </div>
+
+            {/* Only the first, last and every 5th day get a tick — a 31-label
+                axis at this width is a grey smear. */}
+            <div className="edm-chart-axis">
+                {rows.map((r, i) => (
+                    <span key={r.date}>
+                        {(i === 0 || i === rows.length - 1 || (i + 1) % 5 === 0) ? dayNum(r.date) : ''}
+                    </span>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+/* ── Weekday vs weekend, using the tenant's own working week. Two days out of
+   seven carry a very different mix in this market, and the split is the
+   quickest read on whether a month's shortfall is trading or calendar. ── */
+const WeekSplit = ({ days, trendByDate, week, money, share }) => {
+    const stats = useMemo(() => {
+        const blank = () => ({ days: 0, volume: 0, count: 0, nm: 0 });
+        const acc = { weekday: blank(), weekend: blank() };
+        days.forEach(d => {
+            const t = trendByDate.get(d);
+            if (!t) return;                       // a day with no data is not a trading day
+            const b = acc[week.isWeekend(d) ? 'weekend' : 'weekday'];
+            b.days += 1;
+            b.volume += num(t.volume);
+            b.count += num(t.count);
+            b.nm += num(t.nm);
+        });
+        return acc;
+    }, [days, trendByDate, week]);
+
+    const total = stats.weekday.volume + stats.weekend.volume;
+    if (total <= 0) return null;
+
+    const bars = [
+        { key: 'weekday', label: 'Weekdays', hue: 'var(--cat-1)',   ...stats.weekday },
+        { key: 'weekend', label: 'Weekends', hue: 'var(--cat-3, var(--chart-alt, #64748B))', ...stats.weekend },
+    ];
+
+    return (
+        <div style={{ minWidth: 0 }}>
+            <div className="edm-eyebrow" style={{ marginBottom: 10 }}>
+                Weekday vs weekend
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                {bars.map(b => (
+                    <div key={b.key}>
+                        <div style={{
+                            display: 'flex', justifyContent: 'space-between', gap: 10,
+                            fontSize: 11.5, marginBottom: 4,
+                        }}>
+                            <span style={{ color: 'var(--text)', fontWeight: 500 }}
+                                title={b.key === 'weekend' ? week.longLabel : `all days except ${week.longLabel}`}>
+                                {b.label}
+                                <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                                    {' · '}{b.days} day{b.days === 1 ? '' : 's'}
+                                </span>
+                            </span>
+                            <span className="edm-num" style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                                {share(b.volume, total)}
+                            </span>
+                        </div>
+                        <div style={{ height: 5, borderRadius: 999, background: 'var(--border-light, var(--border))' }}>
+                            <div title={`${b.label} · ${money(b.volume)}`} style={{
+                                width: `${Math.max((b.volume / total) * 100, 1.5)}%`,
+                                height: '100%', borderRadius: 999, background: b.hue,
+                            }} />
+                        </div>
+                        <div className="edm-num" style={{ marginTop: 4, fontSize: 10.5, color: 'var(--text-muted)' }}>
+                            {b.days ? `${money(b.volume / b.days)} / day` : 'no trading days'}
+                            {b.days ? ` · Net Margin ${money(b.nm)}` : ''}
+                        </div>
+                    </div>
+                ))}
+            </div>
+            <div style={{ marginTop: 9, fontSize: 10.5, color: 'var(--text-muted)' }}>
+                Weekend here is {week.longLabel}, per this bank's country.
+            </div>
+        </div>
+    );
+};
+
 const FILTER_DEFS = [
     { key: 'mccList',         label: 'MCC',         optKey: 'mccs' },
     { key: 'destinationList', label: 'Destination', optKey: 'destinations' },
@@ -353,9 +600,14 @@ const CHIP_LABELS = {
 };
 
 const DailyMerchantDashboard = () => {
-    const { currencySymbol, currencyCode, currencyDecimals, tenantVersion } = useAuth();
+    const { currencySymbol, currencyCode, currencyDecimals, tenantVersion, homeCountryCode } = useAuth();
     const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
     const navigate = useNavigate();
+
+    /* The tenant's working week — UAE weekends on Sat+Sun, Bahrain/Oman/Egypt
+       on Fri+Sat. Drives the calendar's first column, the weekend tint, the
+       quick picks and the weekday/weekend split. */
+    const week = useMemo(() => weekRules(homeCountryCode), [homeCountryCode]);
 
     // Month-driven date picker: pick a month -> its loaded dates become ribbon
     // bars. Any number can be on; NONE selected = the whole month.
@@ -605,6 +857,13 @@ const DailyMerchantDashboard = () => {
         }
     };
 
+    /* Two different loading states. The FIRST load has nothing to show, so it
+       gets the skeleton. Every load after that already has figures on screen —
+       those stay put and dim, because replacing them with a placeholder is what
+       made the page flash on every click. */
+    const firstLoad = loading && !data;
+    const refreshing = loading && !!data;
+
     const rows = data?.content || [];
     const totals = data?.totals;
     const trend = data?.trend || [];
@@ -633,8 +892,9 @@ const DailyMerchantDashboard = () => {
     const trendMax = useMemo(
         () => trend.reduce((a, t) => Math.max(a, num(t.volume)), 0) || 1, [trend]);
 
-    /* Calendar weeks for the selected month — Sunday-first (Gulf week), so the
-       Fri + Sat weekend lands on the last two columns. null = lead/tail blank. */
+    /* Calendar weeks for the selected month, started on the day that OPENS the
+       tenant's week, so its weekend always lands on the last two columns.
+       null = lead/tail blank. */
     const monthDateSet = useMemo(() => new Set(monthDates), [monthDates]);
     /* Every calendar day of the month — a day with no transactions is still a
        real business date, so it stays selectable and reports its own emptiness
@@ -651,14 +911,28 @@ const DailyMerchantDashboard = () => {
         if (!m) return [];
         const y = Number(m[1]), mo = Number(m[2]) - 1;
         const daysIn = new Date(y, mo + 1, 0).getDate();
-        const cells = Array(new Date(y, mo, 1).getDay()).fill(null);
+        const cells = Array(week.leadBlanks(new Date(y, mo, 1).getDay())).fill(null);
         for (let d = 1; d <= daysIn; d++)
             cells.push(`${m[1]}-${m[2]}-${String(d).padStart(2, '0')}`);
         while (cells.length % 7) cells.push(null);
         const weeks = [];
         for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
         return weeks;
-    }, [month]);
+    }, [month, week]);
+
+    /* Which quick pick the current selection actually IS. Derived, never
+       stored: hand-picking a day on the calendar has to drop the highlight
+       back to "Custom" on its own, or the control lies about what is loaded. */
+    const dayMode = useMemo(() => {
+        if (!selectedDates.length) return 'all';
+        if (!allMonthDays.length) return 'custom';
+        const sel = [...selectedDates].sort().join(',');
+        const wd = allMonthDays.filter(d => !week.isWeekend(d)).sort().join(',');
+        if (sel === wd) return 'weekdays';
+        const we = allMonthDays.filter(week.isWeekend).sort().join(',');
+        if (sel === we) return 'weekends';
+        return 'custom';
+    }, [selectedDates, allMonthDays, week]);
 
     /* Derived ratios — existing Acquira definitions, computed from the server's
        own totals (never a second opinion on the fee maths). */
@@ -683,6 +957,11 @@ const DailyMerchantDashboard = () => {
         const pos = n >= 0;
         return (
             <span title={fullNum(v, currencySymbol)} style={{
+                // Anchors the .edm-sr note below: absolutely positioned with no
+                // positioned ancestor, it resolved against the viewport, escaped
+                // the table's horizontal scroll box and gave the whole PAGE a
+                // horizontal scrollbar on narrow screens.
+                position: 'relative',
                 display: 'inline-flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end',
                 fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
                 fontWeight: bold ? 700 : 600,
@@ -765,6 +1044,67 @@ const DailyMerchantDashboard = () => {
                     padding: 3px 10px; border-radius: var(--radius-pill, 999px);
                     font-size: 11px; font-weight: 600; color: #EEF3FC;
                     background: rgba(255,255,255,0.13); border: 1px solid rgba(255,255,255,0.16); }
+                /* Count badge — a filtered column says how many, not just "on". */
+                .edm-fbtn-count { display: inline-flex; align-items: center; justify-content: center;
+                    min-width: 15px; height: 15px; margin-left: 6px; padding: 0 4px;
+                    border-radius: 999px; font-size: 9px; font-weight: 700;
+                    font-family: var(--font-mono); letter-spacing: 0;
+                    color: #12203E; background: var(--chart-4, #8AA5E0); }
+
+                /* ── Filter popover ── */
+                .edm-link { border: none; background: none; padding: 0; cursor: pointer;
+                    font-size: 11px; font-weight: 600; color: var(--primary); }
+                .edm-link:disabled { cursor: default; }
+                .edm-link-danger { color: var(--danger); }
+                .edm-popbtn { padding: 6px 13px; font-size: 12px; font-weight: 600;
+                    border-radius: var(--radius-sm); cursor: pointer;
+                    color: var(--text-secondary); background: var(--bg-card);
+                    border: 1px solid var(--border); }
+                .edm-popbtn-primary { color: #fff; background: var(--primary);
+                    border-color: var(--primary); }
+
+                /* ── Day quick picks: one segmented control, one lit segment ── */
+                .edm-seg { display: inline-flex; align-items: stretch; overflow: hidden;
+                    border: 1px solid var(--border); border-radius: var(--radius-sm);
+                    background: var(--bg-card); }
+                .edm-seg-btn { padding: 6px 12px; font-size: 12px; font-weight: 600;
+                    font-family: var(--font-ui); border: 0; cursor: pointer;
+                    color: var(--text-secondary); background: transparent;
+                    border-right: 1px solid var(--border); transition: background .12s ease; }
+                .edm-seg-btn:last-child { border-right: 0; }
+                .edm-seg-btn:hover:not(:disabled)[data-on="false"] { background: var(--bg-hover); }
+                .edm-seg-btn:disabled { opacity: 0.45; cursor: default; }
+                .edm-seg-btn[data-on="true"] { color: #fff; background: var(--cal-pick); }
+                .edm-seg-custom { cursor: default; display: inline-flex; align-items: center; }
+
+                /* ── Month shape chart ── */
+                .edm-chart { position: relative; width: 100%; }
+                .edm-chart-bars { position: absolute; inset: 0; display: flex;
+                    align-items: flex-end; gap: 2px; }
+                .edm-bar { position: relative; flex: 1 1 0; min-width: 0; height: 100%;
+                    display: flex; align-items: flex-end; padding: 0; border: 0;
+                    background: transparent; cursor: pointer; border-radius: 2px; }
+                .edm-bar:hover { background: var(--bg-hover); }
+                .edm-bar-fill { display: block; width: 100%; border-radius: 2px 2px 0 0;
+                    transition: opacity .12s ease; }
+                .edm-bar-on .edm-bar-fill { background: var(--select-green, #12805C) !important; }
+                /* Weekend days carry a foot mark, so the week's rhythm is legible
+                   in the curve as well as the grid. */
+                .edm-bar-we { position: absolute; left: 1px; right: 1px; bottom: -3px;
+                    height: 2px; border-radius: 2px; background: var(--chart-alt, #64748B);
+                    opacity: 0.5; }
+                .edm-chart-line { position: absolute; inset: 0; width: 100%; height: 100%;
+                    pointer-events: none; overflow: visible; }
+                .edm-chart-axis { display: flex; gap: 2px; margin-top: 7px;
+                    font-family: var(--font-mono); font-size: 8.5px; color: var(--text-muted); }
+                .edm-chart-axis > span { flex: 1 1 0; min-width: 0; text-align: center; }
+
+                /* Refetch in progress: the figures on screen are one selection
+                   out of date, so they fade slightly and stop taking clicks.
+                   No pulse, no layout change — the page must not move. */
+                .edm-refreshing { opacity: 0.62; pointer-events: none;
+                    transition: opacity .18s ease; }
+
                 .edm-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
                 .edm-panel { background: var(--bg-card); border: 1px solid var(--border);
                     border-radius: var(--radius-xl); }
@@ -798,9 +1138,27 @@ const DailyMerchantDashboard = () => {
                     border: 1px dashed var(--border-light, var(--border)); }
                 .edm-cell-nodata .edm-cell-num { color: var(--text-muted); font-weight: 400; }
                 .edm-cell-nodata:hover { border-color: var(--primary); border-style: solid; }
-                .edm-cell-on { background: var(--primary) !important; border-color: var(--primary); }
+                /* A picked day is GREEN, not the page's navy primary: selection is
+                   a "this is included" signal and reads faster in a colour the
+                   rest of the chrome does not already use. One token so the
+                   grid, the drag preview and the hover border stay in step.
+
+                   Deeper than the --rail-fresh mint (#34B98A) on purpose: the
+                   day numeral sits on top in white, and the mint only carries
+                   ~2.2:1 against it. This green clears 4.5:1 and still reads
+                   green in both themes. */
+                .edm-cal, .edm-seg { --cal-pick: var(--select-green, #12805C); }
+                .edm-cell-on { background: var(--cal-pick) !important;
+                    border-color: var(--cal-pick) !important;
+                    box-shadow: 0 0 0 1px var(--cal-pick); }
                 .edm-cell-on .edm-cell-num { color: #fff; }
-                .edm-cell-drag { outline: 2px dashed var(--primary); outline-offset: 1px; }
+                .edm-cell:hover { border-color: var(--cal-pick); }
+                .edm-cell-nodata:hover { border-color: var(--cal-pick); }
+                .edm-cell-drag { outline: 2px dashed var(--cal-pick); outline-offset: 1px; }
+                /* Weekend columns sit on a faint ground so the tenant's own
+                   working week is visible without reading the headers. */
+                .edm-cell-we:not(.edm-cell-on) { box-shadow: inset 0 0 0 1px
+                    color-mix(in srgb, var(--chart-alt, #64748B) 22%, transparent); }
                 .edm-cell-loss { position: absolute; left: 5px; right: 5px; bottom: 3px;
                     height: 2.5px; border-radius: 2px; background: var(--danger); }
                 .edm-cell-on .edm-cell-loss { background: #fff; opacity: 0.85; }
@@ -944,17 +1302,37 @@ const DailyMerchantDashboard = () => {
                                 <option key={o.value} value={o.value}>{o.label}</option>
                             ))}
                         </select>
-                        <button className="edm-focus" onClick={selectAllDays}
-                            aria-pressed={selectedDates.length === 0}
-                            style={{
-                                padding: '6px 11px', fontSize: 12, fontWeight: 600,
-                                borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                                background: selectedDates.length === 0 ? 'var(--primary)' : 'var(--bg-card)',
-                                color: selectedDates.length === 0 ? '#fff' : 'var(--text-secondary)',
-                                border: `1px solid ${selectedDates.length === 0 ? 'var(--primary)' : 'var(--border)'}`,
-                            }}>
-                            All days
-                        </button>
+                        {/* One control, one truth: whichever segment is lit is
+                            what the table below is actually showing. "Custom"
+                            is not clickable — it only reports a hand-picked
+                            selection, and lights up on its own. */}
+                        <div className="edm-seg" role="group" aria-label="Day selection">
+                            {[
+                                { id: 'all',      label: 'All days',  run: selectAllDays,
+                                  title: `Every day in ${monthLabel(month) || 'the month'}` },
+                                { id: 'weekdays', label: 'Weekdays',  title: `All days except ${week.longLabel}`,
+                                  run: () => applyDates(allMonthDays.filter(d => !week.isWeekend(d))) },
+                                { id: 'weekends', label: 'Weekends',  title: week.longLabel,
+                                  run: () => applyDates(allMonthDays.filter(week.isWeekend)) },
+                            ].map(s => (
+                                <button key={s.id} className="edm-focus edm-seg-btn" onClick={s.run}
+                                    title={s.title}
+                                    disabled={s.id !== 'all' && !allMonthDays.length}
+                                    aria-pressed={dayMode === s.id}
+                                    data-on={dayMode === s.id ? 'true' : 'false'}>
+                                    {s.label}
+                                </button>
+                            ))}
+                            {/* Reports a hand-picked selection rather than offering
+                                one — it lights up on its own and carries the count,
+                                which is more use than the word "Custom". */}
+                            {dayMode === 'custom' && (
+                                <span className="edm-seg-btn edm-seg-custom" data-on="true"
+                                    title="Days picked by hand on the calendar or the chart">
+                                    {selectedDates.length} day{selectedDates.length === 1 ? '' : 's'}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     {behindLatest && (
                         <button className="edm-focus"
@@ -974,8 +1352,10 @@ const DailyMerchantDashboard = () => {
                     <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
                         {/* ── The calendar itself ── */}
                         <div className="edm-cal" role="grid" aria-label={`Business dates in ${monthLabel(month)}`}>
-                            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((h, i) => (
-                                <span key={h} className={`edm-cal-h${i >= 5 ? ' edm-cal-h-we' : ''}`}>{h}</span>
+                            {week.headers.map(h => (
+                                <span key={h.key} className={`edm-cal-h${h.weekend ? ' edm-cal-h-we' : ''}`}>
+                                    {h.label}
+                                </span>
                             ))}
                             {calWeeks.flat().map((d, idx) => {
                                 if (!d) return <span key={`b${idx}`} className="edm-cell edm-cell-blank" />;
@@ -991,9 +1371,10 @@ const DailyMerchantDashboard = () => {
                                 const loss = hasData && t ? num(t.nm) < 0 : false;
                                 // Heat: tint deepens with the day's share of the month's peak.
                                 const heat = Math.round(8 + (vol / trendMax) * 40);
+                                const wknd = week.isWeekend(d);
                                 return (
                                     <button key={d}
-                                        className={`edm-cell${picked ? ' edm-cell-on' : ''}${inDrag ? ' edm-cell-drag' : ''}${hasData ? '' : ' edm-cell-nodata'}`}
+                                        className={`edm-cell${picked ? ' edm-cell-on' : ''}${inDrag ? ' edm-cell-drag' : ''}${hasData ? '' : ' edm-cell-nodata'}${wknd ? ' edm-cell-we' : ''}`}
                                         style={!picked && hasData ? {
                                             background: `color-mix(in srgb, var(--cat-1) ${dimmed ? Math.max(heat - 6, 3) : heat}%, var(--bg-card))`,
                                         } : undefined}
@@ -1001,10 +1382,10 @@ const DailyMerchantDashboard = () => {
                                         onPointerDown={e => handleDayPointerDown(d, e)}
                                         onPointerEnter={() => handleDayPointerEnter(d)}
                                         aria-pressed={picked}
-                                        aria-label={`${longDate(d)}${isWeekend(d) ? ', weekend' : ''}${hasData ? (loss ? ', closed at a loss' : '') : ', no transactions'}`}
+                                        aria-label={`${longDate(d)}${wknd ? ', weekend' : ''}${hasData ? (loss ? ', closed at a loss' : '') : ', no transactions'}`}
                                         title={hasData
-                                            ? `${longDate(d)}${isWeekend(d) ? ' · weekend' : ''}\nVol ${money(vol)}\nTxns ${num(t?.count).toLocaleString()}\nNM ${money(num(t?.nm))}`
-                                            : `${longDate(d)}${isWeekend(d) ? ' · weekend' : ''}\nNo transactions loaded`}>
+                                            ? `${longDate(d)}${wknd ? ' · weekend' : ''}\nVolume ${money(vol)}\nTransactions ${num(t?.count).toLocaleString()}\nNet Margin ${money(num(t?.nm))}`
+                                            : `${longDate(d)}${wknd ? ' · weekend' : ''}\nNo transactions loaded`}>
                                         <span className="edm-cell-num"
                                             style={dimmed && hasData ? { color: 'var(--text-muted)', fontWeight: 400 } : undefined}>
                                             {dayNum(d)}
@@ -1018,7 +1399,7 @@ const DailyMerchantDashboard = () => {
                         {/* ── Selection rail ── */}
                         <div style={{
                             display: 'flex', flexDirection: 'column', gap: 12,
-                            minWidth: 200, flex: '1 1 200px', maxWidth: 320, paddingTop: 2,
+                            minWidth: 190, flex: '0 1 220px', maxWidth: 260, paddingTop: 2,
                         }}>
                             <div>
                                 <div className="edm-eyebrow">Selection</div>
@@ -1031,25 +1412,6 @@ const DailyMerchantDashboard = () => {
                                 <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-secondary)' }}>
                                     Click a day · drag to sweep a range · ⇧-click extends
                                 </div>
-                            </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                {[
-                                    ['Weekdays', () => applyDates(allMonthDays.filter(d => !isWeekend(d)))],
-                                    ['Weekends', () => applyDates(allMonthDays.filter(isWeekend))],
-                                ].map(([lbl, fn]) => (
-                                    <button key={lbl} className="edm-focus" onClick={fn}
-                                        disabled={!allMonthDays.length}
-                                        style={{
-                                            padding: '6px 11px', fontSize: 12, fontWeight: 600,
-                                            borderRadius: 'var(--radius-sm)',
-                                            cursor: allMonthDays.length ? 'pointer' : 'default',
-                                            background: 'var(--bg-card)', color: 'var(--text-secondary)',
-                                            border: '1px solid var(--border)',
-                                            opacity: allMonthDays.length ? 1 : 0.5,
-                                        }}>
-                                        {lbl}
-                                    </button>
-                                ))}
                             </div>
                             <div style={{
                                 display: 'flex', flexDirection: 'column', gap: 6,
@@ -1073,10 +1435,16 @@ const DailyMerchantDashboard = () => {
                                         width: 10, height: 10, borderRadius: 2,
                                         border: '1px dashed var(--border)',
                                     }} />
-                                    no transactions · <span style={{ color: 'var(--chart-alt, #64748B)', fontWeight: 700 }}>Fr Sa</span> = weekend
+                                    no transactions · <span style={{ color: 'var(--chart-alt, #64748B)', fontWeight: 700 }}>
+                                        {week.label}</span> = weekend
                                 </span>
                             </div>
                         </div>
+
+                        {/* The month as a curve — same click target as the grid. */}
+                        <DayTrendChart days={allMonthDays} trendByDate={trendByDate}
+                            selectedDates={selectedDates} onToggle={toggleDate}
+                            money={money} week={week} />
                     </div>
                 ) : (
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '18px 0' }}>
@@ -1085,7 +1453,13 @@ const DailyMerchantDashboard = () => {
                 )}
             </section>
 
-            {loading ? <SkeletonLoader variant="table" rows={10} cols={10} /> : error ? (
+            {/* The skeleton is for the FIRST load only. Swapping the whole
+                summary + mix + table out for a pulsing placeholder on every
+                refetch made the page flash on each day click, filter change,
+                sort and page turn — very visible against the dark theme. Once
+                there is something to show, the existing figures stay on screen
+                and simply dim while the next set arrives. */}
+            {firstLoad ? <SkeletonLoader variant="table" rows={10} cols={10} /> : error ? (
                 <EmptyState title="Could not load the dashboard" message={error}
                     action={{ label: 'Try again', onClick: () => load() }} />
             ) : !rows.length ? (
@@ -1103,7 +1477,7 @@ const DailyMerchantDashboard = () => {
                                 : 'No daily data has been loaded for this tenant yet.'} />
                 )
             ) : (
-                <>
+                <div className={refreshing ? 'edm-refreshing' : undefined} aria-busy={refreshing}>
                     {/* ── Ledger summary: headline figures, the fee ribbon, ratios ── */}
                     {totals && (
                         <section className="edm-panel" style={{ marginBottom: 12, overflow: 'hidden' }}>
@@ -1158,7 +1532,7 @@ const DailyMerchantDashboard = () => {
                                 <div style={cellDiv}>
                                     <Metric label="Net margin rate"
                                         value={marginPct == null ? '—' : `${marginPct.toFixed(2)}%`}
-                                        sub="NM ÷ volume"
+                                        sub="net margin ÷ volume"
                                         tone={marginPct == null ? undefined : marginPct >= 0 ? 'success' : 'danger'} />
                                 </div>
                                 <div style={cellDiv}>
@@ -1194,6 +1568,8 @@ const DailyMerchantDashboard = () => {
                             <MixStrip title="Scheme" hue="var(--cat-1)" rows={mix.scheme} money={money} share={share} />
                             <MixStrip title="Card type" hue="var(--chart-4, #7191CE)" rows={mix.cardType} money={money} share={share} />
                             <MixStrip title="Destination" hue="var(--chart-alt, #64748B)" rows={mix.destination} money={money} share={share} />
+                            <WeekSplit days={allMonthDays} trendByDate={trendByDate}
+                                week={week} money={money} share={share} />
                         </section>
                     ) : null}
 
@@ -1301,7 +1677,7 @@ const DailyMerchantDashboard = () => {
                             </button>
                         </div>
                     </div>
-                </>
+                </div>
             )}
 
             {/* ── Merchant drilldown ────────────────────────────────── */}
@@ -1376,7 +1752,7 @@ const DailyMerchantDashboard = () => {
                                     <NmCell v={detailRow.nm} bold />
                                 </div>
                                 <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}>
-                                    NM = MSF − interchange fee − scheme fee − payment gateway fee,
+                                    Net margin = MSF − interchange fee − scheme fee − payment gateway fee,
                                     in settlement currency.
                                 </div>
                             </div>

@@ -71,15 +71,25 @@ public class IntegrationConnection {
         ORACLE, POSTGRES, MSSQL
     }
 
+    /**
+     * SECURITY: host/port/dbName are validated here, at the single point where
+     * they become a JDBC URL, so no caller can bypass it. Without this an
+     * admin-supplied dbName can append driver properties (Postgres
+     * socketFactory => RCE in this JVM, MSSQL ';'-properties, Oracle wallet
+     * location) — see JdbcTargetValidator.
+     */
     public String getJdbcUrl() {
+        String h = com.acquira.common.util.JdbcTargetValidator.requireValidHost(host);
+        int p = com.acquira.common.util.JdbcTargetValidator.requireValidPort(port);
+        String db = com.acquira.common.util.JdbcTargetValidator.requireValidDbName(dbName);
         switch (dbType) {
             case ORACLE:
-                return "jdbc:oracle:thin:@" + host + ":" + port + "/" + dbName;
+                return "jdbc:oracle:thin:@" + h + ":" + p + "/" + db;
             case POSTGRES:
-                return "jdbc:postgresql://" + host + ":" + port + "/" + dbName;
+                return "jdbc:postgresql://" + h + ":" + p + "/" + db;
             case MSSQL:
                 boolean trust = trustServerCert == null || trustServerCert;
-                return "jdbc:sqlserver://" + host + ":" + port + ";databaseName=" + dbName
+                return "jdbc:sqlserver://" + h + ":" + p + ";databaseName=" + db
                         + ";encrypt=true;trustServerCertificate=" + trust;
             default:
                 throw new IllegalArgumentException("Unsupported DB Type: " + dbType);

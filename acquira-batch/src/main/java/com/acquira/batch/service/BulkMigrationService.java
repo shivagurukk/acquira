@@ -64,16 +64,20 @@ public class BulkMigrationService {
     @org.springframework.beans.factory.annotation.Autowired
     private org.springframework.cache.CacheManager cacheManager;
 
+    private final com.acquira.common.service.MonthlyMetricsRebuilder monthlyMetricsRebuilder;
+
     public BulkMigrationService(JdbcTemplate jdbcTemplate,
                                 com.acquira.common.repository.SumDailyMerchantRepository dailyMerchantRepo,
                                 com.acquira.common.repository.SumMonthlyMerchantMetricsRepository monthlyMetricsRepo,
                                 com.acquira.common.service.MerchantMetricCalculator merchantMetricCalculator,
-                                PartitionMaintenanceService partitionService) {
+                                PartitionMaintenanceService partitionService,
+                                com.acquira.common.service.MonthlyMetricsRebuilder monthlyMetricsRebuilder) {
         this.jdbcTemplate = jdbcTemplate;
         this.dailyMerchantRepo = dailyMerchantRepo;
         this.monthlyMetricsRepo = monthlyMetricsRepo;
         this.merchantMetricCalculator = merchantMetricCalculator;
         this.partitionService = partitionService;
+        this.monthlyMetricsRebuilder = monthlyMetricsRebuilder;
     }
 
     private void evictReportCaches() {
@@ -134,10 +138,30 @@ public class BulkMigrationService {
 
         for (Map.Entry<String, String> entry : columnMapping.entrySet()) {
             String val = entry.getValue().trim();
-            // Skip literals (NULL, numbers, quoted strings, booleans, COALESCE expressions)
+            // Literals are allowed, but only in forms that CANNOT carry SQL.
+            //
+            // SECURITY: this used to accept anything starting with a quote or
+            // with "COALESCE", and skipped validateIdentifier entirely for
+            // those — so a mapping value like
+            //   'x'||(SELECT string_agg(password_hash,',') FROM users)
+            // was emitted verbatim into the INSERT..SELECT, writing this app's
+            // own credentials into fact_transaction where they were readable
+            // through the normal Transactions screen. Quoted values are now
+            // required to be a single, self-contained literal with no way to
+            // resume expression context, and COALESCE is no longer a bypass.
             if (val.equals("NULL") || val.equals("0") || val.equals("false") || val.equals("true")
-                || val.startsWith("'") || val.matches("-?\\d+(\\.\\d+)?")
-                || val.toUpperCase().startsWith("COALESCE")) {
+                || val.matches("-?\\d+(\\.\\d+)?")) {
+                continue;
+            }
+            if (val.startsWith("'")) {
+                // Exactly one quoted literal: opening quote, no embedded quote
+                // except doubled '' escapes, closing quote, then nothing.
+                if (!val.matches("^'(?:[^']|'')*'$")) {
+                    throw new IllegalArgumentException(
+                        "Invalid quoted literal in column mapping '" + entry.getKey() + "': " + val
+                        + ". A quoted mapping must be a single literal such as 'ABC' — expressions, "
+                        + "concatenation and subqueries are not allowed.");
+                }
                 continue;
             }
             // Must be a valid column name that exists in source table
@@ -1089,31 +1113,14 @@ public class BulkMigrationService {
      * Calculate business metrics for the full date range
      */
     private void calculateMetricsForRange(Long tenantId, YearMonth start, YearMonth end) {
-        // Dashboard metrics (month by month)
+        // Dashboard metrics (month by month). The per-merchant SELECT+save loop
+        // that used to live here (2 round trips per merchant per month) is now
+        // the shared bulk rebuilder: 2 queries + 1 batched write per month,
+        // independent of merchant count.
         YearMonth cursor = start;
         while (!cursor.isAfter(end)) {
             currentMonth = cursor.toString();
-            LocalDate monthStart = cursor.atDay(1);
-            LocalDate monthEnd = cursor.atEndOfMonth();
-            String monthYear = cursor.toString();
-
-            List<com.acquira.common.model.SumDailyMerchant> dailyRecs =
-                dailyMerchantRepo.findByTenantIdAndDateRange(tenantId.intValue(), monthStart, monthEnd);
-            Map<Long, List<com.acquira.common.model.SumDailyMerchant>> grouped =
-                dailyRecs.stream().collect(java.util.stream.Collectors.groupingBy(
-                    com.acquira.common.model.SumDailyMerchant::getMerchantId));
-
-            for (Map.Entry<Long, List<com.acquira.common.model.SumDailyMerchant>> entry : grouped.entrySet()) {
-                var metrics = merchantMetricCalculator.calculateMetrics(
-                    entry.getValue(), tenantId.intValue(), entry.getKey(), monthYear);
-                var existing = monthlyMetricsRepo.findByMerchantAndMonth(
-                    tenantId.intValue(), entry.getKey(), monthYear);
-                if (existing.isPresent()) {
-                    metrics.setMetricId(existing.get().getMetricId());
-                    metrics.setCreatedAt(existing.get().getCreatedAt());
-                }
-                monthlyMetricsRepo.save(metrics);
-            }
+            monthlyMetricsRebuilder.rebuildMonth(tenantId.intValue(), cursor.toString());
             cursor = cursor.plusMonths(1);
         }
     }
@@ -1165,8 +1172,27 @@ public class BulkMigrationService {
             result.put("countError", e.getMessage());
         }
 
-        // Get date range
-        String dateCol = columnMapping.getOrDefault("payment_date", "payment_date");
+        // SECURITY: dryRun validated only the table name and then concatenated
+        // every mapping VALUE into SELECT lists below — so it was a full
+        // error-based SQL oracle against the app's own database (e.g.
+        // "payment_date": "(SELECT current_setting('is_superuser'))" was
+        // executed and its value returned in columnMappingValidation).
+        // Validate with exactly the same rules the real migration uses. This is
+        // a diagnostic endpoint, so an invalid mapping is REPORTED rather than
+        // thrown — but nothing unvalidated is allowed to reach a statement.
+        boolean mappingSafe = true;
+        try {
+            validateColumnMapping(sourceTable, columnMapping);
+        } catch (RuntimeException e) {
+            mappingSafe = false;
+            result.put("columnMappingError", e.getMessage());
+        }
+
+        // Get date range. Only a validated mapping may contribute the column
+        // name; otherwise fall back to the hardcoded default.
+        String dateCol = mappingSafe
+                ? columnMapping.getOrDefault("payment_date", "payment_date")
+                : "payment_date";
         try {
             Map<String, Object> dateRange = jdbcTemplate.queryForMap(
                 "SELECT MIN(" + dateCol + ") as min_date, MAX(" + dateCol + ") as max_date FROM " + sourceTable);
@@ -1184,15 +1210,23 @@ public class BulkMigrationService {
             result.put("sampleError", e.getMessage());
         }
 
-        // Validate column mapping
+        // Probe each mapped column. Runs ONLY when the mapping passed
+        // validation above — probing an unvalidated value is exactly the
+        // arbitrary-SQL execution this endpoint must not offer.
         Map<String, String> mappingStatus = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : columnMapping.entrySet()) {
-            try {
-                jdbcTemplate.queryForObject(
-                    "SELECT " + entry.getValue() + " FROM " + sourceTable + " LIMIT 1", Object.class);
-                mappingStatus.put(entry.getKey(), "OK -> " + entry.getValue());
-            } catch (Exception e) {
-                mappingStatus.put(entry.getKey(), "FAILED -> " + entry.getValue() + " (" + e.getMessage() + ")");
+        if (mappingSafe) {
+            for (Map.Entry<String, String> entry : columnMapping.entrySet()) {
+                try {
+                    jdbcTemplate.queryForObject(
+                        "SELECT " + entry.getValue() + " FROM " + sourceTable + " LIMIT 1", Object.class);
+                    mappingStatus.put(entry.getKey(), "OK -> " + entry.getValue());
+                } catch (Exception e) {
+                    mappingStatus.put(entry.getKey(), "FAILED -> " + entry.getValue() + " (" + e.getMessage() + ")");
+                }
+            }
+        } else {
+            for (String k : columnMapping.keySet()) {
+                mappingStatus.put(k, "NOT CHECKED — fix columnMappingError first");
             }
         }
         result.put("columnMappingValidation", mappingStatus);

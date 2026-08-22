@@ -41,6 +41,12 @@ public class MerchantMasterJobConfig {
     @org.springframework.beans.factory.annotation.Autowired
     private MdcStepListener mdcStepListener;
 
+    // Merchant master data (names, RM assignments, attributes) is joined by the
+    // cached report payloads, so a merchant upload must drop the report caches
+    // the same way a transaction ingest does.
+    @org.springframework.beans.factory.annotation.Autowired
+    private CacheEvictionJobListener cacheEvictionJobListener;
+
     public MerchantMasterJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate) {
         this.jobRepository = jobRepository;
@@ -56,6 +62,7 @@ public class MerchantMasterJobConfig {
         return new JobBuilder("merchantMasterJob", jobRepository)
                 .start(ingestMerchantStep)
                 .next(upsertAndSummarizeStep)
+                .listener(cacheEvictionJobListener)
                 .build();
     }
 
@@ -71,6 +78,7 @@ public class MerchantMasterJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("upsertAndSummarizeStep") Step upsertAndSummarizeStep) {
         return new JobBuilder("dbPullMerchantJob", jobRepository)
                 .start(upsertAndSummarizeStep)
+                .listener(cacheEvictionJobListener)
                 .build();
     }
 

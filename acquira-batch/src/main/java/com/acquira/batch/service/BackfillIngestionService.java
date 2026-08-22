@@ -1,12 +1,7 @@
 package com.acquira.batch.service;
 
 import com.acquira.common.model.DataSourceConfig;
-import com.acquira.common.model.SumDailyMerchant;
-import com.acquira.common.model.SumMonthlyMerchantMetrics;
 import com.acquira.common.repository.DataSourceConfigRepository;
-import com.acquira.common.repository.SumDailyMerchantRepository;
-import com.acquira.common.repository.SumMonthlyMerchantMetricsRepository;
-import com.acquira.common.service.MerchantMetricCalculator;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,9 +28,7 @@ public class BackfillIngestionService {
     private final DataSourceConfigRepository dataSourceRepo;
     private final JdbcTemplate jdbcTemplate; // For staging inserts & aggregation
     private final PartitionMaintenanceService partitionService;
-    private final SumDailyMerchantRepository dailyMerchantRepo;
-    private final SumMonthlyMerchantMetricsRepository monthlyMetricsRepo;
-    private final MerchantMetricCalculator merchantMetricCalculator;
+    private final com.acquira.common.service.MonthlyMetricsRebuilder monthlyMetricsRebuilder;
 
     // Track single active job progress (simple singleton approach for now)
     private final AtomicReference<BackfillProgress> currentProgress = new AtomicReference<>(new BackfillProgress());
@@ -61,6 +54,19 @@ public class BackfillIngestionService {
 
     public BackfillProgress getProgress() {
         return currentProgress.get();
+    }
+
+    // Backfill writes fact + summary rows outside the Spring Batch jobs, so
+    // CacheEvictionJobListener never fires for it — clear the report caches
+    // here, same contract as BulkMigrationService.evictReportCaches.
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.cache.CacheManager cacheManager;
+
+    private void evictReportCaches() {
+        for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
+            org.springframework.cache.Cache cache = cacheManager.getCache(name);
+            if (cache != null) cache.clear();
+        }
     }
 
     @Async
@@ -89,6 +95,10 @@ public class BackfillIngestionService {
             DataSourceConfig dsConfig = dataSourceRepo.findById(request.getDataSourceId())
                     .orElseThrow(() -> new RuntimeException("DataSource not found: " + request.getDataSourceId()));
 
+            // Monthly metrics are derived per MONTH, not per day (see the call
+            // after this loop) — collect the months whose days actually landed.
+            java.util.Set<String> touchedMonths = new java.util.LinkedHashSet<>();
+
             LocalDate loopDate = request.getStartDate();
             while (!loopDate.isAfter(request.getEndDate())) {
                 progress.setCurrentDate(loopDate);
@@ -97,6 +107,7 @@ public class BackfillIngestionService {
                 try {
                     processSingleDate(request.getTenantId(), dsConfig, request.getSourceQueries(), loopDate);
                     progress.setCompletedDays(progress.getCompletedDays() + 1);
+                    touchedMonths.add(String.format("%04d-%02d", loopDate.getYear(), loopDate.getMonthValue()));
                 } catch (Exception e) {
                     log.error("Failed to process date: " + loopDate, e);
                     progress.getErrorMessages().add("Date " + loopDate + ": " + e.getMessage());
@@ -106,6 +117,24 @@ public class BackfillIngestionService {
                 loopDate = loopDate.plusDays(1);
             }
 
+            // PERF: monthly merchant metrics are a whole-MONTH aggregate over
+            // sum_daily_merchant. Deriving them inside the day loop re-computed
+            // every month once per day in it — a 31-day run rebuilt the same
+            // month 31 times, each time with a per-merchant SELECT+save. Doing
+            // it once per touched month after all days have landed produces the
+            // identical end state for a fraction of the work.
+            // Per-month try/catch mirrors the per-day fault isolation above: one
+            // month's failure must not skip the remaining months or flip a run
+            // whose fact/summary data all landed into FAILED.
+            for (String monthYear : touchedMonths) {
+                try {
+                    calculateDashboardMetrics(request.getTenantId(), monthYear);
+                } catch (Exception e) {
+                    log.error("Failed to rebuild monthly metrics for: " + monthYear, e);
+                    progress.getErrorMessages().add("Month " + monthYear + " metrics: " + e.getMessage());
+                }
+            }
+
             progress.setStatus("COMPLETED");
             log.info("Backfill Completed.");
 
@@ -113,6 +142,10 @@ public class BackfillIngestionService {
             log.error("Backfill Critical Failure", e);
             progress.setStatus("FAILED");
             progress.getErrorMessages().add("Critical: " + e.getMessage());
+        } finally {
+            // Even a failed run may have rewritten fact/summary days already
+            // processed — clear on any terminal status, like the job listener.
+            evictReportCaches();
         }
 
         return CompletableFuture.completedFuture(null);
@@ -152,9 +185,10 @@ public class BackfillIngestionService {
         // C. Run Aggregation Pipeline (Same logic as TransactionJobConfig)
         runAggregationPipeline(tenantId, targetDate);
 
-        // D. Metrics
+        // D. Metrics. Only the per-DAY activity snapshot runs here; the monthly
+        // merchant metrics are rebuilt once per month by the caller after every
+        // day has landed.
         calculateBusinessMetrics(tenantId, targetDate);
-        calculateDashboardMetrics(tenantId, targetDate);
     }
 
     /**
@@ -925,39 +959,16 @@ public class BackfillIngestionService {
         log.info("Business Metrics calculation completed in {}ms", elapsed);
     }
 
-    private void calculateDashboardMetrics(Long tenantId, LocalDate date) {
+    /**
+     * Rebuild monthly merchant metrics for ONE month (YYYY-MM). Delegates to the
+     * shared bulk rebuilder — this used to be a per-merchant SELECT+save loop
+     * called once per backfilled day.
+     */
+    private void calculateDashboardMetrics(Long tenantId, String monthYear) {
         long start = System.currentTimeMillis();
-
-        // Calculate Month-Year Key
-        String monthYear = date.getYear() + "-" + String.format("%02d", date.getMonthValue());
-
-        // Fetch daily records for this month
-        LocalDate monthStart = date.withDayOfMonth(1);
-        LocalDate monthEnd = date.withDayOfMonth(date.lengthOfMonth());
-
-        List<SumDailyMerchant> dailyRecs = dailyMerchantRepo.findByTenantIdAndDateRange(tenantId.intValue(), monthStart,
-                monthEnd);
-        java.util.Map<Long, List<SumDailyMerchant>> grouped = dailyRecs.stream()
-                .collect(java.util.stream.Collectors.groupingBy(SumDailyMerchant::getMerchantId));
-
-        for (java.util.Map.Entry<Long, List<SumDailyMerchant>> entry : grouped.entrySet()) {
-            Long merchantId = entry.getKey();
-            List<SumDailyMerchant> mRecs = entry.getValue();
-
-            SumMonthlyMerchantMetrics newMetrics = merchantMetricCalculator.calculateMetrics(mRecs, tenantId.intValue(),
-                    merchantId, monthYear);
-            java.util.Optional<SumMonthlyMerchantMetrics> existing = monthlyMetricsRepo.findByMerchantAndMonth(
-                    tenantId.intValue(),
-                    merchantId, monthYear);
-            if (existing.isPresent()) {
-                newMetrics.setMetricId(existing.get().getMetricId());
-                newMetrics.setCreatedAt(existing.get().getCreatedAt());
-            }
-            monthlyMetricsRepo.save(newMetrics);
-        }
-
-        long elapsed = System.currentTimeMillis() - start;
-        log.info("Dashboard Metrics calculation completed in {}ms", elapsed);
+        int saved = monthlyMetricsRebuilder.rebuildMonth(tenantId.intValue(), monthYear);
+        log.info("Dashboard Metrics for {} completed in {}ms ({} rows)",
+                monthYear, System.currentTimeMillis() - start, saved);
     }
 
     // Helpers

@@ -55,6 +55,7 @@ public class SalesPortfolioController {
     private final SalesUserAssignmentRepository userAssignmentRepository;
     /** Stamps the tenant's currency onto every money-bearing response. */
     private final CurrencyMeta currencyMeta;
+    private final com.acquira.common.service.ReportCache reportCache;
 
     private Long getTenantId() {
         Long t = tenantService.getCurrentTenantId();
@@ -123,6 +124,15 @@ public class SalesPortfolioController {
             @RequestParam(defaultValue = "") String compareTo) {
 
         Long tenantId = getTenantId();
+        return ResponseEntity.ok(reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "salesExec:" + tenantId + ":" + dateFrom + ":" + dateTo
+                        + ":" + compareFrom + ":" + compareTo,
+                () -> buildExecutiveDashboard(tenantId, dateFrom, dateTo, compareFrom, compareTo)));
+    }
+
+    private Map<String, Object> buildExecutiveDashboard(Long tenantId,
+            String dateFrom, String dateTo, String compareFrom, String compareTo) {
 
         Map<String, Map<String, Object>> counts = agentMerchantCounts(tenantId, dateFrom, dateTo);
         Map<String, Map<String, Object>> current = agentVolumes(tenantId, dateFrom, dateTo);
@@ -206,7 +216,7 @@ public class SalesPortfolioController {
         // Org-wide totals for the KPI row. Summed from the country nodes, so they
         // agree with the tree by construction.
         out.put("totals", groupNode("org", null, "All Sales", null, tree, hasComparison));
-        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
+        return currencyMeta.attach(out, tenantId);
     }
 
     /** Portfolio counts per agent. Merchant counts are all-time; only "new" is date-bound. */
