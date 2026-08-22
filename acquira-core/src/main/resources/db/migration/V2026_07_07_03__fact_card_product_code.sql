@@ -1,0 +1,28 @@
+-- ============================================================================
+-- V2026_07_07_03: preserve the granular card PRODUCT CODE so interchange tier
+-- (Standard vs Premium) can resolve from it.
+--
+-- ROOT CAUSE
+-- ----------
+-- The feed's `Card Type` column carries the granular product code (VIPM, MCPM,
+-- MCCP, VIDB, MCDB, MCSD, VISD, MCDP ...) which encodes BOTH funding type AND
+-- tier. transactionTenantProcessor overwrites card_type with a coarse
+-- DEBIT/CREDIT/PREPAID label (needed by the summary rollups), destroying the
+-- tier signal. The fee LATERAL then resolved tier from card_scheme ('Visa' ->
+-- ref_card_scheme VISA -> card_subtype 0 -> Standard), so EVERY credit txn
+-- landed Standard.
+--
+-- FIX
+-- ---
+-- Keep the raw product code in a new column card_product_code (on staging AND
+-- fact). The processor now populates it before overwriting card_type. The fee
+-- LATERAL resolves ref_card_scheme (group_name + card_subtype => tier) from
+-- card_product_code instead of card_scheme. Coarse card_type is untouched, so
+-- every existing rollup (sum_daily_finance, sum_daily_merchant credit/debit
+-- splits, etc.) keeps working exactly as before.
+--
+-- Nullable + idempotent. Only affects NEWLY ingested rows; re-upload a month to
+-- recompute its interchange with correct tiers.
+-- ============================================================================
+ALTER TABLE stg_trnx_raw     ADD COLUMN IF NOT EXISTS card_product_code VARCHAR(20);
+ALTER TABLE fact_transaction ADD COLUMN IF NOT EXISTS card_product_code VARCHAR(20);

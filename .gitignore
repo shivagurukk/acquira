@@ -76,7 +76,14 @@ application-prod.properties
 *.ps1
 
 # ─── Migration Artifacts ───
+# Root-level scratch folder for one-off migration exports/dumps.
 migration/
+# ...but the Flyway-style scripts under db/migration ARE source: application.properties
+# lists them in spring.sql.init.schema-locations, so a clone without them cannot boot.
+!acquira-core/src/main/resources/db/migration/
+# ...except the local scratch copies sitting inside it.
+acquira-core/src/main/resources/db/migration/New folder/
+acquira-core/src/main/resources/db/migration/New folder.zip
 MIGRATION_GUIDE.md
 
 # ─── Root-level loose src folder (if any — NOT the module src folders) ───
