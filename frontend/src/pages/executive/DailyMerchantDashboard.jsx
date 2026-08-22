@@ -1406,6 +1406,10 @@ const DailyMerchantDashboard = () => {
                 @keyframes edm-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
                 @keyframes edm-pulse { 0%, 100% { box-shadow: 0 0 0 3px rgba(52,185,138,0.22); }
                     50% { box-shadow: 0 0 0 6px rgba(52,185,138,0.08); } }
+                /* Registered so the angle can be interpolated — an unregistered
+                   custom property would jump, not sweep. */
+                @property --edm-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+                @keyframes edm-border-run { to { --edm-a: 360deg; } }
                 .edm-enter { animation: edm-fadeup .55s cubic-bezier(.2,.8,.2,1) both;
                     animation-delay: calc(var(--i, 0) * 70ms); }
                 .edm-live { animation: edm-pulse 2.4s ease-in-out infinite; }
@@ -1419,6 +1423,57 @@ const DailyMerchantDashboard = () => {
                 .edm-tile { position: relative; min-width: 0; overflow: hidden;
                     transition: background .15s ease; }
                 .edm-tile:hover { background: var(--bg-hover); }
+
+                /* ── Card border: a copper light travels each tile's edge. ──
+                   The ring is a conic gradient clipped to a 1px frame by an
+                   xor mask, so it lights the BORDER only — no wash across the
+                   numerals, which have to stay reconciliation-legible.
+                   The gradient is mostly transparent, so what reads is a short
+                   arc drifting round the card rather than a lit outline.
+                   Angle comes from a registered custom property because a bare
+                   custom property cannot be interpolated; the var() fallback of
+                   0deg keeps the ring valid (just static) where @property is
+                   unsupported. Tiles share one duration but differ in aspect
+                   ratio, so the arcs drift out of step on their own — no
+                   staggered delays needed, and nothing marches in lockstep.
+                   Gated on mask-composite: without it the gradient would paint
+                   across the whole tile instead of its rim, so a browser that
+                   cannot clip the ring simply gets no ring. */
+                @supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+                .edm-tile::before {
+                    content: ''; position: absolute; inset: 0; padding: 1.5px;
+                    border-radius: inherit; pointer-events: none; z-index: 0;
+                    background: conic-gradient(from var(--edm-a, 0deg),
+                        transparent 0 50%,
+                        color-mix(in srgb, var(--cat-2, #CA5F28) 30%, transparent) 62%,
+                        var(--cat-2, #CA5F28) 72%,
+                        color-mix(in srgb, var(--cat-2, #CA5F28) 30%, transparent) 82%,
+                        transparent 92%);
+                    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+                            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+                    -webkit-mask-composite: xor; mask-composite: exclude;
+                    opacity: .8; transition: opacity .25s ease;
+                    animation: edm-border-run 7s linear infinite; }
+                /* Hover brings the light forward and speeds it up — the tile
+                   answers the pointer without moving or resizing. */
+                .edm-tile:hover::before { opacity: 1; animation-duration: 2.8s; }
+                /* The headline tile runs slower and reads in its own tone, so it
+                   stays the calmest thing on the panel rather than the busiest. */
+                .edm-tile-hero::before { animation-duration: 11s;
+                    background: conic-gradient(from var(--edm-a, 0deg),
+                        transparent 0 50%,
+                        color-mix(in srgb, var(--success) 28%, transparent) 62%,
+                        var(--success) 72%,
+                        color-mix(in srgb, var(--success) 28%, transparent) 82%,
+                        transparent 92%); }
+                .edm-tile-hero.edm-tile-danger::before {
+                    background: conic-gradient(from var(--edm-a, 0deg),
+                        transparent 0 50%,
+                        color-mix(in srgb, var(--danger) 28%, transparent) 62%,
+                        var(--danger) 72%,
+                        color-mix(in srgb, var(--danger) 28%, transparent) 82%,
+                        transparent 92%); }
+                }
                 .edm-tile-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums;
                     letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                     position: relative; z-index: 1; }
@@ -1654,7 +1709,8 @@ const DailyMerchantDashboard = () => {
                     .edm-cell, .edm-table tbody tr, .edm-panel, .edm-tile { transition: none; }
                     .edm-enter, .edm-live, .edm-spark-line, .edm-spark-dot, .edm-delta, .edm-ribbon,
                     .edm-mix-fill, .edm-mix-row, .edm-daychip, .edm-bone, .edm-bar-fill,
-                    .edm-chart-trace, .edm-tip, .edm-vol-bar, .edm-row-in, .edm-tile-hero::after {
+                    .edm-chart-trace, .edm-tip, .edm-vol-bar, .edm-row-in, .edm-tile-hero::after,
+                    .edm-tile::before {
                         animation: none; }
                     .edm-panel-lift:hover { transform: none; }
                 }
