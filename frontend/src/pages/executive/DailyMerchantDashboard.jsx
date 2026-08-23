@@ -174,7 +174,7 @@ const FilterSelect = ({ label, options, selected, onChange }) => {
         : `${selected.length} selected`;
 
     return (
-        <div ref={ref} style={{ position: 'relative', display: 'flex' }}>
+        <div ref={ref} className="edm-fwrap">
             <button className={`edm-focus edm-fbtn${active ? ' edm-fbtn-on' : ''}`}
                 onClick={() => (open ? applyAndClose() : openPanel())}
                 aria-expanded={open} aria-haspopup="listbox"
@@ -417,10 +417,14 @@ const FeeRibbon = ({ totals, money, share, compact = false, animKey }) => {
     const icf = num(totals?.icf), sf = num(totals?.sf), pg = num(totals?.pg), nm = num(totals?.nm);
     const pool = icf + sf + pg + Math.max(nm, 0);
     if (pool <= 0) return null;
+    // The three paid-away fees step down ONE ramp (imperial 1→3): they are the
+    // same kind of thing — money leaving — so they should read as one block that
+    // shades, not three unrelated hues. Only the kept margin breaks to jade, and
+    // that break is the whole point of the bar.
     const segs = [
-        { key: 'icf', label: FEE_LABELS.icf, value: icf, color: 'var(--mix-interchange)' },
-        { key: 'sf',  label: FEE_LABELS.sf,  value: sf,  color: 'var(--mix-scheme)' },
-        { key: 'pg',  label: FEE_LABELS.pg,  value: pg,  color: 'var(--mix-pg)' },
+        { key: 'icf', label: FEE_LABELS.icf, value: icf, color: 'var(--imp-1)' },
+        { key: 'sf',  label: FEE_LABELS.sf,  value: sf,  color: 'var(--imp-2)' },
+        { key: 'pg',  label: FEE_LABELS.pg,  value: pg,  color: 'var(--imp-3)' },
         ...(nm >= 0
             ? [{ key: 'nm', label: FEE_LABELS.nm, value: nm, color: 'var(--mix-margin)' }]
             : [{ key: 'loss', label: 'Loss', value: Math.abs(nm), color: 'var(--danger)', overflow: true }]),
@@ -1255,8 +1259,23 @@ const DailyMerchantDashboard = () => {
     };
 
     return (
-        <div style={{ padding: '22px 26px 32px', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+        <div className="edm-page"
+            style={{ padding: '22px 26px 32px', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
             <style>{`
+                /* ── Page-local masthead ground ───────────────────────────────
+                   The app-wide --table-head-bg is a saturated steel navy: right
+                   for a 32px table header strip, too loud for a 150px slab that
+                   opens the page. This page mixes far less --primary into a
+                   graphite base, so the header reads as a calm dark surface
+                   rather than a brand banner — still derived from the token, so
+                   it retints with the brand and follows dark mode. Scoped here
+                   on purpose: table headers elsewhere keep the full-weight navy. */
+                .edm-page {
+                    --edm-mast-bg: linear-gradient(150deg,
+                        color-mix(in srgb, var(--primary) 26%, #171D28) 0%,
+                        color-mix(in srgb, var(--primary) 18%, #141922) 55%,
+                        color-mix(in srgb, var(--primary) 24%, #11161E) 100%);
+                }
                 .edm-eyebrow { font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;
                     letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-muted); }
 
@@ -1266,11 +1285,11 @@ const DailyMerchantDashboard = () => {
                    translucent overlays on it. Two-class selector on purpose —
                    .edm-panel sets a white background later in this sheet and
                    would otherwise win on equal specificity. */
-                .edm-panel.edm-hdrblock { background: var(--table-head-bg,
-                        linear-gradient(135deg, #24386B 0%, #16264A 55%, #0A1426 100%));
+                .edm-panel.edm-hdrblock { background: var(--edm-mast-bg,
+                        linear-gradient(150deg, #212F4B 0%, #1C263C 55%, #1C2841 100%));
                     border-color: transparent; overflow: visible; }
                 .edm-mast { background: transparent;
-                    padding: 20px 24px 18px; display: flex; justify-content: space-between;
+                    padding: 16px 24px 14px; display: flex; justify-content: space-between;
                     align-items: flex-end; gap: 18px; flex-wrap: wrap; }
                 /* Round the block's corners on the children (the section itself must
                    not clip — open dropdowns hang below it). */
@@ -1281,33 +1300,43 @@ const DailyMerchantDashboard = () => {
                 .edm-mast-eyebrow { font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;
                     letter-spacing: 0.18em; text-transform: uppercase;
                     color: var(--table-head-muted, #93A3C6); }
-                .edm-mast h1 { margin: 8px 0 0; font-size: 26px; font-weight: 700;
+                .edm-mast h1 { margin: 7px 0 0; font-size: 23px; font-weight: 700;
                     letter-spacing: -0.025em; line-height: 1.08;
                     color: var(--table-head-text, #EEF3FC); }
-                .edm-mast-sub { margin: 6px 0 0; font-size: 12.5px;
-                    color: color-mix(in srgb, var(--table-head-text, #EEF3FC) 62%, transparent); }
+                /* The ground is duller now, so supporting type is lifted a notch —
+                   less contrast under it means it would otherwise go gray-flat. */
+                .edm-mast-sub { margin: 5px 0 0; font-size: 12.5px;
+                    color: color-mix(in srgb, var(--table-head-text, #EEF3FC) 70%, transparent); }
                 .edm-mast-btn { display: flex; align-items: center; gap: 6px;
                     padding: 9px 15px; font-size: 12.5px; font-weight: 600;
                     color: var(--table-head-text, #EEF3FC);
-                    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.22);
+                    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18);
                     border-radius: var(--radius-sm); cursor: pointer; transition: background .12s ease; }
-                .edm-mast-btn:hover { background: rgba(255,255,255,0.14); }
+                .edm-mast-btn:hover { background: rgba(255,255,255,0.15); }
                 .edm-mast-btn:disabled { opacity: 0.5; cursor: default; }
 
                 /* ── Command deck: the filter row is part of the navy header, not a
                    tray of light boxes under it. Cells are divided by hairlines —
                    one continuous instrument strip. ── */
+                /* Bands are shallower than they were: on the duller ground a .20/.30
+                   step reads as muddy grey rather than as depth. */
                 .edm-cmdbar { display: flex; align-items: stretch; flex-wrap: wrap;
-                    background: rgba(0,0,0,0.20);
-                    border-top: 1px solid rgba(255,255,255,0.13); }
+                    background: rgba(0,0,0,0.10);
+                    border-top: 1px solid rgba(255,255,255,0.08); }
+                /* The flex child is FilterSelect's positioning wrapper, not the
+                   button — so the grow factor has to live here, or the cells stop
+                   at their basis and leave dead ground across the rest of the row. */
+                .edm-fwrap { position: relative; display: flex; flex: 1 1 170px; min-width: 0; }
                 .edm-fbtn { position: relative; display: flex; flex-direction: column;
-                    align-items: stretch; gap: 5px; min-width: 150px; flex: 1 1 150px;
-                    padding: 12px 18px; text-align: left; cursor: pointer;
+                    align-items: stretch; gap: 5px; width: 100%; min-width: 0;
+                    padding: 10px 16px; text-align: left; cursor: pointer;
                     background: transparent; border: 0;
-                    border-right: 1px solid rgba(255,255,255,0.10);
+                    border-right: 1px solid rgba(255,255,255,0.08);
                     transition: background .12s ease; }
-                .edm-fbtn:hover { background: rgba(255,255,255,0.07); }
-                .edm-fbtn-on { background: rgba(255,255,255,0.09);
+                /* The strip ends at the last cell — no divider dangling into space. */
+                .edm-fwrap:last-child .edm-fbtn { border-right: 0; }
+                .edm-fbtn:hover { background: rgba(255,255,255,0.06); }
+                .edm-fbtn-on { background: rgba(255,255,255,0.08);
                     box-shadow: inset 0 -2px 0 var(--chart-4, #7191CE); }
                 .edm-fbtn-label { font-family: var(--font-mono); font-size: 9px; font-weight: 600;
                     letter-spacing: 0.16em; text-transform: uppercase;
@@ -1318,8 +1347,8 @@ const DailyMerchantDashboard = () => {
                 .edm-fbtn-on .edm-fbtn-value { color: var(--chart-4, #8AA5E0); }
                 .edm-cmdbar .edm-focus:focus-visible { outline: 2px solid #EEF3FC; outline-offset: -2px; }
                 .edm-chipstrip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-                    padding: 10px 18px; background: rgba(0,0,0,0.30);
-                    border-top: 1px solid rgba(255,255,255,0.10); }
+                    padding: 9px 16px; background: rgba(0,0,0,0.16);
+                    border-top: 1px solid rgba(255,255,255,0.07); }
                 .edm-chip { display: inline-flex; align-items: center; gap: 6px;
                     padding: 3px 10px; border-radius: var(--radius-pill, 999px);
                     font-size: 11px; font-weight: 600; color: #EEF3FC;
@@ -1445,18 +1474,29 @@ const DailyMerchantDashboard = () => {
                     border-radius: inherit; pointer-events: none; z-index: 0;
                     background: conic-gradient(from var(--edm-a, 0deg),
                         transparent 0 50%,
-                        color-mix(in srgb, var(--cat-2, #CA5F28) 30%, transparent) 62%,
-                        var(--cat-2, #CA5F28) 72%,
-                        color-mix(in srgb, var(--cat-2, #CA5F28) 30%, transparent) 82%,
+                        color-mix(in srgb, var(--edm-ring) 26%, transparent) 62%,
+                        var(--edm-ring) 72%,
+                        color-mix(in srgb, var(--edm-ring) 26%, transparent) 82%,
                         transparent 92%);
                     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
                             mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
                     -webkit-mask-composite: xor; mask-composite: exclude;
-                    opacity: .8; transition: opacity .25s ease;
+                    opacity: .55; transition: opacity .25s ease;
                     animation: edm-border-run 7s linear infinite; }
+                /* Supporting tiles share ONE muted tone. They used to each catch a
+                   copper arc, which — next to the green hero, the coloured delta
+                   chips and the tinted sparklines — turned the strip into a row of
+                   different-coloured cards. Colour now identifies the hero only;
+                   the rest are told apart by their sparkline, not their frame. */
+                .edm-tile { --edm-ring: color-mix(in srgb, var(--primary) 55%, var(--border)); }
                 /* Hover brings the light forward and speeds it up — the tile
                    answers the pointer without moving or resizing. */
-                .edm-tile:hover::before { opacity: 1; animation-duration: 2.8s; }
+                .edm-tile:hover::before { opacity: .9; animation-duration: 2.8s; }
+                /* The ratio row is context, not headline: no travelling light at all,
+                   a recessed ground, and numerals a step below the strip above it. */
+                .edm-ratiorow .edm-tile::before { content: none; }
+                .edm-ratiorow { background: color-mix(in srgb, var(--bg-subtle) 55%, var(--bg-card)); }
+                .edm-ratiorow .edm-tile-value { font-size: 16px !important; }
                 /* The headline tile runs slower and reads in its own tone, so it
                    stays the calmest thing on the panel rather than the busiest. */
                 .edm-tile-hero::before { animation-duration: 11s;
@@ -1557,8 +1597,8 @@ const DailyMerchantDashboard = () => {
                 .edm-mast-ctx b { font-weight: 600; color: var(--table-head-text, #EEF3FC); }
 
                 /* ── Drawer head: same navy as the page masthead ── */
-                .edm-drawer-head { background: var(--table-head-bg,
-                        linear-gradient(135deg, #24386B 0%, #16264A 55%, #0A1426 100%));
+                .edm-drawer-head { background: var(--edm-mast-bg,
+                        linear-gradient(150deg, #212F4B 0%, #1C263C 55%, #1C2841 100%));
                     color: var(--table-head-text, #EEF3FC); padding: 18px 20px;
                     display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
                 .edm-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
@@ -2082,7 +2122,7 @@ const DailyMerchantDashboard = () => {
                                 <FeeRibbon totals={totals} money={money} share={share} animKey={animKey} />
                             </div>
 
-                            <div style={{
+                            <div className="edm-ratiorow" style={{
                                 display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
                                 borderTop: '1px solid var(--border-light, var(--border))',
                             }}>
