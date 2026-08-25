@@ -58,6 +58,8 @@ DELETE FROM merchant_note               WHERE tenant_id = :TENANT;
 DELETE FROM merchant_sales_assignment_history WHERE tenant_id = :TENANT;
 DELETE FROM merchant_settlement_config  WHERE tenant_id = :TENANT;
 DELETE FROM revenue_leakage_flags       WHERE tenant_id = :TENANT;
+DELETE FROM merchant_activity           WHERE tenant_id = :TENANT;  -- FK child of dim_merchant
+DELETE FROM dim_bank_account            WHERE tenant_id = :TENANT;  -- FK child of dim_store
 
 -- 4. Dimensions — order matters: terminal -> store -> merchant (FK children first)
 DELETE FROM dim_terminal WHERE tenant_id = :TENANT;
