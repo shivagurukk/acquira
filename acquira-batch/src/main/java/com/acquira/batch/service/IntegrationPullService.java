@@ -90,6 +90,15 @@ public class IntegrationPullService {
     }
 
     /**
+     * Tenant on/off switch. Field-injected (not constructor) so the explicit
+     * @Qualifier constructor above — and every test that calls it — stays
+     * untouched. Nullable-checked at use for tests that construct the service
+     * directly.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.acquira.common.service.TenantStatusService tenantStatusService;
+
+    /**
      * Self-reference through the Spring proxy, used ONLY by scheduleRetry.
      *
      * WHY: executePull is @Async, but calling it as this.executePull(...) from
@@ -184,6 +193,20 @@ public class IntegrationPullService {
         // controller, so the scheduler, Run Now and retries are all covered.
         // Editing sqlText clears the approval, so an approved-then-swapped
         // query cannot slip through.
+        // TENANT OFF-SWITCH: enforced HERE (not in the scheduler) so scheduled
+        // runs, Run Now AND retries are all covered without reloading schedules
+        // — deactivating a tenant stops its pulls at the next fire, full stop.
+        if (tenantStatusService != null && tenantStatusService.isInactive(tenantId)) {
+            log.warn("[Integration] Pull '{}' (tenant {}) SKIPPED — tenant is not active.",
+                    report.getName(), tenantId);
+            runLog.setStatus(IntegrationRunLog.Status.FAILED);
+            runLog.setErrorMessage("Tenant " + tenantId + " is not active — pull suppressed. "
+                    + "Reactivate the tenant (Tenant Management > Status) to resume scheduled pulls.");
+            finishRunLog(runLog, startMs);
+            org.slf4j.MDC.clear();
+            return;
+        }
+
         if (!report.isApproved()) {
             log.warn("[Integration] Pull '{}' (tenant {}) BLOCKED — report SQL is not approved.",
                     report.getName(), tenantId);

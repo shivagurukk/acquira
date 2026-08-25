@@ -61,6 +61,14 @@ public class PdfController {
     private ReportEmailTemplateService reportEmailTemplateService;
 
     /**
+     * Tenant on/off switch. Field injection (like the template service above)
+     * to leave the seven-arg constructor — and every test that calls it —
+     * untouched.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.TenantStatusService tenantStatusService;
+
+    /**
      * S3 upload service — injected via S3Uploader interface (acquira-common).
      * Implementation (ReportS3UploadService) lives in acquira-core.
      * @Autowired(required=false) keeps pdf module compilable standalone.
@@ -249,6 +257,15 @@ public class PdfController {
             // write their PDFs — same guard /generate-by-mid already has.
             if (currentTenant == null) {
                 return ResponseEntity.status(403).body(Map.of("error", "No tenant context"));
+            }
+            // TENANT OFF-SWITCH: no generation, emailing or S3 archival for a
+            // deactivated tenant — covers /generate-all AND /generate-by-mid
+            // (which delegates here in both its ALL and selective branches).
+            if (tenantStatusService != null && tenantStatusService.isInactive(currentTenant)) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "status",  "TENANT_INACTIVE",
+                    "message", "Tenant " + currentTenant + " is not active — report generation is disabled. "
+                             + "Reactivate the tenant (Tenant Management > Status) to generate reports."));
             }
             String bankShortCode   = resolveBankShortCode();
             Path   folder          = monthFolder(targetMonth, bankShortCode);
