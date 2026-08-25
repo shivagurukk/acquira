@@ -823,12 +823,23 @@ public class MerchantMasterJobConfig {
             // FIX BUG: same pattern — conflict key resolved differently when
             // terminal_internal_id was blank in some uploads.
             // TID and internal_id are IMMUTABLE — never overwritten.
+            // PERF (2026-08-25): the store lookup used a single join with
+            //   (s.sid = raw.sid OR s.internal_id = LEFT(COALESCE(...), 50))
+            // — an OR across two columns, one side wrapped in functions. The planner
+            // cannot drive that through either index, so it degenerated to a nested
+            // loop / seq-scan per staging row. Harmless on the small UAE (CMM) files,
+            // but the BH (AMS) master is one row PER TERMINAL, and the upsert sat for
+            // 7+ minutes on UAT. Split into two LATERAL probes — each is a pure
+            // equality the planner serves from idx_dim_store_tenant_sid and the
+            // (tenant_id, internal_id) unique index — preferring the sid match, then
+            // the internal_id fallback. COALESCE(...) IS NOT NULL preserves the old
+            // INNER-join semantics (row skipped when neither matches).
             String upsertTerminalSql = """
                 INSERT INTO dim_terminal (tenant_id, internal_id, store_id, tid, device_number, type, status, created_date)
                 SELECT
                     CAST(TID AS INTEGER),
                     LEFT(COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)), 50),
-                    MAX(s.store_id),
+                    MAX(COALESCE(sa.store_id, sb.store_id)),
                     raw.tid,
                     MAX(terminal_device_number),
                     MAX(terminal_type),
@@ -836,11 +847,19 @@ public class MerchantMasterJobConfig {
                     MAX(terminal_created_date)
                 FROM stg_merchant_master_raw raw
                 JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
-                JOIN dim_store s ON s.merchant_id = m.merchant_id
-                    AND (s.sid = raw.sid OR s.internal_id = LEFT(COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)), 50))
-                    AND s.tenant_id = TID
+                LEFT JOIN LATERAL (
+                    SELECT st.store_id FROM dim_store st
+                    WHERE st.tenant_id = TID AND st.merchant_id = m.merchant_id
+                      AND st.sid = raw.sid
+                    ORDER BY st.store_id LIMIT 1) sa ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT st.store_id FROM dim_store st
+                    WHERE st.tenant_id = TID AND st.merchant_id = m.merchant_id
+                      AND st.internal_id = LEFT(COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)), 50)
+                    ORDER BY st.store_id LIMIT 1) sb ON TRUE
                 WHERE raw.tenant_id = TID
                   AND NULLIF(TRIM(raw.tid), '') IS NOT NULL
+                  AND COALESCE(sa.store_id, sb.store_id) IS NOT NULL
                 GROUP BY raw.tenant_id,
                          LEFT(COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)), 50),
                          raw.tid
