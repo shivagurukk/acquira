@@ -1377,11 +1377,27 @@ public class TransactionJobConfig {
                 // uploadSchemes mapping above.
                 "CROSS JOIN LATERAL (SELECT CASE WHEN REPLACE(UPPER(TRIM(COALESCE(stg.card_scheme,''))),' ','') = 'NOINTERCHANGE' " +
                 "       THEN 'Benefit QR' ELSE stg.card_scheme END AS norm_scheme) sch " +
-                "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '') " +
-                "LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '') " +
-                "LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id " +
-                "  AND t.tid = NULLIF(TRIM(stg.tid), '') AND (t.store_id = s.store_id OR s.store_id IS NULL) " +
-                "LEFT JOIN dim_store s2 ON s2.tenant_id = stg.tenant_id AND s2.store_id = t.store_id " +
+                // FAN-OUT GUARD (2026-08-25): sid / mid / tid are NOT unique per tenant
+                // (only internal_id is), so a plain LEFT JOIN on these keys can match
+                // several dimension rows and DUPLICATE the transaction — exactly what the
+                // row-count reconciliation below fails on. Each dimension is resolved
+                // through a LATERAL … LIMIT 1 so at most one row is ever attached, keeping
+                // fact 1:1 with staging. Deterministic ORDER BY (lowest surrogate id;
+                // terminal prefers the row whose store matches the resolved store) makes
+                // the pick stable across re-runs. Index-supported: (tenant_id,sid),
+                // (tenant_id,mid), (tenant_id,tid).
+                "LEFT JOIN LATERAL (SELECT ds.store_id, ds.merchant_id FROM dim_store ds " +
+                "  WHERE ds.tenant_id = stg.tenant_id AND ds.sid = NULLIF(TRIM(stg.sid), '') " +
+                "  ORDER BY ds.store_id LIMIT 1) s ON TRUE " +
+                "LEFT JOIN LATERAL (SELECT dm.merchant_id FROM dim_merchant dm " +
+                "  WHERE dm.tenant_id = stg.tenant_id AND dm.mid = NULLIF(TRIM(stg.mid), '') " +
+                "  ORDER BY dm.merchant_id LIMIT 1) m ON TRUE " +
+                "LEFT JOIN LATERAL (SELECT dt.terminal_id, dt.store_id FROM dim_terminal dt " +
+                "  WHERE dt.tenant_id = stg.tenant_id AND dt.tid = NULLIF(TRIM(stg.tid), '') " +
+                "    AND (s.store_id IS NULL OR dt.store_id = s.store_id) " +
+                "  ORDER BY (dt.store_id = s.store_id) DESC NULLS LAST, dt.terminal_id LIMIT 1) t ON TRUE " +
+                "LEFT JOIN LATERAL (SELECT ds2.store_id, ds2.merchant_id FROM dim_store ds2 " +
+                "  WHERE ds2.tenant_id = stg.tenant_id AND ds2.store_id = t.store_id LIMIT 1) s2 ON TRUE " +
                 // Pre-authorizations are holds, not settled money movement — excluded
                 // from fact entirely (BH feed; user-confirmed 2026-08-24). Completion
                 // rows carry the settlement and are mapped to PURCHASE above.

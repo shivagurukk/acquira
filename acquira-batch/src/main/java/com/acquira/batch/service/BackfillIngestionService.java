@@ -77,6 +77,13 @@ public class BackfillIngestionService {
         progress.setCurrentDate(request.getStartDate());
         currentProgress.set(progress);
 
+        // Propagate tenant to this @Async worker thread so TenantAspect sets the
+        // Postgres app.current_tenant RLS backstop. Every query below already
+        // scopes by the explicit request.getTenantId(); this keeps the
+        // defense-in-depth session var consistent with the other async paths and
+        // avoids a bypass if RLS is ever forced. Cleared in the finally.
+        com.acquira.common.config.TenantContext.setCurrentTenant(request.getTenantId());
+
         log.info("Starting Backfill for Tenant: {},  Range: {} to {}", request.getTenantId(), request.getStartDate(),
                 request.getEndDate());
 
@@ -146,6 +153,7 @@ public class BackfillIngestionService {
             // Even a failed run may have rewritten fact/summary days already
             // processed — clear on any terminal status, like the job listener.
             evictReportCaches();
+            com.acquira.common.config.TenantContext.clear();
         }
 
         return CompletableFuture.completedFuture(null);
@@ -373,11 +381,23 @@ public class BackfillIngestionService {
                                      ELSE stg.transaction_type END AS norm_type) tt
                             CROSS JOIN LATERAL (SELECT CASE WHEN REPLACE(UPPER(TRIM(COALESCE(stg.card_scheme,''))),' ','') = 'NOINTERCHANGE'
                                      THEN 'Benefit QR' ELSE stg.card_scheme END AS norm_scheme) sch
-                            LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '')
-                            LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '')
-                            LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id
-                                AND t.tid = NULLIF(TRIM(stg.tid), '') AND (t.store_id = s.store_id OR s.store_id IS NULL)
-                            LEFT JOIN dim_store s2 ON s2.tenant_id = stg.tenant_id AND s2.store_id = t.store_id
+                            -- FAN-OUT GUARD (2026-08-25): sid / mid / tid are NOT unique per
+                            -- tenant, so plain LEFT JOINs on them duplicated the transaction into
+                            -- fact (inflating every summary rebuilt off it). Resolve each dimension
+                            -- via LATERAL … LIMIT 1 (terminal prefers the resolved store) so fact
+                            -- stays 1:1 with staging. Mirrors TransactionJobConfig.stagingToFact.
+                            LEFT JOIN LATERAL (SELECT ds.store_id, ds.merchant_id FROM dim_store ds
+                                WHERE ds.tenant_id = stg.tenant_id AND ds.sid = NULLIF(TRIM(stg.sid), '')
+                                ORDER BY ds.store_id LIMIT 1) s ON TRUE
+                            LEFT JOIN LATERAL (SELECT dm.merchant_id FROM dim_merchant dm
+                                WHERE dm.tenant_id = stg.tenant_id AND dm.mid = NULLIF(TRIM(stg.mid), '')
+                                ORDER BY dm.merchant_id LIMIT 1) m ON TRUE
+                            LEFT JOIN LATERAL (SELECT dt.terminal_id, dt.store_id FROM dim_terminal dt
+                                WHERE dt.tenant_id = stg.tenant_id AND dt.tid = NULLIF(TRIM(stg.tid), '')
+                                  AND (s.store_id IS NULL OR dt.store_id = s.store_id)
+                                ORDER BY (dt.store_id = s.store_id) DESC NULLS LAST, dt.terminal_id LIMIT 1) t ON TRUE
+                            LEFT JOIN LATERAL (SELECT ds2.store_id, ds2.merchant_id FROM dim_store ds2
+                                WHERE ds2.tenant_id = stg.tenant_id AND ds2.store_id = t.store_id LIMIT 1) s2 ON TRUE
                             WHERE stg.tenant_id = ? AND DATE(stg.payment_date) = ?
                                 AND ttr.v NOT IN ('PRE-AUTHORIZATION','PREAUTHORIZATION','PRE-AUTH','PREAUTH')
                         """,

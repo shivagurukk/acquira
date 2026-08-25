@@ -234,7 +234,7 @@ public class EmailCampaignController {
         if (!owned) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(campaignLogRepo.findByCampaignIdOrderBySentAtDesc(id, PageRequest.of(page, size)));
+        return ResponseEntity.ok(campaignLogRepo.findByTenantIdAndCampaignIdOrderBySentAtDesc(tenantId, id, PageRequest.of(page, size)));
     }
 
     @GetMapping("/campaigns/{id}/stats")

@@ -550,10 +550,19 @@ public class BulkMigrationService {
             col.apply(msfCol) + ", " + col.apply(interchangeCol) + ", " +
             col.apply(txnTypeCol) + ", " + col.apply(arnCol) + ", " + col.apply(rrnCol) + ", " + col.apply(authCodeCol) + " " +
             "FROM " + sourceTable + " src " +
-            "LEFT JOIN dim_merchant m ON m.tenant_id = ? AND (" +
-            "  m.mid = CAST(src." + midCol + " AS VARCHAR) OR " +
-            "  m.mid LIKE CAST(src." + midCol + " AS VARCHAR) || '%' OR " +
-            "  CAST(src." + midCol + " AS VARCHAR) LIKE m.mid || '%') " +
+            // FAN-OUT GUARD (2026-08-25): dim_merchant.mid is NOT unique per tenant, and
+            // the bidirectional prefix LIKE made it worse (one source row could match many
+            // merchants, e.g. mid '12' matching '123','1200',…), duplicating rows into
+            // fact and inflating every summary rebuilt off it. Resolve to at most ONE
+            // merchant via LATERAL … LIMIT 1, preferring an exact mid match, then the
+            // shortest/lowest-id candidate. Mirrors the staging→fact fix elsewhere.
+            "LEFT JOIN LATERAL (SELECT m.merchant_id FROM dim_merchant m " +
+            "  WHERE m.tenant_id = ? AND (" +
+            "    m.mid = CAST(src." + midCol + " AS VARCHAR) OR " +
+            "    m.mid LIKE CAST(src." + midCol + " AS VARCHAR) || '%' OR " +
+            "    CAST(src." + midCol + " AS VARCHAR) LIKE m.mid || '%') " +
+            "  ORDER BY (m.mid = CAST(src." + midCol + " AS VARCHAR)) DESC, LENGTH(m.mid), m.merchant_id " +
+            "  LIMIT 1) m ON TRUE " +
             "WHERE src." + paymentDateCol + " IS NOT NULL AND DATE(src." + paymentDateCol + ") BETWEEN ? AND ?";
 
         int rows = jdbcTemplate.update(sql, tenantId, tenantId, monthStart, monthEnd);

@@ -605,7 +605,10 @@ public class IntegrationController {
 
         var recentRuns = runLogRepo.findTop10ByTenantIdOrderByStartTimeDesc(tenantId);
 
-        int activeSchedules = schedulerService.getActiveCount();
+        // Tenant-isolation: schedulerService.getActiveCount() is the size of a
+        // GLOBAL in-memory task map (all tenants), so every tenant admin saw the
+        // platform-wide schedule count. Count only this tenant's enabled schedules.
+        long activeSchedules = scheduleRepo.countByTenantIdAndIsEnabledTrue(tenantId);
 
         return ResponseEntity.ok(Map.of(
                 "totalConnections", totalConnections,

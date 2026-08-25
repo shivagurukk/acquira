@@ -196,7 +196,19 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                                 // spoofed X-Tenant-Id left controllers that read the raw
                                 // header trusting an unvalidated value (cross-tenant IDOR).
                                 logger.warn("User " + username + " attempted unauthorized tenant " + reqTenantId + " — rejected");
-                                response.sendError(HttpServletResponse.SC_FORBIDDEN, "Unauthorized tenant");
+                                // Write the 403 directly rather than response.sendError():
+                                // sendError() flags the response for container ERROR
+                                // dispatch, which re-enters the security chain on the
+                                // cleared context and gets rewritten to 401 by the
+                                // authenticationEntryPoint — so a genuine cross-tenant
+                                // denial looked like an expired session to the client.
+                                // Committing the body here (as the forced-password-change
+                                // branch does) keeps it a true 403.
+                                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                                response.setContentType("application/json");
+                                response.getWriter().write(
+                                        "{\"error\":\"You do not have access to the requested tenant.\","
+                                        + "\"code\":\"TENANT_FORBIDDEN\"}");
                                 return;
                             }
                         } catch (NumberFormatException e) {

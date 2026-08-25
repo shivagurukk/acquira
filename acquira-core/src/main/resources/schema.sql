@@ -150,7 +150,14 @@ ON CONFLICT (code) DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -694,7 +701,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -2029,7 +2036,14 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -2573,7 +2587,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -3909,7 +3923,14 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -4453,7 +4474,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -5789,7 +5810,14 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -6333,7 +6361,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -7670,7 +7698,14 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -8214,7 +8249,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE

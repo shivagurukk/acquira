@@ -83,7 +83,18 @@ public class MigrationController {
 
         // Run async
         Thread migrationThread = new Thread(() -> {
-            migrationService.startMigration(tenantId, sourceTable, startMonth, endMonth, columnMapping);
+            // Propagate tenant to this worker thread so TenantAspect sets the
+            // Postgres app.current_tenant RLS backstop. The service still scopes
+            // every query by the explicit tenantId param; this keeps the
+            // defense-in-depth session var consistent with the other async paths
+            // (FileUploadService, InterchangeNormalizationService) and avoids a
+            // bypass if RLS is ever forced.
+            com.acquira.common.config.TenantContext.setCurrentTenant(tenantId);
+            try {
+                migrationService.startMigration(tenantId, sourceTable, startMonth, endMonth, columnMapping);
+            } finally {
+                com.acquira.common.config.TenantContext.clear();
+            }
         }, "bulk-migration");
         migrationThread.setDaemon(true);
         migrationThread.start();
@@ -219,10 +230,15 @@ public class MigrationController {
         final java.time.YearMonth end = endMonth == null ? null : java.time.YearMonth.parse(endMonth);
         final Long targetTenant = tenantId;
         Thread rebuildThread = new Thread(() -> {
+            // Propagate tenant so TenantAspect sets the app.current_tenant RLS
+            // backstop on this worker thread (see the /start thread above).
+            com.acquira.common.config.TenantContext.setCurrentTenant(targetTenant);
             try {
                 migrationService.rebuildSummaries(targetTenant, start, end);
             } catch (Exception e) {
                 // Progress already carries the FAILED phase; the thread must not die noisily.
+            } finally {
+                com.acquira.common.config.TenantContext.clear();
             }
         }, "summary-rebuild");
         rebuildThread.setDaemon(true);
