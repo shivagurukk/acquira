@@ -14,7 +14,10 @@ import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import ChartGradients from '../components/ChartGradients';
 import { useAuth } from '../contexts/AuthContext';
-import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
+import {
+    createFmt, formatMsf, resolveDecimals,
+    isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
+} from '../utils/formatters';
 import {
     SERIES, GRID_PROPS, AXIS_PROPS, LEGEND_PROPS, ANIM, gradientId,
 } from '../theme/chartPalette';
@@ -83,8 +86,9 @@ const deltaPct = (cur, prev) => {
    third of a Bahraini fils figure. Without a symbol it is a count. */
 const fullNum = (v, sym = '') => {
     if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    const d = resolveDecimals();
-    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+    // Executive display-currency toggle: convert + relabel when USD is active.
+    const d = isUsdDisplay(sym) ? 2 : resolveDecimals();
+    return displayCurrencyCode(sym) + ' ' + convertForDisplay(v, sym).toLocaleString('en-US',
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
@@ -514,13 +518,18 @@ const Dashboard = () => {
         lines.push(['Period', period?.label || ''].map(esc).join(','));
         if (data?.effectiveDate) lines.push(['Through', data.effectiveDate].map(esc).join(','));
         if (isFiltered && viewData.length) lines.push(['Filter', `${viewData[0].label} to ${viewData[viewData.length - 1].label}`].map(esc).join(','));
-        lines.push(['Currency', currencyCode || currencySymbol || 'UNKNOWN'].map(esc).join(','));
+        lines.push(['Currency', displayCurrencyCode(currencyCode) || currencySymbol || 'UNKNOWN'].map(esc).join(','));
+        // When the executive USD toggle is on, money cells below are converted
+        // and the file states the indicative rate used.
+        const fx = usdRateInfo(currencyCode);
+        if (fx) lines.push(['FX Rate', `1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`].map(esc).join(','));
         lines.push('');
         // Money columns are written at the tenant's precision (3dp for BHD), not
         // a hardcoded 2dp; MSF keeps its reconciliation digits. Percentages below
-        // are unaffected.
-        const dp = resolveDecimals(currencyDecimals, currencyCode);
+        // are unaffected (ratios are currency-invariant).
+        const dp = isUsdDisplay(currencyCode) ? 2 : resolveDecimals(currencyDecimals, currencyCode);
         const msfDp = Math.max(4, dp);
+        const cv = (v) => convertForDisplay(num(v), currencyCode);
         const heads = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume', 'Avg Ticket',
             'MSF', 'Interchange', 'Interchange % Vol', 'Scheme Fee', 'Scheme % Vol',
             'PG Fee', 'Net Margin', 'Net Margin %'];
@@ -528,11 +537,11 @@ const Dashboard = () => {
         // Rate columns mirror the on-screen table; exported at 4dp because a
         // spreadsheet has no tooltip to fall back on.
         const rate = (fee, volume) => (num(volume) === 0 ? '' : (safeDiv(fee, volume) * 100).toFixed(4));
-        const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(dp), num(b.avgTicket).toFixed(dp),
-            num(b.msf).toFixed(msfDp), num(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
-            num(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
-            num(b.ecomFee).toFixed(dp),
-            num(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2)]
+        const row = (label, b) => [label, num(b.txns), cv(b.volume).toFixed(dp), cv(b.avgTicket).toFixed(dp),
+            cv(b.msf).toFixed(msfDp), cv(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
+            cv(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
+            cv(b.ecomFee).toFixed(dp),
+            cv(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2)]
             .map(esc).join(',');
         viewData.forEach(b => lines.push(row(b.label + (b.partial ? ' (partial)' : ''), b)));
         lines.push(row(`${modeLabel} Total`, t));
@@ -541,7 +550,7 @@ const Dashboard = () => {
             lines.push(['MSF Rate %', derived.msfRate.toFixed(4)].map(esc).join(','));
             lines.push(['Interchange % of Volume', derived.interchangeRate.toFixed(4)].map(esc).join(','));
             lines.push(['Scheme Fee % of Volume', derived.schemeRate.toFixed(4)].map(esc).join(','));
-            lines.push(['Total Fees', derived.fees.toFixed(dp)].map(esc).join(','));
+            lines.push(['Total Fees', cv(derived.fees).toFixed(dp)].map(esc).join(','));
             lines.push(['Total Fees % of Volume', derived.feesRate.toFixed(4)].map(esc).join(','));
         }
         const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });

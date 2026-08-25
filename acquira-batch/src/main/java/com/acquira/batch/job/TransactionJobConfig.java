@@ -987,6 +987,31 @@ public class TransactionJobConfig {
                 }
             }
 
+            // BLANK-TYPE FALLBACK (2026-08-24, user rule, BIN-typed tenants only).
+            // The BH feed sends Card Type EMPTY on every row, which left the
+            // card-type dashboard and debit/credit splits empty. Rule confirmed
+            // by the business: type locals from the BIN table (the block above),
+            // and when the BIN is not found default to premium. Applied ONLY
+            // when the feed value is still blank — a feed-supplied or BIN-typed
+            // value is never overridden, and FILE-sourced tenants (UAE) keep
+            // their existing blank-stays-blank behaviour.
+            //   1. Benefit / Benefit QR ('No Interchange') scheme => DEBIT —
+            //      the Benefit switch is Bahrain's domestic DEBIT network by
+            //      definition (ref_card_scheme maps both card_type=2), and
+            //      Benefit-only cards never appear in the Visa/MC range files,
+            //      so the premium default would mistype the largest local slice.
+            //   2. Anything else => CREDIT, which resolves the Premium tier
+            //      (card_subtype != 1) — i.e. priced and reported as premium.
+            if (binTyping && (item.getCardType() == null || item.getCardType().isBlank())) {
+                String schemeTok = item.getCardScheme();
+                String schemeNorm = schemeTok == null ? "" : schemeTok.trim().toUpperCase().replace(" ", "");
+                if (schemeNorm.equals("BENEFIT") || schemeNorm.equals("BENEFITQR") || schemeNorm.equals("NOINTERCHANGE")) {
+                    item.setCardType("DEBIT");
+                } else {
+                    item.setCardType("CREDIT");
+                }
+            }
+
             // PERF FIX: decimalDivisor() - cached BigDecimal, no per-row allocation.
             // NOTE: currency-CODE resolution (ISO-numeric -> 'AED' etc.) still runs for BOTH
             // CMM and AMS so the stored currency label is correct. Only the numeric DIVISION
@@ -1199,8 +1224,15 @@ public class TransactionJobConfig {
                 }
             }
 
+            // SCHEME NORMALIZATION AWARENESS (2026-08-24): the fact INSERT below maps
+            // the BH feed token 'No Interchange' to canonical 'Benefit QR'. This list
+            // is compared against FACT card_scheme values in the APPEND delete, so it
+            // must apply the SAME mapping — otherwise a re-upload of a file containing
+            // 'No Interchange' rows would never delete the previously inserted
+            // 'Benefit QR' rows and would duplicate them.
             java.util.List<String> uploadSchemes = jdbcTemplate.queryForList(
-                "SELECT DISTINCT UPPER(TRIM(card_scheme)) FROM stg_trnx_raw " +
+                "SELECT DISTINCT CASE WHEN REPLACE(UPPER(TRIM(card_scheme)),' ','') = 'NOINTERCHANGE' " +
+                "THEN 'BENEFIT QR' ELSE UPPER(TRIM(card_scheme)) END FROM stg_trnx_raw " +
                 "WHERE tenant_id = ? AND NULLIF(TRIM(card_scheme), '') IS NOT NULL",
                 String.class, tenantId);
 
@@ -1263,7 +1295,7 @@ public class TransactionJobConfig {
                 "COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id) AS merchant_id, " +
                 "COALESCE(s.store_id, s2.store_id) AS store_id, t.terminal_id, " +
                 "stg.arn, stg.rrn_number, stg.card_number, stg.auth_code, " +
-                "stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type, " +
+                "stg.payment_date, stg.transaction_date, stg.batch_number, tt.norm_type, " +
                 // SIGNED VOLUME (2026-07-18, reverses 2026-07-08 option B): refunds (RFND)
                 // are stored NEGATIVE so fact + all summaries net refunds out of volume,
                 // matching the raw feed / MIS reconciliation basis. Sign is forced from
@@ -1284,15 +1316,15 @@ public class TransactionJobConfig {
                 // ref_country currency). Blank INTERNATIONAL rows stay NULL — a
                 // guessed foreign currency would poison the by-country rollups.
                 // A feed-supplied currency is never overridden.
-                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, " +
+                "sch.norm_scheme, stg.card_type, stg.card_product_code, stg.dcc, " +
                 "COALESCE(NULLIF(TRIM(stg.txn_currency),''), " +
                 "  CASE WHEN dtm.dest = 'DOMESTIC' THEN NULLIF(TRIM(COALESCE(tn.base_currency, rchome.currency_code)),'') END), " +
-                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
+                "CASE WHEN tt.is_refund " +
                 "     THEN -ABS(stg.txn_currency_amount) ELSE ABS(stg.txn_currency_amount) END, " +
                 "stg.store_base_currency, " +
-                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
+                "CASE WHEN tt.is_refund " +
                 "     THEN -ABS(stg.store_base_currency_amount) ELSE ABS(stg.store_base_currency_amount) END, " +
-                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
+                "CASE WHEN tt.is_refund " +
                 "     THEN -ABS(stg.msf) ELSE ABS(stg.msf) END, " +
                 "ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), " +
                 // DESTINATION NORMALIZATION (2026-08-10). The feed's own vocabulary is
@@ -1318,24 +1350,58 @@ public class TransactionJobConfig {
                 "    AND d.raw_token = UPPER(TRIM(COALESCE(stg.destination,''))) " +
                 "  ORDER BY (d.tenant_id IS NOT NULL) DESC LIMIT 1 " +
                 ") dtm ON TRUE " +
+                // TXN-TYPE NORMALIZATION (2026-08-24, BH tenant go-live; user-confirmed):
+                // descriptive feed types are mapped to the engine's canonical
+                // PURCHASE/REFUND exactly ONCE, here — the destination-normalization
+                // precedent above — so signing, the fee engine's refund rule and every
+                // TRANSACTION_TYPE split all see one vocabulary.
+                //   Purchase, Pre-Authorization Completion       -> PURCHASE
+                //   Refund, Refund Reversal, Refund Void,
+                //   Sale Reversal, Sale Void                     -> REFUND
+                //   Pre-authorization                            -> row EXCLUDED (not a
+                //     settled movement; see the WHERE filter + reconciliation count)
+                // Tokens are compared space-stripped/case-folded; anything else (UAE
+                // 'RFND'/'SALE' etc.) passes through untouched. is_refund drives the
+                // volume/MSF sign and MUST stay a superset of the fee engine's rf set.
+                "CROSS JOIN LATERAL (SELECT REPLACE(UPPER(TRIM(COALESCE(stg.transaction_type,''))),' ','') AS v) ttr " +
+                "CROSS JOIN LATERAL (SELECT " +
+                "  (ttr.v IN ('RFND','REFUND','REFUNDREVERSAL','REFUNDVOID','SALEREVERSAL','SALEVOID')) AS is_refund, " +
+                "  CASE WHEN ttr.v IN ('REFUNDREVERSAL','REFUNDVOID','SALEREVERSAL','SALEVOID') THEN 'REFUND' " +
+                "       WHEN ttr.v IN ('PRE-AUTHORIZATIONCOMPLETION','PREAUTHORIZATIONCOMPLETION','PRE-AUTHCOMPLETION','PREAUTHCOMPLETION') THEN 'PURCHASE' " +
+                "       ELSE stg.transaction_type END AS norm_type) tt " +
+                // SCHEME NORMALIZATION (2026-08-24, BH): the feed's 'No Interchange'
+                // token is the Benefit QR product — store it under its real scheme name
+                // so dashboards group it correctly and the fee engine resolves the
+                // 'Benefit QR' rate card (Bahrain local rates, V2026_08_24_01) instead
+                // of the BH any-scheme wildcard. Keep in sync with the APPEND-mode
+                // uploadSchemes mapping above.
+                "CROSS JOIN LATERAL (SELECT CASE WHEN REPLACE(UPPER(TRIM(COALESCE(stg.card_scheme,''))),' ','') = 'NOINTERCHANGE' " +
+                "       THEN 'Benefit QR' ELSE stg.card_scheme END AS norm_scheme) sch " +
                 "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '') " +
                 "LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '') " +
                 "LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id " +
                 "  AND t.tid = NULLIF(TRIM(stg.tid), '') AND (t.store_id = s.store_id OR s.store_id IS NULL) " +
                 "LEFT JOIN dim_store s2 ON s2.tenant_id = stg.tenant_id AND s2.store_id = t.store_id " +
-                "WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL";
+                // Pre-authorizations are holds, not settled money movement — excluded
+                // from fact entirely (BH feed; user-confirmed 2026-08-24). Completion
+                // rows carry the settlement and are mapped to PURCHASE above.
+                "WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL " +
+                "AND ttr.v NOT IN ('PRE-AUTHORIZATION','PREAUTHORIZATION','PRE-AUTH','PREAUTH')";
             int inserted = jdbcTemplate.update(sql, tenantId);
             log.info(String.format("Inserted %d fact rows in %.1fs", inserted, (System.currentTimeMillis() - tIns) / 1000.0));
 
             // RECONCILIATION: staging rows with a usable date must equal fact rows inserted.
-            // The INSERT's only filter is `payment_date IS NOT NULL`, so these two numbers
-            // are expected to match exactly; a gap means rows were silently lost (or the
+            // The INSERT filters on `payment_date IS NOT NULL` AND excludes
+            // pre-authorization rows (2026-08-24), so this expected count applies the
+            // SAME two filters; a gap means rows were silently lost (or the
             // LEFT JOINs to dim_store/dim_terminal fanned out and DUPLICATED rows, which is
             // possible because those joins are not guaranteed one-to-one and there is no
             // unique constraint on fact_transaction to catch it). Either way the operator
             // must know — this used to be invisible.
             Integer stagedUsable = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL",
+                "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL " +
+                "AND REPLACE(UPPER(TRIM(COALESCE(transaction_type,''))),' ','') " +
+                "    NOT IN ('PRE-AUTHORIZATION','PREAUTHORIZATION','PRE-AUTH','PREAUTH')",
                 Integer.class, tenantId);
             if (stagedUsable != null && stagedUsable != inserted) {
                 String detail = String.format(
@@ -1611,11 +1677,16 @@ public class TransactionJobConfig {
                 "    ) AS channel " +
                 "  ) ch " +
                 // derive refund flag ONCE, reused by both computed_ic and computed_scheme.
-                // MUST match the volume-signing set IN ('RFND','REFUND') used in
-                // stagingToFact (2026-07-18) — previously this checked only 'RFND', so a
-                // row typed 'REFUND' was signed as negative volume yet still charged
-                // interchange + scheme fee. Kept in sync here.
-                "  CROSS JOIN LATERAL (SELECT (UPPER(TRIM(COALESCE(ft.transaction_type,''))) IN ('RFND','REFUND')) AS is_refund) rf " +
+                // MUST match the volume-signing set used in stagingToFact (2026-07-18) —
+                // previously this checked only 'RFND', so a row typed 'REFUND' was signed
+                // as negative volume yet still charged interchange + scheme fee.
+                // 2026-08-24: stagingToFact now normalizes BH descriptive tokens to
+                // canonical REFUND, so 'RFND'/'REFUND' alone would suffice for NEW loads;
+                // the descriptive tokens stay in this set (space-stripped compare) so
+                // fact rows written BEFORE the normalization, or bulk-migrated verbatim,
+                // still take the refund rule on a fee recompute.
+                "  CROSS JOIN LATERAL (SELECT (REPLACE(UPPER(TRIM(COALESCE(ft.transaction_type,''))),' ','') IN " +
+                "    ('RFND','REFUND','REFUNDREVERSAL','REFUNDVOID','SALEREVERSAL','SALEVOID')) AS is_refund) rf " +
                 // derive mcc sector ONCE (was a correlated subquery inside the LATERAL).
                 // COUNTRY-LEVEL (V2026_07_31_02): match the tenant's country card;
                 // tenant_id IS NULL is the country default, a non-null tenant_id is a
@@ -2610,6 +2681,20 @@ public class TransactionJobConfig {
         java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("M/d/yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("M/d/yy"),
+        // BH feed (2026-08-24): dates arrive as '01-AUG-26' / '31-JUL-26'.
+        // Month names must parse CASE-INSENSITIVELY ('AUG' vs the default 'Aug')
+        // and in ENGLISH regardless of the server's default locale — a pattern
+        // formatter alone would silently NULL every payment_date, and the fact
+        // insert's `payment_date IS NOT NULL` filter would then drop 100% of
+        // rows. yy pivots to 2000-2099 (SmartResolverStyle default base 2000).
+        new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("dd-MMM-yy").toFormatter(java.util.Locale.ENGLISH),
+        new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("dd-MMM-yyyy").toFormatter(java.util.Locale.ENGLISH),
+        new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("d-MMM-yy").toFormatter(java.util.Locale.ENGLISH),
+        new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("d-MMM-yyyy").toFormatter(java.util.Locale.ENGLISH),
     };
 
     private java.time.LocalDateTime parseDate(String val) {

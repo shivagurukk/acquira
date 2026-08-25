@@ -10,7 +10,10 @@ import { cachedGet } from '../../api/apiCache';
 import EmptyState from '../../components/EmptyState';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
-import { createFmt, formatMsf, resolveDecimals } from '../../utils/formatters';
+import {
+    createFmt, formatMsf, resolveDecimals,
+    isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
+} from '../../utils/formatters';
 import { weekRules } from '../../utils/weekRules';
 
 /* ════════════════════════════════════════════════════════════════════
@@ -37,8 +40,9 @@ import { weekRules } from '../../utils/weekRules';
 const num = (v) => (v == null ? 0 : Number(v));
 const fullNum = (v, sym = '') => {
     if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    const d = resolveDecimals();
-    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+    // Executive display-currency toggle: convert + relabel when USD is active.
+    const d = isUsdDisplay(sym) ? 2 : resolveDecimals();
+    return displayCurrencyCode(sym) + ' ' + convertForDisplay(v, sym).toLocaleString('en-US',
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
@@ -461,7 +465,9 @@ const FeeRibbon = ({ totals, money, share, compact = false, animKey }) => {
                         <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }} />
                         <span style={{ fontWeight: 600, color: 'var(--text)' }}>{s.label}</span>
                         <span className="edm-num">{money(s.value)}</span>
-                        <span className="edm-pill">{share(s.value, pool)}</span>
+                        <span className="edm-pill edm-pill-tint" style={{ '--pill-ink': s.color }}>
+                            {share(s.value, pool)}
+                        </span>
                     </span>
                 ))}
             </div>
@@ -539,10 +545,13 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
     const withData = rows.filter(r => r.has);
     const nmHi = withData.reduce((a, r) => Math.max(a, r.nm), 0);
     const nmLo = withData.reduce((a, r) => Math.min(a, r.nm), 0);
-    const nmSpan = (nmHi - nmLo) || 1;
+    /* 8% headroom top and bottom: without it the highest and lowest days sit
+       exactly on the plot edges and the stroke is clipped in half. */
+    const nmPad = ((nmHi - nmLo) || Math.abs(nmHi) || 1) * 0.08;
+    const nmSpan = ((nmHi + nmPad) - (nmLo - nmPad)) || 1;
     /* Net margin is drawn in a 0–100 box that the SVG stretches to fit; the
        stroke is non-scaling so the distortion never thickens the line. */
-    const nmY = (v) => 100 - ((v - nmLo) / nmSpan) * 100;
+    const nmY = (v) => 100 - ((v - (nmLo - nmPad)) / nmSpan) * 100;
     const xAt = (i) => ((i + 0.5) / rows.length) * 100;
 
     /* Break the line wherever a day has no data — joining across a gap would
@@ -610,7 +619,7 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
                         );
                     })}
                 </div>
-                <svg className="edm-chart-line" viewBox="0 0 100 100"
+                <svg key={`line-${animKey}`} className="edm-chart-line edm-chart-line-draw" viewBox="0 0 100 100"
                     preserveAspectRatio="none" aria-hidden="true" focusable="false">
                     {zeroY != null && (
                         <line x1="0" y1={zeroY} x2="100" y2={zeroY}
@@ -618,11 +627,10 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
                             vectorEffect="non-scaling-stroke" opacity="0.45" />
                     )}
                     {segments.map((pts, i) => (
-                        <polyline key={`${animKey}-${i}`} points={pts.join(' ')} fill="none"
-                            stroke="var(--chart-4, #7191CE)" strokeWidth="1.75"
+                        <polyline key={i} points={pts.join(' ')} fill="none"
+                            stroke="var(--chart-4, #7191CE)" strokeWidth="2"
                             strokeLinejoin="round" strokeLinecap="round"
-                            vectorEffect="non-scaling-stroke" pathLength="1"
-                            className="edm-chart-trace" />
+                            vectorEffect="non-scaling-stroke" />
                     ))}
                 </svg>
                 {hov && (
@@ -649,12 +657,14 @@ const DayTrendChart = ({ days, trendByDate, selectedDates, onToggle, money, week
                 )}
             </div>
 
-            {/* Only the first, last and every 5th day get a tick — a 31-label
-                axis at this width is a grey smear. The hovered day always shows. */}
+            {/* Every day carries its own date on the axis — reading the shape
+                against the calendar should never need counting. Labels are
+                narrow mono numerals; the hovered day is bolded. */}
             <div className="edm-chart-axis">
                 {rows.map((r, i) => (
-                    <span key={r.date} className={hover === i ? 'edm-axis-hov' : undefined}>
-                        {(hover === i || i === 0 || i === rows.length - 1 || (i + 1) % 5 === 0) ? dayNum(r.date) : ''}
+                    <span key={r.date} className={hover === i ? 'edm-axis-hov' : undefined}
+                        title={longDate(r.date)}>
+                        {dayNum(r.date)}
                     </span>
                 ))}
             </div>
@@ -845,10 +855,11 @@ const DailyMerchantDashboard = () => {
     const [detailMix, setDetailMix] = useState(null);
     const [lastRefresh, setLastRefresh] = useState(null);
 
-    /* Money at tenant precision (BHD is 3dp — never assume 2). */
-    const dp = resolveDecimals(currencyDecimals, currencyCode);
-    const money = useCallback((v) => Number(v || 0).toLocaleString('en-US',
-        { minimumFractionDigits: dp, maximumFractionDigits: dp }), [dp]);
+    /* Money at tenant precision (BHD is 3dp — never assume 2), or 2dp USD when
+       the executive display-currency toggle is on (values are converted). */
+    const dp = isUsdDisplay(currencyCode) ? 2 : resolveDecimals(currencyDecimals, currencyCode);
+    const money = useCallback((v) => convertForDisplay(Number(v || 0), currencyCode).toLocaleString('en-US',
+        { minimumFractionDigits: dp, maximumFractionDigits: dp }), [dp, currencyCode]);
     const share = useCallback((v, total) =>
         !total ? '—' : `${((num(v) / total) * 100).toFixed(1)}%`, []);
 
@@ -1034,8 +1045,13 @@ const DailyMerchantDashboard = () => {
                 return `"${(/^[=+\-@]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
             };
             const msfDp = Math.max(4, dp);
+            // Executive display-currency toggle: money cells are converted with
+            // the same rate the screen uses, and the file states that rate.
+            const cv = (v) => convertForDisplay(num(v), currencyCode);
+            const fx = usdRateInfo(currencyCode);
             const lines = [
-                `Currency,${currencyCode || currencySymbol || 'UNKNOWN'}`,
+                `Currency,${displayCurrencyCode(currencyCode) || currencySymbol || 'UNKNOWN'}`,
+                ...(fx ? [`FX Rate,1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`] : []),
                 `Business Date,${res.data?.month ? res.data.month + ' (full month)'
                     : (res.data?.dates || []).join(' ') || label}`,
                 ['SID', 'MID', 'Name', 'Vol', 'Count', FEE_LABELS.msf, FEE_LABELS.icf,
@@ -1043,18 +1059,18 @@ const DailyMerchantDashboard = () => {
             ];
             rows.forEach(r => lines.push([
                 esc(r.sid), esc(r.mid), esc(r.merchantName),
-                num(r.volume).toFixed(dp), num(r.count),
-                num(r.msf).toFixed(msfDp), num(r.icf).toFixed(dp),
-                num(r.sf).toFixed(dp), num(r.pg).toFixed(dp), num(r.nm).toFixed(dp),
+                cv(r.volume).toFixed(dp), num(r.count),
+                cv(r.msf).toFixed(msfDp), cv(r.icf).toFixed(dp),
+                cv(r.sf).toFixed(dp), cv(r.pg).toFixed(dp), cv(r.nm).toFixed(dp),
             ].join(',')));
             // The server's own selection total, so the file verifies itself.
             if (totals) {
                 lines.push([
                     esc('TOTAL'), esc(''), esc(`${rows.length} rows`),
-                    num(totals.volume).toFixed(dp), num(totals.count),
-                    num(totals.msf).toFixed(msfDp), num(totals.icf).toFixed(dp),
-                    num(totals.sf).toFixed(dp), num(totals.pg).toFixed(dp),
-                    num(totals.nm).toFixed(dp),
+                    cv(totals.volume).toFixed(dp), num(totals.count),
+                    cv(totals.msf).toFixed(msfDp), cv(totals.icf).toFixed(dp),
+                    cv(totals.sf).toFixed(dp), cv(totals.pg).toFixed(dp),
+                    cv(totals.nm).toFixed(dp),
                 ].join(','));
             }
             const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -1157,7 +1173,6 @@ const DailyMerchantDashboard = () => {
     const msfBps = totals && num(totals.volume) ? (num(totals.msf) / num(totals.volume)) * 10000 : null;
     const avgTicket = totals && num(totals.count) ? num(totals.volume) / num(totals.count) : null;
     const costTotal = totals ? num(totals.icf) + num(totals.sf) + num(totals.pg) : 0;
-    const costRatio = totals && num(totals.msf) ? (costTotal / num(totals.msf)) * 100 : null;
     const daysCovered = selectedDates.length || trend.length;
 
     /* One key per SELECTION (dates + filters). Anything that re-animates —
@@ -1383,7 +1398,8 @@ const DailyMerchantDashboard = () => {
                 .edm-seg-btn:last-child { border-right: 0; }
                 .edm-seg-btn:hover:not(:disabled)[data-on="false"] { background: var(--bg-hover); }
                 .edm-seg-btn:disabled { opacity: 0.45; cursor: default; }
-                .edm-seg-btn[data-on="true"] { color: #fff; background: var(--cal-pick); }
+                .edm-seg-btn[data-on="true"] { color: var(--cal-pick-ink); background: var(--cal-pick);
+                    border-color: var(--cal-pick-edge); }
                 .edm-seg-custom { cursor: default; display: inline-flex; align-items: center; }
 
                 /* ── Month shape chart ── */
@@ -1396,7 +1412,9 @@ const DailyMerchantDashboard = () => {
                 .edm-bar:hover { background: var(--bg-hover); }
                 .edm-bar-fill { display: block; width: 100%; border-radius: 2px 2px 0 0;
                     transition: opacity .12s ease; }
-                .edm-bar-on .edm-bar-fill { background: var(--select-green, #12805C) !important; }
+                .edm-bar-on .edm-bar-fill { background: linear-gradient(180deg,
+                        var(--select-green, #A8E6C9),
+                        color-mix(in srgb, var(--select-green, #A8E6C9) 62%, transparent)) !important; }
                 /* Weekend days carry a foot mark, so the week's rhythm is legible
                    in the curve as well as the grid. */
                 .edm-bar-we { position: absolute; left: 1px; right: 1px; bottom: -3px;
@@ -1405,8 +1423,12 @@ const DailyMerchantDashboard = () => {
                 .edm-chart-line { position: absolute; inset: 0; width: 100%; height: 100%;
                     pointer-events: none; overflow: visible; }
                 .edm-chart-axis { display: flex; gap: 2px; margin-top: 7px;
-                    font-family: var(--font-mono); font-size: 8.5px; color: var(--text-muted); }
-                .edm-chart-axis > span { flex: 1 1 0; min-width: 0; text-align: center; }
+                    font-family: var(--font-mono); font-size: 8px; letter-spacing: -0.02em;
+                    color: var(--text-muted); }
+                /* A label per day means 28-31 columns: clip rather than wrap, so a
+                   narrow viewport thins the axis instead of stacking it. */
+                .edm-chart-axis > span { flex: 1 1 0; min-width: 0; text-align: center;
+                    overflow: hidden; white-space: nowrap; }
 
                 /* Refetch in progress: the figures on screen are one selection
                    out of date, so they fade slightly and stop taking clicks.
@@ -1427,6 +1449,8 @@ const DailyMerchantDashboard = () => {
                 @keyframes edm-growx { from { transform: scaleX(0); } to { transform: scaleX(1); } }
                 @keyframes edm-growy { from { transform: scaleY(0); } to { transform: scaleY(1); } }
                 @keyframes edm-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+                @keyframes edm-wipex { from { clip-path: inset(0 100% -20% 0); }
+                    to { clip-path: inset(0 0 -20% 0); } }
                 @keyframes edm-wipe { from { clip-path: inset(0 100% 0 0 round 999px); }
                     to { clip-path: inset(0 0 0 0 round 999px); } }
                 @keyframes edm-pop { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
@@ -1549,9 +1573,16 @@ const DailyMerchantDashboard = () => {
                     opacity: .75; margin-left: 1px; }
                 .edm-pill { display: inline-flex; align-items: center; padding: 1px 7px;
                     border-radius: 999px; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-                    font-size: 10.5px; font-weight: 600; color: var(--text-secondary);
-                    background: var(--bg-subtle); border: 1px solid var(--border-light, var(--border));
-                    white-space: nowrap; }
+                    font-size: 11px; font-weight: 700; color: var(--text);
+                    background: color-mix(in srgb, var(--text) 7%, var(--bg-card));
+                    border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
+                    letter-spacing: .01em; white-space: nowrap; }
+                /* Legend pills carry the hue of their own segment, so the interchange /
+                   scheme / gateway share reads as part of the ribbon rather than as
+                   greyed-out chrome — which is how text-secondary on bg-subtle read. */
+                .edm-pill-tint { color: var(--text);
+                    background: color-mix(in srgb, var(--pill-ink, var(--text)) 13%, var(--bg-card));
+                    border-color: color-mix(in srgb, var(--pill-ink, var(--text)) 40%, transparent); }
 
                 /* ── Fee ribbon ── */
                 .edm-ribbon { display: flex; border-radius: 999px; overflow: hidden;
@@ -1562,8 +1593,9 @@ const DailyMerchantDashboard = () => {
                     box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 -1px 0 rgba(0,0,0,.10);
                     transition: filter .15s ease; }
                 .edm-ribbon-seg:hover { filter: brightness(1.08); }
-                .edm-ribbon-lbl { font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
-                    color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.25); letter-spacing: .02em; }
+                .edm-ribbon-lbl { font-family: var(--font-mono); font-size: 10px; font-weight: 700;
+                    color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.55), 0 0 3px rgba(0,0,0,.4);
+                    letter-spacing: .02em; }
 
                 /* ── Mix strips ── */
                 .edm-rank { font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
@@ -1621,7 +1653,11 @@ const DailyMerchantDashboard = () => {
                 .edm-bar-loss { background: linear-gradient(180deg, var(--danger),
                         color-mix(in srgb, var(--danger) 55%, transparent)); }
                 .edm-bar-hov .edm-bar-fill { filter: brightness(1.12); }
-                .edm-chart-trace { stroke-dasharray: 1; animation: edm-draw 1.1s ease-out both; }
+                /* No stroke-dasharray here: with vectorEffect="non-scaling-stroke"
+                   the dash pattern is measured in screen units, so a pathLength=1
+                   dash renders the margin line as a 1px dotted smear. The draw-in
+                   is a clip wipe on the SVG instead, which leaves the stroke solid. */
+                .edm-chart-line-draw { animation: edm-wipex 1.1s ease-out both; }
                 .edm-axis-hov { color: var(--text); font-weight: 700; }
                 .edm-tip { position: absolute; bottom: calc(100% + 8px); transform: translateX(-50%);
                     min-width: 168px; padding: 9px 11px; border-radius: var(--radius-md);
@@ -1670,15 +1706,18 @@ const DailyMerchantDashboard = () => {
                    rest of the chrome does not already use. One token so the
                    grid, the drag preview and the hover border stay in step.
 
-                   Deeper than the --rail-fresh mint (#34B98A) on purpose: the
-                   day numeral sits on top in white, and the mint only carries
-                   ~2.2:1 against it. This green clears 4.5:1 and still reads
-                   green in both themes. */
-                .edm-cal, .edm-seg { --cal-pick: var(--select-green, #12805C); }
+                   A LIGHT green fill with dark green ink on top: the pale
+                   ground reads as "included" without shouting, and the ink
+                   (#0B4A36 on #A8E6C9) clears 4.5:1 in both themes — a white
+                   numeral on this fill would not. */
+                .edm-cal, .edm-seg {
+                    --cal-pick: var(--select-green, #A8E6C9);
+                    --cal-pick-ink: var(--select-green-ink, #0B4A36);
+                    --cal-pick-edge: color-mix(in srgb, var(--cal-pick) 72%, #0B4A36); }
                 .edm-cell-on { background: var(--cal-pick) !important;
-                    border-color: var(--cal-pick) !important;
-                    box-shadow: 0 0 0 1px var(--cal-pick); }
-                .edm-cell-on .edm-cell-num { color: #fff; }
+                    border-color: var(--cal-pick-edge) !important;
+                    box-shadow: 0 0 0 1px var(--cal-pick-edge); }
+                .edm-cell-on .edm-cell-num { color: var(--cal-pick-ink); }
                 .edm-cell:hover { border-color: var(--cal-pick); }
                 .edm-cell-nodata:hover { border-color: var(--cal-pick); }
                 .edm-cell-drag { outline: 2px dashed var(--cal-pick); outline-offset: 1px; }
@@ -1688,9 +1727,25 @@ const DailyMerchantDashboard = () => {
                     color-mix(in srgb, var(--chart-alt, #64748B) 22%, transparent); }
                 .edm-cell-loss { position: absolute; left: 5px; right: 5px; bottom: 3px;
                     height: 2.5px; border-radius: 2px; background: var(--danger); }
-                .edm-cell-on .edm-cell-loss { background: #fff; opacity: 0.85; }
+                .edm-cell-on .edm-cell-loss { background: var(--danger); opacity: 0.9; }
 
-                /* ── Table ── */
+                /* ── Table ──
+                   The grid is a nested scroll box, so it needs a scrollbar you can
+                   actually see and grab: overlay bars on Windows fade out and the
+                   box then reads as "stuck". Gutter is reserved so the sticky
+                   header does not shift when the bar appears. */
+                .edm-scroll { overflow: auto; max-height: 72vh; overscroll-behavior: contain;
+                    scrollbar-gutter: stable; scrollbar-width: thin;
+                    scrollbar-color: color-mix(in srgb, var(--text) 34%, transparent) transparent; }
+                .edm-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+                .edm-scroll::-webkit-scrollbar-track { background: color-mix(in srgb, var(--text) 4%, transparent); }
+                .edm-scroll::-webkit-scrollbar-thumb {
+                    background: color-mix(in srgb, var(--text) 30%, transparent);
+                    border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+                .edm-scroll::-webkit-scrollbar-thumb:hover {
+                    background: color-mix(in srgb, var(--text) 50%, transparent); background-clip: content-box; }
+                .edm-scroll::-webkit-scrollbar-corner { background: transparent; }
+                .edm-scroll:focus-visible { outline: 2px solid var(--focus, var(--cat-1)); outline-offset: -2px; }
                 .edm-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
                 .edm-table thead th { position: sticky; top: 0; z-index: 2; background: var(--table-head-bg,
                     var(--bg-subtle)); color: var(--table-head-text, var(--text-secondary));
@@ -1749,7 +1804,7 @@ const DailyMerchantDashboard = () => {
                     .edm-cell, .edm-table tbody tr, .edm-panel, .edm-tile { transition: none; }
                     .edm-enter, .edm-live, .edm-spark-line, .edm-spark-dot, .edm-delta, .edm-ribbon,
                     .edm-mix-fill, .edm-mix-row, .edm-daychip, .edm-bone, .edm-bar-fill,
-                    .edm-chart-trace, .edm-tip, .edm-vol-bar, .edm-row-in, .edm-tile-hero::after,
+                    .edm-chart-line-draw, .edm-tip, .edm-vol-bar, .edm-row-in, .edm-tile-hero::after,
                     .edm-tile::before {
                         animation: none; }
                     .edm-panel-lift:hover { transform: none; }
@@ -2080,7 +2135,7 @@ const DailyMerchantDashboard = () => {
                                 <div style={cellDiv}>
                                     <Metric wide label="Volume"
                                         raw={num(totals.volume)} format={fmt.currency}
-                                        sub={`${currencyCode || currencySymbol || ''} · ${daysCovered} day${daysCovered === 1 ? '' : 's'}`}
+                                        sub={`${displayCurrencyCode(currencyCode) || currencySymbol || ''} · ${daysCovered} day${daysCovered === 1 ? '' : 's'}`}
                                         title={fullNum(totals.volume, currencySymbol)}
                                         delta={deltas?.volume} deltaLabel={deltas?.label}
                                         series={kpiSeries.volume} sparkColor="var(--cat-1)" animKey={animKey} />
@@ -2138,11 +2193,6 @@ const DailyMerchantDashboard = () => {
                                         sub="MSF ÷ volume" />
                                 </div>
                                 <div style={cellDiv}>
-                                    <Metric label="Cost ratio"
-                                        value={costRatio == null ? '—' : `${costRatio.toFixed(1)}%`}
-                                        sub="costs ÷ MSF" />
-                                </div>
-                                <div style={cellDiv}>
                                     <Metric label="Average ticket"
                                         value={avgTicket == null ? '—' : money(avgTicket)}
                                         sub="volume ÷ transactions" />
@@ -2172,7 +2222,8 @@ const DailyMerchantDashboard = () => {
 
                     {/* ── Merchant table ── */}
                     <div className="edm-panel edm-enter" style={{ overflow: 'hidden', '--i': 4 }}>
-                        <div style={{ overflowX: 'auto', maxHeight: '62vh', overflowY: 'auto' }}>
+                        <div className="edm-scroll" tabIndex={0} role="region"
+                            aria-label="Merchant rows — scrollable">
                             <table className="edm-table">
                                 <thead>
                                     <tr>

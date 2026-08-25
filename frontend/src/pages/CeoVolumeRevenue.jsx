@@ -9,7 +9,10 @@ import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { showToast } from '../contexts/ToastContext';
-import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
+import {
+    createFmt, formatMsf, resolveDecimals,
+    isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
+} from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Volume & Revenue — MID x SID detail with the full fee stack:
@@ -40,8 +43,9 @@ const num = (v) => (v == null ? 0 : Number(v));
    tenant's decimals (3dp for BHD); without one it is a count. */
 const fullNum = (v, sym = '') => {
     if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    const d = resolveDecimals();
-    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+    // Executive display-currency toggle: convert + relabel when USD is active.
+    const d = isUsdDisplay(sym) ? 2 : resolveDecimals();
+    return displayCurrencyCode(sym) + ' ' + convertForDisplay(v, sym).toLocaleString('en-US',
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
@@ -240,9 +244,12 @@ const CeoVolumeRevenue = ({
             // empty rather than writing a 0.00 that reads as a real measurement.
             const pctCell = (v) => (v == null ? '' : Number(v).toFixed(2));
             // Money columns follow the tenant's precision (3dp for BHD) instead
-            // of a hardcoded 2dp; MSF keeps its reconciliation digits.
-            const dp = resolveDecimals(currencyDecimals, currencyCode);
+            // of a hardcoded 2dp; MSF keeps its reconciliation digits. When the
+            // executive USD toggle is on, values are converted and written 2dp.
+            const dp = isUsdDisplay(currencyCode) ? 2 : resolveDecimals(currencyDecimals, currencyCode);
             const msfDp = Math.max(4, dp);
+            const cv = (v) => convertForDisplay(num(v), currencyCode);
+            const fx = usdRateInfo(currencyCode);
             // Header mirrors the on-screen column order: SID first, MID second.
             const header = lossOnly
                 ? ['MID', 'Merchant', 'Count', 'Volume', 'MSF',
@@ -251,13 +258,17 @@ const CeoVolumeRevenue = ({
                     'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
             // The file must state its currency — the same numbers mean something
             // different in BHD (3dp) than in EGP/AED (2dp).
-            const lines = [`Currency,${currencyCode || currencySymbol || 'UNKNOWN'}`, header.join(',')];
+            const lines = [
+                `Currency,${displayCurrencyCode(currencyCode) || currencySymbol || 'UNKNOWN'}`,
+                ...(fx ? [`FX Rate,1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`] : []),
+                header.join(','),
+            ];
             rows.forEach(r => lines.push([
                 ...(lossOnly ? [esc(r.mid)] : [esc(r.sid), esc(r.mid)]), esc(r.name), num(r.txns),
-                num(r.volume).toFixed(dp), num(r.msf).toFixed(msfDp),
-                num(r.interchange).toFixed(dp), num(r.schemeFee).toFixed(dp),
-                num(r.ecomFee).toFixed(dp),
-                num(r.netRevenue).toFixed(dp), pctCell(r.marginPct),
+                cv(r.volume).toFixed(dp), cv(r.msf).toFixed(msfDp),
+                cv(r.interchange).toFixed(dp), cv(r.schemeFee).toFixed(dp),
+                cv(r.ecomFee).toFixed(dp),
+                cv(r.netRevenue).toFixed(dp), pctCell(r.marginPct),
             ].join(',')));
             // Always append the server's own period-total aggregate (unbounded, matches
             // the on-screen KPI band) as a trailing TOTAL row -- so the file is
@@ -268,10 +279,10 @@ const CeoVolumeRevenue = ({
                 lines.push([
                     esc('TOTAL'), ...(lossOnly ? [] : [esc('')]), esc(`${totalRows} rows (period total)`),
                     num(exportTotals.txns),
-                    num(exportTotals.volume).toFixed(dp), num(exportTotals.msf).toFixed(msfDp),
-                    num(exportTotals.interchange).toFixed(dp), num(exportTotals.schemeFee).toFixed(dp),
-                    num(exportTotals.ecomFee).toFixed(dp),
-                    num(exportTotals.netRevenue).toFixed(dp), pctCell(exportTotals.marginPct),
+                    cv(exportTotals.volume).toFixed(dp), cv(exportTotals.msf).toFixed(msfDp),
+                    cv(exportTotals.interchange).toFixed(dp), cv(exportTotals.schemeFee).toFixed(dp),
+                    cv(exportTotals.ecomFee).toFixed(dp),
+                    cv(exportTotals.netRevenue).toFixed(dp), pctCell(exportTotals.marginPct),
                 ].join(','));
             }
             const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });

@@ -204,8 +204,10 @@ export const AuthProvider = ({ children }) => {
     // switch (Egypt → Bahrain → Egypt) can never leave stale currency/decimals
     // behind, even if two tenants happened to share a currency code.
     useEffect(() => {
-        setDefaultCurrency(currencyCode, currencyDecimals);
-    }, [currencyCode, currencyDecimals, auth.tenantVersion, auth.activeTenantId]);
+        // The symbol is passed so the display-currency layer can recognise
+        // tenant-symbol-labelled money (see usdRateFor in formatters.js).
+        setDefaultCurrency(currencyCode, currencyDecimals, currencySymbol);
+    }, [currencyCode, currencyDecimals, currencySymbol, auth.tenantVersion, auth.activeTenantId]);
 
     // Per-tenant locale (date format + timezone) — same pattern as currency.
     // Fetched from GET /users/me/locale (tenant_setting locale.* keys) whenever

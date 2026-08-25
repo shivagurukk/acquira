@@ -3,7 +3,7 @@ import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, T
 import { DataGrid } from '@mui/x-data-grid';
 import { Activity, AlertTriangle, X, CalendarClock, ArrowRight, Info, Scale } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { createFmt } from '../../utils/formatters';
+import { createFmt, convertForDisplay, isUsdDisplay } from '../../utils/formatters';
 import api from '../../api/axios';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import SkeletonLoader from '../../components/SkeletonLoader';
@@ -433,6 +433,13 @@ const AttritionReport = () => {
 
     // Helpers that read the active-metric value off a row.
     const val = (row, base) => row[`${base}${suffix}`];
+    // Export-side MEASURE value: converted when the executive USD display
+    // toggle is on and the active metric is money; counts and the percent
+    // columns (which keep using val directly) are never converted.
+    const mval = (row, base) => {
+        const v = val(row, base);
+        return (v == null || kind !== 'currency') ? v : convertForDisplay(Number(v));
+    };
     const fmtCount = (v) => v == null ? '-' : Number(v).toLocaleString('en-US');
     const fmtMeasure = (v) => v == null ? '-' : (kind === 'count' ? fmtCount(v) : fmt.currency(v));
     const pctFormatter = (v) => v == null ? '-' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`;
@@ -739,7 +746,10 @@ const AttritionReport = () => {
                     if (bucketFilter != null && BUCKETS[bucketFilter]) parts.push(`ytd_${BUCKETS[bucketFilter].label.replace(/[^\w-]+/g, '')}`);
                     // Column spec mirrors the on-screen grid: friendly names,
                     // active metric only, and the same MoM applicability rule.
-                    const m = METRICS[metric].label;
+                    // Money metric columns are labelled (USD) when the executive
+                    // display toggle is converting their values.
+                    const m = METRICS[metric].label
+                        + (METRICS[metric].kind === 'currency' && isUsdDisplay() ? ' (USD)' : '');
                     exportToCSV(filteredData, parts.join('_'), [
                         { label: 'MID', key: 'mid' },
                         { label: 'Merchant Name', key: 'name' },
@@ -752,22 +762,22 @@ const AttritionReport = () => {
                             { label: 'Churn Top Reason', key: 'churnReason' },
                         ] : []),
                         // The grid's fixed columns: classifier months + full prior year.
-                        { label: `${monthCols.m2} ${m}`, getter: r => val(r, 'prev_m2') },
-                        { label: `${monthCols.m1} ${m}`, getter: r => val(r, 'prev_m1') },
-                        { label: `${monthCols.cur} ${m}`, getter: r => val(r, 'cur_month') },
-                        { label: `${prevYear} Full ${m}`, getter: r => val(r, 'py_full') },
+                        { label: `${monthCols.m2} ${m}`, getter: r => mval(r, 'prev_m2') },
+                        { label: `${monthCols.m1} ${m}`, getter: r => mval(r, 'prev_m1') },
+                        { label: `${monthCols.cur} ${m}`, getter: r => mval(r, 'cur_month') },
+                        { label: `${prevYear} Full ${m}`, getter: r => mval(r, 'py_full') },
                         { label: `${prevYear} Margin %`, getter: r => { const p = marginPct(r, 'py_full_msf', 'py_full'); return p == null ? '' : p.toFixed(2); } },
                         { label: `${selectedYear} YTD Margin %`, getter: r => { const p = marginPct(r, 'ytd_current_msf', 'ytd_current'); return p == null ? '' : p.toFixed(2); } },
                         ...(momApplicable ? [
-                            { label: `Prev Month ${m}`, getter: r => val(r, 'mom_prev') },
-                            { label: `Current Month ${m}`, getter: r => val(r, 'mom_current') },
+                            { label: `Prev Month ${m}`, getter: r => mval(r, 'mom_prev') },
+                            { label: `Current Month ${m}`, getter: r => mval(r, 'mom_current') },
                             { label: 'MoM % Change', getter: r => val(r, 'mom_pct') },
                         ] : []),
-                        { label: `Period ${prevYear} ${m}`, getter: r => val(r, 'mtd_prev') },
-                        { label: `Period ${selectedYear} ${m}`, getter: r => val(r, 'mtd_current') },
+                        { label: `Period ${prevYear} ${m}`, getter: r => mval(r, 'mtd_prev') },
+                        { label: `Period ${selectedYear} ${m}`, getter: r => mval(r, 'mtd_current') },
                         { label: 'Period YoY % Change', getter: r => val(r, 'mtd_pct') },
-                        { label: `YTD ${prevYear} ${m}`, getter: r => val(r, 'ytd_prev') },
-                        { label: `YTD ${selectedYear} ${m}`, getter: r => val(r, 'ytd_current') },
+                        { label: `YTD ${prevYear} ${m}`, getter: r => mval(r, 'ytd_prev') },
+                        { label: `YTD ${selectedYear} ${m}`, getter: r => mval(r, 'ytd_current') },
                         { label: 'YTD % Change', getter: r => val(r, 'ytd_pct') },
                     ]);
                 }}

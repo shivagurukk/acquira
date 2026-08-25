@@ -76,7 +76,9 @@ public class ExternalDataApiController {
         List<Object> rowArgs = new ArrayList<>(args);
         rowArgs.add(lim); rowArgs.add(offset);
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT m.merchant_id, m.mid, m.name, m.status, m.mcc, m.city, m.risk_level, " +
+                "SELECT m.merchant_id, m.mid, m.name, m.status, m.city, m.risk_level, " +
+                // MCC lives on the store; a multi-MCC merchant lists all of them.
+                "  (SELECT STRING_AGG(DISTINCT s.mcc, ',' ORDER BY s.mcc) FROM dim_store s WHERE s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id AND s.mcc IS NOT NULL) AS mcc, " +
                 "  (SELECT COUNT(*) FROM dim_store s WHERE s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id) AS store_count " +
                 "FROM dim_merchant m " + where + " ORDER BY m.name ASC LIMIT ? OFFSET ?",
                 rowArgs.toArray());

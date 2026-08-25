@@ -4,7 +4,7 @@
     {
       "name": "backend",
       "runtimeExecutable": "mvn",
-      "runtimeArgs": ["spring-boot:run", "-pl", "acquira-core", "-o"],
+      "runtimeArgs": ["spring-boot:run", "-pl", "acquira-core", "-o", "-Dspring-boot.run.arguments=--spring.sql.init.mode=never"],
       "port": 8081
     },
     {

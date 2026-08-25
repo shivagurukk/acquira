@@ -351,22 +351,35 @@ public class BackfillIngestionService {
                                 COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id),
                                 COALESCE(s.store_id, s2.store_id), t.terminal_id,
                                 stg.arn, stg.rrn_number, stg.card_number, stg.auth_code,
-                                stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type,
-                                stg.card_scheme, stg.card_type, stg.dcc,
+                                -- TXN-TYPE + SCHEME NORMALIZATION (2026-08-24): mirrors the
+                                -- upload path in TransactionJobConfig — BH descriptive types
+                                -- normalize to PURCHASE/REFUND, pre-auths are excluded (WHERE
+                                -- below), and 'No Interchange' becomes 'Benefit QR'.
+                                stg.payment_date, stg.transaction_date, stg.batch_number, tt.norm_type,
+                                sch.norm_scheme, stg.card_type, stg.dcc,
                                 stg.txn_currency, ABS(stg.txn_currency_amount), stg.store_base_currency, ABS(stg.store_base_currency_amount),
                                 -- SIGNED MSF (2026-08-07): refunds net out, same rule as the
                                 -- upload path in TransactionJobConfig — see the comment there.
                                 -- MSF ONLY: vat/interchange stay ABS.
-                                CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND')
+                                CASE WHEN tt.is_refund
                                      THEN -ABS(stg.msf) ELSE ABS(stg.msf) END,
                                 ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination
                             FROM stg_trnx_raw stg
+                            CROSS JOIN LATERAL (SELECT REPLACE(UPPER(TRIM(COALESCE(stg.transaction_type,''))),' ','') AS v) ttr
+                            CROSS JOIN LATERAL (SELECT
+                                (ttr.v IN ('RFND','REFUND','REFUNDREVERSAL','REFUNDVOID','SALEREVERSAL','SALEVOID')) AS is_refund,
+                                CASE WHEN ttr.v IN ('REFUNDREVERSAL','REFUNDVOID','SALEREVERSAL','SALEVOID') THEN 'REFUND'
+                                     WHEN ttr.v IN ('PRE-AUTHORIZATIONCOMPLETION','PREAUTHORIZATIONCOMPLETION','PRE-AUTHCOMPLETION','PREAUTHCOMPLETION') THEN 'PURCHASE'
+                                     ELSE stg.transaction_type END AS norm_type) tt
+                            CROSS JOIN LATERAL (SELECT CASE WHEN REPLACE(UPPER(TRIM(COALESCE(stg.card_scheme,''))),' ','') = 'NOINTERCHANGE'
+                                     THEN 'Benefit QR' ELSE stg.card_scheme END AS norm_scheme) sch
                             LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '')
                             LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '')
                             LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id
                                 AND t.tid = NULLIF(TRIM(stg.tid), '') AND (t.store_id = s.store_id OR s.store_id IS NULL)
                             LEFT JOIN dim_store s2 ON s2.tenant_id = stg.tenant_id AND s2.store_id = t.store_id
                             WHERE stg.tenant_id = ? AND DATE(stg.payment_date) = ?
+                                AND ttr.v NOT IN ('PRE-AUTHORIZATION','PREAUTHORIZATION','PRE-AUTH','PREAUTH')
                         """,
                 tenantId, date);
 
