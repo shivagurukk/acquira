@@ -1556,20 +1556,16 @@ public class TransactionJobConfig {
             // index) AND the exact DATE(...) IN (...) set. Fees off SETTLEMENT
             // amount (store_base_currency_amount), never cardholder amount.
             // =================================================================
-            int feeRows = jdbcTemplate.update(
-                "UPDATE fact_transaction f SET " +
-                "  interchange_fee = r.computed_ic, " +
-                "  scheme_fee      = r.computed_scheme, " +
-                "  ecom_fee        = r.computed_ecom, " +
-                "  channel                  = r.channel, " +
-                "  fee_resolution_status    = r.status, " +
-                "  scheme_fee_status        = r.sf_status, " +
-                "  interchange_rule_id      = r.ic_rule_id, " +
-                "  scheme_fee_rule_id       = r.sf_rule_id, " +
-                "  interchange_pct_applied  = r.ic_pct, " +
-                "  interchange_flat_applied = r.ic_flat, " +
-                "  interchange_cap_applied  = r.ic_cap " +
-                "FROM ( " +
+            // TWO-PHASE APPLY (2026-08-26): resolve first into a session temp table,
+            // then UPDATE via a plain keyed join. As a single UPDATE-with-subquery the
+            // planner is free to pick a join strategy that re-executes parts of the
+            // rate-resolution subquery per outer row; measured live (UAT, BH re-ingest)
+            // the resolution SELECT costs ~28s per 300k-row day, yet the combined
+            // UPDATE ran for hours. Splitting pins the plan: the SELECT runs exactly
+            // once (and CTAS may parallelize it), the UPDATE is a hash join on
+            // (transaction_id, payment_date). Phase timings are logged separately so
+            // resolve cost vs apply/write cost is visible in production logs.
+            final String feeResolveSelect =
                 "  SELECT ft.transaction_id, ft.payment_date, ch.channel, " +
                 // REFUND RULE (2026-07-08, business-confirmed): refunds carry ZERO
                 // interchange and ZERO scheme fee. Feed transaction_type = 'RFND'.
@@ -1797,17 +1793,44 @@ public class TransactionJobConfig {
                 "      AND (e.tenant_id IS NULL OR e.tenant_id = ft.tenant_id) " +
                 "    ORDER BY (e.tenant_id IS NOT NULL) DESC LIMIT 1 " +
                 "  ) eff ON TRUE " +
-                "  WHERE ft.tenant_id = ? AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope +
-                " ) r " +
+                // CREATE TABLE AS is a utility statement, so no bind parameters:
+                // tenantId is inlined (a Long from job parameters, never user text).
+                "  WHERE ft.tenant_id = " + tenantId + " AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope;
+
+            // No ON COMMIT DROP: works whether or not this tasklet's statements share
+            // a transaction. Explicitly dropped below; the IF EXISTS guard also clears
+            // a leftover from a previous job on the same pooled connection.
+            jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fee_resolve");
+            jdbcTemplate.execute("CREATE TEMP TABLE tmp_fee_resolve AS " + feeResolveSelect);
+            jdbcTemplate.execute("ANALYZE tmp_fee_resolve");
+            long tFeeApply = System.currentTimeMillis();
+            log.info(String.format("Fee resolution (phase 1, temp table): %.1fs",
+                (tFeeApply - tFee) / 1000.0));
+            int feeRows = jdbcTemplate.update(
+                "UPDATE fact_transaction f SET " +
+                "  interchange_fee = r.computed_ic, " +
+                "  scheme_fee      = r.computed_scheme, " +
+                "  ecom_fee        = r.computed_ecom, " +
+                "  channel                  = r.channel, " +
+                "  fee_resolution_status    = r.status, " +
+                "  scheme_fee_status        = r.sf_status, " +
+                "  interchange_rule_id      = r.ic_rule_id, " +
+                "  scheme_fee_rule_id       = r.sf_rule_id, " +
+                "  interchange_pct_applied  = r.ic_pct, " +
+                "  interchange_flat_applied = r.ic_flat, " +
+                "  interchange_cap_applied  = r.ic_cap " +
+                "FROM tmp_fee_resolve r " +
                 // PERF (2026-08-26): the outer f needs its own sargable payment_date
                 // range. The join equality f.payment_date = r.payment_date does NOT
-                // prune partitions at plan time (r is a subquery, not a constant), so
-                // under a hash/merge join Postgres scanned EVERY partition of
-                // fact_transaction for the tenant — seen live in UAT as a single fee
-                // UPDATE running 2h45m+. Same pattern as the store/terminal UPDATEs.
+                // prune partitions at plan time (r is not a constant), so without it a
+                // hash/merge join scans EVERY partition of fact_transaction for the
+                // tenant — seen live in UAT as a single fee UPDATE running 2h45m+.
                 "WHERE f.tenant_id = ? AND " + rngF +
                 "f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
-                tenantId, tenantId);
+                tenantId);
+            jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fee_resolve");
+            log.info(String.format("Fee apply (phase 2, keyed UPDATE): %.1fs",
+                (System.currentTimeMillis() - tFeeApply) / 1000.0));
             log.info(String.format("Fee computation (single-pass): %d rows in %.1fs",
                 feeRows, (System.currentTimeMillis() - tFee) / 1000.0));
 
