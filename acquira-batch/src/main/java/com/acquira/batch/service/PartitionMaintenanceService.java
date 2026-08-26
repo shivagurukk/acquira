@@ -188,20 +188,22 @@ public class PartitionMaintenanceService {
         String partitionName = prefix + suffix;
 
         try {
-            // CREATE TABLE ... PARTITION OF takes ACCESS EXCLUSIVE on the parent, and
-            // the Hikari pool opens every connection with lock_timeout = 0 (see
-            // connection-init-sql) — so without this the very first step of every
-            // transaction job can wait for that lock forever, with nothing in the
-            // application able to break it. SET LOCAL is scoped to this REQUIRES_NEW
-            // transaction, leaving the unbounded default in place for the long ingest
-            // steps that genuinely need it.
-            jdbcTemplate.execute("SET LOCAL lock_timeout = '" + DDL_LOCK_TIMEOUT + "'");
-
             Boolean exists = jdbcTemplate.queryForObject(
                     "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE tablename = ?)",
                     Boolean.class, partitionName.toLowerCase());
 
             if (Boolean.FALSE.equals(exists)) {
+                // CREATE TABLE ... PARTITION OF (and the ALTER TABLE tuning that follows)
+                // take ACCESS EXCLUSIVE on the parent, and the Hikari pool opens every
+                // connection with lock_timeout = 0 (see connection-init-sql) — so without
+                // this the very first step of every transaction job can wait for that lock
+                // forever, with nothing in the application able to break it. SET LOCAL is
+                // scoped to this REQUIRES_NEW transaction, leaving the unbounded default in
+                // place for the long ingest steps that genuinely need it. Issued only on
+                // the create path so the cached "already exists" path stays at zero extra
+                // round-trips.
+                jdbcTemplate.execute("SET LOCAL lock_timeout = '" + DDL_LOCK_TIMEOUT + "'");
+
                 log.info("Creating partition {} for table {}", partitionName, table);
                 String sql = String.format(
                         "CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM ('%s') TO ('%s')",

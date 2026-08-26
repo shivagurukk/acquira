@@ -191,7 +191,7 @@ const UploadPage = () => {
                         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
                         <FinancialLoader />
                         </div>
-                        {jobDetails.currentStep && (
+                        {jobDetails.currentStep ? (
                         <div style={{
                         textAlign: 'center', marginBottom: 14,
                         fontSize: '0.9rem', fontWeight: 600, color: 'var(--text,#111827)',
@@ -202,6 +202,20 @@ const UploadPage = () => {
                         {' '}· step {jobDetails.stepNumber} of {jobDetails.totalSteps}
                         </span>
                         : null}
+                        </div>
+                        ) : (
+                        /* No step executions yet: the job is accepted but waiting for a
+                           batch slot. Say so — msg is only rendered in the error state, so
+                           without this the queued case shows a bare spinner at 0% and reads
+                           as a hang. */
+                        <div style={{
+                        textAlign: 'center', marginBottom: 14,
+                        fontSize: '0.9rem', fontWeight: 600, color: 'var(--text,#111827)',
+                        }}>
+                        Queued
+                        <span style={{ display: 'block', marginTop: 4, fontSize: '0.78rem', fontWeight: 500, color: 'var(--text-muted,#9ca3af)' }}>
+                        Waiting for a free batch slot — check Batch Monitoring for jobs already running.
+                        </span>
                         </div>
                         )}
                         <StageTracker stages={stages} currentStepName={jobDetails.currentStep} stepNumber={jobDetails.stepNumber} totalSteps={jobDetails.totalSteps} progress={uploadPercent} />
