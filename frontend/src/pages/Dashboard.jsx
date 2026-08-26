@@ -94,24 +94,6 @@ const fullNum = (v, sym = '') => {
 
 const safeDiv = (a, b) => (num(b) === 0 ? 0 : num(a) / num(b));
 
-/* ─── Money figure — de-emphasised currency code ───
-   "USD 328.1K" renders with the ISO code small and muted so the numerals
-   carry the weight, the way an annual report sets units. Non-money strings
-   (percentages, counts) pass through untouched. */
-const Fig = ({ children }) => {
-    const m = typeof children === 'string' && children.match(/^([A-Z]{3})\s+(.*)$/);
-    if (!m) return children;
-    return (
-        <>
-            {/* Inherits the figure's colour at reduced opacity, so the unit
-                reads muted on navy AND on the white-on-gradient hero tiles. */}
-            <span style={{ fontSize: '0.52em', fontWeight: 600, color: 'inherit', opacity: 0.62,
-                letterSpacing: '0.06em', marginRight: 6 }}>{m[1]}</span>
-            {m[2]}
-        </>
-    );
-};
-
 /* Cost line as a rate on volume — same basis as the blended MSF take rate,
    so the fee columns are directly comparable against it. Scheme/ECOM land in
    the hundredths of a percent, so 2dp would flatten them to 0.05 vs 0.10;
@@ -125,16 +107,10 @@ const ratePctTitle = (fee, volume) =>
 /* ─── Delta chip ─── */
 const DeltaChip = ({ pct, compareLabel, invert, suffix = '%' }) => {
     if (pct === null) return null; // explicitly suppressed (e.g. filtered view)
-    // A five- or six-figure percentage means the prior-period base was near
-    // zero (partial month, fresh tenant) — "+437100%" is noise, not insight.
-    // Render the neutral chip instead of an absurd figure.
-    const absurd = pct !== undefined && Math.abs(pct) > 500;
-    if (pct === undefined || absurd) {
-        // no meaningful baseline to compare against — neutral dash, not hidden
+    if (pct === undefined) {
+        // no prior-period baseline to compare against — neutral dash, not hidden
         return (
-            <span title={absurd
-                ? 'Prior-period base too small for a meaningful % change'
-                : (compareLabel || 'No prior-period data')} style={{
+            <span title={compareLabel || 'No prior-period data'} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
                 fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
                 background: 'var(--bg-subtle)', fontFamily: 'var(--font-mono)',
@@ -148,14 +124,13 @@ const DeltaChip = ({ pct, compareLabel, invert, suffix = '%' }) => {
     const good = invert ? pct <= 0 : pct >= 0;    // for costs, down is good
     const color = good ? 'var(--success-text)' : 'var(--danger-text)';
     const bg = good ? 'var(--success-bg)' : 'var(--danger-bg)';
-    const edge = good ? 'var(--success-border)' : 'var(--danger-border)';
     const Icon = pct >= 0 ? TrendingUp : TrendingDown;
     return (
         <span title={compareLabel} style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             fontSize: 12, fontWeight: 600, color, background: bg,
             fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
-            border: `1px solid ${edge}`,
+            border: `1px solid color-mix(in srgb, ${color} 26%, transparent)`,
             borderRadius: 999, padding: '2px 9px', whiteSpace: 'nowrap',
         }}>
             <Icon size={12} className={pct >= 0 ? 'dx-arrow-up' : 'dx-arrow-down'} />
@@ -188,14 +163,12 @@ const Sparkline = ({ points, color, sparkId, height = 34, width = 120 }) => {
                     <stop offset="100%" stopColor={color} stopOpacity="0" />
                 </linearGradient>
             </defs>
-            <path d={area} fill={`url(#${gid})`} className="dx-spark-area" />
-            <path d={line} fill="none" stroke={color} strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round"
-                pathLength="1" className="dx-spark-line" />
-            {/* Halo + dot on the latest point — the "live" read; arrives with
-                the area fade, after the line has drawn to it. */}
-            <circle cx={lastX} cy={lastY} r="5" fill={color} className="dx-spark-halo" />
-            <circle cx={lastX} cy={lastY} r="2.6" fill={color} className="dx-spark-area" />
+            <path d={area} fill={`url(#${gid})`} />
+            <path d={line} fill="none" stroke={color} strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" />
+            {/* Halo + dot on the latest point — the "live" read. */}
+            <circle cx={lastX} cy={lastY} r="5" fill={color} opacity="0.18" />
+            <circle cx={lastX} cy={lastY} r="2.6" fill={color} />
         </svg>
     );
 };
@@ -226,15 +199,12 @@ const useCountUp = (target, duration = 900) => {
     return value;
 };
 
-/* ─── Primary hero tile — executive pastel ground, navy numerals ───
-   Same visual grammar as the insight pills: a visibly tinted surface
-   (`grad`), a matching tinted border (`edge`), one saturated element (the
-   solid accent icon chip), and dark-navy figures. The fill goes through
-   the --dx-card-grid TOKEN (never inline `background`) so the .dx-card
-   border layers survive; `edge` overrides --border on this element only,
-   so the whole hairline frame takes the tile's hue. */
+/* ─── Primary hero tile — big value + sparkline ───
+   `raw` + `format` (rather than a pre-rendered string) so the figure can
+   count up on load; `sparkId` keys the gradient because `accent` is now a
+   CSS custom property, not a hex. */
 const HeroTile = ({ label, raw, format, fullValue, deltaPct: dp, deltaSuffix, compareLabel, invertDelta,
-    icon: Icon, accent, grad, edge, spark, sparkId, sub, index = 0 }) => {
+    icon: Icon, accent, spark, sparkId, sub, index = 0 }) => {
     const shown = useCountUp(raw);
     return (
         <div className="dx-card dx-edge dx-rise hero-tile"
@@ -243,32 +213,22 @@ const HeroTile = ({ label, raw, format, fullValue, deltaPct: dp, deltaSuffix, co
                 padding: '20px 20px 14px', minWidth: 0,
                 display: 'flex', flexDirection: 'column', gap: 8,
                 animationDelay: `${index * 70}ms`,
-                // Accent signature line along the top.
-                '--grad-edge': `linear-gradient(90deg, transparent 0%, ${accent} 50%, transparent 100%)`,
-                '--dx-card-grid': `${grad} padding-box`,
-                '--border': edge,
-                '--dx-sweep': `color-mix(in srgb, ${accent} 45%, ${edge})`,
-                '--spark-glow': `color-mix(in srgb, ${accent} 60%, transparent)`,
-                boxShadow: `0 10px 28px -12px color-mix(in srgb, ${accent} 35%, transparent), var(--shadow-card)`,
             }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
                 <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.09em',
                     textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{label}</span>
-                {/* The one saturated element: a solid accent chip, white glyph. */}
-                <span className="hero-ico" style={{ display: 'inline-flex', padding: 7, borderRadius: 10,
-                    background: accent,
-                    boxShadow: `0 3px 10px -2px color-mix(in srgb, ${accent} 55%, transparent)`,
-                    transition: 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)' }}>
-                    <Icon size={15} style={{ color: '#FFFFFF' }} />
+                <span style={{ display: 'inline-flex', padding: 7, borderRadius: 10,
+                    background: `color-mix(in srgb, ${accent} 12%, transparent)`,
+                    border: `1px solid color-mix(in srgb, ${accent} 22%, transparent)` }}>
+                    <Icon size={15} style={{ color: accent }} />
                 </span>
             </div>
             <div title={fullValue} style={{
                 fontSize: 30, fontWeight: 650, color: 'var(--text)',
-                textShadow: `0 0 22px color-mix(in srgb, ${accent} 20%, transparent)`,
                 fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
                 lineHeight: 1.05, letterSpacing: '-0.02em', position: 'relative',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}><Fig>{format(shown)}</Fig></div>
+            }}>{format(shown)}</div>
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, position: 'relative' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 38, justifyContent: 'flex-end' }}>
                     <DeltaChip pct={dp} compareLabel={compareLabel} invert={invertDelta} suffix={deltaSuffix} />
@@ -280,29 +240,17 @@ const HeroTile = ({ label, raw, format, fullValue, deltaPct: dp, deltaSuffix, co
     );
 };
 
-/* ─── Secondary metric cell (hairline rail) ───
-   `accent` is the fee category's chart hue: it colours the icon only, so
-   each cell carries its series identity while the card stays white and
-   the figures stay navy. */
-const RailMetric = ({ label, value, fullValue, sub, subTitle, deltaPct: dp, compareLabel, invertDelta, icon: Icon, hint, accent }) => (
-    <div style={{ padding: '14px 18px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6,
-        // Each cell is a visible wash of its fee family's hue, anchored by
-        // a 3px accent bar on the left — six distinct categories at a
-        // glance, figures still navy for uniform scanning.
-        background: accent
-            ? `linear-gradient(180deg,
-                color-mix(in srgb, ${accent} 8%, var(--bg-card)) 0%,
-                color-mix(in srgb, ${accent} 2%, var(--bg-card)) 100%)`
-            : undefined,
-        boxShadow: accent ? `inset 3px 0 0 ${accent}` : undefined }}>
+/* ─── Secondary metric cell (hairline rail) ─── */
+const RailMetric = ({ label, value, fullValue, sub, subTitle, deltaPct: dp, compareLabel, invertDelta, icon: Icon, hint }) => (
+    <div style={{ padding: '14px 18px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em',
             textTransform: 'uppercase', color: 'var(--text-secondary)',
             display: 'inline-flex', alignItems: 'center', gap: 5 }} title={hint}>
-            <Icon size={12} style={accent ? { color: accent } : { opacity: 0.65 }} />{label}
+            <Icon size={12} style={{ opacity: 0.65 }} />{label}
         </span>
         <span title={fullValue} style={{ fontSize: 17.5, fontWeight: 600, color: 'var(--text)',
             fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><Fig>{value}</Fig></span>
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
         {sub && (
             <span title={subTitle} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)',
                 fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', marginTop: -3,
@@ -314,23 +262,22 @@ const RailMetric = ({ label, value, fullValue, sub, subTitle, deltaPct: dp, comp
     </div>
 );
 
-/* ─── Insight pill — flat semantic wash + matched border (status-card
-   palette: green / amber / red / blue, mirroring the DeltaChip family) ─── */
-const InsightPill = ({ icon: Icon, tone, title, value, index = 0 }) => {
+/* ─── Insight pill — tinted gradient wash, stronger at the icon end ─── */
+const InsightPill = ({ icon: Icon, tone, title, value }) => {
     const tones = {
-        good: { c: 'var(--success-text)', bg: 'var(--success-bg)', b: 'var(--success-border)' },
-        warn: { c: 'var(--warning-text)', bg: 'var(--warning-bg)', b: 'var(--warning-border)' },
-        bad:  { c: 'var(--danger-text)',  bg: 'var(--danger-bg)',  b: 'var(--danger-border)' },
-        info: { c: 'var(--info-text)',    bg: 'var(--info-bg)',    b: 'var(--info-border)' },
+        good: { c: 'var(--success-text)', g: 'var(--success)' },
+        bad: { c: 'var(--danger-text)', g: 'var(--danger)' },
+        info: { c: 'var(--primary)', g: 'var(--primary)' },
     };
     const t = tones[tone] || tones.info;
     return (
-        <div className="dx-rise insight-pill"
-            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px',
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px',
             borderRadius: 'var(--radius-lg)', minWidth: 0,
-            animationDelay: `${340 + index * 90}ms`,
-            background: t.bg,
-            border: `1px solid ${t.b}` }}>
+            background: `linear-gradient(105deg,
+                color-mix(in srgb, ${t.g} 22%, var(--bg-card)) 0%,
+                color-mix(in srgb, ${t.g} 10%, var(--bg-card)) 45%,
+                color-mix(in srgb, ${t.g} 3%, var(--bg-card)) 100%)`,
+            border: `1px solid color-mix(in srgb, ${t.c} 20%, transparent)` }}>
             <Icon size={16} style={{ color: t.c, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em',
@@ -629,11 +576,8 @@ const Dashboard = () => {
     /* Money columns carry the tenant currency in the header (once) instead of
        on every cell — a 13-column table repeating "BHD" 7 times per row is
        noise. `ccy: true` renders the code next to the label; when the tenant
-       currency is unknown the suffix is simply omitted (never invented).
-       Must go through displayCurrencyCode: with the executive USD toggle on,
-       the cell values are converted, so a raw "(BHD)" header would mislabel
-       every money column. */
-    const headCcy = displayCurrencyCode(currencyCode) || currencySymbol || null;
+       currency is unknown the suffix is simply omitted (never invented). */
+    const headCcy = currencyCode || currencySymbol || null;
     const TABLE_HEADS = [
         { label: mode === 'MTD' ? 'Week' : 'Month' },
         { label: 'Transactions' },
@@ -659,76 +603,38 @@ const Dashboard = () => {
                 .exec-row:hover { background: var(--bg-hover); }
                 .seg-btn { border: none; cursor: pointer; border-radius: 8; }
 
-                /* Icon chip answers the tile hover with a small tilt-scale. */
-                .hero-tile:hover .hero-ico { transform: scale(1.12) rotate(-4deg); }
-
-                /* Selected period tab: the blue gradient slowly breathes
-                   side-to-side — a live control, not a static fill. */
-                @keyframes dxGradShift {
-                    0%, 100% { background-position: 0% 50%; }
-                    50%      { background-position: 100% 50%; }
-                }
-                .mode-tab-on {
-                    background-size: 220% 220% !important;
-                    animation: dxGradShift 5s ease infinite;
-                }
-
-                /* Insight pills answer hover with a light lift. */
-                .insight-pill { transition: transform 200ms ease, box-shadow 200ms ease; }
-                .insight-pill:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
-
-                @media (prefers-reduced-motion: reduce) {
-                    .hero-tile:hover .hero-ico { transform: none; }
-                    .mode-tab-on { animation: none; }
-                    .insight-pill, .insight-pill:hover { transform: none; transition: none; }
-                    .exec-row { animation: none; }
-                    .total-band { animation: none; }
-                }
-
-                /* ── Executive light ambience ──
-                   1. a whisper of blueprint grid under the KPI band, fading
-                      out below the fold — texture, not pattern;
-                   2. a white-light sheen on each card — a crisp lit top edge
-                      so panels read as polished glass on the gradient page.
-                      Dark scheme keeps the geometry at moonlight intensity. */
+                /* ── Executive light pass ──
+                   Pure white-light overlays: not a single hue on the page
+                   changes, the surfaces are simply *lit*. Two layers:
+                   1. a daylight bloom falling from the top of the page, so
+                      the canvas brightens toward the headline and KPIs;
+                   2. a glass sheen on each card — a crisp lit top edge plus
+                      a soft interior glow confined to the upper rim, so the
+                      panels read as polished instrument glass, never a veil
+                      over the content. Dark mode keeps the same geometry at
+                      moonlight intensity. */
                 .exec-lume::before {
-                    content: ''; position: absolute; inset: 0 0 auto 0; height: 480px;
+                    content: ''; position: absolute; inset: 0 0 auto 0; height: 460px;
                     pointer-events: none;
-                    background-image:
-                        linear-gradient(to right, rgba(47,94,168,0.045) 1px, transparent 1px),
-                        linear-gradient(to bottom, rgba(47,94,168,0.045) 1px, transparent 1px);
-                    background-size: 44px 44px;
-                    -webkit-mask-image: radial-gradient(85% 90% at 50% 0%, #000 0%, transparent 80%);
-                    mask-image: radial-gradient(85% 90% at 50% 0%, #000 0%, transparent 80%);
+                    background: radial-gradient(72% 100% at 50% 0%,
+                        rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.18) 45%, transparent 72%);
+                }
+                html.dark .exec-lume::before {
+                    background: radial-gradient(72% 100% at 50% 0%,
+                        rgba(255,255,255,0.05) 0%, transparent 65%);
                 }
                 .exec-lume .dx-card::after {
                     content: ''; position: absolute; inset: 0; border-radius: inherit;
                     pointer-events: none;
                     box-shadow:
                         inset 0 1px 0 rgba(255,255,255,0.85),
-                        inset 0 24px 28px -24px rgba(255,255,255,0.75);
+                        inset 0 26px 30px -26px rgba(255,255,255,0.95);
                 }
                 html.dark .exec-lume .dx-card::after {
                     box-shadow:
-                        inset 0 1px 0 rgba(255,255,255,0.12),
-                        inset 0 24px 28px -24px rgba(255,255,255,0.08);
+                        inset 0 1px 0 rgba(255,255,255,0.14),
+                        inset 0 26px 30px -26px rgba(255,255,255,0.10);
                 }
-                /* Luminous sparkline — each tile sets --spark-glow to its hue. */
-                .hero-tile .dx-spark-line {
-                    filter: drop-shadow(0 0 5px var(--spark-glow, transparent));
-                }
-
-                /* ── Table motion ──
-                   Rows cascade in (per-row delay set inline); the margin bars
-                   inside them then stretch via their own width transition.
-                   The navy totals band breathes its gradient like the
-                   selected period tab — the table's live closing bar. */
-                @keyframes dxRowIn {
-                    from { opacity: 0; transform: translateX(-8px); }
-                    to   { opacity: 1; transform: none; }
-                }
-                .exec-row { animation: dxRowIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
-                .total-band { animation: dxGradShift 8s ease infinite; }
             `}</style>
 
             {/* ── Header ── */}
@@ -755,13 +661,7 @@ const Dashboard = () => {
                             progress — Last Year is a closed year. */}
                         {data?.effectiveDate && mode !== 'LAST_YEAR' ? ` · through ${data.effectiveDate}` : ''}
                         <span style={{ color: 'var(--border)' }}>·</span>
-                        {/* USD toggle active → every figure on the page is converted;
-                            say so instead of claiming settlement currency. */}
-                        {isUsdDisplay(currencyCode)
-                            ? <span title={(() => { const fx = usdRateInfo(currencyCode); return fx ? `1 ${fx.base} = ${fx.rate} USD · indicative, as of ${fx.asOf}` : ''; })()}>
-                                USD · indicative FX
-                              </span>
-                            : 'settlement currency'}
+                        settlement currency
                         {isFiltered && viewData.length > 0 && (
                             <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700,
                                 fontFamily: 'var(--font-mono)',
@@ -814,13 +714,12 @@ const Dashboard = () => {
                     <div style={{ display: 'inline-flex', background: 'var(--bg-subtle)',
                         border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
                         {MODES.map(m => (
-                            <button key={m.key} onClick={() => setMode(m.key)}
-                                className={mode === m.key ? 'mode-tab-on' : undefined} style={{
+                            <button key={m.key} onClick={() => setMode(m.key)} style={{
                                 border: 'none', cursor: 'pointer', borderRadius: 999,
                                 padding: '6px 16px', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
                                 background: mode === m.key ? 'var(--grad-primary)' : 'transparent',
                                 color: mode === m.key ? '#fff' : 'var(--text-secondary)',
-                                boxShadow: mode === m.key ? '0 2px 8px rgba(47, 94, 168, 0.28)' : 'none',
+                                boxShadow: mode === m.key ? '0 2px 8px rgba(164, 78, 31,0.28)' : 'none',
                                 transition: 'background 200ms, color 200ms, box-shadow 200ms',
                             }}>{m.label}</button>
                         ))}
@@ -843,26 +742,21 @@ const Dashboard = () => {
                     description="No transactions found for this period yet. Upload data to populate the dashboard." />
             ) : (
                 <>
-                    {/* ── Primary hero band (4 tiles, sparkline shape) ──
-                        Keyed by mode: switching MTD/YTD/Last Year remounts the
-                        band, replaying the rise, count-up and sparkline draw. */}
-                    <div key={`heroes-${mode}`} style={{ display: 'grid', gap: 14, marginBottom: 14,
+                    {/* ── Primary hero band (4 tiles, sparkline shape) ── */}
+                    <div style={{ display: 'grid', gap: 14, marginBottom: 14,
                         gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
-                        <HeroTile label="Volume" icon={BarChart3} accent="var(--kpi-volume)"
-                            grad="var(--kpi-volume-grad)" edge="var(--kpi-volume-edge)" sparkId="volume" index={0}
+                        <HeroTile label="Volume" icon={BarChart3} accent="var(--chart-3)" sparkId="volume" index={0}
                             raw={num(vt.volume)} format={(v) => fmt.currency(v)}
                             fullValue={fullNum(vt.volume, currencySymbol)}
                             deltaPct={dpg(vt.volume, prev?.volume)} compareLabel={compareLabel}
                             spark={sparks.volume}
                             sub={`${num(vt.txns).toLocaleString()} transactions`} />
-                        <HeroTile label="Net Margin" icon={TrendingUp} accent="var(--kpi-margin)"
-                            grad="var(--kpi-margin-grad)" edge="var(--kpi-margin-edge)" sparkId="netrev" index={1}
+                        <HeroTile label="Net Margin" icon={TrendingUp} accent="var(--chart-3)" sparkId="netrev" index={1}
                             raw={num(vt.netRevenue)} format={(v) => fmt.currency(v)}
                             fullValue={fullNum(vt.netRevenue, currencySymbol)}
                             deltaPct={dpg(vt.netRevenue, prev?.netRevenue)} compareLabel={compareLabel}
                             spark={sparks.netRevenue} />
-                        <HeroTile label="Net Margin %" icon={Percent} accent="var(--kpi-marginpct)"
-                            grad="var(--kpi-marginpct-grad)" edge="var(--kpi-marginpct-edge)" sparkId="marginpct" index={2}
+                        <HeroTile label="Net Margin %" icon={Percent} accent="var(--chart-3)" sparkId="marginpct" index={2}
                             raw={num(vt.marginPct)} format={(v) => `${v.toFixed(2)}%`}
                             fullValue={`${num(vt.marginPct).toFixed(4)}% of volume`}
                             deltaPct={isFiltered ? null
@@ -871,8 +765,7 @@ const Dashboard = () => {
                             deltaSuffix="" compareLabel={compareLabel}
                             spark={sparks.marginPct}
                             sub="net margin / volume" />
-                        <HeroTile label="Transactions" icon={Receipt} accent="var(--kpi-txns)"
-                            grad="var(--kpi-txns-grad)" edge="var(--kpi-txns-edge)" sparkId="txns" index={3}
+                        <HeroTile label="Transactions" icon={Receipt} accent="var(--chart-3)" sparkId="txns" index={3}
                             raw={num(vt.txns)} format={(v) => fmt.number(Math.round(v))}
                             fullValue={fullNum(vt.txns)}
                             deltaPct={dpg(vt.txns, prev?.txns)} compareLabel={compareLabel}
@@ -882,15 +775,15 @@ const Dashboard = () => {
 
                     {/* ── Secondary metric rail (fees + derived KPIs) ── */}
                     {derived && (
-                        <div key={`rail-${mode}`} className="rail-grid dx-card dx-rise" style={{
+                        <div className="rail-grid dx-card dx-rise" style={{
                             marginBottom: 14, overflow: 'hidden', animationDelay: '280ms',
                         }}>
-                            <RailMetric label="MSF" icon={Wallet} accent="var(--chart-3)"
+                            <RailMetric label="MSF" icon={Wallet}
                                 value={fmt.currency(num(vt.msf))}
                                 fullValue={formatMsf(vt.msf, currencySymbol)}
                                 deltaPct={dpg(vt.msf, prev?.msf)} compareLabel={compareLabel}
                                 hint="Merchant service fee billed" />
-                            <RailMetric label="MSF Rate" icon={Sigma} accent="var(--primary-soft)"
+                            <RailMetric label="MSF Rate" icon={Sigma}
                                 value={`${derived.msfRate.toFixed(3)}%`}
                                 fullValue={`${derived.msfRate.toFixed(4)}% of volume (blended take rate)`}
                                 deltaPct={isFiltered ? null
@@ -898,7 +791,7 @@ const Dashboard = () => {
                                         ? derived.msfRate - derived.prevMsfRate : undefined)}
                                 compareLabel={`${compareLabel} (pp change)`}
                                 hint="Blended take rate: MSF / volume" />
-                            <RailMetric label="Interchange" icon={ArrowDownRight} accent="var(--mix-interchange)"
+                            <RailMetric label="Interchange" icon={ArrowDownRight}
                                 value={fmt.currency(num(vt.interchange))}
                                 fullValue={fullNum(vt.interchange, currencySymbol)}
                                 sub={`${derived.interchangeRate.toFixed(3)}%`}
@@ -906,7 +799,7 @@ const Dashboard = () => {
                                 deltaPct={dpg(vt.interchange, prev?.interchange)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Paid to issuers" />
-                            <RailMetric label="Scheme Fee" icon={Layers} accent="var(--attention)"
+                            <RailMetric label="Scheme Fee" icon={Layers}
                                 value={fmt.currency(num(vt.schemeFee))}
                                 fullValue={fullNum(vt.schemeFee, currencySymbol)}
                                 sub={`${derived.schemeRate.toFixed(3)}%`}
@@ -914,13 +807,13 @@ const Dashboard = () => {
                                 deltaPct={dpg(vt.schemeFee, prev?.schemeFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Paid to card schemes" />
-                            <RailMetric label="PG Fee" icon={Globe} accent="var(--mix-pg)"
+                            <RailMetric label="PG Fee" icon={Globe}
                                 value={fmt.currency(num(vt.ecomFee))}
                                 fullValue={fullNum(vt.ecomFee, currencySymbol)}
                                 deltaPct={dpg(vt.ecomFee, prev?.ecomFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Payment gateway fees" />
-                            <RailMetric label="Total Charges" icon={Scale} accent="var(--danger)"
+                            <RailMetric label="Total Charges" icon={Scale}
                                 value={fmt.currency(derived.fees)}
                                 fullValue={fullNum(derived.fees, currencySymbol)}
                                 sub={`${derived.feesRate.toFixed(3)}%`}
@@ -934,27 +827,23 @@ const Dashboard = () => {
 
                     {/* ── Insight strip ── */}
                     {(bestIdx >= 0 || momentum || (mode === 'MTD' && runRate && num(runRate.elapsedDays) > 0)) && (
-                        <div key={`pills-${mode}`} style={{ display: 'grid', gap: 10, marginBottom: 22,
+                        <div style={{ display: 'grid', gap: 10, marginBottom: 22,
                             gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
                             {bestIdx >= 0 && (
-                                <InsightPill icon={Award} tone="good" title="Best margin" index={0}
+                                <InsightPill icon={Award} tone="good" title="Best margin"
                                     value={`${viewData[bestIdx].label} · ${viewData[bestIdx].marginPct.toFixed(2)}%`} />
                             )}
                             {worstIdx >= 0 && worstIdx !== bestIdx && (
-                                <InsightPill icon={AlertTriangle} tone="bad" title="Weakest margin" index={1}
+                                <InsightPill icon={AlertTriangle} tone="bad" title="Weakest margin"
                                     value={`${viewData[worstIdx].label} · ${viewData[worstIdx].marginPct.toFixed(2)}%`} />
                             )}
                             {momentum && momentum.pct != null && (
-                                <InsightPill icon={Zap}
-                                    /* Business-impact colour: growth green, mild
-                                       softening amber, only a material drop red. */
-                                    tone={momentum.pct >= 0 ? 'good' : momentum.pct > -10 ? 'warn' : 'bad'}
-                                    index={2}
+                                <InsightPill icon={Zap} tone={momentum.pct >= 0 ? 'good' : 'bad'}
                                     title={`Momentum · ${momentum.before} → ${momentum.last}`}
                                     value={`${momentum.pct >= 0 ? '+' : ''}${momentum.pct.toFixed(1)}% volume`} />
                             )}
                             {mode === 'MTD' && runRate && num(runRate.elapsedDays) > 0 && (
-                                <InsightPill icon={CalendarRange} tone="info" index={3}
+                                <InsightPill icon={CalendarRange} tone="info"
                                     title={`Run-rate · day ${runRate.elapsedDays}/${runRate.daysInMonth}`}
                                     value={`${fmt.currency(num(runRate.projectedVolume))} vol · ${fmt.currency(num(runRate.projectedNetRevenue))} margin`} />
                             )}
@@ -977,18 +866,14 @@ const Dashboard = () => {
                                 axis, Net Margin % line on the right (%) axis. */}
                             <ResponsiveContainer width="100%" height={344}>
                                 <ComposedChart data={viewData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                                    {/* Near-solid bar body: the old 0.25 tail made the
-                                        bars dissolve into the card at the baseline. */}
-                                    <ChartGradients series={{ volume: C.volume }} from={1} to={0.62} />
+                                    <ChartGradients series={{ volume: C.volume }} from={0.95} to={0.25} />
                                     <CartesianGrid {...GRID_PROPS} />
                                     <XAxis dataKey="label" {...AXIS_PROPS} />
                                     {/* Money axis — carries the tenant currency. */}
                                     <YAxis yAxisId="vol" tickFormatter={(v) => fmt.currency(v)}
                                         {...AXIS_PROPS} width={PANEL_Y_WIDTH} />
-                                    {/* 2dp: at 1dp adjacent ticks rounded to the same
-                                        label ("0.1% / 0.1%") on thin-margin books. */}
                                     <YAxis yAxisId="pct" orientation="right"
-                                        tickFormatter={(v) => `${v.toFixed(2)}%`}
+                                        tickFormatter={(v) => `${v.toFixed(1)}%`}
                                         {...AXIS_PROPS} width={48} />
                                     <ReTooltip content={<BucketTooltip fmt={fmt} />}
                                         cursor={{ fill: 'color-mix(in srgb, var(--primary) 7%, transparent)' }} />
@@ -1024,7 +909,7 @@ const Dashboard = () => {
                                 <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                                     {/* Gradient bodies for each stack segment; `to` stays high
                                         so no segment fades out mid-stack. */}
-                                    <ChartGradients from={1} to={0.82} series={{
+                                    <ChartGradients from={0.95} to={0.5} series={{
                                         netRevenue: C.netRevenue,
                                         interchange: C.interchange,
                                         schemeFee: C.schemeFee,
@@ -1077,9 +962,8 @@ const Dashboard = () => {
                         </ChartCard>
                     </div>
 
-                    {/* ── Breakdown table — keyed by mode so the row cascade
-                        replays when the period switches. ── */}
-                    <div key={`table-${mode}`} className="dx-card dx-rise" style={{ overflow: 'hidden', animationDelay: '420ms' }}>
+                    {/* ── Breakdown table ── */}
+                    <div className="dx-card" style={{ overflow: 'hidden' }}>
                         <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
@@ -1118,7 +1002,6 @@ const Dashboard = () => {
                                         return (
                                             <tr key={b.label} className="exec-row" style={{
                                                 borderBottom: '1px solid var(--border)',
-                                                animationDelay: `${480 + i * 60}ms`,
                                                 ...(tint ? { background: tint } : {}),
                                             }}>
                                                 <td style={{ padding: '11px 16px', fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap' }}>
@@ -1167,12 +1050,9 @@ const Dashboard = () => {
                                             </tr>
                                         );
                                     })}
-                                    {/* Totals band — navy gradient report footer; the
-                                        gradient breathes slowly (see .total-band). */}
-                                    <tr className="total-band" style={{ background: 'var(--table-total-bg)',
-                                        backgroundSize: '220% 220%',
-                                        borderTop: '2px solid var(--table-head-edge)' }}>
-                                        <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--table-total-text)' }}>
+                                    <tr style={{ background: 'var(--bg-subtle)',
+                                        borderTop: '2px solid var(--border)' }}>
+                                        <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--text)' }}>
                                             {mode} Total{isFiltered ? ' (filtered)' : ''}
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.txns)}>{num(vt.txns).toLocaleString()}</td>
@@ -1181,16 +1061,16 @@ const Dashboard = () => {
                                         <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.amount(num(vt.msf))}</td>
                                         <td style={tdTotal} title={`${fullNum(vt.interchange, currencySymbol)} · ${ratePctTitle(vt.interchange, vt.volume)}`}>
                                             {fmt.amount(num(vt.interchange))}
-                                            <span style={rateInlineTotal}>({ratePct(vt.interchange, vt.volume)})</span>
+                                            <span style={rateInline}>({ratePct(vt.interchange, vt.volume)})</span>
                                         </td>
                                         <td style={tdTotal} title={`${fullNum(vt.schemeFee, currencySymbol)} · ${ratePctTitle(vt.schemeFee, vt.volume)}`}>
                                             {fmt.amount(num(vt.schemeFee))}
-                                            <span style={rateInlineTotal}>({ratePct(vt.schemeFee, vt.volume)})</span>
+                                            <span style={rateInline}>({ratePct(vt.schemeFee, vt.volume)})</span>
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.amount(num(vt.ecomFee))}</td>
                                         <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.amount(num(vt.netRevenue))}</td>
                                         <td style={{ ...tdTotal,
-                                            color: num(vt.marginPct) >= 0 ? 'var(--table-total-pos)' : 'var(--table-total-neg)' }}>
+                                            color: num(vt.marginPct) >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
                                             {num(vt.marginPct).toFixed(2)}%
                                         </td>
                                     </tr>
@@ -1214,8 +1094,6 @@ const rateInline = {
     fontSize: 10.5, fontWeight: 600, color: 'var(--text-secondary)',
     fontVariantNumeric: 'tabular-nums', marginLeft: 6,
 };
-/* Same, readable on the navy totals band. */
-const rateInlineTotal = { ...rateInline, color: 'var(--table-total-text)', opacity: 0.75 };
 /* Frosted secondary button — export / refresh in the page header. */
 const GHOST_BTN = {
     border: '1px solid var(--border)',
@@ -1234,6 +1112,6 @@ const selStyle = {
     fontSize: 12.5, fontWeight: 600, cursor: 'pointer', outline: 'none',
     padding: '2px 0',
 };
-const tdTotal = { ...tdNum, fontWeight: 700, color: 'var(--table-total-text)' };
+const tdTotal = { ...tdNum, fontWeight: 700 };
 
 export default Dashboard;

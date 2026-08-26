@@ -9,39 +9,39 @@
    below is a token; nothing downstream should carry its own hex.
    ══════════════════════════════════════════════════════════════ */
 :root {
-  /* ── Core palette (light) — NEXUS institutional banking ── */
-  --canvas:      #F4F7FB;   /* page ground — very light neutral blue-grey */
-  --surface:     #FFFFFF;   /* card ground — white */
-  --hairline:    #D9E2EF;
-  --ink:         #102A56;   /* primary text + financial numbers — dark navy */
-  --muted:       #66758C;   /* muted / secondary text */
-  --primary:     #2F5EA8;   /* NEXUS blue — actions, active nav, brand marks */
-  --primary-soft:#5279B9;   /* interactive / hover accent */
-  --wash:        #EAF1FB;   /* selected rows, chips, hover */
-  --negative:    #C94B55;
-  --attention:   #C98A20;   /* margin risk, churn flags */
+  /* ── Core palette (light) ── */
+  --canvas:      #F1F7FF;   /* page ground — light airy blue */
+  --surface:     #EAF1FA;   /* card ground — light steel blue, never white */
+  --hairline:    #E4E7EC;
+  --ink:         #14295E;   /* primary text — deep navy, not black */
+  --muted:       #51618C;   /* secondary text — navy grey */
+  --primary:     #3F63B0;   /* steel — actions, active nav, brand marks */
+  --primary-soft:#5578C4;   /* interactive / hover accent */
+  --wash:        #DCE8F7;   /* selected rows, chips, hover */
+  --negative:    #B3382C;
+  --attention:   #8C5E12;   /* margin risk, churn flags */
   --projected:   #64748B;   /* forecast + benchmark series (neutral slate) */
 
-  /* ── Chart ramp — NEXUS blue sequential, dark → light (magnitude) ── */
-  --chart-1: #193A70;
-  --chart-2: #244E87;
-  --chart-3: #355FA8;
-  --chart-4: #7FA6D8;
-  --chart-5: #C8D8ED;
+  /* ── Chart ramp — steel sequential, dark → light (magnitude) ── */
+  --chart-1: #263C6E;
+  --chart-2: #33518F;
+  --chart-3: #3F63B0;
+  --chart-4: #7191CE;
+  --chart-5: #C2CFEA;
 
   /* ── Categorical series — CVD-validated, fixed order ── */
-  --cat-1: #2F5EA8;   /* NEXUS blue */
-  --cat-2: #C98A20;   /* amber      */
-  --cat-3: #1F8A70;   /* green      */
-  --cat-4: #D29B3D;   /* light amber (scheme / secondary cost) */
-  --cat-5: #8B6FB3;   /* purple     */
+  --cat-1: #3F63B0;   /* steel  */
+  --cat-2: #CA5F28;   /* copper */
+  --cat-3: #0FA070;   /* jade   */
+  --cat-4: #B08C1E;   /* brass  */
+  --cat-5: #A85D9C;   /* plum   */
 
   /* ── Semantic chart marks ── */
   /* Imperial ramp, deep → light. Kept
      separate from the steel ramp so the two chart panels never twin. */
-  --imp-1: #142E5C;
-  --imp-2: #193A70;
-  --imp-3: #2F5EA8;
+  --imp-1: #08207C;
+  --imp-2: #0A34C8;
+  --imp-3: #4467E4;
   --imp-4: #93AAF4;
   --chart-royal: var(--imp-2);
 
@@ -50,17 +50,16 @@
      Validated as a categorical set (CVD + contrast) against --surface;
      the deep interchange imperial is a deliberate anchor below the
      lightness band, relieved by segment gaps, legend and the table. */
-  --mix-margin:      #1F8A70;   /* green — the kept margin */
-  --mix-interchange: #B8811F;   /* deep amber — interchange, the anchor cost */
-  --mix-scheme:      #DCA94E;   /* light amber — a full lightness step above
-                                   interchange so the two never blur in a stack */
-  --mix-pg:          #8B6FB3;   /* purple — PG / technical fee */
-  --chart-line: #193A70;   /* dark chart blue overlay lines (margin %, trends) */
-  --chart-pos: #1F8A70;
-  --chart-neg: #C94B55;
-  --chart-alt: #66758C;
-  --chart-grid: #E8EDF4;
-  --chart-axis: #75859A;
+  --mix-margin:      #0E8F64;   /* jade-deep — the kept margin */
+  --mix-interchange: var(--imp-1);
+  --mix-scheme:      #2B7FD4;   /* sky — lighter, clearly apart from imperial */
+  --mix-pg:          #CA5F28;   /* copper — PG fee */
+  --chart-line: #24386B;   /* navy overlay lines (margin %, trends) */
+  --chart-pos: #0FA070;
+  --chart-neg: #B3382C;
+  --chart-alt: #64748B;
+  --chart-grid: #E9EBEE;
+  --chart-axis: #8593AF;
 
   /* ── Typography ── */
   --font-ui:   'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -98,21 +97,21 @@
   --radius-chip: 6px;
   --radius-pill: 999px;
 
-  /* ── Shadows — very subtle navy elevation ── */
-  --shadow-xs:    0 1px 2px rgba(15, 31, 61, 0.04);
-  --shadow-sm:    0 1px 3px rgba(15, 31, 61, 0.05), 0 1px 2px rgba(15, 31, 61, 0.03);
-  --shadow-md:    0 4px 12px rgba(15, 31, 61, 0.06), 0 1px 3px rgba(15, 31, 61, 0.04);
-  --shadow-lg:    0 12px 32px rgba(15, 31, 61, 0.08), 0 2px 8px rgba(15, 31, 61, 0.04);
-  --shadow-hover: 0 8px 24px rgba(15, 31, 61, 0.08), 0 2px 6px rgba(47, 94, 168, 0.06);
-  --shadow-card:  0 2px 8px rgba(15, 31, 61, 0.05);
-  --shadow-pop:   0 12px 32px rgba(15, 31, 61, 0.12), 0 2px 8px rgba(15, 31, 61, 0.06);
-  --ring-focus:   0 0 0 3px rgba(47, 94, 168, 0.28);
+  /* ── Shadows — soft, neutral graphite elevation ── */
+  --shadow-xs:    0 1px 2px rgba(23, 28, 36, 0.05);
+  --shadow-sm:    0 1px 3px rgba(23, 28, 36, 0.06), 0 1px 2px rgba(23, 28, 36, 0.04);
+  --shadow-md:    0 4px 12px rgba(23, 28, 36, 0.07), 0 1px 3px rgba(23, 28, 36, 0.05);
+  --shadow-lg:    0 12px 32px rgba(23, 28, 36, 0.10), 0 2px 8px rgba(23, 28, 36, 0.05);
+  --shadow-hover: 0 10px 28px rgba(23, 28, 36, 0.10), 0 2px 6px rgba(51, 81, 143, 0.06);
+  --shadow-card:  0 1px 2px rgba(23, 28, 36, 0.04), 0 6px 20px rgba(23, 28, 36, 0.05);
+  --shadow-pop:   0 12px 32px rgba(23, 28, 36, 0.14), 0 2px 8px rgba(23, 28, 36, 0.08);
+  --ring-focus:   0 0 0 3px rgba(63, 99, 176, 0.30);
 
-  /* ── Gradients — NEXUS blue, near-flat, reserved for signature moments ── */
-  --grad-primary: linear-gradient(135deg, #2F5EA8 0%, #274F91 100%);
-  --grad-accent:  linear-gradient(135deg, #5279B9 0%, #2F5EA8 100%);
-  --grad-edge:    linear-gradient(90deg, transparent 0%, #2F5EA8 50%, transparent 100%);
-  --glass-bg:     rgba(255, 255, 255, 0.82);
+  /* ── Gradients — steel reserved for the signature moments ── */
+  --grad-primary: linear-gradient(135deg, #4F71BE 0%, #33518F 100%);
+  --grad-accent:  linear-gradient(135deg, #5578C4 0%, #33518F 100%);
+  --grad-edge:    linear-gradient(90deg, transparent 0%, #3F63B0 50%, transparent 100%);
+  --glass-bg:     rgba(234, 241, 250, 0.78);
   --glass-blur:   saturate(160%) blur(14px);
 
   /* ── Card interior — the "instrument panel" fill ─────────────────
@@ -122,39 +121,31 @@
        a var() inside a :root token resolves against :root, where the
        animation never runs, freezing the motion), then --dx-card-grid. ── */
 
-  /* Graph-paper interior retired — in its place every card gets a soft
-     top-lit sheen: a 3% brand tint at the head fading to the plain card
-     ground. The token name survives (six call sites layer it). */
   --dx-card-grid:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--primary) 3%, var(--bg-card)) 0%,
-      var(--bg-card) 55%) padding-box;
-
-  /* Border glint neutralised: with the sweep colour equal to the border,
-     the conic border layer renders as a uniform hairline. Cards that set
-     an element-level --dx-sweep accent keep a faint STATIC accent tick. */
-  --dx-sweep: var(--border);
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--primary) 6%, transparent) 0 1px,
+      transparent 1px 26px) padding-box,
+    repeating-linear-gradient(0deg,
+      color-mix(in srgb, var(--primary) 6%, transparent) 0 1px,
+      transparent 1px 26px) padding-box,
+    linear-gradient(var(--bg-card), var(--bg-card)) padding-box;
 
   /* ── Tables ──────────────────────────────────────────────────────
-       One treatment for every table in the app: a quiet light header
-       with navy small-caps type and a crisp 2px NEXUS-blue rule under
-       it — the institutional-report look — instead of the old solid
-       navy slab, which fought the white-card language. (Dark scheme
-       overrides these in html.dark below.) ── */
-  --table-head-bg: linear-gradient(180deg, #F2F7FD 0%, #E4EDF8 100%);
-  --table-head-text:  #405674;
-  --table-head-muted: rgba(64, 86, 116, 0.72);
-  --table-head-edge:  var(--primary);
-  /* Totals band — the table closes on a navy gradient "report footer"
-     with light figures; pos/neg keep semantic reads on the dark ground. */
-  --table-total-bg:   linear-gradient(180deg, #24488A 0%, #193A70 100%);
-  --table-total-text: #F2F6FF;
-  --table-total-pos:  #9FE0C9;
-  --table-total-neg:  #F4AEB6;
+       One treatment for every table in the app: a deep navy header bar
+       with light type, tinted rows, and a bright hairline under the
+       header. Derived from --primary so it retints with the brand and
+       works unchanged in dark mode (both mixes land in navy). ── */
+  --table-head-bg: linear-gradient(135deg,
+      color-mix(in srgb, var(--primary) 76%, #0A1426) 0%,
+      color-mix(in srgb, var(--primary) 54%, #0A1426) 52%,
+      color-mix(in srgb, var(--primary) 72%, #0A1426) 100%);
+  --table-head-text:  #F2F6FF;
+  --table-head-muted: rgba(242, 246, 255, 0.72);
+  --table-head-edge:  color-mix(in srgb, var(--primary) 70%, #FFFFFF);
   /* Row tint + zebra. Zebra is applied only to plain tables: the DataGrid
      virtualises rows, so an nth-child stripe would walk while scrolling. */
-  --table-row:      var(--bg-card);
-  --table-row-alt:  color-mix(in srgb, var(--primary) 4%, var(--bg-card));
+  --table-row:      color-mix(in srgb, var(--primary) 4%, var(--bg-card));
+  --table-row-alt:  color-mix(in srgb, var(--primary) 9%, var(--bg-card));
 
   /* ── Surfaces ── */
   --bg:           var(--canvas);
@@ -166,56 +157,31 @@
 
   /* ── Text ── */
   --text:           var(--ink);
-  --text-secondary: #4E6078;   /* body / secondary text */
+  --text-secondary: var(--muted);
   --text-muted:     var(--muted);
   --text-disabled:  color-mix(in srgb, var(--muted) 55%, var(--surface));
 
   /* ── Borders ── */
   --border:       var(--hairline);
-  --border-light: #E8EDF4;   /* light divider */
+  --border-light: var(--hairline);
   --border-focus: color-mix(in srgb, var(--primary) 40%, transparent);
 
   /* ── Status — up/positive = jade; down = muted vermilion;
        attention = brass; projected/benchmark = neutral slate.
        Copper never carries good/bad meaning — it is the brand accent.
        Chips: tinted background + solid text, never solid fill. ── */
-  --success:      #1F8A70;
-  --success-bg:   #E7F5F0;
-  --success-text: #166A57;
-  --success-border: #B9E2D5;
+  --success:      #0FA070;
+  --success-bg:   color-mix(in srgb, #0FA070 10%, var(--surface));
+  --success-text: #0B6B4D;
   --warning:      var(--attention);
-  --warning-bg:   #FFF4DD;
-  --warning-text: #9C6915;
-  --warning-border: #EED7A7;
+  --warning-bg:   color-mix(in srgb, var(--attention) 12%, var(--surface));
+  --warning-text: var(--attention);
   --danger:       var(--negative);
-  --danger-bg:    #FCEBED;
-  --danger-text:  #A83D46;
-  --danger-border: #F0C4C8;
-  --info:         var(--primary);
-  --info-bg:      #EAF1FB;
-  --info-text:    #244E87;
-  --info-border:  #C8D8ED;
-
-  /* ── Hero KPI accents — one hue per headline metric. Volume/marginPct
-       ride the blue family, margin is the "kept money" green, transactions
-       a recessive slate-steel so the count never competes with money. ── */
-  --kpi-volume:    #2F5EA8;
-  --kpi-margin:    #1F8A70;
-  --kpi-marginpct: #355FA8;
-  --kpi-txns:      #526A92;
-
-  /* Hero tile grounds — executive pastel: a clearly visible tint of the
-     metric's hue at the head, settling to near-white. Same language as the
-     status pills (tinted surface + tinted border + navy figures), so the
-     page reads as one system. Paired --kpi-*-edge tints the tile border. */
-  --kpi-volume-grad:    linear-gradient(150deg, #E7EFFA 0%, #F3F7FC 55%, #FBFCFE 100%);
-  --kpi-margin-grad:    linear-gradient(150deg, #E2F3EC 0%, #F1FAF6 55%, #FAFDFC 100%);
-  --kpi-marginpct-grad: linear-gradient(150deg, #E8EDF9 0%, #F3F6FC 55%, #FBFCFE 100%);
-  --kpi-txns-grad:      linear-gradient(150deg, #EAEEF5 0%, #F4F6FA 55%, #FBFCFD 100%);
-  --kpi-volume-edge:    #C4D5EC;
-  --kpi-margin-edge:    #BCE0D2;
-  --kpi-marginpct-edge: #C7D2EC;
-  --kpi-txns-edge:      #CFD9E6;
+  --danger-bg:    color-mix(in srgb, var(--negative) 10%, var(--surface));
+  --danger-text:  var(--negative);
+  --info:         var(--projected);
+  --info-bg:      color-mix(in srgb, var(--projected) 10%, var(--surface));
+  --info-text:    var(--projected);
 
   /* ── Attrition statuses — derived from the semantic tokens above so
        they flip with the scheme automatically. Previously undefined:
@@ -282,19 +248,19 @@
 
   /* ── Sidebar rail — constant dark in BOTH colour schemes.
        It reads as app chrome, not content, so it never flips. ── */
-  --rail-bg:          #0F1F3D;
-  --rail-grad:        linear-gradient(180deg, #172B50 0%, #0F1F3D 48%, #0B1830 100%);
-  --rail-edge:        #1D3A6E;
-  --rail-text:        #AEBBD0;
-  --rail-text-hover:  #F4F7FC;
-  --rail-text-active: #F4F7FC;
-  --rail-hover-bg:    #172B50;
-  --rail-active-bg:   #1D3A6E;
-  --rail-marker:      #4F7DC4;
+  --rail-bg:          #0E1B33;
+  --rail-grad:        linear-gradient(180deg, #16264A 0%, #0E1B33 48%, #0A1327 100%);
+  --rail-edge:        #23345C;
+  --rail-text:        #A7B4CE;
+  --rail-text-hover:  #DCE4F5;
+  --rail-text-active: #EFF4FE;
+  --rail-hover-bg:    #152442;
+  --rail-active-bg:   #1B2E56;
+  --rail-marker:      #5578C4;
   /* Muted nav items, tenant meta and the collapse toggle ride this token,
-     so it must clear AA on the rail: #8292AD on #0F1F3D is ~5:1 and still
-     recedes behind rest text (#AEBBD0). */
-  --rail-eyebrow:     #8292AD;
+     so it must clear AA on the rail: #7C89A8 on #0E1B33 is 5.2:1 and still
+     recedes behind rest text (#A7B4CE, 8.0:1). */
+  --rail-eyebrow:     #7C89A8;
   --rail-fresh:       #34B98A;
   --rail-stale:       #CFA83A;
 
@@ -343,16 +309,10 @@ svg.rotate-90  { transform: rotate(90deg); }
 
 body {
   font-family: var(--font-ui);
-  /* Layered institutional ground: a cool NEXUS-blue bloom falling from the
-     top-left, a whisper of purple at the far corner, over a vertical
-     light-to-lighter wash. Rich enough to read as designed, quiet enough
-     that white cards stay the brightest surfaces. */
+  /* Neutral canvas with a faint cool bloom at the top — the static base the
+     animated .dx-backdrop layers sit on. */
   background-color: var(--bg);
-  background-image:
-    radial-gradient(90% 60% at 12% 0%, rgba(47, 94, 168, 0.15), transparent 58%),
-    radial-gradient(70% 50% at 92% 6%, rgba(139, 111, 179, 0.09), transparent 55%),
-    radial-gradient(60% 40% at 55% 100%, rgba(31, 138, 112, 0.05), transparent 60%),
-    linear-gradient(180deg, #E9F1FA 0%, #F4F7FB 42%, #F0F4FA 100%);
+  background-image: radial-gradient(120% 80% at 50% -10%, #DCE9FC 0%, transparent 62%);
   background-attachment: fixed;
   color: var(--text);
   /* Scroll, never clip. Whatever --app-zoom cannot absorb (a wide table,
@@ -429,19 +389,17 @@ body {
   initial-value: 6%;
 }
 
-/* Frozen (constant keyframes): the breathing glow read as flicker —
-   especially in dark mode. Declarations across the app keep "running"
-   this animation, but it now holds one quiet value. */
 @keyframes dxGridPulse {
   0%, 100% { --dxg: 3%; }
+  50%      { --dxg: 11%; }
 }
 
-/* Frozen (constant keyframes): the travelling border glint flashed like a
-   periodic flicker, worst on dark surfaces. The conic layer is still
-   painted, but --dx-sweep now defaults to the border colour, so it renders
-   as a plain uniform hairline unless a card opts into a static accent. */
+/* A faint copper glint that travels once around the rounded border
+   every 18s. Implemented as a border-box conic gradient beneath a
+   padding-box card fill, so it needs `border: 2px solid transparent`
+   and BOTH background layers wherever it is applied. */
 @keyframes dxBorderSweep {
-  from, to { --dxa: 0deg; }
+  to { --dxa: 360deg; }
 }
 
 .glass-panel,
@@ -503,9 +461,6 @@ body {
 .dx-card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);
-  /* Interaction-driven accent: the (otherwise invisible) border glint arc
-     tints NEXUS blue only while the card is under the pointer. */
-  --dx-sweep: color-mix(in srgb, var(--primary) 55%, var(--border));
 }
 
 /* Gradient hairline along the top edge of a tile. */
@@ -540,45 +495,53 @@ body {
   background-size: 46px 46px;
   mask-image: radial-gradient(90% 70% at 50% 0%, #000 0%, transparent 78%);
   -webkit-mask-image: radial-gradient(90% 70% at 50% 0%, #000 0%, transparent 78%);
-  opacity: 0.22;
-  animation: none;   /* static — the drifting grid contributed to the flicker */
+  opacity: 0.5;
+  animation: dxGridDrift 60s linear infinite;
 }
 
-/* Ambient orbs — slow (34–50s), heavily blurred colour fields. This is the
-   one idle motion allowed back after the flicker purge: at this period and
-   blur it reads as living light, never as flashing. */
 .dx-backdrop__orb {
   position: absolute;
   border-radius: 50%;
   filter: blur(70px);
-  opacity: 0.24;
+  opacity: 0.26;
   will-change: transform;
 }
 
 .dx-backdrop__orb--a {
   width: 46vw; height: 46vw;
   top: -14vw; left: -10vw;
-  background: radial-gradient(circle at 30% 30%, #5279B9, transparent 68%);
+  background: radial-gradient(circle at 30% 30%, #8B98A9, transparent 68%);
   animation: dxFloatA 34s ease-in-out infinite;
 }
 
 .dx-backdrop__orb--b {
   width: 40vw; height: 40vw;
   top: 8vw; right: -12vw;
-  background: radial-gradient(circle at 60% 40%, #8B6FB3, transparent 68%);
+  background: radial-gradient(circle at 60% 40%, #7D95C6, transparent 68%);
   animation: dxFloatB 42s ease-in-out infinite;
 }
 
 .dx-backdrop__orb--c {
   width: 38vw; height: 38vw;
   bottom: -16vw; left: 34%;
-  background: radial-gradient(circle at 50% 50%, #4FA48C, transparent 68%);
+  background: radial-gradient(circle at 50% 50%, #B7C2D8, transparent 68%);
   animation: dxFloatC 50s ease-in-out infinite;
 }
 
-/* Scan sweep retired — a light band passing down the page every 18s read
-   as screen flicker, especially in dark mode. */
-.dx-backdrop__scan { display: none; }
+/* A single scan sweep travelling down the canvas — the subtle "live
+   telemetry" cue. Extremely low contrast by design. */
+.dx-backdrop__scan {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 34vh;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--primary) 5%, transparent) 50%,
+    transparent 100%
+  );
+  animation: dxScan 18s linear infinite;
+}
 
 html.dark .dx-backdrop__orb { opacity: 0.26; }
 html.dark .dx-backdrop__grid { opacity: 0.35; }
@@ -642,40 +605,6 @@ html.dark .dx-backdrop__grid { opacity: 0.35; }
 
 @media (prefers-reduced-motion: reduce) {
   .dx-arrow-up, .dx-arrow-down { animation: none; }
-}
-
-/* Sparkline draw-in: paths declare pathLength="1", so a dash of 1 drawn
-   from offset 1 → 0 traces the line left-to-right on mount. The fill area
-   fades up just behind it. One-shot, ease-out — motion with a finish line,
-   not a loop. */
-@keyframes dxDraw {
-  from { stroke-dashoffset: 1; }
-  to   { stroke-dashoffset: 0; }
-}
-
-.dx-spark-line {
-  stroke-dasharray: 1;
-  animation: dxDraw 1100ms cubic-bezier(0.22, 1, 0.36, 1) 250ms both;
-}
-
-.dx-spark-area {
-  animation: fadeIn 700ms ease-out 650ms both;
-}
-
-/* Live-point halo: fades in with the area, then breathes gently — a small
-   "this number is alive" cue confined to a 10px dot. */
-@keyframes dxHalo {
-  0%, 100% { opacity: 0.18; }
-  50%      { opacity: 0.55; }
-}
-
-.dx-spark-halo {
-  animation: fadeIn 700ms ease-out 650ms both, dxHalo 3s ease-in-out 2s infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dx-spark-line { animation: none; stroke-dasharray: none; }
-  .dx-spark-area, .dx-spark-halo { animation: none; }
 }
 
 /* Staggered tile entrance. */
@@ -756,10 +685,10 @@ html.dark {
 
   /* Categorical series — dark-surface steps, CVD-validated. */
   --cat-1: #5E82D2;
-  --cat-2: #DFA53E;
+  --cat-2: #D5763A;
   --cat-3: #21A176;
-  --cat-4: #E3B45C;
-  --cat-5: #A98FD0;
+  --cat-4: #B48A20;
+  --cat-5: #BA65A8;
 
   --imp-1: #3550D6;
   --imp-2: #4C6FEA;
@@ -770,25 +699,9 @@ html.dark {
   /* Cost & Margin Mix stack — dark-mode steps re-picked (not auto-flipped)
      and validated against the dark surface; all six checks pass here. */
   --mix-margin:      #25A87B;
-  --mix-interchange: #C9922B;
-  --mix-scheme:      #E8C271;
-  --mix-pg:          #A98FD0;
-
-  /* Hero KPI accents — brighter steps for the dark surface. */
-  --kpi-volume:    #5E82D2;
-  --kpi-margin:    #25A87B;
-  --kpi-marginpct: #8AA5E0;
-  --kpi-txns:      #93A0B4;
-
-  /* Hero tile grounds — accent-tinted graphite for the dark scheme. */
-  --kpi-volume-grad:    linear-gradient(150deg, #1B2842 0%, #161E2C 60%, #141B26 100%);
-  --kpi-margin-grad:    linear-gradient(150deg, #14322A 0%, #15202B 60%, #141B26 100%);
-  --kpi-marginpct-grad: linear-gradient(150deg, #1D2A47 0%, #161E2C 60%, #141B26 100%);
-  --kpi-txns-grad:      linear-gradient(150deg, #1E2735 0%, #161D28 60%, #141B26 100%);
-  --kpi-volume-edge:    #2C4066;
-  --kpi-margin-edge:    #23503F;
-  --kpi-marginpct-edge: #30436E;
-  --kpi-txns-edge:      #333F52;
+  --mix-interchange: #4356E0;
+  --mix-scheme:      #3E9AE8;
+  --mix-pg:          #D5763A;
   --chart-line: #C7CFDA;
   --chart-pos: #34B98A;
   --chart-neg: #E2705C;
@@ -799,12 +712,6 @@ html.dark {
   --success:      #34B98A;
   --success-bg:   color-mix(in srgb, #34B98A 14%, var(--surface));
   --success-text: #34B98A;
-  --success-border: color-mix(in srgb, #34B98A 32%, var(--surface));
-  --warning-border: color-mix(in srgb, var(--attention) 32%, var(--surface));
-  --danger-border:  color-mix(in srgb, var(--negative) 32%, var(--surface));
-  --info-bg:        color-mix(in srgb, var(--primary) 14%, var(--surface));
-  --info-text:      #8AA5E0;
-  --info-border:    color-mix(in srgb, var(--primary) 32%, var(--surface));
 
   --grad-primary: linear-gradient(135deg, #5E82D2 0%, #3F63B0 100%);
   --grad-accent:  linear-gradient(135deg, #8AA5E0 0%, #4A6DC0 100%);
@@ -825,16 +732,7 @@ html.dark {
 
   --warning-bg:  color-mix(in srgb, var(--attention) 16%, var(--surface));
   --danger-bg:   color-mix(in srgb, var(--negative) 14%, var(--surface));
-
-  /* Table header — graphite counterpart of the light institutional header. */
-  --table-head-bg: linear-gradient(180deg, #1A2436 0%, #141D2C 100%);
-  --table-head-text:  #C3CEE2;
-  --table-head-muted: rgba(195, 206, 226, 0.7);
-  --table-head-edge:  color-mix(in srgb, var(--primary) 65%, var(--surface));
-  --table-total-bg:   linear-gradient(180deg, #223B66 0%, #182A4A 100%);
-  --table-total-text: #E9EFFB;
-  --table-total-pos:  #8FD9C0;
-  --table-total-neg:  #F2A3AC;
+  --info-bg:     color-mix(in srgb, var(--projected) 14%, var(--surface));
 
   --text-disabled: color-mix(in srgb, var(--muted) 55%, var(--surface));
 
@@ -855,13 +753,11 @@ html.dark {
   --rail-stale:       #D9A03F;
 }
 
-/* Graphite canvas with cool blue + faint violet blooms — the dark twin of
-   the light ground's gradient; cards sit on --surface as before. */
+/* Graphite canvas with a faint cool vignette — gives the dark scheme depth
+   without patterning behind content; cards sit on --surface as before. */
 html.dark body {
   background:
-    radial-gradient(80% 55% at 12% 0%, rgba(94, 130, 210, 0.12), transparent 60%),
-    radial-gradient(60% 45% at 88% 8%, rgba(169, 143, 208, 0.06), transparent 58%),
-    radial-gradient(110% 70% at 50% 0%, rgba(48, 64, 96, 0.20), transparent 62%),
+    radial-gradient(110% 70% at 50% 0%, rgba(48, 64, 96, 0.24), transparent 60%),
     var(--canvas);
   background-attachment: fixed;
 }

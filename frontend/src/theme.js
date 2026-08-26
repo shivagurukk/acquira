@@ -14,17 +14,17 @@ import { createTheme } from '@mui/material/styles';
 // properties in index.css — the one place hex values may live.
 export const TOKENS = {
     light: {
-        canvas:    '#F4F7FB',
-        surface:   '#FFFFFF',
-        hairline:  '#D9E2EF',
-        ink:       '#102A56',
-        muted:     '#66758C',
-        primary:   '#2F5EA8',
-        wash:      '#EAF1FB',
-        negative:  '#C94B55',
-        attention: '#C98A20',
+        canvas:    '#F1F7FF',
+        surface:   '#EAF1FA',
+        hairline:  '#E4E7EC',
+        ink:       '#14295E',
+        muted:     '#51618C',
+        primary:   '#3F63B0',
+        wash:      '#DCE8F7',
+        negative:  '#B3382C',
+        attention: '#8C5E12',
         projected: '#64748B',
-        success:   '#166A57',
+        success:   '#0B6B4D',
     },
     dark: {
         // Graphite dark scheme — mirrors html.dark in index.css.
@@ -40,13 +40,13 @@ export const TOKENS = {
         projected: '#93A0B4',
         success:   '#34B98A',
     },
-    // Sequential chart ramp — NEXUS blue, dark → light.
-    chartRamp:     ['#193A70', '#244E87', '#355FA8', '#7FA6D8', '#C8D8ED'],
+    // Sequential chart ramp — steel, dark → light.
+    chartRamp:     ['#263C6E', '#33518F', '#3F63B0', '#7191CE', '#C2CFEA'],
     chartRampDark: ['#33518F', '#4A6DC0', '#5E82D2', '#8AA5E0', '#C3D1F0'],
-    // Categorical series — CVD-validated fixed order (blue, amber,
-    // green, light amber, purple), stepped per surface.
-    categorical:     ['#2F5EA8', '#C98A20', '#1F8A70', '#D29B3D', '#8B6FB3'],
-    categoricalDark: ['#5E82D2', '#DFA53E', '#21A176', '#E3B45C', '#A98FD0'],
+    // Categorical series — CVD-validated fixed order (steel, copper,
+    // jade, brass, plum), stepped per surface.
+    categorical:     ['#3F63B0', '#CA5F28', '#0FA070', '#B08C1E', '#A85D9C'],
+    categoricalDark: ['#5E82D2', '#D5763A', '#21A176', '#B48A20', '#BA65A8'],
 };
 
 const FONT_UI   = "'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
@@ -127,8 +127,8 @@ export function buildTheme() {
                     // Primary CTA carries the brand gradient + a soft steel lift.
                     containedPrimary: {
                         backgroundImage: 'var(--grad-primary)',
-                        boxShadow: '0 2px 8px rgba(47, 94, 168, 0.22)',
-                        '&:hover': { boxShadow: '0 6px 18px rgba(47, 94, 168, 0.30)' },
+                        boxShadow: '0 2px 8px rgba(51, 81, 143, 0.22)',
+                        '&:hover': { boxShadow: '0 6px 18px rgba(51, 81, 143, 0.30)' },
                     },
                     sizeSmall: { padding: '5px 12px', fontSize: '12px' },
                 },
