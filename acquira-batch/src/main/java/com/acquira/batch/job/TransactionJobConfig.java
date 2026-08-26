@@ -1799,7 +1799,14 @@ public class TransactionJobConfig {
                 "  ) eff ON TRUE " +
                 "  WHERE ft.tenant_id = ? AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope +
                 " ) r " +
-                "WHERE f.tenant_id = ? AND f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
+                // PERF (2026-08-26): the outer f needs its own sargable payment_date
+                // range. The join equality f.payment_date = r.payment_date does NOT
+                // prune partitions at plan time (r is a subquery, not a constant), so
+                // under a hash/merge join Postgres scanned EVERY partition of
+                // fact_transaction for the tenant — seen live in UAT as a single fee
+                // UPDATE running 2h45m+. Same pattern as the store/terminal UPDATEs.
+                "WHERE f.tenant_id = ? AND " + rngF +
+                "f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
                 tenantId, tenantId);
             log.info(String.format("Fee computation (single-pass): %d rows in %.1fs",
                 feeRows, (System.currentTimeMillis() - tFee) / 1000.0));
