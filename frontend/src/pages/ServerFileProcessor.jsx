@@ -10,7 +10,7 @@ import {
     Play as PlayArrow, CheckCircle2 as CheckCircle, XCircle as ErrorIcon,
     Folder, Database as Storage, Ban as Cancel,
 } from 'lucide-react';
-import api from '../api/axios';
+import api, { UPLOAD_TIMEOUT, isTimeoutError } from '../api/axios';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLL_DURATION_MS = 30 * 60 * 1000;  // 30-minute cap per batch
@@ -200,7 +200,17 @@ const ServerFileProcessor = () => {
         setActiveStep(3); // Process transactions (the longest stage)
 
         try {
-            const res = await api.post(`/upload/process-server-file?path=${encodeURIComponent(serverPath.trim())}`);
+            // This endpoint is deliberately BLOCKING and SEQUENTIAL: it only returns
+            // once every file in the folder has reached a terminal state. The axios
+            // default of 60s therefore aborts every real batch client-side while the
+            // server carries on ingesting — the screen reports a failure for work
+            // that is actually running. Use the long upload timeout like every other
+            // ingest screen; nginx's proxy_read_timeout (600s) is the real ceiling.
+            const res = await api.post(
+                `/upload/process-server-file?path=${encodeURIComponent(serverPath.trim())}`,
+                null,
+                { timeout: UPLOAD_TIMEOUT }
+            );
             const data = res.data;
 
             if (data.error) {
@@ -252,6 +262,18 @@ const ServerFileProcessor = () => {
 
         } catch (err) {
             setPhase('input');
+            // A client-side abort or a proxy 504 says nothing about what the server
+            // did — the batch is almost certainly still ingesting. Re-running the
+            // same folder here is how a load gets applied twice, so send the user
+            // to Batch Monitoring instead of implying the run failed.
+            if (isTimeoutError(err) || err.response?.status === 504) {
+                const stalled = 'The batch is taking longer than the request could stay open. '
+                    + 'It is still running on the server — check Batch Monitoring for live status. '
+                    + 'Do NOT re-run this folder until it finishes.';
+                setErrorMsg(stalled);
+                addLog(`⚠️ ${stalled}`);
+                return;
+            }
             const msg = err.response?.data?.error || err.response?.data || err.message;
             setErrorMsg(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
             addLog(`❌ ${typeof msg === 'object' ? JSON.stringify(msg) : String(msg)}`);

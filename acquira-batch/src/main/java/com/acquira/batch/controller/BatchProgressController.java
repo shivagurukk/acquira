@@ -24,8 +24,11 @@ public class BatchProgressController {
     private final JobExplorer jobExplorer;
 
     // Known step counts per job, for a friendly "step N of M" display in the UI.
+    // Keep in step with the job definitions in TransactionJobConfig /
+    // MerchantMasterJobConfig — a stale count here renders as "step 12 of 9".
     private static final Map<String, Integer> TOTAL_STEPS = Map.of(
-        "transactionLoadJob", 9,
+        "transactionLoadJob", 12,
+        "dbPullTransactionJob", 9,
         "merchantMasterJob", 5);
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
