@@ -1044,8 +1044,11 @@ public class BulkMigrationService {
             "AND merchant_id IS NOT NULL GROUP BY tenant_id, merchant_id, DATE(payment_date), card_number), " +
             "Ranked AS (SELECT *, ROW_NUMBER() OVER(PARTITION BY tenant_id, merchant_id, b_date ORDER BY total_spend DESC) as rn FROM DailyCustSpend) " +
             "UPDATE sum_daily_merchant s SET top_spending_customer_id=r.card_number, top_spending_amount=r.total_spend " +
-            "FROM Ranked r WHERE s.tenant_id=r.tenant_id AND s.merchant_id=r.merchant_id AND s.business_date=r.b_date AND r.rn=1 AND s.tenant_id = ?",
-            tenantId, monthStart, monthEnd, tenantId);
+            // PERF (2026-08-26): direct business_date bound on s so the partitioned
+            // table prunes; implied by s.business_date = r.b_date (b_date ∈ [?, ?]).
+            "FROM Ranked r WHERE s.tenant_id=r.tenant_id AND s.merchant_id=r.merchant_id AND s.business_date=r.b_date " +
+            "AND s.business_date BETWEEN ? AND ? AND r.rn=1 AND s.tenant_id = ?",
+            tenantId, monthStart, monthEnd, monthStart, monthEnd, tenantId);
 
         // 13. merchant_activity_summary (business metrics per month)
         //

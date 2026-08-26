@@ -2388,7 +2388,11 @@ public class TransactionJobConfig {
                         " GROUP BY tenant_id, merchant_id, DATE(payment_date), card_number), " +
                         "Ranked AS (SELECT *, ROW_NUMBER() OVER(PARTITION BY tenant_id, merchant_id, b_date ORDER BY total_spend DESC) as rn FROM DailyCustSpend) " +
                         "UPDATE sum_daily_merchant s SET top_spending_customer_id=r.card_number, top_spending_amount=r.total_spend " +
-                        "FROM Ranked r WHERE s.tenant_id=r.tenant_id AND s.merchant_id=r.merchant_id AND s.business_date=r.b_date AND r.rn=1 AND s.tenant_id = ?",
+                        // PERF (2026-08-26): direct business_date scope on s — the join
+                        // equality alone cannot prune this partitioned table. Implied by
+                        // s.business_date = r.b_date (r.b_date ∈ dateScope by definition).
+                        "FROM Ranked r WHERE s.tenant_id=r.tenant_id AND s.merchant_id=r.merchant_id AND s.business_date=r.b_date " +
+                        "AND s.business_date IN " + dateScope + " AND r.rn=1 AND s.tenant_id = ?",
                         tenantId, tenantId)));
                 java.util.concurrent.CompletableFuture.allOf(phase2.toArray(new java.util.concurrent.CompletableFuture[0])).join();
 

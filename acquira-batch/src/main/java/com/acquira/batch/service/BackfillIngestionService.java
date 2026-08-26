@@ -497,9 +497,9 @@ public class BackfillIngestionService {
                         )
                         UPDATE sum_daily_merchant s SET top_spending_customer_id=r.card_number, top_spending_amount=r.total_spend
                         FROM Ranked r WHERE s.tenant_id=r.tenant_id AND s.merchant_id=r.merchant_id
-                            AND s.business_date=r.b_date AND r.rn=1 AND s.tenant_id = ?
+                            AND s.business_date=r.b_date AND s.business_date = ? AND r.rn=1 AND s.tenant_id = ?
                         """,
-                tenantId, date, tenantId);
+                tenantId, date, date, tenantId);
 
         // 3. sum_daily_mcc
         jdbcTemplate.update("""
