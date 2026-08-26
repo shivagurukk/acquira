@@ -62,7 +62,7 @@ export const SERIES = {
 };
 
 export const RAMP_HEX = {
-    light: ['#263C6E', '#33518F', '#3F63B0', '#7191CE', '#C2CFEA'],
+    light: ['#193A70', '#244E87', '#355FA8', '#7FA6D8', '#C8D8ED'],
     dark:  ['#33518F', '#4A6DC0', '#5E82D2', '#8AA5E0', '#C3D1F0'],
 };
 
