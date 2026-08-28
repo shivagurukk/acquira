@@ -56,9 +56,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ecom_flat_fee_one_default
 -- unchanged until each figure is edited. Guarded: seeds once, never clobbers.
 INSERT INTO ecom_flat_fee (tenant_id, country_code, gateway_type, fee_amount, label)
 SELECT v.* FROM ( VALUES
-  (NULL::INT, 'BH', 'BENEFIT PG', 0.1800, 'BH Benefit PG fee - seeded at old flat 0.18 BHD, awaiting real per-gateway figure'),
-  (NULL,      'BH', 'MPGS',       0.1800, 'BH MPGS fee (DEFAULT for unlisted ECOM gateways) - seeded at old flat 0.18 BHD'),
-  (NULL,      'BH', 'PAY ON',     0.1800, 'BH Pay On fee - seeded at old flat 0.18 BHD, awaiting real per-gateway figure')
+  -- label is VARCHAR(80) — keep these short.
+  (NULL::INT, 'BH', 'BENEFIT PG', 0.1800, 'BH Benefit PG fee - seeded at old flat 0.18 BHD, real figure pending'),
+  (NULL,      'BH', 'MPGS',       0.1800, 'BH MPGS fee (DEFAULT for unlisted ECOM gateways) - old flat 0.18 BHD'),
+  (NULL,      'BH', 'PAY ON',     0.1800, 'BH Pay On fee - seeded at old flat 0.18 BHD, real figure pending')
 ) AS v(tenant_id, country_code, gateway_type, fee_amount, label)
 WHERE NOT EXISTS (SELECT 1 FROM ecom_flat_fee x
                   WHERE x.country_code = v.country_code
