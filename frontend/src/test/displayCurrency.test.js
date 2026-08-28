@@ -20,7 +20,7 @@ import {
 } from '../utils/formatters';
 import { USD_PER_UNIT, FX_RATE_AS_OF } from '../config/fxRates';
 
-const BHD_RATE = USD_PER_UNIT.BHD; // 2.65957
+const BHD_RATE = USD_PER_UNIT.BHD; // 2.65252
 
 // Intl style:'currency' joins code and number with a non-breaking space —
 // normalise it so the assertions can use plain spaces.
@@ -56,35 +56,35 @@ describe('USD mode converts, relabels and renders 2dp', () => {
 
     it('formatCurrency converts BHD → $ at the pegged rate', () => {
         expect(getDisplayMode()).toBe('USD');
-        // 100 BHD * 2.65957 = 265.957 → $265.96
-        expect(formatCurrency(100)).toBe('$265.96');
+        // 100 BHD * 2.65252 = 265.252 → $265.25
+        expect(formatCurrency(100)).toBe('$265.25');
     });
 
     it('formatCompactCurrency converts and compacts in USD', () => {
-        // 1,000,000 BHD → 2,659,570 USD → "USD 2.66M"
-        expect(formatCompactCurrency(1_000_000)).toBe('USD 2.66M');
+        // 1,000,000 BHD → 2,652,520 USD → "USD 2.653M"
+        expect(formatCompactCurrency(1_000_000)).toBe('USD 2.653M');
         // Below the compact threshold: exact 2dp
-        expect(formatCompactCurrency(100)).toBe('USD 265.96');
+        expect(formatCompactCurrency(100)).toBe('USD 265.25');
     });
 
     it('formatMsf keeps reconciliation digits on the converted figure', () => {
-        // 1 BHD → 2.65957 → min 2 / max 4 → "USD 2.6596"
-        expect(formatMsf(1)).toBe('USD 2.6596');
+        // 1 BHD → 2.65252 → min 2 / max 4 → "USD 2.6525"
+        expect(formatMsf(1)).toBe('USD 2.6525');
     });
 
     it('createFmt money/amount/decimals follow the toggle', () => {
         const fmt = createFmt('BHD', 3);
-        expect(fmt.money(100)).toBe('USD 265.96');
-        expect(fmt.amount(100)).toBe('265.96');
+        expect(fmt.money(100)).toBe('USD 265.25');
+        expect(fmt.amount(100)).toBe('265.25');
         expect(fmt.decimals()).toBe(2);
-        expect(fmt.currency(1_000_000)).toBe('USD 2.66M');
-        expect(fmt.msf(1)).toBe('USD 2.6596');
+        expect(fmt.currency(1_000_000)).toBe('USD 2.653M');
+        expect(fmt.msf(1)).toBe('USD 2.6525');
     });
 
     it('recognises the tenant display symbol, not just the ISO code', () => {
         setDefaultCurrency('BHD', 3, 'BD');
         const fmt = createFmt('BD', 3);   // pages pass currencySymbol here
-        expect(fmt.money(100)).toBe('USD 265.96');
+        expect(fmt.money(100)).toBe('USD 265.25');
         expect(displayCurrencyCode('BD')).toBe('USD');
         expect(convertForDisplay(100, 'BD')).toBeCloseTo(100 * BHD_RATE, 6);
         // …and back to the symbol untouched in LOCAL mode
@@ -98,7 +98,7 @@ describe('USD mode converts, relabels and renders 2dp', () => {
     });
 
     it('helpers expose the raw conversion for CSV builders', () => {
-        expect(convertForDisplay(100)).toBeCloseTo(265.957, 6);
+        expect(convertForDisplay(100)).toBeCloseTo(265.252, 6);
         expect(displayCurrencyCode('BHD')).toBe('USD');
         expect(isUsdDisplay('BHD')).toBe(true);
         const fx = usdRateInfo('BHD');
@@ -139,7 +139,7 @@ describe('USD mode fail-safes', () => {
     });
 
     it('flipping back to LOCAL restores the original rendering', () => {
-        expect(formatCurrency(100)).toBe('$265.96');
+        expect(formatCurrency(100)).toBe('$265.25');
         setDisplayMode('LOCAL');
         expect(norm(formatCurrency(100))).toBe('BHD 100.000');
     });

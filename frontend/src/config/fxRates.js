@@ -5,7 +5,7 @@
 // currencies are hard-pegged to the dollar, so the rates are stable facts,
 // not market data.
 //
-//   BHD 0.376 /USD  → 2.6595744...   (pegged since 1980)
+//   BHD 0.377 /USD  → 2.6525199...   (pegged since 1980)
 //   AED 3.6725/USD  → 0.2722941...   (pegged since 1997)
 //   OMR 0.3845/USD  → 2.6007802...   (pegged since 1986)
 //   SAR 3.75  /USD  → 0.2666667      (pegged)
@@ -15,7 +15,7 @@
 // (and FX_RATE_AS_OF) manually, or move it to a tenant setting if execs start
 // caring about precision. The UI labels converted figures as indicative.
 export const USD_PER_UNIT = {
-    BHD: 2.65957,
+    BHD: 2.65252,
     AED: 0.27229,
     OMR: 2.60078,
     SAR: 0.26667,
@@ -26,4 +26,4 @@ export const USD_PER_UNIT = {
 
 // Stamp shown next to converted figures / in CSV footers so nobody mistakes
 // an indicative conversion for a booked rate.
-export const FX_RATE_AS_OF = '2026-08-25';
+export const FX_RATE_AS_OF = '2026-08-28';
