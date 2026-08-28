@@ -716,7 +716,6 @@ const LoginPage = () => {
                             <ShieldCheck size={13} aria-hidden="true" /> Protected enterprise access
                         </span>
                         <p className="login-footer">© {new Date().getFullYear()} AFS Nexus. All rights reserved.</p>
-                        <span className="nx-version">v2.0 · Secure</span>
                     </div>
                 </div>
             </main>
