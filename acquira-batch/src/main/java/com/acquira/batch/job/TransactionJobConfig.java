@@ -1662,6 +1662,38 @@ public class TransactionJobConfig {
                     flushed, (System.currentTimeMillis() - tFlush) / 1000.0));
             }
 
+            // PLAN STABILITY (2026-08-28): refresh statistics on the fact
+            // partitions this load rewrote, for BOTH paths (APPEND's in-place
+            // fee UPDATE stales stats exactly the same way). Nothing else
+            // analyzes fact before the wide-window steps downstream, and the
+            // planner's view of the touched partition drifts further with
+            // every same-day re-upload — seen live in UAT (2026-08-28) as two
+            // IDENTICAL uploads two hours apart: businessMetrics 208s -> 811s,
+            // churn 33s -> 49s, dashboards 51s -> 86s, while the date-scoped
+            // steps stayed flat. ANALYZE is sampled (seconds per partition)
+            // and valid inside the tasklet transaction; failures are non-fatal
+            // because statistics are an optimisation, never correctness.
+            {
+                long tAnalyze = System.currentTimeMillis();
+                java.util.Set<String> parts = new java.util.LinkedHashSet<>();
+                for (java.sql.Date d : distinctDates) {
+                    java.time.LocalDate ld = d.toLocalDate();
+                    parts.add(String.format("fact_transaction_y%04dm%02d", ld.getYear(), ld.getMonthValue()));
+                }
+                parts.add("fact_transaction_default"); // rows without a monthly partition land here
+                int analyzed = 0;
+                for (String part : parts) {
+                    try {
+                        jdbcTemplate.execute("ANALYZE " + part);
+                        analyzed++;
+                    } catch (Exception ae) {
+                        log.debug("ANALYZE {} skipped: {}", part, ae.getMessage());
+                    }
+                }
+                log.info(String.format("Analyzed %d fact partition(s) in %.1fs",
+                    analyzed, (System.currentTimeMillis() - tAnalyze) / 1000.0));
+            }
+
             log.info(String.format("stagingToFact completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
             return RepeatStatus.FINISHED;
         };
@@ -1767,6 +1799,10 @@ public class TransactionJobConfig {
                 "last_30d_cnt=EXCLUDED.last_30d_cnt, last_30d_value=EXCLUDED.last_30d_value, " +
                 "status=EXCLUDED.status, status_change_date=EXCLUDED.status_change_date",
                 tenantId, tenantId);
+
+            // Fresh stats for the score SELECT below and for the attrition/
+            // dashboard reads — this table was just mass-deleted + reinserted.
+            try { jdbcTemplate.execute("ANALYZE merchant_activity_summary"); } catch (Exception ignore) {}
 
             jdbcTemplate.update("INSERT INTO merchant_opportunity_score (tenant_id, merchant_id, score, reason_tags, calc_date) " +
                 "SELECT tenant_id, merchant_id, CASE WHEN last_30d_value > 1000 THEN 80 ELSE 40 END, 'Automated Score', calc_date " +

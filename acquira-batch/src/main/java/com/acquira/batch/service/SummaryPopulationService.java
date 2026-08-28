@@ -580,6 +580,32 @@ public class SummaryPopulationService {
 
             } finally { exec.shutdown(); }
 
+            // PLAN STABILITY (2026-08-28): every table above was just
+            // clean-slate DELETEd and rebuilt, so its statistics describe the
+            // PREVIOUS load until autovacuum catches up — and the downstream
+            // steps (dashboard metrics, monthly merchant metrics, reports) plan
+            // against them immediately. ANALYZE is sampled and cheap on these
+            // tables; failures are ignored because stats are an optimisation.
+            {
+                long tAnalyze = System.currentTimeMillis();
+                for (String tbl : new String[]{
+                        "sum_daily_bank", "sum_daily_merchant", "sum_daily_mcc",
+                        "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
+                        "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
+                        "sum_daily_explorer", "sum_daily_merchant_destination",
+                        "sum_daily_local_debit_bin", "sum_daily_finance_rollup",
+                        "sum_daily_merchant_attribute",
+                        "sum_monthly_bank", "sum_monthly_insight", "sum_monthly_card"}) {
+                    try {
+                        jdbcTemplate.execute("ANALYZE " + tbl);
+                    } catch (Exception ae) {
+                        log.debug("ANALYZE {} skipped: {}", tbl, ae.getMessage());
+                    }
+                }
+                log.info(String.format("  [populateSummary] analyzed summary tables in %.1fs",
+                    (System.currentTimeMillis() - tAnalyze) / 1000.0));
+            }
+
             log.info(String.format("populateSummary completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
             } finally {
                 if (lockConnFinal != null) {
