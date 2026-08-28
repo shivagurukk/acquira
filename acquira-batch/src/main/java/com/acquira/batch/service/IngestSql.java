@@ -104,11 +104,14 @@ public final class IngestSql {
                 // Tokens are compared space-stripped/case-folded; anything else (UAE
                 // 'RFND'/'SALE' etc.) passes through untouched. is_refund drives the
                 // volume/MSF sign and MUST stay a superset of the fee engine's rf set.
+                // 2026-08-28: plain 'Purchase'/'Refund' previously fell through the
+                // ELSE and kept the feed's casing, so one day carried both 'Purchase'
+                // and 'PURCHASE' and every TRANSACTION_TYPE split showed twin rows.
                 "CROSS JOIN LATERAL (SELECT REPLACE(UPPER(TRIM(COALESCE(stg.transaction_type,''))),' ','') AS v) ttr " +
                 "CROSS JOIN LATERAL (SELECT " +
                 "  (ttr.v IN ('RFND','REFUND','REFUNDREVERSAL','REFUNDVOID','SALEREVERSAL','SALEVOID')) AS is_refund, " +
-                "  CASE WHEN ttr.v IN ('REFUNDREVERSAL','REFUNDVOID','SALEREVERSAL','SALEVOID') THEN 'REFUND' " +
-                "       WHEN ttr.v IN ('PRE-AUTHORIZATIONCOMPLETION','PREAUTHORIZATIONCOMPLETION','PRE-AUTHCOMPLETION','PREAUTHCOMPLETION') THEN 'PURCHASE' " +
+                "  CASE WHEN ttr.v IN ('REFUND','REFUNDREVERSAL','REFUNDVOID','SALEREVERSAL','SALEVOID') THEN 'REFUND' " +
+                "       WHEN ttr.v IN ('PURCHASE','PRE-AUTHORIZATIONCOMPLETION','PREAUTHORIZATIONCOMPLETION','PRE-AUTHCOMPLETION','PREAUTHCOMPLETION') THEN 'PURCHASE' " +
                 "       ELSE stg.transaction_type END AS norm_type) tt " +
                 // SCHEME NORMALIZATION (2026-08-24, BH): the feed's 'No Interchange'
                 // token is the Benefit QR product — store it under its real scheme name
