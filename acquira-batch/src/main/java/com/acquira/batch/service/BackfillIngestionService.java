@@ -33,6 +33,14 @@ public class BackfillIngestionService {
     // Track single active job progress (simple singleton approach for now)
     private final AtomicReference<BackfillProgress> currentProgress = new AtomicReference<>(new BackfillProgress());
 
+    // INGEST TRUST: backfill bypasses Spring Batch entirely, so it has to record
+    // its own ledger row — see the openRun call in startBackfill.
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.ingest.IngestRunRecorder ingestRunRecorder;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.ingest.IngestReconciliationService ingestReconciliation;
+
     @Data
     public static class BackfillRequest {
         private LocalDate startDate;
@@ -83,6 +91,15 @@ public class BackfillIngestionService {
         // defense-in-depth session var consistent with the other async paths and
         // avoids a bypass if RLS is ever forced. Cleared in the finally.
         com.acquira.common.config.TenantContext.setCurrentTenant(request.getTenantId());
+
+        // INGEST TRUST: backfill is not a Spring Batch job, so IngestRunJobListener
+        // never sees it. Before the ledger, a backfill that rewrote three months of
+        // history left no trace an operator could find. Open the run explicitly.
+        final Long ingestRunId = ingestRunRecorder.openRun(
+                request.getTenantId(), com.acquira.common.ingest.IngestSource.BACKFILL,
+                null, "backfill", null, "REPLACE",
+                com.acquira.common.config.TenantContext.getCurrentTenant() == null ? "system" : "backfill",
+                null);
 
         log.info("Starting Backfill for Tenant: {},  Range: {} to {}", request.getTenantId(), request.getStartDate(),
                 request.getEndDate());
@@ -150,6 +167,18 @@ public class BackfillIngestionService {
             progress.setStatus("FAILED");
             progress.getErrorMessages().add("Critical: " + e.getMessage());
         } finally {
+            // INGEST TRUST: close the ledger row on every terminal path, success or
+            // failure. A backfill that died halfway still rewrote days, and that is
+            // exactly the run someone will need to find later.
+            try {
+                ingestRunRecorder.updateCounts(ingestRunId, null, null, null, null, null, null,
+                        null, request.getStartDate(), request.getEndDate(),
+                        (int) (request.getEndDate().toEpochDay() - request.getStartDate().toEpochDay()) + 1);
+                ingestReconciliation.reconcile(ingestRunId);
+                ingestRunRecorder.closeRun(ingestRunId, progress.getStatus(), null);
+            } catch (Exception le) {
+                log.warn("Could not close the backfill ingest ledger row (non-fatal): {}", le.toString());
+            }
             // Even a failed run may have rewritten fact/summary days already
             // processed — clear on any terminal status, like the job listener.
             evictReportCaches();

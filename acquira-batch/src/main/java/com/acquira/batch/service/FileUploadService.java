@@ -195,6 +195,57 @@ public class FileUploadService {
         return "APPEND".equalsIgnoreCase(effective) ? "APPEND" : "REPLACE";
     }
 
+    // ── Ingest-trust helpers ────────────────────────────────────────────────
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate ingestJdbc;
+
+    /** Username for the ingest ledger's triggered_by column; "system" off a request thread. */
+    private String currentUsername() {
+        try {
+            org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.getName() != null && !auth.getName().isBlank()) {
+                return auth.getName().length() > 128 ? auth.getName().substring(0, 128) : auth.getName();
+            }
+        } catch (Exception ignored) { /* not on a request thread */ }
+        return "system";
+    }
+
+    /**
+     * Refuses a second concurrent ingest for the same tenant.
+     *
+     * P0-2 (INGEST TRUST): staging is cleared and then read back by tenant, not
+     * by run, so two uploads for one tenant at once used to wipe each other's
+     * rows mid-flight and each report success having loaded a fraction of its
+     * file. Staging rows now carry their run id, but every downstream read in
+     * stagingToFactTasklet is still tenant-scoped — so the defect is fixed by
+     * preventing the overlap rather than by pretending the pipeline supports it.
+     *
+     * Stale RUNNING rows (a pod killed mid-job) are ignored after the grace
+     * window so one crash cannot lock a tenant out of uploading forever.
+     */
+    private void assertNoRunningIngest(Long tenantId) {
+        try {
+            Integer running = ingestJdbc.queryForObject(
+                "SELECT COUNT(*) FROM ingest_run WHERE tenant_id = ? AND status = 'RUNNING' " +
+                "AND started_at > CURRENT_TIMESTAMP - INTERVAL '6 hours'",
+                Integer.class, tenantId);
+            if (running != null && running > 0) {
+                throw new IllegalStateException(
+                    "An ingestion is already running for this bank. Wait for it to finish before "
+                    + "uploading again — two concurrent loads for one tenant would overwrite each "
+                    + "other's staging data. Check Ingest Trust (/ops/ingest-trust) for its progress.");
+            }
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            // Ledger unavailable — do not block the upload over a bookkeeping query.
+            log.warn("Could not check for a running ingest on tenant {} (allowing upload): {}",
+                    tenantId, e.toString());
+        }
+    }
+
     /** Holder for the result of a single-pass file scan. */
     private static class FileScanResult {
         String detectedType;  // MERCHANT, TRANSACTION, LEGACY_EXCEL, UNKNOWN
@@ -441,6 +492,8 @@ public class FileUploadService {
                 JobParameters jobParameters = new JobParametersBuilder()
                         .addLong("tenantId", targetTenantId)
                         .addString("fullPath", filePath)
+                        .addString("ingestSource", "UPLOAD")
+                        .addString("triggeredBy", currentUsername())
                         .addLong("startedAt", System.currentTimeMillis())
                         .toJobParameters();
                 org.springframework.batch.core.JobExecution execution = jobLauncher.run(merchantMasterJob, jobParameters);
@@ -453,6 +506,9 @@ public class FileUploadService {
                 return execution;
 
             } else if ("TRANSACTION".equals(detectedType)) {
+                // Refuse an overlapping load for this tenant — see assertNoRunningIngest.
+                assertNoRunningIngest(targetTenantId);
+
                 auditService.log("BATCH_RUN",
                         String.format("Processing TRANSACTION file for Tenant: %s (%d)", entityName,
                                 targetTenantId));
@@ -462,6 +518,8 @@ public class FileUploadService {
                         .addString("fullPath", filePath)
                         .addString("loadMode", loadModeFor(file.getOriginalFilename(), targetTenantId))
                         .addString("inputType", inputTypeForTenant(targetTenantId, file.getOriginalFilename()))
+                        .addString("ingestSource", "UPLOAD")
+                        .addString("triggeredBy", currentUsername())
                         .addLong("startedAt", System.currentTimeMillis())
                         .toJobParameters();
                 org.springframework.batch.core.JobExecution execution = jobLauncher.run(transactionLoadJob, jobParameters);
@@ -907,6 +965,8 @@ public class FileUploadService {
                     .addString("fullPath", filePath)
                     .addString("loadMode", loadModeFor(file.getName(), targetTenantId))
                     .addString("inputType", inputTypeForTenant(targetTenantId, file.getName()))
+                    .addString("ingestSource", "SERVER_FILE")
+                    .addString("triggeredBy", currentUsername())
                     .addLong("startedAt", System.currentTimeMillis())
                     .toJobParameters();
 

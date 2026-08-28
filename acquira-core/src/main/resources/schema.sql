@@ -248,6 +248,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -2134,6 +2135,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -4021,6 +4023,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -5908,6 +5911,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -7796,6 +7800,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION

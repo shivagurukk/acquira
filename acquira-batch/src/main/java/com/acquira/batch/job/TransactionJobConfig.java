@@ -81,6 +81,37 @@ public class TransactionJobConfig {
     @org.springframework.beans.factory.annotation.Autowired
     private CacheEvictionJobListener cacheEvictionJobListener;
 
+    // Ingestion ledger (ingest_run / ingest_run_stage). The job listener opens
+    // and closes the run and publishes its id into the job execution context;
+    // the step listener records one row per stage. Both are best-effort and can
+    // never fail a job — see IngestRunRecorder.
+    @org.springframework.beans.factory.annotation.Autowired
+    private IngestRunStepListener ingestRunStepListener;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private IngestRunJobListener ingestRunJobListener;
+
+    // Records row counts and destructive-delete volumes onto the ledger row as
+    // the pipeline discovers them.
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.ingest.IngestRunRecorder ingestRunRecorder;
+
+    /**
+     * REPLACE guard (P0-3). A REPLACE load deletes fact rows by whole DATE, so a
+     * partial-day resend can destroy a full day. When the incoming row count for
+     * the batch is below this fraction of what already exists, the load is
+     * refused instead of silently destroying data.
+     *
+     * Set acquira.replace.guard.enabled=false to restore the old behaviour, or
+     * raise/lower the ratio per environment. Some tenants legitimately resend
+     * small days, which is why this is configurable rather than hardcoded.
+     */
+    @org.springframework.beans.factory.annotation.Value("${acquira.replace.guard.enabled:true}")
+    private boolean replaceGuardEnabled;
+
+    @org.springframework.beans.factory.annotation.Value("${acquira.replace.guard.min-ratio:0.5}")
+    private double replaceGuardMinRatio;
+
     // Shared bulk rebuild of sum_monthly_merchant_metrics (also used by
     // BulkMigrationService and BackfillIngestionService, which previously each
     // carried their own per-merchant N+1 copy of this logic).
@@ -108,6 +139,36 @@ public class TransactionJobConfig {
     }
 
     private static final String NUMERIC_ONLY_REGEX = "'^[0-9.]+$'";
+
+    // ── Ingest ledger helpers ───────────────────────────────────────────────
+    // Tasklets are lambdas with only a ChunkContext to reach the job execution,
+    // so these two pull the run id out of it and record against the ledger
+    // without any tasklet needing to know how the plumbing works.
+
+    /** Run id published by IngestRunJobListener.beforeJob; null when the ledger is unavailable. */
+    private static Long ingestRunIdOf(org.springframework.batch.core.scope.context.ChunkContext chunkContext) {
+        try {
+            org.springframework.batch.item.ExecutionContext ctx = chunkContext.getStepContext()
+                .getStepExecution().getJobExecution().getExecutionContext();
+            return ctx.containsKey(IngestRunJobListener.CTX_RUN_ID)
+                ? ctx.getLong(IngestRunJobListener.CTX_RUN_ID) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Records how many existing fact rows a load destroyed before writing its own. */
+    private void recordDeleted(org.springframework.batch.core.scope.context.ChunkContext chunkContext, Long deleted) {
+        try {
+            Long runId = ingestRunIdOf(chunkContext);
+            if (runId != null) {
+                ingestRunRecorder.updateCounts(runId, null, null, null, null, null, deleted,
+                    null, null, null, null);
+            }
+        } catch (Exception e) {
+            log.warn("Could not record deleted-row count on the ingest ledger (non-fatal): {}", e.toString());
+        }
+    }
 
     // PERF FIX: compiled once at class-load time, not per buildSafeDateInList() call.
     private static final java.util.regex.Pattern ISO_DATE_PATTERN =
@@ -176,6 +237,7 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
         return new JobBuilder("transactionLoadJob", jobRepository)
+                .listener(ingestRunJobListener)
                 .listener(cacheEvictionJobListener)
                 .start(ensurePartitionsStep).next(splitExcelStep).next(cleanTargetDayStep)
                 .next(masterIngestStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
@@ -206,6 +268,7 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
         return new JobBuilder("dbPullTransactionJob", jobRepository)
+                .listener(ingestRunJobListener)
                 .listener(cacheEvictionJobListener)
                 .start(ensurePartitionsStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
@@ -216,7 +279,7 @@ public class TransactionJobConfig {
     @Bean
     public Step autoCreateDimensionsStep(Tasklet autoCreateDimensionsTasklet) {
         return new StepBuilder("autoCreateDimensionsStep", jobRepository)
-            .tasklet(autoCreateDimensionsTasklet, transactionManager).listener(mdcStepListener).build();
+            .tasklet(autoCreateDimensionsTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
@@ -341,7 +404,7 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step ensurePartitionsStep(Tasklet ensurePartitionsTasklet) {
-        return new StepBuilder("ensurePartitionsStep", jobRepository).tasklet(ensurePartitionsTasklet, transactionManager).listener(mdcStepListener).build();
+        return new StepBuilder("ensurePartitionsStep", jobRepository).tasklet(ensurePartitionsTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
     @Bean public Tasklet ensurePartitionsTasklet() {
         return (contribution, chunkContext) -> {
@@ -353,7 +416,7 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step splitExcelStep(ExcelSplitterTasklet excelSplitterTasklet) {
-        return new StepBuilder("splitExcelStep", jobRepository).tasklet(excelSplitterTasklet, transactionManager).listener(mdcStepListener).build();
+        return new StepBuilder("splitExcelStep", jobRepository).tasklet(excelSplitterTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     /**
@@ -374,7 +437,7 @@ public class TransactionJobConfig {
         return new StepBuilder("analyzeStagingStep", jobRepository)
             .tasklet(analyzeStagingTasklet, transactionManager)
             .transactionAttribute(noTxn())
-            .listener(mdcStepListener).build();
+            .listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
     @Bean @StepScope public Tasklet analyzeStagingTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
         return (contribution, chunkContext) -> {
@@ -422,15 +485,54 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step cleanTargetDayStep(Tasklet cleanTargetDayTasklet) {
-        return new StepBuilder("cleanTargetDayStep", jobRepository).tasklet(cleanTargetDayTasklet, transactionManager).listener(mdcStepListener).build();
+        return new StepBuilder("cleanTargetDayStep", jobRepository).tasklet(cleanTargetDayTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
-    @Bean @StepScope public Tasklet cleanTargetDayTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+    /**
+     * Clears staging ahead of this run's ingest.
+     *
+     * P0-2 (INGEST TRUST): this used to be an unqualified
+     * {@code DELETE FROM stg_trnx_raw WHERE tenant_id = ?} — no day scope and no
+     * run scope, despite the name. Two uploads for the same tenant at once meant
+     * the second wiped the first's staging mid-flight, and the first then
+     * "succeeded" having written a fraction of its rows.
+     *
+     * Now it clears only what is NOT this run's: rows belonging to runs that have
+     * already reached a terminal state, plus untagged legacy rows. A concurrently
+     * RUNNING sibling's rows are left alone.
+     *
+     * NOTE ON SCOPE — read this before "finishing the job" by scoping more reads.
+     * Everything downstream (stagingToFactTasklet and friends) still reads
+     * staging by tenant_id alone. Leaving a sibling's rows in place is therefore
+     * only SAFE because FileUploadService now refuses to start a second ingest
+     * while one is RUNNING for the same tenant (see assertNoRunningIngest). The
+     * defect is fixed by preventing the concurrency, not by supporting it —
+     * supporting it would mean run-scoping ~20 downstream queries, and a
+     * half-scoped pipeline silently mixes two uploads into one fact load.
+     */
+    @Bean @StepScope public Tasklet cleanTargetDayTasklet(
+            @Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("#{jobExecutionContext['ingestRunId']}") Long ingestRunId) {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long t = System.currentTimeMillis();
-            int rows = jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ?", tenantId);
-            log.info(String.format("cleanTargetDay completed in %.1fs (deleted %d staging rows)",
-                (System.currentTimeMillis() - t) / 1000.0, rows));
+            int rows;
+            if (ingestRunId == null) {
+                // Ledger unavailable — fall back to the old behaviour rather than
+                // leaving staging dirty, but say so, because concurrency safety
+                // is not available on this path.
+                rows = jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ?", tenantId);
+                log.warn("cleanTargetDay: no ingest run id available, cleared ALL staging for tenant {} "
+                    + "(concurrent uploads are not safe on this path)", tenantId);
+            } else {
+                rows = jdbcTemplate.update(
+                    "DELETE FROM stg_trnx_raw s WHERE s.tenant_id = ? AND " +
+                    "(s.ingest_run_id IS NULL OR s.ingest_run_id <> ?) AND " +
+                    "(s.ingest_run_id IS NULL OR NOT EXISTS (" +
+                    "   SELECT 1 FROM ingest_run r WHERE r.id = s.ingest_run_id AND r.status = 'RUNNING'))",
+                    tenantId, ingestRunId);
+            }
+            log.info(String.format("cleanTargetDay completed in %.1fs (deleted %d staging rows, run=%s)",
+                (System.currentTimeMillis() - t) / 1000.0, rows, String.valueOf(ingestRunId)));
             return RepeatStatus.FINISHED;
         };
     }
@@ -444,7 +546,7 @@ public class TransactionJobConfig {
         // partition COUNT is (rows / ExcelSplitterTasklet.CHUNK_SIZE). Left at 8
         // only because Spring Batch requires a value.
         return new StepBuilder("masterIngestStep", jobRepository).partitioner("csvWorkerStep", partitioner)
-                .step(csvWorkerStep).taskExecutor(partitionExecutor).gridSize(8).listener(mdcStepListener).build();
+                .step(csvWorkerStep).taskExecutor(partitionExecutor).gridSize(8).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     // PERF FIX: ThreadPoolTaskExecutor instead of SimpleAsyncTaskExecutor.
@@ -1078,19 +1180,32 @@ public class TransactionJobConfig {
 
     // PERF FIX: jdbcTemplate.batchUpdate() uses Hikari properly.
     // Old code called dataSource.getConnection() directly, bypassing the pool entirely.
-    @Bean public ItemWriter<StagingTransaction> highPerfTransactionWriter() {
-        final String sql = "INSERT INTO stg_trnx_raw (entity_name, aggregator_internal_id, aggregator_name, aggregator_code, " +
+    //
+    // P0-2 (INGEST TRUST): every staging row is stamped with the run that wrote
+    // it. Before this, staging had no run scope at all, so cleanTargetDayTasklet
+    // could only clear the WHOLE tenant — two concurrent uploads for one tenant
+    // meant the second wiped the first's staging mid-flight. The stamp is also
+    // what makes a truthful rows_staged possible for the reconciliation funnel.
+    //
+    // @StepScope so the bean can bind the run id the job listener published into
+    // the job execution context before the first step ran. Null when the ledger
+    // was unavailable — the column simply stays NULL and ingestion is unaffected.
+    @Bean @StepScope
+    public ItemWriter<StagingTransaction> highPerfTransactionWriter(
+            @Value("#{jobExecutionContext['ingestRunId']}") Long ingestRunId) {
+        final String sql = "INSERT INTO stg_trnx_raw (ingest_run_id, entity_name, aggregator_internal_id, aggregator_name, aggregator_code, " +
             "mid, merchant_internal_id, merchant_name, sid, merchant_store_internal_id, cmm_merchant_store_internal_id, " +
             "merchant_store_legal_name, store_name, tid, arn, rrn_number, card_number, auth_code, payment_date, " +
             "transaction_date, batch_number, transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, " +
             "txn_currency_amount, store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, " +
-            "interchange_fee, destination, issuer_country, tenant_id, load_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
+            "interchange_fee, destination, issuer_country, tenant_id, load_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
         return items -> jdbcTemplate.batchUpdate(sql,
             new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
                 @Override public int getBatchSize() { return items.size(); }
                 @Override public void setValues(PreparedStatement ps, int idx) throws java.sql.SQLException {
                     StagingTransaction t = items.getItems().get(idx);
                     int i = 1;
+                    if (ingestRunId != null) ps.setLong(i++, ingestRunId); else ps.setNull(i++, java.sql.Types.BIGINT);
                     ps.setString(i++, t.getEntityName()); ps.setString(i++, t.getAggregatorInternalId());
                     ps.setString(i++, t.getAggregatorName()); ps.setString(i++, t.getAggregatorCode());
                     ps.setString(i++, t.getMid()); ps.setString(i++, t.getMerchantInternalId());
@@ -1125,7 +1240,7 @@ public class TransactionJobConfig {
         return new StepBuilder("stagingToFactStep", jobRepository)
             .tasklet(stagingToFactTasklet, transactionManager)
             .transactionAttribute(noTxn())
-            .listener(mdcStepListener)
+            .listener(mdcStepListener).listener(ingestRunStepListener)
             .build();
     }
 
@@ -1273,20 +1388,83 @@ public class TransactionJobConfig {
                 if (uploadSchemes.isEmpty() && !Boolean.TRUE.equals(stagingHasBlankScheme)) {
                     log.warn("APPEND mode: staging has no rows in scope - nothing to delete.");
                 } else {
+                    recordDeleted(chunkContext, (long) deleted);
                     log.info(String.format("APPEND mode: deleted %d fact rows for scheme(s) %s%s in %.1fs",
                         deleted, uploadSchemes,
                         Boolean.TRUE.equals(stagingHasBlankScheme) ? " + blank-scheme rows" : "",
                         (System.currentTimeMillis() - tDel) / 1000.0));
                 }
             } else {
-                jdbcTemplate.update(
+                // P0-3 (INGEST TRUST): REPLACE deletes fact rows by WHOLE DATE, so a
+                // 200-row resend of one acquirer's slice destroys the entire day.
+                // Count first, so (a) the ledger can show what was destroyed and
+                // (b) the guard below can refuse an obviously partial replacement.
+                Long existing = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM fact_transaction WHERE tenant_id = ? AND " + rngBare
+                        + "DATE(payment_date) IN " + dateScope,
+                    Long.class, tenantId);
+                long existingRows = existing == null ? 0L : existing;
+
+                Long incoming = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL",
+                    Long.class, tenantId);
+                long incomingRows = incoming == null ? 0L : incoming;
+
+                if (replaceGuardEnabled && existingRows > 0
+                        && incomingRows < existingRows * replaceGuardMinRatio) {
+                    throw new IllegalStateException(String.format(
+                        "REPLACE refused: this file carries %d row(s) for %d date(s) that already hold "
+                        + "%d row(s). Replacing would delete %d row(s) and write back only %d — a partial-day "
+                        + "file replacing a fuller day. Re-upload the complete day, use APPEND mode, or lower "
+                        + "acquira.replace.guard.min-ratio (currently %.2f) if this is intentional.",
+                        incomingRows, distinctDates.size(), existingRows,
+                        existingRows - incomingRows, incomingRows, replaceGuardMinRatio));
+                }
+
+                int factDeleted = jdbcTemplate.update(
                     "DELETE FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope,
                     tenantId);
-                log.info(String.format("Deleted existing fact rows in %.1fs", (System.currentTimeMillis() - tDel) / 1000.0));
+                recordDeleted(chunkContext, (long) factDeleted);
+                log.info(String.format("Deleted %d existing fact rows in %.1fs",
+                    factDeleted, (System.currentTimeMillis() - tDel) / 1000.0));
+            }
+
+            // =================================================================
+            // APPEND-ONLY FACT WRITE (2026-08-28, REPLACE mode only).
+            //
+            // Every fact row used to be written TWICE: once by the INSERT below,
+            // then re-written by the store/terminal fix-ups and the fee-apply
+            // UPDATE — and a Postgres UPDATE is a delete+insert (new row version,
+            // every index maintained again, dead tuples for autovacuum). On the
+            // BH UAT re-ingest that second write was the dominant cost even after
+            // the two-phase split (resolve SELECT ~28s/day vs hours of UPDATE).
+            //
+            // REPLACE deletes the whole date scope first, so the incoming batch
+            // IS the entire scope. Stage it in a session temp table shaped
+            // exactly like fact_transaction, run the SAME fix-up and fee SQL
+            // against the temp table (cheap: no partitions, no fact indexes, no
+            // MVCC bloat that survives the job), then flush with a single
+            // INSERT INTO fact_transaction — each fact row is written exactly
+            // once, fees and statuses already populated.
+            //
+            // APPEND keeps the direct path verbatim: its delete is
+            // scheme-scoped, so pre-existing rows of OTHER schemes share the
+            // date scope and the fee pass legitimately re-prices them; pricing
+            // only the batch would change that behaviour.
+            //
+            // LIKE ... INCLUDING DEFAULTS copies the live column order and the
+            // BIGSERIAL default, so transaction_ids draw from the real sequence
+            // and the final `INSERT ... SELECT *` aligns positionally.
+            final boolean stageViaBatchTable = !appendMode;
+            final String factTarget = stageViaBatchTable ? "tmp_fact_batch" : "fact_transaction";
+            if (stageViaBatchTable) {
+                jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fact_batch");
+                jdbcTemplate.execute(
+                    "CREATE TEMP TABLE tmp_fact_batch (LIKE fact_transaction INCLUDING DEFAULTS)");
             }
 
             long tIns = System.currentTimeMillis();
-            String sql = "INSERT INTO fact_transaction (tenant_id, merchant_id, store_id, terminal_id, " +
+            String sql = "INSERT INTO " + factTarget + " (tenant_id, merchant_id, store_id, terminal_id, " +
                 "arn, rrn_number, card_number, auth_code, payment_date, transaction_date, batch_number, " +
                 "transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, txn_currency_amount, " +
                 "store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, interchange_fee, " +
@@ -1404,7 +1582,13 @@ public class TransactionJobConfig {
                 "WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL " +
                 "AND ttr.v NOT IN ('PRE-AUTHORIZATION','PREAUTHORIZATION','PRE-AUTH','PREAUTH')";
             int inserted = jdbcTemplate.update(sql, tenantId);
-            log.info(String.format("Inserted %d fact rows in %.1fs", inserted, (System.currentTimeMillis() - tIns) / 1000.0));
+            log.info(String.format("Inserted %d %s rows in %.1fs", inserted,
+                stageViaBatchTable ? "batch (pre-fact)" : "fact", (System.currentTimeMillis() - tIns) / 1000.0));
+            if (stageViaBatchTable) {
+                // Temp tables have no stats until analyzed; the fix-up and fee
+                // joins below need row counts to pick hash joins.
+                jdbcTemplate.execute("ANALYZE tmp_fact_batch");
+            }
 
             // RECONCILIATION: staging rows with a usable date must equal fact rows inserted.
             // The INSERT filters on `payment_date IS NOT NULL` AND excludes
@@ -1439,7 +1623,7 @@ public class TransactionJobConfig {
             Map<String, Object> counts = jdbcTemplate.queryForMap(
                 "SELECT COUNT(*) AS total, " +
                 "COUNT(*) FILTER (WHERE merchant_id IS NOT NULL) AS matched " +
-                "FROM fact_transaction WHERE tenant_id = ? " +
+                "FROM " + factTarget + " WHERE tenant_id = ? " +
                 "AND " + rngBare + "DATE(payment_date) IN " + dateScope, tenantId);
             Integer total   = counts.get("total")   == null ? 0 : ((Number) counts.get("total")).intValue();
             Integer matched = counts.get("matched") == null ? 0 : ((Number) counts.get("matched")).intValue();
@@ -1466,6 +1650,42 @@ public class TransactionJobConfig {
                 log.warn("Could not record data-quality summary (non-fatal): {}", dqe.getMessage());
             }
 
+            // INGEST TRUST: publish the funnel's middle two tiers onto the ledger
+            // row. rows_staged counts only THIS run's staging rows when the stamp
+            // is available (P0-2); rows_facted is what actually landed. The
+            // reconciliation service compares them after the job closes.
+            try {
+                Long runId = ingestRunIdOf(chunkContext);
+                if (runId != null) {
+                    Long stagedForRun = jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND ingest_run_id = ?",
+                        Long.class, tenantId, runId);
+                    // DB pulls populate staging themselves and never carry the stamp,
+                    // so fall back to the tenant-wide count rather than reporting 0.
+                    if (stagedForRun == null || stagedForRun == 0) {
+                        stagedForRun = jdbcTemplate.queryForObject(
+                            "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ?", Long.class, tenantId);
+                    }
+                    ingestRunRecorder.updateCounts(runId, null, stagedForRun,
+                        (long) inserted, null, null, null,
+                        Math.max(0, (total == null ? 0 : total) - (matched == null ? 0 : matched)),
+                        distinctDates.get(0).toLocalDate(),
+                        distinctDates.get(distinctDates.size() - 1).toLocalDate(),
+                        distinctDates.size());
+
+                    // Day coverage is refreshed by IngestRunJobListener AFTER the
+                    // job finishes, not here: populateSummaryStep has not run yet,
+                    // so a coverage row written now would record a summary count of
+                    // zero. The listener re-derives the touched days from
+                    // min_txn_date/max_txn_date written just above — deliberately
+                    // not from a date list in the execution context, whose
+                    // SHORT_CONTEXT column is bounded and would truncate on a
+                    // year-wide backfill.
+                }
+            } catch (Exception le) {
+                log.warn("Could not update ingest ledger counts (non-fatal): {}", le.toString());
+            }
+
             long tFix = System.currentTimeMillis();
             // PERF: both fix-ups join the whole date range of fact_transaction against
             // the whole staging table on (payment_date, arn). That join is paid in full
@@ -1476,12 +1696,12 @@ public class TransactionJobConfig {
             // hasMissingNames / hasUnmappedMerchants guards above.
             int storeFixed = 0, termFixed = 0;
             Boolean anyNullStore = jdbcTemplate.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM fact_transaction f WHERE f.tenant_id = ? " +
+                "SELECT EXISTS (SELECT 1 FROM " + factTarget + " f WHERE f.tenant_id = ? " +
                 "AND f.store_id IS NULL AND f.merchant_id IS NOT NULL " +
                 "AND " + rngF + "DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
             if (Boolean.TRUE.equals(anyNullStore)) {
                 storeFixed = jdbcTemplate.update(
-                    "UPDATE fact_transaction f SET store_id = s.store_id " +
+                    "UPDATE " + factTarget + " f SET store_id = s.store_id " +
                     "FROM dim_store s, stg_trnx_raw stg " +
                     "WHERE f.tenant_id = ? AND s.tenant_id = ? AND stg.tenant_id = ? " +
                     "AND f.store_id IS NULL AND f.merchant_id IS NOT NULL " +
@@ -1492,12 +1712,12 @@ public class TransactionJobConfig {
                     tenantId, tenantId, tenantId);
             }
             Boolean anyNullTerm = jdbcTemplate.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM fact_transaction f WHERE f.tenant_id = ? " +
+                "SELECT EXISTS (SELECT 1 FROM " + factTarget + " f WHERE f.tenant_id = ? " +
                 "AND f.terminal_id IS NULL AND f.store_id IS NOT NULL " +
                 "AND " + rngF + "DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
             if (Boolean.TRUE.equals(anyNullTerm)) {
                 termFixed = jdbcTemplate.update(
-                    "UPDATE fact_transaction f SET terminal_id = t.terminal_id " +
+                    "UPDATE " + factTarget + " f SET terminal_id = t.terminal_id " +
                     "FROM dim_terminal t, stg_trnx_raw stg " +
                     "WHERE f.tenant_id = ? AND t.tenant_id = ? AND stg.tenant_id = ? " +
                     "AND f.terminal_id IS NULL AND f.store_id IS NOT NULL " +
@@ -1625,7 +1845,9 @@ public class TransactionJobConfig {
                 // use the resolved fee (COALESCE to 0 when a country has no configured
                 // row, e.g. BH/OM/EG today); NULL off ECOM. AE keeps 0.18 via its seed.
                 "    CASE WHEN ch.channel = 'ECOM' THEN COALESCE(eff.fee_amount, 0) ELSE NULL END AS computed_ecom " +
-                "  FROM fact_transaction ft " +
+                // REPLACE mode resolves from tmp_fact_batch (identical shape); the
+                // rate-resolution logic is byte-identical either way.
+                "  FROM " + factTarget + " ft " +
                 // COUNTRY RESOLUTION (V2026_07_31_02, Phase 2 multi-region): a rate
                 // card is COUNTRY-LEVEL, not tenant-level. Resolve the transaction's
                 // country from its tenant's home_country_code; every rate LATERAL
@@ -1807,7 +2029,7 @@ public class TransactionJobConfig {
             log.info(String.format("Fee resolution (phase 1, temp table): %.1fs",
                 (tFeeApply - tFee) / 1000.0));
             int feeRows = jdbcTemplate.update(
-                "UPDATE fact_transaction f SET " +
+                "UPDATE " + factTarget + " f SET " +
                 "  interchange_fee = r.computed_ic, " +
                 "  scheme_fee      = r.computed_scheme, " +
                 "  ecom_fee        = r.computed_ecom, " +
@@ -1840,7 +2062,7 @@ public class TransactionJobConfig {
             // instead of leaving it to be discovered in a month-end reconciliation.
             try {
                 java.util.List<java.util.Map<String, Object>> byStatus = jdbcTemplate.queryForList(
-                    "SELECT fee_resolution_status AS st, COUNT(*) AS n FROM fact_transaction " +
+                    "SELECT fee_resolution_status AS st, COUNT(*) AS n FROM " + factTarget + " " +
                     "WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                     " GROUP BY 1 ORDER BY 2 DESC", tenantId);
                 long unresolved = 0;
@@ -1863,7 +2085,7 @@ public class TransactionJobConfig {
                         // entry for table ft" and the whole fee-resolution report was
                         // swallowed by the non-fatal catch below — the pricing-gap
                         // warning this exists to raise has never actually fired.
-                        "SELECT DISTINCT destination_raw FROM fact_transaction WHERE tenant_id = ? " +
+                        "SELECT DISTINCT destination_raw FROM " + factTarget + " WHERE tenant_id = ? " +
                         "AND fee_resolution_status = 'UNMAPPED_DESTINATION' AND " + rngBare +
                         "DATE(payment_date) IN " + dateScope + " LIMIT 20", String.class, tenantId));
                 } else {
@@ -1871,6 +2093,26 @@ public class TransactionJobConfig {
                 }
             } catch (Exception e) {
                 log.warn("Fee resolution report failed (non-fatal): {}", e.getMessage());
+            }
+
+            // FLUSH (append-only path): the batch — dims fixed up, fees and
+            // statuses populated — lands in fact_transaction in ONE insert.
+            // SELECT * is positionally safe because tmp_fact_batch was created
+            // with LIKE fact_transaction in this same session. Rows route to
+            // their monthly partitions exactly as the old direct INSERT did.
+            if (stageViaBatchTable) {
+                long tFlush = System.currentTimeMillis();
+                int flushed = jdbcTemplate.update(
+                    "INSERT INTO fact_transaction SELECT * FROM tmp_fact_batch");
+                jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fact_batch");
+                if (flushed != inserted) {
+                    // Should be impossible (nothing else writes the temp table);
+                    // loud rather than silent if it ever isn't.
+                    log.warn("[RECONCILE] batch flush wrote {} fact row(s) but {} were staged in tmp_fact_batch",
+                        flushed, inserted);
+                }
+                log.info(String.format("Fact flush (append-only, single write): %d rows in %.1fs",
+                    flushed, (System.currentTimeMillis() - tFlush) / 1000.0));
             }
 
             log.info(String.format("stagingToFact completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
@@ -1882,7 +2124,7 @@ public class TransactionJobConfig {
         return new StepBuilder("populateSummaryStep", jobRepository)
             .tasklet(populateSummaryTasklet, transactionManager)
             .transactionAttribute(noTxn())
-            .listener(mdcStepListener)
+            .listener(mdcStepListener).listener(ingestRunStepListener)
             .build();
     }
 
@@ -2462,7 +2704,7 @@ public class TransactionJobConfig {
     @Bean public Step calculateBusinessMetricsStep(Tasklet calculateBusinessMetricsTasklet) {
         return new StepBuilder("calculateBusinessMetricsStep", jobRepository)
             .tasklet(calculateBusinessMetricsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
@@ -2569,7 +2811,7 @@ public class TransactionJobConfig {
     @Bean public Step scoreMlStep(Tasklet scoreMlTasklet) {
         return new StepBuilder("scoreMlStep", jobRepository)
             .tasklet(scoreMlTasklet, transactionManager)
-            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
@@ -2598,7 +2840,7 @@ public class TransactionJobConfig {
     @Bean public Step computeSegmentsStep(Tasklet computeSegmentsTasklet) {
         return new StepBuilder("computeSegmentsStep", jobRepository)
             .tasklet(computeSegmentsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
@@ -2627,7 +2869,7 @@ public class TransactionJobConfig {
     @Bean public Step calculateDailyDashboardMetricsStep(Tasklet calculateDailyDashboardMetricsTasklet) {
         return new StepBuilder("calculateDailyDashboardMetricsStep", jobRepository)
             .tasklet(calculateDailyDashboardMetricsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope

@@ -72,6 +72,7 @@ const ROUTE_IMPORTS = {
     '/upload': () => import('./pages/UploadPage'),
     '/ops/server-file': () => import('./pages/ServerFileProcessor'),
     '/ops/batch-logs': () => import('./pages/BatchMonitoring'),
+    '/ops/ingest-trust': () => import('./pages/ops/IngestTrust'),
     '/business/emails': () => import('./pages/StatementEmails'),
     '/business/revenue-leakage': () => import('./pages/business/RevenueLeakage'),
 
