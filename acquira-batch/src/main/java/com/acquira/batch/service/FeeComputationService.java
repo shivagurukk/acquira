@@ -148,10 +148,16 @@ public class FeeComputationService {
                 "         WHEN sfr.id IS NULL                     THEN 'NO_RATE_FOUND' " +
                 "         WHEN sfr.rate_status <> 'APPROVED'      THEN 'PLACEHOLDER_RATE' " +
                 "         ELSE 'RESOLVED' END AS sf_status, " +
-                // ecom flat fee (V2026_07_31_06): per-country config (ecom_flat_fee)
-                // resolved by home_country_code, NOT a hardcoded 0.18. On ECOM channel
-                // use the resolved fee (COALESCE to 0 when a country has no configured
-                // row, e.g. BH/OM/EG today); NULL off ECOM. AE keeps 0.18 via its seed.
+                // ecom flat fee (V2026_07_31_06, per-gateway since V2026_08_28_02):
+                // per-country config (ecom_flat_fee) resolved by home_country_code,
+                // NOT a hardcoded 0.18. On ECOM channel use the resolved fee (COALESCE
+                // to 0 when a country has no configured row); NULL off ECOM. A
+                // gateway_type row (matched on the raw terminal type, e.g. BENEFIT PG /
+                // MPGS / PAY ON) beats the country's is_default row (business rule
+                // 2026-08-28: an ECOM txn with no gateway-specific row prices at the
+                // default gateway's fee — MPGS), which beats the NULL-gateway
+                // last resort, so each payment gateway's PG fee is configurable
+                // separately.
                 "    CASE WHEN ch.channel = 'ECOM' THEN COALESCE(eff.fee_amount, 0) ELSE NULL END AS computed_ecom " +
                 // REPLACE mode resolves from tmp_fact_batch (identical shape); the
                 // rate-resolution logic is byte-identical either way.
@@ -314,14 +320,28 @@ public class FeeComputationService {
                 "    ORDER BY (s.rate_status = 'APPROVED') DESC, (s.tenant_id IS NOT NULL) DESC, " +
                 "             (s.scheme_group IS NOT NULL) DESC LIMIT 1 " +
                 "  ) sfr ON TRUE " +
-                // ECOM FLAT FEE (V2026_07_31_06): resolve the per-country flat fee the
-                // same country-level way (tenant override preferred over country default).
-                // No row for a country => eff.fee_amount NULL => COALESCE'd to 0 above.
+                // ECOM FLAT FEE (V2026_07_31_06, per-gateway since V2026_08_28_02):
+                // resolve the per-country flat fee the same country-level way. A row
+                // names a specific gateway (gateway_type = raw terminal type, the
+                // token terminal_channel_map matches on), is the flagged default
+                // (is_default: the gateway every unlisted ECOM terminal type prices
+                // as — MPGS per the 2026-08-28 business rule), or is the NULL-gateway
+                // last resort (AE's legacy single row). Precedence: tenant override
+                // first (as for every other rate table), then exact gateway match,
+                // then default, then last resort. The exact-match ORDER BY term is
+                // guarded IS NOT NULL AND: a bare equality is NULL for the
+                // NULL-gateway row and DESC sorts NULLs FIRST in Postgres, which
+                // would put the last resort above a real match.
+                // No matching row => eff.fee_amount NULL => COALESCE'd to 0 above.
                 "  LEFT JOIN LATERAL ( " +
                 "    SELECT e.fee_amount FROM ecom_flat_fee e " +
                 "    WHERE e.country_code = COALESCE(tn.home_country_code,'AE') " +
                 "      AND (e.tenant_id IS NULL OR e.tenant_id = ft.tenant_id) " +
-                "    ORDER BY (e.tenant_id IS NOT NULL) DESC LIMIT 1 " +
+                "      AND (e.gateway_type IS NULL OR e.is_default " +
+                "           OR e.gateway_type = UPPER(TRIM(COALESCE(dt.type,'')))) " +
+                "    ORDER BY (e.tenant_id IS NOT NULL) DESC, " +
+                "             (e.gateway_type IS NOT NULL AND e.gateway_type = UPPER(TRIM(COALESCE(dt.type,'')))) DESC, " +
+                "             e.is_default DESC LIMIT 1 " +
                 "  ) eff ON TRUE " +
                 // CREATE TABLE AS is a utility statement, so no bind parameters:
                 // tenantId is inlined (a Long from job parameters, never user text).
