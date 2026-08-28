@@ -1302,7 +1302,12 @@ const DailyMerchantDashboard = () => {
                    would otherwise win on equal specificity. */
                 .edm-panel.edm-hdrblock { background: var(--edm-mast-bg,
                         linear-gradient(150deg, #212F4B 0%, #1C263C 55%, #1C2841 100%));
-                    border-color: transparent; overflow: visible; }
+                    border-color: transparent; overflow: visible;
+                    /* The edm-enter fill-mode animation makes every panel its own
+                       stacking context, so the filter popover's z-index can't escape
+                       this block — later sibling panels painted over it. Lift the
+                       whole header above them so open dropdowns hang in front. */
+                    position: relative; z-index: 40; }
                 .edm-mast { background: transparent;
                     padding: 16px 24px 14px; display: flex; justify-content: space-between;
                     align-items: flex-end; gap: 18px; flex-wrap: wrap; }
