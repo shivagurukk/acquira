@@ -263,6 +263,14 @@ UPDATE interchange_rate_local
    AND (interchange_pct = 0.019000
         OR label IS DISTINCT FROM 'BH MasterCard POS domestic default (debit/unknown fallback)');
 
+-- Refresh planner stats on the tables this migration reshaped. It deleted
+-- ~1462 interchange_rate_local rows and inserted the tier set; without an
+-- ANALYZE the planner keeps the old row estimates until autoanalyze fires,
+-- which can degrade the per-row interchange lateral's plan in the fee pass.
+-- Cheap on these small tables.
+ANALYZE interchange_rate_local;
+ANALYZE scheme_fee_rate;
+
 INSERT INTO schema_migration_log (filename)
 VALUES ('V2026_08_29_03__mc_manual_rate_alignment.sql')
 ON CONFLICT (filename) DO NOTHING;

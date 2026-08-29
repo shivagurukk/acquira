@@ -186,6 +186,19 @@ public class FileUploadService {
      * Merchant files never call this — they are always UPSERT.
      */
     private String loadModeFor(String fileName, Long tenantId) {
+        // TEMPORARY FORCE (2026-08-29, per directive): every upload runs REPLACE.
+        // All current tenants (AMS + CMM) are REPLACE, and REPLACE is also the
+        // fast fee-resolution path: it prices from the freshly-ANALYZEd
+        // tmp_fact_batch, so the planner's row estimates are sound. APPEND prices
+        // in place on fact_transaction, whose just-appended partition slice has
+        // stale stats -> a ~1-row estimate -> nested-loop blowup in the fee
+        // resolve (observed as a 15-minute tmp_fee_resolve). APPEND will be
+        // revisited later WITH a pre-fee ANALYZE of the touched partitions.
+        // Flip FORCE_REPLACE to false to restore JCB / tenant-setting / global
+        // selection below.
+        final boolean FORCE_REPLACE = true;
+        if (FORCE_REPLACE) return "REPLACE";
+
         if (isAppendModeFileName(fileName)) return "APPEND";
         String effective = globalLoadMode;
         if (tenantId != null) {
