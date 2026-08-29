@@ -215,40 +215,63 @@ public class IngestRunRecorder {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void upsertDayCoverage(Long tenantId, Long runId, List<LocalDate> dates) {
         if (tenantId == null || dates == null || dates.isEmpty()) return;
-        for (LocalDate d : dates) {
-            try {
-                jdbc.update(
-                    "INSERT INTO ingest_day_coverage (tenant_id, txn_date, rows_fact, rows_summary, " +
-                    "gross_amount, fee_priced_rows, last_run_id, last_loaded_at, load_count) " +
-                    "SELECT ?, ?, " +
-                    "  (SELECT COUNT(*) FROM fact_transaction f " +
-                    "     WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? + INTERVAL '1 day'), " +
-                    "  (SELECT COALESCE(SUM(s.total_txns),0) FROM sum_daily_full s " +
-                    "     WHERE s.tenant_id = ? AND s.business_date = ?), " +
-                    "  (SELECT COALESCE(SUM(s.total_volume),0) FROM sum_daily_full s " +
-                    "     WHERE s.tenant_id = ? AND s.business_date = ?), " +
-                    "  (SELECT COUNT(*) FROM fact_transaction f " +
-                    "     WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? + INTERVAL '1 day' " +
-                    "       AND f.msf IS NOT NULL AND f.msf <> 0), " +
-                    "  ?, CURRENT_TIMESTAMP, 1 " +
-                    "ON CONFLICT (tenant_id, txn_date) DO UPDATE SET " +
-                    "  rows_fact       = EXCLUDED.rows_fact, " +
-                    "  rows_summary    = EXCLUDED.rows_summary, " +
-                    "  gross_amount    = EXCLUDED.gross_amount, " +
-                    "  fee_priced_rows = EXCLUDED.fee_priced_rows, " +
-                    "  last_run_id     = EXCLUDED.last_run_id, " +
-                    "  last_loaded_at  = CURRENT_TIMESTAMP, " +
-                    "  load_count      = ingest_day_coverage.load_count + 1",
-                    tenantId, java.sql.Date.valueOf(d),
-                    tenantId, java.sql.Date.valueOf(d), java.sql.Date.valueOf(d),
-                    tenantId, java.sql.Date.valueOf(d),
-                    tenantId, java.sql.Date.valueOf(d),
-                    tenantId, java.sql.Date.valueOf(d), java.sql.Date.valueOf(d),
-                    runId);
-            } catch (Exception e) {
-                log.warn("Could not upsert day coverage for tenant {} date {} (non-fatal): {}",
-                        tenantId, d, e.toString());
-            }
+        // PERF (2026-08-29): was an N+1 — per date, two COUNT(*) scans of
+        // fact_transaction (the second, msf<>0, needing heap access) plus two
+        // summary reads. A 31-day month meant 62 fact scans in afterJob, on the
+        // critical path. Rewritten as ONE bounded, grouped fact scan + ONE
+        // grouped summary scan, joined against the target dates. The fact range
+        // [min, max+1day) prunes to just the touched partitions; DATE(payment_date)
+        // is only in the GROUP BY / output, not a WHERE filter, so pruning holds.
+        // load_count semantics preserved: each target date upserts once, so the
+        // ON CONFLICT +1 increments exactly as the per-date loop did.
+        try {
+            java.util.List<LocalDate> sorted = new java.util.ArrayList<>(dates);
+            java.util.Collections.sort(sorted);
+            LocalDate min = sorted.get(0);
+            LocalDate maxExclusive = sorted.get(sorted.size() - 1).plusDays(1);
+            String valuesList = sorted.stream()
+                .distinct()
+                .map(d -> "(DATE '" + d + "')")
+                .collect(java.util.stream.Collectors.joining(","));
+
+            jdbc.update(
+                "INSERT INTO ingest_day_coverage (tenant_id, txn_date, rows_fact, rows_summary, " +
+                "gross_amount, fee_priced_rows, last_run_id, last_loaded_at, load_count) " +
+                "SELECT ?, d.txn_date, " +
+                "  COALESCE(ff.rows_fact, 0), " +
+                "  COALESCE(sf.rows_summary, 0), " +
+                "  COALESCE(sf.gross_amount, 0), " +
+                "  COALESCE(ff.fee_priced_rows, 0), " +
+                "  ?, CURRENT_TIMESTAMP, 1 " +
+                "FROM (VALUES " + valuesList + ") d(txn_date) " +
+                "LEFT JOIN ( " +
+                "   SELECT DATE(f.payment_date) AS bd, COUNT(*) AS rows_fact, " +
+                "          COUNT(*) FILTER (WHERE f.msf IS NOT NULL AND f.msf <> 0) AS fee_priced_rows " +
+                "   FROM fact_transaction f " +
+                "   WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? " +
+                "   GROUP BY DATE(f.payment_date) " +
+                ") ff ON ff.bd = d.txn_date " +
+                "LEFT JOIN ( " +
+                "   SELECT s.business_date AS bd, SUM(s.total_txns) AS rows_summary, " +
+                "          SUM(s.total_volume) AS gross_amount " +
+                "   FROM sum_daily_full s " +
+                "   WHERE s.tenant_id = ? AND s.business_date >= ? AND s.business_date < ? " +
+                "   GROUP BY s.business_date " +
+                ") sf ON sf.bd = d.txn_date " +
+                "ON CONFLICT (tenant_id, txn_date) DO UPDATE SET " +
+                "  rows_fact       = EXCLUDED.rows_fact, " +
+                "  rows_summary    = EXCLUDED.rows_summary, " +
+                "  gross_amount    = EXCLUDED.gross_amount, " +
+                "  fee_priced_rows = EXCLUDED.fee_priced_rows, " +
+                "  last_run_id     = EXCLUDED.last_run_id, " +
+                "  last_loaded_at  = CURRENT_TIMESTAMP, " +
+                "  load_count      = ingest_day_coverage.load_count + 1",
+                tenantId, runId,
+                tenantId, java.sql.Date.valueOf(min), java.sql.Date.valueOf(maxExclusive),
+                tenantId, java.sql.Date.valueOf(min), java.sql.Date.valueOf(maxExclusive));
+        } catch (Exception e) {
+            log.warn("Could not upsert day coverage for tenant {} ({} date(s)) (non-fatal): {}",
+                    tenantId, dates.size(), e.toString());
         }
     }
 

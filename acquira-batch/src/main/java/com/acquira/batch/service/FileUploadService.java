@@ -559,12 +559,31 @@ public class FileUploadService {
                 // inside the async lambda.
                 final Long asyncTenantId = targetTenantId;
                 final String asyncEntityName = entityName;
+                final org.springframework.batch.core.JobExecution asyncExecution = execution;
                 java.util.concurrent.CompletableFuture.runAsync(() -> {
                     try {
+                        // Wait for the (async-launched) load to finish before
+                        // reporting — otherwise the rollup races the still-running
+                        // job and can aggregate half-loaded data. Then scope to the
+                        // dates this upload actually loaded so we do NOT rescan and
+                        // re-aggregate the tenant's entire history (the dominant
+                        // cost that grew with retention). Empty scope -> the
+                        // unscoped fallback inside ManualIngestionService.
+                        org.springframework.batch.core.JobExecution done = waitForJob(asyncExecution);
+                        if (!"COMPLETED".equals(String.valueOf(done != null ? done.getStatus() : null))) {
+                            log.warn("[async] Skipping reporting for tenant {} ({}) — load ended {}",
+                                asyncEntityName, asyncTenantId, done != null ? done.getStatus() : "UNKNOWN");
+                            return;
+                        }
                         long t = System.currentTimeMillis();
-                        manualIngestionService.processManualUpload(asyncTenantId);
-                        log.info("[async] Reporting update completed for tenant {} ({}) in {} ms",
-                            asyncEntityName, asyncTenantId, System.currentTimeMillis() - t);
+                        java.util.List<java.time.LocalDate> scope = loadedDatesOf(done);
+                        if (scope.isEmpty()) {
+                            manualIngestionService.processManualUpload(asyncTenantId);
+                        } else {
+                            manualIngestionService.processManualUpload(asyncTenantId, scope);
+                        }
+                        log.info("[async] Reporting update completed for tenant {} ({}) in {} ms ({} scoped date(s))",
+                            asyncEntityName, asyncTenantId, System.currentTimeMillis() - t, scope.size());
                     } catch (Exception e) {
                         log.warn("[async] Reporting update failed for tenant {} ({}): {}",
                             asyncEntityName, asyncTenantId, e.getMessage());
@@ -762,13 +781,41 @@ public class FileUploadService {
         // transaction data is fully loaded by the time this runs, so the reporting
         // rollup sees complete data (no race against still-running jobs).
         if (!transactionFiles.isEmpty()) {
+            // Union the dates each tenant's TRANSACTION files actually loaded, read
+            // from each job's execution context (jobId is stored on the result).
+            // This scopes the reporting update to the uploaded month(s) instead of
+            // rescanning the tenant's whole fact history. A tenant with any file
+            // that yields no stamp falls back to the unscoped path for safety.
+            java.util.Map<Long, java.util.LinkedHashSet<java.time.LocalDate>> scopeByTenant =
+                new java.util.LinkedHashMap<>();
+            java.util.Set<Long> unscopedTenants = new java.util.HashSet<>();
+            for (java.util.Map<String, Object> r : results) {
+                if (!"TRANSACTION".equals(String.valueOf(r.get("type")))) continue;
+                Object tid = r.get("tenantId");
+                if (!(tid instanceof Long tenantId)) continue;
+                java.util.List<java.time.LocalDate> dates = loadedDatesOf((Long) r.get("jobId"));
+                if (dates.isEmpty()) {
+                    unscopedTenants.add(tenantId);
+                } else {
+                    scopeByTenant.computeIfAbsent(tenantId, k -> new java.util.LinkedHashSet<>()).addAll(dates);
+                }
+            }
             for (Long tenantId : processedTenants) {
                 final Long asyncTenantId = tenantId;
+                final java.util.List<java.time.LocalDate> scope =
+                    (unscopedTenants.contains(tenantId) || !scopeByTenant.containsKey(tenantId))
+                        ? java.util.List.of()
+                        : new java.util.ArrayList<>(scopeByTenant.get(tenantId));
                 java.util.concurrent.CompletableFuture.runAsync(() -> {
                     try {
                         long t = System.currentTimeMillis();
-                        log.info("[async] Running reporting update for tenant {}", asyncTenantId);
-                        manualIngestionService.processManualUpload(asyncTenantId);
+                        log.info("[async] Running reporting update for tenant {} ({} scoped date(s))",
+                            asyncTenantId, scope.size());
+                        if (scope.isEmpty()) {
+                            manualIngestionService.processManualUpload(asyncTenantId);
+                        } else {
+                            manualIngestionService.processManualUpload(asyncTenantId, scope);
+                        }
                         log.info("[async] Reporting update completed for tenant {} in {} ms",
                             asyncTenantId, System.currentTimeMillis() - t);
                     } catch (Exception e) {
@@ -993,6 +1040,40 @@ public class FileUploadService {
             }
         }
         return latest;
+    }
+
+    /**
+     * The distinct payment dates a completed transaction job actually loaded,
+     * read from the 'dq.loadedDates' CSV the stagingToFact step publishes to
+     * the job execution context (see TransactionJobConfig). Used to SCOPE the
+     * async reporting update to the uploaded month(s) instead of rescanning and
+     * re-aggregating the tenant's entire fact history. Returns an empty list if
+     * the stamp is absent (older job, or the job never reached stagingToFact) —
+     * callers then fall back to the unscoped, whole-history reporting path.
+     */
+    private java.util.List<java.time.LocalDate> loadedDatesOf(
+            org.springframework.batch.core.JobExecution execution) {
+        if (execution == null) return java.util.List.of();
+        try {
+            Object csv = execution.getExecutionContext().get("dq.loadedDates");
+            if (csv == null || csv.toString().isBlank()) return java.util.List.of();
+            java.util.List<java.time.LocalDate> out = new java.util.ArrayList<>();
+            for (String s : csv.toString().split(",")) {
+                String t = s.trim();
+                if (!t.isEmpty()) out.add(java.time.LocalDate.parse(t));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("Could not read loaded dates from job {} (non-fatal, will use unscoped reporting): {}",
+                    execution.getId(), e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    /** loadedDatesOf by job id (via JobExplorer) — for callers that only kept the id. */
+    private java.util.List<java.time.LocalDate> loadedDatesOf(Long jobId) {
+        if (jobId == null || jobExplorer == null) return java.util.List.of();
+        return loadedDatesOf(jobExplorer.getJobExecution(jobId));
     }
 
     /** True once a JobExecution is in a terminal (no longer running) state. */

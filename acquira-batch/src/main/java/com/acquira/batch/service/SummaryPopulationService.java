@@ -111,6 +111,11 @@ public class SummaryPopulationService {
                     .withDayOfMonth(1).plusMonths(1);
             final String monthRngBare = "payment_date >= DATE '" + monthRangeStart +
                 "' AND payment_date < DATE '" + monthRangeEnd + "' AND ";
+            // Same bound for the phase-2 monthly rollups, which read the daily
+            // summary tables (partitioned + indexed on business_date, not
+            // payment_date) and filter only on CAST(TO_CHAR(business_date,...)).
+            final String monthRngBiz = "business_date >= DATE '" + monthRangeStart +
+                "' AND business_date < DATE '" + monthRangeEnd + "' AND ";
             log.info("populateSummary: {} dates, {} months in scope", distinctDates.size(), monthSet.size());
 
             java.util.concurrent.ExecutorService exec =
@@ -550,7 +555,7 @@ public class SummaryPopulationService {
                         "total_interchange, total_scheme_fee, total_ecom_fee, total_vat, total_net_revenue) " +
                         "SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), SUM(total_txns), SUM(total_volume), SUM(COALESCE(total_base_volume,0)), " +
                         "SUM(total_msf), SUM(total_interchange), SUM(total_scheme_fee), SUM(COALESCE(total_ecom_fee,0)), SUM(total_vat), SUM(total_net_revenue) " +
-                        "FROM sum_daily_bank WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN " + monthScope +
+                        "FROM sum_daily_bank WHERE tenant_id=? AND " + monthRngBiz + "CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN " + monthScope +
                         " GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM') " +
                         "ON CONFLICT (tenant_id, month_key) DO UPDATE SET " +
                         "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, " +
@@ -567,7 +572,7 @@ public class SummaryPopulationService {
                         "SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), merchant_id, store_id, terminal_id, " +
                         "card_scheme, card_type, destination, channel, is_opt_in, " +
                         "SUM(total_txns), SUM(total_volume), SUM(total_msf) " +
-                        "FROM sum_daily_insight WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN " + monthScope +
+                        "FROM sum_daily_insight WHERE tenant_id=? AND " + monthRngBiz + "CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN " + monthScope +
                         " GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM'), merchant_id, store_id, terminal_id, " +
                         "card_scheme, card_type, destination, channel, is_opt_in " +
                         "ON CONFLICT (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +

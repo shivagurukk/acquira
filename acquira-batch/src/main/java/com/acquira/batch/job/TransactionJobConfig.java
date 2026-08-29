@@ -358,12 +358,13 @@ public class TransactionJobConfig {
             }
 
             int storesAdded = 0;
-            Boolean hasUnmappedStores = jdbcTemplate.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
-                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
-                "AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
-                "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
-                "LIMIT 1)", Boolean.class, tenantId);
+            // PERF (2026-08-29): the store gate is the SAME EXISTS as the merchant
+            // gate above (same "staged sid with no dim_store AND no dim_terminal"
+            // predicate) — re-running it was a second full staging scan for one
+            // answer. The merchant INSERT only adds dim_merchant rows, never
+            // dim_store/dim_terminal, so the gate's truth value is unchanged by it;
+            // reuse the earlier result.
+            Boolean hasUnmappedStores = hasUnmappedMerchants;
 
             if (Boolean.TRUE.equals(hasUnmappedStores)) {
                 storesAdded = jdbcTemplate.update(
@@ -378,9 +379,23 @@ public class TransactionJobConfig {
                     "           'Store ' || TRIM(s.sid)), " +
                     "  'ACTIVE', NOW() " +
                     "FROM stg_trnx_raw s " +
-                    "JOIN dim_merchant m ON m.tenant_id = s.tenant_id " +
-                    "  AND (m.mid = NULLIF(TRIM(s.mid), '') " +
-                    "    OR m.internal_id = 'AUTO_SID_' || TRIM(s.sid)) " +
+                    // PERF (2026-08-29): resolve the owning merchant via a LATERAL
+                    // of two SINGLE-index probes instead of a disjunctive join
+                    // `ON (m.mid = ... OR m.internal_id = ...)`. The OR cannot use
+                    // either index (idx_dim_merchant_mid / the unique
+                    // (tenant_id, internal_id)), so it degraded to a hash/nested
+                    // join scanning ~every staged row x the tenant's merchants.
+                    // COALESCE prefers the real MID match, falling back to the
+                    // auto-created AUTO_SID_<sid> merchant — the same two arms the
+                    // OR expressed. dim_store's unique internal_id (AUTO_STORE_SID_
+                    // <sid>) already collapses any duplicate to one row, so picking
+                    // one merchant per sid is the identical end state.
+                    "JOIN LATERAL (SELECT COALESCE(" +
+                    "    (SELECT m1.merchant_id FROM dim_merchant m1 " +
+                    "       WHERE m1.tenant_id = s.tenant_id AND m1.mid = NULLIF(TRIM(s.mid), '') LIMIT 1), " +
+                    "    (SELECT m2.merchant_id FROM dim_merchant m2 " +
+                    "       WHERE m2.tenant_id = s.tenant_id AND m2.internal_id = 'AUTO_SID_' || TRIM(s.sid) LIMIT 1) " +
+                    "  ) AS merchant_id) m ON m.merchant_id IS NOT NULL " +
                     "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_store ds " +
                     "    WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
@@ -1341,11 +1356,25 @@ public class TransactionJobConfig {
                 Boolean.TRUE.equals(hasMissingNames) ? "" : " [skipped: all names good]"));
 
             if (Boolean.TRUE.equals(hasMissingNames)) {
-                Boolean stillMissing = jdbcTemplate.queryForObject(
-                    "SELECT EXISTS (SELECT 1 FROM dim_merchant m WHERE m.tenant_id = ? " +
-                    "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") LIMIT 1)",
-                    Boolean.class, tenantId);
-                if (Boolean.TRUE.equals(stillMissing)) {
+                // PERF (2026-08-29): the prefix-match pass below is a bidirectional
+                // `col LIKE othercol || '%'` cross join — non-sargable in both
+                // directions, so its cost is (unnamed merchants) x (distinct staged
+                // mids). For a tenant whose merchant names are genuinely numeric
+                // (the BH feed this heuristic targets) the gate never closes, so it
+                // ran full-cross every upload (5k x 20k ~ 100M string compares).
+                // The exact m.mid = staging_mid pass already ran above; this is a
+                // best-effort fuzzy fallback, so cap it: skip when the unnamed set
+                // is large, where it is both most expensive and least reliable.
+                Integer stillMissingCount = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM dim_merchant m WHERE m.tenant_id = ? " +
+                    "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ")",
+                    Integer.class, tenantId);
+                final int PREFIX_MATCH_CAP = 2000;
+                if (stillMissingCount != null && stillMissingCount > PREFIX_MATCH_CAP) {
+                    log.info("Skipping prefix-match name pass: {} unnamed merchants exceeds cap {} " +
+                        "(exact-match pass already applied; fuzzy prefix match not worth a {}-row cross join)",
+                        stillMissingCount, PREFIX_MATCH_CAP, stillMissingCount);
+                } else if (stillMissingCount != null && stillMissingCount > 0) {
                     long t06 = System.currentTimeMillis();
                     int prefixUpdated = jdbcTemplate.update(
                         "UPDATE dim_merchant m SET name = sub.merchant_name " +
@@ -1582,6 +1611,17 @@ public class TransactionJobConfig {
                 jobCtx.putInt("dq.dates", distinctDates.size());
                 jobCtx.putString("dq.schemes", String.join(",", uploadSchemes));
                 jobCtx.putString("dq.loadMode", appendMode ? "APPEND" : "REPLACE");
+                // PERF (2026-08-29): publish the ISO dates this upload actually
+                // loaded so the async reporting step (ManualIngestionService)
+                // can scope to them instead of rescanning + re-aggregating the
+                // tenant's WHOLE fact history. The DB-pull path already scopes
+                // (it reads staging before the job wipes it); the file path had
+                // no such handle once staging was cleared, so it passed no scope
+                // and processed every month the tenant ever loaded. Kept as a
+                // compact CSV of yyyy-MM-dd; readers split on ','.
+                jobCtx.putString("dq.loadedDates", distinctDates.stream()
+                    .map(d -> d.toLocalDate().toString())
+                    .collect(java.util.stream.Collectors.joining(",")));
             } catch (Exception dqe) {
                 log.warn("Could not record data-quality summary (non-fatal): {}", dqe.getMessage());
             }
@@ -1835,6 +1875,18 @@ public class TransactionJobConfig {
                 log.warn("  [businessMetrics] clean-slate activity {} + score {} rows", delAct, delScore);
             }
 
+            // PERF (2026-08-29): a CONSTANT payment_date envelope for the fact join
+            // below. The per-row bounds `f.payment_date >= d.target_date - 60d`
+            // reference an inline VALUES column, which the planner cannot use for
+            // partition pruning — so on a hash join the WHOLE tenant history of
+            // fact_transaction is scanned (the step's own comment records a
+            // 208s -> 811s regression). distinctDates is sorted ASC; the widest
+            // window any target_date needs is [min-60d, max+1d), and adding it as
+            // a constant predicate prunes to just those month partitions. It never
+            // changes the result: every row the per-row bounds admit lies inside it.
+            final String actWindow =
+                " AND f.payment_date >= DATE '" + distinctDates.get(0).toLocalDate().minusDays(60) + "' " +
+                " AND f.payment_date <  DATE '" + distinctDates.get(distinctDates.size() - 1).toLocalDate().plusDays(1) + "' ";
             jdbcTemplate.update("INSERT INTO merchant_activity_summary (tenant_id, merchant_id, calc_date, " +
                 "first_txn_date, last_txn_date, last_7d_cnt, last_7d_value, last_30d_cnt, last_30d_value, status, status_change_date) " +
                 "SELECT m.tenant_id, m.merchant_id, d.target_date, MIN(f.payment_date), MAX(f.payment_date), " +
@@ -1860,6 +1912,7 @@ public class TransactionJobConfig {
                 // and status were computed from the future.
                 "  AND f.payment_date >= d.target_date - INTERVAL '60 days' " +
                 "  AND f.payment_date <  d.target_date + INTERVAL '1 day' " +
+                actWindow +
                 "WHERE m.tenant_id = ? " +
                 "AND m.merchant_id IN (SELECT DISTINCT merchant_id FROM fact_transaction WHERE tenant_id = ? " +
                 "  AND merchant_id IS NOT NULL AND " + rngBare + "DATE(payment_date) IN " + dateScope + ") " +
