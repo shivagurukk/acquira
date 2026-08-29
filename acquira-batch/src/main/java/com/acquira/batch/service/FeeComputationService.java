@@ -44,6 +44,21 @@ public class FeeComputationService {
     public int computeFees(long tenantId, String factTable,
                            String rngFt, String rngF, String rngBare, String dateScope) {
         final String factTarget = factTable;
+            // PERF (2026-08-29c): REPLACE mode reads from a freshly-built temp table
+            // (tmp_fact_batch) that already contains EXACTLY this load's rows, so the
+            // `DATE(payment_date) IN (...)` scope filter is redundant there — and it is
+            // actively harmful: Postgres cannot estimate the DATE() expression, so it
+            // guessed ~98 rows for a 2.3M-row batch (measured) and therefore ran every
+            // per-row LATERAL (scheme, channel, sector, interchange) as an un-memoized
+            // nested loop 2.3M times — the ~7-minute fee resolve. Dropping the filter
+            // for the temp-batch path restores an accurate row estimate, so the planner
+            // memoizes the small-key laterals down to a handful of executions. APPEND
+            // mode prices in place on fact_transaction (history present), so it KEEPS
+            // the full scope filter. tenant_id is retained as a cheap guard.
+            final boolean fromTempBatch = !"fact_transaction".equalsIgnoreCase(factTarget);
+            final String factScopeWhere = fromTempBatch
+                ? " ft.tenant_id = " + tenantId + " "
+                : " ft.tenant_id = " + tenantId + " AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope + " ";
             // FEE COMPUTATION (V2026_07_05_01): interchange + scheme fee are
             // computed by US, not trusted from the feed. Both off the
             // SETTLEMENT amount (store_base_currency_amount) — never the
@@ -374,7 +389,8 @@ public class FeeComputationService {
                 "  ) eff ON TRUE " +
                 // CREATE TABLE AS is a utility statement, so no bind parameters:
                 // tenantId is inlined (a Long from job parameters, never user text).
-                "  WHERE ft.tenant_id = " + tenantId + " AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope;
+                // Scope filter is mode-dependent (see factScopeWhere above).
+                "  WHERE " + factScopeWhere;
 
             // BIN-TIER PRE-RESOLUTION (2026-08-29b). The fee-resolve SELECT above
             // joins tmp_bin_tier (bin6 -> Standard/Premium/Elite) as a plain hash
@@ -411,7 +427,7 @@ public class FeeComputationService {
                     "          MAX(CASE WHEN UPPER(REPLACE(COALESCE(ft.card_scheme,''),' ','')) LIKE 'MASTER%' THEN 'MASTERCARD' " +
                     "                   WHEN UPPER(REPLACE(COALESCE(ft.card_scheme,''),' ','')) LIKE 'VISA%'   THEN 'VISA' END) AS scheme " +
                     "   FROM " + factTarget + " ft " +
-                    "   WHERE ft.tenant_id = " + tenantId + " AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope +
+                    "   WHERE " + factScopeWhere +
                     "     AND ft.card_number ~ '^[0-9]{6}' " +
                     "     AND COALESCE(NULLIF(TRIM(ft.card_product_code),''),'') = '' " +
                     "   GROUP BY LEFT(ft.card_number,6) " +
