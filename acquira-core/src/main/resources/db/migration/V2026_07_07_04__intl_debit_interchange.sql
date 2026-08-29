@@ -46,11 +46,15 @@ WHERE ilr.tenant_id = t.tenant_id AND t.bank_short_code = 'ACQ'
   AND ilr.priority = 2 AND ilr.dest = 'INTERNATIONAL';
 
 -- ---------------------------------------------------------------------------
--- 2. Channel-split local debit/prepaid base (Excel 'Normal', caps in AED):
---       POS  0.75% cap USD 37.5 -> AED 137.625
---       ECOM 1.00% cap USD 50   -> AED 183.5
+-- 2. Channel-split local debit/prepaid base.
+--    REVISED 2026-08-29 (V2026_08_29_03 alignment): the MC MEA manual states
+--    these caps in AED ("0.75%, max AED 37.50"), not USD - the earlier x3.67
+--    conversion was a currency misread. Manual figures:
+--       POS  debit   0.75% cap AED 37.50
+--       POS  prepaid 1.00% cap AED 50.00 (prepaid is 1.00 in every program)
+--       ECOM both    1.00% cap AED 50.00
 --    Delete covers the original channel-NULL rows, this migration's own rows
---    (re-run safe), and any earlier-draft rows with USD caps.
+--    (re-run safe), and any earlier-draft rows.
 -- ---------------------------------------------------------------------------
 DELETE FROM interchange_rate_local ilr
 USING tenant t
@@ -65,10 +69,10 @@ SELECT t.tenant_id, v.priority, v.dest, v.channel, v.scheme_group, v.card_type, 
        v.mcc, v.min_ticket::numeric, v.max_ticket::numeric, v.interchange_pct::numeric, v.cap_amount::numeric, v.label
 FROM (SELECT tenant_id FROM tenant WHERE bank_short_code = 'ACQ') t
 CROSS JOIN (VALUES
-    (10, 'DOMESTIC', 'POS',  NULL, 'DEBIT',   NULL, NULL, NULL, NULL, NULL, 0.007500, 137.625, 'Local debit POS 0.75 (cap AED 137.625 = USD 37.5)'),
-    (10, 'DOMESTIC', 'POS',  NULL, 'PREPAID', NULL, NULL, NULL, NULL, NULL, 0.007500, 137.625, 'Local prepaid POS 0.75 (cap AED 137.625 = USD 37.5)'),
-    (10, 'DOMESTIC', 'ECOM', NULL, 'DEBIT',   NULL, NULL, NULL, NULL, NULL, 0.010000, 183.500, 'Local debit ECOM 1.00 (cap AED 183.5 = USD 50)'),
-    (10, 'DOMESTIC', 'ECOM', NULL, 'PREPAID', NULL, NULL, NULL, NULL, NULL, 0.010000, 183.500, 'Local prepaid ECOM 1.00 (cap AED 183.5 = USD 50)')
+    (10, 'DOMESTIC', 'POS',  NULL, 'DEBIT',   NULL, NULL, NULL, NULL, NULL, 0.007500,  37.50, 'Local debit POS 0.75 (cap AED 37.50, MC manual Aug-2026)'),
+    (10, 'DOMESTIC', 'POS',  NULL, 'PREPAID', NULL, NULL, NULL, NULL, NULL, 0.010000,  50.00, 'Local prepaid POS 1.00 (cap AED 50, MC manual Aug-2026)'),
+    (10, 'DOMESTIC', 'ECOM', NULL, 'DEBIT',   NULL, NULL, NULL, NULL, NULL, 0.010000,  50.00, 'Local debit ECOM 1.00 (cap AED 50, MC manual Aug-2026)'),
+    (10, 'DOMESTIC', 'ECOM', NULL, 'PREPAID', NULL, NULL, NULL, NULL, NULL, 0.010000,  50.00, 'Local prepaid ECOM 1.00 (cap AED 50, MC manual Aug-2026)')
 ) AS v(priority, dest, channel, scheme_group, card_type, tier, mcc_sector,
        mcc, min_ticket, max_ticket, interchange_pct, cap_amount, label);
 
@@ -140,40 +144,45 @@ INSERT INTO interchange_rate_local
     (tenant_id, priority, dest, channel, scheme_group, card_type, tier, mcc_sector,
      mcc, min_ticket, max_ticket, interchange_pct, cap_amount, label)
 SELECT t.tenant_id, 50, 'DOMESTIC', NULL, NULL, v.card_type, NULL, NULL,
-       v.mcc, NULL, NULL, 0.006500, 3.67, v.label
+       v.mcc, NULL, NULL, 0.006500, 1.00, v.label
 FROM (SELECT tenant_id FROM tenant WHERE bank_short_code = 'ACQ') t
 CROSS JOIN (VALUES
-    ('DEBIT',   '8398', 'MCC 8398 debit 0.65 (cap AED 3.67 = USD 1)'),
-    ('PREPAID', '8398', 'MCC 8398 prepaid 0.65 (cap AED 3.67 = USD 1)'),
-    ('DEBIT',   '8661', 'MCC 8661 debit 0.65 (cap AED 3.67 = USD 1)'),
-    ('PREPAID', '8661', 'MCC 8661 prepaid 0.65 (cap AED 3.67 = USD 1)')
+    ('DEBIT',   '8398', 'MCC 8398 debit 0.65 (cap AED 1.00, MC manual Aug-2026)'),
+    ('PREPAID', '8398', 'MCC 8398 prepaid 0.65 (cap AED 1.00, MC manual Aug-2026)'),
+    ('DEBIT',   '8661', 'MCC 8661 debit 0.65 (cap AED 1.00, MC manual Aug-2026)'),
+    ('PREPAID', '8661', 'MCC 8661 prepaid 0.65 (cap AED 1.00, MC manual Aug-2026)')
 ) AS v(card_type, mcc, label);
 
 -- ---------------------------------------------------------------------------
--- 4. USD -> AED cap conversion for rows seeded by EARLIER migrations.
---    V2026_07_07_01 reseeds its priority-50 MCC rows with USD caps (32.50 /
---    25.00) on every startup; this file runs after it and converts them.
---    Absolute-value UPDATEs keyed on the exact USD figures - re-run safe
---    (second run matches nothing). Also converts any leftover 37.5 base cap
---    from V2026_07_05_01 on a fresh-seeded DB (belt and braces; section 2
---    already replaces those rows).
+-- 4. Cap healing (REVERSED 2026-08-29, see V2026_08_29_03).
+--    This section used to convert the workbook caps USD -> AED (x3.67); the
+--    MC MEA manual states the caps in AED, so the conversion was a currency
+--    misread. V2026_07_07_01's reseeded 32.50 / 25.00 caps are now correct
+--    as-is. This section's remaining job is to HEAL any DB that carries the
+--    old converted values back to the manual's AED figures. Keyed on the
+--    exact converted values - re-run safe (second run matches nothing).
 -- ---------------------------------------------------------------------------
-UPDATE interchange_rate_local ilr SET cap_amount = 119.275
+UPDATE interchange_rate_local ilr SET cap_amount = 32.50
 FROM tenant t
 WHERE ilr.tenant_id = t.tenant_id AND t.bank_short_code = 'ACQ'
-  AND ilr.cap_amount = 32.50;
+  AND ilr.cap_amount = 119.275;
 
-UPDATE interchange_rate_local ilr SET cap_amount = 91.75
+UPDATE interchange_rate_local ilr SET cap_amount = 25.00
 FROM tenant t
 WHERE ilr.tenant_id = t.tenant_id AND t.bank_short_code = 'ACQ'
-  AND ilr.cap_amount = 25.00;
+  AND ilr.cap_amount = 91.75;
 
-UPDATE interchange_rate_local ilr SET cap_amount = 137.625
+UPDATE interchange_rate_local ilr SET cap_amount = 37.50
 FROM tenant t
 WHERE ilr.tenant_id = t.tenant_id AND t.bank_short_code = 'ACQ'
-  AND ilr.cap_amount = 37.50;
+  AND ilr.cap_amount = 137.625;
 
-UPDATE interchange_rate_local ilr SET cap_amount = 183.50
+UPDATE interchange_rate_local ilr SET cap_amount = 50.00
 FROM tenant t
 WHERE ilr.tenant_id = t.tenant_id AND t.bank_short_code = 'ACQ'
-  AND ilr.cap_amount = 50.00;
+  AND ilr.cap_amount = 183.50;
+
+UPDATE interchange_rate_local ilr SET cap_amount = 1.00
+FROM tenant t
+WHERE ilr.tenant_id = t.tenant_id AND t.bank_short_code = 'ACQ'
+  AND ilr.cap_amount = 3.67 AND ilr.mcc IN ('8398','8661');

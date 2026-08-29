@@ -247,6 +247,30 @@ public class FeeComputationService {
                 "      AND m.mcc = ds.mcc " +
                 "    ORDER BY (m.tenant_id IS NOT NULL) DESC LIMIT 1 " +
                 "  ) msm ON TRUE " +
+                // BIN-BASED TIER (2026-08-29, V2026_08_29_03): the BH feed carries no
+                // card product code, so Standard/Premium/Elite resolves from the scheme
+                // BIN file instead: leading 6 PAN digits -> ref_bin_range (9-digit
+                // account ranges) -> product code -> ref_bin_product_tier bucket.
+                // Gated to BH (the only tier-from-BIN rate card) AND product-code-blank,
+                // so a feed-supplied product code always wins and no other country's
+                // resolution changes. Candidate scan is index-friendly: walk the 8
+                // nearest ranges by range_low DESC (idx_ref_bin_range_lookup), keep the
+                // most specific one that covers the 6-digit prefix AND has a tier
+                // mapping; ranges splitting below 6 digits resolve to the most
+                // specific covering subrange.
+                "  LEFT JOIN LATERAL ( " +
+                "    SELECT bpt.card_tier FROM ( " +
+                "      SELECT rbr.product_code, rbr.range_low, rbr.range_high FROM ref_bin_range rbr " +
+                "      WHERE COALESCE(tn.home_country_code,'AE') = 'BH' AND pc.v = '' " +
+                "        AND rbr.scheme = CASE rcs.group_name WHEN 'MasterCard' THEN 'MASTERCARD' WHEN 'Visa' THEN 'VISA' END " +
+                "        AND ft.card_number ~ '^[0-9]{6}' " +
+                "        AND rbr.range_low <= LEFT(ft.card_number,6) || '999' " +
+                "      ORDER BY rbr.range_low DESC LIMIT 8 " +
+                "    ) cand " +
+                "    JOIN ref_bin_product_tier bpt ON bpt.product_code = cand.product_code " +
+                "    WHERE cand.range_high >= LEFT(ft.card_number,6) || '000' " +
+                "    ORDER BY cand.range_low DESC LIMIT 1 " +
+                "  ) bint ON TRUE " +
                 // PERF (2026-07-14): lateral split into MCC-keyed + wildcard branches so
                 // the planner drives each via an index instead of scanning all ~365
                 // candidate rows per transaction (was 9.4M heap blocks / ~270s per window).
@@ -284,7 +308,12 @@ public class FeeComputationService {
                 // - AMEX/JCB/UPI/VICR/MCCR/MCCP/MCPM/VIPM/VICP, generic VISA/MCRD, and
                 // unmatched codes - resolves Premium. (JCB/UPI still hit their priority-11
                 // flat 1.75 rows, which are tier-wildcard, so tier is moot for them.)
-                "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 1 THEN 'Standard' ELSE 'Premium' END) " +
+                // TIER: explicit Standard feed products (MCSD/VISD) stay Standard; then
+                // the BIN-resolved bucket (Standard/Premium/Elite, BH-gated above) wins;
+                // everything else remains the legacy Premium fallback.
+                "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 1 THEN 'Standard' " +
+                "                                               WHEN bint.card_tier IS NOT NULL THEN bint.card_tier " +
+                "                                               ELSE 'Premium' END) " +
                 // MCC-KEYED RATE CARD (2026-07-07): mcc match/wildcard now enforced by the
                 // UNION ALL branches above (most-specific still wins via priority DESC).
                 "      AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = msm.sector) " +
