@@ -242,7 +242,8 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("calculateBusinessMetricsStep") Step calculateBusinessMetricsStep,
             @org.springframework.beans.factory.annotation.Qualifier("scoreMlStep") Step scoreMlStep,
             @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
-            @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
+            @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("clearRunStagingStep") Step clearRunStagingStep) {
         return new JobBuilder("transactionLoadJob", jobRepository)
                 .listener(ingestRunJobListener)
                 .listener(cacheEvictionJobListener)
@@ -250,7 +251,7 @@ public class TransactionJobConfig {
                 .next(masterIngestStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
                 .next(calculateBusinessMetricsStep).next(scoreMlStep).next(computeSegmentsStep)
-                .next(calculateDailyDashboardMetricsStep).build();
+                .next(calculateDailyDashboardMetricsStep).next(clearRunStagingStep).build();
     }
 
     /**
@@ -312,6 +313,12 @@ public class TransactionJobConfig {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long start = System.currentTimeMillis();
+            // Run-scope every staging read (2026-08-29) so a sequential folder load
+            // does not re-scan every prior file's accumulated staging rows for each
+            // new file. Dimension creation is idempotent, but the EXISTS/INSERT scans
+            // over a growing staging table were O(n^2) across a 50-file batch.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhereS = ingestRunId != null ? " AND s.ingest_run_id = " + ingestRunId : "";
 
             int orphansRemoved = jdbcTemplate.update(
                 "DELETE FROM dim_merchant m " +
@@ -330,7 +337,7 @@ public class TransactionJobConfig {
             int merchantsAdded = 0;
             Boolean hasUnmappedMerchants = jdbcTemplate.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
-                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL" + stgRunWhereS + " " +
                 "AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
                 "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
                 "LIMIT 1)", Boolean.class, tenantId);
@@ -349,7 +356,7 @@ public class TransactionJobConfig {
                     "    'Merchant ' || TRIM(s.sid)), " +
                     "  'ACTIVE', NOW() " +
                     "FROM stg_trnx_raw s " +
-                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL" + stgRunWhereS + " " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
                     "GROUP BY s.tenant_id, TRIM(s.sid) " +
@@ -396,7 +403,7 @@ public class TransactionJobConfig {
                     "    (SELECT m2.merchant_id FROM dim_merchant m2 " +
                     "       WHERE m2.tenant_id = s.tenant_id AND m2.internal_id = 'AUTO_SID_' || TRIM(s.sid) LIMIT 1) " +
                     "  ) AS merchant_id) m ON m.merchant_id IS NOT NULL " +
-                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL" + stgRunWhereS + " " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_store ds " +
                     "    WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt " +
@@ -410,7 +417,7 @@ public class TransactionJobConfig {
             Boolean hasUnmappedTerminals = jdbcTemplate.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
                 "JOIN dim_store ds ON ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid) " +
-                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL " +
+                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL" + stgRunWhereS + " " +
                 "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id " +
                 "  AND dt.store_id = ds.store_id AND dt.tid = TRIM(s.tid)) " +
                 "LIMIT 1)", Boolean.class, tenantId);
@@ -425,7 +432,7 @@ public class TransactionJobConfig {
                     "  'ACTIVE', NOW() " +
                     "FROM stg_trnx_raw s " +
                     "JOIN dim_store ds ON ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid) " +
-                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL" + stgRunWhereS + " " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id " +
                     "    AND dt.store_id = ds.store_id AND dt.tid = TRIM(s.tid)) " +
                     "GROUP BY s.tenant_id, ds.store_id, TRIM(s.sid), TRIM(s.tid) " +
@@ -573,6 +580,35 @@ public class TransactionJobConfig {
             }
             log.info(String.format("cleanTargetDay completed in %.1fs (deleted %d staging rows, run=%s)",
                 (System.currentTimeMillis() - t) / 1000.0, rows, String.valueOf(ingestRunId)));
+            return RepeatStatus.FINISHED;
+        };
+    }
+
+    // RUN STAGING CLEANUP (2026-08-29). The LAST step of the job: delete this
+    // run's own staging rows once every reader (stagingToFact, summaries, business
+    // + dashboard metrics) has consumed them. Without it, stg_trnx_raw grew by one
+    // file per file in a sequential folder load — a 50-file batch left ~50 files'
+    // rows piled up (disk + ANALYZE cost), and cleanTargetDay's guarded delete had
+    // been leaving them (prior runs still protected). Deletes ONLY this run's rows,
+    // so it is safe under concurrency. If the job crashes earlier, the next job's
+    // cleanTargetDay removes the leftover (the crashed run is no longer RUNNING).
+    @Bean public Step clearRunStagingStep(Tasklet clearRunStagingTasklet) {
+        return new StepBuilder("clearRunStagingStep", jobRepository)
+            .tasklet(clearRunStagingTasklet, transactionManager)
+            .listener(mdcStepListener).listener(ingestRunStepListener).build();
+    }
+
+    @Bean @StepScope
+    public Tasklet clearRunStagingTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+        return (contribution, chunkContext) -> {
+            if (tenantId == null) return RepeatStatus.FINISHED;
+            long t = System.currentTimeMillis();
+            Long ingestRunId = ingestRunIdOf(chunkContext);
+            int rows = (ingestRunId != null)
+                ? jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ? AND ingest_run_id = ?", tenantId, ingestRunId)
+                : jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ?", tenantId);
+            log.info(String.format("clearRunStaging: deleted %d staging row(s) for run %s in %.1fs",
+                rows, String.valueOf(ingestRunId), (System.currentTimeMillis() - t) / 1000.0));
             return RepeatStatus.FINISHED;
         };
     }
@@ -1291,10 +1327,25 @@ public class TransactionJobConfig {
             long start = System.currentTimeMillis();
             final boolean appendMode = "APPEND".equalsIgnoreCase(loadMode);
 
+            // RUN-SCOPE STAGING (2026-08-29). stg_trnx_raw is shared per tenant. In a
+            // sequential folder load every file appends to it, and cleanTargetDay's
+            // guarded delete keeps rows belonging to still-RUNNING runs — so without a
+            // run filter, stagingToFact reprocessed the WHOLE accumulated table each
+            // file: O(n^2) work and cumulative/duplicate fact (seen live: the per-file
+            // batch grew 3.0M -> 11.9M across six files). Scoping every staging read to
+            // THIS run's ingest_run_id makes each file's job process only its own rows —
+            // correct and safe for sequential AND concurrent loads, with no destructive
+            // clear. When the run id is absent (legacy path / DB pull), cleanTargetDay
+            // wipes the tenant's staging wholesale, so the tenant-only scope stays safe.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhere        = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";       // unaliased
+            final String stgRunWhereAliased = ingestRunId != null ? " AND stg.ingest_run_id = " + ingestRunId : "";   // stg.
+            final String stgRunWhereS       = ingestRunId != null ? " AND s.ingest_run_id = " + ingestRunId : "";     // s.
+
             // PERF FIX: nullDateCount full-scan removed. IS NOT NULL filter below handles skipping.
             java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere + " ORDER BY d",
                 java.sql.Date.class, tenantId);
             String dateScope;
             if (distinctDates.isEmpty()) {
@@ -1309,7 +1360,7 @@ public class TransactionJobConfig {
                 //       successful upload. Fail loudly instead; a totally unparseable file is
                 //       an error, not a no-op.
                 Integer stagedRows = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ?", Integer.class, tenantId);
+                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ?" + stgRunWhere, Integer.class, tenantId);
                 if (stagedRows != null && stagedRows > 0) {
                     throw new IllegalStateException(
                         "Upload rejected: " + stagedRows + " row(s) reached staging but NONE has a usable "
@@ -1336,7 +1387,7 @@ public class TransactionJobConfig {
 
             String updateNameSql = "UPDATE dim_merchant m SET name = sub.merchant_name " +
                 "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
-                "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '') sub " +
+                "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> ''" + stgRunWhereS + ") sub " +
                 "WHERE m.tenant_id = ? " +
                 "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") " +
                 "AND sub.merchant_name !~ " + NUMERIC_ONLY_REGEX + " " +
@@ -1380,7 +1431,7 @@ public class TransactionJobConfig {
                         "UPDATE dim_merchant m SET name = sub.merchant_name " +
                         "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
                         "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
-                        "AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + ") sub " +
+                        "AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + stgRunWhereS + ") sub " +
                         "WHERE m.tenant_id = ? " +
                         "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") " +
                         "AND m.mid <> sub.staging_mid " +
@@ -1402,7 +1453,7 @@ public class TransactionJobConfig {
             java.util.List<String> uploadSchemes = jdbcTemplate.queryForList(
                 "SELECT DISTINCT CASE WHEN REPLACE(UPPER(TRIM(card_scheme)),' ','') = 'NOINTERCHANGE' " +
                 "THEN 'BENEFIT QR' ELSE UPPER(TRIM(card_scheme)) END FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND NULLIF(TRIM(card_scheme), '') IS NOT NULL",
+                "WHERE tenant_id = ? AND NULLIF(TRIM(card_scheme), '') IS NOT NULL" + stgRunWhere,
                 String.class, tenantId);
 
             // CONNECTION PINNING (2026-08-29, root cause of UAT job#1004): this
@@ -1453,7 +1504,7 @@ public class TransactionJobConfig {
                 }
                 Boolean stagingHasBlankScheme = jdbcTemplate.queryForObject(
                     "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw WHERE tenant_id = ? " +
-                    "AND payment_date IS NOT NULL AND NULLIF(TRIM(card_scheme), '') IS NULL LIMIT 1)",
+                    "AND payment_date IS NOT NULL AND NULLIF(TRIM(card_scheme), '') IS NULL" + stgRunWhere + " LIMIT 1)",
                     Boolean.class, tenantId);
                 if (Boolean.TRUE.equals(stagingHasBlankScheme)) {
                     deleted += jdbcTemplate.update(
@@ -1481,7 +1532,7 @@ public class TransactionJobConfig {
                 long existingRows = existing == null ? 0L : existing;
 
                 Long incoming = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL",
+                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere,
                     Long.class, tenantId);
                 long incomingRows = incoming == null ? 0L : incoming;
 
@@ -1545,7 +1596,7 @@ public class TransactionJobConfig {
             // IngestSql.stagingToFactInsertSql (2026-08-28) so backfill writes
             // fact rows with the SAME SQL. All the inline documentation moved
             // with it.
-            String sql = com.acquira.batch.service.IngestSql.stagingToFactInsertSql(factTarget, "");
+            String sql = com.acquira.batch.service.IngestSql.stagingToFactInsertSql(factTarget, stgRunWhereAliased);
             int inserted = jdbcTemplate.update(sql, tenantId);
             log.info(String.format("Inserted %d %s rows in %.1fs", inserted,
                 stageViaBatchTable ? "batch (pre-fact)" : "fact", (System.currentTimeMillis() - tIns) / 1000.0));
@@ -1566,7 +1617,7 @@ public class TransactionJobConfig {
             Integer stagedUsable = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL " +
                 "AND REPLACE(UPPER(TRIM(COALESCE(transaction_type,''))),' ','') " +
-                "    NOT IN ('PRE-AUTHORIZATION','PREAUTHORIZATION','PRE-AUTH','PREAUTH')",
+                "    NOT IN ('PRE-AUTHORIZATION','PREAUTHORIZATION','PRE-AUTH','PREAUTH')" + stgRunWhere,
                 Integer.class, tenantId);
             if (stagedUsable != null && stagedUsable != inserted) {
                 String detail = String.format(
@@ -1679,7 +1730,7 @@ public class TransactionJobConfig {
                 storeFixed = jdbcTemplate.update(
                     "UPDATE " + factTarget + " f SET store_id = s.store_id " +
                     "FROM dim_store s, stg_trnx_raw stg " +
-                    "WHERE f.tenant_id = ? AND s.tenant_id = ? AND stg.tenant_id = ? " +
+                    "WHERE f.tenant_id = ? AND s.tenant_id = ? AND stg.tenant_id = ?" + stgRunWhereAliased + " " +
                     "AND f.store_id IS NULL AND f.merchant_id IS NOT NULL " +
                     "AND s.merchant_id = f.merchant_id " +
                     "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
@@ -1695,7 +1746,7 @@ public class TransactionJobConfig {
                 termFixed = jdbcTemplate.update(
                     "UPDATE " + factTarget + " f SET terminal_id = t.terminal_id " +
                     "FROM dim_terminal t, stg_trnx_raw stg " +
-                    "WHERE f.tenant_id = ? AND t.tenant_id = ? AND stg.tenant_id = ? " +
+                    "WHERE f.tenant_id = ? AND t.tenant_id = ? AND stg.tenant_id = ?" + stgRunWhereAliased + " " +
                     "AND f.terminal_id IS NULL AND f.store_id IS NOT NULL " +
                     "AND t.store_id = f.store_id " +
                     "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
@@ -1805,9 +1856,12 @@ public class TransactionJobConfig {
         // parallel phases and sargable scopes all live on the service now.
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
+            // Run-scope (2026-08-29): only THIS file's staged dates — see stagingToFact.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhere = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";
             java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere + " ORDER BY d",
                 java.sql.Date.class, tenantId);
             summaryPopulationService.populateForDates(tenantId, distinctDates);
             return RepeatStatus.FINISHED;
@@ -1827,9 +1881,12 @@ public class TransactionJobConfig {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long start = System.currentTimeMillis();
+            // Run-scope (2026-08-29): only THIS file's staged dates — see stagingToFact.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhere = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";
             java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere + " ORDER BY d",
                 java.sql.Date.class, tenantId);
             // RETENTION SHORT-CIRCUIT (2026-08-29): the prune at the end of this
             // tasklet deletes every snapshot with calc_date < CURRENT_DATE -
@@ -2050,9 +2107,12 @@ public class TransactionJobConfig {
             long start = System.currentTimeMillis();
 
             // PERF FIX: derive months from distinctDates, avoiding a second stg_trnx_raw scan.
+            // Run-scope (2026-08-29): only THIS file's staged dates — see stagingToFact.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhere = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";
             java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere + " ORDER BY d",
                 java.sql.Date.class, tenantId);
             java.util.Set<String> monthSet = new java.util.LinkedHashSet<>();
             for (java.sql.Date d : distinctDates) {
