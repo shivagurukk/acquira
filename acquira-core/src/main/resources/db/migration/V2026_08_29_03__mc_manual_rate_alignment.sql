@@ -164,6 +164,12 @@ INSERT INTO ref_bin_product_tier (product_code, card_tier, note) VALUES
   ('MCP', 'Elite',    'Purchasing - STOPGAP (manual all-other 2.00%)')
 ON CONFLICT (product_code) DO NOTHING;
 
+-- Give the planner stats immediately. The fee-resolution query joins this
+-- table inside a per-row LATERAL (FeeComputationService); a brand-new table
+-- with reltuples = -1 (never analyzed) can push the planner into a bad plan
+-- for the WHOLE fee pass. One ANALYZE on 23 rows is instant and load-bearing.
+ANALYZE ref_bin_product_tier;
+
 -- ---------------------------------------------------------------------------
 -- 4b. BH - tier rows (priority 30), EXACT manual tiers now that the engine
 --     resolves Standard/Premium/Elite from the BIN. An earlier revision of
@@ -172,10 +178,18 @@ ON CONFLICT (product_code) DO NOTHING;
 --     folded rows are removed here (keyed on their exact pct values) and the
 --     per-tier set below replaces them. Guarded per row.
 -- ---------------------------------------------------------------------------
+-- Match the OLD folded rows by their full (card_type, channel, pct) tuple, NOT
+-- by pct alone: the new credit-Premium-POS rate (0.019200 = 1.92%) collides with
+-- the old prepaid-Premium-ECOM folded value (also 0.019200), so a pct-only
+-- delete would churn — removing and re-inserting the new row every run. The
+-- tuple form can only ever hit the four rows the previous revision seeded.
 DELETE FROM interchange_rate_local
 WHERE country_code = 'BH' AND tenant_id IS NULL AND priority = 30
   AND dest = 'DOMESTIC' AND scheme_group = 'MasterCard' AND tier = 'Premium'
-  AND interchange_pct IN (0.019900, 0.018900, 0.020100, 0.019200);
+  AND ( (card_type = 'CREDIT'  AND channel = 'POS'  AND interchange_pct = 0.019900)
+     OR (card_type = 'CREDIT'  AND channel = 'ECOM' AND interchange_pct = 0.018900)
+     OR (card_type = 'PREPAID' AND channel = 'POS'  AND interchange_pct = 0.020100)
+     OR (card_type = 'PREPAID' AND channel = 'ECOM' AND interchange_pct = 0.019200) );
 
 INSERT INTO interchange_rate_local
     (tenant_id, country_code, cap_currency_code, priority, dest, channel, scheme_group,
@@ -243,7 +257,11 @@ UPDATE interchange_rate_local
        source_note     = 'BUSINESS-APPROVED 2026-08-29: debit/unknown fallback kept at workbook blend - no MC manual BH debit table'
  WHERE country_code = 'BH' AND tenant_id IS NULL AND priority = 15
    AND dest = 'DOMESTIC' AND channel = 'POS' AND scheme_group = 'MasterCard'
-   AND interchange_pct IN (0.017500, 0.019000);
+   AND interchange_pct IN (0.017500, 0.019000)
+   -- Fire only when something actually differs (a prior revision's 1.90, or the
+   -- old label), so re-runs are true no-ops rather than rewriting identical values.
+   AND (interchange_pct = 0.019000
+        OR label IS DISTINCT FROM 'BH MasterCard POS domestic default (debit/unknown fallback)');
 
 INSERT INTO schema_migration_log (filename)
 VALUES ('V2026_08_29_03__mc_manual_rate_alignment.sql')
