@@ -431,7 +431,9 @@ public class BulkMigrationService {
             "INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend) " +
             "SELECT tenant_id, merchant_id, ?, card_number, COUNT(*), SUM(store_base_currency_amount) " +
             "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL " +
-            "AND DATE(payment_date) BETWEEN ? AND ? " +
+            // Sargable (2026-08-29): bare payment_date bounds use the index;
+            // DATE(payment_date) BETWEEN wrapped the column and forced a scan.
+            "AND payment_date >= CAST(? AS DATE) AND payment_date < CAST(? AS DATE) + INTERVAL '1 day' " +
             "GROUP BY tenant_id, merchant_id, card_number",
             monthKey, tenantId, monthStart, monthEnd);
         deleted.put("sum_monthly_card_rebuilt", cardRebuilt);

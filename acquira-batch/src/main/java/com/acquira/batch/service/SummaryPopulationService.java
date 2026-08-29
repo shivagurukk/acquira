@@ -94,6 +94,23 @@ public class SummaryPopulationService {
             }
             final String monthScope = "(" + monthSet.stream().map(String::valueOf)
                 .collect(java.util.stream.Collectors.joining(",")) + ")";
+            // Sargable companion to monthScope (2026-08-29). The month-grained
+            // sum_monthly_card insert must re-aggregate WHOLE months (its grain
+            // is per-card-per-month), but its only filter was the non-sargable
+            // CAST(TO_CHAR(payment_date,...)) IN monthScope — a full scan of the
+            // tenant's entire fact history on every load (the multi-minute step
+            // in otherwise small ingests). Bounding payment_date to
+            // [first-month start, last-month end) lets the planner drive the
+            // scan off the payment_date index; the TO_CHAR month filter stays
+            // for exactness on non-contiguous month sets. distinctDates is
+            // sorted ascending (see javadoc), so first/last give the bounds.
+            final java.time.LocalDate monthRangeStart =
+                distinctDates.get(0).toLocalDate().withDayOfMonth(1);
+            final java.time.LocalDate monthRangeEnd =
+                distinctDates.get(distinctDates.size() - 1).toLocalDate()
+                    .withDayOfMonth(1).plusMonths(1);
+            final String monthRngBare = "payment_date >= DATE '" + monthRangeStart +
+                "' AND payment_date < DATE '" + monthRangeEnd + "' AND ";
             log.info("populateSummary: {} dates, {} months in scope", distinctDates.size(), monthSet.size());
 
             java.util.concurrent.ExecutorService exec =
@@ -520,7 +537,7 @@ public class SummaryPopulationService {
                 phase1.add(runAsync(exec, "sum_monthly_card", () ->
                     jdbcTemplate.update("INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend) " +
                         "SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN " + monthScope +
+                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND " + monthRngBare + "CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN " + monthScope +
                         " GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date,'YYYYMM'), card_number " +
                         "ON CONFLICT (tenant_id, merchant_id, month_key, card_number) DO UPDATE SET " +
                         "visit_count=EXCLUDED.visit_count, total_spend=EXCLUDED.total_spend", tenantId)));
