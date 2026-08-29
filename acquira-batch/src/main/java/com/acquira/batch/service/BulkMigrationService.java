@@ -363,6 +363,150 @@ public class BulkMigrationService {
     }
 
     /**
+     * SUPER-ADMIN RE-PRICE + SUMMARY REBUILD (rate-card correction tool).
+     *
+     * Same shape as {@link #rebuildSummaries}, but with a fee re-computation in
+     * FRONT of each month's summary rebuild: fact_transaction is re-priced IN
+     * PLACE from the CURRENT rate cards (interchange + scheme + ecom + channel +
+     * resolution status), then the summaries are re-derived from those new fees.
+     *
+     * Plain rebuildSummaries only re-AGGREGATES the fees already stamped on fact,
+     * so a rate-card change (a new interchange_rate_local row, the MC alignment,
+     * …) is invisible until fact itself is re-priced — that is what this does.
+     *
+     * IMPORTANT semantics the caller must understand:
+     *   - EFFECTIVE DATING governs which months change. The fee engine resolves a
+     *     rate by the transaction's payment_date against effective_from/_to, so a
+     *     rate whose effective_from is AFTER a re-priced month does NOT touch it.
+     *     A retroactive correction needs the rate row's effective_from NULL or <=
+     *     the months being re-priced.
+     *   - This DESTROYS any interchange NORMALIZATION overlay on the range:
+     *     InterchangeNormalizationService.apply writes finance-supplied totals
+     *     onto fact.interchange_fee, and a re-price recomputes raw from the rate
+     *     card. Re-apply the normalization AFTER a re-price if the month had one.
+     *   - It is a FULL fee recompute (the engine is single-pass), not an
+     *     interchange-only patch — scheme_fee, ecom_fee, channel and the
+     *     *_status / rule_id columns are rewritten too.
+     *
+     * Re-pricing runs DAY BY DAY inside each month — the granularity the upload
+     * job prices at — so tmp_fee_resolve stays bounded and the plan memoizes,
+     * rather than the whole-month-in-one-shot shape that produced the multi-hour
+     * in-place fee UPDATE. Each day is wrapped in its own TransactionTemplate
+     * because computeFees uses CREATE TEMP TABLE and so needs every statement on
+     * one connection (this service otherwise runs on autocommit pooled
+     * connections); a month's summaries are populated only after all its days
+     * re-price, so a mid-range failure leaves earlier months fully consistent.
+     */
+    public void repriceAndRebuild(Long tenantId, YearMonth startMonth, YearMonth endMonth) {
+        if (!runActive.compareAndSet(false, true)) {
+            throw new IllegalStateException("Another migration or summary rebuild is already running");
+        }
+        startTimeMs = System.currentTimeMillis();
+        currentPhase = "INITIALIZING";
+        completedMonths = 0;
+        totalMonths = 0;
+        totalRowsMigrated = 0;
+        currentMonth = "";
+
+        try {
+            if (startMonth == null || endMonth == null) {
+                LocalDate minDate = jdbcTemplate.queryForObject(
+                    "SELECT MIN(DATE(payment_date)) FROM fact_transaction WHERE tenant_id = ?",
+                    LocalDate.class, tenantId);
+                LocalDate maxDate = jdbcTemplate.queryForObject(
+                    "SELECT MAX(DATE(payment_date)) FROM fact_transaction WHERE tenant_id = ?",
+                    LocalDate.class, tenantId);
+                if (minDate == null || maxDate == null) {
+                    throw new IllegalStateException("No transaction data found for this tenant — nothing to re-price");
+                }
+                if (startMonth == null) startMonth = YearMonth.from(minDate);
+                if (endMonth == null) endMonth = YearMonth.from(maxDate);
+            }
+            if (startMonth.isAfter(endMonth)) {
+                throw new IllegalArgumentException("startMonth must be before or equal to endMonth");
+            }
+
+            List<YearMonth> months = new ArrayList<>();
+            for (YearMonth cursor = startMonth; !cursor.isAfter(endMonth); cursor = cursor.plusMonths(1)) {
+                months.add(cursor);
+            }
+            totalMonths = months.size();
+            log.info("[REPRICE] Re-pricing fact + rebuilding summaries: {} months ({} to {}), tenant={}",
+                totalMonths, startMonth, endMonth, tenantId);
+
+            for (int i = 0; i < months.size(); i++) {
+                YearMonth ym = months.get(i);
+                currentMonth = ym.toString();
+                repriceMonth(tenantId, ym);
+                currentPhase = "REBUILDING_" + currentMonth;
+                populateSummariesForMonth(tenantId, ym);
+                completedMonths = i + 1;
+            }
+
+            currentPhase = "CALCULATING_METRICS";
+            calculateMetricsForRange(tenantId, startMonth, endMonth);
+
+            currentPhase = "ANALYZING";
+            analyzeQuietly(
+                "sum_daily_merchant", "sum_daily_merchant_attribute", "sum_daily_bank",
+                "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
+                "sum_daily_finance", "sum_daily_insight", "sum_daily_mcc",
+                "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
+                "sum_daily_local_debit_bin", "sum_daily_finance_rollup",
+                "sum_monthly_insight",
+                "sum_monthly_bank", "sum_monthly_card", "merchant_activity_summary");
+
+            currentPhase = "COMPLETED";
+            long totalMs = System.currentTimeMillis() - startTimeMs;
+            log.info("[REPRICE] COMPLETE: {} months for tenant {} in {}s",
+                totalMonths, tenantId, String.format("%.1f", totalMs / 1000.0));
+
+        } catch (Exception e) {
+            currentPhase = "FAILED: " + e.getMessage();
+            log.error("[REPRICE] Failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Re-price + rebuild failed: " + e.getMessage(), e);
+        } finally {
+            runActive.set(false);
+            evictReportCaches();
+        }
+    }
+
+    /**
+     * Re-price one month of fact_transaction IN PLACE from the current rate
+     * cards, one day at a time. Each day is priced by the SHARED
+     * FeeComputationService — the exact SQL the upload job runs against
+     * fact_transaction — inside its own TransactionTemplate (temp tables need a
+     * single shared connection). The fact partition is ANALYZEd afterwards
+     * because the in-place UPDATE stales its statistics, exactly as the upload
+     * job does after its own in-place pricing.
+     */
+    private void repriceMonth(Long tenantId, YearMonth ym) {
+        LocalDate monthStart = ym.atDay(1);
+        LocalDate monthEnd = ym.atEndOfMonth();
+        currentPhase = "REPRICING_" + ym;
+        long tMonth = System.currentTimeMillis();
+        long tenantIdL = tenantId;
+
+        for (LocalDate day = monthStart; !day.isAfter(monthEnd); day = day.plusDays(1)) {
+            final List<java.sql.Date> days = IngestScopes.daysBetween(day, day);
+            final String dateScope = IngestScopes.dateInList(days);
+            final String rngBare = IngestScopes.rangeClause(days, "");
+            final String rngF = IngestScopes.rangeClause(days, "f.");
+            final String rngFt = IngestScopes.rangeClause(days, "ft.");
+            new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .executeWithoutResult(tx ->
+                    feeComputationService.computeFees(tenantIdL, "fact_transaction",
+                        rngFt, rngF, rngBare, dateScope));
+        }
+
+        // Refresh stats on the month's fact partition — the in-place fee UPDATE
+        // stales them the same way the upload job's does (non-fatal on failure).
+        analyzeQuietly(String.format("fact_transaction_y%04dm%02d", ym.getYear(), ym.getMonthValue()));
+        log.info("[REPRICE] {}: fact re-priced in {}s", ym,
+            String.format("%.1f", (System.currentTimeMillis() - tMonth) / 1000.0));
+    }
+
+    /**
      * SUPER-ADMIN FULL-DAY DELETE (correction tool).
      *
      * Removes ALL transactions (both AMS and CMM — there is no source discriminator)

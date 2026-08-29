@@ -529,6 +529,10 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
   const confirmDialog = useConfirm();
   const [dates, setDates] = useState({ start: '', end: '' });
   const [armed, setArmed] = useState(false);
+  // Re-price fact from the current rate cards before rebuilding — needed after
+  // an interchange/scheme rate-card change (plain rebuild only re-sums the fees
+  // already on fact and so can't see a rate change).
+  const [reprice, setReprice] = useState(false);
 
   // Summaries are rebuilt a whole month at a time (monthly rollups have to be
   // re-derived from every day in the month), so a picked date widens to the
@@ -547,14 +551,16 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
     }
     // Danger confirmation naming the tenant and the exact range.
     const ok = await confirmDialog({
-      title: 'Rebuild every summary table now?',
-      message: `All 13 summary tables and the dashboard metrics in tenant ${activeTenantId || 'unknown'} will be deleted and recalculated from fact_transaction for ${rangeLabel}. Transactions themselves are not modified. Dashboards may show partial numbers while the rebuild is running.`,
-      confirmLabel: 'Rebuild summaries',
+      title: reprice ? 'Re-price transactions and rebuild summaries now?' : 'Rebuild every summary table now?',
+      message: reprice
+        ? `fact_transaction in tenant ${activeTenantId || 'unknown'} will be RE-PRICED from the current rate cards (interchange, scheme, e-com fees are recomputed and overwritten) for ${rangeLabel}, then all 13 summary tables and the dashboard metrics are rebuilt from the new fees. This modifies transaction fees and WIPES any interchange normalization on those months. Only the months whose payment dates fall inside a rate's effective window will change.`
+        : `All 13 summary tables and the dashboard metrics in tenant ${activeTenantId || 'unknown'} will be deleted and recalculated from fact_transaction for ${rangeLabel}. Transactions themselves are not modified. Dashboards may show partial numbers while the rebuild is running.`,
+      confirmLabel: reprice ? 'Re-price and rebuild' : 'Rebuild summaries',
       tone: 'danger',
     });
     setArmed(false);
     if (!ok) return;
-    onStart({ start: monthOf(dates.start), end: monthOf(dates.end) });
+    onStart({ start: monthOf(dates.start), end: monthOf(dates.end), reprice });
   };
 
   return (
@@ -604,11 +610,32 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
             </span>
           )}
 
+          {/* Re-price toggle — off by default (plain rebuild is the safe path). */}
+          <label className="ui-row" style={{ gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={reprice}
+              disabled={isRunning || starting}
+              onChange={e => { setReprice(e.target.checked); setArmed(false); }}
+              style={{ marginTop: 3, flexShrink: 0 }}
+            />
+            <span style={{ fontSize: '0.82rem', color: 'var(--text)' }}>
+              <strong>Re-price transactions from the current rate cards first</strong>
+              <span style={{ display: 'block', color: 'var(--text-muted)', marginTop: 2 }}>
+                Turn this on after changing an interchange or scheme rate. It recomputes and
+                overwrites the interchange, scheme and e-com fees on <code>fact_transaction</code>{' '}
+                before rebuilding — a plain rebuild only re-sums the existing fees and cannot see a
+                rate change. Only months inside the rate's effective window change, and any
+                interchange normalization on those months is wiped.
+              </span>
+            </span>
+          </label>
+
           {/* Guard 1: explicit arming step before the danger dialog. */}
           {!armed ? (
             <Row>
               <Button variant="danger" icon={RefreshCw} disabled={isRunning || starting} onClick={() => setArmed(true)}>
-                Rebuild summaries
+                {reprice ? 'Re-price and rebuild' : 'Rebuild summaries'}
               </Button>
               {isRunning && <Badge tone="warning" dot>A migration or rebuild is already running</Badge>}
             </Row>
@@ -616,10 +643,12 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
             <Row>
               <AlertTriangle size={16} style={{ color: 'var(--danger)', flexShrink: 0 }} />
               <span style={{ fontSize: '0.82rem', color: 'var(--danger)', fontWeight: 600 }}>
-                Recalculate {rangeLabel} for tenant {activeTenantId || 'unknown'}?
+                {reprice
+                  ? `Re-price fact and recalculate ${rangeLabel} for tenant ${activeTenantId || 'unknown'}?`
+                  : `Recalculate ${rangeLabel} for tenant ${activeTenantId || 'unknown'}?`}
               </span>
               <Button variant="danger" icon={Play} loading={starting} onClick={handleStart}>
-                Yes, rebuild now
+                {reprice ? 'Yes, re-price and rebuild now' : 'Yes, rebuild now'}
               </Button>
               <Button onClick={() => setArmed(false)}>Cancel</Button>
             </Row>
@@ -748,7 +777,7 @@ const DataMigration = () => {
   // The backend takes the tenant from X-Tenant-Id (the shared api client sends
   // it), so no tenantId goes in the body.
   const [rebuildStarting, setRebuildStarting] = useState(false);
-  const handleRebuildStart = async ({ start, end }) => {
+  const handleRebuildStart = async ({ start, end, reprice }) => {
     if (!activeTenantId) {
       showToast('No active tenant. Please re-login or pick a tenant.', 'error');
       return;
@@ -762,6 +791,7 @@ const DataMigration = () => {
       const body = { confirm: true };
       if (start) body.startMonth = start;
       if (end) body.endMonth = end;
+      if (reprice) body.reprice = true;
       await api.post('/admin/migration/rebuild-summaries', body);
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(fetchProgress, 5000);
