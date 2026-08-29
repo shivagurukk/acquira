@@ -59,18 +59,6 @@ public class FeeComputationService {
             final String factScopeWhere = fromTempBatch
                 ? " ft.tenant_id = " + tenantId + " "
                 : " ft.tenant_id = " + tenantId + " AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope + " ";
-            // PERF (2026-08-29d): raise work_mem for the fee phase. The phase-2 apply
-            // hash-joins two unindexed temp tables (tmp_fact_batch x tmp_fee_resolve,
-            // one row each per fact row); on a big multi-month file (seen live:
-            // ~11.9M rows, Dec-Apr) the ~1GB hash spills to disk in hundreds of
-            // batches under the default 4MB work_mem — a 30-minute UPDATE. It also
-            // sizes the memoize/hash-join hash tables in the phase-1 resolve. SET
-            // LOCAL is transaction-scoped: both callers (the upload tasklet and the
-            // backfill TransactionTemplate) run computeFees in a transaction, so it
-            // auto-resets on commit and never leaks to a pooled connection. With
-            // hash_mem_multiplier (default 2x) this allows ~1GB for hash nodes.
-            try { jdbcTemplate.execute("SET LOCAL work_mem = '512MB'"); }
-            catch (Exception wm) { log.debug("SET LOCAL work_mem skipped: {}", wm.getMessage()); }
             // FEE COMPUTATION (V2026_07_05_01): interchange + scheme fee are
             // computed by US, not trusted from the feed. Both off the
             // SETTLEMENT amount (store_base_currency_amount) — never the
