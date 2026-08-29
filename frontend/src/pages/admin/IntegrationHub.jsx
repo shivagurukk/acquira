@@ -33,7 +33,7 @@ import {
 // accepts it back to mean "leave the existing ciphertext alone".
 const PASSWORD_SENTINEL = '__UNCHANGED__';
 
-const REPORT_TYPE_TONES = { MERCHANT: 'brand', TRANSACTION: 'success' };
+const REPORT_TYPE_TONES = { MERCHANT: 'brand', TRANSACTION: 'success', RENTAL: 'warning' };
 const DB_TYPE_TONES = { ORACLE: 'warning', POSTGRES: 'info', MSSQL: 'brand' };
 // StatusBadge maps RETRYING to neutral, which loses the "still working" signal,
 // so run status keeps an explicit tone map.
@@ -677,6 +677,7 @@ const ReportsTab = () => {
     { key: 'ALL', label: 'All reports', count: reports.length },
     { key: 'MERCHANT', label: 'Merchant', count: reports.filter((r) => r.reportType === 'MERCHANT').length },
     { key: 'TRANSACTION', label: 'Transaction', count: reports.filter((r) => r.reportType === 'TRANSACTION').length },
+    { key: 'RENTAL', label: 'Rental', count: reports.filter((r) => r.reportType === 'RENTAL').length },
   ];
 
   return (
@@ -737,6 +738,7 @@ const ReportsTab = () => {
                 options={[
                   { value: 'MERCHANT', label: 'Merchant' },
                   { value: 'TRANSACTION', label: 'Transaction' },
+                  { value: 'RENTAL', label: 'Rental' },
                 ]}
               />
             </FormField>
@@ -764,7 +766,9 @@ const ReportsTab = () => {
                   onChange={(e) => setForm({ ...form, sqlText: e.target.value })}
                   placeholder={form.reportType === 'MERCHANT'
                     ? 'SELECT merchant_id AS mid, merchant_name, status AS merchant_status, ...\nFROM merchants WHERE created_year = :year'
-                    : 'SELECT mid, merchant_name, payment_date, txn_currency_amount, card_scheme, ...\nFROM transactions WHERE payment_date BETWEEN :dateFrom AND :dateTo'}
+                    : form.reportType === 'RENTAL'
+                      ? 'SELECT mid, sid, tid, rental_amount, payment_date\nFROM rentals WHERE payment_date BETWEEN :dateFrom AND :dateTo'
+                      : 'SELECT mid, merchant_name, payment_date, txn_currency_amount, card_scheme, ...\nFROM transactions WHERE payment_date BETWEEN :dateFrom AND :dateTo'}
                 />
               </FormField>
 

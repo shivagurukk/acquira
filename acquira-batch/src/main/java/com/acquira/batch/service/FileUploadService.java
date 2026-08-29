@@ -45,6 +45,7 @@ public class FileUploadService {
     private final JobLauncher jobLauncher;
     private final Job merchantMasterJob;
     private final Job transactionLoadJob;
+    private final Job rentalLoadJob;
     private final Job reportingOnlyJob;
     private final org.springframework.batch.core.explore.JobExplorer jobExplorer;
 
@@ -78,6 +79,7 @@ public class FileUploadService {
     public FileUploadService(JobLauncher jobLauncher,
             @Qualifier("merchantMasterJob") Job merchantMasterJob,
             @Qualifier("transactionLoadJob") Job transactionLoadJob,
+            @Qualifier("rentalLoadJob") Job rentalLoadJob,
             @Qualifier("reportingOnlyJob") Job reportingOnlyJob,
             com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantRepository tenantRepository,
@@ -87,6 +89,7 @@ public class FileUploadService {
         this.jobLauncher = jobLauncher;
         this.merchantMasterJob = merchantMasterJob;
         this.transactionLoadJob = transactionLoadJob;
+        this.rentalLoadJob = rentalLoadJob;
         this.reportingOnlyJob = reportingOnlyJob;
         this.auditService = auditService;
         this.tenantRepository = tenantRepository;
@@ -270,7 +273,12 @@ public class FileUploadService {
                 String headerLine = br.readLine();
                 if (headerLine != null) {
                     String h = headerLine.toLowerCase();
-                    if (h.contains("transaction id") || h.contains("txn id") || h.contains("ref number")
+                    // RENTAL first: the rental feed also carries "Payment Date"
+                    // (a TRANSACTION marker) and MID/SID (MERCHANT markers), so
+                    // its own marker must win.
+                    if (h.contains("rental")) {
+                        result.detectedType = "RENTAL";
+                    } else if (h.contains("transaction id") || h.contains("txn id") || h.contains("ref number")
                             || h.contains("transaction date") || h.contains("payment date")
                             || h.contains("arn") || h.contains("rrn") || h.contains("txn currency")) {
                         result.detectedType = "TRANSACTION";
@@ -305,12 +313,16 @@ public class FileUploadService {
             // Row 0: detect type from headers
             Row headerRow = sheet.getRow(0);
             if (headerRow != null) {
+                boolean hasRentalMarker = false;
                 boolean hasTransactionId = false;
                 boolean hasMerchantMarker = false;
                 for (Cell cell : headerRow) {
                     String header = getCellValue(cell);
                     if (header != null) {
                         String h = header.trim().toLowerCase();
+                        if (h.contains("rental")) {
+                            hasRentalMarker = true;
+                        }
                         if (h.contains("transaction id") || h.contains("txn id") || h.equals("ref number")
                                 || h.contains("transaction date") || h.contains("payment date")
                                 || h.contains("arn") || h.contains("rrn") || h.contains("txn currency")) {
@@ -321,7 +333,9 @@ public class FileUploadService {
                         }
                     }
                 }
-                if (hasTransactionId) result.detectedType = "TRANSACTION";
+                // RENTAL wins: the rental feed also carries "Payment Date" and MID/SID.
+                if (hasRentalMarker) result.detectedType = "RENTAL";
+                else if (hasTransactionId) result.detectedType = "TRANSACTION";
                 else if (hasMerchantMarker) result.detectedType = "MERCHANT";
             }
 
@@ -341,7 +355,8 @@ public class FileUploadService {
                 String headerLine = br.readLine();
                 if (headerLine != null) {
                     String h = headerLine.toLowerCase();
-                    if (h.contains("transaction") || h.contains("arn") || h.contains("rrn")) result.detectedType = "TRANSACTION";
+                    if (h.contains("rental")) result.detectedType = "RENTAL";
+                    else if (h.contains("transaction") || h.contains("arn") || h.contains("rrn")) result.detectedType = "TRANSACTION";
                     else if (h.contains("merchant") || h.contains("mid")) result.detectedType = "MERCHANT";
                 }
             } catch (Exception ignored) {}
@@ -561,6 +576,21 @@ public class FileUploadService {
                 // Cleanup is handled by the @Scheduled cleanupOrphanedTempFiles() task.
                 return execution;
 
+            } else if ("RENTAL".equals(detectedType)) {
+                auditService.log("BATCH_RUN",
+                        String.format("Processing RENTAL file for Tenant: %s (%d)", entityName, targetTenantId));
+
+                JobParameters jobParameters = new JobParametersBuilder()
+                        .addLong("tenantId", targetTenantId)
+                        .addString("fullPath", filePath)
+                        .addString("ingestSource", "UPLOAD")
+                        .addString("triggeredBy", currentUsername())
+                        .addLong("startedAt", System.currentTimeMillis())
+                        .toJobParameters();
+                // ASYNC NOTE: see the merchant branch above — temp file cleanup is
+                // handled by the @Scheduled cleanupOrphanedTempFiles() task.
+                return jobLauncher.run(rentalLoadJob, jobParameters);
+
             } else {
                 throw new RuntimeException("Unknown file format.");
             }
@@ -633,6 +663,7 @@ public class FileUploadService {
     private java.util.Map<String, Object> runMultiFileBatch(java.util.List<java.io.File> dataFiles, boolean sequential) {
         java.util.List<java.io.File> merchantFiles = new java.util.ArrayList<>();
         java.util.List<java.io.File> transactionFiles = new java.util.ArrayList<>();
+        java.util.List<java.io.File> rentalFiles = new java.util.ArrayList<>();
         java.util.List<java.util.Map<String, Object>> skippedFiles = new java.util.ArrayList<>();
 
         for (java.io.File f : dataFiles) {
@@ -641,17 +672,19 @@ public class FileUploadService {
                 merchantFiles.add(f);
             } else if ("TRANSACTION".equals(type)) {
                 transactionFiles.add(f);
+            } else if ("RENTAL".equals(type)) {
+                rentalFiles.add(f);
             } else if ("LEGACY_EXCEL".equals(type)) {
                 skippedFiles.add(java.util.Map.of(
                         "file", f.getName(), "reason", "Legacy Excel (.xls) — convert to .xlsx"));
             } else {
                 skippedFiles.add(java.util.Map.of(
-                        "file", f.getName(), "reason", "Unknown format — could not detect MERCHANT or TRANSACTION headers"));
+                        "file", f.getName(), "reason", "Unknown format — could not detect MERCHANT, TRANSACTION or RENTAL headers"));
             }
         }
 
-        log.info("Multi-file batch: {} merchant, {} transaction, {} skipped (sequential={})",
-                merchantFiles.size(), transactionFiles.size(), skippedFiles.size(), sequential);
+        log.info("Multi-file batch: {} merchant, {} transaction, {} rental, {} skipped (sequential={})",
+                merchantFiles.size(), transactionFiles.size(), rentalFiles.size(), skippedFiles.size(), sequential);
 
         java.util.List<java.util.Map<String, Object>> results = new java.util.ArrayList<>();
         java.util.Set<Long> processedTenants = new java.util.LinkedHashSet<>();
@@ -679,6 +712,19 @@ public class FileUploadService {
             if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
                 successCount++;
                 if (r.get("tenantId") != null) processedTenants.add((Long) r.get("tenantId"));
+            } else failCount++;
+        }
+
+        // Phase 2r: RENTAL files LAST — the rental apply step resolves MID/SID/TID
+        // against the dims, which the merchant and transaction loads above may have
+        // just created. Rentals do NOT join the reporting update (Phase 2b/3):
+        // rental charges live in fact_rental only, outside the transaction rollups.
+        for (java.io.File f : rentalFiles) {
+            java.util.Map<String, Object> r = processSingleServerFile(f, "RENTAL", sequential);
+            results.add(r);
+            String st = String.valueOf(r.get("status"));
+            if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
+                successCount++;
             } else failCount++;
         }
 
@@ -737,6 +783,7 @@ public class FileUploadService {
         response.put("totalFiles", dataFiles.size());
         response.put("merchantFiles", merchantFiles.size());
         response.put("transactionFiles", transactionFiles.size());
+        response.put("rentalFiles", rentalFiles.size());
         // In sequential mode this counts files that actually COMPLETED; in async mode
         // it counts files whose jobs were queued (completion determined by polling).
         response.put("submitted", successCount);
@@ -1010,6 +1057,8 @@ public class FileUploadService {
             org.springframework.batch.core.JobExecution execution;
             if ("MERCHANT".equals(fileType)) {
                 execution = jobLauncher.run(merchantMasterJob, jobParameters);
+            } else if ("RENTAL".equals(fileType)) {
+                execution = jobLauncher.run(rentalLoadJob, jobParameters);
             } else {
                 execution = jobLauncher.run(transactionLoadJob, jobParameters);
             }
@@ -1074,6 +1123,7 @@ public class FileUploadService {
             if (sheet.getPhysicalNumberOfRows() > 0) {
                 Row row = sheet.getRow(0);
                 if (row != null) {
+                    boolean hasRentalMarker = false;
                     boolean hasTransactionId = false;
                     boolean hasMerchantMarker = false;
 
@@ -1081,6 +1131,9 @@ public class FileUploadService {
                         String header = getCellValue(cell);
                         if (header != null) {
                             String h = header.trim().toLowerCase();
+                            if (h.contains("rental")) {
+                                hasRentalMarker = true;
+                            }
                             if (h.contains("transaction id") || h.contains("txn id") || h.equals("ref number") ||
                                     h.contains("transaction date") || h.contains("payment date") || h.contains("arn") ||
                                     h.contains("rrn") || h.contains("txn currency")) {
@@ -1091,6 +1144,9 @@ public class FileUploadService {
                             }
                         }
                     }
+                    // RENTAL wins: the rental feed also carries "Payment Date" and MID/SID.
+                    if (hasRentalMarker)
+                        return "RENTAL";
                     if (hasTransactionId)
                         return "TRANSACTION";
                     if (hasMerchantMarker)
@@ -1112,6 +1168,10 @@ public class FileUploadService {
             String headerLine = br.readLine();
             if (headerLine != null) {
                 String h = headerLine.toLowerCase();
+                // RENTAL wins: the rental feed also carries "Payment Date" and MID/SID.
+                if (h.contains("rental")) {
+                    return "RENTAL";
+                }
                 if (h.contains("transaction id") || h.contains("txn id") || h.contains("ref number") ||
                         h.contains("transaction date") || h.contains("payment date") || h.contains("arn") ||
                         h.contains("rrn") || h.contains("txn currency")) {

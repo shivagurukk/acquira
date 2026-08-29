@@ -552,8 +552,10 @@ const ServerFileProcessor = () => {
                                                             <Chip label={fr.type} size="small"
                                                                 sx={{
                                                                     fontSize: '0.65rem', fontWeight: 700, height: 22,
-                                                                    bgcolor: fr.type === 'MERCHANT' ? 'var(--wash)' : '#fce7f3',
-                                                                    color: fr.type === 'MERCHANT' ? 'var(--primary)' : '#be185d',
+                                                                    bgcolor: fr.type === 'MERCHANT' ? 'var(--wash)'
+                                                                        : fr.type === 'RENTAL' ? '#fef3c7' : '#fce7f3',
+                                                                    color: fr.type === 'MERCHANT' ? 'var(--primary)'
+                                                                        : fr.type === 'RENTAL' ? '#92400e' : '#be185d',
                                                                 }}
                                                             />
                                                         </TableCell>

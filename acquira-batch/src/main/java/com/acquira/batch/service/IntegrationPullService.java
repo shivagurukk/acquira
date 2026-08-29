@@ -60,6 +60,7 @@ public class IntegrationPullService {
     private final JobExplorer jobExplorer;          // used to poll async job completion
     private final Job dbPullTransactionJob;
     private final Job dbPullMerchantJob;
+    private final Job dbPullRentalJob;
     private final TaskScheduler taskScheduler;      // retries — replaces the leaked java.util.Timer-per-retry
 
     // Explicit constructor (NOT @RequiredArgsConstructor): the two Job
@@ -76,6 +77,7 @@ public class IntegrationPullService {
                                   JobExplorer jobExplorer,
                                   @Qualifier("dbPullTransactionJob") Job dbPullTransactionJob,
                                   @Qualifier("dbPullMerchantJob") Job dbPullMerchantJob,
+                                  @Qualifier("dbPullRentalJob") Job dbPullRentalJob,
                                   TaskScheduler taskScheduler) {
         this.runLogRepo = runLogRepo;
         this.scheduleRepo = scheduleRepo;
@@ -86,6 +88,7 @@ public class IntegrationPullService {
         this.jobExplorer = jobExplorer;
         this.dbPullTransactionJob = dbPullTransactionJob;
         this.dbPullMerchantJob = dbPullMerchantJob;
+        this.dbPullRentalJob = dbPullRentalJob;
         this.taskScheduler = taskScheduler;
     }
 
@@ -311,6 +314,11 @@ public class IntegrationPullService {
             int processed;
             if (report.getReportType() == IntegrationReport.ReportType.MERCHANT) {
                 processed = insertMerchantStaging(rawRows, columnMap, tenantId, skips);
+            } else if (report.getReportType() == IntegrationReport.ReportType.RENTAL) {
+                // Dedicated rental feed — stg_rental_raw, applied by dbPullRentalJob.
+                // No unit normalization: rental amounts are tenant base currency,
+                // major units, for BOTH input formats (decision 2026-08-29).
+                processed = insertRentalStaging(rawRows, columnMap, tenantId, skips);
             } else {
                 processed = insertTransactionStaging(rawRows, columnMap, tenantId, skips);
                 // 5b. Normalize staged rows to match what the file-path ItemProcessor
@@ -562,6 +570,56 @@ public class IntegrationPullService {
     }
 
     /**
+     * Insert fetched rows into stg_rental_raw (batched). Mapped staging fields:
+     * mid, sid, tid, rental_amount, payment_date (entity_name optional).
+     * Level is NOT mapped — RentalJobConfig.applyRentalTasklet derives it from
+     * which ids are present, identically to the file path.
+     */
+    private int insertRentalStaging(List<Map<String, Object>> rows, Map<String, String> columnMap,
+                                    Long tenantId, SkipTracker skips) {
+        // Clear existing staging for this tenant (same convention as merchant/transaction)
+        jdbcTemplate.update("DELETE FROM stg_rental_raw WHERE tenant_id = ?", tenantId);
+
+        String sql = """
+            INSERT INTO stg_rental_raw (
+                tenant_id, entity_name, mid, sid, tid, rental_amount, payment_date, load_time
+            ) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        """;
+
+        List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
+        int count = 0;
+        for (Map<String, Object> row : rows) {
+            try {
+                BigDecimal amount = toBigDecimal(getMapped(row, columnMap, "rental_amount"));
+                Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
+                if (amount == null || paymentDate == null) {
+                    skips.skip("rental_amount or payment_date missing/unparseable");
+                    continue;
+                }
+                batch.add(new Object[]{
+                    tenantId,
+                    str(getMapped(row, columnMap, "entity_name")),
+                    str(getMapped(row, columnMap, "mid")),
+                    str(getMapped(row, columnMap, "sid")),
+                    str(getMapped(row, columnMap, "tid")),
+                    amount,
+                    new java.sql.Date(paymentDate.getTime())
+                });
+                count++;
+            } catch (Exception e) {
+                skips.skip(e.getMessage());
+            }
+            if (batch.size() >= INSERT_BATCH_SIZE) {
+                jdbcTemplate.batchUpdate(sql, batch);
+                batch.clear();
+            }
+        }
+        if (!batch.isEmpty()) jdbcTemplate.batchUpdate(sql, batch);
+        if (skips.total > 0) log.warn("[Integration] Rental staging: {}", skips.summary());
+        return count;
+    }
+
+    /**
      * Insert fetched rows into stg_trnx_raw (batched). Includes card_product_code
      * (granular feed 'Card Type' — VIPM/MCPM/MCDB…) which tier resolution needs;
      * defaults to the raw card_type value when not mapped separately.
@@ -757,7 +815,11 @@ public class IntegrationPullService {
      * reflects it and retries kick in.
      */
     private void runBatchPipeline(IntegrationReport.ReportType reportType, Long tenantId) throws Exception {
-        Job job = (reportType == IntegrationReport.ReportType.MERCHANT) ? dbPullMerchantJob : dbPullTransactionJob;
+        Job job = switch (reportType) {
+            case MERCHANT -> dbPullMerchantJob;
+            case RENTAL -> dbPullRentalJob;
+            default -> dbPullTransactionJob;
+        };
 
         JobParametersBuilder pb = new JobParametersBuilder()
                 .addLong("tenantId", tenantId)

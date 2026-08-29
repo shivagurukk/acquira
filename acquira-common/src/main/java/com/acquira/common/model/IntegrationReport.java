@@ -76,6 +76,6 @@ public class IntegrationReport {
     private LocalDateTime updatedAt;
 
     public enum ReportType {
-        MERCHANT, TRANSACTION
+        MERCHANT, TRANSACTION, RENTAL
     }
 }
