@@ -249,28 +249,16 @@ public class FeeComputationService {
                 "  ) msm ON TRUE " +
                 // BIN-BASED TIER (2026-08-29, V2026_08_29_03): the BH feed carries no
                 // card product code, so Standard/Premium/Elite resolves from the scheme
-                // BIN file instead: leading 6 PAN digits -> ref_bin_range (9-digit
-                // account ranges) -> product code -> ref_bin_product_tier bucket.
-                // Gated to BH (the only tier-from-BIN rate card) AND product-code-blank,
-                // so a feed-supplied product code always wins and no other country's
-                // resolution changes. Candidate scan is index-friendly: walk the 8
-                // nearest ranges by range_low DESC (idx_ref_bin_range_lookup), keep the
-                // most specific one that covers the 6-digit prefix AND has a tier
-                // mapping; ranges splitting below 6 digits resolve to the most
-                // specific covering subrange.
-                "  LEFT JOIN LATERAL ( " +
-                "    SELECT bpt.card_tier FROM ( " +
-                "      SELECT rbr.product_code, rbr.range_low, rbr.range_high FROM ref_bin_range rbr " +
-                "      WHERE COALESCE(tn.home_country_code,'AE') = 'BH' AND pc.v = '' " +
-                "        AND rbr.scheme = CASE rcs.group_name WHEN 'MasterCard' THEN 'MASTERCARD' WHEN 'Visa' THEN 'VISA' END " +
-                "        AND ft.card_number ~ '^[0-9]{6}' " +
-                "        AND rbr.range_low <= LEFT(ft.card_number,6) || '999' " +
-                "      ORDER BY rbr.range_low DESC LIMIT 8 " +
-                "    ) cand " +
-                "    JOIN ref_bin_product_tier bpt ON bpt.product_code = cand.product_code " +
-                "    WHERE cand.range_high >= LEFT(ft.card_number,6) || '000' " +
-                "    ORDER BY cand.range_low DESC LIMIT 1 " +
-                "  ) bint ON TRUE " +
+                // BIN file (leading 6 PAN digits -> ref_bin_range -> product code ->
+                // ref_bin_product_tier bucket).
+                // PERF (2026-08-29b): this used to be a per-row correlated LATERAL —
+                // ~30s/1M rows of index probes because a 1M-row BH month has millions
+                // of rows but only a few thousand DISTINCT 6-digit BINs. Resolution is
+                // now pre-computed ONCE per distinct BIN into the tmp_bin_tier session
+                // table (built just before the CTAS below, BH-only), so here it is a
+                // plain hash-join on bin6. Empty for non-BH tenants -> bint.card_tier
+                // NULL -> the tier CASE falls through exactly as before.
+                "  LEFT JOIN tmp_bin_tier bint ON bint.bin6 = LEFT(ft.card_number,6) " +
                 // PERF (2026-07-14): lateral split into MCC-keyed + wildcard branches so
                 // the planner drives each via an index instead of scanning all ~365
                 // candidate rows per transaction (was 9.4M heap blocks / ~270s per window).
@@ -311,8 +299,11 @@ public class FeeComputationService {
                 // TIER: explicit Standard feed products (MCSD/VISD) stay Standard; then
                 // the BIN-resolved bucket (Standard/Premium/Elite, BH-gated above) wins;
                 // everything else remains the legacy Premium fallback.
+                // The `pc.v = ''` guard keeps the ORIGINAL gate now that the BIN tier
+                // comes from a shared table (a row WITH a feed product code must still
+                // resolve tier from rcs, not from its BIN).
                 "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 1 THEN 'Standard' " +
-                "                                               WHEN bint.card_tier IS NOT NULL THEN bint.card_tier " +
+                "                                               WHEN pc.v = '' AND bint.card_tier IS NOT NULL THEN bint.card_tier " +
                 "                                               ELSE 'Premium' END) " +
                 // MCC-KEYED RATE CARD (2026-07-07): mcc match/wildcard now enforced by the
                 // UNION ALL branches above (most-specific still wins via priority DESC).
@@ -376,6 +367,56 @@ public class FeeComputationService {
                 // tenantId is inlined (a Long from job parameters, never user text).
                 "  WHERE ft.tenant_id = " + tenantId + " AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope;
 
+            // BIN-TIER PRE-RESOLUTION (2026-08-29b). The fee-resolve SELECT above
+            // joins tmp_bin_tier (bin6 -> Standard/Premium/Elite) as a plain hash
+            // join. Build it here, ONCE per DISTINCT 6-digit BIN in scope, instead
+            // of the old per-row range lateral: a 1M-row BH month has only a few
+            // thousand distinct BINs, so this turns ~1M range probes into a few
+            // thousand. Populated only for BH (the sole BIN-tiered rate card); the
+            // table always exists so the join target is present for every tenant
+            // (empty -> NULL tier -> unchanged pricing elsewhere).
+            jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_bin_tier");
+            jdbcTemplate.execute(
+                "CREATE TEMP TABLE tmp_bin_tier (bin6 VARCHAR(6) PRIMARY KEY, card_tier VARCHAR(10))");
+            String homeCountry = null;
+            try {
+                homeCountry = jdbcTemplate.queryForObject(
+                    "SELECT home_country_code FROM tenant WHERE tenant_id = ?", String.class, tenantId);
+            } catch (Exception ignore) { /* tenant row missing -> treat as non-BH */ }
+            if ("BH".equals(homeCountry)) {
+                long tBin = System.currentTimeMillis();
+                int binRows = jdbcTemplate.update(
+                    "INSERT INTO tmp_bin_tier (bin6, card_tier) " +
+                    "SELECT b.bin6, bt.card_tier FROM ( " +
+                    // Distinct 6-digit BINs actually present in this load, each with
+                    // the scheme derived straight from card_scheme (product code is
+                    // blank for BH, so ref_card_scheme would resolve the same group).
+                    "   SELECT LEFT(ft.card_number,6) AS bin6, " +
+                    "          MAX(CASE WHEN UPPER(REPLACE(COALESCE(ft.card_scheme,''),' ','')) LIKE 'MASTER%' THEN 'MASTERCARD' " +
+                    "                   WHEN UPPER(REPLACE(COALESCE(ft.card_scheme,''),' ','')) LIKE 'VISA%'   THEN 'VISA' END) AS scheme " +
+                    "   FROM " + factTarget + " ft " +
+                    "   WHERE ft.tenant_id = " + tenantId + " AND " + rngFt + "DATE(ft.payment_date) IN " + dateScope +
+                    "     AND ft.card_number ~ '^[0-9]{6}' " +
+                    "     AND COALESCE(NULLIF(TRIM(ft.card_product_code),''),'') = '' " +
+                    "   GROUP BY LEFT(ft.card_number,6) " +
+                    ") b " +
+                    "JOIN LATERAL ( " +
+                    "   SELECT bpt.card_tier FROM ( " +
+                    "     SELECT rbr.product_code, rbr.range_low, rbr.range_high FROM ref_bin_range rbr " +
+                    "     WHERE rbr.scheme = b.scheme " +
+                    "       AND rbr.range_low <= b.bin6 || '999' " +
+                    "     ORDER BY rbr.range_low DESC LIMIT 8 " +
+                    "   ) cand " +
+                    "   JOIN ref_bin_product_tier bpt ON bpt.product_code = cand.product_code " +
+                    "   WHERE cand.range_high >= b.bin6 || '000' " +
+                    "   ORDER BY cand.range_low DESC LIMIT 1 " +
+                    ") bt ON TRUE " +
+                    "WHERE b.scheme IS NOT NULL");
+                jdbcTemplate.execute("ANALYZE tmp_bin_tier");
+                log.info(String.format("BIN-tier pre-resolution: %d distinct BIN(s) in %.1fs",
+                    binRows, (System.currentTimeMillis() - tBin) / 1000.0));
+            }
+
             // No ON COMMIT DROP: works whether or not this tasklet's statements share
             // a transaction. Explicitly dropped below; the IF EXISTS guard also clears
             // a leftover from a previous job on the same pooled connection.
@@ -408,6 +449,7 @@ public class FeeComputationService {
                 "f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
                 tenantId);
             jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fee_resolve");
+            jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_bin_tier");
             log.info(String.format("Fee apply (phase 2, keyed UPDATE): %.1fs",
                 (System.currentTimeMillis() - tFeeApply) / 1000.0));
             log.info(String.format("Fee computation (single-pass): %d rows in %.1fs",
