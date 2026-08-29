@@ -40,6 +40,7 @@ const DailyMerchantDashboard = lazy(() => import('./pages/business/DailyMerchant
 const DestinationDashboard = lazy(() => import('./pages/business/DestinationDashboard'));
 const CardTypeDashboard = lazy(() => import('./pages/business/CardTypeDashboard'));
 const LocalDebitBankDashboard = lazy(() => import('./pages/business/LocalDebitBankDashboard'));
+const RentalOverview = lazy(() => import('./pages/business/RentalOverview'));
 const MerchantAnalyticsReport = lazy(() => import('./pages/business/MerchantAnalyticsReport'));
 const MerchantComparison = lazy(() => import('./pages/business/MerchantComparison'));
 const PricingSimulator = lazy(() => import('./pages/business/PricingSimulator'));
@@ -138,6 +139,7 @@ function App() {
               <Route path="/business/destination-dashboard" element={<DestinationDashboard />} />
               <Route path="/business/card-type-dashboard" element={<CardTypeDashboard />} />
               <Route path="/business/local-debit-bank-dashboard" element={<LocalDebitBankDashboard />} />
+              <Route path="/business/rentals" element={<RentalOverview />} />
               <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
               <Route path="/business/comparison" element={<MerchantComparison />} />
               <Route path="/business/pricing-simulator" element={<PricingSimulator />} />
