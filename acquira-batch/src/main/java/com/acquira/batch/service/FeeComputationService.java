@@ -378,12 +378,19 @@ public class FeeComputationService {
             jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_bin_tier");
             jdbcTemplate.execute(
                 "CREATE TEMP TABLE tmp_bin_tier (bin6 VARCHAR(6) PRIMARY KEY, card_tier VARCHAR(10))");
-            String homeCountry = null;
+            // Tier-from-BIN is driven by the SAME tenant setting as card-type-from-BIN:
+            // card_type_source = 'BIN' means "derive card attributes from the scheme BIN
+            // file"; 'FILE' means "trust the feed's product code" (rcs resolves the tier
+            // instead, and tmp_bin_tier stays empty). Previously this was hardcoded to
+            // home_country_code='BH'; using the setting removes the hardcode and lets any
+            // BIN-sourced tenant tier by BIN (it still needs that country's tier rows to
+            // have an effect, so non-BH BIN tenants degrade gracefully to the base rate).
+            String cardTypeSource = null;
             try {
-                homeCountry = jdbcTemplate.queryForObject(
-                    "SELECT home_country_code FROM tenant WHERE tenant_id = ?", String.class, tenantId);
-            } catch (Exception ignore) { /* tenant row missing -> treat as non-BH */ }
-            if ("BH".equals(homeCountry)) {
+                cardTypeSource = jdbcTemplate.queryForObject(
+                    "SELECT card_type_source FROM tenant WHERE tenant_id = ?", String.class, tenantId);
+            } catch (Exception ignore) { /* tenant row missing -> treat as FILE */ }
+            if ("BIN".equalsIgnoreCase(cardTypeSource)) {
                 long tBin = System.currentTimeMillis();
                 int binRows = jdbcTemplate.update(
                     "INSERT INTO tmp_bin_tier (bin6, card_tier) " +
