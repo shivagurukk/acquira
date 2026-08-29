@@ -26,8 +26,8 @@ const INPUT_FORMATS = [
 ];
 
 const CARD_TYPE_SOURCES = [
-    { value: 'FILE', label: 'Transaction file — card type/product from uploaded file columns' },
-    { value: 'BIN', label: 'BIN mapping — 8-digit BIN table (Super Admin > BIN Management)' },
+    { value: 'FILE', label: 'Transaction file — card type & product/tier from the feed columns' },
+    { value: 'BIN', label: 'BIN mapping — card type & interchange tier from the scheme BIN files' },
 ];
 
 const TenantManagement = ({ embedded = false }) => {
@@ -257,7 +257,7 @@ const TenantManagement = ({ embedded = false }) => {
 
                     <FormField
                         label="Card product/type source"
-                        hint="Where the card type and product for this tenant's transactions come from. Configuration only for now — ingestion behavior is unchanged until the enrichment phase is enabled."
+                        hint="Where card type AND interchange tier (Standard/Premium/Elite) come from. FILE: the feed's card-type/product columns. BIN: the scheme BIN files (Super Admin > BIN Management) — the 6-digit BIN maps to card type and, for a tiered rate card (e.g. Bahrain), the interchange tier."
                     >
                         <Select
                             value={currentTenant.cardTypeSource || 'FILE'}
