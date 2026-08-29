@@ -256,8 +256,22 @@ public class MerchantSegmentationService {
             "  net_take_bps=EXCLUDED.net_take_bps, volume_growth_pct=EXCLUDED.volume_growth_pct, " +
             "  days_since_last=EXCLUDED.days_since_last, model_version=EXCLUDED.model_version, created_at=NOW()",
             tenantId, merchantId, java.sql.Date.valueOf(asOf), primary, secondary, reason, bd(score, 2),
-            bd(vol, 2), bd(netRev, 2), bd(marginPct, 2), bd(effBps, 2), bd(takeBps, 2), bd(growthPct, 2),
+            bd(vol, 2), bd(netRev, 2), bd(clampRatio(marginPct), 2), bd(clampRatio(effBps), 2),
+            bd(clampRatio(takeBps), 2), bd(clampRatio(growthPct), 2),
             daysSince, MODEL_VERSION);
+    }
+
+    /**
+     * The four ratio columns are NUMERIC(9,2). A near-zero denominator — e.g. a
+     * merchant whose 90-day settlement volume nets to fractions of a dinar
+     * against a real MSF — yields bps/pct values past 10^7, and the single
+     * oversized row killed the WHOLE tenant's segmentation upsert with
+     * "numeric field overflow" (seen live UAT 2026-08-28, every run). A figure
+     * that large carries no analytical meaning, so cap it at the column bound
+     * rather than losing every merchant's segmentation.
+     */
+    private static double clampRatio(double v) {
+        return clamp(v, -9_999_999.99, 9_999_999.99);
     }
 
     private LocalDate maxBusinessDate(Long tenantId) {

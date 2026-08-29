@@ -1358,6 +1358,27 @@ public class TransactionJobConfig {
                 "WHERE tenant_id = ? AND NULLIF(TRIM(card_scheme), '') IS NOT NULL",
                 String.class, tenantId);
 
+            // CONNECTION PINNING (2026-08-29, root cause of UAT job#1004): this
+            // step runs with PROPAGATION_NEVER, so without an explicit transaction
+            // every jdbcTemplate call borrows its own pooled connection — but the
+            // session temp tables (tmp_fact_batch below, tmp_fee_resolve inside
+            // FeeComputationService) exist on ONE connection only. It held together
+            // while Hikari happened to hand back the same idle connection; any
+            // concurrent borrower (the REQUIRES_NEW ledger writes, web traffic, a
+            // cron tick) reshuffles the pool and a later statement lands on a
+            // session where the temp table does not exist — seen live 2026-08-29
+            // 02:12 UAT as "relation tmp_fact_batch does not exist" AFTER 2.54M
+            // rows had staged cleanly. Backfill and bulk-migration already wrap
+            // this same sequence in a TransactionTemplate; this tasklet was the
+            // one caller that did not. One programmatic transaction from the fact
+            // delete through the final flush pins every statement to one
+            // connection — and makes delete+reload atomic, so a failed load can
+            // no longer leave the day emptied.
+            org.springframework.transaction.TransactionStatus factTxn =
+                transactionManager.getTransaction(
+                    new org.springframework.transaction.support.DefaultTransactionDefinition());
+            try {
+
             long tDel = System.currentTimeMillis();
             if (appendMode) {
                 // IDEMPOTENCY: the delete below must cover EXACTLY the set of rows the
@@ -1660,6 +1681,16 @@ public class TransactionJobConfig {
                 }
                 log.info(String.format("Fact flush (append-only, single write): %d rows in %.1fs",
                     flushed, (System.currentTimeMillis() - tFlush) / 1000.0));
+            }
+
+            transactionManager.commit(factTxn);
+            } catch (Exception txe) {
+                // Roll back rather than leak an open transaction back to the pool
+                // (and back to this PROPAGATION_NEVER step's thread).
+                if (!factTxn.isCompleted()) {
+                    transactionManager.rollback(factTxn);
+                }
+                throw txe;
             }
 
             // PLAN STABILITY (2026-08-28): refresh statistics on the fact
