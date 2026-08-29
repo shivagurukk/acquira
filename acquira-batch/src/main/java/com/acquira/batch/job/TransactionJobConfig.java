@@ -283,6 +283,24 @@ public class TransactionJobConfig {
                 .next(calculateDailyDashboardMetricsStep).build();
     }
 
+    /**
+     * The final pass of a sequential server-folder load: just the TENANT-WIDE
+     * reporting steps (churn scoring + segmentation) that each file's job
+     * skipped under deferReporting=true. Runs once per tenant over the complete
+     * data — the 21-file BH backfill executed these 23 times overnight with
+     * every run but the last overwritten. businessMetrics and dashboard
+     * snapshots are NOT here: they are scoped to each file's dates/months and
+     * must stay per-file. Job params: tenantId (Long), startedAt (uniqueness).
+     */
+    @Bean
+    public Job reportingOnlyJob(
+            @org.springframework.beans.factory.annotation.Qualifier("scoreMlStep") Step scoreMlStep,
+            @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep) {
+        return new JobBuilder("reportingOnlyJob", jobRepository)
+                .listener(cacheEvictionJobListener)
+                .start(scoreMlStep).next(computeSegmentsStep).build();
+    }
+
     @Bean
     public Step autoCreateDimensionsStep(Tasklet autoCreateDimensionsTasklet) {
         return new StepBuilder("autoCreateDimensionsStep", jobRepository)
@@ -1773,6 +1791,28 @@ public class TransactionJobConfig {
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
                 "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
                 java.sql.Date.class, tenantId);
+            // RETENTION SHORT-CIRCUIT (2026-08-29): the prune at the end of this
+            // tasklet deletes every snapshot with calc_date < CURRENT_DATE -
+            // snapshotRetentionDays — so computing a snapshot for an older date is
+            // insert-then-delete of the same rows within one run. On a historical
+            // backfill that was the ENTIRE step: the 21-file BH re-ingest spent an
+            // average 196s/file building Jan–Jul snapshots the same tasklet
+            // immediately pruned. Filter those dates out up front; the surviving
+            // rows are byte-identical to the old behaviour's end state.
+            if (snapshotRetentionDays > 0 && !distinctDates.isEmpty()) {
+                // Cutoff from the DATABASE clock — the prune below compares against
+                // CURRENT_DATE, so deriving this from the JVM clock could disagree
+                // by a day across a timezone skew and drop a boundary snapshot.
+                java.time.LocalDate cutoff = jdbcTemplate.queryForObject(
+                    "SELECT CURRENT_DATE - ?", java.time.LocalDate.class, snapshotRetentionDays);
+                int before = distinctDates.size();
+                distinctDates.removeIf(d -> d.toLocalDate().isBefore(cutoff));
+                if (distinctDates.size() < before) {
+                    log.info("businessMetrics: skipped {} date(s) older than the {}-day snapshot retention "
+                        + "window (their snapshots would be pruned by this same run)",
+                        before - distinctDates.size(), snapshotRetentionDays);
+                }
+            }
             if (distinctDates.isEmpty()) {
                 log.info("businessMetrics: no dates to process - skipping");
                 return RepeatStatus.FINISHED;
@@ -1874,9 +1914,20 @@ public class TransactionJobConfig {
     }
 
     @Bean @StepScope
-    public Tasklet scoreMlTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+    public Tasklet scoreMlTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("#{jobParameters['deferReporting']}") String deferReporting) {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
+            // DEFERRED REPORTING (2026-08-29): churn scoring is TENANT-WIDE — it
+            // reads the whole merchant base, so in a sequential server-folder run
+            // each file's execution is overwritten by the next file's ~25 minutes
+            // later and only the final one matters. The folder path sets
+            // deferReporting=true per file and runs reportingOnlyJob once at the
+            // end over the complete data.
+            if ("true".equals(deferReporting)) {
+                log.info("scoreMl: deferred (sequential folder load) — will run once in reportingOnlyJob");
+                return RepeatStatus.FINISHED;
+            }
             long start = System.currentTimeMillis();
             try {
                 int scored = churnScoringService.trainAndScore(tenantId);
@@ -1903,9 +1954,16 @@ public class TransactionJobConfig {
     }
 
     @Bean @StepScope
-    public Tasklet computeSegmentsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+    public Tasklet computeSegmentsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("#{jobParameters['deferReporting']}") String deferReporting) {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
+            // Tenant-wide as-of-latest-date computation — same deferral rationale
+            // as scoreMlTasklet above.
+            if ("true".equals(deferReporting)) {
+                log.info("computeSegments: deferred (sequential folder load) — will run once in reportingOnlyJob");
+                return RepeatStatus.FINISHED;
+            }
             long start = System.currentTimeMillis();
             try {
                 int n = merchantSegmentationService.computeForTenant(tenantId);

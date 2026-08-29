@@ -45,6 +45,7 @@ public class FileUploadService {
     private final JobLauncher jobLauncher;
     private final Job merchantMasterJob;
     private final Job transactionLoadJob;
+    private final Job reportingOnlyJob;
     private final org.springframework.batch.core.explore.JobExplorer jobExplorer;
 
     private final String UPLOAD_DIR = "data/uploads/";
@@ -77,6 +78,7 @@ public class FileUploadService {
     public FileUploadService(JobLauncher jobLauncher,
             @Qualifier("merchantMasterJob") Job merchantMasterJob,
             @Qualifier("transactionLoadJob") Job transactionLoadJob,
+            @Qualifier("reportingOnlyJob") Job reportingOnlyJob,
             com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantRepository tenantRepository,
             com.acquira.batch.service.ManualIngestionService manualIngestionService,
@@ -85,6 +87,7 @@ public class FileUploadService {
         this.jobLauncher = jobLauncher;
         this.merchantMasterJob = merchantMasterJob;
         this.transactionLoadJob = transactionLoadJob;
+        this.reportingOnlyJob = reportingOnlyJob;
         this.auditService = auditService;
         this.tenantRepository = tenantRepository;
         this.manualIngestionService = manualIngestionService;
@@ -679,6 +682,31 @@ public class FileUploadService {
             } else failCount++;
         }
 
+        // Phase 2b (sequential mode only): the per-file jobs ran with
+        // deferReporting=true, so churn scoring + segmentation have not run at
+        // all yet. Run them ONCE per tenant now, over the complete data — this
+        // single pass replaces the N-1 overwritten per-file executions (the
+        // 21-file BH backfill ran them 23 times overnight). Awaited, so callers
+        // see final reporting state; failures are non-fatal to the file results.
+        if (sequential && !transactionFiles.isEmpty()) {
+            for (Long tenantId : processedTenants) {
+                try {
+                    long t = System.currentTimeMillis();
+                    org.springframework.batch.core.JobExecution repExec = jobLauncher.run(reportingOnlyJob,
+                        new JobParametersBuilder()
+                            .addLong("tenantId", tenantId)
+                            .addString("triggeredBy", currentUsername())
+                            .addLong("startedAt", System.currentTimeMillis())
+                            .toJobParameters());
+                    repExec = waitForJob(repExec);
+                    log.info("Deferred reporting (churn + segments) for tenant {}: {} in {} ms",
+                        tenantId, repExec.getStatus(), System.currentTimeMillis() - t);
+                } catch (Exception e) {
+                    log.warn("Deferred reporting failed for tenant {} (non-fatal): {}", tenantId, e.getMessage());
+                }
+            }
+        }
+
         // Phase 3: ONE reporting update per tenant (not per file) — ASYNCHRONOUS.
         //
         // PERF FIX: same reasoning as the single-file TRANSACTION branch above.
@@ -960,15 +988,24 @@ public class FileUploadService {
                             fileType, file.getName(), entityName, targetTenantId,
                             file.length() / (1024 * 1024)));
 
-            JobParameters jobParameters = new JobParametersBuilder()
+            JobParametersBuilder paramsBuilder = new JobParametersBuilder()
                     .addLong("tenantId", targetTenantId)
                     .addString("fullPath", filePath)
                     .addString("loadMode", loadModeFor(file.getName(), targetTenantId))
                     .addString("inputType", inputTypeForTenant(targetTenantId, file.getName()))
                     .addString("ingestSource", "SERVER_FILE")
                     .addString("triggeredBy", currentUsername())
-                    .addLong("startedAt", System.currentTimeMillis())
-                    .toJobParameters();
+                    .addLong("startedAt", System.currentTimeMillis());
+            // DEFERRED REPORTING (2026-08-29, sequential folder mode only): the
+            // tenant-wide steps (churn scoring, segmentation) are skipped per
+            // file and run ONCE per tenant in reportingOnlyJob after the folder
+            // completes — every per-file run but the last was overwritten anyway.
+            // Date-scoped steps (stagingToFact, summaries, businessMetrics,
+            // dashboards) still run per file.
+            if (waitForCompletion && "TRANSACTION".equals(fileType)) {
+                paramsBuilder.addString("deferReporting", "true");
+            }
+            JobParameters jobParameters = paramsBuilder.toJobParameters();
 
             org.springframework.batch.core.JobExecution execution;
             if ("MERCHANT".equals(fileType)) {
