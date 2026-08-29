@@ -290,7 +290,16 @@ public class FeeComputationService {
                 // tier below), NOT at the debit/prepaid rate. ft.card_type stays 'PREPAID'
                 // for reporting/splits; only this rate lookup remaps. Debit-prepaid
                 // (rcs.card_type=4, MCDP) stays on the local debit rate via 'DEBIT'.
-                "      AND (ilr.card_type IS NULL OR ilr.card_type = CASE WHEN rcs.card_type = 3 THEN 'CREDIT' ELSE UPPER(TRIM(COALESCE(ft.card_type,''))) END) " +
+                // COMMERCIAL (2026-08-29): when the BIN classifies the card as a
+                // commercial product (card_class='COMMERCIAL'), price it as
+                // card_type='COMMERCIAL' — its own rate band (bint.card_tier =
+                // Comm200/210/215/220) — instead of the consumer credit ladder.
+                // Same pc.v='' gate as the tier BIN branch: a feed-supplied product
+                // code still wins. Consumer BINs keep the credit/prepaid path.
+                "      AND (ilr.card_type IS NULL OR ilr.card_type = CASE " +
+                "             WHEN pc.v = '' AND bint.card_class = 'COMMERCIAL' THEN 'COMMERCIAL' " +
+                "             WHEN rcs.card_type = 3 THEN 'CREDIT' " +
+                "             ELSE UPPER(TRIM(COALESCE(ft.card_type,''))) END) " +
                 // TIER (2026-07-07, business-confirmed mapping): ONLY explicit Standard
                 // products (card_subtype=1: MCSD/VISD) resolve Standard. EVERYTHING else
                 // - AMEX/JCB/UPI/VICR/MCCR/MCCP/MCPM/VIPM/VICP, generic VISA/MCRD, and
@@ -377,7 +386,7 @@ public class FeeComputationService {
             // (empty -> NULL tier -> unchanged pricing elsewhere).
             jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_bin_tier");
             jdbcTemplate.execute(
-                "CREATE TEMP TABLE tmp_bin_tier (bin6 VARCHAR(6) PRIMARY KEY, card_tier VARCHAR(10))");
+                "CREATE TEMP TABLE tmp_bin_tier (bin6 VARCHAR(6) PRIMARY KEY, card_tier VARCHAR(10), card_class VARCHAR(12))");
             // Tier-from-BIN is driven by the SAME tenant setting as card-type-from-BIN:
             // card_type_source = 'BIN' means "derive card attributes from the scheme BIN
             // file"; 'FILE' means "trust the feed's product code" (rcs resolves the tier
@@ -393,8 +402,8 @@ public class FeeComputationService {
             if ("BIN".equalsIgnoreCase(cardTypeSource)) {
                 long tBin = System.currentTimeMillis();
                 int binRows = jdbcTemplate.update(
-                    "INSERT INTO tmp_bin_tier (bin6, card_tier) " +
-                    "SELECT b.bin6, bt.card_tier FROM ( " +
+                    "INSERT INTO tmp_bin_tier (bin6, card_tier, card_class) " +
+                    "SELECT b.bin6, bt.card_tier, bt.card_class FROM ( " +
                     // Distinct 6-digit BINs actually present in this load, each with
                     // the scheme derived straight from card_scheme (product code is
                     // blank for BH, so ref_card_scheme would resolve the same group).
@@ -408,7 +417,7 @@ public class FeeComputationService {
                     "   GROUP BY LEFT(ft.card_number,6) " +
                     ") b " +
                     "JOIN LATERAL ( " +
-                    "   SELECT bpt.card_tier FROM ( " +
+                    "   SELECT bpt.card_tier, bpt.card_class FROM ( " +
                     "     SELECT rbr.product_code, rbr.range_low, rbr.range_high FROM ref_bin_range rbr " +
                     "     WHERE rbr.scheme = b.scheme " +
                     "       AND rbr.range_low <= b.bin6 || '999' " +
