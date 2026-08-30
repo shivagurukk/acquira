@@ -2176,7 +2176,7 @@ const DailyMerchantDashboard = () => {
                                 }}>
                                     <span className="edm-eyebrow edm-eyebrow-rule">Where the MSF went</span>
                                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                        every {currencyCode || 'unit'} of fee income, split into what was paid away and what was kept
+                                        every {displayCurrencyCode(currencyCode) || currencySymbol || 'unit'} of fee income, split into what was paid away and what was kept
                                     </span>
                                 </div>
                                 <FeeRibbon totals={totals} money={money} share={share} animKey={animKey} />

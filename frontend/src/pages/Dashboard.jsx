@@ -577,7 +577,7 @@ const Dashboard = () => {
        on every cell — a 13-column table repeating "BHD" 7 times per row is
        noise. `ccy: true` renders the code next to the label; when the tenant
        currency is unknown the suffix is simply omitted (never invented). */
-    const headCcy = currencyCode || currencySymbol || null;
+    const headCcy = displayCurrencyCode(currencyCode || currencySymbol) || null;
     const TABLE_HEADS = [
         { label: mode === 'MTD' ? 'Week' : 'Month' },
         { label: 'Transactions' },
