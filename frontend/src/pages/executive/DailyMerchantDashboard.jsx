@@ -854,6 +854,12 @@ const DailyMerchantDashboard = () => {
     const [detailRow, setDetailRow] = useState(null);
     const [detailMix, setDetailMix] = useState(null);
     const [lastRefresh, setLastRefresh] = useState(null);
+    /* The table load waits for the calendar to resolve the default month/date;
+       firing it immediately produced a second, thrown-away request (the first
+       ran on the backend-default date, then the calendar answer changed the
+       params) — the abort cancels the HTTP call but Postgres still does the
+       work, doubling the cold-cache cost of every open. */
+    const [bootstrapped, setBootstrapped] = useState(false);
 
     /* Money at tenant precision (BHD is 3dp — never assume 2), or 2dp USD when
        the executive display-currency toggle is on (values are converted). */
@@ -874,7 +880,8 @@ const DailyMerchantDashboard = () => {
                 setMonths(ms); setLatest(lt);
                 if (lt) { setMonth(lt.slice(0, 7)); setSelectedDates([lt]); }
             })
-            .catch(() => { /* the table still loads on the backend default */ });
+            .catch(() => { /* the table still loads on the backend default */ })
+            .finally(() => { if (!cancelled) setBootstrapped(true); });
         cachedGet('/business/filter-options')
             .then(res => { if (!cancelled) setOptions(res.data || {}); })
             .catch(() => {});
@@ -916,13 +923,15 @@ const DailyMerchantDashboard = () => {
     }, [filters, dateParams, page, pageSize, sort, dir]);
 
     useEffect(() => {
+        if (!bootstrapped) return;
         const ac = new AbortController();
         load(ac.signal);
         return () => ac.abort();
-    }, [load, tenantVersion]);
+    }, [load, tenantVersion, bootstrapped]);
 
     useEffect(() => {
         setPage(0); setMonth(''); setSelectedDates([]); setDetailRow(null);
+        setBootstrapped(false);   // wait for the new tenant's calendar
     }, [tenantVersion]);
 
     /* Drilldown: pull the merchant's scheme / card / destination split. */
