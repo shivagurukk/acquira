@@ -2218,7 +2218,13 @@ public class TransactionJobConfig {
                 if (fraction > 0) base = base.plusSeconds(Math.round(fraction * 86400));
                 return base;
             }
-            if (v.contains("T")) return java.time.LocalDateTime.parse(v);
+            // ISO-8601 fast path. Guarded try: '21-OCT-25' also contains a 'T'
+            // (the only month abbreviation that does), and before 2026-09-02 it
+            // was routed here, threw, and NULLed every payment_date in every
+            // October BH file. On failure fall through to the pattern lists.
+            if (v.contains("T")) {
+                try { return java.time.LocalDateTime.parse(v); } catch (Exception ignored) {}
+            }
             if (v.contains(" ")) {
                 for (java.time.format.DateTimeFormatter fmt : DT_FORMATTERS) {
                     try { return java.time.LocalDateTime.parse(v, fmt); } catch (Exception ignored) {}
