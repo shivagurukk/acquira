@@ -22,6 +22,14 @@ public class SecurityStartupGuard {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityStartupGuard.class);
     private static final String DEFAULT_DEV_SECRET = "AcquiraDefaultDevKeyAtLeast32Chars!!";
+    // Known placeholder secrets that ship in the repo/manifests. Any of these in a
+    // protected profile is fatal — the k8s example value passes the length check
+    // but is public, so a deploy that forgets to override JWT_SECRET_KEY would sign
+    // forgeable tokens.
+    private static final java.util.Set<String> INSECURE_SECRETS = java.util.Set.of(
+        "AcquiraDefaultDevKeyAtLeast32Chars!!",
+        "change-me-min-32-bytes-long-secret",
+        "changeme", "secret", "your-256-bit-secret");
 
     @Value("${jwt.secret:AcquiraDefaultDevKeyAtLeast32Chars!!}")
     private String jwtSecret;
@@ -40,11 +48,15 @@ public class SecurityStartupGuard {
 
     @PostConstruct
     public void validateSecurityConfiguration() {
-        boolean isProd = Arrays.asList(env.getActiveProfiles()).contains("prod");
+        // Treat prod/uat/staging as protected — the default JWT secret must never
+        // sign tokens in any shared environment, not only the 'prod' profile.
+        java.util.List<String> profiles = Arrays.asList(env.getActiveProfiles());
+        boolean isProd = profiles.contains("prod") || profiles.contains("uat")
+                || profiles.contains("staging");
         boolean hasErrors = false;
 
         // ── JWT Secret ──────────────────────────────────────────────
-        if (DEFAULT_DEV_SECRET.equals(jwtSecret)) {
+        if (INSECURE_SECRETS.contains(jwtSecret == null ? "" : jwtSecret.trim())) {
             if (isProd) {
                 log.error("╔══════════════════════════════════════════════════════════╗");
                 log.error("║  FATAL: Default JWT secret detected in PRODUCTION.      ║");

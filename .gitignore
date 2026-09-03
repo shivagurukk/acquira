@@ -88,3 +88,16 @@ MIGRATION_GUIDE.md
 
 # ─── Root-level loose src folder (if any — NOT the module src folders) ───
 /src/
+
+# SECURITY: sensitive data artifacts must never be committed (real merchant PII,
+# transaction dumps, DB snapshots). Directories reports/ data/ backups/ temp/ are
+# already ignored; these cover stray root-level exports and dumps.
+/bulk_merchants.csv
+/bulk_transactions.csv
+/test_report.pdf
+/*sample*.xlsx
+/transactions_*.xlsx
+/all-migrations.sql
+/schema-snapshot.sql
+/prod-missing-*.sql
+*.dump
