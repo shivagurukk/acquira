@@ -2,6 +2,7 @@ package com.acquira.core.controller;
 
 import com.acquira.common.model.SalesAgentProfile;
 import com.acquira.common.model.SalesCountryLead;
+import com.acquira.common.service.NetSpreadSql;
 import com.acquira.common.model.SalesTeamMapping;
 import com.acquira.common.model.SalesUserAssignment;
 import com.acquira.common.repository.SalesAgentProfileRepository;
@@ -55,6 +56,33 @@ public class SalesPortfolioController {
     private final SalesUserAssignmentRepository userAssignmentRepository;
     /** Stamps the tenant's currency onto every money-bearing response. */
     private final CurrencyMeta currencyMeta;
+    private final com.acquira.common.service.ReportCache reportCache;
+    private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the Sales Executive default view: the 'This Month' preset —
+     * first-of-month → today, compared against the same span of the previous
+     * month. The math mirrors SalesExecutiveDashboard.jsx presetToRange /
+     * comparisonRange for MONTH exactly; the key uses the raw date strings the
+     * frontend would send. Uses the server's calendar date — a browser in a
+     * timezone straddling midnight just misses the warm entry, nothing worse.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("sales-executive", tenantId -> {
+            java.time.LocalDate today = java.time.LocalDate.now();
+            java.time.LocalDate from = today.withDayOfMonth(1);
+            long days = java.time.temporal.ChronoUnit.DAYS.between(from, today);
+            java.time.LocalDate prevStart = from.minusMonths(1);
+            java.time.LocalDate compareTo = prevStart.plusDays(days);
+            reportCache.get(
+                    com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                    "salesExec:" + tenantId + ":" + from + ":" + today
+                            + ":" + prevStart + ":" + compareTo,
+                    () -> buildExecutiveDashboard(tenantId, from.toString(), today.toString(),
+                            prevStart.toString(), compareTo.toString()));
+        });
+    }
 
     private Long getTenantId() {
         Long t = tenantService.getCurrentTenantId();
@@ -123,6 +151,15 @@ public class SalesPortfolioController {
             @RequestParam(defaultValue = "") String compareTo) {
 
         Long tenantId = getTenantId();
+        return ResponseEntity.ok(reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "salesExec:" + tenantId + ":" + dateFrom + ":" + dateTo
+                        + ":" + compareFrom + ":" + compareTo,
+                () -> buildExecutiveDashboard(tenantId, dateFrom, dateTo, compareFrom, compareTo)));
+    }
+
+    private Map<String, Object> buildExecutiveDashboard(Long tenantId,
+            String dateFrom, String dateTo, String compareFrom, String compareTo) {
 
         Map<String, Map<String, Object>> counts = agentMerchantCounts(tenantId, dateFrom, dateTo);
         Map<String, Map<String, Object>> current = agentVolumes(tenantId, dateFrom, dateTo);
@@ -206,7 +243,7 @@ public class SalesPortfolioController {
         // Org-wide totals for the KPI row. Summed from the country nodes, so they
         // agree with the tree by construction.
         out.put("totals", groupNode("org", null, "All Sales", null, tree, hasComparison));
-        return ResponseEntity.ok(currencyMeta.attach(out, tenantId));
+        return currencyMeta.attach(out, tenantId);
     }
 
     /** Portfolio counts per agent. Merchant counts are all-time; only "new" is date-bound. */
@@ -235,10 +272,15 @@ public class SalesPortfolioController {
     /** Volume / net / txns per agent over a date range (blank range = all time). */
     private Map<String, Map<String, Object>> agentVolumes(Long tenantId, String dateFrom, String dateTo) {
         String sql = "SELECT m.sales_user_id AS agent,"
-            + " COUNT(DISTINCT sdm.merchant_id) AS transacting_merchants,"
+            // total_txns > 0: ancillary-only rows (rental/DCC on a no-sale
+            // day) must not count a merchant as "transacting".
+            + " COUNT(DISTINCT sdm.merchant_id) FILTER (WHERE COALESCE(sdm.total_txns,0) > 0) AS transacting_merchants,"
             + " COALESCE(SUM(sdm.total_base_volume), 0) AS volume,"
             + " COALESCE(SUM(sdm.total_msf), 0) AS msf,"
-            + " COALESCE(SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)), 0) AS net,"
+            // Net margin / net spread from the shared definition (NetSpreadSql):
+            // batch 4-leg margin, plus DCC acquirer share and rental.
+            + " " + NetSpreadSql.sumMargin("sdm") + " AS net,"
+            + " " + NetSpreadSql.sumSpread("sdm") + " AS spread,"
             + " COALESCE(SUM(sdm.total_txns), 0) AS txns"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
@@ -269,9 +311,11 @@ public class SalesPortfolioController {
         node.put("totalVolume", current != null ? num(current.get("volume")) : 0.0);
         node.put("totalMsf", current != null ? num(current.get("msf")) : 0.0);
         node.put("totalNet", current != null ? num(current.get("net")) : 0.0);
+        node.put("totalSpread", current != null ? num(current.get("spread")) : 0.0);
         node.put("totalTxns", current != null ? num(current.get("txns")) : 0.0);
         node.put("prevVolume", previous != null ? num(previous.get("volume")) : 0.0);
         node.put("prevNet", previous != null ? num(previous.get("net")) : 0.0);
+        node.put("prevSpread", previous != null ? num(previous.get("spread")) : 0.0);
         node.put("prevTxns", previous != null ? num(previous.get("txns")) : 0.0);
         finaliseNode(node, hasComparison);
     }
@@ -290,8 +334,8 @@ public class SalesPortfolioController {
         node.put("email", email);
 
         String[] additive = {"merchantCount", "activeMerchants", "inactiveMerchants", "newMerchants",
-            "transactingMerchants", "totalVolume", "totalMsf", "totalNet", "totalTxns",
-            "prevVolume", "prevNet", "prevTxns", "agentCount"};
+            "transactingMerchants", "totalVolume", "totalMsf", "totalNet", "totalSpread", "totalTxns",
+            "prevVolume", "prevNet", "prevSpread", "prevTxns", "agentCount"};
         for (String k : additive) node.put(k, 0.0);
         for (Map<String, Object> c : children) {
             for (String k : additive) node.put(k, num(node.get(k)) + num(c.get(k)));
@@ -310,10 +354,13 @@ public class SalesPortfolioController {
         double msf = num(node.get("totalMsf"));
         node.put("msfRate", volume > 0 ? Math.round(msf / volume * 10000.0) / 100.0 : 0);
         node.put("netRate", volume > 0 ? Math.round(net / volume * 10000.0) / 100.0 : 0);
+        double spread = num(node.get("totalSpread"));
+        node.put("spreadRate", volume > 0 ? Math.round(spread / volume * 10000.0) / 100.0 : 0);
         // Null, not zero, when there is nothing to compare against — a 0% change and
         // "no comparison period" are different statements and the UI shows them differently.
         node.put("volumeChangePct", hasComparison ? changePct(volume, num(node.get("prevVolume"))) : null);
         node.put("netChangePct", hasComparison ? changePct(net, num(node.get("prevNet"))) : null);
+        node.put("spreadChangePct", hasComparison ? changePct(spread, num(node.get("prevSpread"))) : null);
         node.put("txnChangePct", hasComparison ? changePct(num(node.get("totalTxns")), num(node.get("prevTxns"))) : null);
     }
 
@@ -365,6 +412,7 @@ public class SalesPortfolioController {
             + " COALESCE(v.txn_count, 0) AS txn_count,"
             + " COALESCE(v.msf_total, 0) AS msf,"
             + " COALESCE(v.net_total, 0) AS net,"
+            + " COALESCE(v.spread_total, 0) AS spread,"
             + " COALESCE(h.assigned_at, m.created_date) AS assigned_date,"
             + " lt.last_txn_date,"
             + " m.sales_user_id AS current_sales_agent,"
@@ -374,8 +422,9 @@ public class SalesPortfolioController {
             + " LEFT JOIN ("
             + "   SELECT merchant_id, SUM(total_base_volume) AS total_volume,"
             + "     SUM(total_txns) AS txn_count, SUM(total_msf) AS msf_total,"
-            + "     SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)) AS net_total"
-            + "   FROM sum_daily_merchant WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
+            + "     " + NetSpreadSql.sumMargin("sdm") + " AS net_total,"
+            + "     " + NetSpreadSql.sumSpread("sdm") + " AS spread_total"
+            + "   FROM sum_daily_merchant sdm WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
             + "   GROUP BY merchant_id"
             + " ) v ON m.merchant_id = v.merchant_id"
             + " LEFT JOIN LATERAL ("
@@ -384,8 +433,11 @@ public class SalesPortfolioController {
             + "     AND msah.new_sales_user_id = m.sales_user_id"
             + " ) h ON TRUE"
             + " LEFT JOIN ("
+            // total_txns > 0: an ancillary-only row (rental/DCC on a no-sale
+            // day) is not a transaction — without the guard a dormant
+            // merchant reads as active the day its rent is charged.
             + "   SELECT merchant_id, MAX(business_date) AS last_txn_date"
-            + "   FROM sum_daily_merchant WHERE tenant_id = ? GROUP BY merchant_id"
+            + "   FROM sum_daily_merchant WHERE tenant_id = ? AND COALESCE(total_txns,0) > 0 GROUP BY merchant_id"
             + " ) lt ON lt.merchant_id = m.merchant_id"
             + " LEFT JOIN sales_agent_profile sap"
             + "   ON sap.tenant_id = m.tenant_id AND sap.sales_user_id = m.sales_user_id"
@@ -404,12 +456,13 @@ public class SalesPortfolioController {
         List<Map<String, Object>> merchants = jdbcTemplate.queryForList(merchSql, mp.toArray());
         out.put("merchants", merchants);
 
-        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalNet = 0;
+        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalNet = 0, totalSpread = 0;
         for (Map<String, Object> m : merchants) {
             totalVolume += num(m.get("volume"));
             totalMsf += num(m.get("msf"));
             totalTxns += num(m.get("txn_count"));
             totalNet += num(m.get("net"));
+            totalSpread += num(m.get("spread"));
         }
         out.put("merchantCount", merchants.size());
         out.put("totalVolume", totalVolume);
@@ -418,11 +471,14 @@ public class SalesPortfolioController {
         out.put("totalNet", totalNet);
         out.put("msfRate", totalVolume > 0 ? Math.round(totalMsf / totalVolume * 10000.0) / 100.0 : 0);
         out.put("netRate", totalVolume > 0 ? Math.round(totalNet / totalVolume * 10000.0) / 100.0 : 0);
+        out.put("totalSpread", totalSpread);
+        out.put("spreadRate", totalVolume > 0 ? Math.round(totalSpread / totalVolume * 10000.0) / 100.0 : 0);
         addAttainment(out, totalVolume, profile != null ? profile.getMonthlyTarget() : null);
 
         String trendSql = "SELECT TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
             + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf,"
-            + " SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)) AS net"
+            + " " + NetSpreadSql.sumMargin("sdm") + " AS net,"
+            + " " + NetSpreadSql.sumSpread("sdm") + " AS spread"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
             + " WHERE sdm.tenant_id = ? AND m.sales_user_id = ?"
@@ -464,8 +520,9 @@ public class SalesPortfolioController {
             + " LEFT JOIN ("
             + "   SELECT merchant_id, SUM(total_base_volume) AS total_volume,"
             + "     SUM(total_msf) AS msf_total, SUM(total_txns) AS txn_count,"
-            + "     SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)) AS net_total"
-            + "   FROM sum_daily_merchant WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
+            + "     " + NetSpreadSql.sumMargin("sdm") + " AS net_total,"
+            + "     " + NetSpreadSql.sumSpread("sdm") + " AS spread_total"
+            + "   FROM sum_daily_merchant sdm WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
             + "   GROUP BY merchant_id"
             + " ) v ON v.merchant_id = m.merchant_id"
             + " WHERE sua.tenant_id = ? AND sua.team_lead_id = ?"
@@ -485,7 +542,7 @@ public class SalesPortfolioController {
         }
         BigDecimal teamTarget = BigDecimal.ZERO;
         boolean anyTarget = false;
-        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalMerchants = 0, totalNet = 0;
+        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalMerchants = 0, totalNet = 0, totalSpread = 0;
         for (Map<String, Object> a : agents) {
             SalesAgentProfile p = profiles.get((String) a.get("agent"));
             a.put("displayName", p != null ? p.getDisplayName() : null);
@@ -498,6 +555,7 @@ public class SalesPortfolioController {
             totalTxns += num(a.get("txn_count"));
             totalMerchants += num(a.get("merchants"));
             totalNet += num(a.get("net"));
+            totalSpread += num(a.get("spread"));
         }
         out.put("agents", agents);
         out.put("agentCount", agents.size());
@@ -508,11 +566,14 @@ public class SalesPortfolioController {
         out.put("totalNet", totalNet);
         out.put("msfRate", totalVolume > 0 ? Math.round(totalMsf / totalVolume * 10000.0) / 100.0 : 0);
         out.put("netRate", totalVolume > 0 ? Math.round(totalNet / totalVolume * 10000.0) / 100.0 : 0);
+        out.put("totalSpread", totalSpread);
+        out.put("spreadRate", totalVolume > 0 ? Math.round(totalSpread / totalVolume * 10000.0) / 100.0 : 0);
         addAttainment(out, totalVolume, anyTarget ? teamTarget : null);
 
         String trendSql = "SELECT TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
             + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf,"
-            + " SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)) AS net"
+            + " " + NetSpreadSql.sumMargin("sdm") + " AS net,"
+            + " " + NetSpreadSql.sumSpread("sdm") + " AS spread"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
             + " JOIN sales_user_assignment sua ON sua.sales_user_id = m.sales_user_id AND sua.tenant_id = m.tenant_id"
@@ -558,8 +619,9 @@ public class SalesPortfolioController {
             + " LEFT JOIN ("
             + "   SELECT merchant_id, SUM(total_base_volume) AS total_volume,"
             + "     SUM(total_msf) AS msf_total, SUM(total_txns) AS txn_count,"
-            + "     SUM(COALESCE(total_msf,0) - COALESCE(total_interchange,0) - COALESCE(total_scheme_fee,0)) AS net_total"
-            + "   FROM sum_daily_merchant WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
+            + "     " + NetSpreadSql.sumMargin("sdm") + " AS net_total,"
+            + "     " + NetSpreadSql.sumSpread("sdm") + " AS spread_total"
+            + "   FROM sum_daily_merchant sdm WHERE tenant_id = ?" + dateClause(dateFrom, dateTo)
             + "   GROUP BY merchant_id"
             + " ) v ON v.merchant_id = m.merchant_id"
             + " WHERE stm.tenant_id = ? AND stm.country_lead_id = ?"
@@ -572,7 +634,7 @@ public class SalesPortfolioController {
         tp.add(countryLeadId);
         List<Map<String, Object>> teams = jdbcTemplate.queryForList(teamSql, tp.toArray());
 
-        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalMerchants = 0, totalAgents = 0, totalNet = 0;
+        double totalVolume = 0, totalMsf = 0, totalTxns = 0, totalMerchants = 0, totalAgents = 0, totalNet = 0, totalSpread = 0;
         for (Map<String, Object> t : teams) {
             totalVolume += num(t.get("volume"));
             totalMsf += num(t.get("msf"));
@@ -580,6 +642,7 @@ public class SalesPortfolioController {
             totalMerchants += num(t.get("merchants"));
             totalAgents += num(t.get("agent_count"));
             totalNet += num(t.get("net"));
+            totalSpread += num(t.get("spread"));
         }
         out.put("teams", teams);
         out.put("teamCount", teams.size());
@@ -591,6 +654,8 @@ public class SalesPortfolioController {
         out.put("totalNet", totalNet);
         out.put("msfRate", totalVolume > 0 ? Math.round(totalMsf / totalVolume * 10000.0) / 100.0 : 0);
         out.put("netRate", totalVolume > 0 ? Math.round(totalNet / totalVolume * 10000.0) / 100.0 : 0);
+        out.put("totalSpread", totalSpread);
+        out.put("spreadRate", totalVolume > 0 ? Math.round(totalSpread / totalVolume * 10000.0) / 100.0 : 0);
 
         String targetSql = "SELECT COALESCE(SUM(sap.monthly_target), 0) AS total_target"
             + " FROM sales_agent_profile sap"
@@ -603,7 +668,8 @@ public class SalesPortfolioController {
 
         String trendSql = "SELECT TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
             + " SUM(sdm.total_base_volume) AS volume, SUM(sdm.total_txns) AS txn_count, SUM(sdm.total_msf) AS msf,"
-            + " SUM(COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)) AS net"
+            + " " + NetSpreadSql.sumMargin("sdm") + " AS net,"
+            + " " + NetSpreadSql.sumSpread("sdm") + " AS spread"
             + " FROM sum_daily_merchant sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
             + " JOIN sales_user_assignment sua ON sua.sales_user_id = m.sales_user_id AND sua.tenant_id = m.tenant_id"

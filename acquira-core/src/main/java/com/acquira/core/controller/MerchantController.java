@@ -107,7 +107,7 @@ public class MerchantController {
             if (!stores.isEmpty()) {
                 List<Long> storeIds = stores.stream().map(Store::getStoreId)
                         .collect(java.util.stream.Collectors.toList());
-                dto.setTerminals(terminalRepository.findByStoreIdIn(storeIds));
+                dto.setTerminals(terminalRepository.findByTenantIdAndStoreIdIn(tenantId, storeIds));
             } else {
                 dto.setTerminals(java.util.Collections.<Terminal>emptyList());
             }
@@ -128,12 +128,13 @@ public class MerchantController {
     @GetMapping("/{id}/terminals")
     public ResponseEntity<List<Terminal>> getMerchantTerminals(@PathVariable Long id) {
         if (findOwnMerchant(id).isEmpty()) return ResponseEntity.notFound().build();
-        List<Store> stores = storeRepository.findByTenantIdAndMerchantId(TenantContext.getCurrentTenant(), id);
+        Long tenantId = TenantContext.getCurrentTenant();
+        List<Store> stores = storeRepository.findByTenantIdAndMerchantId(tenantId, id);
         if (stores.isEmpty()) {
             return ResponseEntity.ok(java.util.Collections.emptyList());
         }
         List<Long> storeIds = stores.stream().map(Store::getStoreId).collect(java.util.stream.Collectors.toList());
-        return ResponseEntity.ok(terminalRepository.findByStoreIdIn(storeIds));
+        return ResponseEntity.ok(terminalRepository.findByTenantIdAndStoreIdIn(tenantId, storeIds));
     }
 
     @GetMapping("/{id}/contacts")

@@ -81,6 +81,52 @@ public class TransactionJobConfig {
     @org.springframework.beans.factory.annotation.Autowired
     private CacheEvictionJobListener cacheEvictionJobListener;
 
+    // Ingestion ledger (ingest_run / ingest_run_stage). The job listener opens
+    // and closes the run and publishes its id into the job execution context;
+    // the step listener records one row per stage. Both are best-effort and can
+    // never fail a job — see IngestRunRecorder.
+    @org.springframework.beans.factory.annotation.Autowired
+    private IngestRunStepListener ingestRunStepListener;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private IngestRunJobListener ingestRunJobListener;
+
+    // Records row counts and destructive-delete volumes onto the ledger row as
+    // the pipeline discovers them.
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.ingest.IngestRunRecorder ingestRunRecorder;
+
+    /**
+     * REPLACE guard (P0-3). A REPLACE load deletes fact rows by whole DATE, so a
+     * partial-day resend can destroy a full day. When the incoming row count for
+     * the batch is below this fraction of what already exists, the load is
+     * refused instead of silently destroying data.
+     *
+     * Set acquira.replace.guard.enabled=false to restore the old behaviour, or
+     * raise/lower the ratio per environment. Some tenants legitimately resend
+     * small days, which is why this is configurable rather than hardcoded.
+     */
+    @org.springframework.beans.factory.annotation.Value("${acquira.replace.guard.enabled:true}")
+    private boolean replaceGuardEnabled;
+
+    @org.springframework.beans.factory.annotation.Value("${acquira.replace.guard.min-ratio:0.5}")
+    private double replaceGuardMinRatio;
+
+    // Shared bulk rebuild of sum_monthly_merchant_metrics (also used by
+    // BulkMigrationService and BackfillIngestionService, which previously each
+    // carried their own per-merchant N+1 copy of this logic).
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.MonthlyMetricsRebuilder monthlyMetricsRebuilder;
+
+    // Shared fee engine + summary population (extracted 2026-08-28) — the same
+    // beans BulkMigrationService and BackfillIngestionService now use, so all
+    // fact-writing paths price and summarize identically.
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.batch.service.FeeComputationService feeComputationService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.batch.service.SummaryPopulationService summaryPopulationService;
+
     public TransactionJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             DataSource dataSource, JdbcTemplate jdbcTemplate,
             MerchantMetricCalculator merchantMetricCalculator,
@@ -103,9 +149,63 @@ public class TransactionJobConfig {
 
     private static final String NUMERIC_ONLY_REGEX = "'^[0-9.]+$'";
 
+    // ── Ingest ledger helpers ───────────────────────────────────────────────
+    // Tasklets are lambdas with only a ChunkContext to reach the job execution,
+    // so these two pull the run id out of it and record against the ledger
+    // without any tasklet needing to know how the plumbing works.
+
+    /** Run id published by IngestRunJobListener.beforeJob; null when the ledger is unavailable. */
+    private static Long ingestRunIdOf(org.springframework.batch.core.scope.context.ChunkContext chunkContext) {
+        try {
+            org.springframework.batch.item.ExecutionContext ctx = chunkContext.getStepContext()
+                .getStepExecution().getJobExecution().getExecutionContext();
+            return ctx.containsKey(IngestRunJobListener.CTX_RUN_ID)
+                ? ctx.getLong(IngestRunJobListener.CTX_RUN_ID) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Records how many existing fact rows a load destroyed before writing its own. */
+    private void recordDeleted(org.springframework.batch.core.scope.context.ChunkContext chunkContext, Long deleted) {
+        try {
+            Long runId = ingestRunIdOf(chunkContext);
+            if (runId != null) {
+                ingestRunRecorder.updateCounts(runId, null, null, null, null, null, deleted,
+                    null, null, null, null);
+            }
+        } catch (Exception e) {
+            log.warn("Could not record deleted-row count on the ingest ledger (non-fatal): {}", e.toString());
+        }
+    }
+
     // PERF FIX: compiled once at class-load time, not per buildSafeDateInList() call.
     private static final java.util.regex.Pattern ISO_DATE_PATTERN =
         java.util.regex.Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+
+    /**
+     * Sargable partition-pruning range over the RAW payment_date column, ready to
+     * be prepended to a {@code DATE(payment_date) IN (...)} predicate.
+     *
+     * WHY BOTH: fact_transaction is RANGE-partitioned on payment_date (monthly).
+     * {@code DATE(payment_date)} wraps the partition key in a function, so
+     * Postgres can neither prune partitions nor range-scan
+     * idx_fact_txn_tenant_date — every such query scanned the tenant's ENTIRE
+     * history, which meant ingest cost grew with every month of data retained
+     * rather than staying proportional to the day being loaded. The raw-column
+     * range prunes to the affected partitions; the exact IN list is kept because
+     * the dates inside the range may be sparse.
+     *
+     * @param alias table alias including the dot ("f.", "ft.") or "" for none
+     * @return e.g. {@code " f.payment_date >= DATE '2026-08-01' AND f.payment_date < DATE '2026-08-03' + INTERVAL '1 day' AND "}
+     *         — note the trailing AND: callers splice this immediately before
+     *         the DATE(...) IN predicate.
+     */
+    private static String dateRangeClause(java.util.List<java.sql.Date> sortedDates, String alias) {
+        // Canonical implementation lives in IngestScopes (shared with the
+        // backfill / bulk-migration rebuild paths since 2026-08-28).
+        return com.acquira.batch.service.IngestScopes.rangeClause(sortedDates, alias);
+    }
 
     private static Boolean parseDccFlag(String raw) {
         if (raw == null) return Boolean.FALSE;
@@ -142,14 +242,16 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("calculateBusinessMetricsStep") Step calculateBusinessMetricsStep,
             @org.springframework.beans.factory.annotation.Qualifier("scoreMlStep") Step scoreMlStep,
             @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
-            @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
+            @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("clearRunStagingStep") Step clearRunStagingStep) {
         return new JobBuilder("transactionLoadJob", jobRepository)
+                .listener(ingestRunJobListener)
                 .listener(cacheEvictionJobListener)
                 .start(ensurePartitionsStep).next(splitExcelStep).next(cleanTargetDayStep)
                 .next(masterIngestStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
                 .next(calculateBusinessMetricsStep).next(scoreMlStep).next(computeSegmentsStep)
-                .next(calculateDailyDashboardMetricsStep).build();
+                .next(calculateDailyDashboardMetricsStep).next(clearRunStagingStep).build();
     }
 
     /**
@@ -174,6 +276,7 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
             @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
         return new JobBuilder("dbPullTransactionJob", jobRepository)
+                .listener(ingestRunJobListener)
                 .listener(cacheEvictionJobListener)
                 .start(ensurePartitionsStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
@@ -181,10 +284,28 @@ public class TransactionJobConfig {
                 .next(calculateDailyDashboardMetricsStep).build();
     }
 
+    /**
+     * The final pass of a sequential server-folder load: just the TENANT-WIDE
+     * reporting steps (churn scoring + segmentation) that each file's job
+     * skipped under deferReporting=true. Runs once per tenant over the complete
+     * data — the 21-file BH backfill executed these 23 times overnight with
+     * every run but the last overwritten. businessMetrics and dashboard
+     * snapshots are NOT here: they are scoped to each file's dates/months and
+     * must stay per-file. Job params: tenantId (Long), startedAt (uniqueness).
+     */
+    @Bean
+    public Job reportingOnlyJob(
+            @org.springframework.beans.factory.annotation.Qualifier("scoreMlStep") Step scoreMlStep,
+            @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep) {
+        return new JobBuilder("reportingOnlyJob", jobRepository)
+                .listener(cacheEvictionJobListener)
+                .start(scoreMlStep).next(computeSegmentsStep).build();
+    }
+
     @Bean
     public Step autoCreateDimensionsStep(Tasklet autoCreateDimensionsTasklet) {
         return new StepBuilder("autoCreateDimensionsStep", jobRepository)
-            .tasklet(autoCreateDimensionsTasklet, transactionManager).listener(mdcStepListener).build();
+            .tasklet(autoCreateDimensionsTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
@@ -192,6 +313,12 @@ public class TransactionJobConfig {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long start = System.currentTimeMillis();
+            // Run-scope every staging read (2026-08-29) so a sequential folder load
+            // does not re-scan every prior file's accumulated staging rows for each
+            // new file. Dimension creation is idempotent, but the EXISTS/INSERT scans
+            // over a growing staging table were O(n^2) across a 50-file batch.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhereS = ingestRunId != null ? " AND s.ingest_run_id = " + ingestRunId : "";
 
             int orphansRemoved = jdbcTemplate.update(
                 "DELETE FROM dim_merchant m " +
@@ -210,7 +337,7 @@ public class TransactionJobConfig {
             int merchantsAdded = 0;
             Boolean hasUnmappedMerchants = jdbcTemplate.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
-                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL" + stgRunWhereS + " " +
                 "AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
                 "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
                 "LIMIT 1)", Boolean.class, tenantId);
@@ -229,7 +356,7 @@ public class TransactionJobConfig {
                     "    'Merchant ' || TRIM(s.sid)), " +
                     "  'ACTIVE', NOW() " +
                     "FROM stg_trnx_raw s " +
-                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL" + stgRunWhereS + " " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
                     "GROUP BY s.tenant_id, TRIM(s.sid) " +
@@ -238,12 +365,13 @@ public class TransactionJobConfig {
             }
 
             int storesAdded = 0;
-            Boolean hasUnmappedStores = jdbcTemplate.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
-                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
-                "AND NOT EXISTS (SELECT 1 FROM dim_store ds WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
-                "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id AND dt.tid = NULLIF(TRIM(s.tid), '')) " +
-                "LIMIT 1)", Boolean.class, tenantId);
+            // PERF (2026-08-29): the store gate is the SAME EXISTS as the merchant
+            // gate above (same "staged sid with no dim_store AND no dim_terminal"
+            // predicate) — re-running it was a second full staging scan for one
+            // answer. The merchant INSERT only adds dim_merchant rows, never
+            // dim_store/dim_terminal, so the gate's truth value is unchanged by it;
+            // reuse the earlier result.
+            Boolean hasUnmappedStores = hasUnmappedMerchants;
 
             if (Boolean.TRUE.equals(hasUnmappedStores)) {
                 storesAdded = jdbcTemplate.update(
@@ -258,10 +386,24 @@ public class TransactionJobConfig {
                     "           'Store ' || TRIM(s.sid)), " +
                     "  'ACTIVE', NOW() " +
                     "FROM stg_trnx_raw s " +
-                    "JOIN dim_merchant m ON m.tenant_id = s.tenant_id " +
-                    "  AND (m.mid = NULLIF(TRIM(s.mid), '') " +
-                    "    OR m.internal_id = 'AUTO_SID_' || TRIM(s.sid)) " +
-                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL " +
+                    // PERF (2026-08-29): resolve the owning merchant via a LATERAL
+                    // of two SINGLE-index probes instead of a disjunctive join
+                    // `ON (m.mid = ... OR m.internal_id = ...)`. The OR cannot use
+                    // either index (idx_dim_merchant_mid / the unique
+                    // (tenant_id, internal_id)), so it degraded to a hash/nested
+                    // join scanning ~every staged row x the tenant's merchants.
+                    // COALESCE prefers the real MID match, falling back to the
+                    // auto-created AUTO_SID_<sid> merchant — the same two arms the
+                    // OR expressed. dim_store's unique internal_id (AUTO_STORE_SID_
+                    // <sid>) already collapses any duplicate to one row, so picking
+                    // one merchant per sid is the identical end state.
+                    "JOIN LATERAL (SELECT COALESCE(" +
+                    "    (SELECT m1.merchant_id FROM dim_merchant m1 " +
+                    "       WHERE m1.tenant_id = s.tenant_id AND m1.mid = NULLIF(TRIM(s.mid), '') LIMIT 1), " +
+                    "    (SELECT m2.merchant_id FROM dim_merchant m2 " +
+                    "       WHERE m2.tenant_id = s.tenant_id AND m2.internal_id = 'AUTO_SID_' || TRIM(s.sid) LIMIT 1) " +
+                    "  ) AS merchant_id) m ON m.merchant_id IS NOT NULL " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.sid), '') IS NOT NULL" + stgRunWhereS + " " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_store ds " +
                     "    WHERE ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid)) " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt " +
@@ -275,7 +417,7 @@ public class TransactionJobConfig {
             Boolean hasUnmappedTerminals = jdbcTemplate.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw s " +
                 "JOIN dim_store ds ON ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid) " +
-                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL " +
+                "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL" + stgRunWhereS + " " +
                 "AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id " +
                 "  AND dt.store_id = ds.store_id AND dt.tid = TRIM(s.tid)) " +
                 "LIMIT 1)", Boolean.class, tenantId);
@@ -290,7 +432,7 @@ public class TransactionJobConfig {
                     "  'ACTIVE', NOW() " +
                     "FROM stg_trnx_raw s " +
                     "JOIN dim_store ds ON ds.tenant_id = s.tenant_id AND ds.sid = TRIM(s.sid) " +
-                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL " +
+                    "WHERE s.tenant_id = ? AND NULLIF(TRIM(s.tid), '') IS NOT NULL" + stgRunWhereS + " " +
                     "  AND NOT EXISTS (SELECT 1 FROM dim_terminal dt WHERE dt.tenant_id = s.tenant_id " +
                     "    AND dt.store_id = ds.store_id AND dt.tid = TRIM(s.tid)) " +
                     "GROUP BY s.tenant_id, ds.store_id, TRIM(s.sid), TRIM(s.tid) " +
@@ -309,7 +451,7 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step ensurePartitionsStep(Tasklet ensurePartitionsTasklet) {
-        return new StepBuilder("ensurePartitionsStep", jobRepository).tasklet(ensurePartitionsTasklet, transactionManager).listener(mdcStepListener).build();
+        return new StepBuilder("ensurePartitionsStep", jobRepository).tasklet(ensurePartitionsTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
     @Bean public Tasklet ensurePartitionsTasklet() {
         return (contribution, chunkContext) -> {
@@ -321,7 +463,7 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step splitExcelStep(ExcelSplitterTasklet excelSplitterTasklet) {
-        return new StepBuilder("splitExcelStep", jobRepository).tasklet(excelSplitterTasklet, transactionManager).listener(mdcStepListener).build();
+        return new StepBuilder("splitExcelStep", jobRepository).tasklet(excelSplitterTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     /**
@@ -342,7 +484,7 @@ public class TransactionJobConfig {
         return new StepBuilder("analyzeStagingStep", jobRepository)
             .tasklet(analyzeStagingTasklet, transactionManager)
             .transactionAttribute(noTxn())
-            .listener(mdcStepListener).build();
+            .listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
     @Bean @StepScope public Tasklet analyzeStagingTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
         return (contribution, chunkContext) -> {
@@ -390,15 +532,83 @@ public class TransactionJobConfig {
     }
 
     @Bean public Step cleanTargetDayStep(Tasklet cleanTargetDayTasklet) {
-        return new StepBuilder("cleanTargetDayStep", jobRepository).tasklet(cleanTargetDayTasklet, transactionManager).listener(mdcStepListener).build();
+        return new StepBuilder("cleanTargetDayStep", jobRepository).tasklet(cleanTargetDayTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
-    @Bean @StepScope public Tasklet cleanTargetDayTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+    /**
+     * Clears staging ahead of this run's ingest.
+     *
+     * P0-2 (INGEST TRUST): this used to be an unqualified
+     * {@code DELETE FROM stg_trnx_raw WHERE tenant_id = ?} — no day scope and no
+     * run scope, despite the name. Two uploads for the same tenant at once meant
+     * the second wiped the first's staging mid-flight, and the first then
+     * "succeeded" having written a fraction of its rows.
+     *
+     * Now it clears only what is NOT this run's: rows belonging to runs that have
+     * already reached a terminal state, plus untagged legacy rows. A concurrently
+     * RUNNING sibling's rows are left alone.
+     *
+     * NOTE ON SCOPE — read this before "finishing the job" by scoping more reads.
+     * Everything downstream (stagingToFactTasklet and friends) still reads
+     * staging by tenant_id alone. Leaving a sibling's rows in place is therefore
+     * only SAFE because FileUploadService now refuses to start a second ingest
+     * while one is RUNNING for the same tenant (see assertNoRunningIngest). The
+     * defect is fixed by preventing the concurrency, not by supporting it —
+     * supporting it would mean run-scoping ~20 downstream queries, and a
+     * half-scoped pipeline silently mixes two uploads into one fact load.
+     */
+    @Bean @StepScope public Tasklet cleanTargetDayTasklet(
+            @Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("#{jobExecutionContext['ingestRunId']}") Long ingestRunId) {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long t = System.currentTimeMillis();
-            int rows = jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ?", tenantId);
-            log.info(String.format("cleanTargetDay completed in %.1fs (deleted %d staging rows)",
-                (System.currentTimeMillis() - t) / 1000.0, rows));
+            int rows;
+            if (ingestRunId == null) {
+                // Ledger unavailable — fall back to the old behaviour rather than
+                // leaving staging dirty, but say so, because concurrency safety
+                // is not available on this path.
+                rows = jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ?", tenantId);
+                log.warn("cleanTargetDay: no ingest run id available, cleared ALL staging for tenant {} "
+                    + "(concurrent uploads are not safe on this path)", tenantId);
+            } else {
+                rows = jdbcTemplate.update(
+                    "DELETE FROM stg_trnx_raw s WHERE s.tenant_id = ? AND " +
+                    "(s.ingest_run_id IS NULL OR s.ingest_run_id <> ?) AND " +
+                    "(s.ingest_run_id IS NULL OR NOT EXISTS (" +
+                    "   SELECT 1 FROM ingest_run r WHERE r.id = s.ingest_run_id AND r.status = 'RUNNING'))",
+                    tenantId, ingestRunId);
+            }
+            log.info(String.format("cleanTargetDay completed in %.1fs (deleted %d staging rows, run=%s)",
+                (System.currentTimeMillis() - t) / 1000.0, rows, String.valueOf(ingestRunId)));
+            return RepeatStatus.FINISHED;
+        };
+    }
+
+    // RUN STAGING CLEANUP (2026-08-29). The LAST step of the job: delete this
+    // run's own staging rows once every reader (stagingToFact, summaries, business
+    // + dashboard metrics) has consumed them. Without it, stg_trnx_raw grew by one
+    // file per file in a sequential folder load — a 50-file batch left ~50 files'
+    // rows piled up (disk + ANALYZE cost), and cleanTargetDay's guarded delete had
+    // been leaving them (prior runs still protected). Deletes ONLY this run's rows,
+    // so it is safe under concurrency. If the job crashes earlier, the next job's
+    // cleanTargetDay removes the leftover (the crashed run is no longer RUNNING).
+    @Bean public Step clearRunStagingStep(Tasklet clearRunStagingTasklet) {
+        return new StepBuilder("clearRunStagingStep", jobRepository)
+            .tasklet(clearRunStagingTasklet, transactionManager)
+            .listener(mdcStepListener).listener(ingestRunStepListener).build();
+    }
+
+    @Bean @StepScope
+    public Tasklet clearRunStagingTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+        return (contribution, chunkContext) -> {
+            if (tenantId == null) return RepeatStatus.FINISHED;
+            long t = System.currentTimeMillis();
+            Long ingestRunId = ingestRunIdOf(chunkContext);
+            int rows = (ingestRunId != null)
+                ? jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ? AND ingest_run_id = ?", tenantId, ingestRunId)
+                : jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ?", tenantId);
+            log.info(String.format("clearRunStaging: deleted %d staging row(s) for run %s in %.1fs",
+                rows, String.valueOf(ingestRunId), (System.currentTimeMillis() - t) / 1000.0));
             return RepeatStatus.FINISHED;
         };
     }
@@ -406,8 +616,13 @@ public class TransactionJobConfig {
     @Bean public Step masterIngestStep(Step csvWorkerStep, CsvPartitioner partitioner,
             @org.springframework.beans.factory.annotation.Qualifier("transactionPartitionExecutor")
             org.springframework.core.task.TaskExecutor partitionExecutor) {
+        // NOTE: gridSize is INERT here — CsvPartitioner.partition(int) ignores its
+        // argument and returns one partition per part_NNN.csv on disk. The real
+        // concurrency limit is transactionPartitionExecutor's pool size (8); the
+        // partition COUNT is (rows / ExcelSplitterTasklet.CHUNK_SIZE). Left at 8
+        // only because Spring Batch requires a value.
         return new StepBuilder("masterIngestStep", jobRepository).partitioner("csvWorkerStep", partitioner)
-                .step(csvWorkerStep).taskExecutor(partitionExecutor).gridSize(8).listener(mdcStepListener).build();
+                .step(csvWorkerStep).taskExecutor(partitionExecutor).gridSize(8).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     // PERF FIX: ThreadPoolTaskExecutor instead of SimpleAsyncTaskExecutor.
@@ -419,7 +634,17 @@ public class TransactionJobConfig {
             new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
         executor.setCorePoolSize(8);
         executor.setMaxPoolSize(8);
-        executor.setQueueCapacity(0);
+        // CRITICAL: the queue must hold EVERY partition, not zero.
+        // CsvPartitioner creates one partition per part_NNN.csv (50k rows each,
+        // see ExcelSplitterTasklet.CHUNK_SIZE), so a 1M-row file produces ~20
+        // partitions — gridSize(8) below is ignored by that partitioner. With
+        // queueCapacity=0 the 9th and later partitions were REJECTED by the pool
+        // and run by CallerRunsPolicy inline on the partition-manager thread, one
+        // at a time, while the manager was then too busy to feed workers that had
+        // gone idle: parallelism decayed toward serial past 400k rows.
+        // 256 covers a ~12.8M-row file; beyond that CallerRunsPolicy still keeps
+        // the job correct (just slower) rather than failing it.
+        executor.setQueueCapacity(256);
         executor.setThreadNamePrefix("batch-ingest-");
         // Propagate the manager thread's MDC (tenant/job/step/correlationId set by
         // MdcStepListener on masterIngestStep) onto each partition worker thread,
@@ -940,6 +1165,31 @@ public class TransactionJobConfig {
                 }
             }
 
+            // BLANK-TYPE FALLBACK (2026-08-24, user rule, BIN-typed tenants only).
+            // The BH feed sends Card Type EMPTY on every row, which left the
+            // card-type dashboard and debit/credit splits empty. Rule confirmed
+            // by the business: type locals from the BIN table (the block above),
+            // and when the BIN is not found default to premium. Applied ONLY
+            // when the feed value is still blank — a feed-supplied or BIN-typed
+            // value is never overridden, and FILE-sourced tenants (UAE) keep
+            // their existing blank-stays-blank behaviour.
+            //   1. Benefit / Benefit QR ('No Interchange') scheme => DEBIT —
+            //      the Benefit switch is Bahrain's domestic DEBIT network by
+            //      definition (ref_card_scheme maps both card_type=2), and
+            //      Benefit-only cards never appear in the Visa/MC range files,
+            //      so the premium default would mistype the largest local slice.
+            //   2. Anything else => CREDIT, which resolves the Premium tier
+            //      (card_subtype != 1) — i.e. priced and reported as premium.
+            if (binTyping && (item.getCardType() == null || item.getCardType().isBlank())) {
+                String schemeTok = item.getCardScheme();
+                String schemeNorm = schemeTok == null ? "" : schemeTok.trim().toUpperCase().replace(" ", "");
+                if (schemeNorm.equals("BENEFIT") || schemeNorm.equals("BENEFITQR") || schemeNorm.equals("NOINTERCHANGE")) {
+                    item.setCardType("DEBIT");
+                } else {
+                    item.setCardType("CREDIT");
+                }
+            }
+
             // PERF FIX: decimalDivisor() - cached BigDecimal, no per-row allocation.
             // NOTE: currency-CODE resolution (ISO-numeric -> 'AED' etc.) still runs for BOTH
             // CMM and AMS so the stored currency label is correct. Only the numeric DIVISION
@@ -1006,19 +1256,32 @@ public class TransactionJobConfig {
 
     // PERF FIX: jdbcTemplate.batchUpdate() uses Hikari properly.
     // Old code called dataSource.getConnection() directly, bypassing the pool entirely.
-    @Bean public ItemWriter<StagingTransaction> highPerfTransactionWriter() {
-        final String sql = "INSERT INTO stg_trnx_raw (entity_name, aggregator_internal_id, aggregator_name, aggregator_code, " +
+    //
+    // P0-2 (INGEST TRUST): every staging row is stamped with the run that wrote
+    // it. Before this, staging had no run scope at all, so cleanTargetDayTasklet
+    // could only clear the WHOLE tenant — two concurrent uploads for one tenant
+    // meant the second wiped the first's staging mid-flight. The stamp is also
+    // what makes a truthful rows_staged possible for the reconciliation funnel.
+    //
+    // @StepScope so the bean can bind the run id the job listener published into
+    // the job execution context before the first step ran. Null when the ledger
+    // was unavailable — the column simply stays NULL and ingestion is unaffected.
+    @Bean @StepScope
+    public ItemWriter<StagingTransaction> highPerfTransactionWriter(
+            @Value("#{jobExecutionContext['ingestRunId']}") Long ingestRunId) {
+        final String sql = "INSERT INTO stg_trnx_raw (ingest_run_id, entity_name, aggregator_internal_id, aggregator_name, aggregator_code, " +
             "mid, merchant_internal_id, merchant_name, sid, merchant_store_internal_id, cmm_merchant_store_internal_id, " +
             "merchant_store_legal_name, store_name, tid, arn, rrn_number, card_number, auth_code, payment_date, " +
             "transaction_date, batch_number, transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, " +
             "txn_currency_amount, store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, " +
-            "interchange_fee, destination, issuer_country, tenant_id, load_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
+            "interchange_fee, destination, issuer_country, tenant_id, load_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
         return items -> jdbcTemplate.batchUpdate(sql,
             new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
                 @Override public int getBatchSize() { return items.size(); }
                 @Override public void setValues(PreparedStatement ps, int idx) throws java.sql.SQLException {
                     StagingTransaction t = items.getItems().get(idx);
                     int i = 1;
+                    if (ingestRunId != null) ps.setLong(i++, ingestRunId); else ps.setNull(i++, java.sql.Types.BIGINT);
                     ps.setString(i++, t.getEntityName()); ps.setString(i++, t.getAggregatorInternalId());
                     ps.setString(i++, t.getAggregatorName()); ps.setString(i++, t.getAggregatorCode());
                     ps.setString(i++, t.getMid()); ps.setString(i++, t.getMerchantInternalId());
@@ -1053,7 +1316,7 @@ public class TransactionJobConfig {
         return new StepBuilder("stagingToFactStep", jobRepository)
             .tasklet(stagingToFactTasklet, transactionManager)
             .transactionAttribute(noTxn())
-            .listener(mdcStepListener)
+            .listener(mdcStepListener).listener(ingestRunStepListener)
             .build();
     }
 
@@ -1064,10 +1327,25 @@ public class TransactionJobConfig {
             long start = System.currentTimeMillis();
             final boolean appendMode = "APPEND".equalsIgnoreCase(loadMode);
 
+            // RUN-SCOPE STAGING (2026-08-29). stg_trnx_raw is shared per tenant. In a
+            // sequential folder load every file appends to it, and cleanTargetDay's
+            // guarded delete keeps rows belonging to still-RUNNING runs — so without a
+            // run filter, stagingToFact reprocessed the WHOLE accumulated table each
+            // file: O(n^2) work and cumulative/duplicate fact (seen live: the per-file
+            // batch grew 3.0M -> 11.9M across six files). Scoping every staging read to
+            // THIS run's ingest_run_id makes each file's job process only its own rows —
+            // correct and safe for sequential AND concurrent loads, with no destructive
+            // clear. When the run id is absent (legacy path / DB pull), cleanTargetDay
+            // wipes the tenant's staging wholesale, so the tenant-only scope stays safe.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhere        = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";       // unaliased
+            final String stgRunWhereAliased = ingestRunId != null ? " AND stg.ingest_run_id = " + ingestRunId : "";   // stg.
+            final String stgRunWhereS       = ingestRunId != null ? " AND s.ingest_run_id = " + ingestRunId : "";     // s.
+
             // PERF FIX: nullDateCount full-scan removed. IS NOT NULL filter below handles skipping.
             java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere + " ORDER BY d",
                 java.sql.Date.class, tenantId);
             String dateScope;
             if (distinctDates.isEmpty()) {
@@ -1082,7 +1360,7 @@ public class TransactionJobConfig {
                 //       successful upload. Fail loudly instead; a totally unparseable file is
                 //       an error, not a no-op.
                 Integer stagedRows = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ?", Integer.class, tenantId);
+                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ?" + stgRunWhere, Integer.class, tenantId);
                 if (stagedRows != null && stagedRows > 0) {
                     throw new IllegalStateException(
                         "Upload rejected: " + stagedRows + " row(s) reached staging but NONE has a usable "
@@ -1103,14 +1381,13 @@ public class TransactionJobConfig {
             // batch. We keep the exact DATE(...) IN (...) filter too (dates may be
             // sparse within the range) — the range prunes partitions, the IN keeps it
             // exact. `dateRange` is prefixed with the correct table alias per query.
-            final String firstDate = distinctDates.get(0).toString();
-            final String lastDate = distinctDates.get(distinctDates.size() - 1).toString();
-            final String dateRangeF = " f.payment_date >= DATE '" + firstDate + "' AND f.payment_date < DATE '" + lastDate + "' + INTERVAL '1 day' ";
-            final String dateRangeFt = " ft.payment_date >= DATE '" + firstDate + "' AND ft.payment_date < DATE '" + lastDate + "' + INTERVAL '1 day' ";
+            final String rngBare = dateRangeClause(distinctDates, "");
+            final String rngF = dateRangeClause(distinctDates, "f.");
+            final String rngFt = dateRangeClause(distinctDates, "ft.");
 
             String updateNameSql = "UPDATE dim_merchant m SET name = sub.merchant_name " +
                 "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
-                "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '') sub " +
+                "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> ''" + stgRunWhereS + ") sub " +
                 "WHERE m.tenant_id = ? " +
                 "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") " +
                 "AND sub.merchant_name !~ " + NUMERIC_ONLY_REGEX + " " +
@@ -1130,17 +1407,31 @@ public class TransactionJobConfig {
                 Boolean.TRUE.equals(hasMissingNames) ? "" : " [skipped: all names good]"));
 
             if (Boolean.TRUE.equals(hasMissingNames)) {
-                Boolean stillMissing = jdbcTemplate.queryForObject(
-                    "SELECT EXISTS (SELECT 1 FROM dim_merchant m WHERE m.tenant_id = ? " +
-                    "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") LIMIT 1)",
-                    Boolean.class, tenantId);
-                if (Boolean.TRUE.equals(stillMissing)) {
+                // PERF (2026-08-29): the prefix-match pass below is a bidirectional
+                // `col LIKE othercol || '%'` cross join — non-sargable in both
+                // directions, so its cost is (unnamed merchants) x (distinct staged
+                // mids). For a tenant whose merchant names are genuinely numeric
+                // (the BH feed this heuristic targets) the gate never closes, so it
+                // ran full-cross every upload (5k x 20k ~ 100M string compares).
+                // The exact m.mid = staging_mid pass already ran above; this is a
+                // best-effort fuzzy fallback, so cap it: skip when the unnamed set
+                // is large, where it is both most expensive and least reliable.
+                Integer stillMissingCount = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM dim_merchant m WHERE m.tenant_id = ? " +
+                    "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ")",
+                    Integer.class, tenantId);
+                final int PREFIX_MATCH_CAP = 2000;
+                if (stillMissingCount != null && stillMissingCount > PREFIX_MATCH_CAP) {
+                    log.info("Skipping prefix-match name pass: {} unnamed merchants exceeds cap {} " +
+                        "(exact-match pass already applied; fuzzy prefix match not worth a {}-row cross join)",
+                        stillMissingCount, PREFIX_MATCH_CAP, stillMissingCount);
+                } else if (stillMissingCount != null && stillMissingCount > 0) {
                     long t06 = System.currentTimeMillis();
                     int prefixUpdated = jdbcTemplate.update(
                         "UPDATE dim_merchant m SET name = sub.merchant_name " +
                         "FROM (SELECT DISTINCT s.mid AS staging_mid, s.merchant_name FROM stg_trnx_raw s " +
                         "WHERE s.tenant_id = ? AND s.merchant_name IS NOT NULL AND TRIM(s.merchant_name) <> '' " +
-                        "AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + ") sub " +
+                        "AND s.merchant_name !~ " + NUMERIC_ONLY_REGEX + stgRunWhereS + ") sub " +
                         "WHERE m.tenant_id = ? " +
                         "AND (m.name IS NULL OR TRIM(m.name) = '' OR m.name ~ " + NUMERIC_ONLY_REGEX + ") " +
                         "AND m.mid <> sub.staging_mid " +
@@ -1153,10 +1444,38 @@ public class TransactionJobConfig {
                 }
             }
 
+            // SCHEME NORMALIZATION AWARENESS (2026-08-24): the fact INSERT below maps
+            // the BH feed token 'No Interchange' to canonical 'Benefit QR'. This list
+            // is compared against FACT card_scheme values in the APPEND delete, so it
+            // must apply the SAME mapping — otherwise a re-upload of a file containing
+            // 'No Interchange' rows would never delete the previously inserted
+            // 'Benefit QR' rows and would duplicate them.
             java.util.List<String> uploadSchemes = jdbcTemplate.queryForList(
-                "SELECT DISTINCT UPPER(TRIM(card_scheme)) FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND NULLIF(TRIM(card_scheme), '') IS NOT NULL",
+                "SELECT DISTINCT CASE WHEN REPLACE(UPPER(TRIM(card_scheme)),' ','') = 'NOINTERCHANGE' " +
+                "THEN 'BENEFIT QR' ELSE UPPER(TRIM(card_scheme)) END FROM stg_trnx_raw " +
+                "WHERE tenant_id = ? AND NULLIF(TRIM(card_scheme), '') IS NOT NULL" + stgRunWhere,
                 String.class, tenantId);
+
+            // CONNECTION PINNING (2026-08-29, root cause of UAT job#1004): this
+            // step runs with PROPAGATION_NEVER, so without an explicit transaction
+            // every jdbcTemplate call borrows its own pooled connection — but the
+            // session temp tables (tmp_fact_batch below, tmp_fee_resolve inside
+            // FeeComputationService) exist on ONE connection only. It held together
+            // while Hikari happened to hand back the same idle connection; any
+            // concurrent borrower (the REQUIRES_NEW ledger writes, web traffic, a
+            // cron tick) reshuffles the pool and a later statement lands on a
+            // session where the temp table does not exist — seen live 2026-08-29
+            // 02:12 UAT as "relation tmp_fact_batch does not exist" AFTER 2.54M
+            // rows had staged cleanly. Backfill and bulk-migration already wrap
+            // this same sequence in a TransactionTemplate; this tasklet was the
+            // one caller that did not. One programmatic transaction from the fact
+            // delete through the final flush pins every statement to one
+            // connection — and makes delete+reload atomic, so a failed load can
+            // no longer leave the day emptied.
+            org.springframework.transaction.TransactionStatus factTxn =
+                transactionManager.getTransaction(
+                    new org.springframework.transaction.support.DefaultTransactionDefinition());
+            try {
 
             long tDel = System.currentTimeMillis();
             if (appendMode) {
@@ -1180,116 +1499,125 @@ public class TransactionJobConfig {
                     args[0] = tenantId;
                     for (int i = 0; i < uploadSchemes.size(); i++) args[i + 1] = uploadSchemes.get(i);
                     deleted += jdbcTemplate.update(
-                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
+                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " AND UPPER(TRIM(card_scheme)) IN (" + placeholders + ")", args);
                 }
                 Boolean stagingHasBlankScheme = jdbcTemplate.queryForObject(
                     "SELECT EXISTS (SELECT 1 FROM stg_trnx_raw WHERE tenant_id = ? " +
-                    "AND payment_date IS NOT NULL AND NULLIF(TRIM(card_scheme), '') IS NULL LIMIT 1)",
+                    "AND payment_date IS NOT NULL AND NULLIF(TRIM(card_scheme), '') IS NULL" + stgRunWhere + " LIMIT 1)",
                     Boolean.class, tenantId);
                 if (Boolean.TRUE.equals(stagingHasBlankScheme)) {
                     deleted += jdbcTemplate.update(
-                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
+                        "DELETE FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope +
                         " AND NULLIF(TRIM(card_scheme), '') IS NULL", tenantId);
                 }
                 if (uploadSchemes.isEmpty() && !Boolean.TRUE.equals(stagingHasBlankScheme)) {
                     log.warn("APPEND mode: staging has no rows in scope - nothing to delete.");
                 } else {
+                    recordDeleted(chunkContext, (long) deleted);
                     log.info(String.format("APPEND mode: deleted %d fact rows for scheme(s) %s%s in %.1fs",
                         deleted, uploadSchemes,
                         Boolean.TRUE.equals(stagingHasBlankScheme) ? " + blank-scheme rows" : "",
                         (System.currentTimeMillis() - tDel) / 1000.0));
                 }
             } else {
-                jdbcTemplate.update(
-                    "DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope,
+                // P0-3 (INGEST TRUST): REPLACE deletes fact rows by WHOLE DATE, so a
+                // 200-row resend of one acquirer's slice destroys the entire day.
+                // Count first, so (a) the ledger can show what was destroyed and
+                // (b) the guard below can refuse an obviously partial replacement.
+                Long existing = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM fact_transaction WHERE tenant_id = ? AND " + rngBare
+                        + "DATE(payment_date) IN " + dateScope,
+                    Long.class, tenantId);
+                long existingRows = existing == null ? 0L : existing;
+
+                Long incoming = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere,
+                    Long.class, tenantId);
+                long incomingRows = incoming == null ? 0L : incoming;
+
+                if (replaceGuardEnabled && existingRows > 0
+                        && incomingRows < existingRows * replaceGuardMinRatio) {
+                    throw new IllegalStateException(String.format(
+                        "REPLACE refused: this file carries %d row(s) for %d date(s) that already hold "
+                        + "%d row(s). Replacing would delete %d row(s) and write back only %d — a partial-day "
+                        + "file replacing a fuller day. Re-upload the complete day, use APPEND mode, or lower "
+                        + "acquira.replace.guard.min-ratio (currently %.2f) if this is intentional.",
+                        incomingRows, distinctDates.size(), existingRows,
+                        existingRows - incomingRows, incomingRows, replaceGuardMinRatio));
+                }
+
+                int factDeleted = jdbcTemplate.update(
+                    "DELETE FROM fact_transaction WHERE tenant_id = ? AND " + rngBare + "DATE(payment_date) IN " + dateScope,
                     tenantId);
-                log.info(String.format("Deleted existing fact rows in %.1fs", (System.currentTimeMillis() - tDel) / 1000.0));
+                recordDeleted(chunkContext, (long) factDeleted);
+                log.info(String.format("Deleted %d existing fact rows in %.1fs",
+                    factDeleted, (System.currentTimeMillis() - tDel) / 1000.0));
+            }
+
+            // =================================================================
+            // APPEND-ONLY FACT WRITE (2026-08-28, REPLACE mode only).
+            //
+            // Every fact row used to be written TWICE: once by the INSERT below,
+            // then re-written by the store/terminal fix-ups and the fee-apply
+            // UPDATE — and a Postgres UPDATE is a delete+insert (new row version,
+            // every index maintained again, dead tuples for autovacuum). On the
+            // BH UAT re-ingest that second write was the dominant cost even after
+            // the two-phase split (resolve SELECT ~28s/day vs hours of UPDATE).
+            //
+            // REPLACE deletes the whole date scope first, so the incoming batch
+            // IS the entire scope. Stage it in a session temp table shaped
+            // exactly like fact_transaction, run the SAME fix-up and fee SQL
+            // against the temp table (cheap: no partitions, no fact indexes, no
+            // MVCC bloat that survives the job), then flush with a single
+            // INSERT INTO fact_transaction — each fact row is written exactly
+            // once, fees and statuses already populated.
+            //
+            // APPEND keeps the direct path verbatim: its delete is
+            // scheme-scoped, so pre-existing rows of OTHER schemes share the
+            // date scope and the fee pass legitimately re-prices them; pricing
+            // only the batch would change that behaviour.
+            //
+            // LIKE ... INCLUDING DEFAULTS copies the live column order and the
+            // BIGSERIAL default, so transaction_ids draw from the real sequence
+            // and the final `INSERT ... SELECT *` aligns positionally.
+            final boolean stageViaBatchTable = !appendMode;
+            final String factTarget = stageViaBatchTable ? "tmp_fact_batch" : "fact_transaction";
+            if (stageViaBatchTable) {
+                jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fact_batch");
+                jdbcTemplate.execute(
+                    "CREATE TEMP TABLE tmp_fact_batch (LIKE fact_transaction INCLUDING DEFAULTS)");
             }
 
             long tIns = System.currentTimeMillis();
-            String sql = "INSERT INTO fact_transaction (tenant_id, merchant_id, store_id, terminal_id, " +
-                "arn, rrn_number, card_number, auth_code, payment_date, transaction_date, batch_number, " +
-                "transaction_type, card_scheme, card_type, card_product_code, dcc, txn_currency, txn_currency_amount, " +
-                "store_base_currency, store_base_currency_amount, msf, vat, total_amount_settled, interchange_fee, " +
-                "destination, destination_raw, issuer_country) " +
-                "SELECT stg.tenant_id, " +
-                "COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id) AS merchant_id, " +
-                "COALESCE(s.store_id, s2.store_id) AS store_id, t.terminal_id, " +
-                "stg.arn, stg.rrn_number, stg.card_number, stg.auth_code, " +
-                "stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type, " +
-                // SIGNED VOLUME (2026-07-18, reverses 2026-07-08 option B): refunds (RFND)
-                // are stored NEGATIVE so fact + all summaries net refunds out of volume,
-                // matching the raw feed / MIS reconciliation basis. Sign is forced from
-                // transaction_type (not trusted from the feed): purchases +ABS, refunds -ABS.
-                //
-                // SIGNED MSF (2026-08-07): MSF follows the SAME sign rule as volume.
-                // Verified against July 2026 (10,180,989 rows): file signed sum
-                // 16,566,159.6713 == finance == fact netted; the old ABS basis ran
-                // exactly 2x refund MSF higher (16,583,044.4293). Refund fees must
-                // net out to reconcile with the raw feed / finance pivot.
-                // vat/interchange remain ABS; total_amount_settled stays raw SIGNED.
-                // TXN CURRENCY FALLBACK (2026-08-14, user rule): feeds mask the PAN
-                // as first-6-clear + masked + last-4-clear, so only a 6-digit BIN is
-                // extractable and BIN -> issuer-country -> cardholder-currency cannot
-                // resolve yet. For rows the feed leaves blank AND that map to
-                // DOMESTIC, the cardholder is local by definition, so take the
-                // tenant's home currency (base_currency, else the home country's
-                // ref_country currency). Blank INTERNATIONAL rows stay NULL — a
-                // guessed foreign currency would poison the by-country rollups.
-                // A feed-supplied currency is never overridden.
-                "stg.card_scheme, stg.card_type, stg.card_product_code, stg.dcc, " +
-                "COALESCE(NULLIF(TRIM(stg.txn_currency),''), " +
-                "  CASE WHEN dtm.dest = 'DOMESTIC' THEN NULLIF(TRIM(COALESCE(tn.base_currency, rchome.currency_code)),'') END), " +
-                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
-                "     THEN -ABS(stg.txn_currency_amount) ELSE ABS(stg.txn_currency_amount) END, " +
-                "stg.store_base_currency, " +
-                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
-                "     THEN -ABS(stg.store_base_currency_amount) ELSE ABS(stg.store_base_currency_amount) END, " +
-                "CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND') " +
-                "     THEN -ABS(stg.msf) ELSE ABS(stg.msf) END, " +
-                "ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), " +
-                // DESTINATION NORMALIZATION (2026-08-10). The feed's own vocabulary is
-                // mapped to the engine's canonical DOMESTIC/INTERNATIONAL exactly once,
-                // here, so fact + fee engine + every rollup all see the same value.
-                // Previously the raw token was copied verbatim and the fee engine
-                // exact-matched it, so a Bahraini or Egyptian feed saying 'LOCAL'
-                // matched no rate row and silently took a 1.85% UAE fallback.
-                // An UNMAPPED token deliberately lands as NULL rather than being
-                // guessed as INTERNATIONAL — the fee engine reports it as
-                // UNMAPPED_DESTINATION and prices nothing. destination_raw always
-                // keeps the original token for audit and for mapping gaps analysis.
-                "dtm.dest, NULLIF(TRIM(stg.destination),''), stg.issuer_country " +
-                "FROM stg_trnx_raw stg " +
-                "LEFT JOIN tenant tn ON tn.tenant_id = stg.tenant_id " +
-                // home-currency source for the DOMESTIC txn_currency fallback above;
-                // country_code is ref_country's key, so this can never fan out rows.
-                "LEFT JOIN ref_country rchome ON rchome.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "LEFT JOIN LATERAL ( " +
-                "  SELECT d.dest FROM destination_token_map d " +
-                "  WHERE d.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "    AND (d.tenant_id IS NULL OR d.tenant_id = stg.tenant_id) " +
-                "    AND d.raw_token = UPPER(TRIM(COALESCE(stg.destination,''))) " +
-                "  ORDER BY (d.tenant_id IS NOT NULL) DESC LIMIT 1 " +
-                ") dtm ON TRUE " +
-                "LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '') " +
-                "LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '') " +
-                "LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id " +
-                "  AND t.tid = NULLIF(TRIM(stg.tid), '') AND (t.store_id = s.store_id OR s.store_id IS NULL) " +
-                "LEFT JOIN dim_store s2 ON s2.tenant_id = stg.tenant_id AND s2.store_id = t.store_id " +
-                "WHERE stg.tenant_id = ? AND stg.payment_date IS NOT NULL";
+            // The INSERT ... SELECT (dim resolution + fan-out guard + txn-type/
+            // scheme/destination normalization + signed refund volume/MSF +
+            // DOMESTIC txn-currency fallback) was extracted VERBATIM to
+            // IngestSql.stagingToFactInsertSql (2026-08-28) so backfill writes
+            // fact rows with the SAME SQL. All the inline documentation moved
+            // with it.
+            String sql = com.acquira.batch.service.IngestSql.stagingToFactInsertSql(factTarget, stgRunWhereAliased);
             int inserted = jdbcTemplate.update(sql, tenantId);
-            log.info(String.format("Inserted %d fact rows in %.1fs", inserted, (System.currentTimeMillis() - tIns) / 1000.0));
+            log.info(String.format("Inserted %d %s rows in %.1fs", inserted,
+                stageViaBatchTable ? "batch (pre-fact)" : "fact", (System.currentTimeMillis() - tIns) / 1000.0));
+            if (stageViaBatchTable) {
+                // Temp tables have no stats until analyzed; the fix-up and fee
+                // joins below need row counts to pick hash joins.
+                jdbcTemplate.execute("ANALYZE tmp_fact_batch");
+            }
 
             // RECONCILIATION: staging rows with a usable date must equal fact rows inserted.
-            // The INSERT's only filter is `payment_date IS NOT NULL`, so these two numbers
-            // are expected to match exactly; a gap means rows were silently lost (or the
+            // The INSERT filters on `payment_date IS NOT NULL` AND excludes
+            // pre-authorization rows (2026-08-24), so this expected count applies the
+            // SAME two filters; a gap means rows were silently lost (or the
             // LEFT JOINs to dim_store/dim_terminal fanned out and DUPLICATED rows, which is
             // possible because those joins are not guaranteed one-to-one and there is no
             // unique constraint on fact_transaction to catch it). Either way the operator
             // must know — this used to be invisible.
             Integer stagedUsable = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL",
+                "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL " +
+                "AND REPLACE(UPPER(TRIM(COALESCE(transaction_type,''))),' ','') " +
+                "    NOT IN ('PRE-AUTHORIZATION','PREAUTHORIZATION','PRE-AUTH','PREAUTH')" + stgRunWhere,
                 Integer.class, tenantId);
             if (stagedUsable != null && stagedUsable != inserted) {
                 String detail = String.format(
@@ -1311,8 +1639,8 @@ public class TransactionJobConfig {
             Map<String, Object> counts = jdbcTemplate.queryForMap(
                 "SELECT COUNT(*) AS total, " +
                 "COUNT(*) FILTER (WHERE merchant_id IS NOT NULL) AS matched " +
-                "FROM fact_transaction WHERE tenant_id = ? " +
-                "AND DATE(payment_date) IN " + dateScope, tenantId);
+                "FROM " + factTarget + " WHERE tenant_id = ? " +
+                "AND " + rngBare + "DATE(payment_date) IN " + dateScope, tenantId);
             Integer total   = counts.get("total")   == null ? 0 : ((Number) counts.get("total")).intValue();
             Integer matched = counts.get("matched") == null ? 0 : ((Number) counts.get("matched")).intValue();
             if (total != null && total > 0) {
@@ -1334,8 +1662,55 @@ public class TransactionJobConfig {
                 jobCtx.putInt("dq.dates", distinctDates.size());
                 jobCtx.putString("dq.schemes", String.join(",", uploadSchemes));
                 jobCtx.putString("dq.loadMode", appendMode ? "APPEND" : "REPLACE");
+                // PERF (2026-08-29): publish the ISO dates this upload actually
+                // loaded so the async reporting step (ManualIngestionService)
+                // can scope to them instead of rescanning + re-aggregating the
+                // tenant's WHOLE fact history. The DB-pull path already scopes
+                // (it reads staging before the job wipes it); the file path had
+                // no such handle once staging was cleared, so it passed no scope
+                // and processed every month the tenant ever loaded. Kept as a
+                // compact CSV of yyyy-MM-dd; readers split on ','.
+                jobCtx.putString("dq.loadedDates", distinctDates.stream()
+                    .map(d -> d.toLocalDate().toString())
+                    .collect(java.util.stream.Collectors.joining(",")));
             } catch (Exception dqe) {
                 log.warn("Could not record data-quality summary (non-fatal): {}", dqe.getMessage());
+            }
+
+            // INGEST TRUST: publish the funnel's middle two tiers onto the ledger
+            // row. rows_staged counts only THIS run's staging rows when the stamp
+            // is available (P0-2); rows_facted is what actually landed. The
+            // reconciliation service compares them after the job closes.
+            try {
+                Long runId = ingestRunIdOf(chunkContext);
+                if (runId != null) {
+                    Long stagedForRun = jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ? AND ingest_run_id = ?",
+                        Long.class, tenantId, runId);
+                    // DB pulls populate staging themselves and never carry the stamp,
+                    // so fall back to the tenant-wide count rather than reporting 0.
+                    if (stagedForRun == null || stagedForRun == 0) {
+                        stagedForRun = jdbcTemplate.queryForObject(
+                            "SELECT COUNT(*) FROM stg_trnx_raw WHERE tenant_id = ?", Long.class, tenantId);
+                    }
+                    ingestRunRecorder.updateCounts(runId, null, stagedForRun,
+                        (long) inserted, null, null, null,
+                        Math.max(0, (total == null ? 0 : total) - (matched == null ? 0 : matched)),
+                        distinctDates.get(0).toLocalDate(),
+                        distinctDates.get(distinctDates.size() - 1).toLocalDate(),
+                        distinctDates.size());
+
+                    // Day coverage is refreshed by IngestRunJobListener AFTER the
+                    // job finishes, not here: populateSummaryStep has not run yet,
+                    // so a coverage row written now would record a summary count of
+                    // zero. The listener re-derives the touched days from
+                    // min_txn_date/max_txn_date written just above — deliberately
+                    // not from a date list in the execution context, whose
+                    // SHORT_CONTEXT column is bounded and would truncate on a
+                    // year-wide backfill.
+                }
+            } catch (Exception le) {
+                log.warn("Could not update ingest ledger counts (non-fatal): {}", le.toString());
             }
 
             long tFix = System.currentTimeMillis();
@@ -1348,35 +1723,35 @@ public class TransactionJobConfig {
             // hasMissingNames / hasUnmappedMerchants guards above.
             int storeFixed = 0, termFixed = 0;
             Boolean anyNullStore = jdbcTemplate.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM fact_transaction f WHERE f.tenant_id = ? " +
+                "SELECT EXISTS (SELECT 1 FROM " + factTarget + " f WHERE f.tenant_id = ? " +
                 "AND f.store_id IS NULL AND f.merchant_id IS NOT NULL " +
-                "AND DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
+                "AND " + rngF + "DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
             if (Boolean.TRUE.equals(anyNullStore)) {
                 storeFixed = jdbcTemplate.update(
-                    "UPDATE fact_transaction f SET store_id = s.store_id " +
+                    "UPDATE " + factTarget + " f SET store_id = s.store_id " +
                     "FROM dim_store s, stg_trnx_raw stg " +
-                    "WHERE f.tenant_id = ? AND s.tenant_id = ? AND stg.tenant_id = ? " +
+                    "WHERE f.tenant_id = ? AND s.tenant_id = ? AND stg.tenant_id = ?" + stgRunWhereAliased + " " +
                     "AND f.store_id IS NULL AND f.merchant_id IS NOT NULL " +
                     "AND s.merchant_id = f.merchant_id " +
                     "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
                     "AND s.internal_id = CONCAT('STORE_', stg.mid) " +
-                    "AND DATE(f.payment_date) IN " + dateScope,
+                    "AND " + rngF + "DATE(f.payment_date) IN " + dateScope,
                     tenantId, tenantId, tenantId);
             }
             Boolean anyNullTerm = jdbcTemplate.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM fact_transaction f WHERE f.tenant_id = ? " +
+                "SELECT EXISTS (SELECT 1 FROM " + factTarget + " f WHERE f.tenant_id = ? " +
                 "AND f.terminal_id IS NULL AND f.store_id IS NOT NULL " +
-                "AND DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
+                "AND " + rngF + "DATE(f.payment_date) IN " + dateScope + " LIMIT 1)", Boolean.class, tenantId);
             if (Boolean.TRUE.equals(anyNullTerm)) {
                 termFixed = jdbcTemplate.update(
-                    "UPDATE fact_transaction f SET terminal_id = t.terminal_id " +
+                    "UPDATE " + factTarget + " f SET terminal_id = t.terminal_id " +
                     "FROM dim_terminal t, stg_trnx_raw stg " +
-                    "WHERE f.tenant_id = ? AND t.tenant_id = ? AND stg.tenant_id = ? " +
+                    "WHERE f.tenant_id = ? AND t.tenant_id = ? AND stg.tenant_id = ?" + stgRunWhereAliased + " " +
                     "AND f.terminal_id IS NULL AND f.store_id IS NOT NULL " +
                     "AND t.store_id = f.store_id " +
                     "AND f.payment_date = stg.payment_date AND f.arn = stg.arn " +
                     "AND t.internal_id = CONCAT('TERM_', stg.mid) " +
-                    "AND DATE(f.payment_date) IN " + dateScope,
+                    "AND " + rngF + "DATE(f.payment_date) IN " + dateScope,
                     tenantId, tenantId, tenantId);
             }
             if (storeFixed + termFixed > 0) {
@@ -1388,320 +1763,75 @@ public class TransactionJobConfig {
             }
 
             // =================================================================
-            // FEE COMPUTATION (V2026_07_05_01): interchange + scheme fee are
-            // computed by US, not trusted from the feed. Both off the
-            // SETTLEMENT amount (store_base_currency_amount) — never the
-            // cardholder amount. Rows without a matching rate row (e.g. an
-            // unseeded tenant) keep the feed interchange value untouched, so
-            // this can never break ingestion.
-            //
-            // Interchange: highest-priority matching interchange_rate_local
-            // row (NULL column = wildcard). Scheme via ref_card_scheme by
-            // CODE or NAME; tier via card_subtype (1=Standard else Premium);
-            // channel via dim_terminal.type exact ECOM whitelist; MCC sector
-            // via mcc_sector_map; ticket thresholds vs settlement amount;
-            // debit cap via LEAST(). Scheme fee: dest x channel percentage.
             // =================================================================
-            long tFee = System.currentTimeMillis();
+            // FEE COMPUTATION — extracted VERBATIM to FeeComputationService
+            // (2026-08-28) so BackfillIngestionService and BulkMigrationService
+            // price rows with the SAME SQL as this job. The full rate-resolution
+            // documentation (refund rule, effective dating, two-phase apply,
+            // gap report) lives on that class now.
             // =================================================================
-            // SINGLE-PASS FEE COMPUTATION (PERF, 2026-07-06c)
-            //
-            // Previously interchange, scheme fee, and ecom fee were THREE separate
-            // UPDATEs, each re-scanning the same fact rows for the date range and
-            // re-joining dim_terminal / ref_card_scheme. Scheme fee even re-derived
-            // the ECOM channel via a correlated dim_terminal subquery that the
-            // interchange join had already computed. That's 3x the scan + redundant
-            // joins.
-            //
-            // Now ONE UPDATE:
-            //   - joins dim_store / dim_terminal / ref_card_scheme ONCE
-            //   - derives `channel` (POS/ECOM) ONCE in the sub-select
-            //   - one LATERAL for the interchange rate, one for the scheme rate
-            //   - ecom_fee is a CASE on the shared channel (no extra pass/subquery)
-            //
-            // Correctness is identical to the three separate statements: same rate
-            // resolution, same ABS(settlement) basis, same fallbacks. Rows with no
-            // matching rate keep the feed interchange value and get scheme/ecom
-            // 0/NULL exactly as before.
-            //
-            // PERF: filters on the RAW payment_date range (partition pruning +
-            // index) AND the exact DATE(...) IN (...) set. Fees off SETTLEMENT
-            // amount (store_base_currency_amount), never cardholder amount.
-            // =================================================================
-            int feeRows = jdbcTemplate.update(
-                "UPDATE fact_transaction f SET " +
-                "  interchange_fee = r.computed_ic, " +
-                "  scheme_fee      = r.computed_scheme, " +
-                "  ecom_fee        = r.computed_ecom, " +
-                "  channel                  = r.channel, " +
-                "  fee_resolution_status    = r.status, " +
-                "  scheme_fee_status        = r.sf_status, " +
-                "  interchange_rule_id      = r.ic_rule_id, " +
-                "  scheme_fee_rule_id       = r.sf_rule_id, " +
-                "  interchange_pct_applied  = r.ic_pct, " +
-                "  interchange_flat_applied = r.ic_flat, " +
-                "  interchange_cap_applied  = r.ic_cap " +
-                "FROM ( " +
-                "  SELECT ft.transaction_id, ft.payment_date, ch.channel, " +
-                // REFUND RULE (2026-07-08, business-confirmed): refunds carry ZERO
-                // interchange and ZERO scheme fee. Feed transaction_type = 'RFND'.
-                // Ecom flat fee untouched.
-                // interchange: refund => 0; else matched rate (+cap) else flat 1.85% fallback
-                // INTERCHANGE (rewritten 2026-08-10).
-                //
-                // The old version ended `WHEN lr.interchange_pct IS NULL THEN
-                // 0.018500 * amount` — any transaction that matched no rate row was
-                // silently charged the UAE cross-border rate, in the tenant's own
-                // currency, with a NULL (=0) scheme fee. It was indistinguishable
-                // from a correctly priced row. That fallback is GONE: an unmatched
-                // transaction now yields NULL and an explicit fee_resolution_status.
-                //
-                // FORMULA: cap bounds the PERCENTAGE component, then the flat fee is
-                // added. Both live cases confirm that ordering —
-                //   BENEFIT petrol : LEAST(0.6% x 45.750, 0.085) + 0    = 0.085
-                //   BENEFIT intl   : LEAST(1.1% x 100.000, inf) + 0.100 = 1.200
-                "    CASE WHEN rf.is_refund THEN 0 " +
-                "         WHEN ft.destination IS NULL OR ch.channel IS NULL THEN NULL " +
-                "         WHEN lr.id IS NULL OR lr.rate_status <> 'APPROVED' THEN NULL " +
-                "         ELSE LEAST(lr.interchange_pct * ABS(COALESCE(ft.store_base_currency_amount,0)), " +
-                "                    COALESCE(lr.cap_amount, 999999999999)) + COALESCE(lr.flat_fee,0) END AS computed_ic, " +
-                // scheme fee: same discipline — an approved rate or nothing at all.
-                // BH/EG scheme-fee grids are verbatim UAE copies (flagged PLACEHOLDER
-                // in V2026_08_10_01), so they resolve to NULL + PLACEHOLDER_RATE until
-                // real country figures are supplied rather than quietly billing UAE
-                // economics to Bahraini and Egyptian merchants.
-                "    CASE WHEN rf.is_refund THEN 0 " +
-                "         WHEN ft.destination IS NULL OR ch.channel IS NULL THEN NULL " +
-                "         WHEN sfr.id IS NULL OR sfr.rate_status <> 'APPROVED' THEN NULL " +
-                "         ELSE (sfr.fee_pct * ABS(COALESCE(ft.store_base_currency_amount,0))) " +
-                "              + COALESCE(sfr.flat_fee,0) END AS computed_scheme, " +
-                // ---- provenance + resolution status -------------------------------
-                "    lr.id AS ic_rule_id, sfr.id AS sf_rule_id, " +
-                "    CASE WHEN lr.rate_status = 'APPROVED' THEN lr.interchange_pct END AS ic_pct, " +
-                "    CASE WHEN lr.rate_status = 'APPROVED' THEN lr.flat_fee END AS ic_flat, " +
-                "    CASE WHEN lr.rate_status = 'APPROVED' THEN lr.cap_amount END AS ic_cap, " +
-                "    CASE WHEN rf.is_refund                      THEN 'RESOLVED' " +
-                "         WHEN ft.destination IS NULL            THEN 'UNMAPPED_DESTINATION' " +
-                "         WHEN ch.channel IS NULL                THEN 'UNMAPPED_CHANNEL' " +
-                "         WHEN lr.id IS NULL                     THEN 'NO_RATE_FOUND' " +
-                "         WHEN lr.rate_status <> 'APPROVED'      THEN 'PLACEHOLDER_RATE' " +
-                // The scheme token did not resolve to a known network, so pricing came
-                // from the country's any-scheme row. Legitimate (this is how Amex and
-                // unmapped tokens have always priced) but it must be visible, not
-                // silently indistinguishable from a scheme-specific match.
-                "         WHEN rcs.group_name IS NULL            THEN 'RESOLVED_SCHEME_WILDCARD' " +
-                "         ELSE 'RESOLVED' END AS status, " +
-                "    CASE WHEN rf.is_refund                       THEN 'RESOLVED' " +
-                "         WHEN ft.destination IS NULL OR ch.channel IS NULL THEN 'UNRESOLVED' " +
-                "         WHEN sfr.id IS NULL                     THEN 'NO_RATE_FOUND' " +
-                "         WHEN sfr.rate_status <> 'APPROVED'      THEN 'PLACEHOLDER_RATE' " +
-                "         ELSE 'RESOLVED' END AS sf_status, " +
-                // ecom flat fee (V2026_07_31_06): per-country config (ecom_flat_fee)
-                // resolved by home_country_code, NOT a hardcoded 0.18. On ECOM channel
-                // use the resolved fee (COALESCE to 0 when a country has no configured
-                // row, e.g. BH/OM/EG today); NULL off ECOM. AE keeps 0.18 via its seed.
-                "    CASE WHEN ch.channel = 'ECOM' THEN COALESCE(eff.fee_amount, 0) ELSE NULL END AS computed_ecom " +
-                "  FROM fact_transaction ft " +
-                // COUNTRY RESOLUTION (V2026_07_31_02, Phase 2 multi-region): a rate
-                // card is COUNTRY-LEVEL, not tenant-level. Resolve the transaction's
-                // country from its tenant's home_country_code; every rate LATERAL
-                // below then matches country_code = this value (default 'AE' if a
-                // tenant has no home country set, preserving legacy UAE behaviour).
-                "  LEFT JOIN tenant tn ON tn.tenant_id = ft.tenant_id " +
-                "  LEFT JOIN dim_store ds ON ds.store_id = ft.store_id AND ds.tenant_id = ft.tenant_id " +
-                "  LEFT JOIN dim_terminal dt ON dt.terminal_id = ft.terminal_id AND dt.tenant_id = ft.tenant_id " +
-                // SCHEME RESOLUTION FIX (2026-07-07): space-insensitive match so feed
-                // variants like 'MASTER CARD' resolve to ref_card_scheme 'MasterCard'.
-                // Without this, ~42% of rows (MASTER CARD) got group_name NULL -> wrong
-                // interchange AND zero scheme fee. Strips spaces on BOTH sides.
-                // SCHEME RESOLUTION, two-tier (fixed 2026-08-10). The product code is
-                // tried FIRST because it carries the Premium/Standard tier signal, then
-                // the network name is tried as a fallback.
-                //
-                // The previous single-expression join used
-                //   COALESCE(NULLIF(card_product_code,''), card_scheme)
-                // which falls back only when the product code is EMPTY — never when it
-                // is present but unrecognised. A feed that puts a generic word like
-                // 'DEBIT' or 'CREDIT' in its Card Type column therefore resolved
-                // group_name = NULL for EVERY row, so scheme-specific pricing became
-                // unreachable and everything silently took the country's any-scheme
-                // wildcard. Verified on real Bahraini and Egyptian ingestion: BENEFIT
-                // and Meeza transactions were being priced at the generic 1.75%
-                // instead of their own rate cards. UAE is unaffected — its product
-                // codes (VIPM/MCPM/MCDB...) still match on the first tier.
-                "  CROSS JOIN LATERAL (SELECT REPLACE(UPPER(TRIM(COALESCE(ft.card_product_code,''))),' ','') AS v) pc " +
-                "  CROSS JOIN LATERAL (SELECT REPLACE(UPPER(TRIM(COALESCE(ft.card_scheme,''))),' ','') AS v) sc " +
-                "  LEFT JOIN LATERAL ( " +
-                "    SELECT r.*, CASE WHEN pc.v <> '' AND (REPLACE(UPPER(TRIM(r.code)),' ','') = pc.v " +
-                "                       OR REPLACE(UPPER(TRIM(r.name)),' ','') = pc.v) THEN 1 ELSE 0 END AS by_product " +
-                "    FROM ref_card_scheme r " +
-                "    WHERE (pc.v <> '' AND (REPLACE(UPPER(TRIM(r.code)),' ','') = pc.v " +
-                "                        OR REPLACE(UPPER(TRIM(r.name)),' ','') = pc.v)) " +
-                "       OR (sc.v <> '' AND (REPLACE(UPPER(TRIM(r.code)),' ','') = sc.v " +
-                "                        OR REPLACE(UPPER(TRIM(r.name)),' ','') = sc.v)) " +
-                "    ORDER BY by_product DESC, r.id ASC LIMIT 1 " +
-                "  ) rcs ON TRUE " +
-                // derive channel ONCE, reused by both rate LATERALs and the ecom CASE
-                // CHANNEL RESOLUTION (config-driven since 2026-08-10). This used to be
-                // a hardcoded four-string UAE whitelist with an implicit `ELSE 'POS'`,
-                // so ANY other processor's e-commerce silently priced as POS — cheaper
-                // interchange and a cheaper scheme fee, i.e. an error that flatters the
-                // P&L and never trips an alarm. Now: exact terminal-type match, then
-                // the country's '*' wildcard. AE seeds '*' -> POS so its behaviour is
-                // unchanged; BH/EG have no wildcard, so an unrecognised terminal type
-                // surfaces as UNMAPPED_CHANNEL until the real feed values are mapped.
-                "  CROSS JOIN LATERAL ( " +
-                "    SELECT COALESCE( " +
-                "      (SELECT t1.channel FROM terminal_channel_map t1 " +
-                "         WHERE t1.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "           AND (t1.tenant_id IS NULL OR t1.tenant_id = ft.tenant_id) " +
-                "           AND t1.raw_type = UPPER(TRIM(COALESCE(dt.type,''))) " +
-                "         ORDER BY (t1.tenant_id IS NOT NULL) DESC LIMIT 1), " +
-                "      (SELECT t2.channel FROM terminal_channel_map t2 " +
-                "         WHERE t2.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "           AND (t2.tenant_id IS NULL OR t2.tenant_id = ft.tenant_id) " +
-                "           AND t2.raw_type = '*' " +
-                "         ORDER BY (t2.tenant_id IS NOT NULL) DESC LIMIT 1) " +
-                "    ) AS channel " +
-                "  ) ch " +
-                // derive refund flag ONCE, reused by both computed_ic and computed_scheme.
-                // MUST match the volume-signing set IN ('RFND','REFUND') used in
-                // stagingToFact (2026-07-18) — previously this checked only 'RFND', so a
-                // row typed 'REFUND' was signed as negative volume yet still charged
-                // interchange + scheme fee. Kept in sync here.
-                "  CROSS JOIN LATERAL (SELECT (UPPER(TRIM(COALESCE(ft.transaction_type,''))) IN ('RFND','REFUND')) AS is_refund) rf " +
-                // derive mcc sector ONCE (was a correlated subquery inside the LATERAL).
-                // COUNTRY-LEVEL (V2026_07_31_02): match the tenant's country card;
-                // tenant_id IS NULL is the country default, a non-null tenant_id is a
-                // per-tenant override which wins via the (tenant_id IS NOT NULL) DESC
-                // tiebreak. LATERAL+LIMIT 1 so an override never multiplies rows.
-                "  LEFT JOIN LATERAL ( " +
-                "    SELECT m.sector FROM mcc_sector_map m " +
-                "    WHERE m.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "      AND (m.tenant_id IS NULL OR m.tenant_id = ft.tenant_id) " +
-                "      AND m.mcc = ds.mcc " +
-                "    ORDER BY (m.tenant_id IS NOT NULL) DESC LIMIT 1 " +
-                "  ) msm ON TRUE " +
-                // PERF (2026-07-14): lateral split into MCC-keyed + wildcard branches so
-                // the planner drives each via an index instead of scanning all ~365
-                // candidate rows per transaction (was 9.4M heap blocks / ~270s per window).
-                // Branch 1 uses idx_interchange_rate_local_mcc (tenant_id, mcc);
-                // Branch 2 uses idx_interchange_rate_local_generic (partial, mcc IS NULL).
-                // Same candidate set, same priority pick - semantics unchanged.
-                "  LEFT JOIN LATERAL ( " +
-                "    SELECT ilr.id, ilr.interchange_pct, ilr.flat_fee, ilr.cap_amount, ilr.rate_status FROM ( " +
-                // COUNTRY-LEVEL lookup (V2026_07_31_02): match country_code =
-                // tenant's home country (not tenant_id) so all tenants in a country
-                // share its card; tenant_id IS NULL = country default, non-null =
-                // per-tenant override (preferred in the ORDER BY below).
-                "      SELECT i.* FROM interchange_rate_local i " +
-                "      WHERE i.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "        AND (i.tenant_id IS NULL OR i.tenant_id = ft.tenant_id) " +
-                "        AND i.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
-                "        AND i.mcc = ds.mcc " +
-                "      UNION ALL " +
-                "      SELECT i.* FROM interchange_rate_local i " +
-                "      WHERE i.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "        AND (i.tenant_id IS NULL OR i.tenant_id = ft.tenant_id) " +
-                "        AND i.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
-                "        AND i.mcc IS NULL " +
-                "    ) ilr " +
-                "    WHERE (ilr.channel IS NULL OR ilr.channel = ch.channel) " +
-                "      AND (ilr.scheme_group IS NULL OR ilr.scheme_group = COALESCE(rcs.group_name,'')) " +
-                // CARD-TYPE FOR PRICING (2026-07-07, business-confirmed): credit-prepaid
-                // products (rcs.card_type=3, i.e. MCCP) are PRICED as CREDIT (-> Premium
-                // tier below), NOT at the debit/prepaid rate. ft.card_type stays 'PREPAID'
-                // for reporting/splits; only this rate lookup remaps. Debit-prepaid
-                // (rcs.card_type=4, MCDP) stays on the local debit rate via 'DEBIT'.
-                "      AND (ilr.card_type IS NULL OR ilr.card_type = CASE WHEN rcs.card_type = 3 THEN 'CREDIT' ELSE UPPER(TRIM(COALESCE(ft.card_type,''))) END) " +
-                // TIER (2026-07-07, business-confirmed mapping): ONLY explicit Standard
-                // products (card_subtype=1: MCSD/VISD) resolve Standard. EVERYTHING else
-                // - AMEX/JCB/UPI/VICR/MCCR/MCCP/MCPM/VIPM/VICP, generic VISA/MCRD, and
-                // unmatched codes - resolves Premium. (JCB/UPI still hit their priority-11
-                // flat 1.75 rows, which are tier-wildcard, so tier is moot for them.)
-                "      AND (ilr.tier IS NULL OR ilr.tier = CASE WHEN rcs.card_subtype = 1 THEN 'Standard' ELSE 'Premium' END) " +
-                // MCC-KEYED RATE CARD (2026-07-07): mcc match/wildcard now enforced by the
-                // UNION ALL branches above (most-specific still wins via priority DESC).
-                "      AND (ilr.mcc_sector IS NULL OR ilr.mcc_sector = msm.sector) " +
-                "      AND (ilr.min_ticket IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= ilr.min_ticket) " +
-                "      AND (ilr.max_ticket IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  ilr.max_ticket) " +
-                // EFFECTIVE DATING (2026-08-10): resolve against the rate that was in
-                // force on the PAYMENT date, not today's. Without this, re-ingesting a
-                // historical month reprices it at current rates. Needed imminently
-                // because the Egypt Meeza figure is an explicit interim rate.
-                "      AND (ilr.effective_from IS NULL OR ilr.effective_from <= DATE(ft.payment_date)) " +
-                "      AND (ilr.effective_to   IS NULL OR ilr.effective_to   >= DATE(ft.payment_date)) " +
-                // An APPROVED row always beats a PLACEHOLDER one; a placeholder is only
-                // ever returned so the status column can say WHY nothing priced.
-                // Then: tenant override over country default, then priority, then id.
-                "    ORDER BY (ilr.rate_status = 'APPROVED') DESC, (ilr.tenant_id IS NOT NULL) DESC, " +
-                "             ilr.priority DESC, ilr.id ASC LIMIT 1 " +
-                "  ) lr ON TRUE " +
-                // SCHEME FEE: match dest x channel; prefer scheme-specific row, then the
-                // scheme_group IS NULL wildcard (seeded 2026-07-07) so EVERY scheme -
-                // incl. Amex / MASTER CARD / unmapped - gets a rate instead of 0.
-                "  LEFT JOIN LATERAL ( " +
-                // COUNTRY-LEVEL (V2026_07_31_02): match the tenant's country card.
-                // Prefer a per-tenant override (tenant_id NOT NULL), then a
-                // scheme-specific row over the scheme_group IS NULL wildcard.
-                "    SELECT s.id, s.fee_pct, s.flat_fee, s.rate_status FROM scheme_fee_rate s " +
-                "    WHERE s.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "      AND (s.tenant_id IS NULL OR s.tenant_id = ft.tenant_id) " +
-                "      AND s.dest = UPPER(TRIM(COALESCE(ft.destination,''))) " +
-                "      AND s.channel = ch.channel " +
-                "      AND (s.scheme_group IS NULL OR s.scheme_group = COALESCE(rcs.group_name,'')) " +
-                "      AND (s.effective_from IS NULL OR s.effective_from <= DATE(ft.payment_date)) " +
-                "      AND (s.effective_to   IS NULL OR s.effective_to   >= DATE(ft.payment_date)) " +
-                "    ORDER BY (s.rate_status = 'APPROVED') DESC, (s.tenant_id IS NOT NULL) DESC, " +
-                "             (s.scheme_group IS NOT NULL) DESC LIMIT 1 " +
-                "  ) sfr ON TRUE " +
-                // ECOM FLAT FEE (V2026_07_31_06): resolve the per-country flat fee the
-                // same country-level way (tenant override preferred over country default).
-                // No row for a country => eff.fee_amount NULL => COALESCE'd to 0 above.
-                "  LEFT JOIN LATERAL ( " +
-                "    SELECT e.fee_amount FROM ecom_flat_fee e " +
-                "    WHERE e.country_code = COALESCE(tn.home_country_code,'AE') " +
-                "      AND (e.tenant_id IS NULL OR e.tenant_id = ft.tenant_id) " +
-                "    ORDER BY (e.tenant_id IS NOT NULL) DESC LIMIT 1 " +
-                "  ) eff ON TRUE " +
-                "  WHERE ft.tenant_id = ? AND " + dateRangeFt + " AND DATE(ft.payment_date) IN " + dateScope +
-                " ) r " +
-                "WHERE f.tenant_id = ? AND f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date",
-                tenantId, tenantId);
-            log.info(String.format("Fee computation (single-pass): %d rows in %.1fs",
-                feeRows, (System.currentTimeMillis() - tFee) / 1000.0));
+            feeComputationService.computeFees(tenantId, factTarget, rngFt, rngF, rngBare, dateScope);
 
-            // FEE RESOLUTION REPORT. The whole point of removing the 1.85% fallback is
-            // that a pricing gap must be LOUD. Every non-RESOLVED status is a
-            // configuration gap that leaves money uncosted, so surface it per run
-            // instead of leaving it to be discovered in a month-end reconciliation.
-            try {
-                java.util.List<java.util.Map<String, Object>> byStatus = jdbcTemplate.queryForList(
-                    "SELECT fee_resolution_status AS st, COUNT(*) AS n FROM fact_transaction " +
-                    "WHERE tenant_id = ? AND " + dateRangeFt + " AND DATE(payment_date) IN " + dateScope +
-                    " GROUP BY 1 ORDER BY 2 DESC", tenantId);
-                long unresolved = 0;
-                StringBuilder sb = new StringBuilder();
-                for (java.util.Map<String, Object> row : byStatus) {
-                    String st = String.valueOf(row.get("st"));
-                    long n = ((Number) row.get("n")).longValue();
-                    sb.append(st).append('=').append(n).append(' ');
-                    if (!"RESOLVED".equals(st) && !"RESOLVED_SCHEME_WILDCARD".equals(st)) {
-                        unresolved += n;
+            // FLUSH (append-only path): the batch — dims fixed up, fees and
+            // statuses populated — lands in fact_transaction in ONE insert.
+            // SELECT * is positionally safe because tmp_fact_batch was created
+            // with LIKE fact_transaction in this same session. Rows route to
+            // their monthly partitions exactly as the old direct INSERT did.
+            if (stageViaBatchTable) {
+                long tFlush = System.currentTimeMillis();
+                int flushed = jdbcTemplate.update(
+                    "INSERT INTO fact_transaction SELECT * FROM tmp_fact_batch");
+                jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fact_batch");
+                if (flushed != inserted) {
+                    // Should be impossible (nothing else writes the temp table);
+                    // loud rather than silent if it ever isn't.
+                    log.warn("[RECONCILE] batch flush wrote {} fact row(s) but {} were staged in tmp_fact_batch",
+                        flushed, inserted);
+                }
+                log.info(String.format("Fact flush (append-only, single write): %d rows in %.1fs",
+                    flushed, (System.currentTimeMillis() - tFlush) / 1000.0));
+            }
+
+            transactionManager.commit(factTxn);
+            } catch (Exception txe) {
+                // Roll back rather than leak an open transaction back to the pool
+                // (and back to this PROPAGATION_NEVER step's thread).
+                if (!factTxn.isCompleted()) {
+                    transactionManager.rollback(factTxn);
+                }
+                throw txe;
+            }
+
+            // PLAN STABILITY (2026-08-28): refresh statistics on the fact
+            // partitions this load rewrote, for BOTH paths (APPEND's in-place
+            // fee UPDATE stales stats exactly the same way). Nothing else
+            // analyzes fact before the wide-window steps downstream, and the
+            // planner's view of the touched partition drifts further with
+            // every same-day re-upload — seen live in UAT (2026-08-28) as two
+            // IDENTICAL uploads two hours apart: businessMetrics 208s -> 811s,
+            // churn 33s -> 49s, dashboards 51s -> 86s, while the date-scoped
+            // steps stayed flat. ANALYZE is sampled (seconds per partition)
+            // and valid inside the tasklet transaction; failures are non-fatal
+            // because statistics are an optimisation, never correctness.
+            {
+                long tAnalyze = System.currentTimeMillis();
+                java.util.Set<String> parts = new java.util.LinkedHashSet<>();
+                for (java.sql.Date d : distinctDates) {
+                    java.time.LocalDate ld = d.toLocalDate();
+                    parts.add(String.format("fact_transaction_y%04dm%02d", ld.getYear(), ld.getMonthValue()));
+                }
+                parts.add("fact_transaction_default"); // rows without a monthly partition land here
+                int analyzed = 0;
+                for (String part : parts) {
+                    try {
+                        jdbcTemplate.execute("ANALYZE " + part);
+                        analyzed++;
+                    } catch (Exception ae) {
+                        log.debug("ANALYZE {} skipped: {}", part, ae.getMessage());
                     }
                 }
-                if (unresolved > 0) {
-                    log.warn("FEE RESOLUTION GAPS for tenant {}: {} row(s) not priced -> {}",
-                        tenantId, unresolved, sb.toString().trim());
-                    log.warn("  Unmapped destination tokens seen: {}", jdbcTemplate.queryForList(
-                        "SELECT DISTINCT destination_raw FROM fact_transaction WHERE tenant_id = ? " +
-                        "AND fee_resolution_status = 'UNMAPPED_DESTINATION' AND " + dateRangeFt +
-                        " LIMIT 20", String.class, tenantId));
-                } else {
-                    log.info("Fee resolution: {}", sb.toString().trim());
-                }
-            } catch (Exception e) {
-                log.warn("Fee resolution report failed (non-fatal): {}", e.getMessage());
+                log.info(String.format("Analyzed %d fact partition(s) in %.1fs",
+                    analyzed, (System.currentTimeMillis() - tAnalyze) / 1000.0));
             }
 
             log.info(String.format("stagingToFact completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
@@ -1713,566 +1843,35 @@ public class TransactionJobConfig {
         return new StepBuilder("populateSummaryStep", jobRepository)
             .tasklet(populateSummaryTasklet, transactionManager)
             .transactionAttribute(noTxn())
-            .listener(mdcStepListener)
+            .listener(mdcStepListener).listener(ingestRunStepListener)
             .build();
     }
 
     @Bean @StepScope
     public Tasklet populateSummaryTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+        // Body extracted VERBATIM to SummaryPopulationService (2026-08-28) so
+        // BulkMigrationService and BackfillIngestionService aggregate with the
+        // SAME SQL instead of hand-maintained mirrors. This tasklet only feeds
+        // it the upload's staged dates; the advisory lock, clean-slate deletes,
+        // parallel phases and sargable scopes all live on the service now.
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
-            long start = System.currentTimeMillis();
-
-            final long lockKey = 11_000_000L + tenantId;
-            java.sql.Connection lockConn = null;
-            try {
-                lockConn = dataSource.getConnection();
-                lockConn.setAutoCommit(true);
-                long lockWaitStart = System.currentTimeMillis();
-                try (java.sql.PreparedStatement ps = lockConn.prepareStatement("SELECT pg_advisory_lock(?)")) {
-                    ps.setLong(1, lockKey);
-                    try (java.sql.ResultSet rs = ps.executeQuery()) { rs.next(); }
-                }
-                long lockWaitMs = System.currentTimeMillis() - lockWaitStart;
-                if (lockWaitMs > 1000) {
-                    log.warn("populateSummary: waited {}ms for tenant lock", lockWaitMs);
-                }
-            } catch (Exception e) {
-                if (lockConn != null) try { lockConn.close(); } catch (Exception ignore) {}
-                throw new RuntimeException("Failed to acquire advisory lock for tenant " + tenantId, e);
-            }
-            final java.sql.Connection lockConnFinal = lockConn;
-
-            try {
+            // Run-scope (2026-08-29): only THIS file's staged dates — see stagingToFact.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhere = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";
             java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere + " ORDER BY d",
                 java.sql.Date.class, tenantId);
-            if (distinctDates.isEmpty()) {
-                log.info("populateSummary: no dates to process - skipping");
-                return RepeatStatus.FINISHED;
-            }
-            final String dateScope = buildSafeDateInList(distinctDates);
-            java.util.Set<Integer> monthSet = new java.util.LinkedHashSet<>();
-            for (java.sql.Date d : distinctDates) {
-                java.time.LocalDate ld = d.toLocalDate();
-                monthSet.add(ld.getYear() * 100 + ld.getMonthValue());
-            }
-            final String monthScope = "(" + monthSet.stream().map(String::valueOf)
-                .collect(java.util.stream.Collectors.joining(",")) + ")";
-            log.info("populateSummary: {} dates, {} months in scope", distinctDates.size(), monthSet.size());
-
-            java.util.concurrent.ExecutorService exec =
-                java.util.concurrent.Executors.newFixedThreadPool(4,
-                    r -> { Thread t = new Thread(r, "summary-agg-"); t.setDaemon(true); return t; });
-            try {
-                // ---------------------------------------------------------------
-                // FIX: clean-slate the affected grain BEFORE re-aggregating.
-                // The rollups below are ON CONFLICT DO UPDATE, which refreshes a
-                // (grain) tuple only when it reappears in this upload. A merchant/
-                // day/scheme tuple that transacted in an EARLIER upload but not in
-                // this one is never touched -> orphan rows accumulate across the
-                // many uploads per month, and per-day sums drift from fact in both
-                // directions (and can go negative when stale rows collide with a
-                // fact re-insert on the same day). fact_transaction is already
-                // DELETE+reinserted per upload date upstream, so deleting the
-                // summary rows for the SAME dates (daily) / months (monthly) and
-                // rebuilding from fact makes summary reconcile exactly with fact.
-                // Daily tables: delete by business_date IN dateScope.
-                // Monthly tables: delete by month_key IN monthScope (they are
-                // rebuilt from the freshly-cleaned daily tables covering the whole
-                // month, so a whole-month delete+rebuild is correct).
-                // ---------------------------------------------------------------
-                for (String dailyTbl : new String[]{
-                        "sum_daily_bank", "sum_daily_merchant", "sum_daily_mcc",
-                        "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
-                        "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
-                        "sum_daily_explorer", "sum_daily_merchant_destination",
-                        "sum_daily_local_debit_bin",
-                        "sum_daily_merchant_attribute"}) {
-                    int del = jdbcTemplate.update(
-                        "DELETE FROM " + dailyTbl +
-                        " WHERE tenant_id = ? AND business_date IN " + dateScope, tenantId);
-                    log.warn("  [populateSummary] delete {} {} rows", String.format("%-25s", dailyTbl), del);
-                }
-                for (String monthlyTbl : new String[]{
-                        "sum_monthly_bank", "sum_monthly_insight", "sum_monthly_card"}) {
-                    int del = jdbcTemplate.update(
-                        "DELETE FROM " + monthlyTbl +
-                        " WHERE tenant_id = ? AND month_key IN " + monthScope, tenantId);
-                    log.warn("  [populateSummary] delete {} {} rows", String.format("%-25s", monthlyTbl), del);
-                }
-
-                java.util.List<java.util.concurrent.CompletableFuture<Void>> phase1 = new java.util.ArrayList<>();
-
-                phase1.add(runAsync(exec, "sum_daily_bank", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_base_volume, total_msf, " +
-                        "total_interchange, total_scheme_fee, total_ecom_fee, total_vat, total_net_revenue) " +
-                        "SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(store_base_currency_amount), SUM(store_base_currency_amount), SUM(msf), " +
-                        "SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), SUM(COALESCE(ecom_fee,0)), SUM(vat), " +
-                        "SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - COALESCE(scheme_fee,0) - COALESCE(ecom_fee,0)) " +
-                        "FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
-                        " GROUP BY tenant_id, DATE(payment_date) " +
-                        "ON CONFLICT (tenant_id, business_date) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, " +
-                        "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, total_ecom_fee=EXCLUDED.total_ecom_fee, " +
-                        "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
-
-                phase1.add(runAsync(exec, "sum_daily_merchant", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_merchant (tenant_id, business_date, merchant_id, " +
-                        "total_txns, total_volume, total_base_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_margin, " +
-                        "total_debit_prepaid_volume, total_credit_volume, sales_user_id, unique_customer_count, " +
-                        "dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume, dcc_eligible_count, dcc_optin_count) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, COUNT(*), " +
-                        "SUM(f.store_base_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), " +
-                        "SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
-                        "SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - COALESCE(f.scheme_fee,0) - COALESCE(f.ecom_fee,0)), " +
-                        "SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT','PREPAID') THEN f.store_base_currency_amount ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(f.card_type) = 'CREDIT' THEN f.store_base_currency_amount ELSE 0 END), " +
-                        "m.sales_user_id, COUNT(DISTINCT f.card_number), " +
-                        "SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN f.store_base_currency_amount ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN f.store_base_currency_amount ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.store_base_currency_amount ELSE 0 END), " +
-                        "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN 1 END), " +
-                        "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END) " +
-                        "FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id AND m.tenant_id = f.tenant_id " +
-                        "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN " + dateScope +
-                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, m.sales_user_id " +
-                        "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, " +
-                        "total_msf=EXCLUDED.total_msf, total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_ecom_fee=EXCLUDED.total_ecom_fee, " +
-                        "total_margin=EXCLUDED.total_margin, total_debit_prepaid_volume=EXCLUDED.total_debit_prepaid_volume, " +
-                        "total_credit_volume=EXCLUDED.total_credit_volume, sales_user_id=EXCLUDED.sales_user_id, " +
-                        "unique_customer_count=EXCLUDED.unique_customer_count, " +
-                        "dcc_eligible_volume=EXCLUDED.dcc_eligible_volume, dcc_optin_volume=EXCLUDED.dcc_optin_volume, " +
-                        "dcc_optout_volume=EXCLUDED.dcc_optout_volume, dcc_eligible_count=EXCLUDED.dcc_eligible_count, " +
-                        "dcc_optin_count=EXCLUDED.dcc_optin_count", tenantId)));
-
-                // Merchant x destination with REAL fees (V2026_07_10_03 — the table's
-                // promised population, previously never written). Settlement currency,
-                // straight off fact with no dim_merchant join so bank-level totals
-                // reconcile exactly with fact (unmatched-merchant rows keep NULL
-                // merchant_id; the clean-slate DELETE above makes that safe under the
-                // plain UNIQUE). NULL destination lands as DOMESTIC per the table's
-                // documented convention. MIRRORED in BulkMigrationService.rebuildSummaries
-                // — keep both in sync (summary-rebuild-drift rule).
-                phase1.add(runAsync(exec, "sum_daily_merchant_destination", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_merchant_destination (tenant_id, business_date, merchant_id, destination, " +
-                        "total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_net_revenue) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
-                        "CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END, " +
-                        "COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), " +
-                        "SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
-                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
-                        "FROM fact_transaction f " +
-                        "WHERE f.tenant_id = ? AND DATE(f.payment_date) IN " + dateScope +
-                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
-                        "CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END " +
-                        "ON CONFLICT (tenant_id, business_date, merchant_id, destination) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
-                        "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_ecom_fee=EXCLUDED.total_ecom_fee, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
-
-                phase1.add(runAsync(exec, "sum_daily_mcc", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_mcc (tenant_id, business_date, mcc, card_scheme, total_txns, " +
-                        "total_volume, total_msf, total_scheme_fee, total_net_revenue) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), " +
-                        "SUM(COALESCE(f.scheme_fee,0)), " +
-                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
-                        "FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id AND s.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope +
-                        " GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme " +
-                        "ON CONFLICT (tenant_id, business_date, mcc, card_scheme) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
-                        "total_scheme_fee=EXCLUDED.total_scheme_fee, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
-
-                phase1.add(runAsync(exec, "sum_daily_scheme", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_scheme (tenant_id, business_date, card_scheme, total_txns, " +
-                        "total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue) " +
-                        "SELECT tenant_id, DATE(payment_date), " +
-                        "  CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
-                        "       THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') " +
-                        "       ELSE card_scheme END, " +
-                        "COUNT(*), SUM(store_base_currency_amount), SUM(msf), " +
-                        "SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), " +
-                        "SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)-COALESCE(ecom_fee,0)) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope +
-                        " GROUP BY tenant_id, DATE(payment_date), " +
-                        "  CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
-                        "       THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') ELSE card_scheme END " +
-                        "HAVING SUM(store_base_currency_amount) > 0 " +
-                        "ON CONFLICT (tenant_id, business_date, card_scheme) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
-                        "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
-
-                phase1.add(runAsync(exec, "sum_daily_channel", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_channel (tenant_id, business_date, channel, total_txns, " +
-                        "total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*), SUM(f.store_base_currency_amount), " +
-                        "SUM(f.msf), SUM(f.interchange_fee), SUM(COALESCE(f.scheme_fee,0)), " +
-                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)) " +
-                        "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND DATE(f.payment_date) IN " + dateScope +
-                        " GROUP BY f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS') " +
-                        "ON CONFLICT (tenant_id, business_date, channel) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
-                        "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
-
-                phase1.add(runAsync(exec, "sum_daily_terminal", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_terminal (tenant_id, business_date, merchant_id, store_id, terminal_id, " +
-                        "total_txns, total_volume, total_base_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_revenue) " +
-                        "SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id, COUNT(*), SUM(store_base_currency_amount), " +
-                        "SUM(store_base_currency_amount), SUM(msf), SUM(COALESCE(interchange_fee,0)), SUM(COALESCE(scheme_fee,0)), SUM(COALESCE(ecom_fee,0)), " +
-                        "SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)-COALESCE(ecom_fee,0)) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
-                        " GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id " +
-                        "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, " +
-                        "total_msf=EXCLUDED.total_msf, total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_ecom_fee=EXCLUDED.total_ecom_fee, total_revenue=EXCLUDED.total_revenue",
-                        tenantId)));
-
-                phase1.add(runAsync(exec, "sum_daily_finance", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_finance (tenant_id, business_date, " +
-                        "dom_debit_cnt, dom_debit_vol, dom_debit_msf, dom_debit_optin, " +
-                        "dom_credit_cnt, dom_credit_vol, dom_credit_msf, dom_credit_optin, " +
-                        "int_cnt, int_vol, int_msf, int_optin, total_vol, total_msf) " +
-                        "SELECT tenant_id, DATE(payment_date), " +
-                        "COUNT(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN 1 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN store_base_currency_amount ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN msf ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END), " +
-                        "COUNT(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN 1 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN store_base_currency_amount ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN msf ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END), " +
-                        "COUNT(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN 1 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN store_base_currency_amount ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN msf ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END), " +
-                        "SUM(store_base_currency_amount), SUM(msf) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) IN " + dateScope +
-                        " GROUP BY tenant_id, DATE(payment_date) " +
-                        "ON CONFLICT (tenant_id, business_date) DO UPDATE SET " +
-                        "dom_debit_cnt=EXCLUDED.dom_debit_cnt, dom_debit_vol=EXCLUDED.dom_debit_vol, " +
-                        "dom_debit_msf=EXCLUDED.dom_debit_msf, dom_debit_optin=EXCLUDED.dom_debit_optin, " +
-                        "dom_credit_cnt=EXCLUDED.dom_credit_cnt, dom_credit_vol=EXCLUDED.dom_credit_vol, " +
-                        "dom_credit_msf=EXCLUDED.dom_credit_msf, dom_credit_optin=EXCLUDED.dom_credit_optin, " +
-                        "int_cnt=EXCLUDED.int_cnt, int_vol=EXCLUDED.int_vol, int_msf=EXCLUDED.int_msf, int_optin=EXCLUDED.int_optin, " +
-                        "total_vol=EXCLUDED.total_vol, total_msf=EXCLUDED.total_msf", tenantId)));
-
-                phase1.add(runAsync(exec, "sum_daily_insight", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_insight (tenant_id, business_date, merchant_id, store_id, terminal_id, " +
-                        "card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
-                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
-                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
-                        "     ELSE f.card_scheme END, " +
-                        "f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc, COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf) " +
-                        "FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
-                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
-                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
-                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END, " +
-                        "f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc " +
-                        "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +
-                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf",
-                        tenantId)));
-
-                // sum_daily_full — the fully-dimensional daily SETTLEMENT pre-aggregate
-                // WITH real fees. Same fact scan as sum_daily_insight but:
-                //   - volume is store_base_currency_amount (settlement), not cardholder
-                //   - carries interchange / scheme / ecom / net fee columns
-                //   - adds mcc (dim_store) to the grain
-                // Grain: day x merchant x store x mcc x channel x destination x scheme
-                //        x card_type x is_opt_in (dcc). channel from dim_terminal.type
-                //        (COALESCE 'POS'); card_scheme normalized exactly like insight.
-                // Fees come straight from fact_transaction (populated by the fee UPDATE
-                // in stagingToFactStep, which runs BEFORE this step).
-                phase1.add(runAsync(exec, "sum_daily_full", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_full (tenant_id, business_date, merchant_id, store_id, mcc, " +
-                        "channel, destination, card_scheme, card_type, is_opt_in, " +
-                        "total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, " +
-                        "total_net_revenue, dcc_optin_count) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
-                        "COALESCE(t.type,'POS'), f.destination, " +
-                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
-                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
-                        "     ELSE f.card_scheme END, " +
-                        "f.card_type, f.dcc, " +
-                        "COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), " +
-                        "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
-                        "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)), " +
-                        "COUNT(CASE WHEN f.dcc IS TRUE THEN 1 END) " +
-                        "FROM fact_transaction f " +
-                        "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
-                        "LEFT JOIN dim_store st ON f.store_id=st.store_id AND st.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
-                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
-                        "COALESCE(t.type,'POS'), f.destination, " +
-                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
-                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END, " +
-                        "f.card_type, f.dcc " +
-                        "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, mcc, channel, destination, card_scheme, card_type, is_opt_in) " +
-                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
-                        "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
-                        "total_ecom_fee=EXCLUDED.total_ecom_fee, total_net_revenue=EXCLUDED.total_net_revenue, " +
-                        "dcc_optin_count=EXCLUDED.dcc_optin_count",
-                        tenantId)));
-
-                // sum_daily_local_debit_bin — the Local Debit Bank Dashboard
-                // pre-aggregate: day x merchant x 6-digit BIN, restricted to
-                // DOMESTIC DEBIT rows only. Same source, merchant rule, signed
-                // settlement volume/msf, and card_type normalization as
-                // sum_daily_full, so matched banks + the query-time "Other
-                // Banks" bucket reconcile exactly with that table's
-                // DOMESTIC x DEBIT cell. Strict destination='DOMESTIC' —
-                // NULL/UNMAPPED tokens must not silently count as local.
-                // Bank names are NOT stored here: the dashboard joins
-                // ref_tenant_bin_bank at query time, so a BIN re-upload
-                // re-labels all history with no rebuild. PANs not starting
-                // with 6 clear digits land in the visible '??????' bucket.
-                // Any change here MUST be mirrored in
-                // BulkMigrationService.rebuildSummaries and
-                // BackfillIngestionService.
-                phase1.add(runAsync(exec, "sum_daily_local_debit_bin", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_local_debit_bin (tenant_id, business_date, merchant_id, bin6, " +
-                        "total_txns, total_volume, total_msf) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
-                        "CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END, " +
-                        "COUNT(*), SUM(f.store_base_currency_amount), SUM(COALESCE(f.msf,0)) " +
-                        "FROM fact_transaction f " +
-                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL " +
-                        "AND UPPER(COALESCE(NULLIF(TRIM(f.card_type),''),'')) = 'DEBIT' " +
-                        "AND f.destination = 'DOMESTIC' " +
-                        "AND DATE(f.payment_date) IN " + dateScope +
-                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, " +
-                        "CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END " +
-                        "ON CONFLICT (tenant_id, business_date, merchant_id, bin6) " +
-                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, " +
-                        "total_msf=EXCLUDED.total_msf",
-                        tenantId)));
-
-                // sum_daily_explorer — the Data Explorer history pre-aggregate.
-                // Same fact scan as sum_daily_full but at the EXPLORER grain:
-                //   day x merchant x store x terminal x transaction_type x scheme
-                //     x card_type x destination x channel x txn_currency x is_opt_in
-                // Carries BOTH amount bases (cardholder txn_currency_amount and
-                // settlement store_base_currency_amount) plus msf/vat/settled/
-                // interchange/scheme_fee so the Data Explorer can serve every
-                // measure it previously read from staging — but historically.
-                // Row-level identifiers (arn/rrn/card_number) are deliberately
-                // NOT here; the Transactions page owns row grain. Clean-slate
-                // DELETE above covers this table, so the ON CONFLICT clause is a
-                // belt-and-braces no-op in practice (NULL dim values never match
-                // in a UNIQUE constraint — same accepted behavior as
-                // sum_daily_full, made safe by the preceding DELETE).
-                phase1.add(runAsync(exec, "sum_daily_explorer", () ->
-                    jdbcTemplate.update("INSERT INTO sum_daily_explorer (tenant_id, business_date, merchant_id, store_id, terminal_id, " +
-                        "transaction_type, card_scheme, card_type, destination, channel, txn_currency, store_base_currency, is_opt_in, " +
-                        "total_txns, total_txn_currency_amount, total_base_volume, total_msf, total_vat, total_settled, " +
-                        "total_interchange, total_scheme_fee) " +
-                        "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
-                        "f.transaction_type, " +
-                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
-                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') " +
-                        "     ELSE f.card_scheme END, " +
-                        "f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc, " +
-                        "COUNT(*), SUM(COALESCE(f.txn_currency_amount,0)), SUM(COALESCE(f.store_base_currency_amount,0)), " +
-                        "SUM(COALESCE(f.msf,0)), SUM(COALESCE(f.vat,0)), SUM(COALESCE(f.total_amount_settled,0)), " +
-                        "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)) " +
-                        "FROM fact_transaction f " +
-                        "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
-                        "WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) IN " + dateScope +
-                        " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id, " +
-                        "f.transaction_type, " +
-                        "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
-                        "     THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END, " +
-                        "f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc " +
-                        "ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, transaction_type, card_scheme, card_type, destination, channel, txn_currency, is_opt_in) " +
-                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_txn_currency_amount=EXCLUDED.total_txn_currency_amount, " +
-                        "total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, total_vat=EXCLUDED.total_vat, " +
-                        "total_settled=EXCLUDED.total_settled, total_interchange=EXCLUDED.total_interchange, " +
-                        "total_scheme_fee=EXCLUDED.total_scheme_fee, store_base_currency=EXCLUDED.store_base_currency",
-                        tenantId)));
-
-                // Merchant attributes serialized into one task to prevent B-tree deadlocks
-                phase1.add(runAsync(exec, "attr-ALL", () -> {
-                    int totalRows = 0;
-                    final String schemeExpr =
-                        "UPPER(CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
-                        "          THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') " +
-                        "          ELSE card_scheme END)";
-                    totalRows += jdbcTemplate.update(
-                        "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
-                        "SELECT tenant_id, merchant_id, DATE(payment_date), 'CARD_SCHEME', " + schemeExpr + ", COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
-                        " GROUP BY tenant_id, merchant_id, DATE(payment_date), " + schemeExpr +
-                        " ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
-                    for (String ac : new String[]{"CARD_TYPE:card_type","DESTINATION:destination","TRANSACTION_TYPE:transaction_type"}) {
-                        String[] parts = ac.split(":");
-                        totalRows += jdbcTemplate.update(String.format(
-                            "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
-                            "SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(store_base_currency_amount) " +
-                            "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN %s " +
-                            "GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(%s,'UNKNOWN')) " +
-                            "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                            "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume",
-                            parts[0], parts[1], dateScope, parts[1]), tenantId);
-                    }
-                    totalRows += jdbcTemplate.update(
-                        "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
-                        "SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND transaction_date IS NOT NULL AND DATE(payment_date) IN " + dateScope +
-                        " GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date) " +
-                        "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
-                    // Clear the whole TXN_SIZE_BUCKET slice for this date scope before
-                    // reinserting. Previously only the legacy '1K+' label was deleted,
-                    // which was enough while the band labels were fixed constants. Now
-                    // that bands are configurable per country, a relabelled or retuned
-                    // band would otherwise leave its old rows behind and double-count
-                    // (e.g. a BH tenant's historical '< 50' alongside its new '< 5').
-                    jdbcTemplate.update(
-                        "DELETE FROM sum_daily_merchant_attribute WHERE tenant_id=? AND business_date IN " + dateScope +
-                        " AND attribute_type='TXN_SIZE_BUCKET'", tenantId);
-                    // TICKET-SIZE BUCKETS (config-driven since 2026-08-11). These were
-                    // the hardcoded constants 50/100/250/500/1000/5000 compared raw
-                    // against the settlement amount — AED-shaped numbers. 50 BHD is a
-                    // large ticket and 50 EGP is a trivial one, so the same band meant
-                    // three different things across three tenants and the distribution
-                    // was not comparable to anything. Bands now come from
-                    // ticket_size_bucket, per country (AE keeps its historical values,
-                    // so the UAE tenant is unchanged), with a per-tenant override.
-                    // A transaction whose amount matches no band is skipped rather
-                    // than dumped into a catch-all, so a gap in the configuration is
-                    // visible as a missing row instead of a wrong one.
-                    totalRows += jdbcTemplate.update(
-                        "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
-                        "SELECT ft.tenant_id, ft.merchant_id, DATE(ft.payment_date), 'TXN_SIZE_BUCKET', tb.label, " +
-                        "       COUNT(*), SUM(ft.store_base_currency_amount) " +
-                        "FROM fact_transaction ft " +
-                        "LEFT JOIN tenant tn ON tn.tenant_id = ft.tenant_id " +
-                        "CROSS JOIN LATERAL ( " +
-                        "  SELECT b.label FROM ticket_size_bucket b " +
-                        "  WHERE b.country_code = COALESCE(tn.home_country_code,'AE') " +
-                        "    AND (b.tenant_id IS NULL OR b.tenant_id = ft.tenant_id) " +
-                        "    AND (b.min_amount IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) >= b.min_amount) " +
-                        "    AND (b.max_amount IS NULL OR ABS(COALESCE(ft.store_base_currency_amount,0)) <  b.max_amount) " +
-                        "  ORDER BY (b.tenant_id IS NOT NULL) DESC, b.seq ASC LIMIT 1 " +
-                        ") tb " +
-                        "WHERE ft.tenant_id=? AND ft.merchant_id IS NOT NULL AND DATE(ft.payment_date) IN " + dateScope +
-                        " GROUP BY ft.tenant_id, ft.merchant_id, DATE(ft.payment_date), tb.label " +
-                        "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
-                    totalRows += jdbcTemplate.update(
-                        "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
-                        "SELECT tenant_id, merchant_id, DATE(payment_date), 'COUNTRY', UPPER(TRIM(txn_currency)), COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope +
-                        " AND UPPER(destination) = 'INTERNATIONAL' AND NULLIF(TRIM(txn_currency), '') IS NOT NULL " +
-                        "GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(TRIM(txn_currency)) HAVING COUNT(*) > 0 " +
-                        "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
-                    return totalRows;
-                }));
-
-                phase1.add(runAsync(exec, "sum_monthly_card", () ->
-                    jdbcTemplate.update("INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend) " +
-                        "SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(store_base_currency_amount) " +
-                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN " + monthScope +
-                        " GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date,'YYYYMM'), card_number " +
-                        "ON CONFLICT (tenant_id, merchant_id, month_key, card_number) DO UPDATE SET " +
-                        "visit_count=EXCLUDED.visit_count, total_spend=EXCLUDED.total_spend", tenantId)));
-
-                java.util.concurrent.CompletableFuture.allOf(phase1.toArray(new java.util.concurrent.CompletableFuture[0])).join();
-
-                java.util.List<java.util.concurrent.CompletableFuture<Void>> phase2 = new java.util.ArrayList<>();
-                phase2.add(runAsync(exec, "sum_monthly_bank", () ->
-                    jdbcTemplate.update("INSERT INTO sum_monthly_bank (tenant_id, month_key, total_txns, total_volume, total_base_volume, total_msf, " +
-                        "total_interchange, total_scheme_fee, total_ecom_fee, total_vat, total_net_revenue) " +
-                        "SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), SUM(total_txns), SUM(total_volume), SUM(COALESCE(total_base_volume,0)), " +
-                        "SUM(total_msf), SUM(total_interchange), SUM(total_scheme_fee), SUM(COALESCE(total_ecom_fee,0)), SUM(total_vat), SUM(total_net_revenue) " +
-                        "FROM sum_daily_bank WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN " + monthScope +
-                        " GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM') " +
-                        "ON CONFLICT (tenant_id, month_key) DO UPDATE SET " +
-                        "total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf, " +
-                        "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, total_ecom_fee=EXCLUDED.total_ecom_fee, " +
-                        "total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue", tenantId)));
-                // sum_monthly_insight — month-grain rollup of sum_daily_insight (phase1).
-                // Powers WIDE-range Explorer/Business queries: a year reads ~12 month
-                // rows per dimensional combo instead of 365 day rows. Additive SUMs, so
-                // monthly = SUM(daily) reconciles exactly. Mirrors the daily grain with
-                // business_date replaced by month_key (YYYYMM).
-                phase2.add(runAsync(exec, "sum_monthly_insight", () ->
-                    jdbcTemplate.update("INSERT INTO sum_monthly_insight (tenant_id, month_key, merchant_id, store_id, terminal_id, " +
-                        "card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf) " +
-                        "SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), merchant_id, store_id, terminal_id, " +
-                        "card_scheme, card_type, destination, channel, is_opt_in, " +
-                        "SUM(total_txns), SUM(total_volume), SUM(total_msf) " +
-                        "FROM sum_daily_insight WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN " + monthScope +
-                        " GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM'), merchant_id, store_id, terminal_id, " +
-                        "card_scheme, card_type, destination, channel, is_opt_in " +
-                        "ON CONFLICT (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in) " +
-                        "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf",
-                        tenantId)));
-                phase2.add(runAsync(exec, "top_spending_customer", () ->
-                    jdbcTemplate.update("WITH DailyCustSpend AS (SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number, " +
-                        "SUM(store_base_currency_amount) as total_spend FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) IN " + dateScope +
-                        " GROUP BY tenant_id, merchant_id, DATE(payment_date), card_number), " +
-                        "Ranked AS (SELECT *, ROW_NUMBER() OVER(PARTITION BY tenant_id, merchant_id, b_date ORDER BY total_spend DESC) as rn FROM DailyCustSpend) " +
-                        "UPDATE sum_daily_merchant s SET top_spending_customer_id=r.card_number, top_spending_amount=r.total_spend " +
-                        "FROM Ranked r WHERE s.tenant_id=r.tenant_id AND s.merchant_id=r.merchant_id AND s.business_date=r.b_date AND r.rn=1 AND s.tenant_id = ?",
-                        tenantId, tenantId)));
-                java.util.concurrent.CompletableFuture.allOf(phase2.toArray(new java.util.concurrent.CompletableFuture[0])).join();
-
-            } finally { exec.shutdown(); }
-
-            log.info(String.format("populateSummary completed in %.1fs", (System.currentTimeMillis() - start) / 1000.0));
+            summaryPopulationService.populateForDates(tenantId, distinctDates);
             return RepeatStatus.FINISHED;
-            } finally {
-                if (lockConnFinal != null) {
-                    try (java.sql.PreparedStatement ps = lockConnFinal.prepareStatement("SELECT pg_advisory_unlock(?)")) {
-                        ps.setLong(1, lockKey);
-                        try (java.sql.ResultSet rs = ps.executeQuery()) { rs.next(); }
-                    } catch (Exception unlockErr) {
-                        log.warn("pg_advisory_unlock failed (non-fatal): {}", unlockErr.getMessage());
-                    }
-                    try { lockConnFinal.close(); } catch (Exception ignore) {}
-                }
-            }
         };
-    }
-
-    private static java.util.concurrent.CompletableFuture<Void> runAsync(
-            java.util.concurrent.ExecutorService exec, String name,
-            java.util.function.Supplier<Integer> work) {
-        return java.util.concurrent.CompletableFuture.runAsync(() -> {
-            long t = System.currentTimeMillis();
-            try {
-                int rows = work.get();
-                org.slf4j.LoggerFactory.getLogger(TransactionJobConfig.class).warn(
-                    "  [populateSummary] {} {} rows in {}s",
-                    String.format("%-25s", name), rows,
-                    String.format("%.2f", (System.currentTimeMillis() - t) / 1000.0));
-            } catch (Exception e) {
-                org.slf4j.LoggerFactory.getLogger(TransactionJobConfig.class).error(
-                    "  [populateSummary] {} FAILED in {}s: {}",
-                    String.format("%-25s", name),
-                    String.format("%.2f", (System.currentTimeMillis() - t) / 1000.0),
-                    e.getMessage());
-                throw e;
-            }
-        }, exec);
     }
 
     @Bean public Step calculateBusinessMetricsStep(Tasklet calculateBusinessMetricsTasklet) {
         return new StepBuilder("calculateBusinessMetricsStep", jobRepository)
             .tasklet(calculateBusinessMetricsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
@@ -2282,15 +1881,42 @@ public class TransactionJobConfig {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
             long start = System.currentTimeMillis();
+            // Run-scope (2026-08-29): only THIS file's staged dates — see stagingToFact.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhere = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";
             java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere + " ORDER BY d",
                 java.sql.Date.class, tenantId);
+            // RETENTION SHORT-CIRCUIT (2026-08-29): the prune at the end of this
+            // tasklet deletes every snapshot with calc_date < CURRENT_DATE -
+            // snapshotRetentionDays — so computing a snapshot for an older date is
+            // insert-then-delete of the same rows within one run. On a historical
+            // backfill that was the ENTIRE step: the 21-file BH re-ingest spent an
+            // average 196s/file building Jan–Jul snapshots the same tasklet
+            // immediately pruned. Filter those dates out up front; the surviving
+            // rows are byte-identical to the old behaviour's end state.
+            if (snapshotRetentionDays > 0 && !distinctDates.isEmpty()) {
+                // Cutoff from the DATABASE clock — the prune below compares against
+                // CURRENT_DATE, so deriving this from the JVM clock could disagree
+                // by a day across a timezone skew and drop a boundary snapshot.
+                java.time.LocalDate cutoff = jdbcTemplate.queryForObject(
+                    "SELECT CURRENT_DATE - ?", java.time.LocalDate.class, snapshotRetentionDays);
+                int before = distinctDates.size();
+                distinctDates.removeIf(d -> d.toLocalDate().isBefore(cutoff));
+                if (distinctDates.size() < before) {
+                    log.info("businessMetrics: skipped {} date(s) older than the {}-day snapshot retention "
+                        + "window (their snapshots would be pruned by this same run)",
+                        before - distinctDates.size(), snapshotRetentionDays);
+                }
+            }
             if (distinctDates.isEmpty()) {
                 log.info("businessMetrics: no dates to process - skipping");
                 return RepeatStatus.FINISHED;
             }
             String dateScope = buildSafeDateInList(distinctDates);
+            // Sargable companion for the fact_transaction scan below — see dateRangeClause().
+            final String rngBare = dateRangeClause(distinctDates, "");
 
             // FIX: clean-slate the affected calc_dates before re-inserting. These two
             // tables are ON CONFLICT (tenant, merchant, calc_date) DO UPDATE and only
@@ -2306,6 +1932,18 @@ public class TransactionJobConfig {
                 log.warn("  [businessMetrics] clean-slate activity {} + score {} rows", delAct, delScore);
             }
 
+            // PERF (2026-08-29): a CONSTANT payment_date envelope for the fact join
+            // below. The per-row bounds `f.payment_date >= d.target_date - 60d`
+            // reference an inline VALUES column, which the planner cannot use for
+            // partition pruning — so on a hash join the WHOLE tenant history of
+            // fact_transaction is scanned (the step's own comment records a
+            // 208s -> 811s regression). distinctDates is sorted ASC; the widest
+            // window any target_date needs is [min-60d, max+1d), and adding it as
+            // a constant predicate prunes to just those month partitions. It never
+            // changes the result: every row the per-row bounds admit lies inside it.
+            final String actWindow =
+                " AND f.payment_date >= DATE '" + distinctDates.get(0).toLocalDate().minusDays(60) + "' " +
+                " AND f.payment_date <  DATE '" + distinctDates.get(distinctDates.size() - 1).toLocalDate().plusDays(1) + "' ";
             jdbcTemplate.update("INSERT INTO merchant_activity_summary (tenant_id, merchant_id, calc_date, " +
                 "first_txn_date, last_txn_date, last_7d_cnt, last_7d_value, last_30d_cnt, last_30d_value, status, status_change_date) " +
                 "SELECT m.tenant_id, m.merchant_id, d.target_date, MIN(f.payment_date), MAX(f.payment_date), " +
@@ -2331,9 +1969,10 @@ public class TransactionJobConfig {
                 // and status were computed from the future.
                 "  AND f.payment_date >= d.target_date - INTERVAL '60 days' " +
                 "  AND f.payment_date <  d.target_date + INTERVAL '1 day' " +
+                actWindow +
                 "WHERE m.tenant_id = ? " +
                 "AND m.merchant_id IN (SELECT DISTINCT merchant_id FROM fact_transaction WHERE tenant_id = ? " +
-                "  AND merchant_id IS NOT NULL AND DATE(payment_date) IN " + dateScope + ") " +
+                "  AND merchant_id IS NOT NULL AND " + rngBare + "DATE(payment_date) IN " + dateScope + ") " +
                 "GROUP BY m.tenant_id, m.merchant_id, d.target_date " +
                 "ON CONFLICT (tenant_id, merchant_id, calc_date) DO UPDATE SET " +
                 "first_txn_date=EXCLUDED.first_txn_date, last_txn_date=EXCLUDED.last_txn_date, " +
@@ -2341,6 +1980,10 @@ public class TransactionJobConfig {
                 "last_30d_cnt=EXCLUDED.last_30d_cnt, last_30d_value=EXCLUDED.last_30d_value, " +
                 "status=EXCLUDED.status, status_change_date=EXCLUDED.status_change_date",
                 tenantId, tenantId);
+
+            // Fresh stats for the score SELECT below and for the attrition/
+            // dashboard reads — this table was just mass-deleted + reinserted.
+            try { jdbcTemplate.execute("ANALYZE merchant_activity_summary"); } catch (Exception ignore) {}
 
             jdbcTemplate.update("INSERT INTO merchant_opportunity_score (tenant_id, merchant_id, score, reason_tags, calc_date) " +
                 "SELECT tenant_id, merchant_id, CASE WHEN last_30d_value > 1000 THEN 80 ELSE 40 END, 'Automated Score', calc_date " +
@@ -2377,13 +2020,24 @@ public class TransactionJobConfig {
     @Bean public Step scoreMlStep(Tasklet scoreMlTasklet) {
         return new StepBuilder("scoreMlStep", jobRepository)
             .tasklet(scoreMlTasklet, transactionManager)
-            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
-    public Tasklet scoreMlTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+    public Tasklet scoreMlTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("#{jobParameters['deferReporting']}") String deferReporting) {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
+            // DEFERRED REPORTING (2026-08-29): churn scoring is TENANT-WIDE — it
+            // reads the whole merchant base, so in a sequential server-folder run
+            // each file's execution is overwritten by the next file's ~25 minutes
+            // later and only the final one matters. The folder path sets
+            // deferReporting=true per file and runs reportingOnlyJob once at the
+            // end over the complete data.
+            if ("true".equals(deferReporting)) {
+                log.info("scoreMl: deferred (sequential folder load) — will run once in reportingOnlyJob");
+                return RepeatStatus.FINISHED;
+            }
             long start = System.currentTimeMillis();
             try {
                 int scored = churnScoringService.trainAndScore(tenantId);
@@ -2406,13 +2060,20 @@ public class TransactionJobConfig {
     @Bean public Step computeSegmentsStep(Tasklet computeSegmentsTasklet) {
         return new StepBuilder("computeSegmentsStep", jobRepository)
             .tasklet(computeSegmentsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
-    public Tasklet computeSegmentsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+    public Tasklet computeSegmentsTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId,
+            @Value("#{jobParameters['deferReporting']}") String deferReporting) {
         return (contribution, chunkContext) -> {
             if (tenantId == null) return RepeatStatus.FINISHED;
+            // Tenant-wide as-of-latest-date computation — same deferral rationale
+            // as scoreMlTasklet above.
+            if ("true".equals(deferReporting)) {
+                log.info("computeSegments: deferred (sequential folder load) — will run once in reportingOnlyJob");
+                return RepeatStatus.FINISHED;
+            }
             long start = System.currentTimeMillis();
             try {
                 int n = merchantSegmentationService.computeForTenant(tenantId);
@@ -2435,7 +2096,7 @@ public class TransactionJobConfig {
     @Bean public Step calculateDailyDashboardMetricsStep(Tasklet calculateDailyDashboardMetricsTasklet) {
         return new StepBuilder("calculateDailyDashboardMetricsStep", jobRepository)
             .tasklet(calculateDailyDashboardMetricsTasklet, transactionManager)
-            .transactionAttribute(noTxn()).listener(mdcStepListener).build();
+            .transactionAttribute(noTxn()).listener(mdcStepListener).listener(ingestRunStepListener).build();
     }
 
     @Bean @StepScope
@@ -2446,9 +2107,12 @@ public class TransactionJobConfig {
             long start = System.currentTimeMillis();
 
             // PERF FIX: derive months from distinctDates, avoiding a second stg_trnx_raw scan.
+            // Run-scope (2026-08-29): only THIS file's staged dates — see stagingToFact.
+            final Long ingestRunId = ingestRunIdOf(chunkContext);
+            final String stgRunWhere = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";
             java.util.List<java.sql.Date> distinctDates = jdbcTemplate.queryForList(
                 "SELECT DISTINCT DATE(payment_date) AS d FROM stg_trnx_raw " +
-                "WHERE tenant_id = ? AND payment_date IS NOT NULL ORDER BY d",
+                "WHERE tenant_id = ? AND payment_date IS NOT NULL" + stgRunWhere + " ORDER BY d",
                 java.sql.Date.class, tenantId);
             java.util.Set<String> monthSet = new java.util.LinkedHashSet<>();
             for (java.sql.Date d : distinctDates) {
@@ -2458,55 +2122,20 @@ public class TransactionJobConfig {
 
             int totalSaved = 0;
             for (String monthYear : monthSet) {
-                String[] parts = monthYear.split("-");
-                int year = Integer.parseInt(parts[0]); int month = Integer.parseInt(parts[1]);
-                LocalDate monthStart = LocalDate.of(year, month, 1);
-                LocalDate monthEnd = monthStart.withDayOfMonth(monthStart.lengthOfMonth());
-
-                List<SumDailyMerchant> dailyRecs = dailyMerchantRepo.findByTenantIdAndDateRange(tenantId, monthStart, monthEnd);
-                if (dailyRecs.isEmpty()) continue;
-
                 // FIX: clean-slate this month's monthly-merchant-metrics before rebuild.
                 // sum_daily_merchant was just cleanly rebuilt in populateSummary, so
                 // deleting the month here and re-deriving guarantees no orphan merchant
                 // rows survive from an earlier upload that touched a different day of
                 // the same month. month_year is the YYYY-MM VARCHAR key.
-                int delMonthly = jdbcTemplate.update(
-                    "DELETE FROM sum_monthly_merchant_metrics WHERE tenant_id = ? AND month_year = ?",
-                    tenantId, monthYear);
-                if (delMonthly > 0) log.warn("  [dashboardMetrics] clean-slate {} monthly rows for {}", delMonthly, monthYear);
-
-                java.util.Map<Long, List<SumDailyMerchant>> grouped = dailyRecs.stream()
-                        .collect(java.util.stream.Collectors.groupingBy(SumDailyMerchant::getMerchantId));
-
-                java.util.Map<Long, SumMonthlyMerchantMetrics> existingByMerchant = new java.util.HashMap<>();
-                try {
-                    java.util.List<SumMonthlyMerchantMetrics> existingRows = monthlyMetricsRepo.findAllByTenantAndMonth(tenantId, monthYear);
-                    for (SumMonthlyMerchantMetrics e : existingRows) existingByMerchant.put(e.getMerchantId(), e);
-                } catch (Exception ex) {
-                    log.warn("bulk fetch of monthly metrics failed, falling back: {}", ex.getMessage());
-                    for (Long mId : grouped.keySet()) {
-                        monthlyMetricsRepo.findByMerchantAndMonth(tenantId, mId, monthYear)
-                            .ifPresent(e -> existingByMerchant.put(mId, e));
-                    }
-                }
-
-                java.util.List<SumMonthlyMerchantMetrics> toSave = new java.util.ArrayList<>(grouped.size());
-                for (java.util.Map.Entry<Long, List<SumDailyMerchant>> entry : grouped.entrySet()) {
-                    Long merchantId = entry.getKey();
-                    SumMonthlyMerchantMetrics newMetrics = merchantMetricCalculator.calculateMetrics(
-                        entry.getValue(), tenantId, merchantId, monthYear);
-                    SumMonthlyMerchantMetrics existing = existingByMerchant.get(merchantId);
-                    if (existing != null) {
-                        newMetrics.setMetricId(existing.getMetricId());
-                        newMetrics.setCreatedAt(existing.getCreatedAt());
-                    }
-                    toSave.add(newMetrics);
-                }
-                if (!toSave.isEmpty()) {
-                    monthlyMetricsRepo.saveAll(toSave);
-                    totalSaved += toSave.size();
-                }
+                // Passed as the beforeWrite hook so it still fires ONLY when the month
+                // has daily rows to rebuild from — deleting for an empty month would
+                // discard good metrics rather than refresh them.
+                totalSaved += monthlyMetricsRebuilder.rebuildMonth(tenantId, monthYear, () -> {
+                    int delMonthly = jdbcTemplate.update(
+                        "DELETE FROM sum_monthly_merchant_metrics WHERE tenant_id = ? AND month_year = ?",
+                        tenantId, monthYear);
+                    if (delMonthly > 0) log.warn("  [dashboardMetrics] clean-slate {} monthly rows for {}", delMonthly, monthYear);
+                });
             }
             log.info(String.format("dashboardMetrics completed in %.1fs (saved %d rows across %d months)",
                 (System.currentTimeMillis() - start) / 1000.0, totalSaved, monthSet.size()));
@@ -2534,23 +2163,10 @@ public class TransactionJobConfig {
         sync.setDelegate(reader); return sync;
     }
 
-    // PERF FIX: uses static ISO_DATE_PATTERN - no Pattern.compile() per call.
+    // Canonical implementation lives in IngestScopes (shared with the
+    // backfill / bulk-migration rebuild paths since 2026-08-28).
     private static String buildSafeDateInList(java.util.List<java.sql.Date> dates) {
-        if (dates == null || dates.isEmpty()) return "(NULL)";
-        StringBuilder sb = new StringBuilder("(");
-        boolean first = true;
-        for (java.sql.Date d : dates) {
-            if (d == null) continue;
-            String s = d.toString();
-            if (!ISO_DATE_PATTERN.matcher(s).matches()) {
-                throw new IllegalStateException("Refusing to inline non-ISO date: '" + s + "'");
-            }
-            if (!first) sb.append(',');
-            sb.append("DATE '").append(s).append("'");
-            first = false;
-        }
-        sb.append(")");
-        return sb.toString();
+        return com.acquira.batch.service.IngestScopes.dateInList(dates);
     }
 
     private java.math.BigDecimal parseDecimal(String val) {
@@ -2574,6 +2190,20 @@ public class TransactionJobConfig {
         java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("M/d/yyyy"),
         java.time.format.DateTimeFormatter.ofPattern("M/d/yy"),
+        // BH feed (2026-08-24): dates arrive as '01-AUG-26' / '31-JUL-26'.
+        // Month names must parse CASE-INSENSITIVELY ('AUG' vs the default 'Aug')
+        // and in ENGLISH regardless of the server's default locale — a pattern
+        // formatter alone would silently NULL every payment_date, and the fact
+        // insert's `payment_date IS NOT NULL` filter would then drop 100% of
+        // rows. yy pivots to 2000-2099 (SmartResolverStyle default base 2000).
+        new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("dd-MMM-yy").toFormatter(java.util.Locale.ENGLISH),
+        new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("dd-MMM-yyyy").toFormatter(java.util.Locale.ENGLISH),
+        new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("d-MMM-yy").toFormatter(java.util.Locale.ENGLISH),
+        new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("d-MMM-yyyy").toFormatter(java.util.Locale.ENGLISH),
     };
 
     private java.time.LocalDateTime parseDate(String val) {
@@ -2588,7 +2218,13 @@ public class TransactionJobConfig {
                 if (fraction > 0) base = base.plusSeconds(Math.round(fraction * 86400));
                 return base;
             }
-            if (v.contains("T")) return java.time.LocalDateTime.parse(v);
+            // ISO-8601 fast path. Guarded try: '21-OCT-25' also contains a 'T'
+            // (the only month abbreviation that does), and before 2026-09-02 it
+            // was routed here, threw, and NULLed every payment_date in every
+            // October BH file. On failure fall through to the pattern lists.
+            if (v.contains("T")) {
+                try { return java.time.LocalDateTime.parse(v); } catch (Exception ignored) {}
+            }
             if (v.contains(" ")) {
                 for (java.time.format.DateTimeFormatter fmt : DT_FORMATTERS) {
                     try { return java.time.LocalDateTime.parse(v, fmt); } catch (Exception ignored) {}

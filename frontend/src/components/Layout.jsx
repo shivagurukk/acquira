@@ -10,6 +10,8 @@ import NotificationBell from './NotificationBell';
 import ShortcutsPanel from './ShortcutsPanel';
 import DataFreshness from './DataFreshness';
 import DashboardBackdrop from './DashboardBackdrop';
+import { setDisplayMode } from '../utils/formatters';
+import { USD_PER_UNIT, FX_RATE_AS_OF } from '../config/fxRates';
 import './sidebar.css';
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -19,6 +21,29 @@ const COLLAPSE_KEY = 'acquira_sb_collapsed';
 
 // Environment tag shown beside the wordmark (PROD / UAT).
 const ENV_TAG = import.meta.env.VITE_ENV_LABEL || (import.meta.env.PROD ? 'PROD' : 'UAT');
+
+// ── Executive display currency (local ↔ USD) ───────────────────────
+// The routes registered under sys_menu category 'EXECUTIVE'. On these pages
+// (and ONLY these — that is the product decision) the topbar shows a currency
+// dropdown; choosing USD converts every money figure client-side at the
+// hardcoded indicative rates in config/fxRates.js via the display layer in
+// utils/formatters.js. Everywhere else the mode is forced back to LOCAL.
+const CCY_TOGGLE_PATHS = new Set([
+    '/dashboard',                       // Executive Dashboard
+    '/business/ceo-volume-revenue',     // Volume & Revenue
+    '/business/loss-making',            // Loss-Making Merchants
+    '/business/attrition',              // Attrition Report
+    '/business/top-performers',         // Top Performers
+    '/sales/executive',                 // Sales Hierarchy
+    '/executive/sales',                 // Executive Sales Pulse
+    '/executive/daily-merchant',        // Daily Merchant Performance
+    '/executive/net-spread',            // Net Spread Dashboard
+]);
+const CCY_KEY = 'acquira_display_ccy';
+function loadUsdDisplay() {
+    try { return localStorage.getItem(CCY_KEY) === 'USD'; }
+    catch { return false; }
+}
 
 // ── Category grouping ──────────────────────────────────────────────
 // Dark-rail sidebar: groups are what the user is DOING (reporting first,
@@ -62,7 +87,7 @@ const NavItem = ({ menu, active, muted, onClick }) => {
 const Layout = () => {
     const navigate  = useNavigate();
     const location  = useLocation();
-    const { menus, logout, username, activeTenant, activeTenantId, tenantVersion } = useAuth();
+    const { menus, logout, username, activeTenant, activeTenantId, tenantVersion, currencyCode } = useAuth();
     const { isDark, toggleTheme } = useTheme();
     const isMobile  = useMediaQuery('(max-width:768px)');
 
@@ -83,6 +108,24 @@ const Layout = () => {
     }, []);
 
     const w = isMobile ? DRAWER_W : (collapsed ? COLLAPSE_W : DRAWER_W);
+
+    // ── Executive display currency ────────────────────────────────
+    const [usdDisplay, setUsdDisplayState] = useState(loadUsdDisplay);
+    const setUsdDisplay = useCallback((v) => {
+        setUsdDisplayState(v);
+        try { localStorage.setItem(CCY_KEY, v ? 'USD' : 'LOCAL'); } catch { /* ignore */ }
+    }, []);
+    const ccyPage = CCY_TOGGLE_PATHS.has(location.pathname);
+    // The toggle only exists when there is something to convert: a known
+    // tenant currency, with a hardcoded rate, that isn't already USD.
+    const canToggleCcy = ccyPage && !!currencyCode && currencyCode !== 'USD'
+        && !!USD_PER_UNIT[currencyCode];
+    const displayMode = canToggleCcy && usdDisplay ? 'USD' : 'LOCAL';
+    // Pushed during render — not in an effect — so the children remounted by
+    // the keyed Outlet below always format with the already-current mode
+    // (parent effects run after child renders, which would leave the first
+    // paint in the previous currency).
+    setDisplayMode(displayMode);
 
     // ── Idle-prefetch the common landing pages once after first paint ──
     useEffect(() => { prefetchCommonRoutes(); }, []);
@@ -396,6 +439,25 @@ const Layout = () => {
 
             {/* Right actions */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                {/* Executive display currency (local ↔ USD) */}
+                {canToggleCcy && (
+                    <select
+                        value={usdDisplay ? 'USD' : 'LOCAL'}
+                        onChange={(e) => setUsdDisplay(e.target.value === 'USD')}
+                        aria-label="Display currency"
+                        title={`Executive pages display currency. USD figures are converted at 1 ${currencyCode} = ${USD_PER_UNIT[currencyCode]} USD (indicative; as of ${FX_RATE_AS_OF}).`}
+                        style={{
+                            height: 28, borderRadius: 'var(--radius-sm)',
+                            background: 'var(--bg-card)', border: '1px solid var(--border)',
+                            color: usdDisplay ? 'var(--primary)' : 'var(--text-secondary)',
+                            fontFamily: 'var(--font-mono)', fontSize: 11,
+                            padding: '0 6px', cursor: 'pointer',
+                        }}
+                    >
+                        <option value="LOCAL">{currencyCode} · local</option>
+                        <option value="USD">USD</option>
+                    </select>
+                )}
                 {/* Tenant tag */}
                 {activeTenant?.bankName && (
                     <div style={{
@@ -479,7 +541,10 @@ const Layout = () => {
             }}>
                 <DashboardBackdrop />
                 {topbar}
-                <div key={`tenant-${activeTenantId}-${tenantVersion}`} className="dx-above" style={{ flex: 1 }}>
+                {/* ccy in the key: flipping the display currency remounts the
+                    page so every memoised formatted string recomputes (data
+                    refetches hit the apiCache, so the remount is cheap). */}
+                <div key={`tenant-${activeTenantId}-${tenantVersion}-ccy-${displayMode}`} className="dx-above" style={{ flex: 1 }}>
                     <Outlet />
                 </div>
             </div>

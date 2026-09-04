@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/axios';
+import MarginGlossaryHint from '../components/MarginGlossary';
 import {
     RefreshCw, Search, Download, ChevronLeft, ChevronRight,
     ChevronUp, ChevronDown, CalendarRange, TrendingDown,
@@ -9,7 +11,10 @@ import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { showToast } from '../contexts/ToastContext';
-import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
+import {
+    createFmt, formatMsf, resolveDecimals,
+    isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
+} from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Volume & Revenue — MID x SID detail with the full fee stack:
@@ -40,8 +45,9 @@ const num = (v) => (v == null ? 0 : Number(v));
    tenant's decimals (3dp for BHD); without one it is a count. */
 const fullNum = (v, sym = '') => {
     if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    const d = resolveDecimals();
-    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+    // Executive display-currency toggle: convert + relabel when USD is active.
+    const d = isUsdDisplay(sym) ? 2 : resolveDecimals();
+    return displayCurrencyCode(sym) + ' ' + convertForDisplay(v, sym).toLocaleString('en-US',
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
@@ -71,6 +77,13 @@ const ALL_COLUMNS = [
     // losing 0.1% from a small one losing 40%). Server sorts on the ratio, with
     // undefined-ratio rows (zero volume) under NULLS LAST.
     { key: 'margin',      label: 'Net Margin %',   align: 'right', sortable: true },
+    // Net Spread = net margin + DCC acquirer share + rental (server-derived,
+    // NetSpreadSql). At MID x SID grain the ancillary lines are the store's
+    // own (DCC is SID-keyed; rental at store/terminal level); on the
+    // Loss-Making merchant rollup they are the merchant's whole amount.
+    { key: 'dcc',         label: 'DCC',            align: 'right', sortable: true },
+    { key: 'rental',      label: 'Rental',         align: 'right', sortable: true },
+    { key: 'spread',      label: 'Net Spread',     align: 'right', sortable: true },
 ];
 // lossOnly rolls the server-side query up to MID (merchant) level, so the
 // SID column has nothing meaningful to show — drop it from that view.
@@ -240,24 +253,34 @@ const CeoVolumeRevenue = ({
             // empty rather than writing a 0.00 that reads as a real measurement.
             const pctCell = (v) => (v == null ? '' : Number(v).toFixed(2));
             // Money columns follow the tenant's precision (3dp for BHD) instead
-            // of a hardcoded 2dp; MSF keeps its reconciliation digits.
-            const dp = resolveDecimals(currencyDecimals, currencyCode);
+            // of a hardcoded 2dp; MSF keeps its reconciliation digits. When the
+            // executive USD toggle is on, values are converted and written 2dp.
+            const dp = isUsdDisplay(currencyCode) ? 2 : resolveDecimals(currencyDecimals, currencyCode);
             const msfDp = Math.max(4, dp);
+            const cv = (v) => convertForDisplay(num(v), currencyCode);
+            const fx = usdRateInfo(currencyCode);
             // Header mirrors the on-screen column order: SID first, MID second.
+            const spreadHeads = ['DCC (Acquirer)', 'Rental', 'Net Spread', 'Net Spread %'];
             const header = lossOnly
                 ? ['MID', 'Merchant', 'Count', 'Volume', 'MSF',
-                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %']
+                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %', ...spreadHeads]
                 : ['SID', 'MID', 'Merchant', 'Count', 'Volume', 'MSF',
-                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
+                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %', ...spreadHeads];
             // The file must state its currency — the same numbers mean something
             // different in BHD (3dp) than in EGP/AED (2dp).
-            const lines = [`Currency,${currencyCode || currencySymbol || 'UNKNOWN'}`, header.join(',')];
+            const lines = [
+                `Currency,${displayCurrencyCode(currencyCode) || currencySymbol || 'UNKNOWN'}`,
+                ...(fx ? [`FX Rate,1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`] : []),
+                header.join(','),
+            ];
             rows.forEach(r => lines.push([
                 ...(lossOnly ? [esc(r.mid)] : [esc(r.sid), esc(r.mid)]), esc(r.name), num(r.txns),
-                num(r.volume).toFixed(dp), num(r.msf).toFixed(msfDp),
-                num(r.interchange).toFixed(dp), num(r.schemeFee).toFixed(dp),
-                num(r.ecomFee).toFixed(dp),
-                num(r.netRevenue).toFixed(dp), pctCell(r.marginPct),
+                cv(r.volume).toFixed(dp), cv(r.msf).toFixed(msfDp),
+                cv(r.interchange).toFixed(dp), cv(r.schemeFee).toFixed(dp),
+                cv(r.ecomFee).toFixed(dp),
+                cv(r.netRevenue).toFixed(dp), pctCell(r.marginPct),
+                cv(r.dccAcquirer).toFixed(dp), cv(r.rental).toFixed(dp),
+                cv(r.netSpread).toFixed(dp), pctCell(r.spreadPct),
             ].join(',')));
             // Always append the server's own period-total aggregate (unbounded, matches
             // the on-screen KPI band) as a trailing TOTAL row -- so the file is
@@ -268,10 +291,12 @@ const CeoVolumeRevenue = ({
                 lines.push([
                     esc('TOTAL'), ...(lossOnly ? [] : [esc('')]), esc(`${totalRows} rows (period total)`),
                     num(exportTotals.txns),
-                    num(exportTotals.volume).toFixed(dp), num(exportTotals.msf).toFixed(msfDp),
-                    num(exportTotals.interchange).toFixed(dp), num(exportTotals.schemeFee).toFixed(dp),
-                    num(exportTotals.ecomFee).toFixed(dp),
-                    num(exportTotals.netRevenue).toFixed(dp), pctCell(exportTotals.marginPct),
+                    cv(exportTotals.volume).toFixed(dp), cv(exportTotals.msf).toFixed(msfDp),
+                    cv(exportTotals.interchange).toFixed(dp), cv(exportTotals.schemeFee).toFixed(dp),
+                    cv(exportTotals.ecomFee).toFixed(dp),
+                    cv(exportTotals.netRevenue).toFixed(dp), pctCell(exportTotals.marginPct),
+                    cv(exportTotals.dccAcquirer).toFixed(dp), cv(exportTotals.rental).toFixed(dp),
+                    cv(exportTotals.netSpread).toFixed(dp), pctCell(exportTotals.spreadPct),
                 ].join(','));
             }
             const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -356,6 +381,7 @@ const CeoVolumeRevenue = ({
                             <span style={{ color: 'var(--border)' }}>·</span>
                             <span style={{ color: '#dc2626', fontWeight: 600 }}>net margin &lt; 0 only</span>
                         </>}
+                        <MarginGlossaryHint compact style={{ marginLeft: 2 }} />
                     </div>
                 </div>
 
@@ -463,7 +489,18 @@ const CeoVolumeRevenue = ({
                                 <StatTile icon={Layers}
                                     label={lossOnly ? 'Loss Rows' : 'Rows'}
                                     value={totalRows.toLocaleString()}
-                                    caption={`${num(totals.txns).toLocaleString()} transactions`}
+                                    caption={lossOnly && num(totals.rescuedRows) > 0 ? (
+                                        <span title="Merchants negative on net margin whose DCC and rental income bring them to break-even or better"
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                            {num(totals.txns).toLocaleString()} transactions
+                                            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                                                padding: '1px 7px', borderRadius: 999,
+                                                color: 'var(--success-text, #059669)',
+                                                background: 'var(--success-bg, rgba(5,150,105,0.10))' }}>
+                                                {num(totals.rescuedRows).toLocaleString()} RESCUED
+                                            </span>
+                                        </span>
+                                    ) : `${num(totals.txns).toLocaleString()} transactions`}
                                     tone={lossOnly ? 'danger' : undefined} />
                             </div>
                             <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
@@ -492,13 +529,40 @@ const CeoVolumeRevenue = ({
                                     tone={num(totals.netRevenue) >= 0 ? 'success' : 'danger'}
                                     title={fullNum(totals.netRevenue, currencySymbol)} />
                             </div>
-                            <div>
+                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
                                 <StatTile icon={Percent} label="Net Margin %"
                                     value={pct(totals.marginPct)}
                                     caption="net margin ÷ volume"
                                     tone={totals.marginPct == null ? undefined
                                         : num(totals.marginPct) >= 0 ? 'success' : 'danger'} />
                             </div>
+                            <div>
+                                <StatTile icon={Layers} label="Net Spread"
+                                    value={fmt.currency(num(totals.netSpread))}
+                                    caption={`margin + DCC ${fmt.currency(num(totals.dccAcquirer))} + rental ${fmt.currency(num(totals.rental))} · ${pct(totals.spreadPct)}`}
+                                    tone={num(totals.netSpread) >= 0 ? 'success' : 'danger'}
+                                    title={fullNum(totals.netSpread, currencySymbol)} />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Store-grain caveat, stated once under the band (not inside a
+                        tile): merchant-level rental/DCC is split evenly across the
+                        merchant's trading stores; merchants with no trading store in
+                        the window have nowhere to land and are called out here. */}
+                    {!lossOnly && totals && (num(totals.allocatedAncillary) > 0 || num(totals.unattributedAncillary) > 0) && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                            fontSize: 12, color: 'var(--text-secondary)', margin: '-6px 2px 12px' }}>
+                            <Layers size={13} style={{ opacity: 0.7 }} />
+                            {num(totals.allocatedAncillary) > 0 && (
+                                <span>{fmt.currency(num(totals.allocatedAncillary))} of merchant-level rental/DCC is split evenly across each merchant's trading stores.</span>
+                            )}
+                            {num(totals.unattributedAncillary) > 0 && (
+                                <span>{fmt.currency(num(totals.unattributedAncillary))} belongs to merchants with no trading store this period and is not in these rows — see{' '}
+                                    <Link to="/business/loss-making" style={{ color: 'var(--primary)', fontWeight: 600 }}>Loss-Making</Link> or{' '}
+                                    <Link to="/executive/net-spread" style={{ color: 'var(--primary)', fontWeight: 600 }}>Net Spread</Link>.
+                                </span>
+                            )}
                         </div>
                     )}
 
@@ -573,6 +637,22 @@ const CeoVolumeRevenue = ({
                                                     {pct(r.marginPct)}
                                                 </span>
                                             </td>
+                                            <td style={tdNum} title={fullNum(r.dccAcquirer, currencySymbol)}>{fmt.currency(num(r.dccAcquirer))}</td>
+                                            <td style={tdNum} title={fullNum(r.rental, currencySymbol)}>{fmt.currency(num(r.rental))}</td>
+                                            <td style={{ ...tdNum, fontWeight: 700,
+                                                color: num(r.netSpread) >= 0 ? 'var(--text)' : '#dc2626' }}
+                                                title={`${fullNum(r.netSpread, currencySymbol)} · ${pct(r.spreadPct)} of volume`}>
+                                                {fmt.currency(num(r.netSpread))}
+                                                {r.rescued && (
+                                                    <span title="Negative on net margin, non-negative once DCC and rental are added"
+                                                        style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                                                            padding: '1px 6px', borderRadius: 999,
+                                                            color: 'var(--success-text, #059669)',
+                                                            background: 'var(--success-bg, rgba(5,150,105,0.10))' }}>
+                                                        RESCUED
+                                                    </span>
+                                                )}
+                                            </td>
                                         </tr>
                                     ))}
                                     {totals && (
@@ -590,6 +670,12 @@ const CeoVolumeRevenue = ({
                                                 title={fullNum(totals.netRevenue, currencySymbol)}>{fmt.currency(num(totals.netRevenue))}</td>
                                             <td style={{ ...tdTotal, color: pctTone(totals.marginPct) }}>
                                                 {pct(totals.marginPct)}
+                                            </td>
+                                            <td style={tdTotal} title={fullNum(totals.dccAcquirer, currencySymbol)}>{fmt.currency(num(totals.dccAcquirer))}</td>
+                                            <td style={tdTotal} title={fullNum(totals.rental, currencySymbol)}>{fmt.currency(num(totals.rental))}</td>
+                                            <td style={{ ...tdTotal, color: num(totals.netSpread) >= 0 ? 'var(--text)' : '#dc2626' }}
+                                                title={`${fullNum(totals.netSpread, currencySymbol)} · ${pct(totals.spreadPct)} of volume`}>
+                                                {fmt.currency(num(totals.netSpread))}
                                             </td>
                                         </tr>
                                     )}

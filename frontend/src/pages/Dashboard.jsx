@@ -13,8 +13,12 @@ import {
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import ChartGradients from '../components/ChartGradients';
+import MarginGlossaryHint from '../components/MarginGlossary';
 import { useAuth } from '../contexts/AuthContext';
-import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
+import {
+    createFmt, formatMsf, resolveDecimals,
+    isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
+} from '../utils/formatters';
 import {
     SERIES, GRID_PROPS, AXIS_PROPS, LEGEND_PROPS, ANIM, gradientId,
 } from '../theme/chartPalette';
@@ -83,8 +87,9 @@ const deltaPct = (cur, prev) => {
    third of a Bahraini fils figure. Without a symbol it is a count. */
 const fullNum = (v, sym = '') => {
     if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    const d = resolveDecimals();
-    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+    // Executive display-currency toggle: convert + relabel when USD is active.
+    const d = isUsdDisplay(sym) ? 2 : resolveDecimals();
+    return displayCurrencyCode(sym) + ' ' + convertForDisplay(v, sym).toLocaleString('en-US',
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
@@ -200,7 +205,7 @@ const useCountUp = (target, duration = 900) => {
    count up on load; `sparkId` keys the gradient because `accent` is now a
    CSS custom property, not a hex. */
 const HeroTile = ({ label, raw, format, fullValue, deltaPct: dp, deltaSuffix, compareLabel, invertDelta,
-    icon: Icon, accent, spark, sparkId, sub, index = 0 }) => {
+    icon: Icon, accent, spark, sparkId, sub, secondary, index = 0 }) => {
     const shown = useCountUp(raw);
     return (
         <div className="dx-card dx-edge dx-rise hero-tile"
@@ -225,6 +230,16 @@ const HeroTile = ({ label, raw, format, fullValue, deltaPct: dp, deltaSuffix, co
                 lineHeight: 1.05, letterSpacing: '-0.02em', position: 'relative',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>{format(shown)}</div>
+            {/* Optional second reading under the headline (e.g. Net Spread beneath
+                Net Margin) — keeps the hero at four tiles instead of orphaning a
+                fifth on the next row at laptop widths. */}
+            {secondary && (
+                <div style={{ marginTop: -2, fontSize: 12.5, color: 'var(--text-secondary)',
+                    fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {secondary}
+                </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, position: 'relative' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 38, justifyContent: 'flex-end' }}>
                     <DeltaChip pct={dp} compareLabel={compareLabel} invert={invertDelta} suffix={deltaSuffix} />
@@ -316,6 +331,9 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
                 ['PG Fee', fmt.currency(d.ecomFee)],
                 ['Net Margin', fmt.currency(d.netRevenue)],
                 ['Net Margin %', `${num(d.marginPct).toFixed(2)}%`],
+                ['DCC (Acquirer)', fmt.currency(d.dccAcquirer)],
+                ['Rental', fmt.currency(d.rental)],
+                ['Net Spread', fmt.currency(d.netSpread)],
             ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, padding: '1.5px 0' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>{k}</span>
@@ -417,6 +435,12 @@ const Dashboard = () => {
         schemeFee: num(b.schemeFee),
         ecomFee: num(b.ecomFee),
         netRevenue: num(b.netRevenue),
+        // Net Spread = net margin + DCC acquirer share + rental (server-derived;
+        // an older payload without the fields simply reads 0 / = net margin).
+        dccAcquirer: num(b.dccAcquirer),
+        rental: num(b.rental),
+        netSpread: b.netSpread != null ? num(b.netSpread) : num(b.netRevenue) + num(b.dccAcquirer) + num(b.rental),
+        spreadPct: num(b.spreadPct),
         avgTicket: num(b.avgTicket),
         marginPct: num(b.marginPct),
         txns: num(b.txns),
@@ -449,11 +473,15 @@ const Dashboard = () => {
             txns: a.txns + b.txns, volume: a.volume + b.volume, msf: a.msf + b.msf,
             interchange: a.interchange + b.interchange, schemeFee: a.schemeFee + b.schemeFee,
             ecomFee: a.ecomFee + b.ecomFee, netRevenue: a.netRevenue + b.netRevenue,
-        }), { txns: 0, volume: 0, msf: 0, interchange: 0, schemeFee: 0, ecomFee: 0, netRevenue: 0 });
+            dccAcquirer: a.dccAcquirer + b.dccAcquirer, rental: a.rental + b.rental,
+            netSpread: a.netSpread + b.netSpread,
+        }), { txns: 0, volume: 0, msf: 0, interchange: 0, schemeFee: 0, ecomFee: 0, netRevenue: 0,
+              dccAcquirer: 0, rental: 0, netSpread: 0 });
         return {
             ...t,
             avgTicket: safeDiv(t.volume, t.txns),
             marginPct: safeDiv(t.netRevenue, t.volume) * 100,
+            spreadPct: safeDiv(t.netSpread, t.volume) * 100,
         };
     }, [isFiltered, totals, viewData]);
 
@@ -495,6 +523,7 @@ const Dashboard = () => {
     const sparks = useMemo(() => ({
         volume: viewData.map(b => b.volume),
         netRevenue: viewData.map(b => b.netRevenue),
+        netSpread: viewData.map(b => b.netSpread),
         marginPct: viewData.map(b => b.marginPct),
         txns: viewData.map(b => b.txns),
     }), [viewData]);
@@ -514,25 +543,32 @@ const Dashboard = () => {
         lines.push(['Period', period?.label || ''].map(esc).join(','));
         if (data?.effectiveDate) lines.push(['Through', data.effectiveDate].map(esc).join(','));
         if (isFiltered && viewData.length) lines.push(['Filter', `${viewData[0].label} to ${viewData[viewData.length - 1].label}`].map(esc).join(','));
-        lines.push(['Currency', currencyCode || currencySymbol || 'UNKNOWN'].map(esc).join(','));
+        lines.push(['Currency', displayCurrencyCode(currencyCode) || currencySymbol || 'UNKNOWN'].map(esc).join(','));
+        // When the executive USD toggle is on, money cells below are converted
+        // and the file states the indicative rate used.
+        const fx = usdRateInfo(currencyCode);
+        if (fx) lines.push(['FX Rate', `1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`].map(esc).join(','));
         lines.push('');
         // Money columns are written at the tenant's precision (3dp for BHD), not
         // a hardcoded 2dp; MSF keeps its reconciliation digits. Percentages below
-        // are unaffected.
-        const dp = resolveDecimals(currencyDecimals, currencyCode);
+        // are unaffected (ratios are currency-invariant).
+        const dp = isUsdDisplay(currencyCode) ? 2 : resolveDecimals(currencyDecimals, currencyCode);
         const msfDp = Math.max(4, dp);
+        const cv = (v) => convertForDisplay(num(v), currencyCode);
         const heads = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume', 'Avg Ticket',
             'MSF', 'Interchange', 'Interchange % Vol', 'Scheme Fee', 'Scheme % Vol',
-            'PG Fee', 'Net Margin', 'Net Margin %'];
+            'PG Fee', 'Net Margin', 'Net Margin %', 'DCC (Acquirer)', 'Rental', 'Net Spread', 'Net Spread %'];
         lines.push(heads.map(esc).join(','));
         // Rate columns mirror the on-screen table; exported at 4dp because a
         // spreadsheet has no tooltip to fall back on.
         const rate = (fee, volume) => (num(volume) === 0 ? '' : (safeDiv(fee, volume) * 100).toFixed(4));
-        const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(dp), num(b.avgTicket).toFixed(dp),
-            num(b.msf).toFixed(msfDp), num(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
-            num(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
-            num(b.ecomFee).toFixed(dp),
-            num(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2)]
+        const row = (label, b) => [label, num(b.txns), cv(b.volume).toFixed(dp), cv(b.avgTicket).toFixed(dp),
+            cv(b.msf).toFixed(msfDp), cv(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
+            cv(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
+            cv(b.ecomFee).toFixed(dp),
+            cv(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2),
+            cv(b.dccAcquirer).toFixed(dp), cv(b.rental).toFixed(dp),
+            cv(b.netSpread).toFixed(dp), num(b.spreadPct).toFixed(2)]
             .map(esc).join(',');
         viewData.forEach(b => lines.push(row(b.label + (b.partial ? ' (partial)' : ''), b)));
         lines.push(row(`${modeLabel} Total`, t));
@@ -541,7 +577,7 @@ const Dashboard = () => {
             lines.push(['MSF Rate %', derived.msfRate.toFixed(4)].map(esc).join(','));
             lines.push(['Interchange % of Volume', derived.interchangeRate.toFixed(4)].map(esc).join(','));
             lines.push(['Scheme Fee % of Volume', derived.schemeRate.toFixed(4)].map(esc).join(','));
-            lines.push(['Total Fees', derived.fees.toFixed(dp)].map(esc).join(','));
+            lines.push(['Total Fees', cv(derived.fees).toFixed(dp)].map(esc).join(','));
             lines.push(['Total Fees % of Volume', derived.feesRate.toFixed(4)].map(esc).join(','));
         }
         const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -568,7 +604,7 @@ const Dashboard = () => {
        on every cell — a 13-column table repeating "BHD" 7 times per row is
        noise. `ccy: true` renders the code next to the label; when the tenant
        currency is unknown the suffix is simply omitted (never invented). */
-    const headCcy = currencyCode || currencySymbol || null;
+    const headCcy = displayCurrencyCode(currencyCode || currencySymbol) || null;
     const TABLE_HEADS = [
         { label: mode === 'MTD' ? 'Week' : 'Month' },
         { label: 'Transactions' },
@@ -580,6 +616,10 @@ const Dashboard = () => {
         { label: 'PG Fee', ccy: true },
         { label: 'Net Margin', ccy: true },
         { label: 'Net Margin %' },
+        // DCC + rental folded into one column (both are zero on most weeks);
+        // the cell's hover carries the split. Net Spread stays last and bold.
+        { label: 'Ancillary', ccy: true },
+        { label: 'Net Spread', ccy: true },
     ];
 
     const maxAbsMargin = Math.max(...viewData.map(b => Math.abs(b.marginPct)), 0.0001);
@@ -653,6 +693,7 @@ const Dashboard = () => {
                         {data?.effectiveDate && mode !== 'LAST_YEAR' ? ` · through ${data.effectiveDate}` : ''}
                         <span style={{ color: 'var(--border)' }}>·</span>
                         settlement currency
+                        <MarginGlossaryHint compact style={{ marginLeft: 2 }} />
                         {isFiltered && viewData.length > 0 && (
                             <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700,
                                 fontFamily: 'var(--font-mono)',
@@ -746,7 +787,14 @@ const Dashboard = () => {
                             raw={num(vt.netRevenue)} format={(v) => fmt.currency(v)}
                             fullValue={fullNum(vt.netRevenue, currencySymbol)}
                             deltaPct={dpg(vt.netRevenue, prev?.netRevenue)} compareLabel={compareLabel}
-                            spark={sparks.netRevenue} />
+                            spark={sparks.netRevenue}
+                            secondary={
+                                <span title={`Net Spread = net margin + DCC ${fmt.currency(num(vt.dccAcquirer))} + rental ${fmt.currency(num(vt.rental))} · ${num(vt.spreadPct).toFixed(4)}% of volume`}>
+                                    <span style={{ color: SERIES.ancillary, fontWeight: 700 }}>Net Spread</span>{' '}
+                                    <b style={{ color: 'var(--text)' }}>{fmt.currency(num(vt.netSpread))}</b>
+                                    <span style={{ opacity: 0.8 }}> · {num(vt.spreadPct).toFixed(2)}%</span>
+                                </span>
+                            } />
                         <HeroTile label="Net Margin %" icon={Percent} accent="var(--chart-3)" sparkId="marginpct" index={2}
                             raw={num(vt.marginPct)} format={(v) => `${v.toFixed(2)}%`}
                             fullValue={`${num(vt.marginPct).toFixed(4)}% of volume`}
@@ -804,6 +852,26 @@ const Dashboard = () => {
                                 deltaPct={dpg(vt.ecomFee, prev?.ecomFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Payment gateway fees" />
+                            <RailMetric label="DCC (Acquirer)" icon={Globe}
+                                value={fmt.currency(num(vt.dccAcquirer))}
+                                fullValue={fullNum(vt.dccAcquirer, currencySymbol)}
+                                deltaPct={dpg(vt.dccAcquirer, prev?.dccAcquirer)}
+                                compareLabel={compareLabel}
+                                hint="Acquirer share of DCC revenue (added to Net Spread)" />
+                            <RailMetric label="Rental" icon={Layers}
+                                value={fmt.currency(num(vt.rental))}
+                                fullValue={fullNum(vt.rental, currencySymbol)}
+                                deltaPct={dpg(vt.rental, prev?.rental)}
+                                compareLabel={compareLabel}
+                                hint="POS / terminal rental income (added to Net Spread)" />
+                            <RailMetric label="Net Spread" icon={Sigma}
+                                value={fmt.currency(num(vt.netSpread))}
+                                fullValue={fullNum(vt.netSpread, currencySymbol)}
+                                sub={`${num(vt.spreadPct).toFixed(3)}%`}
+                                subTitle={`${num(vt.spreadPct).toFixed(4)}% — net spread / volume`}
+                                deltaPct={dpg(vt.netSpread, prev?.netSpread)}
+                                compareLabel={compareLabel}
+                                hint="Net margin + DCC (acquirer) + rental" />
                             <RailMetric label="Total Charges" icon={Scale}
                                 value={fmt.currency(derived.fees)}
                                 fullValue={fullNum(derived.fees, currencySymbol)}
@@ -1038,6 +1106,16 @@ const Dashboard = () => {
                                                         {b.marginPct.toFixed(2)}%
                                                     </span>
                                                 </td>
+                                                <td style={{ ...tdNum, color: SERIES.ancillary }}
+                                                    title={`DCC (acquirer) ${fullNum(b.dccAcquirer, currencySymbol)} · Rental ${fullNum(b.rental, currencySymbol)}`}>
+                                                    {fmt.amount(b.dccAcquirer + b.rental)}
+                                                </td>
+                                                <td style={{ ...tdNum, fontWeight: 700,
+                                                    color: b.netSpread >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
+                                                    title={`${fullNum(b.netSpread, currencySymbol)} · ${b.spreadPct.toFixed(4)}% of volume`}>
+                                                    {fmt.amount(b.netSpread)}
+                                                    <span style={rateInline}>({b.spreadPct.toFixed(2)}%)</span>
+                                                </td>
                                             </tr>
                                         );
                                     })}
@@ -1063,6 +1141,15 @@ const Dashboard = () => {
                                         <td style={{ ...tdTotal,
                                             color: num(vt.marginPct) >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
                                             {num(vt.marginPct).toFixed(2)}%
+                                        </td>
+                                        <td style={{ ...tdTotal, color: SERIES.ancillary }}
+                                            title={`DCC (acquirer) ${fullNum(vt.dccAcquirer, currencySymbol)} · Rental ${fullNum(vt.rental, currencySymbol)}`}>
+                                            {fmt.amount(num(vt.dccAcquirer) + num(vt.rental))}
+                                        </td>
+                                        <td style={{ ...tdTotal, color: num(vt.netSpread) >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
+                                            title={fullNum(vt.netSpread, currencySymbol)}>
+                                            {fmt.amount(num(vt.netSpread))}
+                                            <span style={rateInline}>({num(vt.spreadPct).toFixed(2)}%)</span>
                                         </td>
                                     </tr>
                                 </tbody>

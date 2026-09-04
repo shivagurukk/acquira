@@ -84,6 +84,7 @@ public class MerchantReportJobConfig {
     private final MerchantInsightService insightService;
     private final PlaywrightPdfService playwrightPdfService;
     private final TenantRepository tenantRepository;
+    private final com.acquira.common.service.TenantStatusService tenantStatusService;
 
     @org.springframework.beans.factory.annotation.Value("${pdf.reports.dir:reports}")
     private String reportsBaseDir;
@@ -145,6 +146,15 @@ public class MerchantReportJobConfig {
             for (Map.Entry<Long, List<Merchant>> entry : byTenant.entrySet()) {
                 Long tenantId = entry.getKey();
                 List<Merchant> allInTenant = entry.getValue();
+
+                // TENANT OFF-SWITCH: findAll() spans every tenant, so this is
+                // the point where a deactivated tenant's merchants are dropped
+                // before any insight fetch or render happens.
+                if (tenantStatusService.isInactive(tenantId)) {
+                    log.info("[JOB] Skipped {} merchant(s) — tenant {} is not active",
+                            allInTenant.size(), tenantId);
+                    continue;
+                }
 
                 // Flag check: only generate for merchants whose generate_report_flag = 1.
                 // Filtered out merchants are never fetched or rendered.
@@ -223,11 +233,13 @@ public class MerchantReportJobConfig {
         Path folder = Paths.get(reportsBaseDir).resolve(folderCode).resolve(target.toString());
         Files.createDirectories(folder);
 
-        String rawName = merchant.getName() != null ? merchant.getName() : merchant.getMid();
-        String safeName = (rawName != null ? rawName : "merchant_" + merchant.getMerchantId())
-                .replaceAll("[^a-zA-Z0-9.\\-]", "_");
-
-        String filename = "Insight_" + safeName + "_" + target + ".pdf";
+        // MID keys the filename (shared scheme with PlaywrightPdfService) so two
+        // distinct merchants with the same name in this tenant can't overwrite one
+        // another's PDF — which previously meant one merchant was emailed another's
+        // report. Same-tenant folder still, but now collision-free.
+        String rawName = merchant.getName() != null ? merchant.getName()
+                : "merchant_" + merchant.getMerchantId();
+        String filename = PlaywrightPdfService.reportFileName(rawName, merchant.getMid(), target.toString());
         Path filePath = folder.resolve(filename);
 
         try (FileOutputStream fos = new FileOutputStream(filePath.toFile())) {

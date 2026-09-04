@@ -37,6 +37,8 @@ public class FinanceController {
     private final com.acquira.core.service.TenantService tenantService;
     /** Stamps the tenant's currency onto every money-bearing response. */
     private final CurrencyMeta currencyMeta;
+    /** Pivot + fee-overlay assembly and the report cache for GET /summary. */
+    private final com.acquira.core.service.FinanceSummaryService financeSummaryService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -49,7 +51,8 @@ public class FinanceController {
             SumDailyChannelRepository channelRepository,
             VolumeRevenueRepository volumeRevenueRepository,
             com.acquira.core.service.TenantService tenantService,
-            CurrencyMeta currencyMeta) {
+            CurrencyMeta currencyMeta,
+            com.acquira.core.service.FinanceSummaryService financeSummaryService) {
         this.bankRepository = bankRepository;
         this.monthlyBankRepository = monthlyBankRepository;
         this.merchantRepository = merchantRepository;
@@ -59,6 +62,7 @@ public class FinanceController {
         this.volumeRevenueRepository = volumeRevenueRepository;
         this.tenantService = tenantService;
         this.currencyMeta = currencyMeta;
+        this.financeSummaryService = financeSummaryService;
     }
 
     /**
@@ -131,37 +135,20 @@ public class FinanceController {
         // 2. Determine groupBy level
         String effectiveGroupBy = (groupBy != null && !groupBy.isBlank()) ? groupBy.toUpperCase() : "MONTH";
 
-        // 3. Build filter DTO
-        VolumeRevenueFilterDTO filter = new VolumeRevenueFilterDTO();
-        filter.setStartDate(start);
-        filter.setEndDate(end);
-
-        // 4. Delegate to existing repository method. Tenant-scoped: without the
-        // explicit tenant_id predicate the (tenant_id, business_date) indexes on
-        // sum_daily_insight are unusable and other tenants' rows count into the totals.
+        // 3. Delegate. Tenant-scoped: without the explicit tenant_id predicate
+        // the (tenant_id, business_date) indexes on sum_daily_insight are
+        // unusable and other tenants' rows count into the totals.
         Long tenantId = resolveTenantId();
         if (tenantId == null) {
             return ResponseEntity.badRequest().body(Map.of(
                     "error", "No active tenant for this session. Select a bank and retry."));
         }
-        List<Map<String, Object>> rawData = volumeRevenueRepository.getPerformanceDashboardData(
-                filter, effectiveGroupBy, null, null, tenantId);
 
-        // 5. Remap keys for frontend compatibility (row_label → month_label)
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (Map<String, Object> row : rawData) {
-            Map<String, Object> mapped = new HashMap<>(row);
-            mapped.put("month_label", row.get("row_label"));
-            if ("MERCHANT".equals(effectiveGroupBy)) {
-                String name = row.get("merchant_name") != null ? row.get("merchant_name").toString() : "";
-                String mid = row.get("row_label") != null ? row.get("row_label").toString() : "";
-                mapped.put("month_label", name.isBlank() ? mid : name + " (" + mid + ")");
-                mapped.put("merchant_id", mid);
-            }
-            result.add(mapped);
-        }
-
-        return ResponseEntity.ok(result);
+        // 4. FinanceSummaryService owns the pivot + fee-overlay merge and the
+        // report cache. The pivot numbers are unchanged — the service only adds
+        // interchange / scheme-fee columns alongside them.
+        return ResponseEntity.ok(
+                financeSummaryService.getSummary(tenantId, effectiveGroupBy, start, end));
     }
 
     // ── A) Dashboard KPIs ────────────────────────────────────────────────

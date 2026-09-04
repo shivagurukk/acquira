@@ -55,8 +55,8 @@ public class LeaderboardService {
     /** A resolved reporting window plus its comparison window. */
     public record Periods(String from, String to, String prevFrom, String prevTo, boolean hasPrev, LocalDate anchor) {}
 
-    private static final String NET_EXPR =
-        "COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)";
+    /** Shared net-margin definition (NetSpreadSql): batch 4-leg margin incl. PG fee. */
+    private static final String NET_EXPR = com.acquira.common.service.NetSpreadSql.margin("sdm");
 
     // ═══════════════════════════════════════════════════════════
     //  PERIOD RESOLUTION
@@ -65,8 +65,12 @@ public class LeaderboardService {
     /** Latest business_date for the tenant — the "today" all periods anchor to. */
     public LocalDate resolveAnchor(Long tenantId) {
         try {
+            // total_txns > 0: an ancillary-only day (rental/DCC loaded ahead
+            // of that day's transaction file) must not drag the MTD/QTD/YTD
+            // anchor past the last real trading day.
             LocalDate max = jdbcTemplate.queryForObject(
-                "SELECT MAX(business_date) FROM sum_daily_merchant WHERE tenant_id = ?",
+                "SELECT MAX(business_date) FROM sum_daily_merchant "
+                + "WHERE tenant_id = ? AND COALESCE(total_txns,0) > 0",
                 LocalDate.class, tenantId);
             return max != null ? max : LocalDate.now();
         } catch (Exception e) {
@@ -179,7 +183,8 @@ public class LeaderboardService {
             + " ),"
             + " activity AS ("
             + "   SELECT mm.group_key,"
-            + "     COUNT(DISTINCT sdm.merchant_id) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct) AS active_merchants,"
+            // total_txns > 0: an ancillary-only row must not count as activity.
+            + "     COUNT(DISTINCT sdm.merchant_id) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct AND COALESCE(sdm.total_txns,0) > 0) AS active_merchants,"
             + "     COALESCE(SUM(sdm.total_txns) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct), 0) AS txn_count,"
             + "     COALESCE(SUM(sdm.total_base_volume) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct), 0) AS total_volume,"
             + "     COALESCE(SUM(sdm.total_msf) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct), 0) AS total_msf,"

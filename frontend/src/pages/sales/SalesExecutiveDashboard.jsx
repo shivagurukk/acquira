@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Globe, Users, User, Loader2, Calendar, RefreshCw, LayoutDashboard,
   DollarSign, Hash, Percent, ChevronRight, ChevronDown, Store,
-  TrendingUp, TrendingDown, Minus, X,
+  TrendingUp, TrendingDown, Minus, X, Layers,
 } from 'lucide-react';
+import MarginGlossaryHint from '../../components/MarginGlossary';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCompactCurrency } from '../../utils/formatters';
@@ -174,8 +175,13 @@ function TreeRow({ node, depth, expanded, onToggle, onSelect, selectedKey }) {
         <td style={{ ...td, fontWeight: 600 }}>{fmt(node.newMerchants)}</td>
         <td style={{ ...td, fontWeight: 700 }}>{fmtM(node.totalVolume)}</td>
         <td style={{ ...td, color: Number(node.totalNet) < 0 ? T.danger : T.text }}>{fmtM(node.totalNet)}</td>
+        <td style={{ ...td, fontWeight: 600, color: Number(node.totalSpread) < 0 ? T.danger : T.text }}
+            title={node.spreadChangePct == null ? undefined : `${node.spreadChangePct > 0 ? '+' : ''}${node.spreadChangePct}% vs previous period`}>
+          {fmtM(node.totalSpread)}
+        </td>
         <td style={td}>{fmt(node.totalTxns)}</td>
         <td style={td}><Delta pct={node.volumeChangePct} /></td>
+        <td style={td}><Delta pct={node.spreadChangePct} /></td>
       </tr>
       {isOpen && (node.children || []).map((child) => (
         <TreeRow
@@ -246,6 +252,7 @@ function AgentDrillDown({ agent, range, onClose }) {
                 <th style={th}>Assigned</th>
                 <th style={th}>Gross Volume</th>
                 <th style={th}>Net Margin</th>
+                <th style={th}>Net Spread</th>
                 <th style={th}>Txns</th>
                 <th style={th}>Last Txn</th>
                 <th style={{ ...th, textAlign: 'left' }}>Sales Lead</th>
@@ -267,6 +274,7 @@ function AgentDrillDown({ agent, range, onClose }) {
                   <td style={{ ...td, color: T.textSec }}>{fmtDate(m.assigned_date)}</td>
                   <td style={{ ...td, fontWeight: 700 }}>{fmtM(m.volume)}</td>
                   <td style={{ ...td, color: Number(m.net) < 0 ? T.danger : T.text }}>{fmtM(m.net)}</td>
+                  <td style={{ ...td, fontWeight: 600, color: Number(m.spread) < 0 ? T.danger : T.text }}>{fmtM(m.spread)}</td>
                   <td style={td}>{fmt(m.txn_count)}</td>
                   <td style={{ ...td, color: T.textSec }}>{fmtDate(m.last_txn_date)}</td>
                   <td style={{ ...td, textAlign: 'left', color: T.textSec }}>{m.current_sales_lead || '—'}</td>
@@ -417,6 +425,8 @@ export default function SalesExecutiveDashboard() {
                sub="vs previous period" pct={totals.volumeChangePct} />
           <Kpi label="Net Margin" value={fmtM(totals.totalNet)} icon={Percent} color={T.successDk}
                sub="vs previous period" pct={totals.netChangePct} />
+          <Kpi label="Net Spread" value={fmtM(totals.totalSpread)} icon={Layers} color="var(--mix-ancillary, #A85D9C)"
+               sub={`${Number(totals.spreadRate || 0).toFixed(2)}% of volume · vs previous`} pct={totals.spreadChangePct} />
           <Kpi label="Transactions" value={fmt(totals.totalTxns)} icon={Hash} color="var(--accent-purple, #7c3aed)"
                sub="vs previous period" pct={totals.txnChangePct} />
           <Kpi label="Merchants" value={fmt(totals.merchantCount)} icon={Store} color={T.brand}
@@ -449,8 +459,10 @@ export default function SalesExecutiveDashboard() {
                 <th style={th}>New</th>
                 <th style={th}>Volume</th>
                 <th style={th}>Net Margin</th>
+                <th style={th}>Net Spread</th>
                 <th style={th}>Txns</th>
                 <th style={th}>Δ Volume</th>
+                <th style={th}>Δ Spread</th>
               </tr>
             </thead>
             <tbody>
@@ -470,10 +482,13 @@ export default function SalesExecutiveDashboard() {
         <AgentDrillDown agent={selectedAgent} range={range} onClose={() => { setSelectedAgent(null); setSelectedKey(null); }} />
       )}
 
-      <div style={{ fontSize: 11.5, color: T.textMut, marginTop: 10, lineHeight: 1.6 }}>
-        Volume is the single-currency settlement figure (store base currency), read from the pre-aggregated daily
-        summary. Net margin is MSF minus interchange and scheme fees. Merchant counts are the agent's whole portfolio;
-        only <b>New</b> is bounded by the selected period. Click any sales agent to see their merchants.
+      <div style={{ fontSize: 11.5, color: T.textMut, marginTop: 10, lineHeight: 1.6, display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <span style={{ flex: '1 1 480px' }}>
+          Volume is the single-currency settlement figure (store base currency), read from the pre-aggregated daily
+          summary. Merchant counts are the agent's whole portfolio;
+          only <b>New</b> is bounded by the selected period. Click any sales agent to see their merchants.
+        </span>
+        <MarginGlossaryHint />
       </div>
     </div>
   );

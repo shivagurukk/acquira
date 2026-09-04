@@ -344,7 +344,7 @@ public class SsoController {
                 }
 
                 // GAP-19: Audit SSO login
-                try { auditService.log("SSO_LOGIN", "SSO login for: " + email); } catch (Exception ignored) {}
+                try { auditService.log("SSO_LOGIN", "SSO login for: " + email, user.getUsername()); } catch (Exception ignored) {}
 
                 // Link SSO if first time
                 if (user.getSsoProvider() == null) {
@@ -429,7 +429,9 @@ public class SsoController {
         log.info("[SSO] Access request created for: {} (tenant: {})", email, tenantIdNum);
 
         // GAP-19: Audit access request
-        try { auditService.log("SSO_ACCESS_REQUEST", "Access request from: " + email); } catch (Exception ignored) {}
+        // No account exists yet for this requester, so the email is the only
+        // identity available — record it so the row isn't anonymous.
+        try { auditService.log("SSO_ACCESS_REQUEST", "Access request from: " + email, email); } catch (Exception ignored) {}
 
         return ResponseEntity.ok(Map.of(
             "status", "request_submitted",

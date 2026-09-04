@@ -22,7 +22,8 @@ const POLICY_DEFAULTS = {
     // sessions + tokens
     sessionTimeoutMinutes: 30, accessTokenMinutes: 30, refreshTokenDays: 7, maxConcurrentSessions: 0,
     // mfa
-    requireMfaForAdmins: false, requireMfaForAll: false, mfaGraceDays: 7, trustedDeviceDays: 30,
+    requireMfaForAdmins: false, requireMfaForAll: false, mfaOtpTtlMinutes: 5,
+    mfaGraceDays: 7, trustedDeviceDays: 30,
     // network
     ipAllowlistEnabled: false, ipAllowlist: '', loginBusinessHoursOnly: false,
     // api + audit
@@ -30,7 +31,7 @@ const POLICY_DEFAULTS = {
 };
 
 /* Which groups are actually enforced by the backend today vs. stored-only */
-const ENFORCED = new Set(['password', 'lockout', 'sessions']);
+const ENFORCED = new Set(['password', 'lockout', 'sessions', 'mfa']);
 
 const PENDING_HINT = 'Stored now. Takes effect once the backend enforcement hook is wired up.';
 
@@ -279,15 +280,37 @@ const SecuritySettings = () => {
                 )}
 
                 {activeTab === 'mfa' && (
-                    <Card pad title="Multi-factor authentication" subtitle="TOTP and authenticator apps" actions={pendingBadge('mfa')}>
+                    <Card pad title="Multi-factor authentication" subtitle="Email verification code at sign-in">
                         <Stack gap="md">
+                            <div className="nx-info-box">
+                                <div className="nx-info-box__title">Requires working SMTP</div>
+                                <div className="nx-info-box__body">
+                                    Codes are delivered by email. Confirm Admin &gt; SMTP Settings can send
+                                    before turning either toggle on — with no working SMTP, covered users
+                                    cannot sign in at all. Users with no email address on file are blocked
+                                    the same way.
+                                </div>
+                            </div>
                             <FormGrid cols={2}>
-                                {toggle('Require MFA for admins', 'requireMfaForAdmins')}
-                                {toggle('Require MFA for all users', 'requireMfaForAll')}
+                                {toggle('Require MFA for admins', 'requireMfaForAdmins',
+                                    'Admin and Super Admin accounts must enter an emailed code at sign-in.')}
+                                {toggle('Require MFA for all users', 'requireMfaForAll',
+                                    'Every user must enter an emailed code at sign-in. Includes admins.')}
                             </FormGrid>
                             <FormGrid cols={2}>
-                                {numField('Enrollment grace period (days)', 'mfaGraceDays', 'Days a new user can sign in before MFA is mandatory.')}
-                                {numField('Trusted device duration (days)', 'trustedDeviceDays', 'Skip MFA on a remembered device for N days.')}
+                                {numField('Code validity (minutes)', 'mfaOtpTtlMinutes', 'How long a sign-in code stays valid.', 1)}
+                            </FormGrid>
+                            <div className="nx-info-box">
+                                <div className="nx-info-box__title">Not yet enforced</div>
+                                <div className="nx-info-box__body">
+                                    Enrollment grace period and trusted devices are stored but not applied —
+                                    both need per-device enrollment tracking, which this email-code flow
+                                    does not use. SSO users are always exempt: their identity provider owns MFA.
+                                </div>
+                            </div>
+                            <FormGrid cols={2}>
+                                {numField('Enrollment grace period (days)', 'mfaGraceDays', 'Stored only — not enforced today.')}
+                                {numField('Trusted device duration (days)', 'trustedDeviceDays', 'Stored only — not enforced today.')}
                             </FormGrid>
                         </Stack>
                     </Card>

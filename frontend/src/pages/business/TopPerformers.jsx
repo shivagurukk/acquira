@@ -10,6 +10,17 @@ import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
 import { pageContainer, premiumTableWrapper } from '../../theme/dataGridStyles';
+import MarginGlossaryHint from '../../components/MarginGlossary';
+
+// Board groups, by the measure each board ranks on.
+const BOARD_TABS = [
+    { key: 'volume',   label: 'Volume' },
+    { key: 'margin',   label: 'Net Margin' },
+    { key: 'spread',   label: 'Net Spread' },
+    { key: 'activity', label: 'Transactions & Signings' },
+];
+// Ancillary-income hue for the Net Spread boards (see --mix-ancillary).
+const SPREAD_HUE = 'var(--mix-ancillary, #A85D9C)';
 
 // ─── Local design tokens (matches Daily Merchant Dashboard / Attrition Report) ───
 const T = {
@@ -272,6 +283,7 @@ const TopPerformers = () => {
 
     const [filters, setFilters] = useState(emptyFilters());
     const [showFilters, setShowFilters] = useState(false);
+    const [boardTab, setBoardTab] = useState('volume');
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -310,6 +322,11 @@ const TopPerformers = () => {
             icon: TrendingUp, color: 'var(--success, #059669)',
         },
         {
+            title: 'Total Net Spread', value: fmt.currency(data.concentration.totalNetSpread),
+            subtitle: 'net margin + DCC (acquirer) + rental',
+            icon: Layers, color: 'var(--success, #059669)',
+        },
+        {
             title: 'Active Merchants', value: fmt.number(data.concentration.activeMerchantCount),
             icon: Users, color: 'var(--brand-alt, #3b82f6)',
         },
@@ -321,7 +338,7 @@ const TopPerformers = () => {
     ] : [];
 
     const grainNote = data?.grain === 'insight'
-        ? 'Card-level filters active — showing cardholder-currency volume; net margin approximated as MSF.'
+        ? 'Card-level filters active — showing cardholder-currency volume; net margin approximated as MSF (net spread = MSF + the merchant’s whole DCC and rental, which cannot be sliced by card).'
         : null;
 
     return (
@@ -370,59 +387,101 @@ const TopPerformers = () => {
                     {Array.from({ length: 6 }).map((_, i) => <SkeletonLoader key={i} variant="table" rows={5} cols={2} />)}
                 </Box>
             ) : (
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 2.5 }}>
-                    <LeaderboardCard
-                        title="Top 10 Merchants — Volume" icon={Sparkles} color={LB_HUE}
-                        rows={data.topMerchantsByVolume} primaryKey="name" secondaryKey="mid"
-                        valueKey="volume" valueFmt={fmt.currency}
-                        onExport={() => exportToCSV(data.topMerchantsByVolume, 'top_merchants_by_volume')}
-                    />
-                    <LeaderboardCard
-                        title="Top 10 Merchants — Net Margin" icon={TrendingUp} color={LB_HUE}
-                        rows={data.topMerchantsByNetRevenue} primaryKey="name" secondaryKey="mid"
-                        valueKey="netRevenue" valueFmt={fmt.currency}
-                        onExport={() => exportToCSV(data.topMerchantsByNetRevenue, 'top_merchants_by_net_revenue')}
-                    />
-                    <LeaderboardCard
-                        title="Top 10 Merchants — Transactions" icon={Receipt} color={LB_HUE}
-                        rows={data.topMerchantsByTxns} primaryKey="name" secondaryKey="mid"
-                        valueKey="txns" valueFmt={fmt.number}
-                        onExport={() => exportToCSV(data.topMerchantsByTxns, 'top_merchants_by_txns')}
-                    />
-                    <LeaderboardCard
-                        title="Top 10 RMs — Volume" icon={Users} color={LB_HUE}
-                        rows={data.topRmsByVolume} primaryKey="name" secondaryKey="salesUserId"
-                        valueKey="volume" valueFmt={fmt.currency}
-                        onExport={() => exportToCSV(data.topRmsByVolume, 'top_rms_by_volume')}
-                    />
-                    <LeaderboardCard
-                        title="Top 10 RMs — Net Margin" icon={Trophy} color={LB_HUE}
-                        rows={data.topRmsByNetRevenue} primaryKey="name" secondaryKey="salesUserId"
-                        valueKey="netRevenue" valueFmt={fmt.currency}
-                        onExport={() => exportToCSV(data.topRmsByNetRevenue, 'top_rms_by_net_revenue')}
-                    />
-                    <LeaderboardCard
-                        title="Top 10 RMs — Merchants Signed" icon={UserPlus} color={LB_HUE}
-                        rows={data.topSignedByRm} primaryKey="name" secondaryKey="salesUserId"
-                        valueKey="signedCount" valueFmt={(v) => `${fmt.number(v)} signed`}
-                        emptyLabel="No merchants onboarded in this window."
-                        onExport={() => exportToCSV(data.topSignedByRm, 'top_rms_by_merchants_signed')}
-                    />
-                    <LeaderboardCard
-                        title="Top 10 MCC — Volume" icon={Layers} color={LB_HUE}
-                        rows={data.topMccs} primaryKey="name" secondaryKey="mcc"
-                        valueKey="volume" valueFmt={fmt.currency}
-                        emptyLabel="No MCC-level data for this window (sum_daily_full not yet populated)."
-                        onExport={() => exportToCSV(data.topMccs, 'top_mccs_by_volume')}
-                    />
-                    <LeaderboardCard
-                        title="Top 10 New Merchants" icon={Sparkles} color={LB_HUE}
-                        rows={data.topNewMerchants} primaryKey="name" secondaryKey="mid"
-                        valueKey="volume" valueFmt={fmt.currency}
-                        emptyLabel="No merchants onboarded in this window."
-                        onExport={() => exportToCSV(data.topNewMerchants, 'top_new_merchants')}
-                    />
-                </Box>
+                <>
+                    {/* Ten boards became too many for one grid. Grouped by the
+                        measure they rank on; the tab is a plain in-memory switch
+                        (no refetch — the payload already carries every board). */}
+                    <Box role="tablist" aria-label="Board group" sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 0.5 }}>
+                        {BOARD_TABS.map(t => (
+                            <button key={t.key} type="button" role="tab" aria-selected={boardTab === t.key}
+                                onClick={() => setBoardTab(t.key)}
+                                style={{
+                                    border: `1px solid ${boardTab === t.key ? T.brand : T.border}`,
+                                    background: boardTab === t.key ? `color-mix(in srgb, ${T.brand} 12%, transparent)` : T.card,
+                                    color: boardTab === t.key ? T.brand : T.textSec,
+                                    borderRadius: 999, padding: '5px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+                                }}>
+                                {t.label}
+                            </button>
+                        ))}
+                        <Box sx={{ ml: 'auto', display: 'inline-flex', alignItems: 'center' }}>
+                            <MarginGlossaryHint />
+                        </Box>
+                    </Box>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 2.5 }}>
+                    {boardTab === 'volume' && (<>
+                        <LeaderboardCard
+                            title="Top 10 Merchants — Volume" icon={Sparkles} color={LB_HUE}
+                            rows={data.topMerchantsByVolume} primaryKey="name" secondaryKey="mid"
+                            valueKey="volume" valueFmt={fmt.currency}
+                            onExport={() => exportToCSV(data.topMerchantsByVolume, 'top_merchants_by_volume')}
+                        />
+                        <LeaderboardCard
+                            title="Top 10 RMs — Volume" icon={Users} color={LB_HUE}
+                            rows={data.topRmsByVolume} primaryKey="name" secondaryKey="salesUserId"
+                            valueKey="volume" valueFmt={fmt.currency}
+                            onExport={() => exportToCSV(data.topRmsByVolume, 'top_rms_by_volume')}
+                        />
+                        <LeaderboardCard
+                            title="Top 10 MCC — Volume" icon={Layers} color={LB_HUE}
+                            rows={data.topMccs} primaryKey="name" secondaryKey="mcc"
+                            valueKey="volume" valueFmt={fmt.currency}
+                            emptyLabel="No MCC-level data for this window (sum_daily_full not yet populated)."
+                            onExport={() => exportToCSV(data.topMccs, 'top_mccs_by_volume')}
+                        />
+                        <LeaderboardCard
+                            title="Top 10 New Merchants" icon={Sparkles} color={LB_HUE}
+                            rows={data.topNewMerchants} primaryKey="name" secondaryKey="mid"
+                            valueKey="volume" valueFmt={fmt.currency}
+                            emptyLabel="No merchants onboarded in this window."
+                            onExport={() => exportToCSV(data.topNewMerchants, 'top_new_merchants')}
+                        />
+                    </>)}
+                    {boardTab === 'margin' && (<>
+                        <LeaderboardCard
+                            title="Top 10 Merchants — Net Margin" icon={TrendingUp} color={LB_HUE}
+                            rows={data.topMerchantsByNetRevenue} primaryKey="name" secondaryKey="mid"
+                            valueKey="netRevenue" valueFmt={fmt.currency}
+                            onExport={() => exportToCSV(data.topMerchantsByNetRevenue, 'top_merchants_by_net_revenue')}
+                        />
+                        <LeaderboardCard
+                            title="Top 10 RMs — Net Margin" icon={Trophy} color={LB_HUE}
+                            rows={data.topRmsByNetRevenue} primaryKey="name" secondaryKey="salesUserId"
+                            valueKey="netRevenue" valueFmt={fmt.currency}
+                            onExport={() => exportToCSV(data.topRmsByNetRevenue, 'top_rms_by_net_revenue')}
+                        />
+                    </>)}
+                    {boardTab === 'spread' && (<>
+                        <LeaderboardCard
+                            title="Top 10 Merchants — Net Spread" icon={Layers} color={SPREAD_HUE}
+                            rows={data.topMerchantsByNetSpread || []} primaryKey="name" secondaryKey="mid"
+                            valueKey="netSpread" valueFmt={fmt.currency}
+                            onExport={() => exportToCSV(data.topMerchantsByNetSpread || [], 'top_merchants_by_net_spread')}
+                        />
+                        <LeaderboardCard
+                            title="Top 10 RMs — Net Spread" icon={Layers} color={SPREAD_HUE}
+                            rows={data.topRmsByNetSpread || []} primaryKey="name" secondaryKey="salesUserId"
+                            valueKey="netSpread" valueFmt={fmt.currency}
+                            onExport={() => exportToCSV(data.topRmsByNetSpread || [], 'top_rms_by_net_spread')}
+                        />
+                    </>)}
+                    {boardTab === 'activity' && (<>
+                        <LeaderboardCard
+                            title="Top 10 Merchants — Transactions" icon={Receipt} color={LB_HUE}
+                            rows={data.topMerchantsByTxns} primaryKey="name" secondaryKey="mid"
+                            valueKey="txns" valueFmt={fmt.number}
+                            onExport={() => exportToCSV(data.topMerchantsByTxns, 'top_merchants_by_txns')}
+                        />
+                        <LeaderboardCard
+                            title="Top 10 RMs — Merchants Signed" icon={UserPlus} color={LB_HUE}
+                            rows={data.topSignedByRm} primaryKey="name" secondaryKey="salesUserId"
+                            valueKey="signedCount" valueFmt={(v) => `${fmt.number(v)} signed`}
+                            emptyLabel="No merchants onboarded in this window."
+                            onExport={() => exportToCSV(data.topSignedByRm, 'top_rms_by_merchants_signed')}
+                        />
+                    </>)}
+                    </Box>
+                </>
             )}
         </Box>
     );

@@ -46,6 +46,11 @@ public class PartitionMaintenanceService {
     // externally). Keeps subsequent-upload cost at zero DB round-trips.
     private volatile Boolean tenantListPartitionedCache;
 
+    // Ceiling on how long partition DDL will queue for its ACCESS EXCLUSIVE lock.
+    // Deliberately finite: the pool's connection-init-sql sets lock_timeout = 0, which
+    // means "wait forever", and this DDL is the FIRST step of every transaction job.
+    private static final String DDL_LOCK_TIMEOUT = "30s";
+
     private static final List<String> MONTHLY_PARTITIONED_TABLES = List.of(
             "fact_transaction");
 
@@ -188,6 +193,17 @@ public class PartitionMaintenanceService {
                     Boolean.class, partitionName.toLowerCase());
 
             if (Boolean.FALSE.equals(exists)) {
+                // CREATE TABLE ... PARTITION OF (and the ALTER TABLE tuning that follows)
+                // take ACCESS EXCLUSIVE on the parent, and the Hikari pool opens every
+                // connection with lock_timeout = 0 (see connection-init-sql) — so without
+                // this the very first step of every transaction job can wait for that lock
+                // forever, with nothing in the application able to break it. SET LOCAL is
+                // scoped to this REQUIRES_NEW transaction, leaving the unbounded default in
+                // place for the long ingest steps that genuinely need it. Issued only on
+                // the create path so the cached "already exists" path stays at zero extra
+                // round-trips.
+                jdbcTemplate.execute("SET LOCAL lock_timeout = '" + DDL_LOCK_TIMEOUT + "'");
+
                 log.info("Creating partition {} for table {}", partitionName, table);
                 String sql = String.format(
                         "CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM ('%s') TO ('%s')",
@@ -195,6 +211,14 @@ public class PartitionMaintenanceService {
                 jdbcTemplate.execute(sql);
                 applyAutovacuumTuning(partitionName, table);
             }
+        } catch (org.springframework.dao.CannotAcquireLockException e) {
+            // Distinct from "not partitioned": something is holding a conflicting lock
+            // on the parent. Rows for this period will land in the DEFAULT partition and
+            // permanently lose partition pruning, so this must be loud, not a warning.
+            log.error("Partition {} NOT created — could not acquire the lock on '{}' within {}. "
+                    + "Rows for this period will fall into the default partition. "
+                    + "Check pg_locks/pg_stat_activity for a blocking session, then re-run.",
+                    partitionName, table, DDL_LOCK_TIMEOUT);
         } catch (Exception e) {
             log.warn("Partition {} skipped (table '{}' may not be partitioned): {}",
                     partitionName, table, e.getMessage());

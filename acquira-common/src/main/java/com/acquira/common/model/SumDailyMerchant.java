@@ -80,6 +80,25 @@ public class SumDailyMerchant {
     @Column(name = "dcc_optin_count")
     private Long dccOptinCount;
 
+    // --- Ancillary revenue (AncillarySql keeps these current from the DCC and
+    //     rental facts; V2026_08_31_01). Net spread = total_margin + dcc_acquirer
+    //     + rental_amount; dcc_merchant is the merchant's own money. ---
+    @Column(name = "dcc_acquirer", insertable = false, updatable = false)
+    private BigDecimal dccAcquirer;
+
+    @Column(name = "dcc_merchant", insertable = false, updatable = false)
+    private BigDecimal dccMerchant;
+
+    @Column(name = "rental_amount", insertable = false, updatable = false)
+    private BigDecimal rentalAmount;
+
+    public BigDecimal getDccAcquirer() { return dccAcquirer; }
+    public void setDccAcquirer(BigDecimal v) { this.dccAcquirer = v; }
+    public BigDecimal getDccMerchant() { return dccMerchant; }
+    public void setDccMerchant(BigDecimal v) { this.dccMerchant = v; }
+    public BigDecimal getRentalAmount() { return rentalAmount; }
+    public void setRentalAmount(BigDecimal v) { this.rentalAmount = v; }
+
     // We might need to join with DimMerchant to get names, or just store name here?
     // Usually Summary tables use IDs. We'll join in Query or fetch separately.
     @ManyToOne

@@ -24,9 +24,50 @@ public class BatchProgressController {
     private final JobExplorer jobExplorer;
 
     // Known step counts per job, for a friendly "step N of M" display in the UI.
+    // Keep in step with the job definitions in TransactionJobConfig /
+    // MerchantMasterJobConfig — a stale count here renders as "step 12 of 9".
     private static final Map<String, Integer> TOTAL_STEPS = Map.of(
-        "transactionLoadJob", 9,
+        "transactionLoadJob", 12,
+        "dbPullTransactionJob", 9,
         "merchantMasterJob", 5);
+
+    /**
+     * Share of a run's wall clock each stage typically takes, used to weight the
+     * progress bar. These are relative weights, not percentages — only their
+     * ratios matter. Tune them from the p50 durations the ingestion ledger
+     * collects in ingest_run_stage; a stage missing here contributes weight 1.
+     *
+     * A step NOT in this map still advances the bar, so adding a pipeline step
+     * without updating this map degrades accuracy rather than breaking the bar.
+     */
+    private static final Map<String, Integer> STAGE_WEIGHTS = Map.ofEntries(
+        Map.entry("ensurePartitionsStep", 1),
+        Map.entry("splitExcelStep", 5),
+        Map.entry("cleanTargetDayStep", 1),
+        Map.entry("masterIngestStep", 30),
+        Map.entry("analyzeStagingStep", 3),
+        Map.entry("autoCreateDimensionsStep", 3),
+        Map.entry("stagingToFactStep", 25),
+        Map.entry("populateSummaryStep", 20),
+        Map.entry("calculateBusinessMetricsStep", 5),
+        Map.entry("scoreMlStep", 3),
+        Map.entry("computeSegmentsStep", 2),
+        Map.entry("calculateDailyDashboardMetricsStep", 2));
+
+    /** The one row-oriented stage; only inside it does row progress move the bar. */
+    private static final String ROW_STAGE = "masterIngestStep";
+
+    /** Stage order per job, so completed-but-not-yet-started weight can be summed. */
+    private static final Map<String, java.util.List<String>> JOB_STAGES = Map.of(
+        "transactionLoadJob", java.util.List.of(
+            "ensurePartitionsStep", "splitExcelStep", "cleanTargetDayStep", "masterIngestStep",
+            "analyzeStagingStep", "autoCreateDimensionsStep", "stagingToFactStep", "populateSummaryStep",
+            "calculateBusinessMetricsStep", "scoreMlStep", "computeSegmentsStep",
+            "calculateDailyDashboardMetricsStep"),
+        "dbPullTransactionJob", java.util.List.of(
+            "ensurePartitionsStep", "analyzeStagingStep", "autoCreateDimensionsStep", "stagingToFactStep",
+            "populateSummaryStep", "calculateBusinessMetricsStep", "scoreMlStep", "computeSegmentsStep",
+            "calculateDailyDashboardMetricsStep"));
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
@@ -262,6 +303,70 @@ public class BatchProgressController {
         return emitter;
     }
 
+    /**
+     * True for a partition worker execution. Spring Batch names them
+     * "<workerStep>:<partitionKey>"; CsvPartitioner's keys look like
+     * "partition_part_003.csv", so the colon is the reliable marker.
+     */
+    static boolean isPartitionWorker(StepExecution step) {   // package-private for BatchProgressProgressTest
+        String name = step.getStepName();
+        return name != null && name.indexOf(':') >= 0;
+    }
+
+    /**
+     * Stage-weighted completion, 0-100 (or -1 when nothing is known yet).
+     *
+     * Completed stages contribute their full weight. The stage currently running
+     * contributes a fraction of its weight: for the row-oriented ingest stage
+     * that fraction is rows-read / total-rows; for every other stage it is a flat
+     * half, because a tasklet has no meaningful mid-flight progress and pinning
+     * it at 0 makes long stages look hung.
+     */
+    static long weightedProgress(JobExecution jobExec, int readCount, long totalRows) {   // package-private for test
+        java.util.List<String> stages = JOB_STAGES.get(jobExec.getJobInstance().getJobName());
+        if (stages == null || stages.isEmpty()) {
+            // Unknown job (e.g. merchantMasterJob): fall back to rows if we have them.
+            if (totalRows > 0) return Math.min(100L, Math.round(readCount * 100.0 / totalRows));
+            return readCount > 0 ? -1L : 0L;
+        }
+
+        int totalWeight = 0;
+        for (String s : stages) totalWeight += STAGE_WEIGHTS.getOrDefault(s, 1);
+        if (totalWeight == 0) return 0L;
+
+        double earned = 0;
+        boolean sawAnything = false;
+        for (StepExecution step : jobExec.getStepExecutions()) {
+            if (isPartitionWorker(step)) continue;
+            String name = step.getStepName();
+            if (!stages.contains(name)) continue;
+            int weight = STAGE_WEIGHTS.getOrDefault(name, 1);
+            sawAnything = true;
+
+            String status = step.getStatus().toString();
+            if ("COMPLETED".equals(status)) {
+                earned += weight;
+            } else if ("STARTED".equals(status) || "STARTING".equals(status)) {
+                if (ROW_STAGE.equals(name) && totalRows > 0) {
+                    earned += weight * Math.min(1.0, readCount / (double) totalRows);
+                } else {
+                    earned += weight * 0.5;
+                }
+            }
+            // FAILED / STOPPED / ABANDONED earn nothing — a failed run must not
+            // read as nearly finished.
+        }
+
+        if (!sawAnything) return 0L;
+
+        // Never report 100 from the weights alone: the job is only complete when
+        // Spring Batch says so. This is the guarantee the old code lacked.
+        String jobStatus = jobExec.getStatus().toString();
+        long pct = Math.round(earned * 100.0 / totalWeight);
+        if ("COMPLETED".equals(jobStatus)) return 100L;
+        return Math.min(99L, Math.max(0L, pct));
+    }
+
     private Map<String, Object> buildProgressPayload(JobExecution jobExec) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("executionId", jobExec.getId());
@@ -271,12 +376,24 @@ public class BatchProgressController {
         payload.put("startTime", jobExec.getStartTime() != null ? jobExec.getStartTime().toString() : null);
         payload.put("endTime", jobExec.getEndTime() != null ? jobExec.getEndTime().toString() : null);
 
-        // Aggregate step metrics
-        int readCount = 0, writeCount = 0, skipCount = 0;
+        // Aggregate step metrics.
+        //
+        // P0-1 FIX: this used to sum every StepExecution on the job, which is
+        // wrong twice over. Spring Batch registers each partition WORKER
+        // ("csvWorkerStep:partition_part_003.csv") as its own StepExecution AND
+        // folds the workers' counts into the manager step (masterIngestStep) via
+        // DefaultStepExecutionAggregator — so partition rows were counted twice.
+        // The summed readCount therefore reached totalReqRows while the manager
+        // ingest step was still running, the percentage below hit 100%, and the
+        // UI announced "Complete!" at step 4 of 12 with eight steps still to go.
+        // Count manager and plain steps only.
+        int readCount = 0, writeCount = 0, skipCount = 0, stepCount = 0;
         for (StepExecution step : jobExec.getStepExecutions()) {
+            if (isPartitionWorker(step)) continue;
             readCount += step.getReadCount();
             writeCount += step.getWriteCount();
             skipCount += step.getSkipCount();
+            stepCount++;
         }
         payload.put("readCount", readCount);
         payload.put("writeCount", writeCount);
@@ -286,6 +403,7 @@ public class BatchProgressController {
         // (e.g. "Building summaries") instead of inferring it from a percentage.
         StepExecution current = null;
         for (StepExecution step : jobExec.getStepExecutions()) {
+            if (isPartitionWorker(step)) continue;   // never show "csvWorkerStep:partition_part_012.csv"
             if (current == null) { current = step; continue; }
             boolean stepStarted = "STARTED".equals(step.getStatus().toString());
             boolean curStarted = "STARTED".equals(current.getStatus().toString());
@@ -300,7 +418,10 @@ public class BatchProgressController {
             payload.put("currentStep", current.getStepName());
             payload.put("currentStepStatus", current.getStatus().toString());
         }
-        payload.put("stepNumber", jobExec.getStepExecutions().size());
+        // stepNumber counts real pipeline stages only. Summing every
+        // StepExecution used to include one entry per CSV partition, so a 1M-row
+        // file (20 partitions) rendered as "step 24 of 12".
+        payload.put("stepNumber", stepCount);
         Integer totalSteps = TOTAL_STEPS.get(jobExec.getJobInstance().getJobName());
         if (totalSteps != null) payload.put("totalSteps", totalSteps);
 
@@ -350,13 +471,15 @@ public class BatchProgressController {
         } catch (Exception e) { /* ignore */ }
         payload.put("totalRows", totalRows);
 
-        // Progress percentage
-        if (totalRows > 0) {
-            double pct = Math.min(100.0, ((double) readCount / totalRows) * 100.0);
-            payload.put("progress", Math.round(pct));
-        } else {
-            payload.put("progress", readCount > 0 ? -1 : 0); // -1 = indeterminate
-        }
+        // Progress percentage — STAGE-WEIGHTED, not row-based.
+        //
+        // Rows only measure the ingest step. Deriving the whole job's percentage
+        // from them meant the bar was full once staging was loaded, even though
+        // stagingToFact, populateSummary and six more steps had not started —
+        // the "Complete! (step 4 of 12)" report. Weight each stage by its typical
+        // share of wall clock instead, and let row progress move the bar only
+        // WITHIN the ingest step.
+        payload.put("progress", weightedProgress(jobExec, readCount, totalRows));
 
         // Estimated time remaining
         if (totalRows > 0 && readCount > 0 && jobExec.getStartTime() != null) {

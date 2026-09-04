@@ -40,6 +40,10 @@ import java.util.*;
 @RequestMapping("/api/email")
 @RequiredArgsConstructor
 @Slf4j
+// SECURITY: sends merchant statement emails from the tenant's SMTP identity and
+// reads send logs/stats. Restricted to admins — a plain authenticated user must
+// not be able to email every merchant of the tenant (spam/phishing surface).
+@org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
 public class EmailController {
 
     private final JdbcTemplate jdbc;

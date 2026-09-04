@@ -1336,6 +1336,7 @@ public class MerchantInsightService {
             List<com.acquira.common.model.SumDailyMerchant> prevRows,
             List<java.util.Map<String, Object>> monthlyTrends) {
         BigDecimal eligVol = BigDecimal.ZERO, optinVol = BigDecimal.ZERO, optoutVol = BigDecimal.ZERO;
+        BigDecimal acquirerShare = BigDecimal.ZERO, merchantShare = BigDecimal.ZERO, rental = BigDecimal.ZERO;
         long eligCount = 0, optinCount = 0;
         for (com.acquira.common.model.SumDailyMerchant r : currentRows) {
             eligVol = eligVol.add(r.getDccEligibleVolume() != null ? r.getDccEligibleVolume() : BigDecimal.ZERO);
@@ -1343,12 +1344,22 @@ public class MerchantInsightService {
             optoutVol = optoutVol.add(r.getDccOptoutVolume() != null ? r.getDccOptoutVolume() : BigDecimal.ZERO);
             eligCount += r.getDccEligibleCount() != null ? r.getDccEligibleCount() : 0;
             optinCount += r.getDccOptinCount() != null ? r.getDccOptinCount() : 0;
+            // Real DCC revenue from the DCC feed (fact_dcc_revenue → AncillarySql),
+            // replacing the old volume × 3% guess.
+            acquirerShare = acquirerShare.add(r.getDccAcquirer() != null ? r.getDccAcquirer() : BigDecimal.ZERO);
+            merchantShare = merchantShare.add(r.getDccMerchant() != null ? r.getDccMerchant() : BigDecimal.ZERO);
+            rental = rental.add(r.getRentalAmount() != null ? r.getRentalAmount() : BigDecimal.ZERO);
         }
+        boolean feedPresent = acquirerShare.signum() != 0 || merchantShare.signum() != 0;
 
         BigDecimal conversionRate = eligCount > 0
                 ? new BigDecimal(optinCount * 100.0 / eligCount).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-        // Kept for backward compat on the DTO; not displayed in PDF.
-        BigDecimal missedRevenue = optoutVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
+        // "Missed" revenue is now the merchant's OWN measured DCC earning rate
+        // (merchant share ÷ opted-in volume) applied to the opted-out volume —
+        // no feed, no rate, no number. The unconfirmed 3% is gone.
+        BigDecimal missedRevenue = (feedPresent && optinVol.signum() > 0)
+                ? optoutVol.multiply(merchantShare).divide(optinVol, 2, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
 
         List<ChartData> missed = new ArrayList<>(), opt = new ArrayList<>(), rateTrend = new ArrayList<>();
         for (java.util.Map<String, Object> r : monthlyTrends) {
@@ -1368,8 +1379,8 @@ public class MerchantInsightService {
         }
 
         long optoutCount = eligCount - optinCount;
-        // Kept for backward compat on the DTO; not displayed in PDF.
-        BigDecimal revenueGenerated = optinVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
+        // The merchant's realised DCC earnings for the month, straight from the feed.
+        BigDecimal revenueGenerated = merchantShare.setScale(2, RoundingMode.HALF_UP);
 
         DccPerformance dcc = DccPerformance.builder()
                 .missedOpportunityTrend(missed).optOutOptInTrend(opt).eligibilityTrend(new ArrayList<>())
@@ -1390,6 +1401,10 @@ public class MerchantInsightService {
         dcc.setTotalIntlTxnCount(eligCount);
         dcc.setTotalIntlVolume(eligVol);
         dcc.setDccRevenueGenerated(revenueGenerated);
+        dcc.setDccMerchantRevenue(merchantShare.setScale(2, RoundingMode.HALF_UP));
+        dcc.setDccAcquirerRevenue(acquirerShare.setScale(2, RoundingMode.HALF_UP));
+        dcc.setRentalIncome(rental.setScale(2, RoundingMode.HALF_UP));
+        dcc.setDccRevenueSource(feedPresent ? "FEED" : "NONE");
         dcc.setOptOutDeclineRate(eligCount > 0
                 ? new BigDecimal(optoutCount * 100.0 / eligCount).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO);
 

@@ -3,7 +3,7 @@ import { Box, Paper, Typography, ToggleButton, ToggleButtonGroup, Chip, Stack, T
 import { DataGrid } from '@mui/x-data-grid';
 import { Activity, AlertTriangle, X, CalendarClock, ArrowRight, Info, Scale } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { createFmt } from '../../utils/formatters';
+import { createFmt, convertForDisplay, isUsdDisplay } from '../../utils/formatters';
 import api from '../../api/axios';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import SkeletonLoader from '../../components/SkeletonLoader';
@@ -38,6 +38,11 @@ const METRICS = {
     volume:  { label: 'Volume',       suffix: '',      kind: 'currency' },
     txns:    { label: 'Transactions', suffix: '_txns', kind: 'count' },
     revenue: { label: 'Revenue (MSF)',suffix: '_msf',  kind: 'currency' },
+    // Net spread = net margin + DCC (acquirer) + rental. A merchant whose
+    // volume is falling but whose rental is steady is a different call from
+    // one whose whole spread is collapsing. Only measurable on the
+    // merchant-grain route (meta.spreadAvailable) — greyed otherwise.
+    spread:  { label: 'Net Spread',   suffix: '_spread', kind: 'currency' },
 };
 
 // Attrition status → colour + label. Mirrors classifyAttrition() in the backend,
@@ -56,6 +61,9 @@ const METRICS = {
 const STATUS_META = {
     CHURNED:    { label: 'Churned',    color: 'var(--attr-churned, #B3382C)',   bg: 'var(--attr-churned-bg, #F4E4E1)',   hard: true },
     DECLINING:  { label: 'Declining',  color: 'var(--attr-declining, #8C5E12)', bg: 'var(--attr-declining-bg, #F0E7D6)', hard: true },
+    // Onboarded but never processed a single transaction across the whole
+    // queried horizon. Quiet colour: actionable (activation call), not churn.
+    NON_STARTER: { label: 'Non-starter', color: 'var(--attr-nonstarter, #6E5A99)', bg: 'var(--attr-nonstarter-bg, #EAE5F3)' },
     STABLE:     { label: 'Stable',     color: 'var(--attr-stable, #51618C)',    bg: 'var(--attr-stable-bg, #E4E9F2)' },
     PERFORMING: { label: 'Performing', color: 'var(--attr-growing, #0B6B4D)',   bg: 'var(--attr-growing-bg, #DFEFE8)' },
     // Trading this month with no trailing 3-month baseline — nothing to attrite
@@ -78,12 +86,16 @@ const RISK_META = {
 // the "How statuses are decided" popover renders this list verbatim.
 // Keep in sync with the backend if the thresholds ever move.
 const STATUS_RULES = [
+    { key: 'NON_STARTER', rule: 'Onboarded but has never processed any volume at all. Decided first, before the rules below.' },
     { key: 'NEW',        rule: 'Trading this month, but no volume at all in the prior three months — there is no baseline to compare against.' },
-    { key: 'CHURNED',    rule: 'No volume this month, or below 30% of the three-month average.' },
-    { key: 'DECLINING',  rule: 'Volume fell in each of the last three months in a row.' },
+    { key: 'CHURNED',    rule: 'Three straight silent months — no volume this month or in either of the two months before it.' },
+    { key: 'DECLINING',  rule: 'At risk but not gone: no volume this month only, or trading below 30% of the three-month average, or volume falling three months in a row.' },
     { key: 'PERFORMING', rule: 'At or above 90% of the three-month average.' },
     { key: 'STABLE',     rule: 'Everything else — between 30% and 90% of the three-month average, and not falling every month.' },
 ];
+// Population exclusions applied by the backend before any status is decided.
+// Stated in the same popover so "where did merchant X go" has an answer.
+const EXCLUSION_NOTE = 'Closed merchants and merchants onboarded within the last 30 days are excluded from this report entirely.';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // Month label off the ISO STRING, never `new Date(iso)` — that parses as UTC
@@ -130,13 +142,17 @@ const explainStatus = (row, moneyFn) => {
     const tail = ' Status is always measured on volume, whichever metric the grid is showing.';
 
     switch (row.status) {
+        case 'NON_STARTER':
+            return `Non-starter — onboarded but has never processed any volume.${tail}`;
         case 'NEW':
             return `New — trading this month (${curTxt}) with no volume in the prior three months, so there is no baseline to compare against.${tail}`;
         case 'CHURNED':
-            return Number(row.cur_month) > 0
-                ? `Churned — this month's volume (${curTxt}) is ${ratioTxt} of the three-month average (${avgTxt}), below the 30% threshold.${tail}`
-                : `Churned — no volume at all this month, against a three-month average of ${avgTxt}.${tail}`;
+            return `Churned — three straight silent months: no volume this month or in either of the two months before it.${tail}`;
         case 'DECLINING':
+            if (!(Number(row.cur_month) > 0))
+                return `Declining — no volume this month, against a three-month average of ${avgTxt}. Not yet churned: there was volume within the last two months.${tail}`;
+            if (ratio != null && Number(ratio) < 30)
+                return `Declining — this month's volume (${curTxt}) is ${ratioTxt} of the three-month average (${avgTxt}), below the 30% threshold.${tail}`;
             return `Declining — volume fell three months running: ${money(row.prev_m3)} → ${money(row.prev_m2)} → ${money(row.prev_m1)} → ${curTxt} this month.${tail}`;
         case 'PERFORMING':
             return `Performing — this month's volume (${curTxt}) is ${ratioTxt} of the three-month average (${avgTxt}), at or above the 90% threshold.${tail}`;
@@ -433,6 +449,13 @@ const AttritionReport = () => {
 
     // Helpers that read the active-metric value off a row.
     const val = (row, base) => row[`${base}${suffix}`];
+    // Export-side MEASURE value: converted when the executive USD display
+    // toggle is on and the active metric is money; counts and the percent
+    // columns (which keep using val directly) are never converted.
+    const mval = (row, base) => {
+        const v = val(row, base);
+        return (v == null || kind !== 'currency') ? v : convertForDisplay(Number(v));
+    };
     const fmtCount = (v) => v == null ? '-' : Number(v).toLocaleString('en-US');
     const fmtMeasure = (v) => v == null ? '-' : (kind === 'count' ? fmtCount(v) : fmt.currency(v));
     const pctFormatter = (v) => v == null ? '-' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`;
@@ -450,7 +473,7 @@ const AttritionReport = () => {
 
     // Status counts come from the whole portfolio (not the status-filtered view).
     const statusCounts = useMemo(() => {
-        const c = { CHURNED: 0, DECLINING: 0, STABLE: 0, PERFORMING: 0, NEW: 0 };
+        const c = { CHURNED: 0, DECLINING: 0, NON_STARTER: 0, STABLE: 0, PERFORMING: 0, NEW: 0 };
         data.forEach(d => { if (c[d.status] != null) c[d.status]++; });
         return c;
     }, [data]);
@@ -524,7 +547,7 @@ const AttritionReport = () => {
     }, [rows, statusFilter, bucketFilter, metric]);
 
     // ── Churn analytics (all from the rows already returned) ──
-    const STATUS_BARS = ['CHURNED', 'DECLINING', 'STABLE', 'PERFORMING', 'NEW'];
+    const STATUS_BARS = ['CHURNED', 'DECLINING', 'NON_STARTER', 'STABLE', 'PERFORMING', 'NEW'];
     const analytics = useMemo(() => {
         const total = data.length || 1;
         // Per-status YTD value, so the health band can be sized by money —
@@ -739,7 +762,10 @@ const AttritionReport = () => {
                     if (bucketFilter != null && BUCKETS[bucketFilter]) parts.push(`ytd_${BUCKETS[bucketFilter].label.replace(/[^\w-]+/g, '')}`);
                     // Column spec mirrors the on-screen grid: friendly names,
                     // active metric only, and the same MoM applicability rule.
-                    const m = METRICS[metric].label;
+                    // Money metric columns are labelled (USD) when the executive
+                    // display toggle is converting their values.
+                    const m = METRICS[metric].label
+                        + (METRICS[metric].kind === 'currency' && isUsdDisplay() ? ' (USD)' : '');
                     exportToCSV(filteredData, parts.join('_'), [
                         { label: 'MID', key: 'mid' },
                         { label: 'Merchant Name', key: 'name' },
@@ -752,22 +778,22 @@ const AttritionReport = () => {
                             { label: 'Churn Top Reason', key: 'churnReason' },
                         ] : []),
                         // The grid's fixed columns: classifier months + full prior year.
-                        { label: `${monthCols.m2} ${m}`, getter: r => val(r, 'prev_m2') },
-                        { label: `${monthCols.m1} ${m}`, getter: r => val(r, 'prev_m1') },
-                        { label: `${monthCols.cur} ${m}`, getter: r => val(r, 'cur_month') },
-                        { label: `${prevYear} Full ${m}`, getter: r => val(r, 'py_full') },
+                        { label: `${monthCols.m2} ${m}`, getter: r => mval(r, 'prev_m2') },
+                        { label: `${monthCols.m1} ${m}`, getter: r => mval(r, 'prev_m1') },
+                        { label: `${monthCols.cur} ${m}`, getter: r => mval(r, 'cur_month') },
+                        { label: `${prevYear} Full ${m}`, getter: r => mval(r, 'py_full') },
                         { label: `${prevYear} Margin %`, getter: r => { const p = marginPct(r, 'py_full_msf', 'py_full'); return p == null ? '' : p.toFixed(2); } },
                         { label: `${selectedYear} YTD Margin %`, getter: r => { const p = marginPct(r, 'ytd_current_msf', 'ytd_current'); return p == null ? '' : p.toFixed(2); } },
                         ...(momApplicable ? [
-                            { label: `Prev Month ${m}`, getter: r => val(r, 'mom_prev') },
-                            { label: `Current Month ${m}`, getter: r => val(r, 'mom_current') },
+                            { label: `Prev Month ${m}`, getter: r => mval(r, 'mom_prev') },
+                            { label: `Current Month ${m}`, getter: r => mval(r, 'mom_current') },
                             { label: 'MoM % Change', getter: r => val(r, 'mom_pct') },
                         ] : []),
-                        { label: `Period ${prevYear} ${m}`, getter: r => val(r, 'mtd_prev') },
-                        { label: `Period ${selectedYear} ${m}`, getter: r => val(r, 'mtd_current') },
+                        { label: `Period ${prevYear} ${m}`, getter: r => mval(r, 'mtd_prev') },
+                        { label: `Period ${selectedYear} ${m}`, getter: r => mval(r, 'mtd_current') },
                         { label: 'Period YoY % Change', getter: r => val(r, 'mtd_pct') },
-                        { label: `YTD ${prevYear} ${m}`, getter: r => val(r, 'ytd_prev') },
-                        { label: `YTD ${selectedYear} ${m}`, getter: r => val(r, 'ytd_current') },
+                        { label: `YTD ${prevYear} ${m}`, getter: r => mval(r, 'ytd_prev') },
+                        { label: `YTD ${selectedYear} ${m}`, getter: r => mval(r, 'ytd_current') },
                         { label: 'YTD % Change', getter: r => val(r, 'ytd_pct') },
                     ]);
                 }}
@@ -1116,6 +1142,9 @@ const AttritionReport = () => {
                                 Transactions or Revenue. Hover any status chip in the table to see that
                                 merchant's own numbers.
                             </Typography>
+                            <Typography variant="caption" sx={{ color: T.textMut, lineHeight: 1.5, display: 'block', mt: 1 }}>
+                                {EXCLUSION_NOTE}
+                            </Typography>
                         </Popover>
                         {/* Nothing previously told users the band was interactive, so its
                             best feature went unused. Show the affordance until it is. */}
@@ -1288,7 +1317,12 @@ const AttritionReport = () => {
                         <ToggleButtonGroup size="small" exclusive value={metric}
                             onChange={(e, v) => v && setMetric(v)} aria-label="metric">
                             {Object.entries(METRICS).map(([k, m]) => (
-                                <ToggleButton key={k} value={k} sx={{ textTransform: 'none', fontWeight: 600, py: 0.4, px: 1.25 }}>{m.label}</ToggleButton>
+                                <ToggleButton key={k} value={k}
+                                    disabled={k === 'spread' && meta?.spreadAvailable === false}
+                                    title={k === 'spread' && meta?.spreadAvailable === false
+                                        ? 'Net spread is not available with card, channel, destination or store filters (DCC and rental are booked per merchant, not per card).'
+                                        : undefined}
+                                    sx={{ textTransform: 'none', fontWeight: 600, py: 0.4, px: 1.25 }}>{m.label}</ToggleButton>
                             ))}
                         </ToggleButtonGroup>
                     </Box>

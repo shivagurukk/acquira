@@ -54,6 +54,17 @@ public class BankController {
     public ResponseEntity<Tenant> createBank(@RequestBody Tenant tenant) {
         // Creating a tenant is a platform-level operation — restrict to SUPER_ADMIN.
         // Previously this had no guard, so any authenticated user could POST a new tenant.
+        //
+        // CREATE MUST NEVER UPDATE (2026-08-24, live incident). A POST whose payload
+        // carried tenantId=8 JPA-merged OVER the existing AFSB tenant: created_at was
+        // rewritten, provisioning re-ran, and card_type_source silently reset
+        // BIN -> FILE (the payload omitted it, so the null-normalizer stamped the
+        // default) — which blanked every card type on the next ingest. A payload
+        // with an id belongs to PUT /{id}; reject it here so a stray client POST
+        // can no longer overwrite an existing tenant.
+        if (tenant.getTenantId() != null) {
+            return ResponseEntity.status(409).body(null);
+        }
         // Validate or set defaults
         if (tenant.getBankShortCode() == null) {
             tenant.setBankShortCode(tenant.getBankName().toUpperCase().replaceAll(" ", "").substring(0,
@@ -93,8 +104,16 @@ public class BankController {
         tenant.setCurrencyName(details.getCurrencyName());
         tenant.setCurrencySymbol(details.getCurrencySymbol());
         tenant.setBaseCurrency(details.getBaseCurrency());
-        tenant.setInputFormat(normalizeInputFormat(details.getInputFormat()));
-        tenant.setCardTypeSource(normalizeCardTypeSource(details.getCardTypeSource()));
+        // Only overwrite when the payload carries a value — an older UI build (or a
+        // partial client model) that doesn't send these fields must not reset a
+        // tenant to the defaults. Same rule as homeCountryCode below; before this
+        // guard, a payload lacking cardTypeSource reset BIN -> FILE (2026-08-24).
+        if (details.getInputFormat() != null && !details.getInputFormat().isBlank()) {
+            tenant.setInputFormat(normalizeInputFormat(details.getInputFormat()));
+        }
+        if (details.getCardTypeSource() != null && !details.getCardTypeSource().isBlank()) {
+            tenant.setCardTypeSource(normalizeCardTypeSource(details.getCardTypeSource()));
+        }
         // Only overwrite when the payload carries a value — an older UI build
         // that doesn't send homeCountryCode must not reset a tenant to 'AE'.
         if (details.getHomeCountryCode() != null && !details.getHomeCountryCode().isBlank()) {

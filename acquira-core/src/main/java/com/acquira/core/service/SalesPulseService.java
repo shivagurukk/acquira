@@ -1,5 +1,6 @@
 package com.acquira.core.service;
 
+import com.acquira.common.service.NetSpreadSql;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -59,9 +60,14 @@ public class SalesPulseService {
     private final JdbcTemplate jdbcTemplate;
     private final SalesPulseProperties props;
 
-    /** Same net-margin expression the leaderboard and portfolio screens use. */
-    private static final String NET_EXPR =
-        "COALESCE(sdm.total_msf,0) - COALESCE(sdm.total_interchange,0) - COALESCE(sdm.total_scheme_fee,0)";
+    /**
+     * Same net-margin expression the leaderboard and portfolio screens use —
+     * the shared NetSpreadSql definition (batch 4-leg margin), so every sales
+     * page ranks on the identical number.
+     */
+    private static final String NET_EXPR = NetSpreadSql.margin("sdm");
+    /** Net spread = net margin + DCC acquirer share + rental (carried alongside, never ranked on). */
+    private static final String SPREAD_EXPR = NetSpreadSql.spread("sdm");
 
     private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
 
@@ -95,7 +101,8 @@ public class SalesPulseService {
     // ═══════════════════════════════════════════════════════════
 
     /** One agent's sales in the selected window and in its comparison window. */
-    public record WindowSales(double sales, double prevSales, double volume, double txns, long merchants) {}
+    public record WindowSales(double sales, double prevSales, double volume, double txns, long merchants,
+                              double spread, double prevSpread) {}
 
     /**
      * Current + previous period for every agent, in ONE scan. Both windows are
@@ -111,7 +118,11 @@ public class SalesPulseService {
           + "   COALESCE(SUM(" + NET_EXPR + ") FILTER (WHERE sdm.business_date BETWEEN b.pf AND b.pt), 0) AS prev_sales,"
           + "   COALESCE(SUM(sdm.total_base_volume) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct), 0) AS volume,"
           + "   COALESCE(SUM(sdm.total_txns) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct), 0) AS txns,"
-          + "   COUNT(DISTINCT sdm.merchant_id) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct) AS merchants"
+          + "   COALESCE(SUM(" + SPREAD_EXPR + ") FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct), 0) AS spread,"
+          + "   COALESCE(SUM(" + SPREAD_EXPR + ") FILTER (WHERE sdm.business_date BETWEEN b.pf AND b.pt), 0) AS prev_spread,"
+          // total_txns > 0: ancillary-only rows (rental/DCC on a no-sale day)
+          // must not count a merchant into the agent's active set.
+          + "   COUNT(DISTINCT sdm.merchant_id) FILTER (WHERE sdm.business_date BETWEEN b.cf AND b.ct AND COALESCE(sdm.total_txns,0) > 0) AS merchants"
           + " FROM sum_daily_merchant sdm"
           + " CROSS JOIN bounds b"
           + " JOIN dim_merchant m ON m.merchant_id = sdm.merchant_id AND m.tenant_id = sdm.tenant_id"
@@ -127,7 +138,9 @@ public class SalesPulseService {
                 hasPrev ? num(r.get("prev_sales")) : 0.0,
                 num(r.get("volume")),
                 num(r.get("txns")),
-                (long) num(r.get("merchants"))));
+                (long) num(r.get("merchants")),
+                num(r.get("spread")),
+                hasPrev ? num(r.get("prev_spread")) : 0.0));
         }
         return out;
     }
@@ -160,12 +173,21 @@ public class SalesPulseService {
      * hide a real decline. Both matter, and they are different cases.
      */
     public Map<String, List<Double>> monthlySeries(Long tenantId, MomentumWindow w) {
+        return monthlySeriesFor(tenantId, w, NET_EXPR);
+    }
+
+    /** Same shape as {@link #monthlySeries} on net spread — the hero chart's second lens. */
+    public Map<String, List<Double>> monthlySpreadSeries(Long tenantId, MomentumWindow w) {
+        return monthlySeriesFor(tenantId, w, SPREAD_EXPR);
+    }
+
+    private Map<String, List<Double>> monthlySeriesFor(Long tenantId, MomentumWindow w, String expr) {
         List<YearMonth> months = new ArrayList<>();
         for (YearMonth m = w.first(); !m.isAfter(w.last()); m = m.plusMonths(1)) months.add(m);
 
         String sql =
             "SELECT m.sales_user_id AS agent, TO_CHAR(sdm.business_date, 'YYYY-MM') AS month,"
-          + "   COALESCE(SUM(" + NET_EXPR + "), 0) AS sales"
+          + "   COALESCE(SUM(" + expr + "), 0) AS sales"
           + " FROM sum_daily_merchant sdm"
           + " JOIN dim_merchant m ON m.merchant_id = sdm.merchant_id AND m.tenant_id = sdm.tenant_id"
           + " WHERE sdm.tenant_id = ? AND sdm.business_date BETWEEN ?::date AND ?::date"

@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { formatCompactCurrency } from '../../utils/formatters';
 import { T, CARD } from '../../theme/salesTokens';
 import PulseHeroBand from '../../components/pulse/PulseHeroBand';
+import MarginGlossaryHint from '../../components/MarginGlossary';
 import TeamRacePanel from '../../components/pulse/TeamRacePanel';
 import SpotlightPanel from '../../components/pulse/SpotlightPanel';
 import TeamLeadSection from '../../components/pulse/TeamLeadSection';
@@ -176,9 +177,12 @@ export default function ExecutiveSalesPulse() {
           <h1 style={{ display: 'flex', alignItems: 'center', gap: 9, margin: 0, fontSize: 21, fontWeight: 700, color: T.text }}>
             <Activity size={21} color={T.brand} /> Executive Sales Pulse
           </h1>
-          <p style={{ margin: '4px 0 0', fontSize: 12, color: T.textMut }}>
-            Who is performing, who is improving, and where leadership should look.
-            {data?.dataThrough && ` Data through ${data.dataThrough}.`}
+          <p style={{ margin: '4px 0 0', fontSize: 12, color: T.textMut, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>
+              Who is performing, who is improving, and where leadership should look.
+              {data?.dataThrough && ` Data through ${data.dataThrough}.`}
+            </span>
+            <MarginGlossaryHint compact />
           </p>
         </div>
 

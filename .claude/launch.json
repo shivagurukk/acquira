@@ -2,12 +2,24 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "backend",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run", "-pl", "acquira-core", "-o", "-Dspring-boot.run.arguments=--spring.sql.init.mode=never"],
+      "port": 8081
+    },
+    {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": ["run", "dev", "--", "--port", "5174", "--strictPort"],
       "cwd": "frontend",
-      "port": 5173,
-      "autoPort": true
+      "port": 5174
+    },
+    {
+      "name": "frontend-5173",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5173", "--strictPort"],
+      "cwd": "frontend",
+      "port": 5173
     }
   ]
 }

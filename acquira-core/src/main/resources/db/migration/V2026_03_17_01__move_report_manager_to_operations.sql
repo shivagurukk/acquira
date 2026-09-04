@@ -1,0 +1,4 @@
+-- This migration is intentionally empty.
+-- The menu update for Merchant Report Manager → OPERATIONS
+-- was moved to data.sql (startup script) for idempotent execution on every restart.
+-- See: acquira-core/src/main/resources/data.sql section 11.
