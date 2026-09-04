@@ -356,8 +356,27 @@ public class RentalJobConfig {
                 + "  OR (r.level='TERMINAL' AND NOT EXISTS (SELECT 1 FROM dim_terminal d WHERE d.tenant_id=r.tenant_id AND d.tid=r.tid)) )",
                 tenantId);
 
-            // 4. Apply — one insert per level so each resolves its own dim chain.
-            //    ON CONFLICT (tenant_id, row_hash) makes re-uploads no-ops.
+            // 4a. REPLACE-BY-DATE (2026-09-04, same semantic as the DCC feed):
+            //     a re-sent file is the TRUTH for the dates it carries, so wipe
+            //     those dates before inserting. Hash-dedupe alone proved
+            //     insufficient — the ABS sign fix changed the hash of every
+            //     previously loaded charge, so re-uploads appended positive
+            //     copies next to the old negative rows and every rental sum
+            //     cancelled to exactly zero (UAT, 2026-09-04). The wipe makes
+            //     corrections structural: whatever the old rows contained, the
+            //     newest file for a date wins. Hash-dedupe still guards
+            //     duplicate rows WITHIN one file.
+            int wiped = jdbcTemplate.update(
+                "DELETE FROM fact_rental f WHERE f.tenant_id=? AND f.payment_date IN ("
+                + "  SELECT DISTINCT payment_date FROM stg_rental_raw "
+                + "  WHERE tenant_id=? AND status='PENDING' AND payment_date IS NOT NULL)",
+                tenantId, tenantId);
+            if (wiped > 0) {
+                log.info("[Rental] Tenant {}: replaced {} existing charge(s) on the dates carried by this file",
+                        tenantId, wiped);
+            }
+
+            // 4b. Apply — one insert per level so each resolves its own dim chain.
             int insMerchant = jdbcTemplate.update(
                 "INSERT INTO fact_rental (tenant_id, level, merchant_id, mid, sid, tid, rental_amount, payment_date, row_hash) "
                 + "SELECT r.tenant_id, r.level, d.merchant_id, r.mid, r.sid, r.tid, r.rental_amount, r.payment_date, r.row_hash "
