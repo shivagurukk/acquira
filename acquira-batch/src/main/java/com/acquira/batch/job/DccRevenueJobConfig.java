@@ -200,36 +200,18 @@ public class DccRevenueJobConfig {
         catch (Exception e) { return null; }
     }
 
-    private static final java.time.format.DateTimeFormatter[] DATE_FORMATS = {
-        java.time.format.DateTimeFormatter.ISO_LOCAL_DATE,
-        java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"),
-        java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"),
-        java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"),
-        java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"),
-        java.time.format.DateTimeFormatter.ofPattern("dd-MMM-yyyy"),
-        java.time.format.DateTimeFormatter.ofPattern("d-MMM-yyyy"),
-        java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy"),
-    };
-
+    /**
+     * Delegates to {@link FeedDateParser} — shared with the rental feed so the
+     * BH export format ('08-MAY-26': two-digit year AND upper-case month)
+     * parses identically in both. See that class for why a plain ofPattern
+     * list silently rejected every row of an AFS Bahrain file.
+     */
     private java.time.LocalDate parseDate(String val) {
-        if (val == null || val.trim().isEmpty()) return null;
-        String s = val.trim();
-        // Excel serial date (ExcelItemReader hands numerics through as strings)
-        if (s.matches("\\d+(?:\\.\\d+)?")) {
-            try {
-                double serial = Double.parseDouble(s);
-                if (serial > 1 && serial < 92000) {
-                    return java.time.LocalDate.of(1899, 12, 30).plusDays((long) serial);
-                }
-            } catch (Exception ignored) {}
+        java.time.LocalDate d = FeedDateParser.parse(val);
+        if (d == null && val != null && !val.trim().isEmpty()) {
+            log.warn("[DCC] Could not parse Date '{}' — storing NULL (row will be REJECTED)", val);
         }
-        // Datetime strings: keep the date part
-        if (s.length() > 10 && s.charAt(10) == ' ') s = s.substring(0, 10);
-        for (java.time.format.DateTimeFormatter f : DATE_FORMATS) {
-            try { return java.time.LocalDate.parse(s, f); } catch (Exception ignored) {}
-        }
-        log.warn("[DCC] Could not parse Date '{}' — storing NULL (row will be REJECTED)", val);
-        return null;
+        return d;
     }
 
     @Bean
