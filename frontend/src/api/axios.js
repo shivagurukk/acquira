@@ -36,6 +36,37 @@ export const UPLOAD_TIMEOUT = 15 * 60 * 1000;
 export const isTimeoutError = (err) =>
     err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT';
 
+/**
+ * Timeout for the token-refresh call.
+ *
+ * This one is load-bearing for the whole app, not just one screen. The refresh
+ * runs on the raw `axios` (it must not re-enter this instance's interceptor and
+ * recurse), and raw axios defaults to timeout: 0 — NO timeout at all. When the
+ * backend accepted the connection but never answered (pod restarting, DB pool
+ * exhausted, nginx upstream hung), that promise never settled, so `isRefreshing`
+ * stayed true forever and every request queued behind it hung with it — leaving
+ * ProtectedRoute stuck on "Validating Session..." indefinitely, past its own
+ * 60s timeout, with no way out but a manual reload. Verified 2026-09-04 against
+ * a stub that 401s /auth/session then never answers /auth/refresh.
+ *
+ * Short on purpose: a refresh that has not answered in 15s is not going to.
+ */
+export const REFRESH_TIMEOUT = 15000;
+
+/**
+ * True when the server was never reached, or answered as a dead gateway — as
+ * opposed to answering with a real application error. Callers use it to tell
+ * "backend is down" apart from "backend says no", which must not look the same
+ * to the user: a failed fetch rendered as an empty table is indistinguishable
+ * from a genuine zero.
+ */
+export const isBackendUnreachable = (err) => {
+    if (!err) return false;
+    if (isTimeoutError(err)) return true;
+    if (!err.response) return true;              // network error / DNS / refused
+    return [502, 503, 504].includes(err.response.status);
+};
+
 // Refresh token cache. The primary mechanism is the HttpOnly cookie set
 // by the backend; this localStorage copy is a backward-compat fallback
 // used when the cookie is unavailable (e.g. plain-HTTP dev, where the
@@ -114,7 +145,8 @@ api.interceptors.response.use(
 
             try {
                 // #12: Cookie is sent automatically; body is fallback for backward compat
-                const res = await axios.post('/api/auth/refresh', { refreshToken }, { withCredentials: true });
+                const res = await axios.post('/api/auth/refresh', { refreshToken },
+                    { withCredentials: true, timeout: REFRESH_TIMEOUT });
                 const { jwt, refreshToken: newRefresh } = res.data;
 
                 localStorage.setItem('token', jwt);
@@ -129,6 +161,16 @@ api.interceptors.response.use(
                 return api(originalRequest);
             } catch (refreshError) {
                 processQueue(refreshError, null);
+                // A refresh that could not REACH the server says nothing about
+                // whether the session is still good. Logging out here would
+                // destroy a valid session over a transient outage — and send the
+                // user to a login screen that cannot authenticate them either,
+                // because the same backend is down. Keep the credentials, report
+                // the outage, and let the caller offer a retry.
+                if (isBackendUnreachable(refreshError)) {
+                    showToast('Cannot reach the server. Check your connection and retry.', 'error', 6000);
+                    return Promise.reject(refreshError);
+                }
                 clearAuthStorage();
                 showToast('Your session has expired. Please log in again.', 'warning', 5000);
                 setTimeout(() => { window.location.href = '/login'; }, 1200);
