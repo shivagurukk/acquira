@@ -425,14 +425,27 @@ public class RentalJobConfig {
                 tenantId);
             stepDone.accept("step 4d: insert TERMINAL-level charges", insTerminal);
 
-            // A staged row whose hash already existed in fact_rental is a
-            // duplicate of an earlier load, not an error.
+            // 4e. Flag IN-FILE duplicates: extra copies of a row that appears
+            //     more than once in this one file (same ids, amount, date =
+            //     same row_hash). Keep the first copy PROCESSED, flag the rest.
+            //
+            //     This REPLACES the old cross-load check ("hash already in
+            //     fact_rental from an earlier load"), which replace-by-date
+            //     (4a) made dead code: the hash includes the payment date, so
+            //     a matching fact row sat on a date this file carries — and 4a
+            //     just wiped those. Its created_at < MIN(load_time) guard then
+            //     excluded this load's own inserts, leaving nothing it could
+            //     ever match. Worse, that MIN() subquery was correlated, so
+            //     Postgres re-ran a full staging scan PER ROW — 34 minutes on
+            //     a 150k-row UAT file (pg_stat_activity, 2026-09-04) to update
+            //     zero rows. The GROUP BY below is one pass over staging.
             int duplicates = jdbcTemplate.update(
-                "UPDATE stg_rental_raw r SET status='DUPLICATE', error_message='Charge already recorded (same ids, amount and date)' "
-                + "WHERE r.tenant_id=? AND r.status='PENDING' AND EXISTS ("
-                + "  SELECT 1 FROM fact_rental f WHERE f.tenant_id=r.tenant_id AND f.row_hash=r.row_hash "
-                + "  AND f.created_at < (SELECT MIN(load_time) FROM stg_rental_raw x WHERE x.tenant_id=r.tenant_id))",
-                tenantId);
+                "UPDATE stg_rental_raw r SET status='DUPLICATE', "
+                + "error_message='Duplicate row within this file (same ids, amount and date)' "
+                + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.raw_id NOT IN ("
+                + "  SELECT MIN(raw_id) FROM stg_rental_raw "
+                + "  WHERE tenant_id=? AND status='PENDING' GROUP BY row_hash)",
+                tenantId, tenantId);
             stepDone.accept("step 4e: flag in-file duplicates", duplicates);
             // Touched dates for the ancillary summary overlay — collected
             // BEFORE the status flip below empties the PENDING set.
