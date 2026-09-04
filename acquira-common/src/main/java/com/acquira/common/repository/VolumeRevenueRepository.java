@@ -1639,6 +1639,8 @@ public class VolumeRevenueRepository {
         java.time.LocalDate m1Start = curMonStart.minusMonths(1);
         java.time.LocalDate m3Start = curMonStart.minusMonths(3);
         java.time.LocalDate m1End = m1Start.withDayOfMonth(monthComplete ? m1Start.lengthOfMonth() : Math.min(dayCut, m1Start.lengthOfMonth()));
+        // Same exclusion cutoff as getAttritionReport — must stay in sync.
+        java.time.LocalDate onboardCutoff = classifierEnd.minusDays(30);
 
         java.util.function.BiFunction<java.time.LocalDate, java.time.LocalDate, Boolean> windowHasData = (wStart, wEnd) -> {
             StringBuilder sql = new StringBuilder();
@@ -1650,6 +1652,10 @@ public class VolumeRevenueRepository {
             }
             sql.append("WHERE s.business_date >= :wStart AND s.business_date <= :wEnd AND s.total_volume > 0 ");
             if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
+            // Same population exclusions as getAttritionReport (closed merchants,
+            // onboarded <30 days before the classifier anchor) — keep in sync.
+            sql.append("AND UPPER(COALESCE(m.status, 'ACTIVE')) NOT IN ('CLOSED','INACTIVE','TERMINATED','SUSPENDED','DEACTIVATED','DISABLED') ");
+            sql.append("AND (m.date_of_onboarding IS NULL OR m.date_of_onboarding <= :onboardCutoff) ");
 
             if (listNonEmpty(filter.getPartnerList()))    sql.append("AND m.referral_partner IN (:partners) ");
             if (listNonEmpty(filter.getRmList()))         sql.append("AND m.sales_email IN (:rms) ");
@@ -1671,6 +1677,7 @@ public class VolumeRevenueRepository {
             Query q = entityManager.createNativeQuery(sql.toString());
             q.setParameter("wStart", wStart);
             q.setParameter("wEnd", wEnd);
+            q.setParameter("onboardCutoff", onboardCutoff);
             if (tenantId != null) q.setParameter("tenantId", tenantId);
 
             if (listNonEmpty(filter.getPartnerList()))    q.setParameter("partners", filter.getPartnerList());
@@ -1705,6 +1712,9 @@ public class VolumeRevenueRepository {
         meta.put("momPrevStart", momStart.toString());
         meta.put("momPrevEnd", momEnd.toString());
         meta.put("momWindowHasData", momHasData);
+        // Net spread is only measurable on the merchant-grain route (the insight
+        // cross-tab carries no DCC/rental columns); the UI greys the toggle.
+        meta.put("spreadAvailable", canUseMerchantGrain);
         meta.put("yoyPrevStart", prevStart.toString());
         meta.put("yoyPrevEnd", prevEnd.toString());
         meta.put("yoyWindowHasData", yoyHasData);
@@ -1715,6 +1725,9 @@ public class VolumeRevenueRepository {
         // (selected end clamped to the latest loaded business date), and whether its
         // trailing-3-month baseline holds any data at all.
         meta.put("classifierAnchor", classifierEnd.toString());
+        // Population exclusions, for the UI captions: merchants onboarded after
+        // this date (and closed merchants) are removed from the report.
+        meta.put("onboardCutoff", onboardCutoff.toString());
         meta.put("baselineStart", m3Start.toString());
         meta.put("baselineEnd", m1End.toString());
         meta.put("baselineWindowHasData", baselineHasData);
@@ -1820,6 +1833,14 @@ public class VolumeRevenueRepository {
         java.time.LocalDate m1End = m1Start.withDayOfMonth(monthComplete ? m1Start.lengthOfMonth() : Math.min(dayCut, m1Start.lengthOfMonth()));
         java.time.LocalDate m2End = m2Start.withDayOfMonth(monthComplete ? m2Start.lengthOfMonth() : Math.min(dayCut, m2Start.lengthOfMonth()));
         java.time.LocalDate m3End = m3Start.withDayOfMonth(monthComplete ? m3Start.lengthOfMonth() : Math.min(dayCut, m3Start.lengthOfMonth()));
+        // Merchants onboarded within 30 days of the classifier anchor are too
+        // fresh to judge (no full month of trading yet) and are excluded from
+        // the report entirely. Anchored on classifierEnd, not the wall clock,
+        // so historical selections judge against their own era. Deliberately
+        // uses date_of_onboarding WITHOUT the created_date fallback the user
+        // filters use: created_date is a DB-ingest artifact, and a freshly
+        // backloaded tenant would otherwise exclude its ENTIRE book.
+        java.time.LocalDate onboardCutoff = classifierEnd.minusDays(30);
 
         // Earliest date any window reads — used as the WHERE lower bound for partition pruning.
         //
@@ -1878,18 +1899,55 @@ public class VolumeRevenueRepository {
         appendWindowMeasures(sql, "curmonx", ":curMonStart", ":curMonEnd");
         appendWindowMeasures(sql, "m1x", ":m1Start", ":m1End");
         appendWindowMeasures(sql, "m2x", ":m2Start", ":m2End");
+        // Net spread (margin + DCC acquirer + rental) for the same nine
+        // presentation windows — the report's fourth Measure. Only the
+        // merchant-grain summary carries the ancillary columns; on the insight
+        // route the columns are emitted as literal 0 so the row[] layout is
+        // identical and the UI is told (meta.spreadAvailable) to grey the
+        // toggle. Appended LAST: indices 34–42.
+        String[][] spreadWindows = {
+            {"mtdcur", ":startDate", ":endDate"}, {"mtdprev", ":prevStartDate", ":prevEndDate"},
+            {"ytdcur", ":ytdStartDate", ":endDate"}, {"ytdprev", ":prevYtdStartDate", ":prevEndDate"},
+            {"momprev", ":momStartDate", ":momEndDate"}, {"pyfull", ":prevYtdStartDate", ":pyFullEnd"},
+            {"curmonx", ":curMonStart", ":curMonEnd"}, {"m1x", ":m1Start", ":m1End"}, {"m2x", ":m2Start", ":m2End"},
+        };
+        for (String[] w : spreadWindows) {
+            if (canUseMerchantGrain) {
+                sql.append("SUM(CASE WHEN s.business_date >= ").append(w[1])
+                   .append(" AND s.business_date <= ").append(w[2])
+                   .append(" THEN ").append(com.acquira.common.service.NetSpreadSql.spread("s"))
+                   .append(" ELSE 0 END) AS ").append(w[0]).append("_spread, ");
+            } else {
+                sql.append("0 AS ").append(w[0]).append("_spread, ");
+            }
+        }
         // strip trailing comma
         sql.setLength(sql.length() - 2);
-        sql.append(" FROM ").append(baseTable).append(" s ");
+        // Driven from dim_merchant with the summary LEFT-joined so merchants
+        // with NO summary rows at all (never transacted) still get a row —
+        // that is what the NON_STARTER status classifies. The date bounds move
+        // into the ON clause (in a WHERE they would turn the LEFT join back
+        // into an inner one). On the insight route the old inner-join
+        // semantics are kept (s IS NOT NULL below): a dimension-filtered view
+        // would otherwise tag every merchant outside the filter NON_STARTER.
         // [TENANCY] Join is tenant-scoped (s.tenant_id = m.tenant_id) — the old version
         // joined on merchant_id alone, the [P2-1] cross-tenant time-bomb pattern.
-        sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
+        sql.append(" FROM dim_merchant m ");
+        sql.append("LEFT JOIN ").append(baseTable).append(" s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id ");
+        sql.append("AND s.business_date >= :globalLowerBound AND s.business_date <= :endDate ");
         if (needStore) {
             sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
         }
 
-        sql.append("WHERE s.business_date >= :globalLowerBound AND s.business_date <= :endDate ");
-        if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
+        sql.append("WHERE 1=1 ");
+        if (tenantId != null) sql.append("AND m.tenant_id = :tenantId ");
+        if (!canUseMerchantGrain) sql.append("AND s.merchant_id IS NOT NULL ");
+        // Closed merchants cannot attrite — they are already gone. Only an
+        // EXPLICIT off-status excludes (same philosophy as TenantStatusService);
+        // NULL/blank/unknown statuses stay in.
+        sql.append("AND UPPER(COALESCE(m.status, 'ACTIVE')) NOT IN ('CLOSED','INACTIVE','TERMINATED','SUSPENDED','DEACTIVATED','DISABLED') ");
+        // Too-new-to-judge exclusion — see the onboardCutoff comment above.
+        sql.append("AND (m.date_of_onboarding IS NULL OR m.date_of_onboarding <= :onboardCutoff) ");
 
         // Merchant-dimension filters
         if (listNonEmpty(filter.getPartnerList()))  sql.append("AND m.referral_partner IN (:partners) ");
@@ -1933,6 +1991,7 @@ public class VolumeRevenueRepository {
         query.setParameter("m3Start", m3Start);
         query.setParameter("m3End", m3End);
         query.setParameter("globalLowerBound", globalLowerBound);
+        query.setParameter("onboardCutoff", onboardCutoff);
         if (tenantId != null) query.setParameter("tenantId", tenantId);
 
         if (listNonEmpty(filter.getPartnerList()))    query.setParameter("partners", filter.getPartnerList());
@@ -1975,15 +2034,25 @@ public class VolumeRevenueRepository {
             java.math.BigDecimal pyMsf = bd(row[24]);
             long curMonTxn = lng(row[26]), m1Txn = lng(row[29]), m2Txn = lng(row[32]);
             java.math.BigDecimal curMonMsf = bd(row[27]), m1Msf = bd(row[30]), m2Msf = bd(row[33]);
+            // Net spread windows (indices 34–42, see the SELECT). Zero on the
+            // insight route.
+            java.math.BigDecimal mtdSpread = bd(row[34]), mtdSpreadP = bd(row[35]);
+            java.math.BigDecimal ytdSpread = bd(row[36]), ytdSpreadP = bd(row[37]);
+            java.math.BigDecimal momSpread = bd(row[38]), pySpread = bd(row[39]);
+            java.math.BigDecimal curMonSpread = bd(row[40]), m1Spread = bd(row[41]), m2Spread = bd(row[42]);
 
-            // Drop merchants with no activity in ANY window — pure noise, never attrition.
+            // No activity in ANY window — this merchant never transacted across the
+            // whole queried horizon (~2 years). Formerly dropped as noise; now that
+            // the query is LEFT-joined from dim_merchant these are exactly the
+            // NON_STARTER population: onboarded (the WHERE already removed anyone
+            // onboarded <30 days ago, and every closed merchant) but never traded.
             // The rolling-month windows are included so a merchant whose only activity
-            // sits in the trailing 3 months is still classified rather than silently
-            // dropped; the full prior year likewise, so a merchant who only traded in
-            // the back half of last year (after the prior-YTD cutoff) still appears.
-            if (isZero(mtdVol) && isZero(mtdVolP) && isZero(ytdVol) && isZero(ytdVolP) && isZero(momVol)
-                    && isZero(curMonVol) && isZero(m1Vol) && isZero(m2Vol) && isZero(m3Vol) && isZero(pyVol))
-                continue;
+            // sits in the trailing 3 months is still classified rather than mis-tagged;
+            // the full prior year likewise, so a merchant who only traded in
+            // the back half of last year (after the prior-YTD cutoff) still classifies.
+            boolean neverTraded = isZero(mtdVol) && isZero(mtdVolP) && isZero(ytdVol) && isZero(ytdVolP)
+                    && isZero(momVol) && isZero(curMonVol) && isZero(m1Vol) && isZero(m2Vol)
+                    && isZero(m3Vol) && isZero(pyVol);
 
             Map<String, Object> map = new HashMap<>();
             map.put("mid", row[0]);
@@ -2047,8 +2116,24 @@ public class VolumeRevenueRepository {
             map.put("py_full", pyVol);
             map.put("py_full_txns", pyTxn);
             map.put("py_full_msf", pyMsf);
+
+            // ── Net spread (margin + DCC acquirer + rental) ──
+            map.put("mtd_current_spread", mtdSpread);
+            map.put("mtd_prev_spread", mtdSpreadP);
+            map.put("mtd_pct_spread", calculateGrowth(mtdSpread.doubleValue(), mtdSpreadP.doubleValue()));
+            map.put("ytd_current_spread", ytdSpread);
+            map.put("ytd_prev_spread", ytdSpreadP);
+            map.put("ytd_pct_spread", calculateGrowth(ytdSpread.doubleValue(), ytdSpreadP.doubleValue()));
+            map.put("mom_prev_spread", momSpread);
+            map.put("mom_current_spread", mtdSpread);
+            map.put("mom_pct_spread", calculateGrowth(mtdSpread.doubleValue(), momSpread.doubleValue()));
+            map.put("cur_month_spread", curMonSpread);
+            map.put("prev_m1_spread", m1Spread);
+            map.put("prev_m2_spread", m2Spread);
+            map.put("py_full_spread", pySpread);
             map.put("avg_3m_ratio_pct", ratioPct);
-            map.put("status", classifyAttrition(curMon, m1Vol.doubleValue(), m2Vol.doubleValue(), m3Vol.doubleValue(), avg3));
+            map.put("status", neverTraded ? "NON_STARTER"
+                    : classifyAttrition(curMon, m1Vol.doubleValue(), m2Vol.doubleValue(), m3Vol.doubleValue(), avg3));
 
             // Last activity date, normalised to an ISO string. The JDBC driver may
             // hand back java.sql.Date or LocalDate depending on column type and
@@ -2098,12 +2183,13 @@ public class VolumeRevenueRepository {
     /** Worst-first rank for the attrition grid. Unknown statuses sort with STABLE. */
     private static int statusSeverity(String status) {
         switch (status == null ? "" : status) {
-            case "CHURNED":    return 0;
-            case "DECLINING":  return 1;
-            case "STABLE":     return 2;
-            case "PERFORMING": return 3;
-            case "NEW":        return 4;
-            default:           return 2;
+            case "CHURNED":     return 0;
+            case "DECLINING":   return 1;
+            case "NON_STARTER": return 2;
+            case "STABLE":      return 3;
+            case "PERFORMING":  return 4;
+            case "NEW":         return 5;
+            default:            return 3;
         }
     }
 
@@ -2114,8 +2200,14 @@ public class VolumeRevenueRepository {
      * rows at all (classifier then falls back to the selected end date).
      */
     private java.time.LocalDate latestBusinessDate(String baseTable, Long tenantId) {
+        // sum_daily_merchant can hold ancillary-only rows (rental/DCC on a day
+        // with no transactions, total_txns=0); an anchor on such a day would
+        // re-introduce the mass-CHURNED bug the [FIX] comment describes. The
+        // other routed tables never carry those rows.
+        String guard = "sum_daily_merchant".equals(baseTable)
+                ? " AND COALESCE(s.total_txns,0) > 0" : "";
         Object r = entityManager.createNativeQuery(
-                "SELECT MAX(s.business_date) FROM " + baseTable + " s WHERE s.tenant_id = :tenantId")
+                "SELECT MAX(s.business_date) FROM " + baseTable + " s WHERE s.tenant_id = :tenantId" + guard)
                 .setParameter("tenantId", tenantId)
                 .getSingleResult();
         if (r == null) return null;
@@ -2150,8 +2242,13 @@ public class VolumeRevenueRepository {
      *              through to PERFORMING ("current >= 90% of a zero average"), so a
      *              window at the start of the tenant's data history stamped the whole
      *              portfolio Performing against an average that did not exist.
-     *   CHURNED    current month is zero, OR below 30% of avg3
-     *   DECLINING  the last three months are constantly dropping (m3 > m2 > m1 > current)
+     *   CHURNED    three straight silent months — zero volume in the current month
+     *              AND each of the two months before it. (2026-09-03 tightening: a
+     *              single silent month, or a low-but-trading month, is no longer
+     *              "churned" — those fall to DECLINING below.)
+     *   DECLINING  at risk but not gone: zero volume THIS month only (traded within
+     *              the last two), OR trading below 30% of avg3, OR volume dropping
+     *              three months in a row (m3 > m2 > m1 > current).
      *   PERFORMING current month is at least 90% of avg3. Zero months inside the
      *              trailing window do NOT disqualify — a merchant returning from
      *              dormancy at >=90% of its (correspondingly lower) average counts
@@ -2161,13 +2258,14 @@ public class VolumeRevenueRepository {
      *
      * Evaluated in that order, so the most severe status wins when several apply.
      *
-     * A merchant with no classifier-window activity at all (avg3 == 0, current == 0)
-     * still classifies CHURNED: it traded in SOME window (the noise filter upstream
-     * guarantees that) but has been dead for the whole classification horizon.
+     * NON_STARTER (never traded at all across the queried horizon) is decided by
+     * the caller from the window sums, not here — this method only ever sees
+     * merchants with SOME activity somewhere.
      */
     private String classifyAttrition(double curMonth, double m1, double m2, double m3, double avg3) {
         if (avg3 <= 0 && curMonth > 0) return "NEW";
-        if (curMonth <= 0 || (avg3 > 0 && curMonth < 0.30 * avg3)) return "CHURNED";
+        if (curMonth <= 0 && m1 <= 0 && m2 <= 0) return "CHURNED";
+        if (curMonth <= 0 || (avg3 > 0 && curMonth < 0.30 * avg3)) return "DECLINING";
         if (m3 > m2 && m2 > m1 && m1 > curMonth) return "DECLINING";
         if (curMonth >= 0.90 * avg3) return "PERFORMING";
         return "STABLE";

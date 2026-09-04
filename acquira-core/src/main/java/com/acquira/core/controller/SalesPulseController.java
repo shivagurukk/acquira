@@ -77,11 +77,33 @@ public class SalesPulseController {
     private final SalesCountryLeadRepository countryLeadRepository;
     private final TenantService tenantService;
     private final CurrencyMeta currencyMeta;
+    private final com.acquira.common.service.ReportCache reportCache;
+    private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
 
     private Long getTenantId() {
         Long t = tenantService.getCurrentTenantId();
         if (t == null) throw new IllegalStateException("No tenant context");
         return t;
+    }
+
+    /**
+     * The whole page is one cache entry per (tenant, period, filters): four
+     * scans over sum_daily_merchant per open otherwise. Evicted with every
+     * other report on ingest (ReportCache.evictAll), re-warmed for the default
+     * MTD view so the first open after a load is instant.
+     */
+    private Map<String, Object> cachedBuild(Long tenantId, String period, String dateFrom, String dateTo,
+                                            Long teamLeadId, Long countryLeadId, String targetMetric) {
+        String key = "salesPulse:" + tenantId + ":" + period + ":" + dateFrom + ":" + dateTo
+                + ":" + teamLeadId + ":" + countryLeadId + ":" + targetMetric;
+        return reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> build(tenantId, period, dateFrom, dateTo, teamLeadId, countryLeadId, targetMetric));
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("sales-pulse", tenantId ->
+                cachedBuild(tenantId, "MTD", "", "", null, null, SalesTargetResolver.DEFAULT_METRIC));
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -99,7 +121,7 @@ public class SalesPulseController {
 
         Long tenantId = getTenantId();
         return ResponseEntity.ok(currencyMeta.attach(
-                build(tenantId, period, dateFrom, dateTo, teamLeadId, countryLeadId, targetMetric), tenantId));
+                cachedBuild(tenantId, period, dateFrom, dateTo, teamLeadId, countryLeadId, targetMetric), tenantId));
     }
 
     /**
@@ -158,6 +180,7 @@ public class SalesPulseController {
         Map<String, WindowSales> window =
                 pulseService.windowSales(tenantId, p.from(), p.to(), p.prevFrom(), p.prevTo(), p.hasPrev());
         Map<String, List<Double>> series = pulseService.monthlySeries(tenantId, mw);
+        Map<String, List<Double>> spreadSeries = pulseService.monthlySpreadSeries(tenantId, mw);
         // An unbounded ("all time") window resolves to sentinel dates spanning
         // centuries. A target for all of history is not a thing anyone set, and
         // asking for it would build an IN list of thousands of month keys — so a
@@ -210,7 +233,7 @@ public class SalesPulseController {
                 if (tm == null || !countryLeadId.equals(tm.getCountryLeadId())) continue;
             }
 
-            WindowSales ws = window.getOrDefault(agentId, new WindowSales(0, 0, 0, 0, 0));
+            WindowSales ws = window.getOrDefault(agentId, new WindowSales(0, 0, 0, 0, 0, 0, 0));
             List<Double> hist = series.get(agentId);
             BigDecimal target = targets.get(agentId);
 
@@ -233,6 +256,11 @@ public class SalesPulseController {
             row.put("volume", ws.volume());
             row.put("txns", ws.txns());
             row.put("merchants", ws.merchants());
+            // Net spread (net margin + DCC acquirer share + rental) rides
+            // alongside; momentum, signals and ranking stay on `sales`.
+            row.put("spread", ws.spread());
+            row.put("previousSpread", p.hasPrev() ? ws.prevSpread() : null);
+            row.put("spreadGrowthPct", p.hasPrev() ? SalesPulseService.changePct(ws.spread(), ws.prevSpread()) : null);
             // null, not 0 — "no target configured" is not "missed the target".
             row.put("target", target);
             row.put("targetAchievement", attainment);
@@ -286,12 +314,15 @@ public class SalesPulseController {
         }
 
         // ── Summary ──────────────────────────────────────────────────────────
-        double totalSales = 0, totalPrev = 0;
+        double totalSales = 0, totalPrev = 0, totalSpread = 0, totalPrevSpread = 0;
         int needsAttention = 0, longDecline = 0;
         for (Map<String, Object> a : everyone) {
             totalSales += num(a.get("sales"));
+            totalSpread += num(a.get("spread"));
             Object prev = a.get("previousSales");
             if (prev instanceof Number n) totalPrev += n.doubleValue();
+            Object prevSp = a.get("previousSpread");
+            if (prevSp instanceof Number n) totalPrevSpread += n.doubleValue();
             if (SalesPulseService.NEEDS_ATTENTION.contains(String.valueOf(a.get("momentum")))) needsAttention++;
             if (num(a.get("consecutiveDeclines")) >= props.getAttentionDeclineStreak()) longDecline++;
         }
@@ -310,6 +341,9 @@ public class SalesPulseController {
         summary.put("totalSales", totalSales);
         summary.put("previousTotalSales", p.hasPrev() ? totalPrev : null);
         summary.put("growth", growth);
+        summary.put("totalSpread", totalSpread);
+        summary.put("previousTotalSpread", p.hasPrev() ? totalPrevSpread : null);
+        summary.put("spreadGrowth", p.hasPrev() ? SalesPulseService.changePct(totalSpread, totalPrevSpread) : null);
         summary.put("topTeam", topTeam);
         summary.put("needsAttentionCount", needsAttention);
         summary.put("salesExecutiveCount", everyone.size());
@@ -325,19 +359,30 @@ public class SalesPulseController {
             List<YearMonth> months = new ArrayList<>();
             for (YearMonth m = mw.first(); !m.isAfter(mw.last()); m = m.plusMonths(1)) months.add(m);
             double[] sums = new double[months.size()];
+            double[] spreadSums = new double[months.size()];
             for (Map<String, Object> a : everyone) {
                 @SuppressWarnings("unchecked")
                 List<Double> s = (List<Double>) a.get("series");
-                if (s == null || s.isEmpty()) continue;
-                int offset = sums.length - s.size();   // >= 0: a series never exceeds the window
-                for (int i = Math.max(0, -offset); i < s.size(); i++) {
-                    sums[offset + i] += s.get(i) == null ? 0.0 : s.get(i);
+                if (s != null && !s.isEmpty()) {
+                    int offset = sums.length - s.size();   // >= 0: a series never exceeds the window
+                    for (int i = Math.max(0, -offset); i < s.size(); i++) {
+                        sums[offset + i] += s.get(i) == null ? 0.0 : s.get(i);
+                    }
+                }
+                // Net spread rides alongside on the same (filtered) population.
+                List<Double> sp = spreadSeries.get(String.valueOf(a.get("id")));
+                if (sp != null && !sp.isEmpty()) {
+                    int offset = spreadSums.length - sp.size();
+                    for (int i = Math.max(0, -offset); i < sp.size(); i++) {
+                        spreadSums[offset + i] += sp.get(i) == null ? 0.0 : sp.get(i);
+                    }
                 }
             }
             for (int i = 0; i < months.size(); i++) {
                 Map<String, Object> pt = new LinkedHashMap<>();
                 pt.put("month", months.get(i).toString());
                 pt.put("sales", SalesPulseService.round1(sums[i]));
+                pt.put("spread", SalesPulseService.round1(spreadSums[i]));
                 orgSeries.add(pt);
             }
         }
@@ -381,11 +426,14 @@ public class SalesPulseController {
      */
     private Map<String, Object> teamNode(Long teamLeadId, String name, String email, String countryLeadName,
                                          List<Map<String, Object>> members, boolean hasPrev) {
-        double sales = 0, prev = 0;
+        double sales = 0, prev = 0, spread = 0, prevSpread = 0;
         for (Map<String, Object> m : members) {
             sales += num(m.get("sales"));
+            spread += num(m.get("spread"));
             Object pv = m.get("previousSales");
             if (pv instanceof Number n) prev += n.doubleValue();
+            Object ps = m.get("previousSpread");
+            if (ps instanceof Number n) prevSpread += n.doubleValue();
         }
 
         // Contribution is only meaningful against a positive team total. Net margin
@@ -411,6 +459,9 @@ public class SalesPulseController {
         node.put("teamSales", sales);
         node.put("previousTeamSales", hasPrev ? prev : null);
         node.put("teamGrowth", hasPrev ? SalesPulseService.changePct(sales, prev) : null);
+        node.put("teamSpread", spread);
+        node.put("previousTeamSpread", hasPrev ? prevSpread : null);
+        node.put("teamSpreadGrowth", hasPrev ? SalesPulseService.changePct(spread, prevSpread) : null);
         node.put("salesExecutiveCount", members.size());
         node.put("needsAttentionCount", needsAttention);
         node.put("salesExecutives", members);

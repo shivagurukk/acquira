@@ -75,11 +75,15 @@ public class BackfillIngestionService {
     @org.springframework.beans.factory.annotation.Autowired
     private org.springframework.cache.CacheManager cacheManager;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> reportCacheWarmup;
+
     private void evictReportCaches() {
         for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
             org.springframework.cache.Cache cache = cacheManager.getCache(name);
             if (cache != null) cache.clear();
         }
+        reportCacheWarmup.ifAvailable(w -> w.requestWarm("backfill"));
     }
 
     @Async

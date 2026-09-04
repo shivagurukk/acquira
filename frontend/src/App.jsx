@@ -1,4 +1,5 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense } from 'react';
+import { lazyWithReload as lazy } from './lazyWithReload';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -53,12 +54,15 @@ const SalesExecutiveDashboard = lazy(() => import('./pages/sales/SalesExecutiveD
 const ExecutiveSalesPulse = lazy(() => import('./pages/executive/ExecutiveSalesPulse'));
 // Executive daily view (distinct from pages/business/DailyMerchantDashboard, the month heat-grid)
 const ExecutiveDailyMerchant = lazy(() => import('./pages/executive/DailyMerchantDashboard'));
+// Net Spread — replica of the executive daily page at merchant grain, plus DCC + rental legs
+const NetSpreadDashboard = lazy(() => import('./pages/executive/NetSpreadDashboard'));
 const SalesTargetManagement = lazy(() => import('./pages/sales/SalesTargetManagement'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const TenantManagement = lazy(() => import('./pages/TenantManagement'));
 const RbacGroups = lazy(() => import('./pages/RbacGroups'));
 const BatchMonitoring = lazy(() => import('./pages/BatchMonitoring'));
 const IngestTrust = lazy(() => import('./pages/ops/IngestTrust'));
+const SchemeBillingReference = lazy(() => import('./pages/ops/SchemeBillingReference'));
 const GroupReports = lazy(() => import('./pages/GroupReports'));
 const FinanceSummary = lazy(() => import('./pages/finance/FinanceSummary'));
 const MerchantInsightHub = lazy(() => import('./pages/reports/MerchantInsightHub'));
@@ -115,6 +119,7 @@ function App() {
               <Route path="/business/loss-making" element={<LossMakingMerchants />} />
               <Route path="/executive/sales" element={<ExecutiveSalesPulse />} />
               <Route path="/executive/daily-merchant" element={<ExecutiveDailyMerchant />} />
+              <Route path="/executive/net-spread" element={<NetSpreadDashboard />} />
 
               {/* Merchant MGT */}
               <Route path="/merchants" element={<MerchantHierarchy />} />
@@ -178,6 +183,9 @@ function App() {
               } />
               <Route path="/ops/ingest-trust" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><IngestTrust /></RoleGuard>
+              } />
+              <Route path="/ops/scheme-billing-reference" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SchemeBillingReference /></RoleGuard>
               } />
               <Route path="/business/emails" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><StatementEmails /></RoleGuard>

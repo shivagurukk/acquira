@@ -46,6 +46,7 @@ public class FileUploadService {
     private final Job merchantMasterJob;
     private final Job transactionLoadJob;
     private final Job rentalLoadJob;
+    private final Job dccLoadJob;
     private final Job reportingOnlyJob;
     private final org.springframework.batch.core.explore.JobExplorer jobExplorer;
 
@@ -65,6 +66,21 @@ public class FileUploadService {
     private String allowedPathsCsv;
 
     /**
+     * Server-folder runs move each file out of the import folder once its job
+     * has reached a terminal state: COMPLETED → <folder>/processed/<yyyyMMdd>/,
+     * FAILED → <folder>/failed/<yyyyMMdd>/. Without this a second click on the
+     * same path (or a retry after the proxy timed out) re-ingested the whole
+     * folder. Set to false to leave files in place.
+     */
+    @org.springframework.beans.factory.annotation.Value("${app.upload.archive-processed:true}")
+    private boolean archiveProcessed;
+
+    /** Per-file outcome codes for the server-folder path beyond SUCCESS/FAILED. */
+    private static final String ST_SKIPPED_UPSTREAM = "SKIPPED_UPSTREAM_FAILURE";
+    private static final String ST_SKIPPED_ABORT = "SKIPPED_PREVIOUS_STILL_RUNNING";
+    private static final String ST_TIMED_OUT = "TIMED_OUT_STILL_RUNNING";
+
+    /**
      * Global transaction load mode: REPLACE (default) or APPEND. Applies to ALL transaction
      * uploads (AMS and CMM alike). JCB* files always force APPEND regardless of this flag.
      * Merchant files ignore this entirely (always UPSERT).
@@ -80,6 +96,7 @@ public class FileUploadService {
             @Qualifier("merchantMasterJob") Job merchantMasterJob,
             @Qualifier("transactionLoadJob") Job transactionLoadJob,
             @Qualifier("rentalLoadJob") Job rentalLoadJob,
+            @Qualifier("dccLoadJob") Job dccLoadJob,
             @Qualifier("reportingOnlyJob") Job reportingOnlyJob,
             com.acquira.common.service.AuditService auditService,
             com.acquira.common.repository.TenantRepository tenantRepository,
@@ -90,6 +107,7 @@ public class FileUploadService {
         this.merchantMasterJob = merchantMasterJob;
         this.transactionLoadJob = transactionLoadJob;
         this.rentalLoadJob = rentalLoadJob;
+        this.dccLoadJob = dccLoadJob;
         this.reportingOnlyJob = reportingOnlyJob;
         this.auditService = auditService;
         this.tenantRepository = tenantRepository;
@@ -284,12 +302,24 @@ public class FileUploadService {
         if (lowerPath.endsWith(".csv") || lowerPath.endsWith(".tsv") || lowerPath.endsWith(".txt")) {
             try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
                 String headerLine = br.readLine();
+                int dccTenantColIdx = -1;
                 if (headerLine != null) {
                     String h = headerLine.toLowerCase();
-                    // RENTAL first: the rental feed also carries "Payment Date"
-                    // (a TRANSACTION marker) and MID/SID (MERCHANT markers), so
-                    // its own marker must win.
-                    if (h.contains("rental")) {
+                    // DCC / RENTAL first: both feeds also carry TRANSACTION
+                    // markers ("Payment Date"/"Date") and MERCHANT markers
+                    // (MID/SID), so their own marker must win.
+                    if (h.contains("acquirer share")) {
+                        result.detectedType = "DCC";
+                        // DCC files start with SID, not Entity Name — the
+                        // tenant identity lives in the "Tenant Id" column.
+                        char hDelim = headerLine.contains("\t") ? '\t' : ',';
+                        String[] cols = headerLine.split(String.valueOf(hDelim), -1);
+                        for (int i = 0; i < cols.length; i++) {
+                            String c = cols[i].replace("\"", "").trim().toLowerCase()
+                                    .replace(" ", "").replace("_", "");
+                            if (c.equals("tenantid")) { dccTenantColIdx = i; break; }
+                        }
+                    } else if (h.contains("rental")) {
                         result.detectedType = "RENTAL";
                     } else if (h.contains("transaction id") || h.contains("txn id") || h.contains("ref number")
                             || h.contains("transaction date") || h.contains("payment date")
@@ -302,9 +332,16 @@ public class FileUploadService {
                 String dataLine = br.readLine();
                 if (dataLine != null && !dataLine.isEmpty()) {
                     char delim = dataLine.contains("\t") ? '\t' : ',';
-                    int end = dataLine.indexOf(delim);
-                    String entity = end > 0 ? dataLine.substring(0, end) : dataLine;
-                    result.entityId = entity.replace("\"", "").trim();
+                    if ("DCC".equals(result.detectedType) && dccTenantColIdx >= 0) {
+                        String[] fields = dataLine.split(String.valueOf(delim), -1);
+                        if (dccTenantColIdx < fields.length) {
+                            result.entityId = fields[dccTenantColIdx].replace("\"", "").trim();
+                        }
+                    } else {
+                        int end = dataLine.indexOf(delim);
+                        String entity = end > 0 ? dataLine.substring(0, end) : dataLine;
+                        result.entityId = entity.replace("\"", "").trim();
+                    }
                 }
             } catch (Exception e) {
                 log.warn("Could not scan CSV file: {}", e.getMessage());
@@ -325,7 +362,9 @@ public class FileUploadService {
 
             // Row 0: detect type from headers
             Row headerRow = sheet.getRow(0);
+            int dccTenantColIdx = -1;
             if (headerRow != null) {
+                boolean hasDccMarker = false;
                 boolean hasRentalMarker = false;
                 boolean hasTransactionId = false;
                 boolean hasMerchantMarker = false;
@@ -333,6 +372,12 @@ public class FileUploadService {
                     String header = getCellValue(cell);
                     if (header != null) {
                         String h = header.trim().toLowerCase();
+                        if (h.contains("acquirer share")) {
+                            hasDccMarker = true;
+                        }
+                        if (h.replace(" ", "").replace("_", "").equals("tenantid")) {
+                            dccTenantColIdx = cell.getColumnIndex();
+                        }
                         if (h.contains("rental")) {
                             hasRentalMarker = true;
                         }
@@ -346,17 +391,22 @@ public class FileUploadService {
                         }
                     }
                 }
-                // RENTAL wins: the rental feed also carries "Payment Date" and MID/SID.
-                if (hasRentalMarker) result.detectedType = "RENTAL";
+                // DCC/RENTAL win: both feeds also carry "Payment Date"/"Date" and MID/SID.
+                if (hasDccMarker) result.detectedType = "DCC";
+                else if (hasRentalMarker) result.detectedType = "RENTAL";
                 else if (hasTransactionId) result.detectedType = "TRANSACTION";
                 else if (hasMerchantMarker) result.detectedType = "MERCHANT";
             }
 
-            // Row 1: entity ID at col 0 (same workbook — no re-open)
+            // Row 1: entity ID at col 0 (same workbook — no re-open). DCC files
+            // start with SID, so their tenant identity comes from the Tenant Id
+            // column instead.
             if (sheet.getLastRowNum() >= 1) {
                 Row row = sheet.getRow(1);
                 if (row != null) {
-                    Cell cell = row.getCell(0);
+                    int entityCol = "DCC".equals(result.detectedType) && dccTenantColIdx >= 0
+                            ? dccTenantColIdx : 0;
+                    Cell cell = row.getCell(entityCol);
                     result.entityId = getCellValue(cell);
                 }
             }
@@ -368,7 +418,8 @@ public class FileUploadService {
                 String headerLine = br.readLine();
                 if (headerLine != null) {
                     String h = headerLine.toLowerCase();
-                    if (h.contains("rental")) result.detectedType = "RENTAL";
+                    if (h.contains("acquirer share")) result.detectedType = "DCC";
+                    else if (h.contains("rental")) result.detectedType = "RENTAL";
                     else if (h.contains("transaction") || h.contains("arn") || h.contains("rrn")) result.detectedType = "TRANSACTION";
                     else if (h.contains("merchant") || h.contains("mid")) result.detectedType = "MERCHANT";
                 }
@@ -416,9 +467,14 @@ public class FileUploadService {
                     .map(com.acquira.common.model.Tenant::getTenantId)
                     .or(() -> tenantRepository.findByInstitutionId(finalFileEntityId)
                             .map(com.acquira.common.model.Tenant::getTenantId))
+                    // DCC feeds may carry the numeric tenant id in their
+                    // "Tenant Id" column rather than a short code.
+                    .or(() -> parseTenantIdDigits(finalFileEntityId)
+                            .flatMap(id -> tenantRepository.findById(id)
+                                    .map(com.acquira.common.model.Tenant::getTenantId)))
                     .orElseThrow(() -> new RuntimeException(
                             "Super Admin Upload: No Tenant found for Entity ID '" + finalFileEntityId
-                                    + "' (Checked Short Code & Institution ID)."));
+                                    + "' (Checked Short Code, Institution ID & numeric Tenant Id)."));
 
             // CROSS-TENANT SAFETY.
             //
@@ -458,7 +514,10 @@ public class FileUploadService {
                     .orElseThrow(() -> new RuntimeException("Session Tenant not found in DB"));
 
             boolean match = fileEntityId.equalsIgnoreCase(sessionTenant.getBankShortCode())
-                    || fileEntityId.equalsIgnoreCase(sessionTenant.getInstitutionId());
+                    || fileEntityId.equalsIgnoreCase(sessionTenant.getInstitutionId())
+                    // DCC feeds may carry the numeric tenant id.
+                    || parseTenantIdDigits(fileEntityId)
+                            .map(id -> id.equals(sessionTenantId)).orElse(false);
 
             if (!match) {
                 throw new RuntimeException("Permission Denied: You belong to '" + sessionTenant.getBankShortCode()
@@ -467,6 +526,16 @@ public class FileUploadService {
 
             return sessionTenantId;
         }
+    }
+
+    /** "12" / "12.0" (an Excel numeric cell read back as text) -> 12; else empty. */
+    private java.util.Optional<Long> parseTenantIdDigits(String s) {
+        if (s == null) return java.util.Optional.empty();
+        String t = s.trim();
+        if (t.matches("\\d+\\.0+")) t = t.substring(0, t.indexOf('.'));
+        if (!t.matches("\\d{1,9}")) return java.util.Optional.empty();
+        try { return java.util.Optional.of(Long.parseLong(t)); }
+        catch (Exception e) { return java.util.Optional.empty(); }
     }
 
     /**
@@ -623,6 +692,21 @@ public class FileUploadService {
                 // handled by the @Scheduled cleanupOrphanedTempFiles() task.
                 return jobLauncher.run(rentalLoadJob, jobParameters);
 
+            } else if ("DCC".equals(detectedType)) {
+                auditService.log("BATCH_RUN",
+                        String.format("Processing DCC revenue file for Tenant: %s (%d)", entityName, targetTenantId));
+
+                JobParameters jobParameters = new JobParametersBuilder()
+                        .addLong("tenantId", targetTenantId)
+                        .addString("fullPath", filePath)
+                        .addString("ingestSource", "UPLOAD")
+                        .addString("triggeredBy", currentUsername())
+                        .addLong("startedAt", System.currentTimeMillis())
+                        .toJobParameters();
+                // ASYNC NOTE: see the merchant branch above — temp file cleanup is
+                // handled by the @Scheduled cleanupOrphanedTempFiles() task.
+                return jobLauncher.run(dccLoadJob, jobParameters);
+
             } else {
                 throw new RuntimeException("Unknown file format.");
             }
@@ -696,49 +780,74 @@ public class FileUploadService {
         java.util.List<java.io.File> merchantFiles = new java.util.ArrayList<>();
         java.util.List<java.io.File> transactionFiles = new java.util.ArrayList<>();
         java.util.List<java.io.File> rentalFiles = new java.util.ArrayList<>();
+        java.util.List<java.io.File> dccFiles = new java.util.ArrayList<>();
         java.util.List<java.util.Map<String, Object>> skippedFiles = new java.util.ArrayList<>();
+        // One workbook open per file: the scan classifies the file AND reads its
+        // entity id, which processSingleServerFile reuses for tenant resolution
+        // (it used to open every workbook a second time).
+        java.util.Map<String, FileScanResult> scans = new java.util.HashMap<>();
 
         for (java.io.File f : dataFiles) {
-            String type = detectFileType(f.getAbsolutePath());
+            FileScanResult scan = scanFileOnce(f.getAbsolutePath());
+            scans.put(f.getAbsolutePath(), scan);
+            String type = scan.detectedType;
             if ("MERCHANT".equals(type)) {
                 merchantFiles.add(f);
             } else if ("TRANSACTION".equals(type)) {
                 transactionFiles.add(f);
             } else if ("RENTAL".equals(type)) {
                 rentalFiles.add(f);
+            } else if ("DCC".equals(type)) {
+                dccFiles.add(f);
             } else if ("LEGACY_EXCEL".equals(type)) {
                 skippedFiles.add(java.util.Map.of(
                         "file", f.getName(), "reason", "Legacy Excel (.xls) — convert to .xlsx"));
             } else {
                 skippedFiles.add(java.util.Map.of(
-                        "file", f.getName(), "reason", "Unknown format — could not detect MERCHANT, TRANSACTION or RENTAL headers"));
+                        "file", f.getName(), "reason", "Unknown format — could not detect MERCHANT, TRANSACTION, RENTAL or DCC headers"));
             }
         }
 
-        log.info("Multi-file batch: {} merchant, {} transaction, {} rental, {} skipped (sequential={})",
-                merchantFiles.size(), transactionFiles.size(), rentalFiles.size(), skippedFiles.size(), sequential);
+        log.info("Multi-file batch: {} merchant, {} transaction, {} rental, {} dcc, {} skipped (sequential={})",
+                merchantFiles.size(), transactionFiles.size(), rentalFiles.size(), dccFiles.size(), skippedFiles.size(), sequential);
 
         java.util.List<java.util.Map<String, Object>> results = new java.util.ArrayList<>();
         java.util.Set<Long> processedTenants = new java.util.LinkedHashSet<>();
         int successCount = 0;
         int failCount = 0;
+        // Sequential (folder) mode safety rails:
+        //   blockedTenants — a tenant whose MERCHANT file did not COMPLETE. Its
+        //     transaction/rental/DCC files are skipped rather than loaded against
+        //     dimensions that were never created (they would land on AUTO_
+        //     placeholders and report success).
+        //   abort — a job hit waitForJob's 6h ceiling and is STILL RUNNING. The
+        //     old loop marked it FAILED and launched the next file on top of it,
+        //     i.e. the concurrent same-tenant ingest everything else assumes
+        //     cannot happen. Remaining files are left untouched instead.
+        java.util.Set<Long> blockedTenants = new java.util.HashSet<>();
+        boolean[] abort = { false };
 
         // Phase 1: MERCHANT files first
         // Track per-file outcome by the new SUBMITTED state too. "SUCCESS" was
         // misleading: it meant "job submitted" but read as "file processed".
         for (java.io.File f : merchantFiles) {
-            java.util.Map<String, Object> r = processSingleServerFile(f, "MERCHANT", sequential);
+            java.util.Map<String, Object> r = processSingleServerFile(f, "MERCHANT", sequential,
+                scans.get(f.getAbsolutePath()), blockedTenants, abort);
             results.add(r);
             String st = String.valueOf(r.get("status"));
             if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
                 successCount++;
                 if (r.get("tenantId") != null) processedTenants.add((Long) r.get("tenantId"));
-            } else failCount++;
+            } else {
+                failCount++;
+                if (sequential && r.get("tenantId") instanceof Long t) blockedTenants.add(t);
+            }
         }
 
         // Phase 2: TRANSACTION files
         for (java.io.File f : transactionFiles) {
-            java.util.Map<String, Object> r = processSingleServerFile(f, "TRANSACTION", sequential);
+            java.util.Map<String, Object> r = processSingleServerFile(f, "TRANSACTION", sequential,
+                scans.get(f.getAbsolutePath()), blockedTenants, abort);
             results.add(r);
             String st = String.valueOf(r.get("status"));
             if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
@@ -752,7 +861,23 @@ public class FileUploadService {
         // just created. Rentals do NOT join the reporting update (Phase 2b/3):
         // rental charges live in fact_rental only, outside the transaction rollups.
         for (java.io.File f : rentalFiles) {
-            java.util.Map<String, Object> r = processSingleServerFile(f, "RENTAL", sequential);
+            java.util.Map<String, Object> r = processSingleServerFile(f, "RENTAL", sequential,
+                scans.get(f.getAbsolutePath()), blockedTenants, abort);
+            results.add(r);
+            String st = String.valueOf(r.get("status"));
+            if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
+                successCount++;
+            } else failCount++;
+        }
+
+        // Phase 2d: DCC revenue files — after merchants/transactions for the
+        // same reason as rentals (the apply step resolves SID against dim_store,
+        // which the loads above may have just created). Like rentals, DCC files
+        // do NOT join the reporting update: their apply step maintains the
+        // ancillary summary columns itself via AncillarySql.
+        for (java.io.File f : dccFiles) {
+            java.util.Map<String, Object> r = processSingleServerFile(f, "DCC", sequential,
+                scans.get(f.getAbsolutePath()), blockedTenants, abort);
             results.add(r);
             String st = String.valueOf(r.get("status"));
             if ("SUBMITTED".equals(st) || "SUCCESS".equals(st)) {
@@ -935,7 +1060,32 @@ public class FileUploadService {
             dataFiles.add(target);
         }
 
+        // A file still being copied in (SFTP, scp, a network share) parses as a
+        // valid, shorter file — and in REPLACE mode would wipe the full day and
+        // write the fragment back. Sample size + mtime twice; anything that moved
+        // between the samples is left for the next run.
+        java.util.List<java.util.Map<String, Object>> stillWriting = new java.util.ArrayList<>();
+        if (!dataFiles.isEmpty()) {
+            java.util.Map<java.io.File, long[]> first = new java.util.HashMap<>();
+            for (java.io.File f : dataFiles) first.put(f, new long[] { f.length(), f.lastModified() });
+            try { Thread.sleep(2000L); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            java.util.Iterator<java.io.File> it = dataFiles.iterator();
+            while (it.hasNext()) {
+                java.io.File f = it.next();
+                long[] a = first.get(f);
+                if (a[0] != f.length() || a[1] != f.lastModified()) {
+                    log.warn("Skipping {}: size/mtime changed during the stability check (still being written)", f.getName());
+                    stillWriting.add(java.util.Map.of("file", f.getName(),
+                        "reason", "Still being written (size changed during check) — re-run once the transfer completes"));
+                    it.remove();
+                }
+            }
+        }
+
         if (dataFiles.isEmpty()) {
+            if (!stillWriting.isEmpty()) {
+                throw new RuntimeException("Every data file in " + path + " is still being written — re-run once the transfer completes");
+            }
             throw new RuntimeException("No data files (.xlsx, .csv, .tsv) found in: " + path);
         }
 
@@ -944,14 +1094,63 @@ public class FileUploadService {
         // in runMultiFileBatch(); the screen-multi-upload path calls it with sequential=false.
         java.util.Map<String, Object> response = runMultiFileBatch(dataFiles, true);
 
+        // Move finished files out of the import folder so a re-run of the same
+        // path cannot re-ingest them (only files whose job reached a terminal
+        // state; skipped / still-running ones stay put for the next run).
+        if (archiveProcessed && target.isDirectory()) {
+            archiveProcessedFiles(target, response);
+        }
+
         // Add server-path-specific fields
         java.util.Map<String, Object> wrapped = new java.util.LinkedHashMap<>();
         wrapped.put("path", path);
         wrapped.putAll(response);
+        if (!stillWriting.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            java.util.List<java.util.Map<String, Object>> skipped =
+                new java.util.ArrayList<>((java.util.List<java.util.Map<String, Object>>) response.get("skipped"));
+            skipped.addAll(stillWriting);
+            wrapped.put("skipped", skipped);
+        }
         log.info("Server path processing complete: {} success, {} failed, {} skipped",
                 response.get("success"), response.get("failed"),
                 ((java.util.List<?>) response.get("skipped")).size());
         return wrapped;
+    }
+
+    /**
+     * Move each terminal-state file under <folder>/processed/<yyyyMMdd>/ or
+     * <folder>/failed/<yyyyMMdd>/, recording the destination on its result
+     * row. Non-fatal: a move that fails (permissions, read-only mount) is
+     * logged and the file stays where it is.
+     */
+    @SuppressWarnings("unchecked")
+    private void archiveProcessedFiles(java.io.File folder, java.util.Map<String, Object> response) {
+        Object raw = response.get("fileResults");
+        if (!(raw instanceof java.util.List<?> results)) return;
+        String day = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+        for (Object o : results) {
+            if (!(o instanceof java.util.Map<?, ?> m)) continue;
+            java.util.Map<String, Object> r = (java.util.Map<String, Object>) m;
+            String st = String.valueOf(r.get("status"));
+            String bucket = "SUCCESS".equals(st) ? "processed" : "FAILED".equals(st) ? "failed" : null;
+            if (bucket == null) continue;
+            String name = String.valueOf(r.get("file"));
+            Path src = folder.toPath().resolve(name);
+            if (!Files.isRegularFile(src)) continue;
+            try {
+                Path dir = folder.toPath().resolve(bucket).resolve(day);
+                Files.createDirectories(dir);
+                Path dest = dir.resolve(name);
+                int n = 1;
+                while (Files.exists(dest)) dest = dir.resolve(name + "." + (n++));
+                Files.move(src, dest);
+                r.put("archivedTo", folder.toPath().relativize(dest).toString());
+            } catch (Exception e) {
+                log.warn("Could not archive {} to {}/: {}", name, bucket, e.getMessage());
+                r.put("archiveError", e.getMessage());
+            }
+        }
     }
 
     /**
@@ -1029,7 +1228,6 @@ public class FileUploadService {
     private org.springframework.batch.core.JobExecution waitForJob(
             org.springframework.batch.core.JobExecution execution) {
         if (execution == null) return null;
-        final long POLL_MS = 1000L;
         final long TIMEOUT_MS = 6L * 60L * 60L * 1000L; // 6h ceiling per file
         long start = System.currentTimeMillis();
         Long id = execution.getId();
@@ -1040,8 +1238,13 @@ public class FileUploadService {
                         System.currentTimeMillis() - start, id, latest.getStatus());
                 break;
             }
+            // Back off: 1s for the first minute, 5s for the first ten, then 15s.
+            // Each poll is a multi-query read of the batch metadata tables; a
+            // multi-hour folder run polled ~10k times per file at a flat 1s.
+            long waited = System.currentTimeMillis() - start;
+            long pollMs = waited < 60_000L ? 1000L : waited < 600_000L ? 5000L : 15_000L;
             try {
-                Thread.sleep(POLL_MS);
+                Thread.sleep(pollMs);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 log.warn("waitForJob: interrupted waiting for job {}", id);
@@ -1107,22 +1310,42 @@ public class FileUploadService {
      *   state and report SUCCESS/FAILED accordingly; when false, return immediately after
      *   submitting the async job (status SUBMITTED).
      */
-    private java.util.Map<String, Object> processSingleServerFile(java.io.File file, String fileType, boolean waitForCompletion) {
+    private java.util.Map<String, Object> processSingleServerFile(java.io.File file, String fileType, boolean waitForCompletion,
+            FileScanResult scan, java.util.Set<Long> blockedTenants, boolean[] abort) {
         java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("file", file.getName());
         result.put("type", fileType);
         result.put("sizeMB", file.length() / (1024 * 1024));
 
+        if (abort != null && abort[0]) {
+            result.put("status", ST_SKIPPED_ABORT);
+            result.put("error", "Not started: an earlier file's job exceeded the wait ceiling and is still running. "
+                + "Re-run this folder once Batch Monitoring shows it finished.");
+            return result;
+        }
+
         try {
             String filePath = file.getAbsolutePath();
 
-            // Resolve Tenant
-            Long targetTenantId = resolveTargetTenant(filePath);
+            // Resolve Tenant (from the classification scan when we have it — no
+            // second workbook open).
+            Long targetTenantId = scan != null
+                    ? resolveTargetTenantFromEntityId(scan.entityId)
+                    : resolveTargetTenant(filePath);
             String entityName = tenantRepository.findById(targetTenantId)
                     .map(t -> t.getInstitutionId()).orElse("Unknown");
 
             result.put("tenantId", targetTenantId);
             result.put("entity", entityName);
+
+            if (waitForCompletion && blockedTenants != null && blockedTenants.contains(targetTenantId)
+                    && !"MERCHANT".equals(fileType)) {
+                result.put("status", ST_SKIPPED_UPSTREAM);
+                result.put("error", "Not loaded: this tenant's merchant master file failed earlier in the same run. "
+                    + "Fix and re-run the merchant file first.");
+                log.warn("{} file {} skipped: merchant master for tenant {} failed in this run", fileType, file.getName(), targetTenantId);
+                return result;
+            }
 
             auditService.log("BATCH_RUN",
                     String.format("Processing %s file (server): %s for Tenant: %s (%d) — %d MB",
@@ -1153,6 +1376,8 @@ public class FileUploadService {
                 execution = jobLauncher.run(merchantMasterJob, jobParameters);
             } else if ("RENTAL".equals(fileType)) {
                 execution = jobLauncher.run(rentalLoadJob, jobParameters);
+            } else if ("DCC".equals(fileType)) {
+                execution = jobLauncher.run(dccLoadJob, jobParameters);
             } else {
                 execution = jobLauncher.run(transactionLoadJob, jobParameters);
             }
@@ -1168,6 +1393,17 @@ public class FileUploadService {
                 execution = waitForJob(execution);
                 String finalStatus = execution.getStatus().toString();
                 result.put("jobStatus", finalStatus);
+                if (!isTerminal(execution)) {
+                    // Wait ceiling reached with the job STILL RUNNING. Do not launch
+                    // anything else on top of it (see abort in runMultiFileBatch).
+                    result.put("status", ST_TIMED_OUT);
+                    result.put("error", "Job " + execution.getId() + " is still running after the wait ceiling; "
+                        + "remaining files were not started. Check Batch Monitoring.");
+                    if (abort != null) abort[0] = true;
+                    log.warn("{} file {} — job {} still {} after wait ceiling; aborting the rest of the folder run",
+                            fileType, file.getName(), execution.getId(), finalStatus);
+                    return result;
+                }
                 // COMPLETED -> SUCCESS; anything else (FAILED/STOPPED/ABANDONED) -> FAILED.
                 boolean ok = "COMPLETED".equals(finalStatus);
                 result.put("status", ok ? "SUCCESS" : "FAILED");
@@ -1217,6 +1453,7 @@ public class FileUploadService {
             if (sheet.getPhysicalNumberOfRows() > 0) {
                 Row row = sheet.getRow(0);
                 if (row != null) {
+                    boolean hasDccMarker = false;
                     boolean hasRentalMarker = false;
                     boolean hasTransactionId = false;
                     boolean hasMerchantMarker = false;
@@ -1225,6 +1462,9 @@ public class FileUploadService {
                         String header = getCellValue(cell);
                         if (header != null) {
                             String h = header.trim().toLowerCase();
+                            if (h.contains("acquirer share")) {
+                                hasDccMarker = true;
+                            }
                             if (h.contains("rental")) {
                                 hasRentalMarker = true;
                             }
@@ -1238,7 +1478,9 @@ public class FileUploadService {
                             }
                         }
                     }
-                    // RENTAL wins: the rental feed also carries "Payment Date" and MID/SID.
+                    // DCC/RENTAL win: both feeds also carry "Payment Date"/"Date" and MID/SID.
+                    if (hasDccMarker)
+                        return "DCC";
                     if (hasRentalMarker)
                         return "RENTAL";
                     if (hasTransactionId)
@@ -1262,7 +1504,10 @@ public class FileUploadService {
             String headerLine = br.readLine();
             if (headerLine != null) {
                 String h = headerLine.toLowerCase();
-                // RENTAL wins: the rental feed also carries "Payment Date" and MID/SID.
+                // DCC/RENTAL win: both feeds also carry "Payment Date"/"Date" and MID/SID.
+                if (h.contains("acquirer share")) {
+                    return "DCC";
+                }
                 if (h.contains("rental")) {
                     return "RENTAL";
                 }

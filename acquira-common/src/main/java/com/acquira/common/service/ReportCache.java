@@ -34,9 +34,14 @@ import java.util.function.Supplier;
 public class ReportCache {
 
     private final CacheManager cacheManager;
+    /** Provider, not a direct dependency: ReportCacheWarmup itself must be
+     *  constructible without ReportCache, and test slices may omit it. */
+    private final org.springframework.beans.factory.ObjectProvider<ReportCacheWarmup> warmup;
 
-    public ReportCache(CacheManager cacheManager) {
+    public ReportCache(CacheManager cacheManager,
+            org.springframework.beans.factory.ObjectProvider<ReportCacheWarmup> warmup) {
         this.cacheManager = cacheManager;
+        this.warmup = warmup;
     }
 
     @SuppressWarnings("unchecked")
@@ -68,5 +73,6 @@ public class ReportCache {
             Cache cache = cacheManager.getCache(name);
             if (cache != null) cache.clear();
         }
+        warmup.ifAvailable(w -> w.requestWarm("evictAll"));
     }
 }

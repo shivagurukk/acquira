@@ -48,6 +48,11 @@ public class BulkMigrationService {
     private volatile long totalRowsMigrated = 0;
     private volatile String currentMonth = "";
     private volatile long startTimeMs = 0;
+    // Re-price visibility: the last day whose fees were committed (a resume
+    // point after a mid-month failure) and how many rows kept their previous
+    // fee because the current rate cards resolved to nothing for them.
+    private volatile String lastRepricedDay = "";
+    private volatile long preservedFeeRows = 0;
 
     // One bulk run (migration OR summary rebuild) at a time — both share the
     // progress fields above, so a second concurrent run would corrupt them and
@@ -91,11 +96,15 @@ public class BulkMigrationService {
         this.monthlyMetricsRebuilder = monthlyMetricsRebuilder;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> reportCacheWarmup;
+
     private void evictReportCaches() {
         for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
             org.springframework.cache.Cache cache = cacheManager.getCache(name);
             if (cache != null) cache.clear();
         }
+        reportCacheWarmup.ifAvailable(w -> w.requestWarm("bulk migration"));
     }
 
     public Map<String, Object> getProgress() {
@@ -105,6 +114,8 @@ public class BulkMigrationService {
         p.put("completedMonths", completedMonths);
         p.put("totalMonths", totalMonths);
         p.put("totalRowsMigrated", totalRowsMigrated);
+        p.put("lastRepricedDay", lastRepricedDay);
+        p.put("preservedFeeRows", preservedFeeRows);
         if (startTimeMs > 0) {
             long elapsed = System.currentTimeMillis() - startTimeMs;
             p.put("elapsedSeconds", elapsed / 1000);
@@ -297,11 +308,14 @@ public class BulkMigrationService {
 
         try {
             if (startMonth == null || endMonth == null) {
+                // MIN/MAX on the bare column so the (tenant_id, payment_date) index
+                // answers it; wrapping the column in DATE() forced a full scan of
+                // every partition before any work began.
                 LocalDate minDate = jdbcTemplate.queryForObject(
-                    "SELECT MIN(DATE(payment_date)) FROM fact_transaction WHERE tenant_id = ?",
+                    "SELECT CAST(MIN(payment_date) AS DATE) FROM fact_transaction WHERE tenant_id = ?",
                     LocalDate.class, tenantId);
                 LocalDate maxDate = jdbcTemplate.queryForObject(
-                    "SELECT MAX(DATE(payment_date)) FROM fact_transaction WHERE tenant_id = ?",
+                    "SELECT CAST(MAX(payment_date) AS DATE) FROM fact_transaction WHERE tenant_id = ?",
                     LocalDate.class, tenantId);
                 if (minDate == null || maxDate == null) {
                     throw new IllegalStateException("No transaction data found for this tenant — nothing to rebuild");
@@ -407,14 +421,23 @@ public class BulkMigrationService {
         totalMonths = 0;
         totalRowsMigrated = 0;
         currentMonth = "";
+        lastRepricedDay = "";
+        preservedFeeRows = 0;
+        // Months whose fact rows were touched by the re-price (even partially).
+        // On failure their summaries are rebuilt from whatever fact now holds, so
+        // the dashboards never describe fees that are no longer on the rows.
+        List<YearMonth> touchedMonths = new ArrayList<>();
 
         try {
             if (startMonth == null || endMonth == null) {
+                // MIN/MAX on the bare column so the (tenant_id, payment_date) index
+                // answers it; wrapping the column in DATE() forced a full scan of
+                // every partition before any work began.
                 LocalDate minDate = jdbcTemplate.queryForObject(
-                    "SELECT MIN(DATE(payment_date)) FROM fact_transaction WHERE tenant_id = ?",
+                    "SELECT CAST(MIN(payment_date) AS DATE) FROM fact_transaction WHERE tenant_id = ?",
                     LocalDate.class, tenantId);
                 LocalDate maxDate = jdbcTemplate.queryForObject(
-                    "SELECT MAX(DATE(payment_date)) FROM fact_transaction WHERE tenant_id = ?",
+                    "SELECT CAST(MAX(payment_date) AS DATE) FROM fact_transaction WHERE tenant_id = ?",
                     LocalDate.class, tenantId);
                 if (minDate == null || maxDate == null) {
                     throw new IllegalStateException("No transaction data found for this tenant — nothing to re-price");
@@ -437,10 +460,16 @@ public class BulkMigrationService {
             for (int i = 0; i < months.size(); i++) {
                 YearMonth ym = months.get(i);
                 currentMonth = ym.toString();
+                touchedMonths.add(ym);
                 repriceMonth(tenantId, ym);
                 currentPhase = "REBUILDING_" + currentMonth;
                 populateSummariesForMonth(tenantId, ym);
                 completedMonths = i + 1;
+            }
+            if (preservedFeeRows > 0) {
+                log.warn("[REPRICE] {} fact row(s) kept their PREVIOUS fees: the current rate cards resolved to "
+                    + "no approved rate for them (NO_RATE_FOUND / PLACEHOLDER_RATE). Nothing was blanked; "
+                    + "fix the rate card and re-run to price them.", preservedFeeRows);
             }
 
             currentPhase = "CALCULATING_METRICS";
@@ -462,9 +491,24 @@ public class BulkMigrationService {
                 totalMonths, tenantId, String.format("%.1f", totalMs / 1000.0));
 
         } catch (Exception e) {
-            currentPhase = "FAILED: " + e.getMessage();
-            log.error("[REPRICE] Failed: {}", e.getMessage(), e);
-            throw new RuntimeException("Re-price + rebuild failed: " + e.getMessage(), e);
+            String where = lastRepricedDay.isEmpty() ? "before any day was re-priced"
+                : "last committed day " + lastRepricedDay;
+            currentPhase = "FAILED (" + where + "): " + e.getMessage();
+            log.error("[REPRICE] Failed ({}): {}", where, e.getMessage(), e);
+            // Each day commits on its own, so the failing month is now part old
+            // fees / part new. Rebuild the summaries of every touched month from
+            // the fact rows as they stand, so screens and fact agree; the resume
+            // point (lastRepricedDay) is in the progress payload.
+            for (YearMonth ym : touchedMonths) {
+                try {
+                    currentMonth = ym.toString();
+                    populateSummariesForMonth(tenantId, ym);
+                    log.info("[REPRICE] summaries for {} re-synced to current fact after failure", ym);
+                } catch (Exception inner) {
+                    log.error("[REPRICE] could not re-sync summaries for {} after failure: {}", ym, inner.getMessage());
+                }
+            }
+            throw new RuntimeException("Re-price + rebuild failed (" + where + "): " + e.getMessage(), e);
         } finally {
             runActive.set(false);
             evictReportCaches();
@@ -487,22 +531,47 @@ public class BulkMigrationService {
         long tMonth = System.currentTimeMillis();
         long tenantIdL = tenantId;
 
-        for (LocalDate day = monthStart; !day.isAfter(monthEnd); day = day.plusDays(1)) {
+        // Only the days that actually hold rows: a blank calendar day still paid
+        // for two temp tables, three ANALYZEs and a tenant lookup.
+        List<LocalDate> tradingDays = jdbcTemplate.query(
+            "SELECT DISTINCT CAST(payment_date AS DATE) AS d FROM fact_transaction "
+            + "WHERE tenant_id = ? AND payment_date >= ? AND payment_date < ? ORDER BY 1",
+            (rs, i) -> rs.getDate("d").toLocalDate(),
+            tenantIdL, java.sql.Timestamp.valueOf(monthStart.atStartOfDay()),
+            java.sql.Timestamp.valueOf(monthEnd.plusDays(1).atStartOfDay()));
+
+        for (LocalDate day : tradingDays) {
             final List<java.sql.Date> days = IngestScopes.daysBetween(day, day);
             final String dateScope = IngestScopes.dateInList(days);
             final String rngBare = IngestScopes.rangeClause(days, "");
             final String rngF = IngestScopes.rangeClause(days, "f.");
             final String rngFt = IngestScopes.rangeClause(days, "ft.");
-            new org.springframework.transaction.support.TransactionTemplate(transactionManager)
-                .executeWithoutResult(tx ->
-                    feeComputationService.computeFees(tenantIdL, "fact_transaction",
+            currentPhase = "REPRICING_" + day;
+            // preserving=true: a row the current cards cannot price (no approved
+            // rate) KEEPS its previous fee and status instead of being blanked to
+            // NULL — a re-price must never turn a costed row into an uncosted one
+            // (the summaries skip NULL costs, so margin would silently rise).
+            FeeComputationService.FeeApplyResult r =
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                    .execute(tx -> feeComputationService.computeFeesPreserving(tenantIdL, "fact_transaction",
                         rngFt, rngF, rngBare, dateScope));
+            if (r != null) preservedFeeRows += r.preservedRows();
+            lastRepricedDay = day.toString();
         }
 
-        // Refresh stats on the month's fact partition — the in-place fee UPDATE
+        // Refresh stats on the month's fact partition(s) — the in-place fee UPDATE
         // stales them the same way the upload job's does (non-fatal on failure).
-        analyzeQuietly(String.format("fact_transaction_y%04dm%02d", ym.getYear(), ym.getMonthValue()));
-        log.info("[REPRICE] {}: fact re-priced in {}s", ym,
+        // The partition name is looked up, not guessed: tenant-wise LIST
+        // partitioning names them fact_transaction_t<id>_y2026m08, and the old
+        // fixed pattern silently analyzed nothing there.
+        String tag = String.format("y%04dm%02d", ym.getYear(), ym.getMonthValue());
+        List<String> parts = jdbcTemplate.queryForList(
+            "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+            + "JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname = 'fact_transaction' AND c.relname LIKE ?",
+            String.class, "%" + tag + "%");
+        if (parts.isEmpty()) analyzeQuietly("fact_transaction");
+        else analyzeQuietly(parts.toArray(new String[0]));
+        log.info("[REPRICE] {}: {} trading day(s) re-priced in {}s", ym, tradingDays.size(),
             String.format("%.1f", (System.currentTimeMillis() - tMonth) / 1000.0));
     }
 

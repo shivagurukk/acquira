@@ -232,7 +232,11 @@ public class MerchantMasterJobConfig {
             m.setRiskLevelProhibited(parseBoolean(reader.getCellValue(row, "Risk Level Prohibited")));
             m.setRiskLevelRestricted(parseBoolean(reader.getCellValue(row, "Risk Level Restricted")));
             m.setTerminalInternalId(reader.getCellValue(row, "TerminalInternalId"));
-            m.setTid(reader.getCellValue(row, "TID"));
+            // TID goes through the same normalisation as MID/SID: a trailing space
+            // or a scientific-notation Excel cell used to make "T001" and "T001 "
+            // two GROUP BY rows sharing one ON CONFLICT key — which aborts the
+            // whole terminal upsert ("cannot affect row a second time").
+            m.setTid(normalizeSid(reader.getCellValue(row, "TID")));
             m.setTerminalName(reader.getCellValue(row, "Terminal Name"));
             m.setTerminalStatus(reader.getCellValue(row, "Terminal Status"));
             m.setTerminalDeviceNumber(reader.getCellValue(row, "Terminal Device Number"));
@@ -573,6 +577,75 @@ public class MerchantMasterJobConfig {
             log.info("  staging cleanup: removed {} stale rows for tenant {} in {}ms",
                 purged, tId, System.currentTimeMillis() - t0);
 
+            // ── 0. Canonicalise the dimension keys in staging ──────────────────────
+            //
+            // The upserts below key on COALESCE(<internal id from file>, 'MID_'||mid)
+            // (and the SID_/TID_ equivalents). That key is only stable if the file
+            // carries the internal id the same way every time. It does not: one
+            // extract fills MerchantInternalId, the next leaves it blank, and the
+            // same MID then resolves to two keys -> a second dim_merchant row, and
+            // the store upsert's `merchant_id = EXCLUDED.merchant_id` re-parents
+            // every store onto whichever duplicate sorts last. Two passes per dim:
+            //   (a) inside the file, one key per MID / (MID,SID) / (MID,TID) —
+            //       the non-blank internal id wins over a blank sibling row;
+            //   (b) a dimension that ALREADY exists keeps the key it was stored
+            //       under (matched by MID / SID-under-MID / TID-under-MID), so an
+            //       existing row is always updated in place, never duplicated.
+            // AUTO_ placeholders are excluded from (b): the back-fill in 3b still
+            // reconciles those by SID.
+            long tCanon = System.currentTimeMillis();
+            int cm1 = jdbcTemplate.update(
+                "UPDATE stg_merchant_master_raw s SET merchant_internal_id = k.key FROM ("
+                + "  SELECT TRIM(mid) AS mid, MAX(NULLIF(TRIM(merchant_internal_id), '')) AS key"
+                + "  FROM stg_merchant_master_raw WHERE tenant_id = ? AND NULLIF(TRIM(mid), '') IS NOT NULL"
+                + "  GROUP BY TRIM(mid)) k"
+                + " WHERE s.tenant_id = ? AND TRIM(s.mid) = k.mid AND k.key IS NOT NULL"
+                + "   AND s.merchant_internal_id IS DISTINCT FROM k.key", tenantId, tenantId);
+            int cm2 = jdbcTemplate.update(
+                "UPDATE stg_merchant_master_raw s SET merchant_internal_id = em.internal_id FROM ("
+                // TRIM on the dim side too: identifiers loaded before the reader
+                // normalised them still carry trailing whitespace / newlines.
+                + "  SELECT DISTINCT ON (BTRIM(mid, E' \\t\\r\\n')) BTRIM(mid, E' \\t\\r\\n') AS mid, internal_id FROM dim_merchant"
+                + "  WHERE tenant_id = ? AND internal_id NOT LIKE 'AUTO\\_%' ORDER BY BTRIM(mid, E' \\t\\r\\n'), merchant_id) em"
+                + " WHERE s.tenant_id = ? AND LEFT(s.mid, 50) = em.mid"
+                + "   AND s.merchant_internal_id IS DISTINCT FROM em.internal_id", tenantId, tenantId);
+            int cs1 = jdbcTemplate.update(
+                "UPDATE stg_merchant_master_raw s SET merchant_store_internal_id = k.key FROM ("
+                + "  SELECT TRIM(mid) AS mid, sid, MAX(NULLIF(TRIM(merchant_store_internal_id), '')) AS key"
+                + "  FROM stg_merchant_master_raw WHERE tenant_id = ? AND NULLIF(TRIM(sid), '') IS NOT NULL"
+                + "  GROUP BY TRIM(mid), sid) k"
+                + " WHERE s.tenant_id = ? AND TRIM(s.mid) = k.mid AND s.sid = k.sid AND k.key IS NOT NULL"
+                + "   AND s.merchant_store_internal_id IS DISTINCT FROM k.key", tenantId, tenantId);
+            int cs2 = jdbcTemplate.update(
+                "UPDATE stg_merchant_master_raw s SET merchant_store_internal_id = es.internal_id FROM ("
+                + "  SELECT DISTINCT ON (BTRIM(m.mid, E' \\t\\r\\n'), BTRIM(st.sid, E' \\t\\r\\n'))"
+                + "         BTRIM(m.mid, E' \\t\\r\\n') AS mid, BTRIM(st.sid, E' \\t\\r\\n') AS sid, st.internal_id"
+                + "  FROM dim_store st JOIN dim_merchant m ON m.merchant_id = st.merchant_id AND m.tenant_id = st.tenant_id"
+                + "  WHERE st.tenant_id = ? AND st.internal_id NOT LIKE 'AUTO\\_%'"
+                + "  ORDER BY BTRIM(m.mid, E' \\t\\r\\n'), BTRIM(st.sid, E' \\t\\r\\n'), st.store_id) es"
+                + " WHERE s.tenant_id = ? AND LEFT(s.mid, 50) = es.mid AND s.sid = es.sid"
+                + "   AND s.merchant_store_internal_id IS DISTINCT FROM es.internal_id", tenantId, tenantId);
+            int ct1 = jdbcTemplate.update(
+                "UPDATE stg_merchant_master_raw s SET terminal_internal_id = k.key FROM ("
+                + "  SELECT TRIM(mid) AS mid, tid, MAX(NULLIF(TRIM(terminal_internal_id), '')) AS key"
+                + "  FROM stg_merchant_master_raw WHERE tenant_id = ? AND NULLIF(TRIM(tid), '') IS NOT NULL"
+                + "  GROUP BY TRIM(mid), tid) k"
+                + " WHERE s.tenant_id = ? AND TRIM(s.mid) = k.mid AND s.tid = k.tid AND k.key IS NOT NULL"
+                + "   AND s.terminal_internal_id IS DISTINCT FROM k.key", tenantId, tenantId);
+            int ct2 = jdbcTemplate.update(
+                "UPDATE stg_merchant_master_raw s SET terminal_internal_id = et.internal_id FROM ("
+                + "  SELECT DISTINCT ON (BTRIM(m.mid, E' \\t\\r\\n'), BTRIM(t.tid, E' \\t\\r\\n'))"
+                + "         BTRIM(m.mid, E' \\t\\r\\n') AS mid, BTRIM(t.tid, E' \\t\\r\\n') AS tid, t.internal_id"
+                + "  FROM dim_terminal t"
+                + "  JOIN dim_store st ON st.store_id = t.store_id AND st.tenant_id = t.tenant_id"
+                + "  JOIN dim_merchant m ON m.merchant_id = st.merchant_id AND m.tenant_id = st.tenant_id"
+                + "  WHERE t.tenant_id = ? AND t.internal_id NOT LIKE 'AUTO\\_%'"
+                + "  ORDER BY BTRIM(m.mid, E' \\t\\r\\n'), BTRIM(t.tid, E' \\t\\r\\n'), t.terminal_id) et"
+                + " WHERE s.tenant_id = ? AND LEFT(s.mid, 50) = et.mid AND s.tid = et.tid"
+                + "   AND s.terminal_internal_id IS DISTINCT FROM et.internal_id", tenantId, tenantId);
+            log.info("  key canonicalisation: merchants {}+{}, stores {}+{}, terminals {}+{} row(s) aligned in {}ms",
+                cm1, cm2, cs1, cs2, ct1, ct2, System.currentTimeMillis() - tCanon);
+
             // ── 1. Upsert Merchants ──────────────────────────────────────────────────
             //
             // FIX BUG: updating merchant_name / store_name / store_legal_name in the
@@ -727,9 +800,16 @@ public class MerchantMasterJobConfig {
                 SELECT
                     CAST(TID AS INTEGER),
                     LEFT(COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), 50),
-                    LEFT(mid, 50),
+                    MAX(LEFT(mid, 50)),
                     LEFT(MAX(CASE WHEN merchant_name ~ '^[0-9.]+$' THEN NULL ELSE NULLIF(TRIM(merchant_name), '') END), 150),
-                    LEFT(COALESCE(MAX(merchant_status), 'ACTIVE'), 50),
+                    -- Status is NULLABLE here on purpose. The old
+                    -- COALESCE(MAX(status), 'ACTIVE') meant EXCLUDED.status was never
+                    -- NULL, so the DO UPDATE below ALWAYS overwrote — a file with a
+                    -- blank/missing status column re-activated every INACTIVE
+                    -- merchant. New rows get 'ACTIVE' from the fix-up UPDATE after
+                    -- this statement; existing rows keep their status unless the
+                    -- file states one.
+                    LEFT(MAX(NULLIF(TRIM(merchant_status), '')), 50),
                     MAX(created_date),
                     MAX(date_of_onboarding),
                     LEFT(MAX(sales_user_id), 50),
@@ -742,7 +822,10 @@ public class MerchantMasterJobConfig {
                     LEFT(MAX(NULLIF(TRIM(address), '')), 100)
                 FROM stg_merchant_master_raw
                 WHERE tenant_id = TID AND NULLIF(TRIM(mid), '') IS NOT NULL
-                GROUP BY tenant_id, LEFT(COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), 50), LEFT(mid, 50)
+                -- GROUP BY exactly the conflict key. Grouping by mid as well produced
+                -- two INSERT rows with one (tenant_id, internal_id) whenever a key
+                -- mapped to two MID spellings, and Postgres aborts the statement.
+                GROUP BY tenant_id, LEFT(COALESCE(NULLIF(TRIM(merchant_internal_id), ''), 'MID_' || TRIM(mid)), 50)
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
                     name          = CASE WHEN EXCLUDED.name IS NOT NULL AND TRIM(EXCLUDED.name) <> ''
                                          THEN EXCLUDED.name ELSE dim_merchant.name END,
@@ -758,6 +841,8 @@ public class MerchantMasterJobConfig {
                     location      = COALESCE(EXCLUDED.location, dim_merchant.location)
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertMerchantSql);
+            // New merchants whose file row carried no status default to ACTIVE.
+            jdbcTemplate.update("UPDATE dim_merchant SET status = 'ACTIVE' WHERE tenant_id = ? AND status IS NULL", tenantId);
             log.info("Upserted Merchants for tenant {}", tId);
 
             // Re-sync the ingest-time RM snapshot on sum_daily_merchant so an RM
@@ -791,17 +876,17 @@ public class MerchantMasterJobConfig {
                     CAST(TID AS INTEGER),
                     LEFT(COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)), 50),
                     MAX(m.merchant_id),
-                    s.sid,
+                    MAX(s.sid),
                     MAX(COALESCE(NULLIF(TRIM(store_name), ''), NULLIF(TRIM(merchant_name), ''))),
                     MAX(store_legal_name),
                     MAX(s.address), MAX(s.city), MAX(s.state), MAX(s.postal_code),
                     MAX(s.business_mcc),
-                    COALESCE(MAX(store_status), 'ACTIVE'),
+                    MAX(NULLIF(TRIM(store_status), '')),
                     MAX(merchant_store_created_date)
                 FROM stg_merchant_master_raw s
                 JOIN dim_merchant m ON s.mid = m.mid AND m.tenant_id = TID
                 WHERE s.tenant_id = TID AND NULLIF(TRIM(s.sid), '') IS NOT NULL
-                GROUP BY s.tenant_id, LEFT(COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)), 50), s.sid
+                GROUP BY s.tenant_id, LEFT(COALESCE(NULLIF(TRIM(merchant_store_internal_id), ''), 'SID_' || TRIM(s.sid), CONCAT('STORE_', s.mid)), 50)
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
                     -- SID and internal_id are IMMUTABLE — never overwritten.
                     -- Only mutable descriptive fields updated so name / legal_name
@@ -816,6 +901,7 @@ public class MerchantMasterJobConfig {
                     status      = COALESCE(EXCLUDED.status, dim_store.status)
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertStoreSql);
+            jdbcTemplate.update("UPDATE dim_store SET status = 'ACTIVE' WHERE tenant_id = ? AND status IS NULL", tenantId);
             log.info("Upserted Stores for tenant {}", tId);
 
             // ── 3. Upsert Terminals ───────────────────────────────────────────────────
@@ -840,10 +926,10 @@ public class MerchantMasterJobConfig {
                     CAST(TID AS INTEGER),
                     LEFT(COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)), 50),
                     MAX(COALESCE(sa.store_id, sb.store_id)),
-                    raw.tid,
+                    MAX(raw.tid),
                     MAX(terminal_device_number),
                     MAX(terminal_type),
-                    COALESCE(MAX(terminal_status), 'ACTIVE'),
+                    MAX(NULLIF(TRIM(terminal_status), '')),
                     MAX(terminal_created_date)
                 FROM stg_merchant_master_raw raw
                 JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
@@ -861,8 +947,7 @@ public class MerchantMasterJobConfig {
                   AND NULLIF(TRIM(raw.tid), '') IS NOT NULL
                   AND COALESCE(sa.store_id, sb.store_id) IS NOT NULL
                 GROUP BY raw.tenant_id,
-                         LEFT(COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)), 50),
-                         raw.tid
+                         LEFT(COALESCE(NULLIF(TRIM(terminal_internal_id), ''), 'TID_' || TRIM(raw.tid), CONCAT('TERM_', raw.mid)), 50)
                 ON CONFLICT (tenant_id, internal_id) DO UPDATE SET
                     -- TID and internal_id are IMMUTABLE — never overwritten.
                     device_number = COALESCE(EXCLUDED.device_number, dim_terminal.device_number),
@@ -870,7 +955,30 @@ public class MerchantMasterJobConfig {
                     status        = COALESCE(EXCLUDED.status, dim_terminal.status)
                 """.replace("TID", tId);
             jdbcTemplate.execute(upsertTerminalSql);
+            jdbcTemplate.update("UPDATE dim_terminal SET status = 'ACTIVE' WHERE tenant_id = ? AND status IS NULL", tenantId);
             log.info("Upserted Terminals for tenant {}", tId);
+
+            // Rows the upserts silently filtered out, surfaced on the job context so
+            // the upload UI can show them next to the reassignment counts. A shifted
+            // column or terminals whose store never loaded used to vanish with a
+            // COMPLETED job and no trace.
+            Integer skippedNoMid = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM stg_merchant_master_raw WHERE tenant_id = ? AND NULLIF(TRIM(mid), '') IS NULL",
+                Integer.class, tenantId);
+            Integer skippedNoStore = jdbcTemplate.queryForObject(
+                "SELECT COUNT(DISTINCT raw.tid) FROM stg_merchant_master_raw raw"
+                + " JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = raw.tenant_id"
+                + " WHERE raw.tenant_id = ? AND NULLIF(TRIM(raw.tid), '') IS NOT NULL"
+                + "   AND NOT EXISTS (SELECT 1 FROM dim_store st WHERE st.tenant_id = raw.tenant_id"
+                + "        AND st.merchant_id = m.merchant_id AND (st.sid = raw.sid"
+                + "        OR st.internal_id = LEFT(COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)), 50)))",
+                Integer.class, tenantId);
+            execCtx.putInt("skipped.noMid", skippedNoMid == null ? 0 : skippedNoMid);
+            execCtx.putInt("skipped.terminalNoStore", skippedNoStore == null ? 0 : skippedNoStore);
+            if ((skippedNoMid != null && skippedNoMid > 0) || (skippedNoStore != null && skippedNoStore > 0)) {
+                log.warn("Merchant master for tenant {}: {} row(s) without MID skipped, {} terminal(s) skipped (store not found)",
+                    tId, skippedNoMid, skippedNoStore);
+            }
 
             // ── 3b. BACK-FILL AUTO-CREATED PLACEHOLDERS ───────────────────────────
             //
@@ -1042,9 +1150,20 @@ public class MerchantMasterJobConfig {
                         SELECT CAST(TID AS INTEGER), MAX(s.store_id), MAX(bank_name), bank_account_number, MAX(swift_code), MAX(iban_number)
                         FROM stg_merchant_master_raw raw
                         JOIN dim_merchant m ON raw.mid = m.mid AND m.tenant_id = TID
-                        JOIN dim_store s ON s.merchant_id = m.merchant_id
-                            AND (s.sid = raw.sid OR s.internal_id = LEFT(COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)), 50))
-                            AND s.tenant_id = TID
+                        -- Same two-probe LATERAL shape as the terminal upsert: the old
+                        -- (sid = .. OR internal_id = fn(..)) join could not use either
+                        -- index and ran as a nested loop per staging row (the 7-minute
+                        -- UAT pattern), hidden here on a background thread.
+                        LEFT JOIN LATERAL (
+                            SELECT st.store_id FROM dim_store st
+                            WHERE st.tenant_id = TID AND st.merchant_id = m.merchant_id AND st.sid = raw.sid
+                            ORDER BY st.store_id LIMIT 1) sa ON TRUE
+                        LEFT JOIN LATERAL (
+                            SELECT st.store_id FROM dim_store st
+                            WHERE st.tenant_id = TID AND st.merchant_id = m.merchant_id
+                              AND st.internal_id = LEFT(COALESCE(NULLIF(TRIM(raw.merchant_store_internal_id), ''), 'SID_' || TRIM(raw.sid)), 50)
+                            ORDER BY st.store_id LIMIT 1) sb ON TRUE
+                        JOIN dim_store s ON s.store_id = COALESCE(sa.store_id, sb.store_id) AND s.tenant_id = TID
                         WHERE raw.tenant_id = TID AND raw.bank_account_number IS NOT NULL
                         GROUP BY raw.tenant_id, bank_account_number
                         """.replace("TID", tId));

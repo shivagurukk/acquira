@@ -233,11 +233,13 @@ public class MerchantReportJobConfig {
         Path folder = Paths.get(reportsBaseDir).resolve(folderCode).resolve(target.toString());
         Files.createDirectories(folder);
 
-        String rawName = merchant.getName() != null ? merchant.getName() : merchant.getMid();
-        String safeName = (rawName != null ? rawName : "merchant_" + merchant.getMerchantId())
-                .replaceAll("[^a-zA-Z0-9.\\-]", "_");
-
-        String filename = "Insight_" + safeName + "_" + target + ".pdf";
+        // MID keys the filename (shared scheme with PlaywrightPdfService) so two
+        // distinct merchants with the same name in this tenant can't overwrite one
+        // another's PDF — which previously meant one merchant was emailed another's
+        // report. Same-tenant folder still, but now collision-free.
+        String rawName = merchant.getName() != null ? merchant.getName()
+                : "merchant_" + merchant.getMerchantId();
+        String filename = PlaywrightPdfService.reportFileName(rawName, merchant.getMid(), target.toString());
         Path filePath = folder.resolve(filename);
 
         try (FileOutputStream fos = new FileOutputStream(filePath.toFile())) {

@@ -28,6 +28,10 @@ const STATUS_COLORS = {
     ABANDONED:  { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
     SKIPPED:    { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
     RUNNING:    { bg: '#fefce8', color: '#ca8a04', border: '#fef08a' },
+    // Folder-run safety outcomes (backend, 2026-09-03): not loaded, by design.
+    SKIPPED_UPSTREAM_FAILURE:       { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
+    SKIPPED_PREVIOUS_STILL_RUNNING: { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
+    TIMED_OUT_STILL_RUNNING:        { bg: '#fefce8', color: '#ca8a04', border: '#fef08a' },
 };
 
 const getStatusStyle = (status) => STATUS_COLORS[status] || STATUS_COLORS.RUNNING;
@@ -241,10 +245,11 @@ const ServerFileProcessor = () => {
             if (data.fileResults) {
                 data.fileResults.forEach((fr, idx) => {
                     const ok = fr.status === 'SUCCESS' || fr.status === 'COMPLETED';
-                    const icon = ok ? '✅' : '❌';
+                    const skipped = String(fr.status || '').startsWith('SKIPPED') || fr.status === 'TIMED_OUT_STILL_RUNNING';
+                    const icon = ok ? '✅' : skipped ? '⏭️' : '❌';
                     const detail = ok
-                        ? `done (${fr.sizeMB} MB, Tenant: ${fr.entity || '—'})`
-                        : (fr.error || 'failed');
+                        ? `done (${fr.sizeMB} MB, Tenant: ${fr.entity || '—'})${fr.archivedTo ? ` → moved to ${fr.archivedTo}` : ''}`
+                        : (fr.error || 'failed') + (fr.archivedTo ? ` → moved to ${fr.archivedTo}` : '');
                     addLog(`${icon} [${idx + 1}/${data.fileResults.length}] ${fr.type}: ${fr.file} — ${detail}`);
                 });
             }
@@ -573,8 +578,11 @@ const ServerFileProcessor = () => {
                                                                 }}
                                                             />
                                                         </TableCell>
-                                                        <TableCell sx={{ fontSize: '0.78rem', color: '#0f172a', fontWeight: 500 }}>
-                                                            {(fr.status === 'SUCCESS' || fr.status === 'COMPLETED') ? '✓' : (fr.error ? '—' : '')}
+                                                        <TableCell sx={{ fontSize: '0.78rem', color: '#0f172a', fontWeight: 500 }}
+                                                            title={fr.error || (fr.archivedTo ? `Moved to ${fr.archivedTo}` : undefined)}>
+                                                            {(fr.status === 'SUCCESS' || fr.status === 'COMPLETED')
+                                                                ? (fr.archivedTo ? `✓ ${fr.archivedTo}` : '✓')
+                                                                : (fr.error ? <span style={{ color: '#b45309' }}>{fr.error}</span> : '')}
                                                         </TableCell>
                                                     </TableRow>
                                                 );

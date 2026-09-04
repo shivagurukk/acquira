@@ -44,6 +44,18 @@ public class ChurnRiskController {
         this.reportCache = reportCache;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /** Warm the churn column the Attrition Report fetches alongside its rows. */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("churn-risk", tenantId -> reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "churnRisk:" + tenantId,
+                () -> loadChurnRisk(tenantId)));
+    }
+
     /**
      * SECURITY: the raw X-Tenant-Id header is attacker-controlled and is never
      * read here. TenantContext is the filter-validated value (JwtRequestFilter

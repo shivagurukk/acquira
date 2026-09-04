@@ -65,11 +65,14 @@ public class ReportCacheConfig {
     /**
      * reportData holds the big payloads — the properties file's gzip note calls
      * report JSON "multiple MB", and the core pod's k8s memory limit is 4Gi
-     * shared with Chromium and batch. 64 × ~5MB worst case ≈ 320MB, an
-     * acceptable ceiling; with 6 tenants the real working set (a handful of
-     * reports per tenant per day) fits comfortably under this cap.
+     * shared with Chromium and batch. Worst case 128 × ~5MB ≈ 640MB, but the
+     * typical executive payload is well under 1MB so the realistic ceiling is
+     * far lower. Raised from 64 when ReportCacheWarmup landed: warming ~10
+     * default views × 6 tenants seeds ~60 entries by itself, and at 64 any
+     * real navigation immediately evicted them (LRU churn made the warm pass
+     * pointless).
      */
-    private static final long REPORT_DATA_MAX_ENTRIES = 64;
+    private static final long REPORT_DATA_MAX_ENTRIES = 128;
 
     /** Lookups/bounds entries are small (id lists, date pairs). */
     private static final long LOOKUP_MAX_ENTRIES = 2000;

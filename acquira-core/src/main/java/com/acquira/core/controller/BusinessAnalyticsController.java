@@ -41,6 +41,55 @@ public class BusinessAnalyticsController {
         }
     }
 
+    @Autowired
+    private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the shared gates first — data-bounds and filter-options are the
+     * first request of nearly every report page (both are @Cacheable / cached
+     * per tenant underneath) — then the Attrition Report's seeded first run.
+     *
+     * The attrition filter template mirrors AttritionReport.jsx: the seeded
+     * body sends every list as an EMPTY ARRAY and merchantName as "", with
+     * startDate = first of the latest data month and endDate = the latest
+     * data date (from /data-bounds). Any drift from that shape changes the
+     * serialized filter key and the warm entry is simply never read.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmers() {
+        reportCacheWarmup.register("data-bounds+filter-options", tenantId -> {
+            dataBoundsService.getBounds(tenantId);
+            volumeRevenueRepository.getFilterOptions(tenantId);
+        });
+        reportCacheWarmup.register("attrition-report", tenantId -> {
+            Map<String, Object> bounds = dataBoundsService.getBounds(tenantId);
+            Object latest = bounds.get("latest");
+            if (latest == null) return;
+            String latestYmd = String.valueOf(latest).substring(0, 10);
+            String template = "{"
+                    + "\"startDate\":\"" + latestYmd.substring(0, 7) + "-01\","
+                    + "\"endDate\":\"" + latestYmd + "\","
+                    + "\"partnerList\":[],\"mccList\":[],\"industryList\":[],"
+                    + "\"rmList\":[],\"teamLeaderList\":[],\"sectorList\":[],"
+                    + "\"destinationList\":[],\"schemeList\":[],\"cardTypeList\":[],"
+                    + "\"channelList\":[],\"merchantName\":\"\",\"midList\":[],\"sidList\":[]"
+                    + "}";
+            VolumeRevenueFilterDTO filters;
+            try {
+                filters = objectMapper.readValue(template, VolumeRevenueFilterDTO.class);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return;
+            }
+            resolveFilters(filters);
+            String fk = filterKey(filters);
+            if (fk == null) return;
+            reportCache.get(
+                    com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                    "attritionMeta:" + tenantId + ":" + fk,
+                    () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
+        });
+    }
+
     private void resolveFilters(VolumeRevenueFilterDTO filters) {
         if (filters.getTeamLeaderList() != null && !filters.getTeamLeaderList().isEmpty()) {
             Long tenantId = tenantService.getCurrentTenantId();

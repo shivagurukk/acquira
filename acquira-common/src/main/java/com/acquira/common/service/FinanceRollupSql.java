@@ -157,7 +157,12 @@ public final class FinanceRollupSql {
         if (tenantId == null || start == null || end == null || start.isAfter(end)) return 0;
         jdbc.update("DELETE FROM " + TABLE + " WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
                 tenantId, start, end);
-        return jdbc.update(REBUILD_INSERT, tenantId, start, end, tenantId, start, end);
+        int written = jdbc.update(REBUILD_INSERT, tenantId, start, end, tenantId, start, end);
+        // The DELETE above also wiped the ancillary columns (dcc_acquirer /
+        // dcc_merchant / rental_amount) — re-derive them from their facts so a
+        // rollup rebuild can never silently lose DCC or rental revenue.
+        AncillarySql.applyRollupRange(jdbc, tenantId, start, end);
+        return written;
     }
 
     /**

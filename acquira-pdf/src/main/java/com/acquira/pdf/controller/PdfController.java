@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -35,6 +36,14 @@ import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api/business/insights")
+// SECURITY: mirror the stub MerchantInsightController's guard. In production the
+// acquira-pdf module is on the classpath so THIS controller (not the stub) is
+// active — without this annotation every /api/business/insights endpoint sat
+// under SecurityConfig's anyRequest().authenticated(), letting any authenticated
+// tenant user (not just Admin/Super-Admin) start batch PDF jobs, email merchants,
+// push to S3 and download reports. @menuAccess enforces the same DB-driven menu
+// grant the sidebar and the RoleGuard on /business/report-manager already use.
+@PreAuthorize("@menuAccess.canAccess('/business/report-manager')")
 public class PdfController {
 
     private static final Logger log = LoggerFactory.getLogger(PdfController.class);
@@ -341,12 +350,16 @@ public class PdfController {
 
             List<long[]>   batchMerchantIds = new ArrayList<>(merchants.size());
             List<String>   merchantNames    = new ArrayList<>(merchants.size());
+            List<String>   merchantMids     = new ArrayList<>(merchants.size());
             Map<Long, String> merchantEmailMap = new HashMap<>();
 
             for (Merchant m : merchants) {
                 batchMerchantIds.add(new long[]{m.getMerchantId()});
                 String name = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
                 merchantNames.add(name);
+                // Parallel to merchantNames — the MID keys the output filename so
+                // two same-named merchants can't overwrite one another's PDF.
+                merchantMids.add(m.getMid());
                 if (sendEmail && m.getContactEmail() != null && !m.getContactEmail().isBlank()) {
                     merchantEmailMap.put(m.getMerchantId(), m.getContactEmail());
                 }
@@ -365,7 +378,7 @@ public class PdfController {
             final List<Merchant> capturedMerchants = merchants; // snapshot for post-batch thread
 
             BatchJobStatus status = playwrightPdfService.generateBatch(
-                    batchMerchantIds, merchantNames,
+                    batchMerchantIds, merchantNames, merchantMids,
                     (mid, ctx) -> {
                         MerchantInsightsDTO dto = null;
                         try {
@@ -436,8 +449,8 @@ public class PdfController {
 
                             for (Merchant m : capturedMerchants) {
                                 String mName    = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
-                                String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-                                Path   pdfFile  = batchFolder.resolve("Insight_" + safeName + "_" + capturedYearMonth + ".pdf");
+                                Path   pdfFile  = batchFolder.resolve(
+                                        PlaywrightPdfService.reportFileName(mName, m.getMid(), capturedYearMonth));
 
                                 if (!Files.exists(pdfFile)) {
                                     log.warn("[S3-ONLY] PDF not found, skipping: {}", pdfFile.getFileName());
@@ -482,8 +495,8 @@ public class PdfController {
                                 // (the `mid` local above is the surrogate merchant_id, not the MID).
                                 String mMid  = merchant != null ? merchant.getMid() : null;
 
-                                String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-                                Path   pdfFile  = batchFolder.resolve("Insight_" + safeName + "_" + capturedYearMonth + ".pdf");
+                                Path   pdfFile  = batchFolder.resolve(
+                                        PlaywrightPdfService.reportFileName(mName, mMid, capturedYearMonth));
 
                                 if (!Files.exists(pdfFile)) {
                                     log.warn("[EMAIL] PDF not found for {}: {}", mName, pdfFile);
@@ -1112,8 +1125,12 @@ public class PdfController {
             Files.createDirectories(folder);
 
             String merchantName = resolvemerchantName(merchantId);
-            String safeName  = merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-            String filename  = "Insight_" + safeName + "_" + targetMonth + ".pdf";
+            // MID keys the filename (same scheme as the batch path) so two
+            // same-named merchants never share one PDF. Tenant guard on the
+            // insight fetch below still governs whose data is rendered.
+            String merchantMid = merchantRepository.findById(merchantId)
+                    .map(Merchant::getMid).orElse(null);
+            String filename  = PlaywrightPdfService.reportFileName(merchantName, merchantMid, targetMonth.toString());
             Path   outPath   = folder.resolve(filename);
 
             if (!force && Files.exists(outPath) && Files.size(outPath) > 0) {

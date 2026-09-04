@@ -678,6 +678,7 @@ const ReportsTab = () => {
     { key: 'MERCHANT', label: 'Merchant', count: reports.filter((r) => r.reportType === 'MERCHANT').length },
     { key: 'TRANSACTION', label: 'Transaction', count: reports.filter((r) => r.reportType === 'TRANSACTION').length },
     { key: 'RENTAL', label: 'Rental', count: reports.filter((r) => r.reportType === 'RENTAL').length },
+    { key: 'DCC', label: 'DCC Revenue', count: reports.filter((r) => r.reportType === 'DCC').length },
   ];
 
   return (
@@ -739,6 +740,7 @@ const ReportsTab = () => {
                   { value: 'MERCHANT', label: 'Merchant' },
                   { value: 'TRANSACTION', label: 'Transaction' },
                   { value: 'RENTAL', label: 'Rental' },
+                  { value: 'DCC', label: 'DCC Revenue' },
                 ]}
               />
             </FormField>
@@ -768,7 +770,9 @@ const ReportsTab = () => {
                     ? 'SELECT merchant_id AS mid, merchant_name, status AS merchant_status, ...\nFROM merchants WHERE created_year = :year'
                     : form.reportType === 'RENTAL'
                       ? 'SELECT mid, sid, tid, rental_amount, payment_date\nFROM rentals WHERE payment_date BETWEEN :dateFrom AND :dateTo'
-                      : 'SELECT mid, merchant_name, payment_date, txn_currency_amount, card_scheme, ...\nFROM transactions WHERE payment_date BETWEEN :dateFrom AND :dateTo'}
+                      : form.reportType === 'DCC'
+                        ? 'SELECT sid, merchant_share, acquirer_share, payment_date\nFROM dcc_revenue WHERE payment_date BETWEEN :dateFrom AND :dateTo'
+                        : 'SELECT mid, merchant_name, payment_date, txn_currency_amount, card_scheme, ...\nFROM transactions WHERE payment_date BETWEEN :dateFrom AND :dateTo'}
                 />
               </FormField>
 

@@ -61,6 +61,7 @@ public class IntegrationPullService {
     private final Job dbPullTransactionJob;
     private final Job dbPullMerchantJob;
     private final Job dbPullRentalJob;
+    private final Job dbPullDccJob;
     private final TaskScheduler taskScheduler;      // retries — replaces the leaked java.util.Timer-per-retry
 
     // Explicit constructor (NOT @RequiredArgsConstructor): the two Job
@@ -78,6 +79,7 @@ public class IntegrationPullService {
                                   @Qualifier("dbPullTransactionJob") Job dbPullTransactionJob,
                                   @Qualifier("dbPullMerchantJob") Job dbPullMerchantJob,
                                   @Qualifier("dbPullRentalJob") Job dbPullRentalJob,
+                                  @Qualifier("dbPullDccJob") Job dbPullDccJob,
                                   TaskScheduler taskScheduler) {
         this.runLogRepo = runLogRepo;
         this.scheduleRepo = scheduleRepo;
@@ -89,6 +91,7 @@ public class IntegrationPullService {
         this.dbPullTransactionJob = dbPullTransactionJob;
         this.dbPullMerchantJob = dbPullMerchantJob;
         this.dbPullRentalJob = dbPullRentalJob;
+        this.dbPullDccJob = dbPullDccJob;
         this.taskScheduler = taskScheduler;
     }
 
@@ -314,6 +317,11 @@ public class IntegrationPullService {
             int processed;
             if (report.getReportType() == IntegrationReport.ReportType.MERCHANT) {
                 processed = insertMerchantStaging(rawRows, columnMap, tenantId, skips);
+            } else if (report.getReportType() == IntegrationReport.ReportType.DCC) {
+                // Dedicated DCC revenue feed — stg_dcc_revenue_raw, applied by
+                // dbPullDccJob with replace-by-date semantics. Amounts are
+                // tenant base currency, major units.
+                processed = insertDccStaging(rawRows, columnMap, tenantId, skips);
             } else if (report.getReportType() == IntegrationReport.ReportType.RENTAL) {
                 // Dedicated rental feed — stg_rental_raw, applied by dbPullRentalJob.
                 // No unit normalization: rental amounts are tenant base currency,
@@ -570,6 +578,57 @@ public class IntegrationPullService {
     }
 
     /**
+     * Insert fetched rows into stg_dcc_revenue_raw (batched). Mapped staging
+     * fields: sid, merchant_share, acquirer_share, payment_date
+     * (file_tenant_id optional — validated, never used for routing). The apply
+     * step (DccRevenueJobConfig.applyDccTasklet) then does the same validation
+     * and replace-by-date apply as the file path.
+     */
+    private int insertDccStaging(List<Map<String, Object>> rows, Map<String, String> columnMap,
+                                 Long tenantId, SkipTracker skips) {
+        // Clear existing staging for this tenant (same convention as merchant/transaction)
+        jdbcTemplate.update("DELETE FROM stg_dcc_revenue_raw WHERE tenant_id = ?", tenantId);
+
+        String sql = """
+            INSERT INTO stg_dcc_revenue_raw (
+                tenant_id, sid, file_tenant_id, merchant_share, acquirer_share, payment_date, load_time
+            ) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        """;
+
+        List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
+        int count = 0;
+        for (Map<String, Object> row : rows) {
+            try {
+                BigDecimal merchantShare = toBigDecimal(getMapped(row, columnMap, "merchant_share"));
+                BigDecimal acquirerShare = toBigDecimal(getMapped(row, columnMap, "acquirer_share"));
+                Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
+                if ((merchantShare == null && acquirerShare == null) || paymentDate == null) {
+                    skips.skip("merchant_share/acquirer_share or payment_date missing/unparseable");
+                    continue;
+                }
+                batch.add(new Object[]{
+                    tenantId,
+                    str(getMapped(row, columnMap, "sid")),
+                    str(getMapped(row, columnMap, "file_tenant_id")),
+                    merchantShare,
+                    acquirerShare,
+                    new java.sql.Date(paymentDate.getTime())
+                });
+                count++;
+            } catch (Exception e) {
+                skips.skip(e.getMessage());
+            }
+            if (batch.size() >= INSERT_BATCH_SIZE) {
+                jdbcTemplate.batchUpdate(sql, batch);
+                batch.clear();
+            }
+        }
+        if (!batch.isEmpty()) jdbcTemplate.batchUpdate(sql, batch);
+        if (skips.total > 0) log.warn("[Integration] DCC staging: {}", skips.summary());
+        return count;
+    }
+
+    /**
      * Insert fetched rows into stg_rental_raw (batched). Mapped staging fields:
      * mid, sid, tid, rental_amount, payment_date (entity_name optional).
      * Level is NOT mapped — RentalJobConfig.applyRentalTasklet derives it from
@@ -818,6 +877,7 @@ public class IntegrationPullService {
         Job job = switch (reportType) {
             case MERCHANT -> dbPullMerchantJob;
             case RENTAL -> dbPullRentalJob;
+            case DCC -> dbPullDccJob;
             default -> dbPullTransactionJob;
         };
 

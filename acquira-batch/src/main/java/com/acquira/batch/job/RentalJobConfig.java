@@ -62,6 +62,9 @@ public class RentalJobConfig {
     @org.springframework.beans.factory.annotation.Autowired
     private IngestRunJobListener ingestRunJobListener;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private CacheEvictionJobListener cacheEvictionJobListener;
+
     public RentalJobConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
             JdbcTemplate jdbcTemplate) {
         this.jobRepository = jobRepository;
@@ -90,6 +93,7 @@ public class RentalJobConfig {
                 .next(ingestRentalStep)
                 .next(applyRentalStep)
                 .listener(ingestRunJobListener)
+                .listener(cacheEvictionJobListener)
                 .build();
     }
 
@@ -99,6 +103,7 @@ public class RentalJobConfig {
         return new JobBuilder("dbPullRentalJob", jobRepository)
                 .start(applyRentalStep)
                 .listener(ingestRunJobListener)
+                .listener(cacheEvictionJobListener)
                 .build();
     }
 
@@ -361,7 +366,7 @@ public class RentalJobConfig {
                 + "SELECT r.tenant_id, r.level, s.merchant_id, t.store_id, t.terminal_id, r.mid, r.sid, r.tid, r.rental_amount, r.payment_date, r.row_hash "
                 + "FROM stg_rental_raw r "
                 + "JOIN dim_terminal t ON t.tenant_id=r.tenant_id AND t.tid=r.tid "
-                + "LEFT JOIN dim_store s ON s.store_id=t.store_id "
+                + "LEFT JOIN dim_store s ON s.tenant_id=t.tenant_id AND s.store_id=t.store_id "
                 + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.level='TERMINAL' "
                 + "ON CONFLICT (tenant_id, row_hash) DO NOTHING",
                 tenantId);
@@ -374,6 +379,12 @@ public class RentalJobConfig {
                 + "  SELECT 1 FROM fact_rental f WHERE f.tenant_id=r.tenant_id AND f.row_hash=r.row_hash "
                 + "  AND f.created_at < (SELECT MIN(load_time) FROM stg_rental_raw x WHERE x.tenant_id=r.tenant_id))",
                 tenantId);
+            // Touched dates for the ancillary summary overlay — collected
+            // BEFORE the status flip below empties the PENDING set.
+            java.util.List<java.time.LocalDate> ancillaryDates = jdbcTemplate.query(
+                "SELECT DISTINCT payment_date FROM stg_rental_raw "
+                + "WHERE tenant_id=? AND status='PENDING' AND payment_date IS NOT NULL",
+                (rs, i) -> rs.getDate(1).toLocalDate(), tenantId);
             int processed = jdbcTemplate.update(
                 "UPDATE stg_rental_raw SET status='PROCESSED', error_message=NULL "
                 + "WHERE tenant_id=? AND status='PENDING'",
@@ -401,6 +412,13 @@ public class RentalJobConfig {
                 + "  ORDER BY terminal_id, payment_date DESC, rental_id DESC) l "
                 + "WHERE t.tenant_id=? AND t.terminal_id=l.terminal_id",
                 tenantId, tenantId);
+
+            // 6. Ancillary summary overlay: rental_amount onto
+            //    sum_daily_merchant / sum_daily_finance_rollup for the loaded
+            //    dates, so Net Spread reflects the charges without a summary
+            //    rebuild. Duplicate rows are harmless here — the overlay
+            //    re-derives from fact_rental, which the dedupe already guards.
+            com.acquira.common.service.AncillarySql.applyDates(jdbcTemplate, tenantId, ancillaryDates);
 
             int rejected = rejMissing + rejNoIds + rejTidNoSid + rejFormat;
             log.info("[Rental] Tenant {} ({}) apply: {} merchant + {} store + {} terminal charges inserted, "

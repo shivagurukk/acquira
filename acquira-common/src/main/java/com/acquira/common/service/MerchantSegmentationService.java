@@ -180,6 +180,11 @@ public class MerchantSegmentationService {
             "    MAX(CASE WHEN COALESCE(s.total_txns,0) > 0 THEN s.business_date END) AS last_active " +
             "  FROM sum_daily_merchant s " +
             "  WHERE s.tenant_id = ? AND s.merchant_id IS NOT NULL " +
+            // total_txns > 0: a merchant whose only rows in the window are
+            // ancillary charges (rental/DCC, no transactions) must not enter
+            // the percentile population — extra zero rows at the bottom would
+            // shift the STRATEGIC/VOLUME_DRIVER/LONG_TAIL cutoffs tenant-wide.
+            "    AND COALESCE(s.total_txns,0) > 0 " +
             "    AND s.business_date >= ? AND s.business_date <= ? " +
             "  GROUP BY s.merchant_id " +
             ") " +
@@ -276,8 +281,11 @@ public class MerchantSegmentationService {
 
     private LocalDate maxBusinessDate(Long tenantId) {
         try {
+            // total_txns > 0: an ancillary-only day must not shift the as-of
+            // anchor (it would inflate days_since_last for every merchant).
             return jdbc.queryForObject(
-                "SELECT MAX(business_date) FROM sum_daily_merchant WHERE tenant_id = ?",
+                "SELECT MAX(business_date) FROM sum_daily_merchant "
+                + "WHERE tenant_id = ? AND COALESCE(total_txns,0) > 0",
                 LocalDate.class, tenantId);
         } catch (Exception e) {
             return null;

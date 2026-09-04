@@ -388,13 +388,34 @@ const ProgressMonitor = ({ progress, onRefresh, refreshing }) => {
           <Stat label="Months done" value={progress.completedMonths || 0} color="var(--brand)" />
           <Stat label="Elapsed" value={formatTime(progress.elapsedSeconds)} />
           <Stat label="ETA remaining" value={formatTime(progress.estimatedRemainingSeconds)} color="var(--warning)" />
+          {progress.lastRepricedDay && (
+            <Stat label="Last day re-priced" value={progress.lastRepricedDay} color="var(--brand)" />
+          )}
+          {progress.preservedFeeRows > 0 && (
+            <Stat label="Rows kept old fee" value={Number(progress.preservedFeeRows).toLocaleString()} color="var(--warning)" />
+          )}
         </div>
+
+        {progress.preservedFeeRows > 0 && (
+          <Alert tone="warning" title="Some rows could not be re-priced">
+            {Number(progress.preservedFeeRows).toLocaleString()} transaction rows had no approved rate in the current rate
+            cards (NO_RATE_FOUND / PLACEHOLDER_RATE). They kept their previous fees instead of being blanked. Fix the
+            rate card and re-run to price them.
+          </Alert>
+        )}
 
         {isFailed && (
           <Alert tone="danger" title="Failure detail">
             <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '0.78rem' }}>
-              {progress.phase.replace('FAILED: ', '')}
+              {progress.phase.replace(/^FAILED(?: \([^)]*\))?: /, '')}
             </span>
+            {progress.lastRepricedDay && (
+              <div style={{ marginTop: 6, fontSize: '0.78rem' }}>
+                Fees are committed through <strong>{progress.lastRepricedDay}</strong>; later days in that month still carry
+                the previous fees. Summaries for the touched months were re-synced to the current fact rows. Re-run the
+                re-price from that month once the cause is fixed.
+              </div>
+            )}
           </Alert>
         )}
       </Stack>
@@ -553,7 +574,7 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
     const ok = await confirmDialog({
       title: reprice ? 'Re-price transactions and rebuild summaries now?' : 'Rebuild every summary table now?',
       message: reprice
-        ? `fact_transaction in tenant ${activeTenantId || 'unknown'} will be RE-PRICED from the current rate cards (interchange, scheme, e-com fees are recomputed and overwritten) for ${rangeLabel}, then all 13 summary tables and the dashboard metrics are rebuilt from the new fees. This modifies transaction fees and WIPES any interchange normalization on those months. Only the months whose payment dates fall inside a rate's effective window will change.`
+        ? `fact_transaction in tenant ${activeTenantId || 'unknown'} will be RE-PRICED from the current rate cards (interchange, scheme, e-com fees are recomputed and overwritten) for ${rangeLabel}, then all 13 summary tables and the dashboard metrics are rebuilt from the new fees. This modifies transaction fees and WIPES any interchange normalization on those months. Only the months whose payment dates fall inside a rate's effective window will change. Rows the current cards cannot price keep their previous fee (reported afterwards). Dashboards may show partial numbers while it runs.`
         : `All 13 summary tables and the dashboard metrics in tenant ${activeTenantId || 'unknown'} will be deleted and recalculated from fact_transaction for ${rangeLabel}. Transactions themselves are not modified. Dashboards may show partial numbers while the rebuild is running.`,
       confirmLabel: reprice ? 'Re-price and rebuild' : 'Rebuild summaries',
       tone: 'danger',

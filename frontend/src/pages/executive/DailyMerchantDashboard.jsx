@@ -1849,6 +1849,20 @@ const DailyMerchantDashboard = () => {
                                 <span><b>{monthDates.length}</b> of {allMonthDays.length} days loaded in {monthLabel(month)}</span>
                             )}
                             {refreshedAt && <span>Refreshed <b>{refreshedAt}</b></span>}
+                            {/* This ledger is sliced by card dimensions, which DCC and
+                                rental (booked per merchant) cannot follow. Net Spread
+                                for the same days lives on its merchant-grain twin. */}
+                            <button type="button" className="edm-focus"
+                                onClick={() => navigate('/executive/net-spread?' + new URLSearchParams({
+                                    ...(month ? { month } : {}),
+                                    ...(selectedDates.length ? { dates: selectedDates.join(',') } : {}),
+                                }).toString())}
+                                title="Open the Net Spread page (net margin + DCC + rental) for the same month and days"
+                                style={{ background: 'rgba(241,245,249,0.10)', border: '1px solid rgba(241,245,249,0.22)',
+                                    color: 'var(--table-head-text, #EEF3FC)', borderRadius: 999, padding: '2px 10px',
+                                    fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                Net Spread for these days →
+                            </button>
                         </div>
                     </div>
 

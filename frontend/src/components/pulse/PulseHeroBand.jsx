@@ -79,9 +79,9 @@ const monthLabel = (key) => {
   return MONTH_ABBR[(m || 1) - 1] || key;
 };
 
-function OrgTrendChart({ series, money }) {
+function OrgTrendChart({ series, money, field = 'sales' }) {
   const [active, setActive] = useState(null);
-  const pts = (series || []).map((p) => Number(p.sales) || 0);
+  const pts = (series || []).map((p) => Number(p[field]) || 0);
   if (pts.length < 2) return null;
 
   const W = 560, H = 150, PAD_T = 14, PAD_B = 6;
@@ -133,7 +133,7 @@ function OrgTrendChart({ series, money }) {
           return (
             <div key={p.month} style={{ flex: 1, textAlign: i === 0 ? 'left' : i === series.length - 1 ? 'right' : 'center', minWidth: 0 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: active === i ? D.text : D.textSec, ...NUM, minHeight: 15, whiteSpace: 'nowrap' }}>
-                {showValue ? money(p.sales) : ''}
+                {showValue ? money(p[field]) : ''}
               </div>
               <div style={{ fontSize: 10, fontWeight: active === i ? 700 : 500, color: active === i ? D.textSec : D.textMut }}>
                 {monthLabel(p.month)}
@@ -152,6 +152,11 @@ export default function PulseHeroBand({ data, money, periodLabel, narrow }) {
   const attention = s.needsAttentionCount || 0;
   const orgSeries = data?.orgSeries || [];
   const hasChart = orgSeries.filter((p) => p != null).length >= 2;
+  // Trend lens: net margin ("sales") or net spread. Spread is only offered
+  // when the payload carries it (older backend → sales only).
+  const hasSpreadSeries = orgSeries.some((p) => p && p.spread != null);
+  const [lens, setLens] = useState('sales');
+  const field = lens === 'spread' && hasSpreadSeries ? 'spread' : 'sales';
 
   return (
     <section style={{
@@ -191,6 +196,24 @@ export default function PulseHeroBand({ data, money, periodLabel, narrow }) {
               Previous period {money(s.previousTotalSales)}
             </div>
           )}
+          {s.totalSpread != null && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${D.border}` }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mix-ancillary, #BA65A8)', textTransform: 'uppercase', letterSpacing: 1 }}>
+                Net Spread · margin + DCC + rental
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
+                <span style={{ fontSize: narrow ? 22 : 26, fontWeight: 800, lineHeight: 1.1, color: D.text, letterSpacing: -0.3, ...NUM }}>
+                  {money(s.totalSpread)}
+                </span>
+                <HeroDelta pct={s.spreadGrowth} />
+              </div>
+              {s.previousTotalSpread != null && (
+                <div style={{ fontSize: 12, color: D.textMut, marginTop: 4, ...NUM }}>
+                  Previous period {money(s.previousTotalSpread)}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* The insight sentence — the page's actual product. */}
           {data?.executiveInsight && (
@@ -221,8 +244,26 @@ export default function PulseHeroBand({ data, money, periodLabel, narrow }) {
         {hasChart && (
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: D.textMut, textTransform: 'uppercase', letterSpacing: 1.2 }}>
-                Monthly Trend
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: D.textMut, textTransform: 'uppercase', letterSpacing: 1.2 }}>
+                  Monthly Trend
+                </span>
+                {hasSpreadSeries && (
+                  <span role="tablist" aria-label="Trend measure" style={{ display: 'inline-flex', borderRadius: 999, background: D.chip, padding: 2 }}>
+                    {[['sales', 'Net Margin'], ['spread', 'Net Spread']].map(([k, label]) => (
+                      <button key={k} type="button" role="tab" aria-selected={lens === k}
+                        onClick={() => setLens(k)}
+                        style={{
+                          border: 'none', cursor: 'pointer', borderRadius: 999, padding: '2px 9px',
+                          fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3,
+                          background: lens === k ? 'rgba(241,245,249,0.16)' : 'transparent',
+                          color: lens === k ? D.text : D.textMut,
+                        }}>
+                        {label}
+                      </button>
+                    ))}
+                  </span>
+                )}
               </span>
               {data?.momentumWindow && (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: D.textMut }}>
@@ -231,7 +272,7 @@ export default function PulseHeroBand({ data, money, periodLabel, narrow }) {
                 </span>
               )}
             </div>
-            <OrgTrendChart series={orgSeries} money={money} />
+            <OrgTrendChart series={orgSeries} money={money} field={field} />
           </div>
         )}
       </div>

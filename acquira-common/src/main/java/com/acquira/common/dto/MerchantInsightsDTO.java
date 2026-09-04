@@ -773,12 +773,28 @@ public class MerchantInsightsDTO {
         //    the opt-out volume bars.
         private List<ChartData> optInConversionRateTrend;
 
-        // Backward-compat field: kept so MerchantInsightService.buildDccPerformance
-        // still compiles. NOT shown in any merchant-facing PDF template.
-        // (Was: optInVol × 0.03, using an unconfirmed commission rate.)
+        // Since 2026-09-02 populated from the DCC revenue feed (fact_dcc_revenue
+        // via sum_daily_merchant.dcc_merchant) — the merchant's realised DCC
+        // earnings, no longer optInVol × 3%.
         private BigDecimal optInRevenue;
         public BigDecimal getOptInRevenue() { return optInRevenue; }
         public void setOptInRevenue(BigDecimal v) { this.optInRevenue = v; }
+
+        // Measured DCC revenue split from the feed. dccRevenueSource is "FEED"
+        // when the month has feed rows, "NONE" otherwise — templates gate on it
+        // so a merchant never sees a zero presented as a measurement.
+        private BigDecimal dccMerchantRevenue;
+        private BigDecimal dccAcquirerRevenue;
+        private BigDecimal rentalIncome;
+        private String dccRevenueSource;
+        public BigDecimal getDccMerchantRevenue() { return dccMerchantRevenue; }
+        public void setDccMerchantRevenue(BigDecimal v) { this.dccMerchantRevenue = v; }
+        public BigDecimal getDccAcquirerRevenue() { return dccAcquirerRevenue; }
+        public void setDccAcquirerRevenue(BigDecimal v) { this.dccAcquirerRevenue = v; }
+        public BigDecimal getRentalIncome() { return rentalIncome; }
+        public void setRentalIncome(BigDecimal v) { this.rentalIncome = v; }
+        public String getDccRevenueSource() { return dccRevenueSource; }
+        public void setDccRevenueSource(String v) { this.dccRevenueSource = v; }
 
         public List<ChartData> getOptInConversionRateTrend() { return optInConversionRateTrend; }
         public void setOptInConversionRateTrend(List<ChartData> v) { this.optInConversionRateTrend = v; }

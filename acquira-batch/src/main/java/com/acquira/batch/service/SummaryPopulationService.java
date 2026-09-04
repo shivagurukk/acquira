@@ -600,6 +600,16 @@ public class SummaryPopulationService {
                         tenantId, tenantId)));
                 java.util.concurrent.CompletableFuture.allOf(phase2.toArray(new java.util.concurrent.CompletableFuture[0])).join();
 
+                // Ancillary revenue overlay (dcc_acquirer / dcc_merchant /
+                // rental_amount) — sum_daily_merchant was clean-slate rebuilt
+                // above from fact_transaction only, so re-derive these columns
+                // from fact_dcc_revenue / fact_rental for the same dates. The
+                // finance rollup's copy is already re-applied inside
+                // FinanceRollupSql.rebuildRange (phase2).
+                com.acquira.common.service.AncillarySql.applyMerchantDates(jdbcTemplate, tenantId,
+                    distinctDates.stream().map(java.sql.Date::toLocalDate)
+                        .collect(java.util.stream.Collectors.toList()));
+
             } finally { exec.shutdown(); }
 
             // PLAN STABILITY (2026-08-28): every table above was just

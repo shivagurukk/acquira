@@ -31,7 +31,7 @@ class FinanceRollupSqlTest {
     }
 
     @Test
-    @DisplayName("rebuildRange = clean-slate DELETE then INSERT for the same window")
+    @DisplayName("rebuildRange = clean-slate DELETE, INSERT, then the ancillary re-derivation for the same window")
     void rebuildRangeDeletesThenInserts() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(3);
@@ -40,9 +40,17 @@ class FinanceRollupSqlTest {
 
         assertEquals(3, n);
         ArgumentCaptor<String> sqlCap = ArgumentCaptor.forClass(String.class);
-        verify(jdbc, times(2)).update(sqlCap.capture(), any(Object[].class));
-        assertTrue(sqlCap.getAllValues().get(0).startsWith("DELETE FROM sum_daily_finance_rollup"));
-        assertEquals(FinanceRollupSql.REBUILD_INSERT, sqlCap.getAllValues().get(1));
+        // DELETE + REBUILD_INSERT, then AncillarySql.applyRollupRange's four
+        // statements (zero-out, DCC upsert, rental upsert, cleanup) — the
+        // clean-slate wiped the ancillary columns, so they must come back.
+        verify(jdbc, times(6)).update(sqlCap.capture(), any(Object[].class));
+        List<String> sqls = sqlCap.getAllValues();
+        assertTrue(sqls.get(0).startsWith("DELETE FROM sum_daily_finance_rollup"));
+        assertEquals(FinanceRollupSql.REBUILD_INSERT, sqls.get(1));
+        assertTrue(sqls.get(2).startsWith("UPDATE sum_daily_finance_rollup SET dcc_acquirer = 0"));
+        assertTrue(sqls.get(3).contains("FROM fact_dcc_revenue"));
+        assertTrue(sqls.get(4).contains("FROM fact_rental"));
+        assertTrue(sqls.get(5).startsWith("DELETE FROM sum_daily_finance_rollup"));
     }
 
     @Test
@@ -59,11 +67,12 @@ class FinanceRollupSqlTest {
         FinanceRollupSql.rebuildDates(jdbc, 5L, dates);
 
         ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
-        verify(jdbc, times(4)).update(anyString(), args.capture()); // 2 runs x (DELETE + INSERT)
+        // 2 runs x (DELETE + INSERT + 4 ancillary re-derivation statements)
+        verify(jdbc, times(12)).update(anyString(), args.capture());
         Object[] firstDelete = args.getAllValues().get(0);
         assertEquals(LocalDate.of(2026, 1, 1), firstDelete[1]);
         assertEquals(LocalDate.of(2026, 1, 3), firstDelete[2]);
-        Object[] secondDelete = args.getAllValues().get(2);
+        Object[] secondDelete = args.getAllValues().get(6);
         assertEquals(LocalDate.of(2026, 6, 30), secondDelete[1]);
         assertEquals(LocalDate.of(2026, 6, 30), secondDelete[2]);
     }

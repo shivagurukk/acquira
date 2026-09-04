@@ -35,6 +35,57 @@ public class ExecutiveDailyMerchantController {
     private final com.acquira.common.service.ReportCache reportCache;
     /** Serializes the filter DTO into a stable cache-key suffix. */
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the page's first-load requests: the calendar feed, then the table
+     * for the latest loaded date with the frontend's initial (empty) filters.
+     * The filter template mirrors DailyMerchantDashboard.jsx EMPTY_FILTERS —
+     * empty ARRAYS, not nulls, or the serialized filter key won't match the
+     * live request and the warm entry is never read.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("executive-daily-merchant", tenantId -> {
+            reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+                    "edmCalendar:" + tenantId + ":months", () -> {
+                        Map<String, Object> response = new HashMap<>();
+                        response.put("months", volumeRevenueRepository.getBusinessMonths(tenantId, 24));
+                        List<LocalDate> l = volumeRevenueRepository.getRecentBusinessDates(tenantId, 1);
+                        response.put("latest", l.isEmpty() ? null : l.get(0).toString());
+                        return response;
+                    });
+            List<LocalDate> recent = volumeRevenueRepository.getRecentBusinessDates(tenantId, 1);
+            if (recent.isEmpty()) return;
+            LocalDate latest = recent.get(0);
+            java.time.YearMonth ym = java.time.YearMonth.from(latest);
+            reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+                    "edmCalendar:" + tenantId + ":" + ym, () -> {
+                        Map<String, Object> response = new HashMap<>();
+                        List<LocalDate> ds = volumeRevenueRepository.getBusinessDatesInMonth(
+                                tenantId, ym.atDay(1), ym.atEndOfMonth());
+                        response.put("month", ym.toString());
+                        response.put("dates", ds.stream().map(LocalDate::toString).toList());
+                        return response;
+                    });
+            VolumeRevenueFilterDTO filter;
+            try {
+                filter = objectMapper.readValue(
+                        "{\"mccList\":[],\"destinationList\":[],\"cardTypeList\":[],\"schemeList\":[],\"rmList\":[]}",
+                        VolumeRevenueFilterDTO.class);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return;
+            }
+            String fk = filterKey(filter);
+            if (fk == null) return;
+            List<LocalDate> dates = List.of(latest);
+            String key = "execDaily:" + tenantId + ":" + dates
+                    + ":0:50:volume:desc:" + fk;
+            reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                    () -> buildDailyMerchants(filter, dates, null, null, null,
+                            latest.toString(), null, "volume", "desc", 0, 50, false, tenantId, fk));
+        });
+    }
 
     /** Filter DTO as a key suffix, or null when it cannot be serialized (→ skip caching). */
     private String filterKey(VolumeRevenueFilterDTO filter) {

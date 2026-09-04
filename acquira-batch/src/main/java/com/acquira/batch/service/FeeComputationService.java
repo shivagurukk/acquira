@@ -41,8 +41,29 @@ public class FeeComputationService {
     }
 
     /** Runs the two-phase fee pass + gap report against factTable. Returns rows priced. */
+    /** Rows the apply UPDATE touched, and how many of them kept a previous fee (preserving mode only). */
+    public record FeeApplyResult(int rows, long preservedRows) {}
+
     public int computeFees(long tenantId, String factTable,
                            String rngFt, String rngF, String rngBare, String dateScope) {
+        return computeFeesInternal(tenantId, factTable, rngFt, rngF, rngBare, dateScope, false).rows();
+    }
+
+    /**
+     * Same pass as {@link #computeFees}, for IN-PLACE re-pricing of rows that
+     * already carry fees: a row the current rate cards resolve to nothing for
+     * (NO_RATE_FOUND / PLACEHOLDER_RATE → NULL) KEEPS its existing fee and
+     * status instead of being overwritten with NULL. Rows that do resolve are
+     * rewritten exactly as in the normal pass.
+     */
+    public FeeApplyResult computeFeesPreserving(long tenantId, String factTable,
+                           String rngFt, String rngF, String rngBare, String dateScope) {
+        return computeFeesInternal(tenantId, factTable, rngFt, rngF, rngBare, dateScope, true);
+    }
+
+    private FeeApplyResult computeFeesInternal(long tenantId, String factTable,
+                           String rngFt, String rngF, String rngBare, String dateScope,
+                           boolean preserveExisting) {
         final String factTarget = factTable;
             // PERF (2026-08-29c): REPLACE mode reads from a freshly-built temp table
             // (tmp_fact_batch) that already contains EXACTLY this load's rows, so the
@@ -458,19 +479,46 @@ public class FeeComputationService {
             long tFeeApply = System.currentTimeMillis();
             log.info(String.format("Fee resolution (phase 1, temp table): %.1fs",
                 (tFeeApply - tFee) / 1000.0));
+            long preserved = 0;
+            if (preserveExisting) {
+                Long kept = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM " + factTarget + " f JOIN tmp_fee_resolve r " +
+                    "ON f.transaction_id = r.transaction_id AND f.payment_date = r.payment_date " +
+                    "WHERE f.tenant_id = ? AND " + rngF +
+                    "((r.computed_ic IS NULL AND f.interchange_fee IS NOT NULL) " +
+                    " OR (r.computed_scheme IS NULL AND f.scheme_fee IS NOT NULL))",
+                    Long.class, tenantId);
+                preserved = kept == null ? 0 : kept;
+            }
+            // Preserving mode: an unresolved interchange keeps the row's existing
+            // fee AND its existing status/rule (so the row still says how it was
+            // priced), likewise for the scheme fee. Ecom fee keeps its old value
+            // when the new pass has none. Resolved rows are rewritten as usual.
+            String setClause = preserveExisting
+                ? "  interchange_fee = COALESCE(r.computed_ic, f.interchange_fee), " +
+                  "  scheme_fee      = COALESCE(r.computed_scheme, f.scheme_fee), " +
+                  "  ecom_fee        = COALESCE(r.computed_ecom, f.ecom_fee), " +
+                  "  channel                  = COALESCE(r.channel, f.channel), " +
+                  "  fee_resolution_status    = CASE WHEN r.computed_ic IS NULL AND f.interchange_fee IS NOT NULL THEN f.fee_resolution_status ELSE r.status END, " +
+                  "  scheme_fee_status        = CASE WHEN r.computed_scheme IS NULL AND f.scheme_fee IS NOT NULL THEN f.scheme_fee_status ELSE r.sf_status END, " +
+                  "  interchange_rule_id      = CASE WHEN r.computed_ic IS NULL AND f.interchange_fee IS NOT NULL THEN f.interchange_rule_id ELSE r.ic_rule_id END, " +
+                  "  scheme_fee_rule_id       = CASE WHEN r.computed_scheme IS NULL AND f.scheme_fee IS NOT NULL THEN f.scheme_fee_rule_id ELSE r.sf_rule_id END, " +
+                  "  interchange_pct_applied  = CASE WHEN r.computed_ic IS NULL AND f.interchange_fee IS NOT NULL THEN f.interchange_pct_applied ELSE r.ic_pct END, " +
+                  "  interchange_flat_applied = CASE WHEN r.computed_ic IS NULL AND f.interchange_fee IS NOT NULL THEN f.interchange_flat_applied ELSE r.ic_flat END, " +
+                  "  interchange_cap_applied  = CASE WHEN r.computed_ic IS NULL AND f.interchange_fee IS NOT NULL THEN f.interchange_cap_applied ELSE r.ic_cap END "
+                : "  interchange_fee = r.computed_ic, " +
+                  "  scheme_fee      = r.computed_scheme, " +
+                  "  ecom_fee        = r.computed_ecom, " +
+                  "  channel                  = r.channel, " +
+                  "  fee_resolution_status    = r.status, " +
+                  "  scheme_fee_status        = r.sf_status, " +
+                  "  interchange_rule_id      = r.ic_rule_id, " +
+                  "  scheme_fee_rule_id       = r.sf_rule_id, " +
+                  "  interchange_pct_applied  = r.ic_pct, " +
+                  "  interchange_flat_applied = r.ic_flat, " +
+                  "  interchange_cap_applied  = r.ic_cap ";
             int feeRows = jdbcTemplate.update(
-                "UPDATE " + factTarget + " f SET " +
-                "  interchange_fee = r.computed_ic, " +
-                "  scheme_fee      = r.computed_scheme, " +
-                "  ecom_fee        = r.computed_ecom, " +
-                "  channel                  = r.channel, " +
-                "  fee_resolution_status    = r.status, " +
-                "  scheme_fee_status        = r.sf_status, " +
-                "  interchange_rule_id      = r.ic_rule_id, " +
-                "  scheme_fee_rule_id       = r.sf_rule_id, " +
-                "  interchange_pct_applied  = r.ic_pct, " +
-                "  interchange_flat_applied = r.ic_flat, " +
-                "  interchange_cap_applied  = r.ic_cap " +
+                "UPDATE " + factTarget + " f SET " + setClause +
                 "FROM tmp_fee_resolve r " +
                 // PERF (2026-08-26): the outer f needs its own sargable payment_date
                 // range. The join equality f.payment_date = r.payment_date does NOT
@@ -525,6 +573,9 @@ public class FeeComputationService {
             } catch (Exception e) {
                 log.warn("Fee resolution report failed (non-fatal): {}", e.getMessage());
             }
-        return feeRows;
+            if (preserved > 0) {
+                log.warn("Re-price: {} row(s) kept their previous fee (no approved rate in the current cards)", preserved);
+            }
+        return new FeeApplyResult(feeRows, preserved);
     }
 }

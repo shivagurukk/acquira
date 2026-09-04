@@ -54,6 +54,10 @@
   --mix-interchange: var(--imp-1);
   --mix-scheme:      #2B7FD4;   /* sky — lighter, clearly apart from imperial */
   --mix-pg:          #CA5F28;   /* copper — PG fee */
+  /* Ancillary income (DCC acquirer share + rental) — the part of Net Spread
+     that is NOT fee margin. Plum from the validated cat set so it never reads
+     as margin-green or as a cost. */
+  --mix-ancillary:   var(--cat-5);
   --chart-line: #24386B;   /* navy overlay lines (margin %, trends) */
   --chart-pos: #0FA070;
   --chart-neg: #B3382C;
@@ -192,6 +196,8 @@
   --attr-churned-bg:   color-mix(in srgb, var(--negative) 12%, var(--surface));
   --attr-declining:    var(--attention);
   --attr-declining-bg: color-mix(in srgb, var(--attention) 14%, var(--surface));
+  --attr-nonstarter:    color-mix(in srgb, var(--primary) 55%, var(--negative));
+  --attr-nonstarter-bg: color-mix(in srgb, var(--primary) 8%, var(--surface));
   --attr-stable:       var(--muted);
   --attr-stable-bg:    color-mix(in srgb, var(--muted) 12%, var(--surface));
   --attr-growing:      var(--success-text);
@@ -702,6 +708,7 @@ html.dark {
   --mix-interchange: #4356E0;
   --mix-scheme:      #3E9AE8;
   --mix-pg:          #D5763A;
+  --mix-ancillary:   var(--cat-5);
   --chart-line: #C7CFDA;
   --chart-pos: #34B98A;
   --chart-neg: #E2705C;

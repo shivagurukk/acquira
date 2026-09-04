@@ -1,6 +1,7 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
+import com.acquira.common.service.NetSpreadSql;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
@@ -76,6 +77,55 @@ public class TopPerformersController {
     @Autowired
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
+    @Autowired
+    private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the default first-load board: current calendar month-to-date with
+     * the untouched filter drawer. The template mirrors TopPerformers.jsx
+     * emptyFilters() minus startDate/endDate/datePreset (stripped before the
+     * POST) — every list an EMPTY ARRAY and merchantName "", or the
+     * serialized filter key won't match the live request.
+     *
+     * The window uses the SERVER's calendar date the same way the endpoint
+     * does for period=MTD; a viewer whose browser date differs (timezone
+     * straddling midnight) just misses the warm entry — no wrong data.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("top-performers", tenantId -> {
+            LocalDate today = LocalDate.now();
+            String from = today.withDayOfMonth(1).toString();
+            String to = today.toString();
+            VolumeRevenueFilterDTO filter;
+            try {
+                filter = objectMapper.readValue("{"
+                        + "\"partnerList\":[],\"rmList\":[],\"teamLeaderList\":[],"
+                        + "\"mccList\":[],\"industryList\":[],\"sectorList\":[],"
+                        + "\"midList\":[],\"sidList\":[],\"merchantName\":\"\","
+                        + "\"destinationList\":[],\"schemeList\":[],\"cardTypeList\":[],"
+                        + "\"channelList\":[],\"terminalTypeList\":[]"
+                        + "}", VolumeRevenueFilterDTO.class);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return;
+            }
+            resolveFilters(filter, tenantId);
+            LocalDate[] curWindow = resolveWindow("MTD", from, to);
+            boolean cardGrain = usesCardFilters(filter);
+            String fk;
+            try {
+                fk = objectMapper.writeValueAsString(filter);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return;
+            }
+            reportCache.get(
+                    com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                    "topPerformers:" + tenantId + ":" + curWindow[0] + ":" + curWindow[1]
+                            + ":" + cardGrain + ":MTD:" + fk,
+                    () -> buildTopPerformers(filter, tenantId, cardGrain, curWindow, "MTD"));
+        });
+    }
+
     private void resolveFilters(VolumeRevenueFilterDTO filters, Long tenantId) {
         if (notEmpty(filters.getTeamLeaderList()) && tenantId != null) {
             List<String> ids = salesTeamService.getSalesUserIdsByTeamLeadNames(tenantId, filters.getTeamLeaderList());
@@ -139,12 +189,14 @@ public class TopPerformersController {
 
         response.put("topMerchantsByVolume", rank(withVolume, "volume", TOP_N));
         response.put("topMerchantsByNetRevenue", rank(withVolume, "netRevenue", TOP_N));
+        response.put("topMerchantsByNetSpread", rank(withVolume, "netSpread", TOP_N));
         response.put("topMerchantsByTxns", rank(withVolume, "txns", TOP_N));
 
         Map<String, String> displayNames = agentDisplayNames(tenantId);
         List<Map<String, Object>> rmAgg = groupByRm(withVolume, displayNames);
         response.put("topRmsByVolume", rank(rmAgg, "volume", TOP_N));
         response.put("topRmsByNetRevenue", rank(rmAgg, "netRevenue", TOP_N));
+        response.put("topRmsByNetSpread", rank(rmAgg, "netSpread", TOP_N));
 
         response.put("topMccs", topMccs(filter, tenantId, curWindow[0], curWindow[1]));
 
@@ -157,12 +209,14 @@ public class TopPerformersController {
 
         double totalVolume = current.stream().mapToDouble(r -> toDouble(r.get("volume"))).sum();
         double totalNet = current.stream().mapToDouble(r -> toDouble(r.get("netRevenue"))).sum();
+        double totalSpread = current.stream().mapToDouble(r -> toDouble(r.get("netSpread"))).sum();
         double top10Volume = withVolume.stream()
                 .sorted((a, b) -> Double.compare(toDouble(b.get("volume")), toDouble(a.get("volume"))))
                 .limit(TOP_N).mapToDouble(r -> toDouble(r.get("volume"))).sum();
         Map<String, Object> concentration = new LinkedHashMap<>();
         concentration.put("totalVolume", totalVolume);
         concentration.put("totalNetRevenue", totalNet);
+        concentration.put("totalNetSpread", totalSpread);
         concentration.put("activeMerchantCount", withVolume.size());
         concentration.put("top10SharePct", totalVolume > 0 ? round2(top10Volume / totalVolume * 100) : 0);
         response.put("concentration", concentration);
@@ -250,7 +304,13 @@ public class TopPerformersController {
             sql.append("       COALESCE(SUM(s.total_volume), 0) AS volume, ");
             sql.append("       COALESCE(SUM(s.total_txns), 0) AS txns, ");
             sql.append("       COALESCE(SUM(s.total_msf), 0) AS msf, ");
-            sql.append("       COALESCE(SUM(s.total_msf), 0) AS netRevenue ");
+            sql.append("       COALESCE(SUM(s.total_msf), 0) AS netRevenue, ");
+            // Ancillary revenue (DCC acquirer share + rental) is merchant-day
+            // grain and cannot be sliced by card dimension; it is read whole
+            // from sum_daily_merchant per merchant, on top of the MSF proxy.
+            sql.append("       COALESCE(SUM(s.total_msf), 0) + COALESCE((SELECT SUM(COALESCE(a.dcc_acquirer,0) + COALESCE(a.rental_amount,0)) ");
+            sql.append("         FROM sum_daily_merchant a WHERE a.merchant_id = m.merchant_id AND a.tenant_id = m.tenant_id ");
+            sql.append("         AND a.business_date BETWEEN :from AND :to), 0) AS netSpread ");
             sql.append("FROM dim_merchant m ");
             sql.append("LEFT JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id ");
             sql.append("  AND s.business_date BETWEEN :from AND :to ");
@@ -262,7 +322,10 @@ public class TopPerformersController {
             sql.append("       COALESCE(SUM(s.total_base_volume), 0) AS volume, ");
             sql.append("       COALESCE(SUM(s.total_txns), 0) AS txns, ");
             sql.append("       COALESCE(SUM(s.total_msf), 0) AS msf, ");
-            sql.append("       COALESCE(SUM(COALESCE(s.total_msf,0) - COALESCE(s.total_interchange,0) - COALESCE(s.total_scheme_fee,0)), 0) AS netRevenue ");
+            // Net margin / net spread from the shared definition (NetSpreadSql):
+            // the batch 4-leg margin, plus DCC acquirer share and rental.
+            sql.append("       " + NetSpreadSql.sumMargin("s") + " AS netRevenue, ");
+            sql.append("       " + NetSpreadSql.sumSpread("s") + " AS netSpread ");
             sql.append("FROM dim_merchant m ");
             sql.append("LEFT JOIN sum_daily_merchant s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id ");
             sql.append("  AND s.business_date BETWEEN :from AND :to ");
@@ -321,6 +384,7 @@ public class TopPerformersController {
             m.put("txns", toDouble(row[9]));
             m.put("msf", toDouble(row[10]));
             m.put("netRevenue", toDouble(row[11]));
+            m.put("netSpread", toDouble(row[12]));
             result.add(m);
         }
         return result;
@@ -467,6 +531,7 @@ public class TopPerformersController {
                 a.put("salesEmail", null);
                 a.put("volume", 0.0);
                 a.put("netRevenue", 0.0);
+                a.put("netSpread", 0.0);
                 a.put("msf", 0.0);
                 a.put("merchantCount", 0);
                 return a;
@@ -479,6 +544,7 @@ public class TopPerformersController {
             }
             agg.put("volume", toDouble(agg.get("volume")) + toDouble(r.get("volume")));
             agg.put("netRevenue", toDouble(agg.get("netRevenue")) + toDouble(r.get("netRevenue")));
+            agg.put("netSpread", toDouble(agg.get("netSpread")) + toDouble(r.get("netSpread")));
             agg.put("msf", toDouble(agg.get("msf")) + toDouble(r.get("msf")));
             agg.put("merchantCount", (Integer) agg.get("merchantCount") + 1);
         }
