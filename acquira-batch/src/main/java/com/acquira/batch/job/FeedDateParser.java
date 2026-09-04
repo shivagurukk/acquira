@@ -41,6 +41,11 @@ public final class FeedDateParser {
         ci("dd/MM/yyyy"),
         ci("MM/dd/yyyy"),
         ci("dd-MM-yyyy"),
+        // All-numeric two-digit year ('03-09-26'), seen in a CMM rental
+        // sample. DAY-FIRST like dd-MM-yyyy above — a US-style MM-dd-yy cell
+        // parses without error but lands on the wrong date, so a feed known to
+        // be month-first must be converted before upload, not sent as-is.
+        ci("dd-MM-yy"),
         // BH feed: '08-MAY-26' / '01-AUG-26'. Both the two-digit year and the
         // upper-case month are load-bearing — see the class javadoc.
         ci("dd-MMM-yy"),

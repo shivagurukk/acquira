@@ -68,6 +68,14 @@ class FeedDateParserTest {
     }
 
     @Test
+    void parsesAllNumericTwoDigitYearDayFirst() {
+        // CMM rental sample cell '03-09-26' = 3 September 2026 (day-first,
+        // consistent with dd-MM-yyyy above).
+        assertEquals(LocalDate.of(2026, 9, 3), FeedDateParser.parse("03-09-26"));
+        assertEquals(MAY_8, FeedDateParser.parse("08-05-26"));
+    }
+
+    @Test
     void twoDigitYearPivotsTo2000s() {
         assertEquals(LocalDate.of(2025, 10, 21), FeedDateParser.parse("21-OCT-25"));
         assertEquals(LocalDate.of(2026, 8, 1), FeedDateParser.parse("01-AUG-26"));
