@@ -1,0 +1,3847 @@
+{
+ "source": "Mastercard Consolidated Billing System manual, 2 June 2026 edition",
+ "extractedAt": "2026-09-01",
+ "topicCount": 74,
+ "topics": [
+  {
+   "title": "AB110010-AA: X-CODE and BAT Weekly Detail Authorizations",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB110010-AA: X-CODE and BAT Weekly Detail Authorizations",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The X-Code and BAT Weekly Authorizations report provides detail pertaining to transactions authorized by X-Code and Basic Authorization Truncation (BAT). This detail includes the cardholder account number, transaction date, transaction time, reference number, POS method, transaction type, transaction amount and currency (if not U.S. dollars), response, responding authorization system, and Stand-In fail reason. X-Code authorizations appear first in numerical order by cardholder account number. BAT authorizations are presented in the same manner following X-Code authorizations. A grand total combined account number of X-Code and BAT authorizations and the total dollar amount billed is provided at the end of the report."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-A1: Acquirer Authorization Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-A1: Acquirer Authorization Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Authorization Detail Report lists detail pertaining to authorization transactions that will be charged to the acquirer. The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-A3: Call Referral Acquirer Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-A3: Call Referral Acquirer Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Call Referral Acquirer Detail report lists detail pertaining to call referral transactions for the Acquirer. The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-A4: Acquirer Authorization Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-A4: Acquirer Authorization Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Call Referral Issuer Detail Report lists detail pertaining to call referral transactions for the Issuer. The transactions are presented numerically by cardholder account number. If the same cardholder account number appears more than once, the transactions are presented by date and by time."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-A5: Acquirer Detail Report with Merchant ID",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-A5: Acquirer Detail Report with Merchant ID",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Detail Report with Merchant ID provides details pertaining to Authorization transactions that will be charged to the Acquirer. The transactions are sorted by merchant ID and presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-A6: Merchant Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-A6: Merchant Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Detail Report for Merchant provides details pertaining to Authorization transactions that will be charged to the merchant. The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-C1: Acquirer Off-Network Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-C1: Acquirer Off-Network Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TKY7)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Off-Network Detail Report File provides details pertaining to off-network transactions that will be charged to the acquirer (CLOG transactions). The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction. Transactions that create more than 5 events contain more than 1 record in the file."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-C5: Acquirer Off-Network Detail Report with Merchant ID",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-C5: Acquirer Off-Network Detail Report with Merchant ID",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TKY7)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "Acquirer Off-Network Detail Report File with Merchant ID provides details pertaining to off-network transactions that will be charged to the Acquirer (CLOG transactions). The transactions are sorted by merchant ID and presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction. Transactions that create more than five events contain more than one record in the file."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-C6: Acquirer Off-Network Detail Report for Merchant",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-C6: Acquirer Off-Network Detail Report for Merchant",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TKY7)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Off-Network Detail Report File for Merchant provides details pertaining to off-network transactions that will be charged to the merchant (CLOG transactions). The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction. Column headers are provided at once (top of the file). Transactions that create more than five events contain more than one record in the file."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-C7: Acquirer Off-Network Detail Report for Requestor",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-C7: Acquirer Off-Network Detail Report for Requestor",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TKY7)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Off-Network Detail Report File for Merchant provides details pertaining to off-network transactions that will be charged to the merchant (CLOG transactions). The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction. Column headers are provided at once (top of the file). Transactions that create more than five events contain more than one record in the file."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-F1: Acquirer Auth Detail File",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-F1: Acquirer Auth Detail File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TKY7)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Authorization Detail Report File provides details pertaining to authorization transactions that will be charged to the acquirer. The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction. Transactions that create more than five events contain more than one record in the file."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-F3: Call Referral Acquirer Detail File",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-F3: Call Referral Acquirer Detail File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TKY7)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Call Referral Acquirer Detail Report File lists detail pertaining to call referral transactions for the Acquirer Customer ID. The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction. Transactions that create more than five events contain more than one record in the file."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-F5: Acquirer Auth Detail with Merchant ID - File",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-F5: Acquirer Auth Detail with Merchant ID - File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TKY7)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Authorization Detail Report File with Merchant ID provides details pertaining to authorization transactions that will be charged to the Acquirer. The transactions are sorted by merchant ID and presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction. Transactions that create more than five events contain more than one record in the file."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB201010-F6: Acquirer Auth Detail for Merchant - File",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB201010-F6: Acquirer Auth Detail for Merchant - File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TKY7)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Acquirer Detail Report File for Merchant provides details pertaining to authorization transactions that will be charged to the merchant. The transactions are presented numerically by cardholder account number. Cardholder account numbers that appear more than once are presented by the date and time of the transaction. Transactions that create more than five events contain more than one record in the file."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB602010-FF: Processing Integrity Non-compliance Acquirer Detail File",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB602010-FF: Processing Integrity Non-compliance Acquirer Detail File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report contains transaction detail for acquirers that are invoiced processing integrity fees."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB605010-AA: Authorization Processing Integrity Acquirer Detail",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB605010-AA: Authorization Processing Integrity Acquirer Detail",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This Report provides transaction details for each of the transactions that failed authorization under the Transaction Processing Excellence (TPE) program."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AB605010-FF: Authorization Processing Integrity Acquirer Detail File",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AB605010-FF: Authorization Processing Integrity Acquirer Detail File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Monday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (TKR8)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This Report provides transaction details for each of the transactions that failed authorization under the Transaction Processing Excellence (TPE) program."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "ABU Billing Summary Report: ABU Billing Summary Report for Parent by Child",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "ABU Billing Summary Report: ABU Billing Summary Report for Parent by Child",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "1st of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The report provides a monthly summary of the ABU activity for each Parent ICA. The report will provide details for each child ICAs activity for Parent ICAs who implemented ABU for their individual child ICAs."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Acq Performance Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "Acq Performance Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Last Monday of the Month"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (TB4T)"
+      ],
+      [
+       "Billable",
+       "Billable Number"
+      ],
+      [
+       "Description",
+       "This report provides merchant level details of transactions that were assessed by the acquirer performance development fee."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "AUTH ISO Connect Billing Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "AUTH ISO Connect Billing Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TD1G)"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report provided a merchant level view of billing for the ISO connect program that was introduced to acquirers."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "BEHP Acquirer Aggregate Rpt",
+   "short": "",
+   "audience": "Principal Acquirer",
+   "tables": [
+    {
+     "title": "BEHP Acquirer Aggregate Rpt",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Third Monday of the month for previous month’s activity"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (TB4T)"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report provides a summary by merchant id for the transactions that were assessed the acquirer performance development fee."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Billing Collection Report",
+   "short": "The Billing Collection report provides a summary of billing by service code for a given billable ICA and Collection Method. The report lists the transaction quantity/amount and U.S. dollar amount billed for each service. Totals for draft date, collection method, and billable customer ID are also provided.",
+   "audience": "Principal Issuer Principal Acquirer Processor",
+   "tables": [
+    {
+     "title": "Billing Collection Report fields",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer Principal Acquirer Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Daily/Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Format",
+       "Text, Excel"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T0CH/TN3A/T0CF) Mastercard will retire the T0CH file format in August 2026."
+      ],
+      [
+       "Billable",
+       "No"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Bulk Data File",
+   "short": "Invoice details are available for customers to download through a bulk data file. This chapter describes the data files that contain invoice details. Refer to Chapter 5, Bulk Data File layout for file layouts.",
+   "audience": null,
+   "tables": []
+  },
+  {
+   "title": "Bulk Data File layout",
+   "short": "Invoice details are available for customers to download through a bulk data file. This chapter provides the layout of the these files.",
+   "audience": null,
+   "tables": []
+  },
+  {
+   "title": "CONNDETRPT – Connectivity Detail Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "CONNDETRPT – Connectivity Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Monday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (TK5O)"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report provides transaction and byte quantity for the Connectivity billing."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Final Auth Clearing Timlns Rpt",
+   "short": "",
+   "audience": "Principal Acquirer",
+   "tables": [
+    {
+     "title": "Final Auth Clearing Timlns Rpt",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (TP5C)"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "Aggregated view of charges at the merchant level for the time-based authorization validity value fees to acquirers for cleared final authorization transaction."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB073010: Monthly Summarized Billing Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB073010: Monthly Summarized Billing Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report provides a summary of all billed charges to a billable ICA over the previous month. It is organized alphabetically by service. Within each service, it lists all billed events and provides the quantity, rate, and amount billed."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB151010-BB: Acquirer Customer Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB151010-BB: Acquirer Customer Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report lists all of the acquiring Cirrus and Maestro transactions generating billing activity to the customer (or its affiliate)."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB152010-AA: Single Message Transaction Manager Usage Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB152010-AA: Single Message Transaction Manager Usage Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report lists usage for the Single Message Transaction Manager tool (SMTM) activity generated billed to the customer (or its affiliate)."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB193010-AA: NICS Adjustment History (Acquiring)",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB193010-AA: NICS Adjustment History (Acquiring)",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T863)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Adjustment History Report lists all exception items billed by MCBS processed by the cardholder processor. This report provides details to identify exception items types, amounts, and fees applied to each of the exception items processed."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB230010-BB – GCMS Cross Border Transaction Detail Report - Acquirer",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB230010-BB – GCMS Cross Border Transaction Detail Report - Acquirer",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report lists all the cross-border transactions in the IPM outbound backups. It is sorted by acquirer ICA, card acceptor ID, then by cardholder number. Details include bank name, merchant country, transaction amount, transaction type, GCMS cycle number, issuer ICA and country, message reversal indicator, acquirer reference number and the billing event code assigned to the activity."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB230010-FIL: GCMS Acquirer Cross Border Detail File",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB230010-FIL: GCMS Acquirer Cross Border Detail File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This file lists all the cross-border transactions in the IPM outbound backups. It is sorted by acquirer ICA, card acceptor ID, then by cardholder number. Details include bank name, merchant country, transaction amount, transaction type, GCMS cycle number, issuer ICA and country, message reversal indicator, acquirer reference number and the billing event code assigned to the activity."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB232010-BB: MDS/APC Cross Border Transaction Detail Report - Acquirer",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB232010-BB: MDS/APC Cross Border Transaction Detail Report - Acquirer",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report lists all the cross-border transactions in the Mastercard Debit Switch (MDS) Transaction Journal File (TJF) and the Australian Processing Center (APC) Transaction Journal File (TJF). It is sorted by acquirer ICA and acquirer routing and transit number. Details include acquirer bank name, card number, transaction date and time, transaction amount, merchant country, issuer processor number, acquirer processor number, issuer routing and Transit number and the billing event code assigned to the activity."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB247010-AA – GCMS Acquirer Program Transaction Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB247010-AA – GCMS Acquirer Program Transaction Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The GCMS Acquirer Program Transaction Detail Report lists all Global Acquirer Program Transaction activity by Acquiring ICA."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB280010-BB – GCMS MoneySend Report - Acquirer",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB280010-BB – GCMS MoneySend Report - Acquirer",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The report provides transactional information and amount detail for all MoneySend payment transactions originated by the acquirer generating billing activity."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB403010-BB: MasterCom Acquirer Detail",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB403010-BB: MasterCom Acquirer Detail",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TB52)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report lists all the MasterCom activity generated over a one-month period and billed to the customer (or its affiliate). To provide customers with detail about retrieval request transactions on MasterCom for Mastercard, Visa, and On-Us records billed monthly through MCBS."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB403010-DD: COLB Acquirer Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB403010-DD: COLB Acquirer Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The Mastercom acquirer collaboration detail report provides acquirers with the Mastercom claim id, claim date, item number and response code for each PAN and associated ARN or RTN and processor number of the claim."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB405010-AA: MasterCom Chargeback Transactions Detail Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB405010-AA: MasterCom Chargeback Transactions Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report lists all the chargeback transactions sent and received by the customer during the previous month’s billing cycle. Transactions received by the customer are listed first, including the receiving PC endpoint, sending ICA, sending PC endpoint, number of pages, message text, and billing event numbers generated for each transaction. A total number of transactions received by the customer concludes this portion of the report."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB405010-CC: MasterCom Single Message Chargeback Detail Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB405010-CC: MasterCom Single Message Chargeback Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This reports lists all of the Single Message chargeback transactions sent by the customer during the previous month’s billing cycle. A total number of chargeback transactions received, and total chargeback amount are found at the end of the report."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB406010-AA: MasterCom Image Review Tracking Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB406010-AA: MasterCom Image Review Tracking Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report provides customers with details pertaining to all MasterCom image review transactions."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB408010-AA: MCOM Claims Manager Detail Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB408010-AA: MCOM Claims Manager Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report provides transactions that customers were charged for where they used the MasterCom Claims Manager."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB415010-FF: Transaction Investigator Activity Detail Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB415010-FF: Transaction Investigator Activity Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report is used by users of Transaction Investigator tool to understand activity that was billed at the user level by ICA. The fields included are: company ID, username, Date and time of search, view type, and PAN number."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB712010-DD: Master Assist Acquirer Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB712010-DD: Master Assist Acquirer Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report provides the acquirer with details pertaining to all Enhanced Access Service, Concierge, and MasterAssist Service activity billed through MCBS. Transactions on this report are presented in numeric order by call identification number. The cardholder account number involved in the transaction, the service type, call date, call start and end times, call type, inbound/outbound indicators, country of origin, services delivered, and billing events generated are provided for each transaction."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB713010-BB: ATM Locator Acquirer Detail Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB713010-BB: ATM Locator Acquirer Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "To provide the acquirer with detail pertaining to all ATM Locator IVR billed weekly through MCBS."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB715010-AA: GCC Loyalty Rewards Program Acquirer Detail",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB715010-AA: GCC Loyalty Rewards Program Acquirer Detail",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "The GB715010-AA report provides details about all GCC Loyalty Rewards activity billed through MCBS. This Report provides detail transaction activity for each Acquirer ICA identifying transactions in which the Acquirer was either billed for or paid out for with regards to the GCC Loyalty Rewards Program."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB718010-FF: Authentication Acquirer Detail Report – Bulk",
+   "short": "",
+   "audience": "Principal Acquirer",
+   "tables": [
+    {
+     "title": "GB718010-FF: Authentication Acquirer Detail Report – Bulk",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Eighth day of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (TYI6)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report provides acquirers with transaction level details for the SecureCode billing."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB720010-CC: MPGS Merchant Transaction Summary Report",
+   "short": "",
+   "audience": "Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "GB720010-CC: MPGS Merchant Transaction Summary Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First of every month"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T852)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report provides a listing of the gateway merchant ID, merchant name, status, transaction type and number of production transactions."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "GB901010-FF: Acquirer Volume Fee Detailed Mapping Report",
+   "short": "",
+   "audience": "Principal Acquirer",
+   "tables": [
+    {
+     "title": "GB901010-FF: Acquirer Volume Fee Detailed Mapping Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TNP8)"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report provides acquirers MCC level details at the Card Acceptor ID level."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "INSL Charge Detail Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "INSL Charge Detail Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TB4B)"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "IPPs receive a weekly report that summarizes the fee rates and amounts assessed for all processed purchase, refund, and chargeback transactions for Pay now buy later. Each transaction record is listed individually with no aggregation."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Invoice Tier Detail Report",
+   "short": "The Invoice Tier Detail reports summarize billing events by tier event ID providing an event level break down for tier calculation.",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "Invoice Tier Detail fields",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Daily/Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Format",
+       "Text, Excel"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T0CH/TN3A/T0CF) T0CH will be replaced in August 2026."
+      ],
+      [
+       "Billable",
+       "No"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Key Residency Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "Key Residency Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report provides details related to the key residency billing. Week - The week that the key is invoiced. Status [A] Active [I] Inactive Card Number - The card number or card range to which the key is defined. Key ID - The key ID provided by the issuer. Expiry Date [MMDD] - The floor expiry date. Key Type - The description of the key defined for the account."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Licensing Recurring Aff Proc: Licensing Recurring Affiliate Processor Fee",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "Licensing Recurring Aff Proc: Licensing Recurring Affiliate Processor Fee",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Third Sunday of the month"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report identifies the affiliates being assessed the recurring fee. The report breaks out each Mastercard affiliate ID and RTN (if applicable). It also provides the affiliate name, city, state and country."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Licensing Recurring Affiliate: Licensing Recurring Affiliate Fee Listing",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "Licensing Recurring Affiliate: Licensing Recurring Affiliate Fee Listing",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Last Sunday of the month"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report identifies the affiliates being assessed the recurring fee. Mastercard adjusts the current license application and administration one-off license fee payable by the principal for sponsoring any new affiliate. The fee will be assessed as indicated."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Mastercard Consolidated Billing System Reports",
+   "short": "This guide provides customers with insight into the billing reports available to assist in viewing and reconciling billing data.",
+   "audience": "Acquirer Issuer InControl Issuer Network Enablement Partner Principal Affiliate Principal Branded Processor Principal Merchant",
+   "tables": [
+    {
+     "title": "Details",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Metadata",
+       "Value"
+      ],
+      [
+       "Audience",
+       "Acquirer Issuer InControl Issuer Network Enablement Partner Principal Affiliate Principal Branded Processor Principal Merchant"
+      ],
+      [
+       "Product",
+       "Network Processing and Operations"
+      ],
+      [
+       "Region",
+       "Global"
+      ],
+      [
+       "Type",
+       "Reference guide"
+      ],
+      [
+       "Publish Date",
+       "2 June 2026"
+      ]
+     ]
+    },
+    {
+     "title": "Summary of changes, 2 June 2026",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Description of change",
+       "Where to look"
+      ],
+      [
+       "Chapter 4 Detail Reports Listing"
+      ],
+      [
+       "Chapter 5 Bulk Data File layout"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Mastercard Invoices",
+   "short": "Invoices generate as legal documentation to provide insight into customer billing by ICA. Invoice types are generated based on billing type and customer location.",
+   "audience": "Principal Issuer Principal Acquirer Processor",
+   "tables": [
+    {
+     "title": "Invoice fields",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer Principal Acquirer Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Daily (if billing)"
+      ],
+      [
+       "Delivery By (Timing)"
+      ],
+      [
+       "Delivery Format",
+       "Text, Excel"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T0CH/TN3A/T0CF) Mastercard will retire the T0CH file format in August 2026."
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "Varied"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "MC Send Summary Report",
+   "short": "",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "MC Send Summary Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Daily"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ],
+      [
+       "Description",
+       "This report provides customers the partner ID and the Partner/Customer name being billed for MasterCard Send billing. This report can be used in conjunction with the T464."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Monthly Billing Summary Report",
+   "short": "The Monthly Billing Summary report provides a view of all billing processed within the month. The data is broken out at the Pricing Definition level, similar to the invoice layout.",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "Monthly Billing Summary fields",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First day of following month"
+      ],
+      [
+       "Delivery Format",
+       "Text, Excel"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "No"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "PREA ISO Connect Billing Report: Pre Authorization ISO Connect Billing Report",
+   "short": "",
+   "audience": "Principal Acquirer",
+   "tables": [
+    {
+     "title": "PREA ISO Connect Billing Report: Pre Authorization ISO Connect Billing Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TD1I)"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report provided a merchant level view of billing for the ISO connect program that was introduced to acquirers."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T0CF – Invoice Report Image",
+   "short": "The T0CF contains invoice details in a report image file created when a customer is billed. The file is sent through Global File Transfer (GFT) to the customer’s endpoint as a report image in bulk delivery.",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "T0CF",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Daily (if billing occurs)"
+      ],
+      [
+       "Delivery Format",
+       "Fixed format bulk data file"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T0CF)"
+      ],
+      [
+       "Billable",
+       "No"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T0CH/BFIL – Invoice Detail Data File",
+   "short": "The T0CH/BFIL contains invoice details in a fixed-format data file created when a customer is billed. The file is sent through Global File Transfer (GFT) to the customer's endpoint.",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "T0CH/BFIL",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Daily (if billing occurs)"
+      ],
+      [
+       "Delivery Format",
+       "Fixed format bulk data file"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (T0CH)"
+      ],
+      [
+       "Billable",
+       "No"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T0CH/BFIL – Invoice Detail Data File",
+   "short": "The T0CH/BFIL is a fixed format file that is created anytime a customer is billed and sent using Global File Transfer (GFT) to a customer’s endpoint.",
+   "audience": null,
+   "tables": [
+    {
+     "title": "T0CH/BFIL – Invoice Detail Data File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Record Type",
+       "May Precede",
+       "May Follow",
+       "Cardinality",
+       "Aggregation key over charge records",
+       "Trigger for Output"
+      ],
+      [
+       "U - File Header Record",
+       "None",
+       "A,C",
+       "1 per file",
+       "N/A",
+       "The 'U' record type is output as the first line in a new file for a given Invoice ICA on a given bill run effective date."
+      ],
+      [
+       "A - Affiliate Billing Event Total",
+       "U, A, C, S, M, L, T, F, V",
+       "A, C, M",
+       "0, 1 or many per file/invoice number",
+       "Aggregates charges that have the same Billing Event ID, Rate and Invoice Text and Affiliate ID.",
+       "The \"A' record type is output under the following conditions: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The billable ICA changes when compared to the previous charge. The activity ICA changes when compared to the previous charge record. The service code changes when compared to the previous charge record. The billing event ID, rate, or invoice text changes when compared to the previous charge record."
+      ],
+      [
+       "C- Customer Billing Event Total",
+       "U, A, C, S, M, L, T, F, V",
+       "A, C, S, M",
+       "1 or many per file/invoice number",
+       "Aggregates charges that have the same Billing Event ID, Rate and Invoice Text.",
+       "The 'C' record type is output under the following conditions: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The billable ICA changes when compared to the previous charge. The activity ICA changes when compared to the previous charge record. The service code changes when compared to the previous charge record. The billing event ID, rate, or invoice text changes when compared to the previous charge record."
+      ],
+      [
+       "S - Service Total",
+       "C",
+       "A, C, M",
+       "1 or many per file/invoice number.",
+       "Aggregates charges that have the same Service Code.",
+       "The 'S' record type is output under the following conditions: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The billable ICA changes when compared to the previous charge. The activity ICA changes when compared to the previous charge record. The service code changes when compared to the previous charge record."
+      ],
+      [
+       "M - Collection Method Total",
+       "A, C, S, F",
+       "A, C, L",
+       "1 or many per file/invoice number.",
+       "Aggregates charges that have the same Collection Method",
+       "The 'M' record type is output under the following conditions: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The billable ICA changes when compared to the previous charge. The activity ICA changes when compared to the previous charge record. The service code changes when compared to the previous charge record. The billing event ID, rate, or invoice text changes when compared to the previous charge record. The Collection Method changes when compared to the previous charge record."
+      ],
+      [
+       "L - Customer Total",
+       "M",
+       "A, C, F, D, T",
+       "1 or many per file/invoice number",
+       "Aggregates all charges processed (that is, no key used in aggregation).",
+       "The 'L' record type is output under the following conditions: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The billable ICA changes when compared to the previous charge. The activity ICA changes when compared to the previous charge record."
+      ],
+      [
+       "T - Invoice Total",
+       "L, D",
+       "A, C, F, V, Z",
+       "1 or many per file/invoice number",
+       "Aggregates charges that have the same Invoice Number.",
+       "The 'T' record type is output under the following conditions: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record."
+      ],
+      [
+       "F - Affiliate Type Total",
+       "T, L, F",
+       "A, C, M, F, V, Z",
+       "0, 1 or many per file/invoice number",
+       "Aggregates charges that have the same Affiliate Report Type.",
+       "The 'F' record type is output under the following conditions: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The billable ICA changes when compared to the previous charge."
+      ],
+      [
+       "V - VAT Total",
+       "V, F, T",
+       "A, C, V, Z",
+       "0, 1 or many per file/invoice number.",
+       "Aggregates charges that have the same VAT Code.",
+       "The 'V' record type is output under the following conditions when VAT charges exist: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record."
+      ],
+      [
+       "D - SBF Explanatory Text",
+       "L",
+       "T",
+       "0, 1 or many per file/invoice number",
+       "Aggregates lines of SBF Explanatory Text by Billing Event ID and SBF Text ID.",
+       "The 'D' record type is output under the following conditions if there are charges that have the SBF Text ID populated:"
+      ],
+      [
+       "Z - File Trailer",
+       "T, F, V",
+       "None",
+       "1 per file",
+       "N/A",
+       "Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The 'Z' record type is output as the last line in a new file for a given Invoice ICA on a given bill run effective date."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T0CH/BFIL Detail Record",
+   "short": "",
+   "audience": null,
+   "tables": [
+    {
+     "title": "T0CH/BFIL Detail Record",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Start",
+       "End",
+       "Length",
+       "Purpose and Business Rules",
+       "Properties",
+       "Values"
+      ],
+      [
+       "Record Type ID",
+       "1",
+       "1",
+       "1",
+       "Unique identifier for BFIL file header record",
+       "String, Mandatory",
+       "A- Affiliate Billing Event total C - Customer Billing Event Total F- Affiliate Type total S - Service Total M- Collection Method Total L - Customer Total T - Invoice Total V - VAT Total"
+      ],
+      [
+       "Invoice Type",
+       "2",
+       "3",
+       "2",
+       "Identifies the type of invoice represented by the record.",
+       "String, Mandatory",
+       "IN - Invoice CR - Credit Note AD - Advisor CN - MCE Commission Note"
+      ],
+      [
+       "Invoice Number",
+       "4",
+       "18",
+       "15",
+       "Identifies the type of invoice represented by the record.",
+       "String, Mandatory",
+       "IN - Invoice CR - Credit Note AD - Advisor CN - MCE"
+      ],
+      [
+       "Invoice ICA Number",
+       "19",
+       "29",
+       "11",
+       "ICA number for the activity customer receiving the invoice. In most cases, this is the same as the activity ICA.",
+       "Integer, Mandatory",
+       "Spaces"
+      ],
+      [
+       "Invoice ICA Name",
+       "30",
+       "99",
+       "70",
+       "ICA name for the activity customer receiving the invoice. In most cases, this will be the same as the activity ICA.",
+       "String, Mandatory"
+      ],
+      [
+       "Activity ICA Number",
+       "100",
+       "110",
+       "11",
+       "ICA number for the activity customer.",
+       "Integer, Optional"
+      ],
+      [
+       "Activity ICA Name",
+       "111",
+       "180",
+       "70",
+       "ICA name for the activity customer.",
+       "String, Optional"
+      ],
+      [
+       "VAT Number",
+       "181",
+       "200",
+       "20",
+       "Invoice customer's VAT Identification Number",
+       "String, Optional"
+      ],
+      [
+       "Billable ICA Number",
+       "201",
+       "211",
+       "11",
+       "The ICA number for the billable customer.",
+       "Integer, Optional"
+      ],
+      [
+       "Billable ICA Name",
+       "212",
+       "281",
+       "70",
+       "The ICA name for the billable customer.",
+       "String, Optional"
+      ],
+      [
+       "Partner Identifier",
+       "282",
+       "321",
+       "40",
+       "Identifies the Partner associated to the transactions for MA SEND",
+       "String, Optional"
+      ],
+      [
+       "Partner Customer Name",
+       "322",
+       "421",
+       "100",
+       "Identifies the name of the Partner associated to the transactions for MA SEND.",
+       "String, Optional"
+      ],
+      [
+       "Affiliate Number (no longer used)",
+       "422",
+       "436",
+       "15",
+       "The number of the associated affiliate.",
+       "Integer, Optional"
+      ],
+      [
+       "Affiliate Name (no longer used)",
+       "437",
+       "471",
+       "35",
+       "The name of the associated affiliate.",
+       "String, Optional"
+      ],
+      [
+       "Affiliate Type",
+       "472",
+       "472",
+       "1",
+       "Affiliate reporting type value.",
+       "String, Optional",
+       "B - Issuer/RPPS Reporting M - Merchant Acquirer Reporting R - R&T Acquirer Reporting"
+      ],
+      [
+       "Currency",
+       "473",
+       "475",
+       "3",
+       "ISO 4217 numeric currency code for amount fields on this record.",
+       "Integer, Mandatory"
+      ],
+      [
+       "Service Code",
+       "476",
+       "477",
+       "2",
+       "Unique service identifier",
+       "String, Optional"
+      ],
+      [
+       "Service Code Description",
+       "478",
+       "547",
+       "70",
+       "Text description of the service.",
+       "String, Optional"
+      ],
+      [
+       "Billing Event Code",
+       "548",
+       "558",
+       "11",
+       "Unique code representing a billing event. this field contains the details Billing Event Code rather than the tier Billing Event Code (which is populated in a separate field toward the end of this record when applicable).",
+       "String, Optional"
+      ],
+      [
+       "Billing Event Description",
+       "559",
+       "628",
+       "70",
+       "Text description of the billing event.",
+       "String, Optional"
+      ],
+      [
+       "Collection Method Code",
+       "629",
+       "629",
+       "1",
+       "Collection Method assigned to the charge.",
+       "String, Optional"
+      ],
+      [
+       "Collection Method Description",
+       "630",
+       "659",
+       "30",
+       "Text description of the collection Method",
+       "String, Optional"
+      ],
+      [
+       "UOM",
+       "660",
+       "660",
+       "1",
+       "Unit of measure. Indicates whether the next field represents a quantity or amount. For some billing events this is defined as optional and will be space filled, but the majority will have a value provided.",
+       "String, Optional",
+       "A - Amount Q - Quantity"
+      ],
+      [
+       "Sign",
+       "661",
+       "661",
+       "1",
+       "Indication whether the following Quantity/amount field is positive or negative. For some billing events this is defined as optional and will be space filled, but the majority will have a value provided.",
+       "Integer, Optional",
+       "\"+\" or \"-\""
+      ],
+      [
+       "Quantity/Amount",
+       "662",
+       "667",
+       "16",
+       "Billing event quantity/amount. For some billing events this is defined as optional and will be space filled, but the majority will have a value provided.",
+       "Integer, Optional",
+       "Right justified and zero filled. For example, 00000000345612."
+      ],
+      [
+       "Exponent",
+       "678",
+       "679",
+       "2",
+       "Number of decimal places in the preceding Quantity/Amount field. For some billing events this is defined as optional and will be space filled, but the majority will have a value provided.",
+       "Integer, Optional",
+       "For example, 03, for the above Qty/Amt field the real value is 345.612"
+      ],
+      [
+       "Sign",
+       "Indication of whether the following Rate field is positive or negative. For some billing events this is defined as optional and will be space filled, but the majority will have a value provided.",
+       "String, Optional",
+       "\"+\" or \"-\""
+      ],
+      [
+       "Rate",
+       "681",
+       "701",
+       "21",
+       "The blended rate at which the billing event has been billed. For some billing events this is defined as optional and will be space filled, but the majority will have a value provided.",
+       "Integer, Optional Last 9 characters are after the decimal place, first 9 are before.",
+       "Right justified and zero filled. For example, 1.345612 real positive value is 00000000345612000."
+      ],
+      [
+       "Sign",
+       "702",
+       "702",
+       "1",
+       "Indication whether the following Charge field is positive or negative.",
+       "String, Mandatory",
+       "\"+\" or \"-\""
+      ],
+      [
+       "Charge",
+       "703",
+       "718",
+       "16",
+       "The billing event charge amount (before taxes).",
+       "Integer (currency dependent), Mandatory",
+       "Right-justified and zero filled. For example, 00000000345612"
+      ],
+      [
+       "Exponent",
+       "719",
+       "720",
+       "2",
+       "Number of decimal places in the preceding Charge field.",
+       "Integer, Mandatory",
+       "Right-justified and zero filled. For example, 02"
+      ],
+      [
+       "Additional Charge Details 1",
+       "721",
+       "745",
+       "25",
+       "Defines additional charge amounts. Optional, sub-divided field. Space-filled if the entire section is not used. Otherwise, the defined field properties apply to each component. If the Tax charge record has a VAT code populated and the currency of the tax charge is not a Euro Currency ID, then an additional ACD will be created with a Charge Type of 02 (that is, it creates a VAT in Euro ACD). Zero amount ACDs may be generated.",
+       "Subdivided field, Optional"
+      ],
+      [
+       "ACD - Charge Type",
+       "746",
+       "747",
+       "2",
+       "Determines the type of charge represented by this additional charge detail element. Logic for setting the ACD - Charge Type: If the Tax record associated with the charge currently being processed has a VAT Code populated, and the Currency ID is EURO, then set the Charge Type to: 02. Otherwise, the Charge Type defaults to 01. If the Tax Type code equals the US Sales Tax Code (which is the default for a US Sales Tax charge), then set the Charge Type to 01. If the Tax Type code exists in the dMC_BFIL_TaxType_ACDRec_Xred DA table (see BRT T-BOBJ-0005), then use the ACD Charge Type returned from the lookup. Otherwise, set the Charge Type to 00.",
+       "Integer, Mandatory if ACD is present.",
+       "00 - no Tax Code to ACD charge Type mapping for non-VAT and non-US sales Tax charge 01 - VAT (not in Euro)/US Sales Tax Charge 02 - VAT in Euro Tax Charge 03 - AGST 04 - India CESS 06 - India SEC & higher Education CESS 07 - CGST"
+      ],
+      [
+       "ACD - Included in Total",
+       "748",
+       "748",
+       "1",
+       "Indicates whether this charge amount is represented in the Total Charge field.",
+       "String, Mandatory if ACD is present",
+       "Y - Yes N - No"
+      ],
+      [
+       "ACD - Currency",
+       "749",
+       "751",
+       "3",
+       "ISO 4217 alpha currency code representing the additional charge detail element's currency.",
+       "String, Mandatory if ACD is present.",
+       ""
+      ],
+      [
+       "Sign",
+       "752",
+       "752",
+       "1",
+       "Indication whether the following ACH-Charge field is positive or negative.",
+       "String, Mandatory if ACD is present",
+       "\"+\" or \"-\""
+      ],
+      [
+       "ADC - Charge",
+       "753",
+       "768",
+       "16",
+       "The charge amount of this additional charge detail element.",
+       "Integer (currency dependent). Mandatory if ACD is present."
+      ],
+      [
+       "Exponent",
+       "769",
+       "770",
+       "2",
+       "Number of decimal places in the preceding ACD-Chage field.",
+       "Integer, Mandatory if ACD is present.",
+       "For example, 02"
+      ],
+      [
+       "Additional Charge Details 2",
+       "771",
+       "795",
+       "25",
+       "Defines additional charge amounts. See definition in Additional Charge Details 1 field of the Detail Record.",
+       "Subdivided Field, Optional"
+      ],
+      [
+       "Additional Charge Details 3",
+       "796",
+       "820",
+       "25",
+       "Defines additional charge amounts. See definition in Additional Charge Details 1 field of the Detail Record.",
+       "Subdivided Field, Optional",
+       ""
+      ],
+      [
+       "Additional Charge Details 4",
+       "821",
+       "845",
+       "25",
+       "Defines additional charge amounts. See definition in Additional Charge Details 1 field of the Detail Record.",
+       "Subdivided Field, Optional"
+      ],
+      [
+       "Additional Charge Details 5",
+       "846",
+       "870",
+       "25",
+       "Defines additional charge amounts. See definition in Additional Charge Details 1 field of the Detail Record.",
+       "Subdivided Field, Optional",
+       ""
+      ],
+      [
+       "Sign",
+       "871",
+       "871",
+       "1",
+       "Indication whether the following Total Charge field is positive or negative.",
+       "String, Mandatory"
+      ],
+      [
+       "Total Charge",
+       "872",
+       "887",
+       "16",
+       "Total charge amount. This is the sum of all related child records.",
+       "Integer (currency dependent), Mandatory",
+       ""
+      ],
+      [
+       "Exponent",
+       "888",
+       "889",
+       "2",
+       "Number of decimal places in the preceding Total Charge field.",
+       "Integer, Mandatory",
+       "For example, 02"
+      ],
+      [
+       "VAT code",
+       "890",
+       "893",
+       "4",
+       "Transaction's VAT code.",
+       "String, Optional"
+      ],
+      [
+       "Period Start Date",
+       "894",
+       "901",
+       "8",
+       "Indicates the period start date for recurring charges. Space filled for non-recurring charges.",
+       "Date YYYYMMDD, Optional"
+      ],
+      [
+       "Period End Date",
+       "902",
+       "909",
+       "8",
+       "Indicates the period end date for recurring charges. NOTE: Space filled for non-recurring charges.",
+       "Date YYYYMMDD, Optional"
+      ],
+      [
+       "Tier Billing Event Code",
+       "910",
+       "920",
+       "11",
+       "Unique code representing a tier billing event. Populated for a detail billing events that make up a tier.",
+       "String, Optional"
+      ],
+      [
+       "Fee Type",
+       "921",
+       "945",
+       "25",
+       "Identifies billing event as Acquirer, Customer or Issuer.",
+       "String, Optional"
+      ],
+      [
+       "Category",
+       "946",
+       "1010",
+       "65",
+       "Identifies categorization of a billing event.",
+       "String, Optional"
+      ],
+      [
+       "Category Sub-category",
+       "1011",
+       "1075",
+       "65",
+       "Identifies sub-categorization of a billing event.",
+       "String, Optional"
+      ],
+      [
+       "Filler",
+       "Future expansion",
+       "String, Not Used",
+       "Spaces"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T0CH/BFIL Explanatory Text Detail Record",
+   "short": "",
+   "audience": null,
+   "tables": [
+    {
+     "title": "T0CH/BFIL Explanatory Text Detail Record",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Start",
+       "End",
+       "Length",
+       "Purpose and Business Rules",
+       "Properties",
+       "Values"
+      ],
+      [
+       "Record Type ID",
+       "1",
+       "1",
+       "1",
+       "Unique identifier for the explanatory text detail record.",
+       "String, Mandatory",
+       "D"
+      ],
+      [
+       "Invoice Type",
+       "2",
+       "3",
+       "2",
+       "Identifies the type of invoice represented by the record.",
+       "String, Mandatory",
+       "IN - Invoice CR - Credit Note AD - Advisor CN - MCE Commission Note"
+      ],
+      [
+       "Invoice Number",
+       "4",
+       "18",
+       "15",
+       "Unique identifier for the invoice.",
+       "String, Mandatory",
+       "See INV-FUNC-0021"
+      ],
+      [
+       "Invoice ICA Number",
+       "19",
+       "29",
+       "11",
+       "ICA number for the activity customer receiving the invoice. Typically the same as the activity ICA.",
+       "Integer, Mandatory"
+      ],
+      [
+       "Activity ICA Number",
+       "30",
+       "40",
+       "11",
+       "ICA number for the activity customer.",
+       "Integer, Mandatory"
+      ],
+      [
+       "VAT Number",
+       "41",
+       "55",
+       "15",
+       "Invoice customer's VAT Identification Number.",
+       "String, Optional"
+      ],
+      [
+       "Billable ICA Number",
+       "56",
+       "66",
+       "11",
+       "The ICA number for the billable customer.",
+       "Integer, Mandatory"
+      ],
+      [
+       "Filler",
+       "67",
+       "81",
+       "15",
+       "Not Used",
+       "Spaces"
+      ],
+      [
+       "Filler",
+       "82",
+       "82",
+       "1",
+       "Not Used",
+       "Spaces"
+      ],
+      [
+       "Currency",
+       "83",
+       "85",
+       "3",
+       "ISO 4217 numeric currency code for amount fields on this record.",
+       "Integer, Mandatory"
+      ],
+      [
+       "Service Code",
+       "86",
+       "87",
+       "2",
+       "Unique service identifier.",
+       "String, Mandatory",
+       "See PRIC-BOBJ-0036"
+      ],
+      [
+       "Service Code Description",
+       "88",
+       "157",
+       "70",
+       "Text description of the service.",
+       "String, Mandatory"
+      ],
+      [
+       "Billing Event Code",
+       "158",
+       "168",
+       "11",
+       "Unique code representing a billing event.",
+       "String, Mandatory"
+      ],
+      [
+       "Explanatory Text",
+       "169",
+       "423",
+       "255",
+       "Explanatory text for the billing event.",
+       "String, Mandatory"
+      ],
+      [
+       "Filler",
+       "424",
+       "1000",
+       "625",
+       "Future expansion.",
+       "String, Not Used",
+       "spaces"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T0CH/BFIL Header Record",
+   "short": "",
+   "audience": null,
+   "tables": [
+    {
+     "title": "T0CH/BFIL Header Record",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Start",
+       "End",
+       "Length",
+       "Purpose and Business Rules",
+       "Properties",
+       "Values"
+      ],
+      [
+       "Record Type ID",
+       "1",
+       "1",
+       "1",
+       "Unique identifier for BFIL file header record",
+       "String, Mandatory",
+       "U"
+      ],
+      [
+       "Bill Run Effective Date",
+       "2",
+       "9",
+       "8",
+       "Effective date of the bill run",
+       "Date (YYYYMMDD), Mandatory"
+      ],
+      [
+       "Invoice ICA Number",
+       "10",
+       "20",
+       "11",
+       "ICA number for the activity customer receiving the invoice. In most cases, this is the same as the activity ICA.",
+       "Integer, Mandatory"
+      ],
+      [
+       "Filler",
+       "21",
+       "1048",
+       "1028",
+       "Future expansion",
+       "String, Not Used",
+       "Spaces"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T0CH/BFIL Trailer Record",
+   "short": "",
+   "audience": null,
+   "tables": [
+    {
+     "title": "T0CH/BFIL Trailer Record",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Start",
+       "End",
+       "Length",
+       "Purpose and Business Rules",
+       "Properties",
+       "Values"
+      ],
+      [
+       "Record Type ID",
+       "1",
+       "1",
+       "1",
+       "Unique identifier for BFIL file header record.",
+       "String, Mandatory",
+       "D"
+      ],
+      [
+       "Bill Run Effective Date",
+       "2",
+       "9",
+       "8",
+       "Effective date of the bill run.",
+       "String, Mandatory",
+       "Date (YYYYMMDD), Mandatory"
+      ],
+      [
+       "Invoice ICA Number",
+       "10",
+       "20",
+       "11",
+       "ICA number for the activity customer receiving the invoice. In most cases, this is the same as the activity ICA.",
+       "Integer, Mandatory"
+      ],
+      [
+       "Record Count",
+       "21",
+       "37",
+       "17",
+       "Record count for the file. This includes all records except for the trailer record.",
+       "Integer, Mandatory"
+      ],
+      [
+       "Filler",
+       "21",
+       "1000",
+       "963",
+       "Future expansion.",
+       "String, Not Used",
+       "Spaces"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T5P2/T5P4 - Affiliate Monthly",
+   "short": "The Affiliate Monthly report lists the quantity, rate, and amounts of billing events charged to the Affiliate as identified by the customer (refer to form 235).",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "T5P2/T5P4 - Affiliate Monthly",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Monthly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "First business day of the following month"
+      ],
+      [
+       "Delivery Format"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T5P2/T5P4)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "T5P2/T5P4 - Affiliate Report",
+   "short": "The Affiliate Monthly report lists the quantity, rate, and amounts of billing events charged to the Affiliate as identified by the customer (refer to form 235).",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "T5P2/T5P4",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Daily/Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Format"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (T5P2/T5P4)"
+      ],
+      [
+       "Billable",
+       "Yes"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "TN3A – Invoice Detail Data File",
+   "short": "The TN3A is a comma delimited file that is created anytime a customer is billed and sent via Global File Transfer (GFT) to a customer’s endpoint.",
+   "audience": null,
+   "tables": [
+    {
+     "title": "TN3A – Invoice Detail Data File",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Record Type",
+       "Cardinality",
+       "Aggregation key over charge records",
+       "Trigger for Output"
+      ],
+      [
+       "No Value",
+       "1 per file",
+       "N/A",
+       "The first line of the file will contain Header columns for the file. This will be the first line in a new file for a give Invoice ICA on a given bill run effective date."
+      ],
+      [
+       "C- Customer Billing Event Total",
+       "1 or many per file/invoice number",
+       "Aggregates charges that have the same Billing Event ID, Rate and Invoice Text.",
+       "The 'C' record type is output under the following conditions: Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The billable ICA changes when compared to the previous charge. The activity ICA changes when compared to the previous charge record. The service code changes when compared to the previous charge record. The billing event ID, rate, or invoice text changes when compared to the previous charge record."
+      ],
+      [
+       "Z - File Trailer",
+       "1 per file",
+       "N/A",
+       "Last charge record to be processed for the Invoice ICA. The invoice number changes when compared to the previous charge record. The 'Z' record type is output as the last line in a new file for a given Invoice ICA on a given bill run effective date."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "TN3A – Invoice Detail Data File",
+   "short": "The TN3A contains invoice details in a comma delimited file created when a customer is billed. The file is sent through Global File Transfer (GFT) to the customer’s endpoint.",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "TN3A",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Daily (if billing occurs)"
+      ],
+      [
+       "Delivery Format",
+       "Comma delimited bulk data file"
+      ],
+      [
+       "Delivery Mode",
+       "Bulk (TN3A)"
+      ],
+      [
+       "Billable",
+       "No"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "TN3A Invoice Detail Data Trailer Record",
+   "short": "",
+   "audience": null,
+   "tables": [
+    {
+     "title": "Invoice Detail Data Trailer Record",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Purpose and Business Rules",
+       "Values"
+      ],
+      [
+       "Record Type ID",
+       "Record Type identifier",
+       "Z - Trailer"
+      ],
+      [
+       "Bill Run Effective Date",
+       "Effective date of the bill run",
+       "Date (YYYYMMDD)"
+      ],
+      [
+       "Invoice ICA Number",
+       "ICA number for the activity customer receiving the invoice."
+      ],
+      [
+       "Record Count",
+       "Record count for the file. This includes all records except for the trailer record."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "TN3A Invoice Detail Header Record",
+   "short": "Properties for the Bulk Data File (TN3A) file header will be comma separated.",
+   "audience": null,
+   "tables": [
+    {
+     "title": "TN3A Invoice Detail Header Record",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Properties"
+      ],
+      [
+       "Record Type ID,Invoice Type,Invoice Number,Invoice ICA Number,Invoice ICA Name,Activity ICA Number,Activity ICA Name,VAT Number,Billable ICA Number,Billable ICA Name,Partner Identifier,Partner Customer Name,Currency,Service Code,Service Code Description,Billing Event Code,Invoice Text,Explanatory Text,Collection Method Code,Collection Method Description,UOM,Quantity/Amount,Rate,Charge,ACD1 - Charge Type,ACD1 - Included in Total,ACD1 - Currency,ACD1 - Charge,ACD2 - Charge Type,ACD2 - Included in Total,ACD2 - Currency,ADC2 - Charge,ADC3 - Charge Type,ADC3 - Included in Total,ADC3 - Currency,ADC3 - Charge,ADC4 - Charge Type,ADC4 - Included in Total,ADC4 - Currency,ADC4 - Charge,ADC5 - Charge Type,ADC5 - Included in Total,ADC5 - Currency,ADC5 - Charge,Total Charge,VAT Code,Period Start Date,Period End Date,Tier Billing Event Code,Fee Type,Category,Sub Category,3Scale ID,Platform Provider,Reseller ID,Reseller Name"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "TN3A Invoice Detail Record",
+   "short": "Detail Record properties and descriptions for the Bulk Data File (TN3A) Invoice Detail record.",
+   "audience": null,
+   "tables": [
+    {
+     "title": "TN3A Invoice Detail Record",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Purpose and Business Rules",
+       "Values",
+       "Data Type"
+      ],
+      [
+       "Record Type ID",
+       "Record Type identifier",
+       "C - Customer Billing Event Total",
+       "Alpha"
+      ],
+      [
+       "Invoice Type",
+       "Identifies the type of invoice represented by the record.",
+       "IN - Invoice CR - Credit Note AD - Advisor CN - MCE Commission Note",
+       "Alpha"
+      ],
+      [
+       "Invoice Number",
+       "Identifier of the specific invoice represented by the record.",
+       "Alpha Numeric"
+      ],
+      [
+       "Invoice ICA Number",
+       "ICA number for the activity customer receiving the invoice. In most cases, this is the same as the activity ICA.",
+       "Alpha Numeric"
+      ],
+      [
+       "Invoice ICA Name",
+       "ICA name for the activity customer receiving the invoice. In most cases, this will be the same as the activity ICA.",
+       "Alpha Numeric"
+      ],
+      [
+       "Activity ICA Number",
+       "ICA number for the activity customer.",
+       "Alpha Numeric"
+      ],
+      [
+       "Activity ICA Name",
+       "ICA name for the activity customer.",
+       "Alpha Numeric"
+      ],
+      [
+       "VAT Number",
+       "Invoice customer's VAT Identification Number.",
+       "Alpha Numeric"
+      ],
+      [
+       "Billable ICA Number",
+       "The ICA number for the billable customer.",
+       "Alpha Numeric"
+      ],
+      [
+       "Billable ICA Name",
+       "The ICA name for the billable customer.",
+       "Alpha Numeric"
+      ],
+      [
+       "Partner Identifier",
+       "Identifies the Partner associated to the transactions for MA SEND",
+       "Alpha Numeric"
+      ],
+      [
+       "Partner Customer Name",
+       "Identifies the name of the Partner associated to the transactions for MA SEND.",
+       "Alpha Numeric"
+      ],
+      [
+       "Currency",
+       "ISO 4217 numeric currency code for amount fields on this record.",
+       "Numeric"
+      ],
+      [
+       "Service Code",
+       "Unique service identifier.",
+       "Alpha Numeric"
+      ],
+      [
+       "Service Code Description",
+       "Text description of the service.",
+       "Alpha Numeric"
+      ],
+      [
+       "Billing Event Code",
+       "Unique code representing a billing event. This field contains the detail Billing Event Code rather than the Tier Event Code (which is populated in a separate field toward the end of this record when applicable).",
+       "Alpha Numeric"
+      ],
+      [
+       "Invoice Text",
+       "Text description of the billing event or rate description",
+       "Alpha Numeric"
+      ],
+      [
+       "Explanatory Text",
+       "Explanatory text",
+       "Alpha Numeric"
+      ],
+      [
+       "Collection Method Code",
+       "Collection Method assigned to the charge.",
+       "Alpha"
+      ],
+      [
+       "Collection Method Description",
+       "Text description of the collection Method.",
+       "Alpha"
+      ],
+      [
+       "UOM",
+       "Unit of measure. Indicates whether the next field represents a quantity or amount. Optional because an event can be set not to display it.",
+       "A - Amount Q - Quantity",
+       "Alpha"
+      ],
+      [
+       "Quantity/Amount",
+       "Billing event quantity/amount. Optional because an event can be set not to display it.",
+       "Numeric"
+      ],
+      [
+       "Rate",
+       "The blended rate at which the billing event has been billed. Optional because an event can be set not to display it.",
+       "Numeric"
+      ],
+      [
+       "Charge",
+       "The billing event charge amount (before taxes).",
+       "Numeric"
+      ],
+      [
+       "Additional Charge Details 1",
+       "Defines additional charge amounts. Subdivided Field, Optional If the Tax charge record has a VAT code populated and the currency of the tax charge is not a Euro Currency ID, then an additional ACD will be created with a Charge Type of 02 (VAT in Euro ACD).Zero amount ACDs may be generated.",
+       "Numeric"
+      ],
+      [
+       "ACD - Charge Type",
+       "Determines the type of charge represented by this additional charge detail element. Logic for setting the ACD - Charge Type: If the Tax record associated with the charge currently being processed has a VAT Code populated: If the Currency ID is EURO, then set the Charge Type to 02. Otherwise, set the Charge Type to 01. If the Tax Type code equals the US Sales Tax Code, then set the Charge Type to 01. Otherwise,If the Tax Type code exists in the dMC_BFIL_TaxType_ACDRec_Xred DA table (see BRT T-BOBJ-0005), then use the ACD charge Type returned from the lookup. Otherwise, set the Charge Type to 00.",
+       "00 - no Tax Code to ACD charge Type mapping for non-VAT and non-US sales Tax charge 01 - VAT (not in Euro) or US Sales Tax Charge 02 - VAT in Euro Tax Charge 03 AGST 04 - India CESS 06 - India SEC & higher Education CESS 07 - CGST",
+       "Numeric"
+      ],
+      [
+       "ACD - Included in Total",
+       "Indicates whether this charge amount is represented in the Total Charge field.",
+       "Y - Yes N - No (for VAT in Euro)",
+       "Alpha Numeric"
+      ],
+      [
+       "ACD - Currency",
+       "ISO 4217 alpha currency code representing the additional charge's currency.",
+       "Numeric"
+      ],
+      [
+       "ADC - Charge",
+       "The charge amount of this additional charge detail element.",
+       "Numeric"
+      ],
+      [
+       "Additional Charge Details 2",
+       "Defines additional charge amounts. See definition in Additional Charge Details 1 field of the Detail Record.",
+       "Numeric"
+      ],
+      [
+       "ACD - Charge Type",
+       "Numeric"
+      ],
+      [
+       "ACD - Included in Total",
+       "Alpha Numeric"
+      ],
+      [
+       "ACD - Currency",
+       "Numeric"
+      ],
+      [
+       "ADC - Charge",
+       "Numeric"
+      ],
+      [
+       "Additional Charge Details 3",
+       "Defines additional charge amounts. See definition in Additional Charge Details 1 field of the Detail Record.",
+       "Numeric"
+      ],
+      [
+       "ACD - Charge Type",
+       "Numeric"
+      ],
+      [
+       "ACD - Included in Total",
+       "Alpha Numeric"
+      ],
+      [
+       "ACD - Currency",
+       "Numeric"
+      ],
+      [
+       "ADC - Charge",
+       "Numeric"
+      ],
+      [
+       "Additional Charge Details 4",
+       "Defines additional charge amounts. See definition in Additional Charge Details 1 field of the Detail Record.",
+       "Numeric"
+      ],
+      [
+       "ACD - Charge Type",
+       "Numeric"
+      ],
+      [
+       "ACD - Included in Total",
+       "Alpha Numeric"
+      ],
+      [
+       "ACD - Currency",
+       "Numeric"
+      ],
+      [
+       "ADC - Charge",
+       "Numeric"
+      ],
+      [
+       "Additional Charge Details 5",
+       "Defines additional charge amounts. See definition in Additional Charge Details 1 field of the Detail Record.",
+       "Numeric"
+      ],
+      [
+       "ACD - Charge Type",
+       "Numeric"
+      ],
+      [
+       "ACD - Included in Total",
+       "Alpha Numeric"
+      ],
+      [
+       "ACD - Currency",
+       "Numeric"
+      ],
+      [
+       "ADC - Charge",
+       "Numeric"
+      ],
+      [
+       "Total Charge",
+       "Total charge amount. This is the sum of all related child records.",
+       "Numeric"
+      ],
+      [
+       "VAT Code",
+       "VAT code of the tax charge",
+       "Alpha Numeric"
+      ],
+      [
+       "Period Start Date",
+       "Indicates the period start date for recurring charges. NOTE: Blank for non-recurring charges.",
+       "Date (YYYYMMDD)",
+       "Numeric"
+      ],
+      [
+       "Period End Date",
+       "Indicates the period end date for recurring charges. NOTE: Blank for non-recurring charges.",
+       "Date (YYYYMMDD)",
+       "Numeric"
+      ],
+      [
+       "Tier Billing Event Code",
+       "Unique code representing a tier billing event. Populated for detail billing events that make up a tier.",
+       "Alpha Numeric"
+      ],
+      [
+       "Fee Type",
+       "Identifies billing event as Acquirer, Customer or Issuer.",
+       "Alpha Numeric"
+      ],
+      [
+       "Category",
+       "Identifies Commercial Hierarchy category of a billing event.",
+       "Alpha Numeric"
+      ],
+      [
+       "Sub Category",
+       "Identifies Commercial Hierarchy subcategory of a billing event.",
+       "Alpha Numeric"
+      ],
+      [
+       "3Scale ID",
+       "If this invoice is for a Finicity customer, then this is the 3Scale ID (Guidepoint)",
+       "Alpha Numeric"
+      ],
+      [
+       "Platform Provider",
+       "If this invoice is for a Finicity customer, then this is the 3Scale ID Platform Provider",
+       "Alpha Numeric"
+      ],
+      [
+       "Reseller ID",
+       "If this invoice is for a Finicity customer, then this is the Reseller ID",
+       "Alpha Numeric"
+      ],
+      [
+       "Reseller Name",
+       "If this invoice is for a Finicity customer, then this is the customer name associated with the above Reseller ID",
+       "Alpha Numeric"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "USTXBOVRRPT: US Territory Domestic XB Override Report",
+   "short": "",
+   "audience": "Principal Acquirer",
+   "tables": [
+    {
+     "title": "USTXBOVRRPT: US Territory Domestic XB Override Report",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Acquirer"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Mode",
+       "Online, Bulk (TF2V)"
+      ],
+      [
+       "Billable",
+       "No"
+      ],
+      [
+       "Description",
+       "This report will contain the detail behind U.S. territory cross-border domestic override transactions. The report will list individually each cleared transaction record with no aggregation."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Weekly Billing Summary Report",
+   "short": "The Weekly Billing Summary report provides a view of all billing processed within the week. The data is broken out at the Pricing Definition level, similar to the invoice layout.",
+   "audience": "Principal Issuer, Principal Acquirer, Processor",
+   "tables": [
+    {
+     "title": "Weekly Billing Summary fields",
+     "headerCount": 1,
+     "rows": [
+      [
+       "Field",
+       "Description"
+      ],
+      [
+       "Audience",
+       "Principal Issuer, Principal Acquirer, Processor"
+      ],
+      [
+       "Delivery Frequency",
+       "Weekly"
+      ],
+      [
+       "Delivery By (Timing)",
+       "Sunday"
+      ],
+      [
+       "Delivery Format",
+       "Text, Excel"
+      ],
+      [
+       "Delivery Mode",
+       "Online"
+      ],
+      [
+       "Billable",
+       "No"
+      ]
+     ]
+    }
+   ]
+  }
+ ]
+}

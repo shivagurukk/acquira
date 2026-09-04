@@ -38,6 +38,10 @@ yarn-error.log*
 logs/
 reports/
 data/
+# ...but frontend/src/data holds SOURCE data bundled into the build (the
+# unanchored data/ rule above matches it too, and a missing file there fails
+# the Docker frontend build, not just a local run).
+!frontend/src/data/
 temp/
 backups/
 
