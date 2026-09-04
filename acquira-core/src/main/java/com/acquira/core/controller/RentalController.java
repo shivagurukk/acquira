@@ -121,6 +121,8 @@ public class RentalController {
             @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "date") String sort,
+            @RequestParam(defaultValue = "desc") String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
         Long tenantId = requireTenant();
@@ -157,7 +159,7 @@ public class RentalController {
             + "dm.name AS merchant_name, ds.name AS store_name, dt.device_number AS terminal_device, "
             + "f.rental_amount, f.payment_date "
             + baseSql
-            + " ORDER BY f.payment_date DESC, f.rental_id DESC LIMIT ? OFFSET ?",
+            + " ORDER BY " + orderExpr(sort, dir) + ", f.rental_id DESC LIMIT ? OFFSET ?",
             params.toArray());
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -166,6 +168,107 @@ public class RentalController {
         out.put("totalAmount", sum);
         out.put("page", page);
         out.put("size", pageSize);
+        return out;
+    }
+
+    /**
+     * Whitelisted sort key -> SQL expression for /list. The sort/dir strings
+     * from the request NEVER reach the SQL — only these constants do.
+     */
+    private static final Map<String, String> SORT_COLS = Map.of(
+            "date", "f.payment_date",
+            "amount", "f.rental_amount",
+            "merchant", "dm.name",
+            "store", "ds.name",
+            "id", "COALESCE(f.tid, f.sid, f.mid)");
+
+    private String orderExpr(String sort, String dir) {
+        String col = SORT_COLS.getOrDefault(sort == null ? "" : sort.toLowerCase(), "f.payment_date");
+        String d = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
+        return col + " " + d + " NULLS LAST";
+    }
+
+    // ─── monthly trend ─────────────────────────────────────────────────────
+
+    /**
+     * Rental income per calendar month, split by level — feeds the trend
+     * bars. Defaults to the last 12 whole months when no range is given.
+     * The month is derived in SELECT/GROUP BY only; the WHERE stays a plain
+     * payment_date range so the partition/index still prunes (sargable rule).
+     */
+    @GetMapping("/trend")
+    public List<Map<String, Object>> trend(
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate to) {
+        Long tenantId = requireTenant();
+        LocalDate end = (to != null) ? to : LocalDate.now();
+        LocalDate start = (from != null) ? from : end.withDayOfMonth(1).minusMonths(11);
+        return jdbcTemplate.queryForList(
+            "SELECT TO_CHAR(payment_date, 'YYYY-MM') AS month, level, "
+            + "COUNT(*) AS charge_count, COALESCE(SUM(rental_amount),0) AS total_amount "
+            + "FROM fact_rental WHERE tenant_id = ? AND payment_date BETWEEN ? AND ? "
+            + "GROUP BY 1, 2 ORDER BY 1", tenantId, start, end);
+    }
+
+    // ─── one-time-fee coverage ─────────────────────────────────────────────
+
+    /**
+     * Rental is a ONE-TIME fee (business decision 2026-09-04), so over ALL
+     * history every entity at the tenant's finest level should carry exactly
+     * one charge. Three buckets: billed once (correct), never billed (missed
+     * revenue), billed 2+ times (double-charging) — the two problem buckets
+     * come with row lists for follow-up. Deliberately all-time and unfiltered
+     * by date: a date window makes no sense for a fee charged once ever.
+     * Entity status from the dim is included rather than filtered on, so a
+     * closed terminal that was never billed is visible but explainable.
+     */
+    @GetMapping("/coverage")
+    public Map<String, Object> coverage() {
+        Long tenantId = requireTenant();
+        boolean ams = levelsForTenant(tenantId).size() > 1;
+        // AMS bills at terminal level, CMM at store level.
+        String lvl   = ams ? "TERMINAL" : "STORE";
+        String dim   = ams ? "dim_terminal" : "dim_store";
+        String idCol = ams ? "terminal_id" : "store_id";
+        String key   = ams ? "tid" : "sid";
+        String label = ams ? "device_number" : "name";
+
+        String billedCte =
+            "WITH billed AS (SELECT " + idCol + " AS eid, COUNT(*) AS n, "
+            + "COALESCE(SUM(rental_amount),0) AS amt, MIN(payment_date) AS first_charge, "
+            + "MAX(payment_date) AS last_charge FROM fact_rental "
+            + "WHERE tenant_id = ? AND level = '" + lvl + "' AND " + idCol + " IS NOT NULL "
+            + "GROUP BY " + idCol + ") ";
+
+        Map<String, Object> counts = jdbcTemplate.queryForMap(
+            billedCte
+            + "SELECT COUNT(*) AS total, "
+            + "COUNT(*) FILTER (WHERE b.n = 1) AS billed_once, "
+            + "COUNT(*) FILTER (WHERE b.n > 1) AS billed_multi, "
+            + "COUNT(*) FILTER (WHERE b.eid IS NULL) AS never_billed "
+            + "FROM " + dim + " d LEFT JOIN billed b ON b.eid = d." + idCol + " "
+            + "WHERE d.tenant_id = ?", tenantId, tenantId);
+
+        List<Map<String, Object>> multiRows = jdbcTemplate.queryForList(
+            billedCte
+            + "SELECT d." + key + " AS entity, d." + label + " AS label, d.status, "
+            + "b.n AS charges, b.amt AS total_amount, b.first_charge, b.last_charge "
+            + "FROM " + dim + " d JOIN billed b ON b.eid = d." + idCol + " "
+            + "WHERE d.tenant_id = ? AND b.n > 1 ORDER BY b.n DESC, b.amt DESC LIMIT 200",
+            tenantId, tenantId);
+
+        List<Map<String, Object>> neverRows = jdbcTemplate.queryForList(
+            billedCte
+            + "SELECT d." + key + " AS entity, d." + label + " AS label, d.status "
+            + "FROM " + dim + " d LEFT JOIN billed b ON b.eid = d." + idCol + " "
+            + "WHERE d.tenant_id = ? AND b.eid IS NULL ORDER BY d." + key + " LIMIT 200",
+            tenantId, tenantId);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("level", lvl);
+        out.put("counts", counts);
+        out.put("multiRows", multiRows);
+        out.put("neverRows", neverRows);
         return out;
     }
 
