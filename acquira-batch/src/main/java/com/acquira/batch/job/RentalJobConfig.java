@@ -302,7 +302,36 @@ public class RentalJobConfig {
                     tenantId);
             }
 
-            // 2. Derive level + dedupe hash for the survivors.
+            // 2. Normalise sign, then derive level + dedupe hash for the survivors.
+            //
+            // SIGN (business decision 2026-09-04): the AFS extract reports a
+            // rental as a DEBIT POSTED TO THE MERCHANT, so the amount arrives
+            // negative ('...,03362738,-3,08-MAY-26'). To the acquirer that same
+            // charge is INCOME, and Net Spread ADDS rental to margin
+            // (NetSpreadSql) -- so a raw negative SUBTRACTED rental revenue and
+            // pushed the spread down instead of up.
+            //
+            // ABS rather than * -1 deliberately: the feed is expected to be
+            // uniformly negative, and ABS leaves an already-positive row
+            // correct where a blind negation would invert it. The trade-off is
+            // that a genuine CREDIT/reversal (a negative meant as a refund of
+            // rent) becomes a charge -- the feed carries no flag telling the
+            // two apart, so if credits are ever introduced they need an
+            // explicit marker here rather than relying on the sign.
+            //
+            // Applied in staging BEFORE the hash so the dedupe key is the
+            // NORMALISED amount: the same charge filed as -3 in one export and
+            // +3 in another is one charge, not two. fact_rental, the dim_*
+            // convenience columns and every summary then inherit the positive
+            // convention with no further conversion.
+            int signFlipped = jdbcTemplate.update(
+                "UPDATE stg_rental_raw SET rental_amount = ABS(rental_amount) "
+                + "WHERE tenant_id=? AND status='PENDING' AND rental_amount < 0",
+                tenantId);
+            if (signFlipped > 0) {
+                log.info("[Rental] Normalised {} negative rental amount(s) to positive (acquirer-income convention)",
+                        signFlipped);
+            }
             jdbcTemplate.update(
                 "UPDATE stg_rental_raw SET "
                 + "level = CASE WHEN tid IS NOT NULL THEN 'TERMINAL' "
