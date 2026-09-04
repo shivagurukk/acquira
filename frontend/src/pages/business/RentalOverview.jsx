@@ -4,7 +4,7 @@ import {
 } from 'recharts';
 import {
     Receipt, RefreshCw, Download, AlertTriangle, Search,
-    ArrowUp, ArrowDown, CheckCircle2, CircleSlash, Copy,
+    ArrowUp, ArrowDown, CheckCircle2, CircleSlash,
 } from 'lucide-react';
 import { createFmt, formatNumber } from '../../utils/formatters';
 import { useAuth } from '../../contexts/AuthContext';
@@ -23,9 +23,12 @@ import api from '../../api/axios';
    from the latest load's staging rows.
 
    Rental is a ONE-TIME fee (business decision 2026-09-04), so the page
-   also carries a COVERAGE panel over all history: every entity at the
-   tenant's finest level should have exactly one charge — "never
-   billed" is missed revenue, "billed 2+ times" is double-charging.
+   also carries a COVERAGE panel over all history: an entity with no
+   charge ever ("never billed") is missed revenue. A "billed 2+ times"
+   bucket existed briefly but is PARKED (2026-09-04): some entities are
+   legitimately charged on a monthly basis too, so a repeat charge is
+   not evidence of double-billing — the backend /coverage endpoint
+   still returns the bucket for when the business revisits it.
    The monthly trend shows collection cadence, not recurrence. ═══════ */
 
 const num = (v) => (v == null ? 0 : Number(v));
@@ -132,7 +135,7 @@ const RentalOverview = () => {
 
     const [trend, setTrend] = useState([]);
     const [coverage, setCoverage] = useState(null);
-    const [coverageOpen, setCoverageOpen] = useState(null); // 'never' | 'multi' | null
+    const [coverageOpen, setCoverageOpen] = useState(null); // 'never' | null
 
     const [exceptions, setExceptions] = useState([]);
     const [showExceptions, setShowExceptions] = useState(false);
@@ -266,8 +269,7 @@ const RentalOverview = () => {
 
     const cov = coverage?.counts || {};
     const covLevelLabel = coverage?.level === 'TERMINAL' ? 'terminals' : 'stores';
-    const coverageRows = coverageOpen === 'never' ? (coverage?.neverRows || [])
-        : coverageOpen === 'multi' ? (coverage?.multiRows || []) : [];
+    const coverageRows = coverageOpen === 'never' ? (coverage?.neverRows || []) : [];
 
     const lastPage = Math.max(Math.ceil(total / PAGE_SIZE) - 1, 0);
 
@@ -405,13 +407,6 @@ const RentalOverview = () => {
                             active={coverageOpen === 'never'}
                             onClick={num(cov.never_billed) > 0
                                 ? () => setCoverageOpen((v) => (v === 'never' ? null : 'never')) : undefined} />
-                        <CoverageTile icon={Copy} label="Billed 2+ times"
-                            tone={num(cov.billed_multi) > 0 ? 'warn' : 'ok'}
-                            value={formatNumber(num(cov.billed_multi))}
-                            sub={num(cov.billed_multi) > 0 ? 'possible double-charge — click to view' : 'no duplicates'}
-                            active={coverageOpen === 'multi'}
-                            onClick={num(cov.billed_multi) > 0
-                                ? () => setCoverageOpen((v) => (v === 'multi' ? null : 'multi')) : undefined} />
                     </div>
                     {coverageOpen && coverageRows.length > 0 && (
                         <div style={{ borderRadius: 'var(--radius-lg)', border: '1px solid var(--danger-border, #fecaca)', overflow: 'auto' }}>
@@ -420,12 +415,6 @@ const RentalOverview = () => {
                                     <th style={th}>{coverage.level === 'TERMINAL' ? 'TID' : 'SID'}</th>
                                     <th style={th}>{coverage.level === 'TERMINAL' ? 'Device' : 'Store'}</th>
                                     <th style={th}>Status</th>
-                                    {coverageOpen === 'multi' && <>
-                                        <th style={{ ...th, textAlign: 'right' }}>Charges</th>
-                                        <th style={{ ...th, textAlign: 'right' }}>Total charged</th>
-                                        <th style={th}>First</th>
-                                        <th style={th}>Last</th>
-                                    </>}
                                 </tr></thead>
                                 <tbody>
                                     {coverageRows.map((r, i) => (
@@ -433,19 +422,13 @@ const RentalOverview = () => {
                                             <td style={tdMono}>{r.entity || '—'}</td>
                                             <td style={td}>{r.label || '—'}</td>
                                             <td style={td}>{r.status || '—'}</td>
-                                            {coverageOpen === 'multi' && <>
-                                                <td style={{ ...tdMono, textAlign: 'right', fontWeight: 700, color: 'var(--danger-text, #991b1b)' }}>{formatNumber(num(r.charges))}</td>
-                                                <td style={{ ...tdMono, textAlign: 'right' }}>{fmt.money(num(r.total_amount))}</td>
-                                                <td style={tdMono}>{r.first_charge}</td>
-                                                <td style={tdMono}>{r.last_charge}</td>
-                                            </>}
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
                             <div style={{ padding: '8px 14px', fontSize: 11.5, color: 'var(--text-secondary)' }}>
                                 {coverageRows.length >= 200 ? 'First 200 shown — export the level CSV for the full set.' : `${coverageRows.length} ${covLevelLabel}`}
-                                {coverageOpen === 'never' && ' · Status comes from the merchant master: a closed entity that was never billed may be expected.'}
+                                {' · Status comes from the merchant master: a closed entity that was never billed may be expected.'}
                             </div>
                         </div>
                     )}
