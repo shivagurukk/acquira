@@ -209,10 +209,16 @@ public class RentalJobConfig {
     }
 
     @Bean
+    @StepScope // per-run progress counter below
     public ItemWriter<RentalRow> rentalWriter() {
         final String sqlPrefix = "INSERT INTO stg_rental_raw "
                 + "(tenant_id, entity_name, mid, sid, tid, rental_amount, payment_date, load_time) VALUES ";
         final String onePh = "(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
+        // Progress heartbeat: with a slow file (large .xlsx, remote disk) the
+        // ingest step can run for minutes with no output at all, which reads
+        // as a hang. One line per ~10k rows says it is alive and how fast.
+        final java.util.concurrent.atomic.AtomicLong staged = new java.util.concurrent.atomic.AtomicLong();
+        final long ingestStart = System.currentTimeMillis();
         return chunk -> {
             java.util.List<? extends RentalRow> items = chunk.getItems();
             if (items.isEmpty()) return;
@@ -234,6 +240,11 @@ public class RentalJobConfig {
                     ps.setObject(p++, r.paymentDate, java.sql.Types.DATE);
                 }
             });
+            long done = staged.addAndGet(items.size());
+            if (done / 10_000 != (done - items.size()) / 10_000) {
+                long secs = Math.max((System.currentTimeMillis() - ingestStart) / 1000, 1);
+                log.info("[Rental] ingest: {} rows staged so far ({} rows/s)", done, done / secs);
+            }
         };
     }
 
@@ -260,6 +271,14 @@ public class RentalJobConfig {
     public Tasklet applyRentalTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
         return (contribution, chunkContext) -> {
             long t0 = System.currentTimeMillis();
+            // Per-step wall-clock so a slow apply names its slow step instead
+            // of one opaque total. lap[0] advances after every line logged.
+            final long[] lap = { t0 };
+            final java.util.function.ObjIntConsumer<String> stepDone = (label, rows) -> {
+                long now = System.currentTimeMillis();
+                log.info("[Rental] apply t{}: {} — {} row(s) in {} ms", tenantId, label, rows, now - lap[0]);
+                lap[0] = now;
+            };
 
             String inputFormat;
             try {
@@ -271,6 +290,10 @@ public class RentalJobConfig {
                 inputFormat = "CMM";
             }
             boolean ams = "AMS".equalsIgnoreCase(inputFormat);
+            Integer pending = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM stg_rental_raw WHERE tenant_id=? AND status='PENDING'",
+                Integer.class, tenantId);
+            stepDone.accept("start (" + inputFormat + ", pending staging rows)", pending == null ? 0 : pending);
 
             // 1. Reject rows that can never apply. Level is DERIVED from id
             //    presence, so an impossible combination must fail loudly here
@@ -287,6 +310,7 @@ public class RentalJobConfig {
                 "UPDATE stg_rental_raw SET status='REJECTED', error_message='TID present without its SID' "
                 + "WHERE tenant_id=? AND status='PENDING' AND tid IS NOT NULL AND sid IS NULL",
                 tenantId);
+            stepDone.accept("step 1a-c: reject missing/no-id/tid-without-sid", rejMissing + rejNoIds + rejTidNoSid);
             int rejFormat = 0;
             if (ams) {
                 rejFormat = jdbcTemplate.update(
@@ -301,6 +325,7 @@ public class RentalJobConfig {
                     + "WHERE tenant_id=? AND status='PENDING' AND (tid IS NOT NULL OR (mid IS NOT NULL AND sid IS NULL))",
                     tenantId);
             }
+            stepDone.accept("step 1d: reject format-invalid combinations", rejFormat);
 
             // 2. Normalise sign, then derive level + dedupe hash for the survivors.
             //
@@ -328,11 +353,8 @@ public class RentalJobConfig {
                 "UPDATE stg_rental_raw SET rental_amount = ABS(rental_amount) "
                 + "WHERE tenant_id=? AND status='PENDING' AND rental_amount < 0",
                 tenantId);
-            if (signFlipped > 0) {
-                log.info("[Rental] Normalised {} negative rental amount(s) to positive (acquirer-income convention)",
-                        signFlipped);
-            }
-            jdbcTemplate.update(
+            stepDone.accept("step 2a: normalise negative amounts (ABS)", signFlipped);
+            int hashed = jdbcTemplate.update(
                 "UPDATE stg_rental_raw SET "
                 + "level = CASE WHEN tid IS NOT NULL THEN 'TERMINAL' "
                 + "              WHEN sid IS NOT NULL THEN 'STORE' ELSE 'MERCHANT' END, "
@@ -340,6 +362,7 @@ public class RentalJobConfig {
                 + "               || CAST(rental_amount AS TEXT) || '|' || CAST(payment_date AS TEXT)) "
                 + "WHERE tenant_id=? AND status='PENDING'",
                 tenantId);
+            stepDone.accept("step 2b: derive level + dedupe hash", hashed);
 
             // 3. Mark UNMATCHED — ids the dims don't know yet. Deliberately NO
             //    dim auto-create from a rental file; rows stay visible on the
@@ -355,6 +378,7 @@ public class RentalJobConfig {
                 + "  OR (r.level='STORE' AND NOT EXISTS (SELECT 1 FROM dim_store d WHERE d.tenant_id=r.tenant_id AND d.sid=r.sid)) "
                 + "  OR (r.level='TERMINAL' AND NOT EXISTS (SELECT 1 FROM dim_terminal d WHERE d.tenant_id=r.tenant_id AND d.tid=r.tid)) )",
                 tenantId);
+            stepDone.accept("step 3: mark UNMATCHED (ids unknown to dims)", unmatched);
 
             // 4a. REPLACE-BY-DATE (2026-09-04, same semantic as the DCC feed):
             //     a re-sent file is the TRUTH for the dates it carries, so wipe
@@ -371,10 +395,7 @@ public class RentalJobConfig {
                 + "  SELECT DISTINCT payment_date FROM stg_rental_raw "
                 + "  WHERE tenant_id=? AND status='PENDING' AND payment_date IS NOT NULL)",
                 tenantId, tenantId);
-            if (wiped > 0) {
-                log.info("[Rental] Tenant {}: replaced {} existing charge(s) on the dates carried by this file",
-                        tenantId, wiped);
-            }
+            stepDone.accept("step 4a: replace-by-date wipe of prior charges", wiped);
 
             // 4b. Apply — one insert per level so each resolves its own dim chain.
             int insMerchant = jdbcTemplate.update(
@@ -384,6 +405,7 @@ public class RentalJobConfig {
                 + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.level='MERCHANT' "
                 + "ON CONFLICT (tenant_id, row_hash) DO NOTHING",
                 tenantId);
+            stepDone.accept("step 4b: insert MERCHANT-level charges", insMerchant);
             int insStore = jdbcTemplate.update(
                 "INSERT INTO fact_rental (tenant_id, level, merchant_id, store_id, mid, sid, tid, rental_amount, payment_date, row_hash) "
                 + "SELECT r.tenant_id, r.level, s.merchant_id, s.store_id, r.mid, r.sid, r.tid, r.rental_amount, r.payment_date, r.row_hash "
@@ -391,6 +413,7 @@ public class RentalJobConfig {
                 + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.level='STORE' "
                 + "ON CONFLICT (tenant_id, row_hash) DO NOTHING",
                 tenantId);
+            stepDone.accept("step 4c: insert STORE-level charges", insStore);
             int insTerminal = jdbcTemplate.update(
                 "INSERT INTO fact_rental (tenant_id, level, merchant_id, store_id, terminal_id, mid, sid, tid, rental_amount, payment_date, row_hash) "
                 + "SELECT r.tenant_id, r.level, s.merchant_id, t.store_id, t.terminal_id, r.mid, r.sid, r.tid, r.rental_amount, r.payment_date, r.row_hash "
@@ -400,6 +423,7 @@ public class RentalJobConfig {
                 + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.level='TERMINAL' "
                 + "ON CONFLICT (tenant_id, row_hash) DO NOTHING",
                 tenantId);
+            stepDone.accept("step 4d: insert TERMINAL-level charges", insTerminal);
 
             // A staged row whose hash already existed in fact_rental is a
             // duplicate of an earlier load, not an error.
@@ -409,6 +433,7 @@ public class RentalJobConfig {
                 + "  SELECT 1 FROM fact_rental f WHERE f.tenant_id=r.tenant_id AND f.row_hash=r.row_hash "
                 + "  AND f.created_at < (SELECT MIN(load_time) FROM stg_rental_raw x WHERE x.tenant_id=r.tenant_id))",
                 tenantId);
+            stepDone.accept("step 4e: flag in-file duplicates", duplicates);
             // Touched dates for the ancillary summary overlay — collected
             // BEFORE the status flip below empties the PENDING set.
             java.util.List<java.time.LocalDate> ancillaryDates = jdbcTemplate.query(
@@ -419,29 +444,31 @@ public class RentalJobConfig {
                 "UPDATE stg_rental_raw SET status='PROCESSED', error_message=NULL "
                 + "WHERE tenant_id=? AND status='PENDING'",
                 tenantId);
+            stepDone.accept("step 4f: mark PROCESSED (" + ancillaryDates.size() + " touched date(s))", processed);
 
             // 5. Latest charge per entity onto the dims (convenience columns).
-            jdbcTemplate.update(
+            int dimM = jdbcTemplate.update(
                 "UPDATE dim_merchant m SET rental_amount = l.rental_amount FROM ("
                 + "  SELECT DISTINCT ON (merchant_id) merchant_id, rental_amount FROM fact_rental "
                 + "  WHERE tenant_id=? AND level='MERCHANT' AND merchant_id IS NOT NULL "
                 + "  ORDER BY merchant_id, payment_date DESC, rental_id DESC) l "
                 + "WHERE m.tenant_id=? AND m.merchant_id=l.merchant_id",
                 tenantId, tenantId);
-            jdbcTemplate.update(
+            int dimS = jdbcTemplate.update(
                 "UPDATE dim_store s SET rental_amount = l.rental_amount FROM ("
                 + "  SELECT DISTINCT ON (store_id) store_id, rental_amount FROM fact_rental "
                 + "  WHERE tenant_id=? AND level='STORE' AND store_id IS NOT NULL "
                 + "  ORDER BY store_id, payment_date DESC, rental_id DESC) l "
                 + "WHERE s.tenant_id=? AND s.store_id=l.store_id",
                 tenantId, tenantId);
-            jdbcTemplate.update(
+            int dimT = jdbcTemplate.update(
                 "UPDATE dim_terminal t SET rental_amount = l.rental_amount FROM ("
                 + "  SELECT DISTINCT ON (terminal_id) terminal_id, rental_amount FROM fact_rental "
                 + "  WHERE tenant_id=? AND level='TERMINAL' AND terminal_id IS NOT NULL "
                 + "  ORDER BY terminal_id, payment_date DESC, rental_id DESC) l "
                 + "WHERE t.tenant_id=? AND t.terminal_id=l.terminal_id",
                 tenantId, tenantId);
+            stepDone.accept("step 5: dim convenience columns (merchant/store/terminal)", dimM + dimS + dimT);
 
             // 6. Ancillary summary overlay: rental_amount onto
             //    sum_daily_merchant / sum_daily_finance_rollup for the loaded
@@ -449,6 +476,7 @@ public class RentalJobConfig {
             //    rebuild. Duplicate rows are harmless here — the overlay
             //    re-derives from fact_rental, which the dedupe already guards.
             com.acquira.common.service.AncillarySql.applyDates(jdbcTemplate, tenantId, ancillaryDates);
+            stepDone.accept("step 6: ancillary summary overlay (AncillarySql)", ancillaryDates.size());
 
             int rejected = rejMissing + rejNoIds + rejTidNoSid + rejFormat;
             log.info("[Rental] Tenant {} ({}) apply: {} merchant + {} store + {} terminal charges inserted, "
