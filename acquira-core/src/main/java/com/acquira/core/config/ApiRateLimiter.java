@@ -22,6 +22,8 @@ public class ApiRateLimiter {
     private static final class Window {
         long minuteEpoch;   // System.currentTimeMillis() / 60000
         int count;
+        long dayEpoch;      // System.currentTimeMillis() / 86_400_000
+        long dayCount;
     }
 
     private final Map<Long, Window> windows = new ConcurrentHashMap<>();
@@ -47,6 +49,41 @@ public class ApiRateLimiter {
             }
             w.count++;
             return true;
+        }
+    }
+
+    /**
+     * Daily quota check (UTC day fixed window). Unlike the minute limiter this
+     * does NOT consume on rejection — call it BEFORE allow() so a 429 on the
+     * daily ceiling doesn't also burn a minute-window slot.
+     *
+     * @param quotaPerDay null or <= 0 means no daily quota configured.
+     * @return true if the request fits inside today's quota.
+     */
+    public boolean allowDay(Long keyId, Integer quotaPerDay) {
+        if (keyId == null || quotaPerDay == null || quotaPerDay <= 0) return true;
+        long today = System.currentTimeMillis() / 86_400_000L;
+        Window w = windows.computeIfAbsent(keyId, k -> new Window());
+        synchronized (w) {
+            if (w.dayEpoch != today) {
+                w.dayEpoch = today;
+                w.dayCount = 0;
+            }
+            if (w.dayCount >= quotaPerDay) return false;
+            w.dayCount++;
+            return true;
+        }
+    }
+
+    /** Remaining requests in today's quota window (for X-RateLimit-Remaining-Day). */
+    public long remainingDay(Long keyId, Integer quotaPerDay) {
+        if (keyId == null || quotaPerDay == null || quotaPerDay <= 0) return Long.MAX_VALUE;
+        Window w = windows.get(keyId);
+        if (w == null) return quotaPerDay;
+        long today = System.currentTimeMillis() / 86_400_000L;
+        synchronized (w) {
+            if (w.dayEpoch != today) return quotaPerDay;
+            return Math.max(0, quotaPerDay - w.dayCount);
         }
     }
 

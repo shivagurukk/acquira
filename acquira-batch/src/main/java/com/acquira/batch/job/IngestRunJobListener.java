@@ -1,5 +1,6 @@
 package com.acquira.batch.job;
 
+import com.acquira.common.event.IngestRunFinishedEvent;
 import com.acquira.common.ingest.IngestReconciliationService;
 import com.acquira.common.ingest.IngestRunRecorder;
 import com.acquira.common.ingest.IngestSource;
@@ -8,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.JobExecutionListener;
 import org.springframework.batch.item.ExecutionContext;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -42,12 +44,14 @@ public class IngestRunJobListener implements JobExecutionListener {
     private final IngestRunRecorder recorder;
     private final IngestReconciliationService reconciliation;
     private final JdbcTemplate jdbc;
+    private final ApplicationEventPublisher eventPublisher;
 
     public IngestRunJobListener(IngestRunRecorder recorder, IngestReconciliationService reconciliation,
-                                JdbcTemplate jdbc) {
+                                JdbcTemplate jdbc, ApplicationEventPublisher eventPublisher) {
         this.recorder = recorder;
         this.reconciliation = reconciliation;
         this.jdbc = jdbc;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -121,6 +125,23 @@ public class IngestRunJobListener implements JobExecutionListener {
             }
 
             recorder.closeRun(runId, jobExecution.getStatus().toString(), failure);
+
+            // Webhook seam: core fans this out to the tenant's subscribed
+            // endpoints. Publish AFTER closeRun so a subscriber querying the
+            // ledger on receipt sees the final row.
+            try {
+                Long tenantId = jobExecution.getJobParameters().getLong("tenantId");
+                String fullPath = jobExecution.getJobParameters().getString("fullPath");
+                String fileName = fullPath == null ? null
+                        : fullPath.substring(Math.max(fullPath.lastIndexOf('/'), fullPath.lastIndexOf('\\')) + 1);
+                String sourceRaw = jobExecution.getJobParameters().getString("ingestSource");
+                eventPublisher.publishEvent(new IngestRunFinishedEvent(
+                        tenantId, runId, jobExecution.getJobInstance().getJobName(), fileName,
+                        sourceRaw, jobExecution.getStatus().toString(),
+                        failure == null ? null : failure.getMessage()));
+            } catch (Exception pe) {
+                log.warn("Could not publish ingest-finished event for run {} (non-fatal): {}", runId, pe.toString());
+            }
         } catch (Exception e) {
             log.warn("Could not close ingest ledger row {} (non-fatal): {}", runId, e.toString());
         }

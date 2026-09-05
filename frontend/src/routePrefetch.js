@@ -98,6 +98,7 @@ const ROUTE_IMPORTS = {
     '/admin/bin-management': () => import('./pages/admin/BinManagement'),
     '/admin/alerts': () => import('./pages/admin/AlertsNotifications'),
     '/admin/api-management': () => import('./pages/admin/ApiManagement'),
+    '/admin/webhooks': () => import('./pages/admin/Webhooks'),
 };
 
 const PREFETCHED = new Set();
