@@ -124,14 +124,15 @@ class BatchProgressWeightingTest {
     }
 
     @Test
-    @DisplayName("dbPullTransactionJob is weighted over its own nine stages")
+    @DisplayName("dbPullTransactionJob is weighted over its own stage list")
     void dbPullJobUsesItsOwnStageList() {
         JobExecution job = new JobExecution(2L);
         job.setJobInstance(new JobInstance(2L, "dbPullTransactionJob"));
         job.setStatus(BatchStatus.STARTED);
         job.createStepExecution("ensurePartitionsStep").setStatus(BatchStatus.COMPLETED);
 
-        // dbPull total weight = 1+3+3+25+20+5+3+2+2 = 64; ensurePartitions = 1.
+        // dbPull total weight = 1(adopt)+1+3+3+25+20+5+3+2+2+1(clearRunStaging) = 66;
+        // ensurePartitions = 1 -> round(100/66) = 2.
         assertEquals(2L, BatchProgressController.weightedProgress(job, 0, 0));
     }
 

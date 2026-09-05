@@ -27,8 +27,8 @@ public class BatchProgressController {
     // Keep in step with the job definitions in TransactionJobConfig /
     // MerchantMasterJobConfig — a stale count here renders as "step 12 of 9".
     private static final Map<String, Integer> TOTAL_STEPS = Map.of(
-        "transactionLoadJob", 12,
-        "dbPullTransactionJob", 9,
+        "transactionLoadJob", 13,
+        "dbPullTransactionJob", 11,
         "merchantMasterJob", 5);
 
     /**
@@ -52,7 +52,9 @@ public class BatchProgressController {
         Map.entry("calculateBusinessMetricsStep", 5),
         Map.entry("scoreMlStep", 3),
         Map.entry("computeSegmentsStep", 2),
-        Map.entry("calculateDailyDashboardMetricsStep", 2));
+        Map.entry("calculateDailyDashboardMetricsStep", 2),
+        Map.entry("adoptStagingStep", 1),
+        Map.entry("clearRunStagingStep", 1));
 
     /** The one row-oriented stage; only inside it does row progress move the bar. */
     private static final String ROW_STAGE = "masterIngestStep";
@@ -63,11 +65,11 @@ public class BatchProgressController {
             "ensurePartitionsStep", "splitExcelStep", "cleanTargetDayStep", "masterIngestStep",
             "analyzeStagingStep", "autoCreateDimensionsStep", "stagingToFactStep", "populateSummaryStep",
             "calculateBusinessMetricsStep", "scoreMlStep", "computeSegmentsStep",
-            "calculateDailyDashboardMetricsStep"),
+            "calculateDailyDashboardMetricsStep", "clearRunStagingStep"),
         "dbPullTransactionJob", java.util.List.of(
-            "ensurePartitionsStep", "analyzeStagingStep", "autoCreateDimensionsStep", "stagingToFactStep",
-            "populateSummaryStep", "calculateBusinessMetricsStep", "scoreMlStep", "computeSegmentsStep",
-            "calculateDailyDashboardMetricsStep"));
+            "adoptStagingStep", "ensurePartitionsStep", "analyzeStagingStep", "autoCreateDimensionsStep",
+            "stagingToFactStep", "populateSummaryStep", "calculateBusinessMetricsStep", "scoreMlStep",
+            "computeSegmentsStep", "calculateDailyDashboardMetricsStep", "clearRunStagingStep"));
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 

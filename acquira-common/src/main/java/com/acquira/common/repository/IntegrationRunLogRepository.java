@@ -32,4 +32,12 @@ public interface IntegrationRunLogRepository extends JpaRepository<IntegrationRu
     long countFailedRunsSince(Long tenantId, LocalDateTime since);
 
     List<IntegrationRunLog> findTop10ByTenantIdOrderByStartTimeDesc(Long tenantId);
+
+    List<IntegrationRunLog> findTop5ByScheduleIdOrderByStartTimeDesc(Long scheduleId);
+
+    /** Feed-health window: every run for the tenant since a cutoff, newest first. */
+    List<IntegrationRunLog> findByTenantIdAndStartTimeAfterOrderByStartTimeDesc(Long tenantId, LocalDateTime after);
+
+    /** Most recent run of a given status for a report (e.g. last SUCCESS ever, beyond the health window). */
+    IntegrationRunLog findFirstByReportIdAndStatusOrderByStartTimeDesc(Long reportId, IntegrationRunLog.Status status);
 }

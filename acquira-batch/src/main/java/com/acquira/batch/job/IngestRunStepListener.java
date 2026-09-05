@@ -19,8 +19,8 @@ import org.springframework.stereotype.Component;
  * report "Complete!" at step 4 of 12. Record managers and plain steps only; the
  * worker count is preserved as a note on the manager row.
  *
- * Registered alongside mdcStepListener on every step, so the whole 12-step
- * transactionLoadJob and 9-step dbPullTransactionJob are covered without any
+ * Registered alongside mdcStepListener on every step, so the whole 13-step
+ * transactionLoadJob and 11-step dbPullTransactionJob are covered without any
  * per-step code.
  */
 @Component

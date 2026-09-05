@@ -263,9 +263,15 @@ public class TransactionJobConfig {
      * dimension auto-create, stagingToFact with fee computation, ALL summary
      * tables, business metrics, ML scoring, segments, and dashboard metrics.
      * Job params: tenantId (Long), loadMode (String), startedAt (Long, uniqueness).
+     *
+     * adoptStagingStep MUST run first — see its javadoc; without it the
+     * run-scoped staging reads see zero rows and the whole pipeline no-ops
+     * green. clearRunStagingStep at the end mirrors transactionLoadJob's
+     * cleanup so pulled staging rows don't linger until the next upload.
      */
     @Bean
     public Job dbPullTransactionJob(
+            @org.springframework.beans.factory.annotation.Qualifier("adoptStagingStep") Step adoptStagingStep,
             @org.springframework.beans.factory.annotation.Qualifier("ensurePartitionsStep") Step ensurePartitionsStep,
             @org.springframework.beans.factory.annotation.Qualifier("analyzeStagingStep") Step analyzeStagingStep,
             @org.springframework.beans.factory.annotation.Qualifier("autoCreateDimensionsStep") Step autoCreateDimensionsStep,
@@ -274,14 +280,57 @@ public class TransactionJobConfig {
             @org.springframework.beans.factory.annotation.Qualifier("calculateBusinessMetricsStep") Step calculateBusinessMetricsStep,
             @org.springframework.beans.factory.annotation.Qualifier("scoreMlStep") Step scoreMlStep,
             @org.springframework.beans.factory.annotation.Qualifier("computeSegmentsStep") Step computeSegmentsStep,
-            @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep) {
+            @org.springframework.beans.factory.annotation.Qualifier("calculateDailyDashboardMetricsStep") Step calculateDailyDashboardMetricsStep,
+            @org.springframework.beans.factory.annotation.Qualifier("clearRunStagingStep") Step clearRunStagingStep) {
         return new JobBuilder("dbPullTransactionJob", jobRepository)
                 .listener(ingestRunJobListener)
                 .listener(cacheEvictionJobListener)
-                .start(ensurePartitionsStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
+                .start(adoptStagingStep)
+                .next(ensurePartitionsStep).next(analyzeStagingStep).next(autoCreateDimensionsStep)
                 .next(stagingToFactStep).next(populateSummaryStep)
                 .next(calculateBusinessMetricsStep).next(scoreMlStep).next(computeSegmentsStep)
-                .next(calculateDailyDashboardMetricsStep).build();
+                .next(calculateDailyDashboardMetricsStep).next(clearRunStagingStep).build();
+    }
+
+    /**
+     * FIRST step of dbPullTransactionJob ONLY (2026-09-05).
+     *
+     * IntegrationPullService fills stg_trnx_raw BEFORE this job exists, so its
+     * rows carry no ingest_run_id — while IngestRunJobListener DOES open a
+     * ledger run for this job (source DB_PULL), which switches every downstream
+     * staging read to `AND ingest_run_id = <run>` (the 2026-08-29 run-scope
+     * fix). Without adoption those reads matched ZERO rows: stagingToFact saw
+     * "staging is empty", the job COMPLETED green, and the pull reported
+     * SUCCESS having loaded nothing. Adopting the tenant's untagged rows into
+     * THIS run makes the pull genuinely run-scoped — full parity with the file
+     * path, including cleanTargetDay's protection of RUNNING siblings.
+     *
+     * Only untagged (ingest_run_id IS NULL) rows are adopted, so a concurrent
+     * file upload's tagged rows are never stolen.
+     */
+    @Bean
+    public Step adoptStagingStep(Tasklet adoptStagingTasklet) {
+        return new StepBuilder("adoptStagingStep", jobRepository)
+            .tasklet(adoptStagingTasklet, transactionManager).listener(mdcStepListener).listener(ingestRunStepListener).build();
+    }
+
+    @Bean @StepScope
+    public Tasklet adoptStagingTasklet(@Value("#{jobParameters['tenantId']}") Long tenantId) {
+        return (contribution, chunkContext) -> {
+            if (tenantId == null) return RepeatStatus.FINISHED;
+            Long ingestRunId = ingestRunIdOf(chunkContext);
+            if (ingestRunId == null) {
+                // Ledger unavailable — downstream reads fall back to tenant
+                // scope, which is safe because the pull wiped staging first.
+                log.warn("adoptStaging: no ingest run id available — staging reads fall back to tenant scope");
+                return RepeatStatus.FINISHED;
+            }
+            int rows = jdbcTemplate.update(
+                "UPDATE stg_trnx_raw SET ingest_run_id = ? WHERE tenant_id = ? AND ingest_run_id IS NULL",
+                ingestRunId, tenantId);
+            log.info("adoptStaging: tagged {} staged row(s) with run {}", rows, ingestRunId);
+            return RepeatStatus.FINISHED;
+        };
     }
 
     /**
@@ -1335,8 +1384,10 @@ public class TransactionJobConfig {
             // batch grew 3.0M -> 11.9M across six files). Scoping every staging read to
             // THIS run's ingest_run_id makes each file's job process only its own rows —
             // correct and safe for sequential AND concurrent loads, with no destructive
-            // clear. When the run id is absent (legacy path / DB pull), cleanTargetDay
-            // wipes the tenant's staging wholesale, so the tenant-only scope stays safe.
+            // clear. DB pulls also carry a run id: IngestRunJobListener opens a DB_PULL
+            // run for dbPullTransactionJob and adoptStagingStep tags the pulled rows
+            // with it. The null fallback (tenant-only scope) remains only for the
+            // ledger-unavailable case, where cleanTargetDay wiped staging wholesale.
             final Long ingestRunId = ingestRunIdOf(chunkContext);
             final String stgRunWhere        = ingestRunId != null ? " AND ingest_run_id = " + ingestRunId : "";       // unaliased
             final String stgRunWhereAliased = ingestRunId != null ? " AND stg.ingest_run_id = " + ingestRunId : "";   // stg.

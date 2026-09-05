@@ -105,6 +105,16 @@ public class IntegrationPullService {
     private com.acquira.common.service.TenantStatusService tenantStatusService;
 
     /**
+     * Failure-alert seam: publishes IntegrationRunFailedEvent on a FINAL failed
+     * attempt; the core module's listener emails the schedule's recipients.
+     * Field-injected (required=false) for the same reason as tenantStatusService
+     * — the explicit @Qualifier constructor and direct-construction tests stay
+     * untouched.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+
+    /**
      * Self-reference through the Spring proxy, used ONLY by scheduleRetry.
      *
      * WHY: executePull is @Async, but calling it as this.executePull(...) from
@@ -137,6 +147,11 @@ public class IntegrationPullService {
 
     /** Staging insert batch size (jdbcTemplate.batchUpdate chunk). */
     private static final int INSERT_BATCH_SIZE = 2_000;
+
+    /** External cursor fetch size for streamed pulls — keeps heap flat on huge
+     *  result sets (Oracle's default is 10, which would make a 1M-row pull crawl;
+     *  Postgres needs an explicit value with autoCommit off to stream at all). */
+    private static final int FETCH_SIZE = 2_000;
 
     /** Max time to wait for the async Spring Batch pipeline to finish. */
     private static final long JOB_POLL_TIMEOUT_MS = 2 * 60 * 60 * 1000L; // 2h
@@ -283,52 +298,40 @@ public class IntegrationPullService {
                         report.getName(), tenantId);
             }
 
-            // 3. Fetch from external DB
+            // 3. Stream from the external DB straight into staging (batched).
+            // PERF/PARITY (2026-09-05): the result set is no longer materialised
+            // in heap first — a 1M-row pull used to build a List of 1M
+            // LinkedHashMaps (multi-GB) before writing a single staging row.
+            // The file path streams (split + chunked ingest), so the pull now
+            // does too: fetchSize on the external cursor, INSERT_BATCH_SIZE
+            // flushes into staging, memory stays flat regardless of window size.
             log.info("[Integration] Pulling {} report '{}' for tenant {} (attempt {}/{})",
                     report.getReportType(), report.getName(), tenantId, attemptNumber, runLog.getMaxRetries());
 
-            List<Map<String, Object>> rawRows = executeExternalQuery(conn, report.getSqlText(), params);
-            runLog.setRowsFetched(rawRows.size());
+            // CONCURRENCY (2026-09-05): staging is shared per tenant, and the
+            // wipe inside pullToStaging would destroy a RUNNING file/server-folder
+            // load's rows mid-flight. FileUploadService.assertNoRunningIngest
+            // already blocks uploads while a pull is RUNNING; this closes the
+            // reverse direction. Throws -> the normal retry backoff kicks in.
+            assertNoRunningIngestForTenant(tenantId);
 
-            // A pull that hit the row ceiling is a PARTIAL extract. Loading it
-            // would silently publish an incomplete day/month to the warehouse
-            // (REPLACE mode deletes the real rows first), and the run would be
-            // recorded SUCCESS — the worst possible combination. Fail loudly and
-            // make the operator narrow the window instead.
-            if (rawRows.size() >= MAX_PULL_ROWS) {
-                throw new IllegalStateException(
-                    "Source query returned at least " + MAX_PULL_ROWS + " rows and was TRUNCATED at the safety cap. "
-                    + "Nothing was loaded, because a partial extract would overwrite complete data. "
-                    + "Narrow the report's date window (or split the schedule) and re-run.");
-            }
+            // 4/5. Parse column mapping, wipe staging, stream query -> staging.
+            Map<String, String> columnMap = parseColumnMapping(report.getColumnMapping());
+            SkipTracker skips = new SkipTracker();
+            PullResult pulled = pullToStaging(report, conn, params, columnMap, tenantId, skips);
+            runLog.setRowsFetched((int) Math.min(pulled.fetched(), Integer.MAX_VALUE));
 
-            if (rawRows.isEmpty()) {
+            if (pulled.fetched() == 0) {
                 log.warn("[Integration] No rows returned for report '{}', tenant {}", report.getName(), tenantId);
                 runLog.setStatus(IntegrationRunLog.Status.SUCCESS);
                 runLog.setRowsProcessed(0);
                 return; // finally persists the run log — calling finishRunLog here too saved it twice
             }
 
-            // 4. Parse column mapping
-            Map<String, String> columnMap = parseColumnMapping(report.getColumnMapping());
-
-            // 5. Insert into staging table based on report type (batched)
-            SkipTracker skips = new SkipTracker();
-            int processed;
-            if (report.getReportType() == IntegrationReport.ReportType.MERCHANT) {
-                processed = insertMerchantStaging(rawRows, columnMap, tenantId, skips);
-            } else if (report.getReportType() == IntegrationReport.ReportType.DCC) {
-                // Dedicated DCC revenue feed — stg_dcc_revenue_raw, applied by
-                // dbPullDccJob with replace-by-date semantics. Amounts are
-                // tenant base currency, major units.
-                processed = insertDccStaging(rawRows, columnMap, tenantId, skips);
-            } else if (report.getReportType() == IntegrationReport.ReportType.RENTAL) {
-                // Dedicated rental feed — stg_rental_raw, applied by dbPullRentalJob.
-                // No unit normalization: rental amounts are tenant base currency,
-                // major units, for BOTH input formats (decision 2026-08-29).
-                processed = insertRentalStaging(rawRows, columnMap, tenantId, skips);
-            } else {
-                processed = insertTransactionStaging(rawRows, columnMap, tenantId, skips);
+            int processed = pulled.processed();
+            if (report.getReportType() != IntegrationReport.ReportType.MERCHANT
+                    && report.getReportType() != IntegrationReport.ReportType.DCC
+                    && report.getReportType() != IntegrationReport.ReportType.RENTAL) {
                 // 5b. Normalize staged rows to match what the file-path ItemProcessor
                 //     produces: granular card_product_code preserved, card_type
                 //     coarsened to DEBIT/CREDIT/PREPAID, ISO-numeric currency tokens
@@ -345,7 +348,7 @@ public class IntegrationPullService {
             }
 
             runLog.setRowsProcessed(processed);
-            runLog.setRowsFailed(rawRows.size() - processed);
+            runLog.setRowsFailed((int) Math.min(pulled.fetched() - processed, Integer.MAX_VALUE));
             if (skips.total > 0) {
                 runLog.setErrorMessage(skips.summary());
             }
@@ -366,7 +369,7 @@ public class IntegrationPullService {
             // 8. Success
             runLog.setStatus(IntegrationRunLog.Status.SUCCESS);
             log.info("[Integration] SUCCESS — '{}' for tenant {}: {} rows fetched, {} processed{}",
-                    report.getName(), tenantId, rawRows.size(), processed,
+                    report.getName(), tenantId, pulled.fetched(), processed,
                     skips.total > 0 ? " (" + skips.total + " skipped)" : "");
 
         } catch (Exception e) {
@@ -504,15 +507,216 @@ public class IntegrationPullService {
         }
     }
 
-    /**
-     * Insert fetched rows into stg_merchant_master_raw (batched).
-     */
-    private int insertMerchantStaging(List<Map<String, Object>> rows, Map<String, String> columnMap,
-                                      Long tenantId, SkipTracker skips) {
-        // Clear existing staging for this tenant
-        jdbcTemplate.update("DELETE FROM stg_merchant_master_raw WHERE tenant_id = ?", tenantId);
+    /** Result of a streamed pull: rows read from the source vs rows written to staging. */
+    private record PullResult(long fetched, int processed) {}
 
-        String sql = """
+    /**
+     * Refuse to start while any ingest (file upload, server folder) is RUNNING
+     * for this tenant — mirrors FileUploadService.assertNoRunningIngest, which
+     * covers the opposite direction (upload blocked while a pull runs). The
+     * pull's own ledger run only opens when the batch job launches, AFTER the
+     * staging fill, so this check never sees itself. Ledger unavailable ->
+     * proceed rather than block the pull over a bookkeeping query, same policy
+     * as the upload path.
+     */
+    private void assertNoRunningIngestForTenant(Long tenantId) {
+        try {
+            Integer running = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ingest_run WHERE tenant_id = ? AND status = 'RUNNING' " +
+                "AND started_at > CURRENT_TIMESTAMP - INTERVAL '6 hours'",
+                Integer.class, tenantId);
+            if (running != null && running > 0) {
+                throw new IllegalStateException(
+                    "An ingestion is already running for this tenant — staging tables are shared per tenant, "
+                    + "and starting the pull now would wipe the running load's staging mid-flight. "
+                    + "The pull retries automatically; check /ops/ingest-trust for the running load.");
+            }
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            log.debug("[Integration] Ingest ledger unavailable for running-ingest check (non-fatal): {}", e.toString());
+        }
+    }
+
+    /**
+     * Wipe this tenant's staging for the report type, then stream the report
+     * query straight into it — the pull-side equivalent of the file path's
+     * clean-staging + ingest steps. The per-tenant wipe is the same convention
+     * all four feeds use; the REPLACE semantics live downstream in the shared
+     * apply (stagingToFact REPLACE wipes + reloads the pulled dates,
+     * applyRental/applyDcc replace by date, merchant is an upsert), so
+     * re-pulling a day replaces that day exactly like re-uploading its file.
+     */
+    private PullResult pullToStaging(IntegrationReport report, IntegrationConnection config,
+                                     Map<String, Object> params, Map<String, String> columnMap,
+                                     Long tenantId, SkipTracker skips) {
+        final String stagingTable;
+        final String insertSql;
+        final java.util.function.Function<Map<String, Object>, Object[]> mapper;
+        switch (report.getReportType()) {
+            case MERCHANT -> {
+                stagingTable = "stg_merchant_master_raw";
+                insertSql = MERCHANT_STAGING_INSERT;
+                mapper = row -> mapMerchantArgs(row, columnMap, tenantId, skips);
+            }
+            case DCC -> {
+                // Dedicated DCC revenue feed — applied by dbPullDccJob with
+                // replace-by-date semantics. Amounts are tenant base currency,
+                // major units.
+                stagingTable = "stg_dcc_revenue_raw";
+                insertSql = DCC_STAGING_INSERT;
+                mapper = row -> mapDccArgs(row, columnMap, tenantId, skips);
+            }
+            case RENTAL -> {
+                // Dedicated rental feed — applied by dbPullRentalJob. No unit
+                // normalization: rental amounts are tenant base currency, major
+                // units, for BOTH input formats (decision 2026-08-29).
+                stagingTable = "stg_rental_raw";
+                insertSql = RENTAL_STAGING_INSERT;
+                mapper = row -> mapRentalArgs(row, columnMap, tenantId, skips);
+            }
+            default -> {
+                stagingTable = "stg_trnx_raw";
+                insertSql = TRANSACTION_STAGING_INSERT;
+                mapper = row -> mapTransactionArgs(row, columnMap, tenantId, skips);
+            }
+        }
+
+        // Clear existing staging for this tenant (same convention as the file
+        // path's clean-staging step; safe against concurrent uploads thanks to
+        // assertNoRunningIngestForTenant in executePull).
+        jdbcTemplate.update("DELETE FROM " + stagingTable + " WHERE tenant_id = ?", tenantId);
+
+        PullResult r = streamQueryToStaging(config, report.getSqlText(), params, insertSql, mapper);
+        if (skips.total > 0) {
+            log.warn("[Integration] {} staging: {}", report.getReportType(), skips.summary());
+        }
+        return r;
+    }
+
+    /**
+     * Stream the report query into staging without materialising the result
+     * set: rows are read cursor-wise (FETCH_SIZE) and flushed to staging in
+     * INSERT_BATCH_SIZE batches, so heap stays flat for any pull size — the
+     * old path built the ENTIRE result as a List of Maps first, which for a
+     * 1M+ row transaction window was a multi-GB allocation. Connection setup
+     * mirrors executeExternalQuery (which remains for the small precondition /
+     * validation queries).
+     */
+    private PullResult streamQueryToStaging(IntegrationConnection config, String sql, Map<String, Object> params,
+                                            String insertSql,
+                                            java.util.function.Function<Map<String, Object>, Object[]> mapper) {
+        String url = config.getJdbcUrl();
+        int timeout = config.getTimeoutSeconds() != null ? config.getTimeoutSeconds() : 30;
+
+        log.info("[Integration] Connecting to {} ({}) at {}:{}", config.getName(), config.getDbType(), config.getHost(), config.getPort());
+        assertSingleStatement(sql);
+
+        Properties props = new Properties();
+        props.setProperty("user", config.getUsername());
+        props.setProperty("password", cryptoService.decrypt(config.getEncryptedPassword()));
+        props.setProperty("loginTimeout", String.valueOf(timeout));
+
+        java.util.concurrent.ExecutorService netTimeoutExec =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+        try (Connection extConn = DriverManager.getConnection(url, props)) {
+            extConn.setReadOnly(true); // Safety: prevent accidental writes to external DB
+            // Postgres only streams with autoCommit off (otherwise the driver
+            // buffers the full result client-side, defeating the point); Oracle
+            // and MSSQL honour fetchSize regardless. Read-only, so close()
+            // simply discards the transaction.
+            try { extConn.setAutoCommit(false); } catch (SQLException | RuntimeException ignored) {}
+            try {
+                extConn.setNetworkTimeout(netTimeoutExec, timeout * 1000);
+            } catch (SQLException | RuntimeException ignored) {
+                // Not all drivers implement setNetworkTimeout; queryTimeout below still applies.
+            }
+
+            try (PreparedStatement ps = NamedParamBinder.prepare(extConn, sql, params)) {
+                ps.setQueryTimeout(timeout);
+                ps.setFetchSize(FETCH_SIZE);
+                try (ResultSet rs = ps.executeQuery()) {
+                    ResultSetMetaData meta = rs.getMetaData();
+                    int colCount = meta.getColumnCount();
+                    // Labels are lower-cased ONCE here, not per row. Lookup keys
+                    // (staging field names and parsed column-mapping values) are
+                    // already lower case, so every getMapped now hits the map's
+                    // direct get. Without this, Oracle and MSSQL return UPPERCASE
+                    // labels, every one of the ~33 transaction fields missed and
+                    // fell through to getIgnoreCase's linear scan over all ~33
+                    // entries — ~1e9 string comparisons on a 1M-row pull.
+                    String[] labels = new String[colCount];
+                    for (int i = 1; i <= colCount; i++) {
+                        labels[i - 1] = meta.getColumnLabel(i) == null
+                                ? "" : meta.getColumnLabel(i).trim().toLowerCase();
+                    }
+
+                    List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
+                    long fetched = 0;
+                    int processed = 0;
+                    while (rs.next()) {
+                        // A pull that hits the row ceiling is a PARTIAL extract.
+                        // Applying it would silently publish an incomplete
+                        // day/month (REPLACE deletes the real rows first) with
+                        // the run recorded SUCCESS — the worst combination.
+                        // Fail loudly; the partial staging rows are never
+                        // applied (the batch job is not launched) and the next
+                        // pull's wipe removes them.
+                        if (++fetched > MAX_PULL_ROWS) {
+                            throw new IllegalStateException(
+                                "Source query returned more than " + MAX_PULL_ROWS + " rows and was STOPPED at the safety cap. "
+                                + "Nothing was applied, because a partial extract would overwrite complete data. "
+                                + "Narrow the report's date window (or split the schedule) and re-run.");
+                        }
+                        Map<String, Object> row = new LinkedHashMap<>(colCount * 2);
+                        // putIfAbsent, not put: two source columns whose labels
+                        // differ only by case now collapse to one key, and the
+                        // first non-null wins — the same column the old
+                        // case-insensitive scan would have found.
+                        for (int i = 1; i <= colCount; i++) row.putIfAbsent(labels[i - 1], rs.getObject(i));
+                        Object[] args = mapper.apply(row);
+                        if (args != null) {
+                            batch.add(args);
+                            processed++;
+                        }
+                        if (batch.size() >= INSERT_BATCH_SIZE) {
+                            jdbcTemplate.batchUpdate(insertSql, batch);
+                            batch.clear();
+                        }
+                    }
+                    if (!batch.isEmpty()) jdbcTemplate.batchUpdate(insertSql, batch);
+                    return new PullResult(fetched, processed);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("External DB query failed for '" + config.getName() + "': "
+                    + e.getMessage() + timeoutHint(e, timeout), e);
+        } finally {
+            netTimeoutExec.shutdownNow();
+        }
+    }
+
+    /**
+     * Appended to a pull failure that looks like the query timeout firing, so the
+     * run log names the setting instead of showing a bare driver error. The
+     * connection's timeout covers the WHOLE source query, and a high-volume feed
+     * routinely needs longer than the 30s default — without this the pull just
+     * retries into the same wall.
+     */
+    private String timeoutHint(SQLException e, int timeoutSeconds) {
+        String msg = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
+        boolean looksLikeTimeout = e instanceof SQLTimeoutException
+                || msg.contains("timeout") || msg.contains("timed out")
+                || msg.contains("canceling statement")          // PostgreSQL
+                || msg.contains("ora-01013")                    // Oracle: user requested cancel
+                || msg.contains("cancel of current operation"); // Oracle (text form)
+        if (!looksLikeTimeout) return "";
+        return " — this looks like the connection's " + timeoutSeconds + "s timeout firing. It applies to the"
+                + " whole source query, not just connecting; high-volume feeds usually need 300-600s."
+                + " Raise Timeout (seconds) on the connection, or narrow the report's date window.";
+    }
+
+    private static final String MERCHANT_STAGING_INSERT = """
             INSERT INTO stg_merchant_master_raw (
                 tenant_id, institution_code, institution_name, entity_internal_id, entity_name, entity_code,
                 aggregator_internal_id, aggregator_name, aggregator_code,
@@ -526,169 +730,124 @@ public class IntegrationPullService {
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         """;
 
-        List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
-        int count = 0;
-        for (Map<String, Object> row : rows) {
-            try {
-                batch.add(new Object[]{
-                    tenantId,
-                    str(getMapped(row, columnMap, "institution_code")),
-                    str(getMapped(row, columnMap, "institution_name")),
-                    str(getMapped(row, columnMap, "entity_internal_id")),
-                    str(getMapped(row, columnMap, "entity_name")),
-                    str(getMapped(row, columnMap, "entity_code")),
-                    str(getMapped(row, columnMap, "aggregator_internal_id")),
-                    str(getMapped(row, columnMap, "aggregator_name")),
-                    str(getMapped(row, columnMap, "aggregator_code")),
-                    str(getMapped(row, columnMap, "merchant_internal_id")),
-                    str(getMapped(row, columnMap, "mid")),
-                    str(getMapped(row, columnMap, "merchant_name")),
-                    str(getMapped(row, columnMap, "merchant_status")),
-                    str(getMapped(row, columnMap, "merchant_store_internal_id")),
-                    str(getMapped(row, columnMap, "sid")),
-                    str(getMapped(row, columnMap, "store_legal_name")),
-                    str(getMapped(row, columnMap, "store_name")),
-                    str(getMapped(row, columnMap, "store_status")),
-                    str(getMapped(row, columnMap, "business_type")),
-                    str(getMapped(row, columnMap, "business_mcc")),
-                    str(getMapped(row, columnMap, "vat_number")),
-                    str(getMapped(row, columnMap, "primary_contact_person")),
-                    str(getMapped(row, columnMap, "primary_contact_number")),
-                    str(getMapped(row, columnMap, "primary_contact_email")),
-                    str(getMapped(row, columnMap, "address")),
-                    str(getMapped(row, columnMap, "city")),
-                    str(getMapped(row, columnMap, "state")),
-                    str(getMapped(row, columnMap, "postal_code")),
-                    str(getMapped(row, columnMap, "risk_level")),
-                    str(getMapped(row, columnMap, "product")),
-                    str(getMapped(row, columnMap, "date_of_onboarding"))
-                });
-                count++;
-            } catch (Exception e) {
-                skips.skip(e.getMessage());
-            }
-            if (batch.size() >= INSERT_BATCH_SIZE) {
-                jdbcTemplate.batchUpdate(sql, batch);
-                batch.clear();
-            }
+    /** Maps one source row to stg_merchant_master_raw insert args; null = skipped (recorded in skips). */
+    private Object[] mapMerchantArgs(Map<String, Object> row, Map<String, String> columnMap,
+                                     Long tenantId, SkipTracker skips) {
+        try {
+            return new Object[]{
+                tenantId,
+                str(getMapped(row, columnMap, "institution_code")),
+                str(getMapped(row, columnMap, "institution_name")),
+                str(getMapped(row, columnMap, "entity_internal_id")),
+                str(getMapped(row, columnMap, "entity_name")),
+                str(getMapped(row, columnMap, "entity_code")),
+                str(getMapped(row, columnMap, "aggregator_internal_id")),
+                str(getMapped(row, columnMap, "aggregator_name")),
+                str(getMapped(row, columnMap, "aggregator_code")),
+                str(getMapped(row, columnMap, "merchant_internal_id")),
+                str(getMapped(row, columnMap, "mid")),
+                str(getMapped(row, columnMap, "merchant_name")),
+                str(getMapped(row, columnMap, "merchant_status")),
+                str(getMapped(row, columnMap, "merchant_store_internal_id")),
+                str(getMapped(row, columnMap, "sid")),
+                str(getMapped(row, columnMap, "store_legal_name")),
+                str(getMapped(row, columnMap, "store_name")),
+                str(getMapped(row, columnMap, "store_status")),
+                str(getMapped(row, columnMap, "business_type")),
+                str(getMapped(row, columnMap, "business_mcc")),
+                str(getMapped(row, columnMap, "vat_number")),
+                str(getMapped(row, columnMap, "primary_contact_person")),
+                str(getMapped(row, columnMap, "primary_contact_number")),
+                str(getMapped(row, columnMap, "primary_contact_email")),
+                str(getMapped(row, columnMap, "address")),
+                str(getMapped(row, columnMap, "city")),
+                str(getMapped(row, columnMap, "state")),
+                str(getMapped(row, columnMap, "postal_code")),
+                str(getMapped(row, columnMap, "risk_level")),
+                str(getMapped(row, columnMap, "product")),
+                str(getMapped(row, columnMap, "date_of_onboarding"))
+            };
+        } catch (Exception e) {
+            skips.skip(e.getMessage());
+            return null;
         }
-        if (!batch.isEmpty()) jdbcTemplate.batchUpdate(sql, batch);
-        if (skips.total > 0) log.warn("[Integration] Merchant staging: {}", skips.summary());
-        return count;
     }
 
-    /**
-     * Insert fetched rows into stg_dcc_revenue_raw (batched). Mapped staging
-     * fields: sid, merchant_share, acquirer_share, payment_date
-     * (file_tenant_id optional — validated, never used for routing). The apply
-     * step (DccRevenueJobConfig.applyDccTasklet) then does the same validation
-     * and replace-by-date apply as the file path.
-     */
-    private int insertDccStaging(List<Map<String, Object>> rows, Map<String, String> columnMap,
-                                 Long tenantId, SkipTracker skips) {
-        // Clear existing staging for this tenant (same convention as merchant/transaction)
-        jdbcTemplate.update("DELETE FROM stg_dcc_revenue_raw WHERE tenant_id = ?", tenantId);
-
-        String sql = """
+    private static final String DCC_STAGING_INSERT = """
             INSERT INTO stg_dcc_revenue_raw (
                 tenant_id, sid, file_tenant_id, merchant_share, acquirer_share, payment_date, load_time
             ) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)
         """;
 
-        List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
-        int count = 0;
-        for (Map<String, Object> row : rows) {
-            try {
-                BigDecimal merchantShare = toBigDecimal(getMapped(row, columnMap, "merchant_share"));
-                BigDecimal acquirerShare = toBigDecimal(getMapped(row, columnMap, "acquirer_share"));
-                Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
-                if ((merchantShare == null && acquirerShare == null) || paymentDate == null) {
-                    skips.skip("merchant_share/acquirer_share or payment_date missing/unparseable");
-                    continue;
-                }
-                batch.add(new Object[]{
-                    tenantId,
-                    str(getMapped(row, columnMap, "sid")),
-                    str(getMapped(row, columnMap, "file_tenant_id")),
-                    merchantShare,
-                    acquirerShare,
-                    new java.sql.Date(paymentDate.getTime())
-                });
-                count++;
-            } catch (Exception e) {
-                skips.skip(e.getMessage());
+    /**
+     * Maps one source row to stg_dcc_revenue_raw insert args; null = skipped.
+     * Mapped staging fields: sid, merchant_share, acquirer_share, payment_date
+     * (file_tenant_id optional — validated, never used for routing). The apply
+     * step (DccRevenueJobConfig.applyDccTasklet) then does the same validation
+     * and replace-by-date apply as the file path.
+     */
+    private Object[] mapDccArgs(Map<String, Object> row, Map<String, String> columnMap,
+                                Long tenantId, SkipTracker skips) {
+        try {
+            BigDecimal merchantShare = toBigDecimal(getMapped(row, columnMap, "merchant_share"));
+            BigDecimal acquirerShare = toBigDecimal(getMapped(row, columnMap, "acquirer_share"));
+            Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
+            if ((merchantShare == null && acquirerShare == null) || paymentDate == null) {
+                skips.skip("merchant_share/acquirer_share or payment_date missing/unparseable");
+                return null;
             }
-            if (batch.size() >= INSERT_BATCH_SIZE) {
-                jdbcTemplate.batchUpdate(sql, batch);
-                batch.clear();
-            }
+            return new Object[]{
+                tenantId,
+                str(getMapped(row, columnMap, "sid")),
+                str(getMapped(row, columnMap, "file_tenant_id")),
+                merchantShare,
+                acquirerShare,
+                new java.sql.Date(paymentDate.getTime())
+            };
+        } catch (Exception e) {
+            skips.skip(e.getMessage());
+            return null;
         }
-        if (!batch.isEmpty()) jdbcTemplate.batchUpdate(sql, batch);
-        if (skips.total > 0) log.warn("[Integration] DCC staging: {}", skips.summary());
-        return count;
     }
 
-    /**
-     * Insert fetched rows into stg_rental_raw (batched). Mapped staging fields:
-     * mid, sid, tid, rental_amount, payment_date (entity_name optional).
-     * Level is NOT mapped — RentalJobConfig.applyRentalTasklet derives it from
-     * which ids are present, identically to the file path.
-     */
-    private int insertRentalStaging(List<Map<String, Object>> rows, Map<String, String> columnMap,
-                                    Long tenantId, SkipTracker skips) {
-        // Clear existing staging for this tenant (same convention as merchant/transaction)
-        jdbcTemplate.update("DELETE FROM stg_rental_raw WHERE tenant_id = ?", tenantId);
-
-        String sql = """
+    private static final String RENTAL_STAGING_INSERT = """
             INSERT INTO stg_rental_raw (
                 tenant_id, entity_name, mid, sid, tid, rental_amount, payment_date, load_time
             ) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         """;
 
-        List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
-        int count = 0;
-        for (Map<String, Object> row : rows) {
-            try {
-                BigDecimal amount = toBigDecimal(getMapped(row, columnMap, "rental_amount"));
-                Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
-                if (amount == null || paymentDate == null) {
-                    skips.skip("rental_amount or payment_date missing/unparseable");
-                    continue;
-                }
-                batch.add(new Object[]{
-                    tenantId,
-                    str(getMapped(row, columnMap, "entity_name")),
-                    str(getMapped(row, columnMap, "mid")),
-                    str(getMapped(row, columnMap, "sid")),
-                    str(getMapped(row, columnMap, "tid")),
-                    amount,
-                    new java.sql.Date(paymentDate.getTime())
-                });
-                count++;
-            } catch (Exception e) {
-                skips.skip(e.getMessage());
+    /**
+     * Maps one source row to stg_rental_raw insert args; null = skipped.
+     * Mapped staging fields: mid, sid, tid, rental_amount, payment_date
+     * (entity_name optional). Level is NOT mapped —
+     * RentalJobConfig.applyRentalTasklet derives it from which ids are
+     * present, identically to the file path.
+     */
+    private Object[] mapRentalArgs(Map<String, Object> row, Map<String, String> columnMap,
+                                   Long tenantId, SkipTracker skips) {
+        try {
+            BigDecimal amount = toBigDecimal(getMapped(row, columnMap, "rental_amount"));
+            Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
+            if (amount == null || paymentDate == null) {
+                skips.skip("rental_amount or payment_date missing/unparseable");
+                return null;
             }
-            if (batch.size() >= INSERT_BATCH_SIZE) {
-                jdbcTemplate.batchUpdate(sql, batch);
-                batch.clear();
-            }
+            return new Object[]{
+                tenantId,
+                str(getMapped(row, columnMap, "entity_name")),
+                str(getMapped(row, columnMap, "mid")),
+                str(getMapped(row, columnMap, "sid")),
+                str(getMapped(row, columnMap, "tid")),
+                amount,
+                new java.sql.Date(paymentDate.getTime())
+            };
+        } catch (Exception e) {
+            skips.skip(e.getMessage());
+            return null;
         }
-        if (!batch.isEmpty()) jdbcTemplate.batchUpdate(sql, batch);
-        if (skips.total > 0) log.warn("[Integration] Rental staging: {}", skips.summary());
-        return count;
     }
 
-    /**
-     * Insert fetched rows into stg_trnx_raw (batched). Includes card_product_code
-     * (granular feed 'Card Type' — VIPM/MCPM/MCDB…) which tier resolution needs;
-     * defaults to the raw card_type value when not mapped separately.
-     */
-    private int insertTransactionStaging(List<Map<String, Object>> rows, Map<String, String> columnMap,
-                                         Long tenantId, SkipTracker skips) {
-        // Clear existing staging for this tenant
-        jdbcTemplate.update("DELETE FROM stg_trnx_raw WHERE tenant_id = ?", tenantId);
-
-        String sql = """
+    private static final String TRANSACTION_STAGING_INSERT = """
             INSERT INTO stg_trnx_raw (
                 tenant_id, entity_name, aggregator_internal_id, aggregator_name, aggregator_code,
                 mid, merchant_internal_id, merchant_name,
@@ -702,71 +861,70 @@ public class IntegrationPullService {
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         """;
 
-        List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
-        int count = 0;
-        for (Map<String, Object> row : rows) {
-            try {
-                Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
-                if (paymentDate == null) {
-                    // Without payment_date the row can't be partition-routed or
-                    // date-scoped anywhere downstream — skip loudly, not silently.
-                    skips.skip("payment_date missing/unparseable");
-                    continue;
-                }
-                String rawCardType = str(getMapped(row, columnMap, "card_type"));
-                String productCode = str(getMapped(row, columnMap, "card_product_code"));
-                if (productCode == null || productCode.isBlank()) {
-                    // Preserve the granular product code BEFORE card_type is
-                    // coarsened to DEBIT/CREDIT/PREPAID (same rule as the file path).
-                    productCode = rawCardType;
-                }
-                batch.add(new Object[]{
-                    tenantId,
-                    str(getMapped(row, columnMap, "entity_name")),
-                    str(getMapped(row, columnMap, "aggregator_internal_id")),
-                    str(getMapped(row, columnMap, "aggregator_name")),
-                    str(getMapped(row, columnMap, "aggregator_code")),
-                    str(getMapped(row, columnMap, "mid")),
-                    str(getMapped(row, columnMap, "merchant_internal_id")),
-                    str(getMapped(row, columnMap, "merchant_name")),
-                    str(getMapped(row, columnMap, "sid")),
-                    str(getMapped(row, columnMap, "merchant_store_internal_id")),
-                    str(getMapped(row, columnMap, "store_name")),
-                    str(getMapped(row, columnMap, "tid")),
-                    str(getMapped(row, columnMap, "arn")),
-                    str(getMapped(row, columnMap, "rrn_number")),
-                    str(getMapped(row, columnMap, "card_number")),
-                    str(getMapped(row, columnMap, "auth_code")),
-                    paymentDate,
-                    toTimestamp(getMapped(row, columnMap, "transaction_date")),
-                    str(getMapped(row, columnMap, "batch_number")),
-                    str(getMapped(row, columnMap, "transaction_type")),
-                    str(getMapped(row, columnMap, "card_scheme")),
-                    rawCardType,
-                    productCode,
-                    toBoolean(getMapped(row, columnMap, "dcc")),
-                    str(getMapped(row, columnMap, "txn_currency")),
-                    toBigDecimal(getMapped(row, columnMap, "txn_currency_amount")),
-                    str(getMapped(row, columnMap, "store_base_currency")),
-                    toBigDecimal(getMapped(row, columnMap, "store_base_currency_amount")),
-                    toBigDecimal(getMapped(row, columnMap, "msf")),
-                    toBigDecimal(getMapped(row, columnMap, "vat")),
-                    toBigDecimal(getMapped(row, columnMap, "total_amount_settled")),
-                    toBigDecimal(getMapped(row, columnMap, "interchange_fee")),
-                    str(getMapped(row, columnMap, "destination"))
-                });
-                count++;
-            } catch (Exception e) {
-                skips.skip(e.getMessage());
+    /**
+     * Maps one source row to stg_trnx_raw insert args; null = skipped.
+     * Includes card_product_code (granular feed 'Card Type' — VIPM/MCPM/MCDB…)
+     * which tier resolution needs; defaults to the raw card_type value when not
+     * mapped separately. ingest_run_id is deliberately NOT set here — the run
+     * only exists once dbPullTransactionJob launches; its adoptStagingStep tags
+     * these rows with the run id before any downstream read.
+     */
+    private Object[] mapTransactionArgs(Map<String, Object> row, Map<String, String> columnMap,
+                                        Long tenantId, SkipTracker skips) {
+        try {
+            Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
+            if (paymentDate == null) {
+                // Without payment_date the row can't be partition-routed or
+                // date-scoped anywhere downstream — skip loudly, not silently.
+                skips.skip("payment_date missing/unparseable");
+                return null;
             }
-            if (batch.size() >= INSERT_BATCH_SIZE) {
-                jdbcTemplate.batchUpdate(sql, batch);
-                batch.clear();
+            String rawCardType = str(getMapped(row, columnMap, "card_type"));
+            String productCode = str(getMapped(row, columnMap, "card_product_code"));
+            if (productCode == null || productCode.isBlank()) {
+                // Preserve the granular product code BEFORE card_type is
+                // coarsened to DEBIT/CREDIT/PREPAID (same rule as the file path).
+                productCode = rawCardType;
             }
+            return new Object[]{
+                tenantId,
+                str(getMapped(row, columnMap, "entity_name")),
+                str(getMapped(row, columnMap, "aggregator_internal_id")),
+                str(getMapped(row, columnMap, "aggregator_name")),
+                str(getMapped(row, columnMap, "aggregator_code")),
+                str(getMapped(row, columnMap, "mid")),
+                str(getMapped(row, columnMap, "merchant_internal_id")),
+                str(getMapped(row, columnMap, "merchant_name")),
+                str(getMapped(row, columnMap, "sid")),
+                str(getMapped(row, columnMap, "merchant_store_internal_id")),
+                str(getMapped(row, columnMap, "store_name")),
+                str(getMapped(row, columnMap, "tid")),
+                str(getMapped(row, columnMap, "arn")),
+                str(getMapped(row, columnMap, "rrn_number")),
+                str(getMapped(row, columnMap, "card_number")),
+                str(getMapped(row, columnMap, "auth_code")),
+                paymentDate,
+                toTimestamp(getMapped(row, columnMap, "transaction_date")),
+                str(getMapped(row, columnMap, "batch_number")),
+                str(getMapped(row, columnMap, "transaction_type")),
+                str(getMapped(row, columnMap, "card_scheme")),
+                rawCardType,
+                productCode,
+                toBoolean(getMapped(row, columnMap, "dcc")),
+                str(getMapped(row, columnMap, "txn_currency")),
+                toBigDecimal(getMapped(row, columnMap, "txn_currency_amount")),
+                str(getMapped(row, columnMap, "store_base_currency")),
+                toBigDecimal(getMapped(row, columnMap, "store_base_currency_amount")),
+                toBigDecimal(getMapped(row, columnMap, "msf")),
+                toBigDecimal(getMapped(row, columnMap, "vat")),
+                toBigDecimal(getMapped(row, columnMap, "total_amount_settled")),
+                toBigDecimal(getMapped(row, columnMap, "interchange_fee")),
+                str(getMapped(row, columnMap, "destination"))
+            };
+        } catch (Exception e) {
+            skips.skip(e.getMessage());
+            return null;
         }
-        if (!batch.isEmpty()) jdbcTemplate.batchUpdate(sql, batch);
-        if (skips.total > 0) log.warn("[Integration] Transaction staging: {}", skips.summary());
-        return count;
     }
 
     /**
@@ -1061,6 +1219,14 @@ public class IntegrationPullService {
         return getIgnoreCase(row, stagingField);
     }
 
+    /**
+     * On the streamed pull path the row keys are already lower-cased (see
+     * streamQueryToStaging), and both lookup key sources — the staging field
+     * names and parseColumnMapping's values — are lower case too, so the direct
+     * get hits and the scan below never runs. The scan is kept as a safety net
+     * for any caller whose keys are not normalized; it is O(columns) per miss,
+     * so it must not become the hot path again.
+     */
     private Object getIgnoreCase(Map<String, Object> row, String key) {
         Object direct = row.get(key);
         if (direct != null) return direct;
@@ -1077,6 +1243,15 @@ public class IntegrationPullService {
         String s = val.toString();
         return s.isBlank() ? null : s;
     }
+
+    /**
+     * Cache of {@code timestampValue()} per driver value class (Oracle's Datum
+     * subclasses), so the per-row reflective lookup in toTimestamp resolves once
+     * per class instead of once per column per row. Empty = the class has no such
+     * method. Bounded by the number of JDBC value types the drivers return.
+     */
+    private static final Map<Class<?>, Optional<java.lang.reflect.Method>> TIMESTAMP_VALUE_METHODS =
+            new ConcurrentHashMap<>();
 
     /** Accepts 'yyyy-MM-dd HH:mm:ss[.fraction]' (JDBC toString), ISO-8601, and bare dates. */
     private static final DateTimeFormatter JDBC_TS_FORMAT = new DateTimeFormatterBuilder()
@@ -1106,13 +1281,27 @@ public class IntegrationPullService {
         // transaction pull could therefore ingest zero rows while reporting
         // SUCCESS. Reflection keeps this driver-agnostic (no compile-time
         // dependency on ojdbc, and it also covers other vendors' Datum types).
-        try {
-            java.lang.reflect.Method m = val.getClass().getMethod("timestampValue");
-            Object ts = m.invoke(val);
-            if (ts instanceof Timestamp t) return t;
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Not an Oracle Datum (or TIMESTAMPTZ, whose timestampValue needs a
-            // Connection) — fall through to the string parsers.
+        // Method lookup is CACHED per class: Class.getMethod scans and copies the
+        // declared-method array on every call, and this runs for payment_date AND
+        // transaction_date on every row — two million reflective lookups on a
+        // 1M-row Oracle pull. The resolution itself is unchanged.
+        java.lang.reflect.Method m = TIMESTAMP_VALUE_METHODS
+                .computeIfAbsent(val.getClass(), c -> {
+                    try {
+                        return Optional.of(c.getMethod("timestampValue"));
+                    } catch (ReflectiveOperationException | RuntimeException e) {
+                        return Optional.empty();
+                    }
+                })
+                .orElse(null);
+        if (m != null) {
+            try {
+                Object ts = m.invoke(val);
+                if (ts instanceof Timestamp t) return t;
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                // Oracle TIMESTAMPTZ, whose timestampValue() needs a Connection —
+                // fall through to the string parsers.
+            }
         }
 
         String s = val.toString().trim();
@@ -1163,18 +1352,70 @@ public class IntegrationPullService {
         runLog.setEndTime(LocalDateTime.now());
         runLog.setDurationMs(System.currentTimeMillis() - startMs);
         runLogRepo.save(runLog);
+        publishFailureAlert(runLog);
+    }
+
+    /**
+     * Fire the failure-alert event for a FINAL failure only. RETRYING runs stay
+     * silent (another attempt is coming); runs without a schedule (ad-hoc from
+     * the UI, where the operator is watching) stay silent too. Alerting must
+     * never break the pull bookkeeping — everything is caught.
+     */
+    private void publishFailureAlert(IntegrationRunLog runLog) {
+        try {
+            if (eventPublisher == null) return;
+            if (runLog.getStatus() != IntegrationRunLog.Status.FAILED) return;
+            IntegrationSchedule schedule = runLog.getSchedule();
+            if (schedule == null) return;
+            if (Boolean.FALSE.equals(schedule.getAlertOnFailure())) return;
+            String recipients = schedule.getAlertEmails();
+            if (recipients == null || recipients.isBlank()) return;
+
+            IntegrationReport report = runLog.getReport();
+            eventPublisher.publishEvent(new com.acquira.common.event.IntegrationRunFailedEvent(
+                    runLog.getTenantId(),
+                    runLog.getId(),
+                    schedule.getId(),
+                    report != null ? report.getName() : "Unknown report",
+                    report != null && report.getReportType() != null ? report.getReportType().name() : null,
+                    report != null && report.getConnection() != null ? report.getConnection().getName() : null,
+                    runLog.getTriggerType() != null ? runLog.getTriggerType().name() : null,
+                    runLog.getErrorMessage(),
+                    runLog.getAttemptNumber() != null ? runLog.getAttemptNumber() : 1,
+                    runLog.getMaxRetries() != null ? runLog.getMaxRetries() : 1,
+                    runLog.getDateRangeFrom(),
+                    runLog.getDateRangeTo(),
+                    recipients));
+        } catch (Exception e) {
+            log.warn("[Integration] Could not publish failure alert for run #{}: {}",
+                    runLog.getId(), e.getMessage());
+        }
     }
 
     // ─── Public test connection ───────────────────────────────
 
     public boolean testConnection(IntegrationConnection config) {
-        try (Connection conn = DriverManager.getConnection(
-                config.getJdbcUrl(), config.getUsername(),
-                cryptoService.decrypt(config.getEncryptedPassword()))) {
-            return conn.isValid(config.getTimeoutSeconds() != null ? config.getTimeoutSeconds() : 5);
-        } catch (SQLException e) {
+        return testConnectionError(config) == null;
+    }
+
+    /**
+     * Returns null when the connection opens and is valid, otherwise the
+     * driver/validator error message — for the ad-hoc pre-save test in the
+     * connection editor, where "failed" alone isn't actionable.
+     */
+    public String testConnectionError(IntegrationConnection config) {
+        int timeout = config.getTimeoutSeconds() != null ? config.getTimeoutSeconds() : 5;
+        // loginTimeout goes through the per-connection property rather than the
+        // JVM-global DriverManager.setLoginTimeout, which would race other pulls.
+        java.util.Properties props = new java.util.Properties();
+        props.setProperty("user", config.getUsername() != null ? config.getUsername() : "");
+        props.setProperty("password", cryptoService.decrypt(config.getEncryptedPassword()));
+        props.setProperty("loginTimeout", String.valueOf(timeout));
+        try (Connection conn = DriverManager.getConnection(config.getJdbcUrl(), props)) {
+            return conn.isValid(timeout) ? null : "The driver reported the connection as not valid.";
+        } catch (SQLException | RuntimeException e) {
             log.error("Test connection failed for '{}': {}", config.getName(), e.getMessage());
-            return false;
+            return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
         }
     }
 
