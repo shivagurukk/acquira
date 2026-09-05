@@ -55,7 +55,15 @@ import java.util.stream.Collectors;
 @PreAuthorize("@menuAccess.canAccess('/business/top-performers')")
 public class TopPerformersController {
 
+    /** Default board depth; the UI can request 10–50 via the `top` param. */
     private static final int TOP_N = 10;
+    private static final int TOP_N_MAX = 50;
+
+    /** Clamp the caller-supplied board depth to [10, 50]. */
+    private static int resolveTopN(Integer top) {
+        if (top == null) return TOP_N;
+        return Math.max(TOP_N, Math.min(TOP_N_MAX, top));
+    }
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -121,8 +129,8 @@ public class TopPerformersController {
             reportCache.get(
                     com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
                     "topPerformers:" + tenantId + ":" + curWindow[0] + ":" + curWindow[1]
-                            + ":" + cardGrain + ":MTD:" + fk,
-                    () -> buildTopPerformers(filter, tenantId, cardGrain, curWindow, "MTD"));
+                            + ":" + cardGrain + ":MTD:" + TOP_N + ":" + fk,
+                    () -> buildTopPerformers(filter, tenantId, cardGrain, curWindow, "MTD", TOP_N));
         });
     }
 
@@ -138,6 +146,7 @@ public class TopPerformersController {
             @RequestParam(defaultValue = "MTD") String period,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer top,
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
 
         Long tenantId = tenantService.getCurrentTenantId();
@@ -149,6 +158,7 @@ public class TopPerformersController {
         // and the resolved filter DTO, so equivalent requests share an entry.
         LocalDate[] curWindow = resolveWindow(period, from, to);
         boolean cardGrain = usesCardFilters(filter);
+        final int topN = resolveTopN(top);
         final VolumeRevenueFilterDTO f = filter;
         String fk;
         try {
@@ -157,7 +167,7 @@ public class TopPerformersController {
             fk = null;
         }
         if (fk == null) {
-            return buildTopPerformers(f, tenantId, cardGrain, curWindow, period);
+            return buildTopPerformers(f, tenantId, cardGrain, curWindow, period, topN);
         }
         // period is part of the key even though the window is already resolved:
         // the payload echoes response.put("period", period), so period=MTD and
@@ -166,12 +176,12 @@ public class TopPerformersController {
         return reportCache.get(
                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
                 "topPerformers:" + tenantId + ":" + curWindow[0] + ":" + curWindow[1]
-                        + ":" + cardGrain + ":" + period + ":" + fk,
-                () -> buildTopPerformers(f, tenantId, cardGrain, curWindow, period));
+                        + ":" + cardGrain + ":" + period + ":" + topN + ":" + fk,
+                () -> buildTopPerformers(f, tenantId, cardGrain, curWindow, period, topN));
     }
 
     private Map<String, Object> buildTopPerformers(VolumeRevenueFilterDTO filter, Long tenantId,
-            boolean cardGrain, LocalDate[] curWindow, String period) {
+            boolean cardGrain, LocalDate[] curWindow, String period, int topN) {
 
         List<Map<String, Object>> current = runAggregate(filter, tenantId, cardGrain, curWindow[0], curWindow[1]);
 
@@ -180,6 +190,7 @@ public class TopPerformersController {
         response.put("period", period);
         response.put("from", curWindow[0].toString());
         response.put("to", curWindow[1].toString());
+        response.put("topN", topN);
 
         // Only merchants with actual volume are eligible for the "top" boards —
         // zero-volume merchants would just clutter a volume/net-revenue ranking.
@@ -187,25 +198,25 @@ public class TopPerformersController {
                 .filter(r -> toDouble(r.get("volume")) > 0)
                 .collect(Collectors.toList());
 
-        response.put("topMerchantsByVolume", rank(withVolume, "volume", TOP_N));
-        response.put("topMerchantsByNetRevenue", rank(withVolume, "netRevenue", TOP_N));
-        response.put("topMerchantsByNetSpread", rank(withVolume, "netSpread", TOP_N));
-        response.put("topMerchantsByTxns", rank(withVolume, "txns", TOP_N));
+        response.put("topMerchantsByVolume", rank(withVolume, "volume", topN));
+        response.put("topMerchantsByNetRevenue", rank(withVolume, "netRevenue", topN));
+        response.put("topMerchantsByNetSpread", rank(withVolume, "netSpread", topN));
+        response.put("topMerchantsByTxns", rank(withVolume, "txns", topN));
 
         Map<String, String> displayNames = agentDisplayNames(tenantId);
         List<Map<String, Object>> rmAgg = groupByRm(withVolume, displayNames);
-        response.put("topRmsByVolume", rank(rmAgg, "volume", TOP_N));
-        response.put("topRmsByNetRevenue", rank(rmAgg, "netRevenue", TOP_N));
-        response.put("topRmsByNetSpread", rank(rmAgg, "netSpread", TOP_N));
+        response.put("topRmsByVolume", rank(rmAgg, "volume", topN));
+        response.put("topRmsByNetRevenue", rank(rmAgg, "netRevenue", topN));
+        response.put("topRmsByNetSpread", rank(rmAgg, "netSpread", topN));
 
-        response.put("topMccs", topMccs(filter, tenantId, curWindow[0], curWindow[1]));
+        response.put("topMccs", topMccs(filter, tenantId, curWindow[0], curWindow[1], topN));
 
         // Effective onboarding dates back both remaining onboarding boards.
         Map<String, LocalDate> firstTxn = firstTxnDates(tenantId, cardGrain, curWindow[0], curWindow[1]);
         response.put("topSignedByRm", computeSignedByRm(current, firstTxn,
-                curWindow[0], curWindow[1], displayNames));
+                curWindow[0], curWindow[1], displayNames, topN));
         response.put("topNewMerchants", computeNewMerchants(withVolume, firstTxn,
-                curWindow[0], curWindow[1]));
+                curWindow[0], curWindow[1], topN));
 
         double totalVolume = current.stream().mapToDouble(r -> toDouble(r.get("volume"))).sum();
         double totalNet = current.stream().mapToDouble(r -> toDouble(r.get("netRevenue"))).sum();
@@ -399,7 +410,7 @@ public class TopPerformersController {
      * sheet doesn't know keeps its bare code.
      */
     private List<Map<String, Object>> topMccs(VolumeRevenueFilterDTO f, Long tenantId,
-            LocalDate from, LocalDate to) {
+            LocalDate from, LocalDate to, int topN) {
 
         boolean needMerchant = notEmpty(f.getPartnerList()) || notEmpty(f.getRmList())
                 || notEmpty(f.getTeamLeaderList()) || notEmpty(f.getMidList())
@@ -432,7 +443,7 @@ public class TopPerformersController {
             sql.append(") ");
         }
         sql.append("GROUP BY s.mcc HAVING COALESCE(SUM(s.total_volume), 0) > 0 ");
-        sql.append("ORDER BY volume DESC LIMIT ").append(TOP_N);
+        sql.append("ORDER BY volume DESC LIMIT ").append(topN);
 
         Query q = entityManager.createNativeQuery(sql.toString());
         q.setParameter("tid", tenantId);
@@ -583,7 +594,7 @@ public class TopPerformersController {
      */
     private List<Map<String, Object>> computeSignedByRm(List<Map<String, Object>> current,
             Map<String, LocalDate> firstTxnDates, LocalDate from, LocalDate to,
-            Map<String, String> displayNames) {
+            Map<String, String> displayNames, int topN) {
         Map<String, Map<String, Object>> byRm = new LinkedHashMap<>();
         for (Map<String, Object> r : current) {
             if (!inWindow(onboardDate(r, firstTxnDates), from, to)) continue;
@@ -606,7 +617,7 @@ public class TopPerformersController {
                     return byCount != 0 ? byCount
                             : Double.compare(toDouble(b.get("volume")), toDouble(a.get("volume")));
                 })
-                .limit(TOP_N)
+                .limit(topN)
                 .collect(Collectors.toList());
         int rank = 1;
         for (Map<String, Object> r : ranked) { r.put("rank", rank++); }
@@ -622,11 +633,11 @@ public class TopPerformersController {
      * transactions.
      */
     private List<Map<String, Object>> computeNewMerchants(List<Map<String, Object>> withVolume,
-            Map<String, LocalDate> firstTxnDates, LocalDate from, LocalDate to) {
+            Map<String, LocalDate> firstTxnDates, LocalDate from, LocalDate to, int topN) {
         List<Map<String, Object>> newOnes = withVolume.stream()
                 .filter(r -> inWindow(onboardDate(r, firstTxnDates), from, to))
                 .sorted((a, b) -> Double.compare(toDouble(b.get("volume")), toDouble(a.get("volume"))))
-                .limit(TOP_N)
+                .limit(topN)
                 .map(LinkedHashMap::new)
                 .collect(Collectors.toList());
         int rank = 1;

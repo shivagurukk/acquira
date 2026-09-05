@@ -609,20 +609,16 @@ const Dashboard = () => {
         { label: mode === 'MTD' ? 'Week' : 'Month' },
         { label: 'Transactions' },
         { label: 'Volume', ccy: true },
-        { label: 'Avg Ticket', ccy: true },
         { label: 'MSF', ccy: true },
         { label: 'Interchange', ccy: true },
         { label: 'Scheme Fee', ccy: true },
         { label: 'PG Fee', ccy: true },
         { label: 'Net Margin', ccy: true },
-        { label: 'Net Margin %' },
         // DCC + rental folded into one column (both are zero on most weeks);
         // the cell's hover carries the split. Net Spread stays last and bold.
         { label: 'Ancillary', ccy: true },
         { label: 'Net Spread', ccy: true },
     ];
-
-    const maxAbsMargin = Math.max(...viewData.map(b => Math.abs(b.marginPct)), 0.0001);
 
     return (
         <div className="exec-lume" style={{ padding: '24px 28px', width: '100%', position: 'relative' }}>
@@ -1057,7 +1053,6 @@ const Dashboard = () => {
                                         // would suppress the global table zebra.
                                         const tint = i === bestIdx ? rowGrad('var(--success)')
                                             : i === worstIdx ? rowGrad('var(--danger)') : null;
-                                        const marginW = Math.min(Math.abs(b.marginPct) / maxAbsMargin, 1) * 100;
                                         return (
                                             <tr key={b.label} className="exec-row" style={{
                                                 borderBottom: '1px solid var(--border)',
@@ -1078,7 +1073,6 @@ const Dashboard = () => {
                                                 </td>
                                                 <td style={tdNum} title={fullNum(b.txns)}>{num(b.txns).toLocaleString()}</td>
                                                 <td style={tdNum} title={fullNum(b.volume, currencySymbol)}>{fmt.amount(b.volume)}</td>
-                                                <td style={tdNum} title={fullNum(b.avgTicket, currencySymbol)}>{fmt.amount(b.avgTicket)}</td>
                                                 <td style={tdNum} title={formatMsf(b.msf, currencySymbol)}>{fmt.amount(b.msf)}</td>
                                                 <td style={tdNum} title={`${fullNum(b.interchange, currencySymbol)} · ${ratePctTitle(b.interchange, b.volume)}`}>
                                                     {fmt.amount(b.interchange)}
@@ -1091,20 +1085,9 @@ const Dashboard = () => {
                                                 <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.amount(b.ecomFee)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 600,
                                                     color: b.netRevenue >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
-                                                    title={fullNum(b.netRevenue, currencySymbol)}>{fmt.amount(b.netRevenue)}</td>
-                                                <td style={{ ...tdNum, fontWeight: 600,
-                                                    color: b.marginPct >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
-                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
-                                                        <span style={{ width: 44, height: 5, borderRadius: 999,
-                                                            background: 'var(--bg-subtle)',
-                                                            overflow: 'hidden', display: 'inline-block' }}>
-                                                            <span style={{ display: 'block', height: '100%',
-                                                                width: `${marginW}%`, borderRadius: 999,
-                                                                transition: 'width 600ms cubic-bezier(0.22, 1, 0.36, 1)',
-                                                                background: b.marginPct >= 0 ? 'var(--grad-accent)' : 'var(--danger)' }} />
-                                                        </span>
-                                                        {b.marginPct.toFixed(2)}%
-                                                    </span>
+                                                    title={`${fullNum(b.netRevenue, currencySymbol)} · ${b.marginPct.toFixed(4)}% of volume`}>
+                                                    {fmt.amount(b.netRevenue)}
+                                                    <span style={rateInline}>({b.marginPct.toFixed(2)}%)</span>
                                                 </td>
                                                 <td style={{ ...tdNum, color: SERIES.ancillary }}
                                                     title={`DCC (acquirer) ${fullNum(b.dccAcquirer, currencySymbol)} · Rental ${fullNum(b.rental, currencySymbol)}`}>
@@ -1126,7 +1109,6 @@ const Dashboard = () => {
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.txns)}>{num(vt.txns).toLocaleString()}</td>
                                         <td style={tdTotal} title={fullNum(vt.volume, currencySymbol)}>{fmt.amount(num(vt.volume))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.avgTicket, currencySymbol)}>{fmt.amount(num(vt.avgTicket))}</td>
                                         <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.amount(num(vt.msf))}</td>
                                         <td style={tdTotal} title={`${fullNum(vt.interchange, currencySymbol)} · ${ratePctTitle(vt.interchange, vt.volume)}`}>
                                             {fmt.amount(num(vt.interchange))}
@@ -1137,10 +1119,10 @@ const Dashboard = () => {
                                             <span style={rateInline}>({ratePct(vt.schemeFee, vt.volume)})</span>
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.amount(num(vt.ecomFee))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.amount(num(vt.netRevenue))}</td>
-                                        <td style={{ ...tdTotal,
-                                            color: num(vt.marginPct) >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
-                                            {num(vt.marginPct).toFixed(2)}%
+                                        <td style={{ ...tdTotal, color: num(vt.netRevenue) >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
+                                            title={`${fullNum(vt.netRevenue, currencySymbol)} · ${num(vt.marginPct).toFixed(4)}% of volume`}>
+                                            {fmt.amount(num(vt.netRevenue))}
+                                            <span style={rateInline}>({num(vt.marginPct).toFixed(2)}%)</span>
                                         </td>
                                         <td style={{ ...tdTotal, color: SERIES.ancillary }}
                                             title={`DCC (acquirer) ${fullNum(vt.dccAcquirer, currencySymbol)} · Rental ${fullNum(vt.rental, currencySymbol)}`}>

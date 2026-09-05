@@ -22,6 +22,9 @@ const BOARD_TABS = [
 // Ancillary-income hue for the Net Spread boards (see --mix-ancillary).
 const SPREAD_HUE = 'var(--mix-ancillary, #A85D9C)';
 
+// Board depth choices — the server clamps to this same range.
+const TOP_N_OPTIONS = [10, 20, 30, 40, 50];
+
 // ─── Local design tokens (matches Daily Merchant Dashboard / Attrition Report) ───
 const T = {
     card:     'var(--bg-card, #ffffff)',
@@ -284,6 +287,7 @@ const TopPerformers = () => {
     const [filters, setFilters] = useState(emptyFilters());
     const [showFilters, setShowFilters] = useState(false);
     const [boardTab, setBoardTab] = useState('volume');
+    const [topN, setTopN] = useState(10);
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -292,7 +296,7 @@ const TopPerformers = () => {
     // so the board could show results for a window the user had already moved off.
     const reqSeq = React.useRef(0);
 
-    const fetchData = async (explicitFilters) => {
+    const fetchData = async (explicitFilters, explicitTopN) => {
         const f = explicitFilters || filters;
         const seq = ++reqSeq.current;
         setLoading(true);
@@ -300,6 +304,8 @@ const TopPerformers = () => {
             const params = new URLSearchParams();
             if (f.startDate) params.set('from', f.startDate);
             if (f.endDate) params.set('to', f.endDate);
+            const n = explicitTopN || topN;
+            if (n !== 10) params.set('top', n);
             const body = { ...f, startDate: undefined, endDate: undefined, datePreset: undefined };
             const res = await api.post(`/business/top-performers-filtered?${params.toString()}`, body);
             if (seq === reqSeq.current) setData(res.data);
@@ -336,6 +342,10 @@ const TopPerformers = () => {
             icon: Trophy, color: 'var(--warning, #d97706)',
         },
     ] : [];
+
+    // Prefer the echoed depth so titles always describe the rows on screen,
+    // even while a new depth's fetch is still in flight.
+    const boardN = data?.topN || topN;
 
     const grainNote = data?.grain === 'insight'
         ? 'Card-level filters active — showing cardholder-currency volume; net margin approximated as MSF (net spread = MSF + the merchant’s whole DCC and rental, which cannot be sliced by card).'
@@ -391,7 +401,7 @@ const TopPerformers = () => {
                     {/* Ten boards became too many for one grid. Grouped by the
                         measure they rank on; the tab is a plain in-memory switch
                         (no refetch — the payload already carries every board). */}
-                    <Box role="tablist" aria-label="Board group" sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 0.5 }}>
+                    <Box role="tablist" aria-label="Board group" sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 0.5, alignItems: 'center' }}>
                         {BOARD_TABS.map(t => (
                             <button key={t.key} type="button" role="tab" aria-selected={boardTab === t.key}
                                 onClick={() => setBoardTab(t.key)}
@@ -404,33 +414,56 @@ const TopPerformers = () => {
                                 {t.label}
                             </button>
                         ))}
-                        <Box sx={{ ml: 'auto', display: 'inline-flex', alignItems: 'center' }}>
-                            <MarginGlossaryHint />
+                        {/* Board depth — unlike the tabs, changing it refetches:
+                            the server only ever returns the requested N rows. */}
+                        <Box role="group" aria-label="Board depth" sx={{
+                            ml: 'auto', display: 'inline-flex', alignItems: 'center', gap: 0.5,
+                        }}>
+                            <Typography fontSize="0.72rem" fontWeight={700} color={T.textMut}
+                                sx={{ mr: 0.5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                Top
+                            </Typography>
+                            {TOP_N_OPTIONS.map(n => (
+                                <button key={n} type="button" aria-pressed={topN === n}
+                                    onClick={() => { if (topN !== n) { setTopN(n); fetchData(undefined, n); } }}
+                                    style={{
+                                        border: `1px solid ${topN === n ? T.brand : T.border}`,
+                                        background: topN === n ? `color-mix(in srgb, ${T.brand} 12%, transparent)` : T.card,
+                                        color: topN === n ? T.brand : T.textSec,
+                                        borderRadius: 8, padding: '4px 9px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                                        fontFamily: 'var(--font-mono)',
+                                    }}>
+                                    {n}
+                                </button>
+                            ))}
+                            <Box sx={{ ml: 0.75, display: 'inline-flex', alignItems: 'center' }}>
+                                <MarginGlossaryHint />
+                            </Box>
                         </Box>
                     </Box>
                     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 2.5 }}>
                     {boardTab === 'volume' && (<>
                         <LeaderboardCard
-                            title="Top 10 Merchants — Volume" icon={Sparkles} color={LB_HUE}
+                            title={`Top ${boardN} Merchants — Volume`} icon={Sparkles} color={LB_HUE}
                             rows={data.topMerchantsByVolume} primaryKey="name" secondaryKey="mid"
                             valueKey="volume" valueFmt={fmt.currency}
                             onExport={() => exportToCSV(data.topMerchantsByVolume, 'top_merchants_by_volume')}
                         />
                         <LeaderboardCard
-                            title="Top 10 RMs — Volume" icon={Users} color={LB_HUE}
+                            title={`Top ${boardN} RMs — Volume`} icon={Users} color={LB_HUE}
                             rows={data.topRmsByVolume} primaryKey="name" secondaryKey="salesUserId"
                             valueKey="volume" valueFmt={fmt.currency}
                             onExport={() => exportToCSV(data.topRmsByVolume, 'top_rms_by_volume')}
                         />
                         <LeaderboardCard
-                            title="Top 10 MCC — Volume" icon={Layers} color={LB_HUE}
+                            title={`Top ${boardN} MCC — Volume`} icon={Layers} color={LB_HUE}
                             rows={data.topMccs} primaryKey="name" secondaryKey="mcc"
                             valueKey="volume" valueFmt={fmt.currency}
                             emptyLabel="No MCC-level data for this window (sum_daily_full not yet populated)."
                             onExport={() => exportToCSV(data.topMccs, 'top_mccs_by_volume')}
                         />
                         <LeaderboardCard
-                            title="Top 10 New Merchants" icon={Sparkles} color={LB_HUE}
+                            title={`Top ${boardN} New Merchants`} icon={Sparkles} color={LB_HUE}
                             rows={data.topNewMerchants} primaryKey="name" secondaryKey="mid"
                             valueKey="volume" valueFmt={fmt.currency}
                             emptyLabel="No merchants onboarded in this window."
@@ -439,13 +472,13 @@ const TopPerformers = () => {
                     </>)}
                     {boardTab === 'margin' && (<>
                         <LeaderboardCard
-                            title="Top 10 Merchants — Net Margin" icon={TrendingUp} color={LB_HUE}
+                            title={`Top ${boardN} Merchants — Net Margin`} icon={TrendingUp} color={LB_HUE}
                             rows={data.topMerchantsByNetRevenue} primaryKey="name" secondaryKey="mid"
                             valueKey="netRevenue" valueFmt={fmt.currency}
                             onExport={() => exportToCSV(data.topMerchantsByNetRevenue, 'top_merchants_by_net_revenue')}
                         />
                         <LeaderboardCard
-                            title="Top 10 RMs — Net Margin" icon={Trophy} color={LB_HUE}
+                            title={`Top ${boardN} RMs — Net Margin`} icon={Trophy} color={LB_HUE}
                             rows={data.topRmsByNetRevenue} primaryKey="name" secondaryKey="salesUserId"
                             valueKey="netRevenue" valueFmt={fmt.currency}
                             onExport={() => exportToCSV(data.topRmsByNetRevenue, 'top_rms_by_net_revenue')}
@@ -453,13 +486,13 @@ const TopPerformers = () => {
                     </>)}
                     {boardTab === 'spread' && (<>
                         <LeaderboardCard
-                            title="Top 10 Merchants — Net Spread" icon={Layers} color={SPREAD_HUE}
+                            title={`Top ${boardN} Merchants — Net Spread`} icon={Layers} color={SPREAD_HUE}
                             rows={data.topMerchantsByNetSpread || []} primaryKey="name" secondaryKey="mid"
                             valueKey="netSpread" valueFmt={fmt.currency}
                             onExport={() => exportToCSV(data.topMerchantsByNetSpread || [], 'top_merchants_by_net_spread')}
                         />
                         <LeaderboardCard
-                            title="Top 10 RMs — Net Spread" icon={Layers} color={SPREAD_HUE}
+                            title={`Top ${boardN} RMs — Net Spread`} icon={Layers} color={SPREAD_HUE}
                             rows={data.topRmsByNetSpread || []} primaryKey="name" secondaryKey="salesUserId"
                             valueKey="netSpread" valueFmt={fmt.currency}
                             onExport={() => exportToCSV(data.topRmsByNetSpread || [], 'top_rms_by_net_spread')}
@@ -467,13 +500,13 @@ const TopPerformers = () => {
                     </>)}
                     {boardTab === 'activity' && (<>
                         <LeaderboardCard
-                            title="Top 10 Merchants — Transactions" icon={Receipt} color={LB_HUE}
+                            title={`Top ${boardN} Merchants — Transactions`} icon={Receipt} color={LB_HUE}
                             rows={data.topMerchantsByTxns} primaryKey="name" secondaryKey="mid"
                             valueKey="txns" valueFmt={fmt.number}
                             onExport={() => exportToCSV(data.topMerchantsByTxns, 'top_merchants_by_txns')}
                         />
                         <LeaderboardCard
-                            title="Top 10 RMs — Merchants Signed" icon={UserPlus} color={LB_HUE}
+                            title={`Top ${boardN} RMs — Merchants Signed`} icon={UserPlus} color={LB_HUE}
                             rows={data.topSignedByRm} primaryKey="name" secondaryKey="salesUserId"
                             valueKey="signedCount" valueFmt={(v) => `${fmt.number(v)} signed`}
                             emptyLabel="No merchants onboarded in this window."
