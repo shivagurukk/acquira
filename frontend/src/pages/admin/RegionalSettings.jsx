@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Globe2, Clock, UploadCloud, Save } from 'lucide-react';
+import { Globe2, Clock, UploadCloud, Save, SlidersHorizontal } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
@@ -39,6 +39,9 @@ const KEYS = {
     dateFormat: 'locale.date_format',
     timezone: 'locale.timezone',
     loadMode: 'load.mode',
+    // Pricing Simulator v2 segment calculations — read by
+    // PricingSimulatorService.isEnabled (absent = enabled).
+    pricingSimulator: 'pricing.simulator_enabled',
 };
 
 const DATE_FORMAT_OPTIONS = DATE_FORMATS.map(f => ({
@@ -58,7 +61,7 @@ const titleRowStyle = { gap: 8, flexWrap: 'nowrap' };
 
 const RegionalSettings = () => {
     const { tenantVersion } = useAuth();
-    const [values, setValues] = useState({ dateFormat: 'DD/MM/YYYY', timezone: '', loadMode: '' });
+    const [values, setValues] = useState({ dateFormat: 'DD/MM/YYYY', timezone: '', loadMode: '', pricingSimulator: 'true' });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
@@ -68,13 +71,15 @@ const RegionalSettings = () => {
         api.get('/admin/settings')
             .then(res => {
                 if (cancelled) return;
-                const next = { dateFormat: 'DD/MM/YYYY', timezone: '', loadMode: '' };
+                const next = { dateFormat: 'DD/MM/YYYY', timezone: '', loadMode: '', pricingSimulator: 'true' };
                 (res.data || []).forEach(s => {
                     const k = s.key || s.settingKey;
                     const v = s.value ?? s.settingValue ?? '';
                     if (k === KEYS.dateFormat && v) next.dateFormat = v;
                     if (k === KEYS.timezone) next.timezone = v || '';
                     if (k === KEYS.loadMode) next.loadMode = v || '';
+                    // Only an explicit 'false' disables (mirrors backend semantics).
+                    if (k === KEYS.pricingSimulator) next.pricingSimulator = String(v).toLowerCase() === 'false' ? 'false' : 'true';
                 });
                 setValues(next);
             })
@@ -93,6 +98,7 @@ const RegionalSettings = () => {
             if (values.loadMode) {
                 await api.put('/admin/settings', { settingKey: KEYS.loadMode, settingValue: values.loadMode });
             }
+            await api.put('/admin/settings', { settingKey: KEYS.pricingSimulator, settingValue: values.pricingSimulator });
             showToast('Settings saved. Date format applies after the next page refresh; load mode applies to the next upload.', 'success');
         } catch (e) {
             showToast(e?.response?.data?.error || 'Save failed', 'error');
@@ -182,6 +188,31 @@ const RegionalSettings = () => {
                                 onChange={e => setValues(v => ({ ...v, loadMode: e.target.value }))}
                                 placeholder="Platform default (follows server configuration)"
                                 options={LOAD_MODE_OPTIONS}
+                                style={{ maxWidth: 460 }}
+                            />
+                        </FormField>
+                    </Card>
+
+                    <Card
+                        pad
+                        title={
+                            <span className="ui-row" style={titleRowStyle}>
+                                <SlidersHorizontal size={15} strokeWidth={2} style={titleIconStyle} />
+                                Pricing Simulator
+                            </span>
+                        }
+                    >
+                        <FormField
+                            label="Segment margin calculations (per card scheme × card type × local/international)"
+                            hint="When off, the Pricing Simulator screen stops running its segment calculations for this bank — the page shows a notice instead and its APIs refuse requests. Existing data is untouched."
+                        >
+                            <Select
+                                value={values.pricingSimulator}
+                                onChange={e => setValues(v => ({ ...v, pricingSimulator: e.target.value }))}
+                                options={[
+                                    { value: 'true', label: 'Enabled (default) — calculate segment margins' },
+                                    { value: 'false', label: 'Disabled — do not calculate for this bank' },
+                                ]}
                                 style={{ maxWidth: 460 }}
                             />
                         </FormField>
