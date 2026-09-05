@@ -74,6 +74,7 @@ const ROUTE_IMPORTS = {
     '/ops/batch-logs': () => import('./pages/BatchMonitoring'),
     '/ops/ingest-trust': () => import('./pages/ops/IngestTrust'),
     '/ops/scheme-billing-reference': () => import('./pages/ops/SchemeBillingReference'),
+    '/ops/daily-digest': () => import('./pages/ops/DailyDigest'),
     '/business/emails': () => import('./pages/StatementEmails'),
     '/business/revenue-leakage': () => import('./pages/business/RevenueLeakage'),
 

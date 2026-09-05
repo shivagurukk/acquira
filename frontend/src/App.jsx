@@ -63,6 +63,7 @@ const RbacGroups = lazy(() => import('./pages/RbacGroups'));
 const BatchMonitoring = lazy(() => import('./pages/BatchMonitoring'));
 const IngestTrust = lazy(() => import('./pages/ops/IngestTrust'));
 const SchemeBillingReference = lazy(() => import('./pages/ops/SchemeBillingReference'));
+const DailyDigest = lazy(() => import('./pages/ops/DailyDigest'));
 const GroupReports = lazy(() => import('./pages/GroupReports'));
 const FinanceSummary = lazy(() => import('./pages/finance/FinanceSummary'));
 const MerchantInsightHub = lazy(() => import('./pages/reports/MerchantInsightHub'));
@@ -186,6 +187,9 @@ function App() {
               } />
               <Route path="/ops/scheme-billing-reference" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SchemeBillingReference /></RoleGuard>
+              } />
+              <Route path="/ops/daily-digest" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><DailyDigest /></RoleGuard>
               } />
               <Route path="/business/emails" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><StatementEmails /></RoleGuard>
