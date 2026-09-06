@@ -34,6 +34,19 @@ public class SummaryPopulationService {
 
     private static final Logger log = LoggerFactory.getLogger(SummaryPopulationService.class);
 
+    /**
+     * Domestic card schemes — cards on a national switch that can NEVER be
+     * offered Dynamic Currency Conversion, whatever the feed's destination flag
+     * says (Benefit=BH, mada=SA, KNET=KW, Meeza=EG, NAPS=QA, OmanNet=OM,
+     * Aani=AE, JoNet=JO). Matched against UPPER(TRIM(card_scheme)).
+     */
+    private static final String DOMESTIC_SCHEMES =
+        "('BENEFIT','BENEFIT QR','MADA','KNET','MEEZA','NAPS','OMANNET','AANI','JONET')";
+
+    /** DCC-eligible transaction: international destination on a non-domestic scheme. */
+    private static final String DCC_ELIGIBLE_COND =
+        "UPPER(f.destination)='INTERNATIONAL' AND UPPER(TRIM(COALESCE(f.card_scheme,''))) NOT IN " + DOMESTIC_SCHEMES;
+
     private final JdbcTemplate jdbcTemplate;
     private final DataSource dataSource;
 
@@ -186,11 +199,16 @@ public class SummaryPopulationService {
                         "SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT','PREPAID') THEN f.store_base_currency_amount ELSE 0 END), " +
                         "SUM(CASE WHEN UPPER(f.card_type) = 'CREDIT' THEN f.store_base_currency_amount ELSE 0 END), " +
                         "m.sales_user_id, COUNT(DISTINCT f.card_number), " +
-                        "SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN f.store_base_currency_amount ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN f.store_base_currency_amount ELSE 0 END), " +
-                        "SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.store_base_currency_amount ELSE 0 END), " +
-                        "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN 1 END), " +
-                        "COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END) " +
+                        // DCC eligibility = destination INTERNATIONAL *and* not a domestic
+                        // card scheme. Feeds occasionally mislabel domestic-switch cards as
+                        // International (2026-08 AFSB: 4 Benefit rows paying in BHD), and a
+                        // Benefit/mada/KNET/... card can never be offered DCC — counting
+                        // them fabricated a "missed DCC revenue" story on the merchant PDF.
+                        "SUM(CASE WHEN " + DCC_ELIGIBLE_COND + " THEN f.store_base_currency_amount ELSE 0 END), " +
+                        "SUM(CASE WHEN " + DCC_ELIGIBLE_COND + " AND f.dcc IS TRUE THEN f.store_base_currency_amount ELSE 0 END), " +
+                        "SUM(CASE WHEN " + DCC_ELIGIBLE_COND + " AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.store_base_currency_amount ELSE 0 END), " +
+                        "COUNT(CASE WHEN " + DCC_ELIGIBLE_COND + " THEN 1 END), " +
+                        "COUNT(CASE WHEN " + DCC_ELIGIBLE_COND + " AND f.dcc IS TRUE THEN 1 END) " +
                         "FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id AND m.tenant_id = f.tenant_id " +
                         "WHERE f.tenant_id = ? AND " + rngF + "DATE(f.payment_date) IN " + dateScope +
                         " GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, m.sales_user_id " +
