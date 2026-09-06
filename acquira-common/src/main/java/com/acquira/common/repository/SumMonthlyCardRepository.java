@@ -87,4 +87,27 @@ public interface SumMonthlyCardRepository extends JpaRepository<SumMonthlyCard, 
             @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
             @org.springframework.data.repository.query.Param("startMonth") Integer startMonth,
             @org.springframework.data.repository.query.Param("endMonth") Integer endMonth);
+
+    /**
+     * Highest per-CARD spend per merchant over a month window:
+     * (merchant_id, top_spend). A card's rows are summed across the window
+     * first (multi-month windows collapse to one spend per card), then MAX'd.
+     * Powers the "Top Customer Spend" tile on the merchant PDF —
+     * sum_daily_merchant.top_spending_amount is only the best card-DAY, which
+     * understated any cardholder who spread their spend across several days.
+     */
+    @Query(value = """
+            SELECT t.merchant_id, MAX(t.spend) AS top_spend
+            FROM (SELECT merchant_id, card_number, SUM(total_spend) AS spend
+                  FROM sum_monthly_card
+                  WHERE tenant_id = :tenantId
+                    AND merchant_id IN (:merchantIds) AND month_key BETWEEN :startMonth AND :endMonth
+                  GROUP BY merchant_id, card_number) t
+            GROUP BY t.merchant_id
+            """, nativeQuery = true)
+    List<Object[]> topCardSpendPerMerchant(
+            @org.springframework.data.repository.query.Param("tenantId") Long tenantId,
+            @org.springframework.data.repository.query.Param("merchantIds") java.util.List<Long> merchantIds,
+            @org.springframework.data.repository.query.Param("startMonth") Integer startMonth,
+            @org.springframework.data.repository.query.Param("endMonth") Integer endMonth);
 }

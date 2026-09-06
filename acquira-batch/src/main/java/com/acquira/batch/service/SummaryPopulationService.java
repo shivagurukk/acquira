@@ -490,6 +490,22 @@ public class SummaryPopulationService {
                         " GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date) " +
                         "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
                         "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
+                    // DOW_HOUR: trading day-of-week × hour, value '<isoDow>|<hour>' (1=Mon..7=Sun).
+                    // Feeds that settle next-day (e.g. AFS BH) put a txn traded Sun 19:33 under
+                    // Monday's payment_date; the HOUR attribute above keys by DATE(payment_date),
+                    // so pairing its hour with business_date's weekday shifted every merchant-report
+                    // day-of-week chart/heatmap by one day. Here BOTH the weekday and the hour come
+                    // from transaction_date (the real trading timestamp), while business_date stays
+                    // DATE(payment_date) so day-wipe/replace scoping keeps covering these rows.
+                    totalRows += jdbcTemplate.update(
+                        "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
+                        "SELECT tenant_id, merchant_id, DATE(payment_date), 'DOW_HOUR', " +
+                        "CONCAT(CAST(EXTRACT(ISODOW FROM transaction_date) AS INT), '|', CAST(EXTRACT(HOUR FROM transaction_date) AS INT)), " +
+                        "COUNT(*), SUM(store_base_currency_amount) " +
+                        "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND transaction_date IS NOT NULL AND " + rngBare + "DATE(payment_date) IN " + dateScope +
+                        " GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(ISODOW FROM transaction_date), EXTRACT(HOUR FROM transaction_date) " +
+                        "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
+                        "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume", tenantId);
                     // Clear the whole TXN_SIZE_BUCKET slice for this date scope before
                     // reinserting. Previously only the legacy '1K+' label was deleted,
                     // which was enough while the band labels were fixed constants. Now

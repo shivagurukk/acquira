@@ -34,7 +34,7 @@
             <div class="card card-accent-amber" style="padding: 10px 12px;">
                 <div class="kpi-label">TOP CUSTOMER SPEND (<span th:text="${dto.currencyCode}">AED</span>)</div>
                 <div style="font-size: 20px; font-weight: 900; color: #111827; margin: 3px 0 2px 0; letter-spacing: -0.02em;" th:text="${dto.overview.peakStats.highestCustomerSpend != null ? dto.currencyCode + ' ' + dto.overview.peakStats.highestCustomerSpend.formattedValue : '-'}">0</div>
-                <span class="text-xs text-muted">Highest individual spend</span>
+                <span class="text-xs text-muted">Highest single-card spend this month</span>
             </div>
         </div>
 
