@@ -1,5 +1,5 @@
 -- ============================================================================
--- NEXTCORP WLL — ecom FX rate row (EUR), MID supplied by business 2026-09-07.
+-- NEXTCORP WLL - ecom FX rate row (EUR), MID supplied by business 2026-09-07.
 --
 -- Companion to V2026_09_07_01__netspread_ecom_fx_revenue.sql, whose name-based
 -- NEXTCORP seed found no merchant at apply time. Calc-sheet rates:
@@ -14,7 +14,8 @@
 INSERT INTO ref_ecom_fx_rate (tenant_id, mid, txn_currency, board_rate, cost_rate, multiplier, label)
 SELECT t.tenant_id, '000000000565200', 'EUR', 0.440, 0.430, 0.430, 'NEXTCORP EUR'
 FROM tenant t
-WHERE t.home_country_code = 'BH'
+-- AFSB acquiring tenant ONLY (user decision 2026-09-07: FX is not for every BH tenant).
+WHERE t.institution_id = 'AFSB'
   AND NOT EXISTS (SELECT 1 FROM ref_ecom_fx_rate x
                   WHERE x.tenant_id = t.tenant_id
                     AND x.mid = '000000000565200'

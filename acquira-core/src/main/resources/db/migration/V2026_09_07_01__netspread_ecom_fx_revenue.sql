@@ -14,26 +14,26 @@
 --               preserved verbatim below: mult 0.370 vs cost 0.430 )
 --
 -- Applies ONLY to ECOM transactions NOT carried by Benefit PG (Benefit is the
--- domestic scheme/gateway — no FX), and only to currencies with a seeded rate
+-- domestic scheme/gateway - no FX), and only to currencies with a seeded rate
 -- row (BHD deliberately has none). Merchant-specific negotiated rates override
 -- the tenant defaults (TAP / RAIN / COINMENA / NEXTCORP).
 --
 -- DESIGN
 -- ------
--- * ref_ecom_fx_rate — rate table instead of a hardcoded if-chain; mid NULL =
+-- * ref_ecom_fx_rate - rate table instead of a hardcoded if-chain; mid NULL =
 --   tenant default, a mid-specific row wins. MIDs are compared with leading
 --   zeros stripped on BOTH sides (feed MIDs are 15-digit zero-padded).
 -- * fx_revenue columns on sum_daily_merchant + sum_daily_finance_rollup,
 --   re-derived from fact_transaction by AncillarySql (same lifecycle as
---   dcc_acquirer / rental_amount — clean-slate rebuilds re-derive, never wipe).
--- * tenant_setting 'netspread.fx_enabled' — read by NetSpreadController.
+--   dcc_acquirer / rental_amount - clean-slate rebuilds re-derive, never wipe).
+-- * tenant_setting 'netspread.fx_enabled' - read by NetSpreadController.
 --   OPT-IN: only an explicit 'true' shows the FX column and adds it to the
 --   spread (unlike pricing.simulator_enabled's fail-open, because tenants
 --   without rate rows would otherwise show a dead all-zero column).
 -- * Refunds need no special casing: fact rows are volume-signed (REFUND rows
 --   carry a negative store_base_currency_amount), so the formula reverses the
 --   FX income on refunds by construction.
--- * Historic days need a summary rebuild (or any re-ingest) to pick up FX —
+-- * Historic days need a summary rebuild (or any re-ingest) to pick up FX -
 --   the columns start at 0 and only AncillarySql fills them.
 --
 -- Idempotent; splitter-safe (no dollar-quoting, no DO blocks).
@@ -64,7 +64,8 @@ ALTER TABLE sum_daily_finance_rollup ADD COLUMN IF NOT EXISTS fx_revenue NUMERIC
 COMMENT ON COLUMN sum_daily_merchant.fx_revenue IS
   'ECOM FX income (excl. Benefit PG), re-derived from fact_transaction x ref_ecom_fx_rate by AncillarySql. Added to Net Spread only when tenant_setting netspread.fx_enabled = true.';
 
--- 3. Seed: tenant defaults for every BH tenant (guarded, never clobbers) -----
+-- 3. Seed: tenant defaults - the AFSB acquiring tenant ONLY (user decision
+--    2026-09-07: FX is for the acquiring tenant, not every BH tenant), guarded.
 -- Sheet default rows. EUR multiplier 0.370 (not its 0.430 cost rate) and the
 -- zero-margin OMR row (0.980/0.980) are VERBATIM from the sheet.
 INSERT INTO ref_ecom_fx_rate (tenant_id, mid, txn_currency, board_rate, cost_rate, multiplier, label)
@@ -80,7 +81,7 @@ JOIN ( VALUES
   ('EUR', 0.440, 0.430, 0.370, 'BH default EUR (sheet multiplier 0.370, verbatim)'),
   ('OMR', 0.980, 0.980, 0.970, 'BH default OMR (equal rates - zero margin, verbatim)')
 ) AS v(ccy, b, c, m, lbl) ON TRUE
-WHERE t.home_country_code = 'BH'
+WHERE t.institution_id = 'AFSB'
   AND NOT EXISTS (SELECT 1 FROM ref_ecom_fx_rate x
                   WHERE x.tenant_id = t.tenant_id AND x.mid IS NULL
                     AND x.txn_currency = v.ccy);
@@ -118,29 +119,29 @@ JOIN ( VALUES
   ('000000000266544', 'OMR', 0.980, 0.980, 0.980, 'RAIN OMR (zero margin, verbatim)'),
   ('000000000266544', 'EUR', 0.440, 0.400, 0.400, 'RAIN EUR')
 ) AS v(mid, ccy, b, c, m, lbl) ON TRUE
-WHERE t.home_country_code = 'BH'
+WHERE t.institution_id = 'AFSB'
   AND NOT EXISTS (SELECT 1 FROM ref_ecom_fx_rate x
                   WHERE x.tenant_id = t.tenant_id AND x.mid = v.mid
                     AND x.txn_currency = v.ccy);
 
--- NEXTCORP WLL (EUR only) — the sheet gave no MID, so resolve it from
+-- NEXTCORP WLL (EUR only) - the sheet gave no MID, so resolve it from
 -- dim_merchant by name at apply time. If NEXTCORP is not onboarded yet this
 -- seeds nothing; insert its row manually once the MID is known.
 INSERT INTO ref_ecom_fx_rate (tenant_id, mid, txn_currency, board_rate, cost_rate, multiplier, label)
 SELECT m.tenant_id, m.mid, 'EUR', 0.440, 0.430, 0.430, 'NEXTCORP EUR (mid resolved by name)'
 FROM dim_merchant m
-JOIN tenant t ON t.tenant_id = m.tenant_id AND t.home_country_code = 'BH'
+JOIN tenant t ON t.tenant_id = m.tenant_id AND t.institution_id = 'AFSB'
 WHERE UPPER(m.name) LIKE 'NEXTCORP%'
   AND NOT EXISTS (SELECT 1 FROM ref_ecom_fx_rate x
                   WHERE x.tenant_id = m.tenant_id AND x.mid = m.mid
                     AND x.txn_currency = 'EUR');
 
--- 5. Tenant flag: ON for BH tenants (guarded — a deliberate later 'false'
+-- 5. Tenant flag: ON for BH tenants (guarded - a deliberate later 'false'
 --    is never forced back). Absent/false = FX hidden and excluded from spread.
 INSERT INTO tenant_setting (tenant_id, setting_key, setting_value, setting_type)
 SELECT t.tenant_id, 'netspread.fx_enabled', 'true', 'BOOLEAN'
 FROM tenant t
-WHERE t.home_country_code = 'BH'
+WHERE t.institution_id = 'AFSB'
 ON CONFLICT (tenant_id, setting_key) DO NOTHING;
 
 -- Verify
@@ -148,3 +149,4 @@ SELECT tenant_id, COALESCE(mid,'(default)') AS mid, txn_currency, board_rate, co
 FROM ref_ecom_fx_rate ORDER BY tenant_id, mid NULLS FIRST, txn_currency;
 
 INSERT INTO schema_migration_log (filename) VALUES ('V2026_09_07_01__netspread_ecom_fx_revenue.sql') ON CONFLICT (filename) DO NOTHING;
+
