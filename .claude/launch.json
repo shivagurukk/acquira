@@ -8,6 +8,12 @@
       "port": 8081
     },
     {
+      "name": "backend-8082",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run", "-pl", "acquira-core", "-o", "-Dspring-boot.run.arguments=--spring.sql.init.mode=never --server.port=8082 --app.cors.origins=http://localhost:5173,http://localhost:5174,http://localhost:5175"],
+      "port": 8082
+    },
+    {
       "name": "frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5174", "--strictPort"],
@@ -20,6 +26,13 @@
       "runtimeArgs": ["run", "dev", "--", "--port", "5173", "--strictPort"],
       "cwd": "frontend",
       "port": 5173
+    },
+    {
+      "name": "frontend-8082",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set BACKEND_PORT=8082&& npm run dev -- --port 5175 --strictPort"],
+      "cwd": "frontend",
+      "port": 5175
     }
   ]
 }

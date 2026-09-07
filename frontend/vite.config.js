@@ -68,7 +68,8 @@ export default defineConfig({
     port: Number(process.env.PORT) || 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8081',
+        // BACKEND_PORT lets a second dev pair run beside the default 8081.
+        target: `http://localhost:${process.env.BACKEND_PORT || 8081}`,
         changeOrigin: true,
         secure: false
       }

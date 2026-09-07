@@ -40,6 +40,9 @@ const MerchantHeatmap = lazy(() => import('./pages/business/MerchantHeatmap'));
 const DailyMerchantDashboard = lazy(() => import('./pages/business/DailyMerchantDashboard'));
 const DestinationDashboard = lazy(() => import('./pages/business/DestinationDashboard'));
 const CardTypeDashboard = lazy(() => import('./pages/business/CardTypeDashboard'));
+const IndustryAnalytics = lazy(() => import('./pages/business/IndustryAnalytics'));
+const RevenueMix = lazy(() => import('./pages/business/RevenueMix'));
+const VolumeDrop = lazy(() => import('./pages/business/VolumeDrop'));
 const LocalDebitBankDashboard = lazy(() => import('./pages/business/LocalDebitBankDashboard'));
 const RentalOverview = lazy(() => import('./pages/business/RentalOverview'));
 const MerchantAnalyticsReport = lazy(() => import('./pages/business/MerchantAnalyticsReport'));
@@ -145,6 +148,9 @@ function App() {
               <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
               <Route path="/business/destination-dashboard" element={<DestinationDashboard />} />
               <Route path="/business/card-type-dashboard" element={<CardTypeDashboard />} />
+              <Route path="/business/industry-analytics" element={<IndustryAnalytics />} />
+              <Route path="/business/revenue-mix" element={<RevenueMix />} />
+              <Route path="/business/volume-drop" element={<VolumeDrop />} />
               <Route path="/business/local-debit-bank-dashboard" element={<LocalDebitBankDashboard />} />
               <Route path="/business/rentals" element={<RentalOverview />} />
               <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
