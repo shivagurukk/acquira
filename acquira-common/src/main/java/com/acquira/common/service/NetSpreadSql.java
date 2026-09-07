@@ -54,6 +54,28 @@ public final class NetSpreadSql {
         return "(" + margin(a) + " + " + ancillary(a) + ")";
     }
 
+    /**
+     * ECOM FX income for one row (V2026_09_07_01) — maintained by AncillarySql
+     * like the other ancillary legs, but NOT part of {@link #ancillary}/
+     * {@link #spread}: it joins the spread only where the tenant has opted in
+     * (tenant_setting {@code netspread.fx_enabled} = true, checked by
+     * NetSpreadController), so every other consumer of the shared spread is
+     * unchanged until the business decides FX belongs everywhere.
+     */
+    public static String fx(String a) {
+        return "COALESCE(" + a + ".fx_revenue,0)";
+    }
+
+    /** Net spread INCLUDING FX income — the flag-on read shape. */
+    public static String spreadWithFx(String a) {
+        return "(" + margin(a) + " + " + ancillary(a) + " + " + fx(a) + ")";
+    }
+
+    /** {@code SUM(spread + fx)} with a zero default. */
+    public static String sumSpreadWithFx(String a) {
+        return "COALESCE(SUM(" + spreadWithFx(a) + "), 0)";
+    }
+
     /** {@code SUM(margin)} with a zero default — the usual aggregate shape. */
     public static String sumMargin(String a) {
         return "COALESCE(SUM(" + margin(a) + "), 0)";

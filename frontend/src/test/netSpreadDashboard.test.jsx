@@ -154,6 +154,49 @@ describe('Net Spread Dashboard — visual layer', () => {
         expect(container.querySelectorAll('tbody .edm-nm-cell').length).toBe(3);
     });
 
+    it('shows the FX column, tile, ribbon segment and drilldown line only when fxEnabled', async () => {
+        // BH-shaped payload: netspread.fx_enabled = true, fx figures present.
+        const fxRows = ROWS.map(r => ({ ...r, fx: r.merchantId === 1 ? 90 : 0,
+            spread: r.spread + (r.merchantId === 1 ? 90 : 0) }));
+        post.mockImplementation(() => Promise.resolve({ data: {
+            ...PAYLOAD,
+            fxEnabled: true,
+            content: fxRows,
+            totals: { ...PAYLOAD.totals, fx: 90, spread: 880 },
+            trend: TREND.map(t => ({ ...t, fx: 0 })),
+        } }));
+
+        const { container } = render(<NetSpreadDashboard />);
+        await waitFor(() => expect(screen.getByText('Alpha Foods')).toBeInTheDocument());
+
+        const heads = [...container.querySelectorAll('thead th')].map(h => h.textContent);
+        expect(heads).toContain('FX Income');
+        expect(heads.length).toBe(13);
+
+        const tiles = [...container.querySelectorAll('.edm-tile')].map(t => t.textContent);
+        expect(tiles.some(t => t.includes('+ FX income'))).toBe(true);
+
+        const legend = [...container.querySelectorAll('.edm-panel')]
+            .find(p => p.textContent.includes('From MSF to Net Spread'));
+        expect(legend.textContent).toContain('FX Income');
+
+        const totalRow = container.querySelector('.edm-total-row');
+        expect(totalRow.textContent).toContain('90.00');   // FX total
+        expect(totalRow.textContent).toContain('880.00');  // spread now includes FX
+
+        fireEvent.click(screen.getByText('Alpha Foods'));
+        await waitFor(() => expect(screen.getByTestId('drawer')).toBeInTheDocument());
+        expect(screen.getByTestId('drawer').textContent).toContain('+ FX income (ecom)');
+    });
+
+    it('hides every FX surface when the flag is off (default payload)', async () => {
+        const { container } = render(<NetSpreadDashboard />);
+        await waitFor(() => expect(screen.getByText('Alpha Foods')).toBeInTheDocument());
+        expect([...container.querySelectorAll('thead th')].map(h => h.textContent))
+            .not.toContain('FX Income');
+        expect(container.textContent).not.toContain('+ FX income');
+    });
+
     it('opens the drilldown with the line-by-line spread equation', async () => {
         const { container } = render(<NetSpreadDashboard />);
         await waitFor(() => expect(screen.getByText('Gamma Rescueme')).toBeInTheDocument());

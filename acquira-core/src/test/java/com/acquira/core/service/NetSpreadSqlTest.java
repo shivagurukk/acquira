@@ -38,6 +38,19 @@ class NetSpreadSqlTest {
     }
 
     @Test
+    void fxStaysOutOfTheSharedSpread() {
+        // ECOM FX income joins only the flag-gated Net Spread read shape —
+        // the shared spread every other screen uses must not move.
+        assertFalse(NetSpreadSql.spread("s").contains("fx_revenue"));
+        assertFalse(NetSpreadSql.ancillary("s").contains("fx_revenue"));
+        assertEquals("COALESCE(s.fx_revenue,0)", NetSpreadSql.fx("s"));
+        assertEquals("(" + NetSpreadSql.margin("s") + " + " + NetSpreadSql.ancillary("s")
+                + " + " + NetSpreadSql.fx("s") + ")", NetSpreadSql.spreadWithFx("s"));
+        assertEquals("COALESCE(SUM(" + NetSpreadSql.spreadWithFx("s") + "), 0)",
+                NetSpreadSql.sumSpreadWithFx("s"));
+    }
+
+    @Test
     void aggregatesAreZeroDefaultedSums() {
         assertEquals("COALESCE(SUM(" + NetSpreadSql.margin("t") + "), 0)", NetSpreadSql.sumMargin("t"));
         assertEquals("COALESCE(SUM(" + NetSpreadSql.spread("t") + "), 0)", NetSpreadSql.sumSpread("t"));

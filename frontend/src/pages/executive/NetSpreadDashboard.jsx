@@ -43,8 +43,10 @@ const fullNum = (v, sym = '') => {
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
-/* Fixed column set — merchant grain, so no SID column; the three revenue
-   columns land after Net Margin and Net Spread closes the row. */
+/* Fixed column set — merchant grain, so no SID column; the revenue columns
+   land after Net Margin and Net Spread closes the row. The FX column (ECOM
+   FX income, BH calc sheet) only renders when the backend says the tenant's
+   netspread.fx_enabled flag is on — see columnsFor(). */
 const COLUMNS = [
     { key: 'mid',    label: 'MID',   align: 'left',  sticky: 1 },
     { key: 'name',   label: 'Name',  align: 'left',  sticky: 2 },
@@ -57,8 +59,11 @@ const COLUMNS = [
     { key: 'nm',     label: 'Net Margin',        align: 'right', wrap: true },
     { key: 'dcc',    label: 'DCC (Acquirer)',    align: 'right', wrap: true },
     { key: 'rental', label: 'Rental',            align: 'right' },
+    { key: 'fx',     label: 'FX Income',         align: 'right', wrap: true },
     { key: 'spread', label: 'Net Spread',        align: 'right', wrap: true },
 ];
+
+const columnsFor = (fxEnabled) => (fxEnabled ? COLUMNS : COLUMNS.filter(c => c.key !== 'fx'));
 
 const FEE_LABELS = {
     msf: 'MSF',
@@ -68,6 +73,7 @@ const FEE_LABELS = {
     nm:  'Net Margin',
     dcc: 'DCC (Acquirer Share)',
     rental: 'Rental Income',
+    fx:  'FX Income',
     spread: 'Net Spread',
 };
 
@@ -209,10 +215,11 @@ const Metric = ({
    MSF + DCC + rentals; the pay-away fees step down one ramp, the kept
    margin breaks to jade, and the two ancillary legs continue in their own
    green shades — the bar walks left-to-right from cost to Net Spread. ── */
-const SpreadRibbon = ({ totals, money, share, compact = false, animKey }) => {
+const SpreadRibbon = ({ totals, money, share, compact = false, animKey, fxEnabled = false }) => {
     const icf = num(totals?.icf), sf = num(totals?.sf), pg = num(totals?.pg);
     const nm = num(totals?.nm), dcc = num(totals?.dcc), rental = num(totals?.rental);
-    const pool = icf + sf + pg + Math.max(nm, 0) + dcc + rental;
+    const fxv = fxEnabled ? num(totals?.fx) : 0;
+    const pool = icf + sf + pg + Math.max(nm, 0) + dcc + rental + Math.max(fxv, 0);
     if (pool <= 0) return null;
     const segs = [
         { key: 'icf', label: FEE_LABELS.icf, value: icf, color: 'var(--imp-1)' },
@@ -223,6 +230,9 @@ const SpreadRibbon = ({ totals, money, share, compact = false, animKey }) => {
             : [{ key: 'loss', label: 'Margin Loss', value: Math.abs(nm), color: 'var(--danger)', overflow: true }]),
         { key: 'dcc',    label: FEE_LABELS.dcc,    value: dcc,    color: 'var(--success, #2E9E6B)' },
         { key: 'rental', label: FEE_LABELS.rental, value: rental, color: 'var(--cat-5, #4E8D7C)' },
+        ...(fxEnabled
+            ? [{ key: 'fx', label: FEE_LABELS.fx, value: Math.max(fxv, 0), color: 'var(--cat-3, #3D7EA6)' }]
+            : []),
     ];
     const drawn = segs.filter(s => s.value > 0);
 
@@ -711,6 +721,7 @@ const NetSpreadDashboard = () => {
             const rows = res.data?.content || [];
             const totals = res.data?.totals;
             const label = res.data?.selection || '';
+            const withFx = !!res.data?.fxEnabled;
             const esc = (v) => {
                 const s = String(v ?? '');
                 return `"${(/^[=+\-@]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
@@ -725,7 +736,9 @@ const NetSpreadDashboard = () => {
                     : (res.data?.dates || []).join(' ') || label}`,
                 ['MID', 'Name', 'Vol', 'Count', FEE_LABELS.msf, FEE_LABELS.icf,
                     FEE_LABELS.sf, FEE_LABELS.pg, FEE_LABELS.nm, FEE_LABELS.dcc,
-                    'DCC (Merchant Share)', FEE_LABELS.rental, FEE_LABELS.spread, 'Rescued'].join(','),
+                    'DCC (Merchant Share)', FEE_LABELS.rental,
+                    ...(withFx ? [FEE_LABELS.fx] : []),
+                    FEE_LABELS.spread, 'Rescued'].join(','),
             ];
             rows.forEach(r => lines.push([
                 esc(r.mid), esc(r.name),
@@ -733,7 +746,9 @@ const NetSpreadDashboard = () => {
                 cv(r.msf).toFixed(msfDp), cv(r.icf).toFixed(dp),
                 cv(r.sf).toFixed(dp), cv(r.pg).toFixed(dp), cv(r.nm).toFixed(dp),
                 cv(r.dcc).toFixed(dp), cv(r.dccMerchant).toFixed(dp),
-                cv(r.rental).toFixed(dp), cv(r.spread).toFixed(dp),
+                cv(r.rental).toFixed(dp),
+                ...(withFx ? [cv(r.fx).toFixed(dp)] : []),
+                cv(r.spread).toFixed(dp),
                 r.rescued ? 'YES' : '',
             ].join(',')));
             if (totals) {
@@ -744,6 +759,7 @@ const NetSpreadDashboard = () => {
                     cv(totals.sf).toFixed(dp), cv(totals.pg).toFixed(dp),
                     cv(totals.nm).toFixed(dp), cv(totals.dcc).toFixed(dp),
                     cv(totals.dccMerchant).toFixed(dp), cv(totals.rental).toFixed(dp),
+                    ...(withFx ? [cv(totals.fx).toFixed(dp)] : []),
                     cv(totals.spread).toFixed(dp), '',
                 ].join(','));
             }
@@ -770,6 +786,10 @@ const NetSpreadDashboard = () => {
     const rows = data?.content || [];
     const totals = data?.totals;
     const trend = data?.trend || [];
+    /* ECOM FX income (tenant flag netspread.fx_enabled) — when off, the FX
+       column/tile/segment don't render and the backend spread excludes fx. */
+    const fxEnabled = !!data?.fxEnabled;
+    const columns = useMemo(() => columnsFor(fxEnabled), [fxEnabled]);
     const totalRows = num(data?.totalElements);
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
     const latestMonth = latest ? latest.slice(0, 7) : '';
@@ -828,7 +848,9 @@ const NetSpreadDashboard = () => {
     /* Derived ratios from the server's own totals. */
     const spreadPct = totals && num(totals.volume) ? (num(totals.spread) / num(totals.volume)) * 100 : null;
     const marginPct = totals && num(totals.volume) ? (num(totals.nm) / num(totals.volume)) * 100 : null;
-    const ancillaryTotal = totals ? num(totals.dcc) + num(totals.rental) : 0;
+    const ancillaryTotal = totals
+        ? num(totals.dcc) + num(totals.rental) + (fxEnabled ? num(totals.fx) : 0) : 0;
+    const ancillaryLabel = fxEnabled ? 'DCC + rentals + FX' : 'DCC + rentals';
     const daysCovered = selectedDates.length || trend.length;
 
     const animKey = `${dateParams.dates || dateParams.month || ''}|${search}|${lossOnly}`;
@@ -840,6 +862,7 @@ const NetSpreadDashboard = () => {
         nm:     loadedDays.map(t => num(t.nm)),
         dcc:    loadedDays.map(t => num(t.dcc)),
         rental: loadedDays.map(t => num(t.rental)),
+        fx:     loadedDays.map(t => num(t.fx)),
         spread: loadedDays.map(t => num(t.spread)),
         cost:   loadedDays.map(costOf),
     }), [loadedDays]);
@@ -866,6 +889,7 @@ const NetSpreadDashboard = () => {
             nm:     pct(t => num(t.nm)),
             dcc:    pct(t => num(t.dcc)),
             rental: pct(t => num(t.rental)),
+            fx:     pct(t => num(t.fx)),
             spread: pct(t => num(t.spread)),
         };
     }, [selectedDates, loadedDays]);
@@ -1317,7 +1341,7 @@ const NetSpreadDashboard = () => {
                         </div>
                         <h1>Net Spread Dashboard</h1>
                         <p className="edm-mast-sub" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <span>Net margin + DCC acquirer share + rental income, per merchant</span>
+                            <span>Net margin + DCC acquirer share + rental income{fxEnabled ? ' + ecom FX income' : ''}, per merchant</span>
                             <MarginGlossaryHint compact light />
                         </p>
                         <div className="edm-mast-ctx">
@@ -1619,6 +1643,16 @@ const NetSpreadDashboard = () => {
                                         delta={deltas?.rental} deltaLabel={deltas?.label}
                                         series={kpiSeries.rental} sparkColor="var(--cat-5, #4E8D7C)" animKey={animKey} />
                                 </div>
+                                {fxEnabled && (
+                                    <div style={cellDiv}>
+                                        <Metric wide label="+ FX income"
+                                            raw={num(totals.fx)} format={fmt.currency}
+                                            sub="ecom foreign-currency margin (excl. Benefit PG)"
+                                            title={fullNum(totals.fx, currencySymbol)}
+                                            delta={deltas?.fx} deltaLabel={deltas?.label}
+                                            series={kpiSeries.fx} sparkColor="var(--cat-3, #3D7EA6)" animKey={animKey} />
+                                    </div>
+                                )}
                                 <div>
                                     <Metric wide label="Volume"
                                         raw={num(totals.volume)} format={fmt.currency}
@@ -1639,7 +1673,8 @@ const NetSpreadDashboard = () => {
                                         fee income split into what was paid away and what was kept, then the ancillary legs on top
                                     </span>
                                 </div>
-                                <SpreadRibbon totals={totals} money={money} share={share} animKey={animKey} />
+                                <SpreadRibbon totals={totals} money={money} share={share}
+                                    animKey={animKey} fxEnabled={fxEnabled} />
                             </div>
 
                             {/* ── The rescue story, stated in numbers ── */}
@@ -1648,7 +1683,7 @@ const NetSpreadDashboard = () => {
                                 <span>
                                     <b>{num(totals.lossOnMargin).toLocaleString()}</b> merchant{num(totals.lossOnMargin) === 1 ? '' : 's'} negative
                                     on net margin alone · <b>{num(totals.rescued).toLocaleString()}</b> turn{num(totals.rescued) === 1 ? 's' : ''} positive
-                                    with DCC + rentals · <b>{num(totals.lossOnSpread).toLocaleString()}</b> still
+                                    with {ancillaryLabel} · <b>{num(totals.lossOnSpread).toLocaleString()}</b> still
                                     negative on net spread
                                 </span>
                                 <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text-muted)' }}>
@@ -1671,7 +1706,7 @@ const NetSpreadDashboard = () => {
                                         value={num(totals.spread) > 0
                                             ? `${((ancillaryTotal / num(totals.spread)) * 100).toFixed(1)}%`
                                             : '—'}
-                                        sub="DCC + rentals ÷ net spread" />
+                                        sub={`${ancillaryLabel} ÷ net spread`} />
                                 </div>
                                 <div style={cellDiv}>
                                     <Metric label="Margin-loss merchants"
@@ -1706,7 +1741,7 @@ const NetSpreadDashboard = () => {
                             <table className="edm-table">
                                 <thead>
                                     <tr>
-                                        {COLUMNS.map(c => {
+                                        {columns.map(c => {
                                             const active = sort === c.key;
                                             return (
                                                 <th key={c.key}
@@ -1760,6 +1795,12 @@ const NetSpreadDashboard = () => {
                                                 {money(r.dcc)}
                                             </td>
                                             <td className="edm-cell-num" title={fullNum(r.rental, currencySymbol)}>{money(r.rental)}</td>
+                                            {fxEnabled && (
+                                                <td className="edm-cell-num"
+                                                    title={`ECOM FX income ${fullNum(r.fx, currencySymbol)} (excl. Benefit PG)`}>
+                                                    {money(r.fx)}
+                                                </td>
+                                            )}
                                             <td className={`edm-cell-num ${num(r.spread) < 0 ? 'edm-nm-loss' : 'edm-nm-cell'}`}
                                                 style={{ '--heat': spreadHeat(r.spread) }}>
                                                 <SignedCell v={r.spread} bold />
@@ -1783,6 +1824,9 @@ const NetSpreadDashboard = () => {
                                             <td className="edm-cell-num"><SignedCell v={totals.nm} bold kind="margin" /></td>
                                             <td className="edm-cell-num" title={fullNum(totals.dcc, currencySymbol)}>{money(totals.dcc)}</td>
                                             <td className="edm-cell-num" title={fullNum(totals.rental, currencySymbol)}>{money(totals.rental)}</td>
+                                            {fxEnabled && (
+                                                <td className="edm-cell-num" title={fullNum(totals.fx, currencySymbol)}>{money(totals.fx)}</td>
+                                            )}
                                             <td className="edm-cell-num"><SignedCell v={totals.spread} bold /></td>
                                         </tr>
                                     )}
@@ -1891,13 +1935,14 @@ const NetSpreadDashboard = () => {
                             <div style={{ marginTop: 20 }}>
                                 <div className="edm-eyebrow edm-eyebrow-rule" style={{ marginBottom: 10 }}>Spread stack</div>
                                 <SpreadRibbon totals={detailRow} money={money} share={share} compact
-                                    animKey={`${detailRow.merchantId}`} />
+                                    animKey={`${detailRow.merchantId}`} fxEnabled={fxEnabled} />
                                 {/* The equation, line by line */}
                                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-light, var(--border))' }}>
                                     {[
                                         ['Net margin', detailRow.nm, 'margin'],
                                         ['+ DCC (acquirer share)', detailRow.dcc],
                                         ['+ Rental income', detailRow.rental],
+                                        ...(fxEnabled ? [['+ FX income (ecom)', detailRow.fx]] : []),
                                     ].map(([k, v, kind]) => (
                                         <div key={k} style={{
                                             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -1921,7 +1966,8 @@ const NetSpreadDashboard = () => {
                                 </div>
                                 <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}>
                                     Net spread = net margin (MSF − interchange − scheme − gateway)
-                                    + DCC acquirer share + rental income, in settlement currency.
+                                    + DCC acquirer share + rental income
+                                    {fxEnabled ? ' + ecom FX income (excl. Benefit PG)' : ''}, in settlement currency.
                                     DCC merchant share ({money(detailRow.dccMerchant)}) is the merchant's money
                                     and is never added.
                                 </div>

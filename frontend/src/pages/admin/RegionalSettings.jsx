@@ -42,6 +42,10 @@ const KEYS = {
     // Pricing Simulator v2 segment calculations — read by
     // PricingSimulatorService.isEnabled (absent = enabled).
     pricingSimulator: 'pricing.simulator_enabled',
+    // Net Spread ECOM FX income (V2026_09_07_01) — read by
+    // NetSpreadController.fxEnabled. OPT-IN: absent = disabled, because only
+    // tenants with seeded ref_ecom_fx_rate rows (BH) produce FX figures.
+    netspreadFx: 'netspread.fx_enabled',
 };
 
 const DATE_FORMAT_OPTIONS = DATE_FORMATS.map(f => ({
@@ -61,7 +65,7 @@ const titleRowStyle = { gap: 8, flexWrap: 'nowrap' };
 
 const RegionalSettings = () => {
     const { tenantVersion } = useAuth();
-    const [values, setValues] = useState({ dateFormat: 'DD/MM/YYYY', timezone: '', loadMode: '', pricingSimulator: 'true' });
+    const [values, setValues] = useState({ dateFormat: 'DD/MM/YYYY', timezone: '', loadMode: '', pricingSimulator: 'true', netspreadFx: 'false' });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
@@ -71,7 +75,7 @@ const RegionalSettings = () => {
         api.get('/admin/settings')
             .then(res => {
                 if (cancelled) return;
-                const next = { dateFormat: 'DD/MM/YYYY', timezone: '', loadMode: '', pricingSimulator: 'true' };
+                const next = { dateFormat: 'DD/MM/YYYY', timezone: '', loadMode: '', pricingSimulator: 'true', netspreadFx: 'false' };
                 (res.data || []).forEach(s => {
                     const k = s.key || s.settingKey;
                     const v = s.value ?? s.settingValue ?? '';
@@ -80,6 +84,8 @@ const RegionalSettings = () => {
                     if (k === KEYS.loadMode) next.loadMode = v || '';
                     // Only an explicit 'false' disables (mirrors backend semantics).
                     if (k === KEYS.pricingSimulator) next.pricingSimulator = String(v).toLowerCase() === 'false' ? 'false' : 'true';
+                    // Only an explicit 'true' enables (mirrors backend opt-in semantics).
+                    if (k === KEYS.netspreadFx) next.netspreadFx = String(v).toLowerCase() === 'true' ? 'true' : 'false';
                 });
                 setValues(next);
             })
@@ -99,6 +105,7 @@ const RegionalSettings = () => {
                 await api.put('/admin/settings', { settingKey: KEYS.loadMode, settingValue: values.loadMode });
             }
             await api.put('/admin/settings', { settingKey: KEYS.pricingSimulator, settingValue: values.pricingSimulator });
+            await api.put('/admin/settings', { settingKey: KEYS.netspreadFx, settingValue: values.netspreadFx });
             showToast('Settings saved. Date format applies after the next page refresh; load mode applies to the next upload.', 'success');
         } catch (e) {
             showToast(e?.response?.data?.error || 'Save failed', 'error');
@@ -212,6 +219,31 @@ const RegionalSettings = () => {
                                 options={[
                                     { value: 'true', label: 'Enabled (default) — calculate segment margins' },
                                     { value: 'false', label: 'Disabled — do not calculate for this bank' },
+                                ]}
+                                style={{ maxWidth: 460 }}
+                            />
+                        </FormField>
+                    </Card>
+
+                    <Card
+                        pad
+                        title={
+                            <span className="ui-row" style={titleRowStyle}>
+                                <SlidersHorizontal size={15} strokeWidth={2} style={titleIconStyle} />
+                                Net Spread — ecom FX income
+                            </span>
+                        }
+                    >
+                        <FormField
+                            label="Add e-commerce foreign-currency income to the Net Spread dashboard"
+                            hint="FX margin on ecom transactions in a foreign currency (Benefit PG excluded), from the bank's negotiated vs board conversion rates. Only banks with seeded FX rates produce figures — leave disabled otherwise. Toggling changes reads immediately; historic days need a summary rebuild to carry FX figures."
+                        >
+                            <Select
+                                value={values.netspreadFx}
+                                onChange={e => setValues(v => ({ ...v, netspreadFx: e.target.value }))}
+                                options={[
+                                    { value: 'false', label: 'Disabled (default) — FX not shown, not added to net spread' },
+                                    { value: 'true', label: 'Enabled — show FX income and add it to net spread' },
                                 ]}
                                 style={{ maxWidth: 460 }}
                             />

@@ -10,9 +10,10 @@ import java.util.TreeSet;
 
 /**
  * Maintains the ANCILLARY revenue columns (dcc_acquirer / dcc_merchant /
- * rental_amount) on {@code sum_daily_merchant} and
- * {@code sum_daily_finance_rollup}, always recomputed from the two facts
- * ({@code fact_dcc_revenue}, {@code fact_rental}) — never carried forward.
+ * rental_amount / fx_revenue) on {@code sum_daily_merchant} and
+ * {@code sum_daily_finance_rollup}, always recomputed from their sources
+ * ({@code fact_dcc_revenue}, {@code fact_rental}, and for FX income
+ * {@code fact_transaction} × {@code ref_ecom_fx_rate}) — never carried forward.
  *
  * WHY THIS CLASS EXISTS
  * ---------------------
@@ -46,9 +47,9 @@ public final class AncillarySql {
     // ── sum_daily_merchant ──────────────────────────────────────────────────
 
     private static final String MERCH_ZERO =
-            "UPDATE sum_daily_merchant SET dcc_acquirer = 0, dcc_merchant = 0, rental_amount = 0 "
+            "UPDATE sum_daily_merchant SET dcc_acquirer = 0, dcc_merchant = 0, rental_amount = 0, fx_revenue = 0 "
             + "WHERE tenant_id = ? AND business_date BETWEEN ? AND ? "
-            + "AND (dcc_acquirer <> 0 OR dcc_merchant <> 0 OR rental_amount <> 0)";
+            + "AND (dcc_acquirer <> 0 OR dcc_merchant <> 0 OR rental_amount <> 0 OR fx_revenue <> 0)";
 
     // fact_dcc_revenue rows always carry merchant_id (resolved via dim_store at
     // apply; unmatched SIDs never leave staging), but the guard keeps a manual
@@ -77,6 +78,41 @@ public final class AncillarySql {
             + "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET "
             + "rental_amount = EXCLUDED.rental_amount";
 
+    // ECOM FX income (V2026_09_07_01, BH calc sheet): per ECOM transaction NOT
+    // carried by Benefit PG, in a currency with a ref_ecom_fx_rate row,
+    //   fx = multiplier * (settlement/cost_rate - settlement/board_rate).
+    // A mid-specific rate row beats the tenant default (LATERAL ... LIMIT 1,
+    // leading zeros stripped from BOTH mids — feed MIDs are zero-padded).
+    // Refund rows carry a NEGATIVE store_base_currency_amount (volume-signing,
+    // 2026-07-18), so refunds reverse their FX income with no special casing.
+    // Unlisted currencies (incl. BHD) simply never match — inner JOIN LATERAL.
+    // Rows always land on merchant-days that already exist (they come from the
+    // same fact rows the summary was built from); the INSERT arm is
+    // belt-and-braces only.
+    private static final String MERCH_FX_UPSERT =
+            "INSERT INTO sum_daily_merchant (tenant_id, business_date, merchant_id, "
+            + "total_txns, total_volume, total_base_volume, total_msf, total_interchange, "
+            + "total_scheme_fee, total_margin, fx_revenue) "
+            + "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, 0, 0, 0, 0, 0, 0, 0, "
+            + "SUM(fr.multiplier * (COALESCE(f.store_base_currency_amount,0) / fr.cost_rate "
+            + "                   - COALESCE(f.store_base_currency_amount,0) / fr.board_rate)) "
+            + "FROM fact_transaction f "
+            + "JOIN dim_merchant m ON m.merchant_id = f.merchant_id AND m.tenant_id = f.tenant_id "
+            + "LEFT JOIN dim_terminal dt ON dt.terminal_id = f.terminal_id AND dt.tenant_id = f.tenant_id "
+            + "JOIN LATERAL ("
+            + "  SELECT r.board_rate, r.cost_rate, r.multiplier FROM ref_ecom_fx_rate r "
+            + "  WHERE r.tenant_id = f.tenant_id "
+            + "    AND r.txn_currency = UPPER(TRIM(f.txn_currency)) "
+            + "    AND (r.mid IS NULL OR LTRIM(r.mid, '0') = LTRIM(m.mid, '0')) "
+            + "  ORDER BY (r.mid IS NOT NULL) DESC LIMIT 1"
+            + ") fr ON TRUE "
+            + "WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? "
+            + "AND f.merchant_id IS NOT NULL AND f.channel = 'ECOM' "
+            + "AND UPPER(TRIM(COALESCE(dt.type, ''))) <> 'BENEFIT PG' "
+            + "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id "
+            + "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET "
+            + "fx_revenue = EXCLUDED.fx_revenue";
+
     // Ancillary-only rows (total_txns = 0, written above) whose ancillary is
     // now 0 again — e.g. after a DCC replace removed their day — must go, or
     // they read as fake-active merchant-days forever.
@@ -84,14 +120,14 @@ public final class AncillarySql {
             "DELETE FROM sum_daily_merchant "
             + "WHERE tenant_id = ? AND business_date BETWEEN ? AND ? "
             + "AND COALESCE(total_txns, 0) = 0 AND COALESCE(total_volume, 0) = 0 "
-            + "AND dcc_acquirer = 0 AND dcc_merchant = 0 AND rental_amount = 0";
+            + "AND dcc_acquirer = 0 AND dcc_merchant = 0 AND rental_amount = 0 AND fx_revenue = 0";
 
     // ── sum_daily_finance_rollup (tenant-day) ───────────────────────────────
 
     private static final String ROLLUP_ZERO =
-            "UPDATE sum_daily_finance_rollup SET dcc_acquirer = 0, dcc_merchant = 0, rental_amount = 0 "
+            "UPDATE sum_daily_finance_rollup SET dcc_acquirer = 0, dcc_merchant = 0, rental_amount = 0, fx_revenue = 0 "
             + "WHERE tenant_id = ? AND business_date BETWEEN ? AND ? "
-            + "AND (dcc_acquirer <> 0 OR dcc_merchant <> 0 OR rental_amount <> 0)";
+            + "AND (dcc_acquirer <> 0 OR dcc_merchant <> 0 OR rental_amount <> 0 OR fx_revenue <> 0)";
 
     private static final String ROLLUP_DCC_UPSERT =
             "INSERT INTO sum_daily_finance_rollup (tenant_id, business_date, dcc_acquirer, dcc_merchant) "
@@ -111,13 +147,48 @@ public final class AncillarySql {
             + "ON CONFLICT (tenant_id, business_date) DO UPDATE SET "
             + "rental_amount = EXCLUDED.rental_amount";
 
+    // Tenant-day FX rollup — same rate resolution as MERCH_FX_UPSERT.
+    private static final String ROLLUP_FX_UPSERT =
+            "INSERT INTO sum_daily_finance_rollup (tenant_id, business_date, fx_revenue) "
+            + "SELECT f.tenant_id, DATE(f.payment_date), "
+            + "SUM(fr.multiplier * (COALESCE(f.store_base_currency_amount,0) / fr.cost_rate "
+            + "                   - COALESCE(f.store_base_currency_amount,0) / fr.board_rate)) "
+            + "FROM fact_transaction f "
+            + "JOIN dim_merchant m ON m.merchant_id = f.merchant_id AND m.tenant_id = f.tenant_id "
+            + "LEFT JOIN dim_terminal dt ON dt.terminal_id = f.terminal_id AND dt.tenant_id = f.tenant_id "
+            + "JOIN LATERAL ("
+            + "  SELECT r.board_rate, r.cost_rate, r.multiplier FROM ref_ecom_fx_rate r "
+            + "  WHERE r.tenant_id = f.tenant_id "
+            + "    AND r.txn_currency = UPPER(TRIM(f.txn_currency)) "
+            + "    AND (r.mid IS NULL OR LTRIM(r.mid, '0') = LTRIM(m.mid, '0')) "
+            + "  ORDER BY (r.mid IS NOT NULL) DESC LIMIT 1"
+            + ") fr ON TRUE "
+            + "WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? "
+            + "AND f.merchant_id IS NOT NULL AND f.channel = 'ECOM' "
+            + "AND UPPER(TRIM(COALESCE(dt.type, ''))) <> 'BENEFIT PG' "
+            + "GROUP BY f.tenant_id, DATE(f.payment_date) "
+            + "ON CONFLICT (tenant_id, business_date) DO UPDATE SET "
+            + "fx_revenue = EXCLUDED.fx_revenue";
+
     // Ancillary-only rollup rows are recognisable by both built flags being
     // false (a real pivot/fee day always sets one of them).
     private static final String ROLLUP_CLEANUP =
             "DELETE FROM sum_daily_finance_rollup "
             + "WHERE tenant_id = ? AND business_date BETWEEN ? AND ? "
             + "AND pivot_built = FALSE AND fees_built = FALSE "
-            + "AND dcc_acquirer = 0 AND dcc_merchant = 0 AND rental_amount = 0";
+            + "AND dcc_acquirer = 0 AND dcc_merchant = 0 AND rental_amount = 0 AND fx_revenue = 0";
+
+    /**
+     * True when the tenant has any FX rate rows. Guards the FX fact scans so
+     * tenants without seeded rates (everyone but BH today) never pay a
+     * fact_transaction pass per rebuild for a guaranteed-empty result.
+     */
+    private static boolean hasFxRates(JdbcTemplate jdbc, Long tenantId) {
+        Boolean b = jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM ref_ecom_fx_rate WHERE tenant_id = ?)",
+                Boolean.class, tenantId);
+        return Boolean.TRUE.equals(b);
+    }
 
     /** Re-derives the ancillary columns on sum_daily_merchant for [start, end]. */
     public static void applyMerchantRange(JdbcTemplate jdbc, Long tenantId, LocalDate start, LocalDate end) {
@@ -125,6 +196,10 @@ public final class AncillarySql {
         jdbc.update(MERCH_ZERO, tenantId, start, end);
         jdbc.update(MERCH_DCC_UPSERT, tenantId, start, end);
         jdbc.update(MERCH_RENTAL_UPSERT, tenantId, start, end);
+        if (hasFxRates(jdbc, tenantId)) {
+            // Sargable timestamp bounds on fact.payment_date: [start, end+1day).
+            jdbc.update(MERCH_FX_UPSERT, tenantId, start, end.plusDays(1));
+        }
         jdbc.update(MERCH_CLEANUP, tenantId, start, end);
     }
 
@@ -134,6 +209,9 @@ public final class AncillarySql {
         jdbc.update(ROLLUP_ZERO, tenantId, start, end);
         jdbc.update(ROLLUP_DCC_UPSERT, tenantId, start, end);
         jdbc.update(ROLLUP_RENTAL_UPSERT, tenantId, start, end);
+        if (hasFxRates(jdbc, tenantId)) {
+            jdbc.update(ROLLUP_FX_UPSERT, tenantId, start, end.plusDays(1));
+        }
         jdbc.update(ROLLUP_CLEANUP, tenantId, start, end);
     }
 

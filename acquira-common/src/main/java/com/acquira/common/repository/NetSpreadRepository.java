@@ -51,6 +51,7 @@ public class NetSpreadRepository {
             Map.entry("dcc", "dcc_acquirer"),
             Map.entry("dccMerchant", "dcc_merchant"),
             Map.entry("rental", "rental"),
+            Map.entry("fx", "fx"),
             Map.entry("spread", "spread"),
             Map.entry("name", "name"));
 
@@ -116,8 +117,14 @@ public class NetSpreadRepository {
         return w;
     }
 
-    private static final String AGG_SELECT =
-            "SELECT m.merchant_id AS merchant_id, m.mid AS mid, m.name AS name, "
+    /**
+     * fxEnabled (tenant_setting netspread.fx_enabled, resolved by the
+     * controller) decides whether ECOM FX income joins the spread. The fx
+     * column itself is always selected so the flag never hides stored data
+     * from a diagnostic query — it only changes the headline sum.
+     */
+    private static String aggSelect(boolean fxEnabled) {
+        return "SELECT m.merchant_id AS merchant_id, m.mid AS mid, m.name AS name, "
             + "SUM(COALESCE(s.total_txns,0)) AS cnt, "
             + "SUM(COALESCE(s.total_base_volume,0)) AS vol, "
             + "SUM(COALESCE(s.total_msf,0)) AS msf, "
@@ -128,8 +135,10 @@ public class NetSpreadRepository {
             + "SUM(COALESCE(s.dcc_acquirer,0)) AS dcc_acquirer, "
             + "SUM(COALESCE(s.dcc_merchant,0)) AS dcc_merchant, "
             + "SUM(COALESCE(s.rental_amount,0)) AS rental, "
-            + NetSpreadSql.sumSpread("s") + " AS spread "
+            + "SUM(" + NetSpreadSql.fx("s") + ") AS fx, "
+            + (fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s")) + " AS spread "
             + "FROM sum_daily_merchant s JOIN dim_merchant m ON m.merchant_id = s.merchant_id ";
+    }
 
     /**
      * Per-merchant page. size < 0 = export (no pagination). Returns
@@ -138,7 +147,7 @@ public class NetSpreadRepository {
     public Map<String, Object> getMerchants(Long tenantId, List<LocalDate> dateList,
             LocalDate rangeStart, LocalDate rangeEnd, String search,
             List<String> midList, List<String> sidList, String merchantName,
-            String sort, String dir, int page, int size) {
+            String sort, String dir, int page, int size, boolean fxEnabled) {
 
         Where w = where(tenantId, dateList, rangeStart, rangeEnd, search, midList, sidList, merchantName);
         String orderCol = SORT_COLS.getOrDefault(sort, "spread");
@@ -149,7 +158,7 @@ public class NetSpreadRepository {
                 + "JOIN dim_merchant m ON m.merchant_id = s.merchant_id " + w.sql,
                 Long.class, w.params.toArray());
 
-        StringBuilder sql = new StringBuilder(AGG_SELECT).append(w.sql)
+        StringBuilder sql = new StringBuilder(aggSelect(fxEnabled)).append(w.sql)
                 .append("GROUP BY m.merchant_id, m.mid, m.name ")
                 .append("ORDER BY ").append(orderCol).append(' ').append(orderDir)
                 .append(" NULLS LAST, m.merchant_id ");
@@ -175,6 +184,7 @@ public class NetSpreadRepository {
             r.put("dcc", rs.getBigDecimal("dcc_acquirer"));
             r.put("dccMerchant", rs.getBigDecimal("dcc_merchant"));
             r.put("rental", rs.getBigDecimal("rental"));
+            r.put("fx", rs.getBigDecimal("fx"));
             java.math.BigDecimal nm = rs.getBigDecimal("nm");
             java.math.BigDecimal spread = rs.getBigDecimal("spread");
             r.put("spread", spread);
@@ -196,7 +206,7 @@ public class NetSpreadRepository {
      */
     public Map<String, Object> getTotals(Long tenantId, List<LocalDate> dateList,
             LocalDate rangeStart, LocalDate rangeEnd, String search,
-            List<String> midList, List<String> sidList, String merchantName) {
+            List<String> midList, List<String> sidList, String merchantName, boolean fxEnabled) {
 
         Where w = where(tenantId, dateList, rangeStart, rangeEnd, search, midList, sidList, merchantName);
 
@@ -204,12 +214,13 @@ public class NetSpreadRepository {
                 + "COALESCE(SUM(icf),0) icf, COALESCE(SUM(sf),0) sf, COALESCE(SUM(pg),0) pg, "
                 + "COALESCE(SUM(nm),0) nm, COALESCE(SUM(dcc_acquirer),0) dcc, "
                 + "COALESCE(SUM(dcc_merchant),0) dcc_merchant, COALESCE(SUM(rental),0) rental, "
+                + "COALESCE(SUM(fx),0) fx, "
                 + "COALESCE(SUM(spread),0) spread, "
                 + "COUNT(*) FILTER (WHERE nm < 0) loss_on_margin, "
                 + "COUNT(*) FILTER (WHERE nm < 0 AND spread >= 0) rescued, "
                 + "COUNT(*) FILTER (WHERE spread < 0) loss_on_spread, "
                 + "COUNT(*) merchants "
-                + "FROM (" + AGG_SELECT + w.sql + "GROUP BY m.merchant_id, m.mid, m.name) t";
+                + "FROM (" + aggSelect(fxEnabled) + w.sql + "GROUP BY m.merchant_id, m.mid, m.name) t";
 
         return jdbcTemplate.query(sql, rs -> {
             Map<String, Object> t = new LinkedHashMap<>();
@@ -224,6 +235,7 @@ public class NetSpreadRepository {
                 t.put("dcc", rs.getBigDecimal("dcc"));
                 t.put("dccMerchant", rs.getBigDecimal("dcc_merchant"));
                 t.put("rental", rs.getBigDecimal("rental"));
+                t.put("fx", rs.getBigDecimal("fx"));
                 t.put("spread", rs.getBigDecimal("spread"));
                 t.put("lossOnMargin", rs.getLong("loss_on_margin"));
                 t.put("rescued", rs.getLong("rescued"));
@@ -240,7 +252,8 @@ public class NetSpreadRepository {
      * with the same measures as the totals.
      */
     public List<Map<String, Object>> getTrend(Long tenantId, LocalDate ctxStart, LocalDate ctxEnd,
-            String search, List<String> midList, List<String> sidList, String merchantName) {
+            String search, List<String> midList, List<String> sidList, String merchantName,
+            boolean fxEnabled) {
 
         Where w = where(tenantId, null, ctxStart, ctxEnd, search, midList, sidList, merchantName);
 
@@ -250,7 +263,8 @@ public class NetSpreadRepository {
                 + "SUM(COALESCE(s.total_scheme_fee,0)) sf, SUM(COALESCE(s.total_ecom_fee,0)) pg, "
                 + NetSpreadSql.sumMargin("s") + " nm, SUM(COALESCE(s.dcc_acquirer,0)) dcc, "
                 + "SUM(COALESCE(s.rental_amount,0)) rental, "
-                + NetSpreadSql.sumSpread("s") + " spread "
+                + "SUM(" + NetSpreadSql.fx("s") + ") fx, "
+                + (fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s")) + " spread "
                 + "FROM sum_daily_merchant s JOIN dim_merchant m ON m.merchant_id = s.merchant_id "
                 + w.sql
                 + "GROUP BY s.business_date ORDER BY s.business_date";
@@ -267,6 +281,7 @@ public class NetSpreadRepository {
             r.put("nm", rs.getBigDecimal("nm"));
             r.put("dcc", rs.getBigDecimal("dcc"));
             r.put("rental", rs.getBigDecimal("rental"));
+            r.put("fx", rs.getBigDecimal("fx"));
             r.put("spread", rs.getBigDecimal("spread"));
             return r;
         }, w.params.toArray());
