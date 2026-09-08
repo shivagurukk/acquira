@@ -1625,13 +1625,21 @@ public class VolumeRevenueRepository {
                 && !listNonEmpty(filter.getSchemeList())
                 && !listNonEmpty(filter.getCardTypeList())
                 && !listNonEmpty(filter.getDestinationList());
+        // Executive channel scope (POS/ECOM) — same routing as getAttritionReport,
+        // must stay in sync with it.
+        String channel = com.acquira.common.service.ChannelSql.normalize(filter.getChannel());
+        boolean channelScoped = com.acquira.common.service.ChannelSql.isChannel(channel);
+        String probeTable = canUseMerchantGrain
+                ? (channelScoped ? com.acquira.common.service.ChannelSql.merchantDay(channel) : "sum_daily_merchant")
+                : (channelScoped ? "sum_daily_full" : "sum_daily_insight");
 
         // Classifier windows — same math as getAttritionReport (latest-data clamp,
         // complete-month baselines). The status column needs its OWN coverage probe:
         // an empty trailing-3-month baseline makes every status read NEW/CHURNED,
         // an artifact of missing history the MoM/YoY probes below cannot see.
-        java.time.LocalDate latestData = precomputedLatestData != null ? precomputedLatestData : latestBusinessDate(
-                canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight", tenantId);
+        java.time.LocalDate latestData = precomputedLatestData != null ? precomputedLatestData
+                : channelScoped ? latestBusinessDateForChannel(channel, tenantId)
+                : latestBusinessDate(canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight", tenantId);
         java.time.LocalDate classifierEnd = (latestData != null && latestData.isBefore(end)) ? latestData : end;
         int dayCut = classifierEnd.getDayOfMonth();
         boolean monthComplete = dayCut == classifierEnd.lengthOfMonth();
@@ -1644,14 +1652,17 @@ public class VolumeRevenueRepository {
 
         java.util.function.BiFunction<java.time.LocalDate, java.time.LocalDate, Boolean> windowHasData = (wStart, wEnd) -> {
             StringBuilder sql = new StringBuilder();
-            sql.append("SELECT EXISTS(SELECT 1 FROM ")
-               .append(canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight").append(" s ");
+            sql.append("SELECT EXISTS(SELECT 1 FROM ").append(probeTable).append(" s ");
             sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
             if (needStore) {
                 sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
             }
             sql.append("WHERE s.business_date >= :wStart AND s.business_date <= :wEnd AND s.total_volume > 0 ");
             if (tenantId != null) sql.append("AND s.tenant_id = :tenantId ");
+            // Channel scope on the dimension-filtered route reads sum_daily_full,
+            // which carries channel_class. ChannelSql-validated literal only.
+            if (!canUseMerchantGrain && channelScoped)
+                sql.append("AND s.channel_class = '").append(channel).append("' ");
             // Same population exclusions as getAttritionReport (closed merchants,
             // onboarded <30 days before the classifier anchor) — keep in sync.
             sql.append("AND UPPER(COALESCE(m.status, 'ACTIVE')) NOT IN ('CLOSED','INACTIVE','TERMINATED','SUSPENDED','DEACTIVATED','DISABLED') ");
@@ -1731,6 +1742,9 @@ public class VolumeRevenueRepository {
         meta.put("baselineStart", m3Start.toString());
         meta.put("baselineEnd", m1End.toString());
         meta.put("baselineWindowHasData", baselineHasData);
+        // Which channel scope the rows were computed under (ALL/POS/ECOM), so
+        // captions can label the activity basis.
+        meta.put("channel", channel);
         return meta;
     }
 
@@ -1758,8 +1772,10 @@ public class VolumeRevenueRepository {
                 && !listNonEmpty(filter.getSchemeList())
                 && !listNonEmpty(filter.getCardTypeList())
                 && !listNonEmpty(filter.getDestinationList());
-        java.time.LocalDate latestData = latestBusinessDate(
-                canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight", tenantId);
+        String channel = com.acquira.common.service.ChannelSql.normalize(filter.getChannel());
+        java.time.LocalDate latestData = com.acquira.common.service.ChannelSql.isChannel(channel)
+                ? latestBusinessDateForChannel(channel, tenantId)
+                : latestBusinessDate(canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight", tenantId);
 
         Map<String, Object> response = new HashMap<>();
         response.put("rows", getAttritionReport(filter, tenantId, latestData));
@@ -1801,7 +1817,19 @@ public class VolumeRevenueRepository {
                 && !listNonEmpty(filter.getSchemeList())
                 && !listNonEmpty(filter.getCardTypeList())
                 && !listNonEmpty(filter.getDestinationList());
-        String baseTable = canUseMerchantGrain ? "sum_daily_merchant" : "sum_daily_insight";
+        // Executive channel scope (POS/ECOM/ALL). ALL keeps every read
+        // byte-identical; POS/ECOM change the ACTIVITY BASIS only — the
+        // classifier logic itself is untouched, it just reads channel-scoped
+        // volumes. Merchant-grain route swaps to the ChannelSql derived
+        // relation (same column names); the dimension-filtered route swaps
+        // sum_daily_insight for sum_daily_full, which carries the same
+        // measure/dimension columns PLUS channel_class (the insight cross-tab's
+        // channel column holds raw terminal types, not POS/ECOM).
+        String channel = com.acquira.common.service.ChannelSql.normalize(filter.getChannel());
+        boolean channelScoped = com.acquira.common.service.ChannelSql.isChannel(channel);
+        String baseTable = canUseMerchantGrain
+                ? (channelScoped ? com.acquira.common.service.ChannelSql.merchantDay(channel) : "sum_daily_merchant")
+                : (channelScoped ? "sum_daily_full" : "sum_daily_insight");
 
         // ── Attrition classification windows (calendar months, independent of the
         //    selected range) ──
@@ -1817,7 +1845,9 @@ public class VolumeRevenueRepository {
         // days than dayCut while the baselines were complete, biasing every ratio
         // low by (missing days / dayCut) and mass-stamping CHURNED right after
         // month start. Historical selections are unaffected (latest >= end there).
-        java.time.LocalDate latestData = precomputedLatestData != null ? precomputedLatestData : latestBusinessDate(baseTable, tenantId);
+        java.time.LocalDate latestData = precomputedLatestData != null ? precomputedLatestData
+                : channelScoped ? latestBusinessDateForChannel(channel, tenantId)
+                : latestBusinessDate(baseTable, tenantId);
         java.time.LocalDate classifierEnd = (latestData != null && latestData.isBefore(end)) ? latestData : end;
         int dayCut = classifierEnd.getDayOfMonth();
         // [FIX] When the anchored month is COMPLETE, the baselines must be complete
@@ -1911,11 +1941,17 @@ public class VolumeRevenueRepository {
             {"momprev", ":momStartDate", ":momEndDate"}, {"pyfull", ":prevYtdStartDate", ":pyFullEnd"},
             {"curmonx", ":curMonStart", ":curMonEnd"}, {"m1x", ":m1Start", ":m1End"}, {"m2x", ":m2Start", ":m2End"},
         };
+        // FX joins the spread only where the tenant opted in (the shared
+        // spread() definition is untouched — see NetSpreadSql.fx). Resolved
+        // once per call; only meaningful on the merchant-grain route.
+        boolean fxOn = canUseMerchantGrain && isFxEnabled(tenantId);
+        String spreadExpr = fxOn ? com.acquira.common.service.NetSpreadSql.spreadWithFx("s")
+                                 : com.acquira.common.service.NetSpreadSql.spread("s");
         for (String[] w : spreadWindows) {
             if (canUseMerchantGrain) {
                 sql.append("SUM(CASE WHEN s.business_date >= ").append(w[1])
                    .append(" AND s.business_date <= ").append(w[2])
-                   .append(" THEN ").append(com.acquira.common.service.NetSpreadSql.spread("s"))
+                   .append(" THEN ").append(spreadExpr)
                    .append(" ELSE 0 END) AS ").append(w[0]).append("_spread, ");
             } else {
                 sql.append("0 AS ").append(w[0]).append("_spread, ");
@@ -1969,6 +2005,13 @@ public class VolumeRevenueRepository {
         if (listNonEmpty(filter.getSchemeList()))       sql.append("AND s.card_scheme IN (:schemes) ");
         if (listNonEmpty(filter.getCardTypeList()))     sql.append("AND s.card_type IN (:cardTypes) ");
         if (listNonEmpty(filter.getDestinationList()))  sql.append("AND s.destination IN (:destinations) ");
+        // Channel scope on the dimension-filtered route: sum_daily_full carries
+        // channel_class. In the WHERE (not the ON) deliberately — this route
+        // keeps inner-join semantics (s IS NOT NULL above), same as the other
+        // s.* filters here. Merchant-grain scope is inside baseTable itself, so
+        // the LEFT-join NON_STARTER semantics survive. Validated literal only.
+        if (!canUseMerchantGrain && channelScoped)
+            sql.append("AND s.channel_class = '").append(channel).append("' ");
 
         sql.append("GROUP BY m.mid, m.name ORDER BY m.mid ASC");
 
@@ -2214,6 +2257,44 @@ public class VolumeRevenueRepository {
         if (r instanceof java.time.LocalDate) return (java.time.LocalDate) r;
         if (r instanceof java.sql.Date) return ((java.sql.Date) r).toLocalDate();
         return java.time.LocalDate.parse(r.toString().substring(0, 10));
+    }
+
+    /**
+     * Channel-scoped variant of {@link #latestBusinessDate}: reads
+     * sum_daily_full directly (running MAX through the ChannelSql derived
+     * relation would aggregate the whole table to answer one date). Same
+     * transacting-rows guard as the sum_daily_merchant variant — the channel
+     * relation can surface ancillary-only merchant-days. Callers only pass
+     * ChannelSql-validated 'POS'/'ECOM' literals.
+     */
+    private java.time.LocalDate latestBusinessDateForChannel(String channel, Long tenantId) {
+        if (!com.acquira.common.service.ChannelSql.isChannel(channel))
+            throw new IllegalArgumentException("Not a channel scope: " + channel);
+        Object r = entityManager.createNativeQuery(
+                "SELECT MAX(s.business_date) FROM sum_daily_full s WHERE s.tenant_id = :tenantId"
+                + " AND s.channel_class = '" + channel + "' AND COALESCE(s.total_txns,0) > 0")
+                .setParameter("tenantId", tenantId)
+                .getSingleResult();
+        if (r == null) return null;
+        if (r instanceof java.time.LocalDate) return (java.time.LocalDate) r;
+        if (r instanceof java.sql.Date) return ((java.sql.Date) r).toLocalDate();
+        return java.time.LocalDate.parse(r.toString().substring(0, 10));
+    }
+
+    /**
+     * The {@code netspread.fx_enabled} tenant flag — same explicit-'true'-only
+     * contract as NetSpreadSql.fxEnabled (that helper takes a JdbcTemplate;
+     * this repository runs on the EntityManager). Public so controllers can
+     * fold the flag into their cache keys, as the NetSpreadSql doc requires.
+     */
+    public boolean isFxEnabled(Long tenantId) {
+        @SuppressWarnings("unchecked")
+        List<Object> v = entityManager.createNativeQuery(
+                "SELECT setting_value FROM tenant_setting WHERE tenant_id = :tenantId"
+                + " AND setting_key = 'netspread.fx_enabled'")
+                .setParameter("tenantId", tenantId)
+                .getResultList();
+        return !v.isEmpty() && "true".equalsIgnoreCase(String.valueOf(v.get(0)).trim());
     }
 
     /** Emits "SUM(CASE WHEN business_date in window THEN <col> ELSE 0 END) AS <alias>_x, " for vol/txn/msf. */
@@ -2620,8 +2701,11 @@ public class VolumeRevenueRepository {
      */
     public Map<String, Object> getExecutiveDailyMerchant(VolumeRevenueFilterDTO filter,
             List<java.time.LocalDate> dates, java.time.LocalDate rangeStart, java.time.LocalDate rangeEnd,
-            String search, String sort, String dir, int page, int size, Long tenantId) {
+            String search, String sort, String dir, int page, int size, Long tenantId,
+            boolean fxEnabled, String channel) {
         requireTenant(tenantId);
+        String ch = com.acquira.common.service.ChannelSql.normalize(channel);
+        boolean withFx = fxEnabled && !com.acquira.common.service.ChannelSql.POS.equals(ch);
 
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT m.merchant_id, st.sid, m.mid, m.name, ");
@@ -2633,7 +2717,13 @@ public class VolumeRevenueRepository {
         sql.append("  SUM(s.total_ecom_fee)    as pg, ");
         sql.append("  SUM(s.total_net_revenue) as nm, ");
         sql.append("  count(*) OVER() as total_count ");
-        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart);
+        // FX income is merchant-day grain (sum_daily_merchant, AncillarySql) —
+        // it cannot be split by SID, so a multi-store merchant shows its whole
+        // merchant-level FX on each of its rows; the selection totals count it
+        // exactly once. m.merchant_id is in the GROUP BY, so the correlated
+        // scalar is legal in the grouped select list.
+        if (withFx) sql.append(", ").append(fxScalar(filter, search, dates, true, false)).append(" as fx ");
+        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart, ch);
         sql.append("GROUP BY m.merchant_id, st.sid, m.mid, m.name ");
 
         String sortExpr = DAILY_MERCHANT_SORT.getOrDefault(sort == null ? "" : sort, "SUM(s.total_volume)");
@@ -2669,6 +2759,7 @@ public class VolumeRevenueRepository {
             map.put("pg",           row[9]);
             map.put("nm",           row[10]);
             if (totalElements == 0) totalElements = ((Number) row[11]).longValue();
+            if (withFx)             map.put("fx", row[12]);
             content.add(map);
         }
 
@@ -2685,8 +2776,10 @@ public class VolumeRevenueRepository {
      */
     public Map<String, Object> getExecutiveDailyMerchantTotals(VolumeRevenueFilterDTO filter,
             List<java.time.LocalDate> dates, java.time.LocalDate rangeStart, java.time.LocalDate rangeEnd,
-            String search, Long tenantId) {
+            String search, Long tenantId, boolean fxEnabled, String channel) {
         requireTenant(tenantId);
+        String ch = com.acquira.common.service.ChannelSql.normalize(channel);
+        boolean withFx = fxEnabled && !com.acquira.common.service.ChannelSql.POS.equals(ch);
 
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT ");
@@ -2697,7 +2790,8 @@ public class VolumeRevenueRepository {
         sql.append("  COALESCE(SUM(s.total_scheme_fee), 0), ");
         sql.append("  COALESCE(SUM(s.total_ecom_fee), 0), ");
         sql.append("  COALESCE(SUM(s.total_net_revenue), 0) ");
-        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart);
+        if (withFx) sql.append(", ").append(fxScalar(filter, search, dates, false, false)).append(" ");
+        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart, ch);
 
         Query query = entityManager.createNativeQuery(sql.toString());
         bindDailyMerchantParams(query, filter, search, tenantId, dates, rangeStart, rangeEnd);
@@ -2711,6 +2805,7 @@ public class VolumeRevenueRepository {
         totals.put("sf",     row[4]);
         totals.put("pg",     row[5]);
         totals.put("nm",     row[6]);
+        if (withFx) totals.put("fx", row[7]);
         return totals;
     }
 
@@ -2720,8 +2815,11 @@ public class VolumeRevenueRepository {
      * height encodes that day's volume, and which doubles as the date picker).
      */
     public List<Map<String, Object>> getExecutiveDailyMerchantTrend(VolumeRevenueFilterDTO filter,
-            java.time.LocalDate monthStart, java.time.LocalDate monthEnd, String search, Long tenantId) {
+            java.time.LocalDate monthStart, java.time.LocalDate monthEnd, String search, Long tenantId,
+            boolean fxEnabled, String channel) {
         requireTenant(tenantId);
+        String ch = com.acquira.common.service.ChannelSql.normalize(channel);
+        boolean withFx = fxEnabled && !com.acquira.common.service.ChannelSql.POS.equals(ch);
 
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT s.business_date, ");
@@ -2734,7 +2832,10 @@ public class VolumeRevenueRepository {
         sql.append("  COALESCE(SUM(s.total_interchange), 0), ");
         sql.append("  COALESCE(SUM(s.total_scheme_fee), 0), ");
         sql.append("  COALESCE(SUM(s.total_ecom_fee), 0) ");
-        appendDailyMerchantFromWhere(sql, filter, search, null, monthStart);
+        // Per-day FX income; s.business_date is grouped, so the correlated
+        // scalar is legal (and the extra range bound keeps pruning intact).
+        if (withFx) sql.append(", ").append(fxScalar(filter, search, null, false, true)).append(" ");
+        appendDailyMerchantFromWhere(sql, filter, search, null, monthStart, ch);
         sql.append("GROUP BY s.business_date ORDER BY s.business_date");
 
         Query query = entityManager.createNativeQuery(sql.toString());
@@ -2754,6 +2855,7 @@ public class VolumeRevenueRepository {
             m.put("icf", r[5]);
             m.put("sf", r[6]);
             m.put("pg", r[7]);
+            if (withFx) m.put("fx", r[8]);
             out.add(m);
         }
         return out;
@@ -2767,8 +2869,9 @@ public class VolumeRevenueRepository {
      */
     public Map<String, List<Map<String, Object>>> getExecutiveDailyMerchantMix(VolumeRevenueFilterDTO filter,
             List<java.time.LocalDate> dates, java.time.LocalDate rangeStart, java.time.LocalDate rangeEnd,
-            String search, Long tenantId, Long merchantId) {
+            String search, Long tenantId, Long merchantId, String channel) {
         requireTenant(tenantId);
+        String ch = com.acquira.common.service.ChannelSql.normalize(channel);
 
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT GROUPING(s.card_scheme), s.card_scheme, ");
@@ -2777,7 +2880,7 @@ public class VolumeRevenueRepository {
         sql.append("       COALESCE(SUM(s.total_volume), 0), ");
         sql.append("       COALESCE(SUM(s.total_txns), 0), ");
         sql.append("       COALESCE(SUM(s.total_net_revenue), 0) ");
-        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart);
+        appendDailyMerchantFromWhere(sql, filter, search, dates, rangeStart, ch);
         if (merchantId != null) sql.append("AND s.merchant_id = :merchantId ");
         sql.append("GROUP BY GROUPING SETS ((s.card_scheme), (s.card_type), (s.destination))");
 
@@ -2877,7 +2980,7 @@ public class VolumeRevenueRepository {
      * predicate too (defence in depth on top of RLS).
      */
     private void appendDailyMerchantFromWhere(StringBuilder sql, VolumeRevenueFilterDTO filter, String search,
-            List<java.time.LocalDate> dates, java.time.LocalDate rangeStart) {
+            List<java.time.LocalDate> dates, java.time.LocalDate rangeStart, String channel) {
         sql.append("FROM sum_daily_full s ");
         sql.append("JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
         sql.append("LEFT JOIN dim_store st ON s.store_id = st.store_id AND st.tenant_id = s.tenant_id ");
@@ -2888,6 +2991,12 @@ public class VolumeRevenueRepository {
         } else if (rangeStart != null) {
             sql.append("AND s.business_date BETWEEN :rangeStart AND :rangeEnd ");
         }
+        // Executive channel selector: POS/ECOM filter on channel_class (this
+        // page already reads sum_daily_full, so no re-routing needed); ALL
+        // appends nothing — the SQL stays byte-identical. Only the two
+        // ChannelSql-validated literals can reach this string.
+        if (com.acquira.common.service.ChannelSql.isChannel(channel))
+            sql.append("AND s.channel_class = '").append(channel).append("' ");
         if (nonEmptyList(filter.getMccList()))         sql.append("AND s.mcc IN (:mccs) ");
         if (nonEmptyList(filter.getDestinationList())) sql.append("AND s.destination IN (:destinations) ");
         if (nonEmptyList(filter.getCardTypeList()))    sql.append("AND s.card_type IN (:cardTypes) ");
@@ -2915,6 +3024,47 @@ public class VolumeRevenueRepository {
         if (nonEmptyList(filter.getRmList()))          query.setParameter("rms", filter.getRmList());
         if (search != null && !search.isBlank())
             query.setParameter("search", "%" + search.trim() + "%");
+    }
+
+    /**
+     * Additive ECOM FX income scalar for the executive daily merchant page.
+     * sum_daily_full (the page's base table) carries NO fx column — its fee
+     * stack is card-grain, while FX income lives at merchant-day grain on
+     * sum_daily_merchant (AncillarySql). The flag-on read therefore joins the
+     * merchant summary as a SEPARATE additive column, attributed wholesale
+     * (mirrors ChannelSql: FX -> ECOM, so callers never emit it on the POS
+     * scope). Card-dimension filters (MCC/destination/card type/scheme) do not
+     * cut it — FX has no card dimension to cut on; merchant-level narrowing
+     * (RM, the mid/name search) DOES apply so the column tracks the table's
+     * population. Reuses the caller's named date params (bound by
+     * bindDailyMerchantParams) so partition pruning applies inside too.
+     *
+     * @param perMerchant correlate on the outer grouped m.merchant_id (table rows)
+     * @param perDay      correlate on the outer grouped s.business_date (trend);
+     *                    callers pass a rangeStart month window in that case
+     */
+    private String fxScalar(VolumeRevenueFilterDTO filter, String search,
+            List<java.time.LocalDate> dates, boolean perMerchant, boolean perDay) {
+        StringBuilder fx = new StringBuilder();
+        fx.append("(SELECT COALESCE(SUM(a.fx_revenue), 0) FROM sum_daily_merchant a ");
+        boolean needMerchDim = nonEmptyList(filter.getRmList()) || (search != null && !search.isBlank());
+        if (needMerchDim)
+            fx.append("JOIN dim_merchant fm ON fm.merchant_id = a.merchant_id AND fm.tenant_id = a.tenant_id ");
+        fx.append("WHERE a.tenant_id = :tenantId ");
+        if (dates != null && !dates.isEmpty()) {
+            fx.append(dates.size() == 1 ? "AND a.business_date = :businessDate "
+                                        : "AND a.business_date IN (:businessDates) ");
+        } else {
+            fx.append("AND a.business_date BETWEEN :rangeStart AND :rangeEnd ");
+        }
+        if (perMerchant) fx.append("AND a.merchant_id = m.merchant_id ");
+        if (perDay)      fx.append("AND a.business_date = s.business_date ");
+        if (nonEmptyList(filter.getRmList())) fx.append("AND fm.sales_email IN (:rms) ");
+        // st.sid is store-grain and FX is not — mid/name are the meaningful legs.
+        if (search != null && !search.isBlank())
+            fx.append("AND (fm.mid ILIKE :search OR fm.name ILIKE :search) ");
+        fx.append(")");
+        return fx.toString();
     }
 
     private static boolean nonEmptyList(List<?> list) {

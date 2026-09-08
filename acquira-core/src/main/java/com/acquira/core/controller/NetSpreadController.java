@@ -65,10 +65,7 @@ public class NetSpreadController {
      * Part of the cache key, so toggling the flag takes effect immediately.
      */
     private boolean fxEnabled(Long tenantId) {
-        List<String> v = jdbcTemplate.queryForList(
-                "SELECT setting_value FROM tenant_setting WHERE tenant_id = ? AND setting_key = 'netspread.fx_enabled'",
-                String.class, tenantId);
-        return !v.isEmpty() && "true".equalsIgnoreCase(String.valueOf(v.get(0)).trim());
+        return com.acquira.common.service.NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
     }
 
     /**
@@ -106,10 +103,12 @@ public class NetSpreadController {
             List<LocalDate> dates = List.of(latest);
             boolean fx = fxEnabled(tenantId);
             String key = "netSpread:" + tenantId + ":" + dates
-                    + ":0:50:spread:desc:false:fx" + fx + ":" + fk;
+                    + ":0:50:spread:desc:false:fx" + fx
+                    + ":ch" + com.acquira.common.service.ChannelSql.ALL + ":" + fk;
             reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
                     () -> buildNetSpread(filter, dates, null, null, null,
-                            latest.toString(), null, "spread", "desc", 0, 50, false, false, tenantId, fx));
+                            latest.toString(), null, "spread", "desc", 0, 50, false, false, tenantId, fx,
+                            com.acquira.common.service.ChannelSql.ALL));
         });
     }
 
@@ -131,11 +130,15 @@ public class NetSpreadController {
             @RequestParam(defaultValue = "false") boolean export,
             @RequestParam(defaultValue = "false") boolean lossOnly,
             @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "ALL") String channel,
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
 
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
         if (filter == null) filter = new VolumeRevenueFilterDTO();
+        // POS / ECOM route to the channel-scoped relation (ChannelSql);
+        // anything else is ALL = the untouched sum_daily_merchant read.
+        final String ch = com.acquira.common.service.ChannelSql.normalize(channel);
 
         List<LocalDate> dateList = null;
         LocalDate rangeStart = null, rangeEnd = null;
@@ -192,7 +195,7 @@ public class NetSpreadController {
         String fk = (export || (search != null && !search.isBlank())) ? null : filterKey(filter);
         if (fk == null) {
             return ResponseEntity.ok(buildNetSpread(filter, dateList, rangeStart, rangeEnd,
-                    month, selectionLabel, search, sort, dir, page, size, export, lossOnly, tenantId, fx));
+                    month, selectionLabel, search, sort, dir, page, size, export, lossOnly, tenantId, fx, ch));
         }
         final VolumeRevenueFilterDTO f = filter;
         final List<LocalDate> fDates = dateList;
@@ -204,25 +207,27 @@ public class NetSpreadController {
         // an empty `month=` param must never collapse distinct selections.
         String selection = fStart != null ? (fStart + ".." + fEnd) : String.valueOf(fDates);
         String key = "netSpread:" + tenantId + ":" + selection
-                + ":" + fPage + ":" + fSize + ":" + sort + ":" + dir + ":" + fLossOnly + ":fx" + fx + ":" + fk;
+                + ":" + fPage + ":" + fSize + ":" + sort + ":" + dir + ":" + fLossOnly + ":fx" + fx
+                + ":ch" + ch + ":" + fk;
         return ResponseEntity.ok(reportCache.get(
                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
                 () -> buildNetSpread(f, fDates, fStart, fEnd, month, fLabel,
-                        search, sort, dir, fPage, fSize, false, fLossOnly, tenantId, fx)));
+                        search, sort, dir, fPage, fSize, false, fLossOnly, tenantId, fx, ch)));
     }
 
     private Map<String, Object> buildNetSpread(VolumeRevenueFilterDTO filter,
             List<LocalDate> dateList, LocalDate rangeStart, LocalDate rangeEnd,
             String month, String selectionLabel, String search, String sort, String dir,
-            int page, int size, boolean export, boolean lossOnly, Long tenantId, boolean fxEnabled) {
+            int page, int size, boolean export, boolean lossOnly, Long tenantId, boolean fxEnabled,
+            String channel) {
 
         Map<String, Object> pageResult = netSpreadRepository.getMerchants(
                 tenantId, dateList, rangeStart, rangeEnd, search,
                 filter.getMidList(), filter.getSidList(), filter.getMerchantName(),
-                sort, dir, export ? 0 : page, export ? -1 : size, fxEnabled);
+                sort, dir, export ? 0 : page, export ? -1 : size, fxEnabled, channel);
         Map<String, Object> totals = netSpreadRepository.getTotals(
                 tenantId, dateList, rangeStart, rangeEnd, search,
-                filter.getMidList(), filter.getSidList(), filter.getMerchantName(), fxEnabled);
+                filter.getMidList(), filter.getSidList(), filter.getMerchantName(), fxEnabled, channel);
 
         // lossOnly (the rescued-merchants lens): keep merchants negative on NM,
         // applied AFTER aggregation. Page-local filtering would break the row
@@ -235,7 +240,7 @@ public class NetSpreadController {
             Map<String, Object> full = netSpreadRepository.getMerchants(
                     tenantId, dateList, rangeStart, rangeEnd, search,
                     filter.getMidList(), filter.getSidList(), filter.getMerchantName(),
-                    sort, dir, 0, -1, fxEnabled);
+                    sort, dir, 0, -1, fxEnabled, channel);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> all = (List<Map<String, Object>>) full.get("content");
             List<Map<String, Object>> losers = all.stream()
@@ -254,9 +259,10 @@ public class NetSpreadController {
                     : ctxStart.withDayOfMonth(ctxStart.lengthOfMonth());
             response.put("trend", netSpreadRepository.getTrend(
                     tenantId, ctxStart, ctxEnd, search,
-                    filter.getMidList(), filter.getSidList(), filter.getMerchantName(), fxEnabled));
+                    filter.getMidList(), filter.getSidList(), filter.getMerchantName(), fxEnabled, channel));
         }
         response.put("fxEnabled", fxEnabled);
+        response.put("channel", channel);
         response.put("businessDate",
                 dateList != null && dateList.size() == 1 ? dateList.get(0).toString() : null);
         response.put("dates", dateList == null ? null

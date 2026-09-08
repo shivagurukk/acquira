@@ -40,29 +40,53 @@ public class BusinessController {
         @org.springframework.beans.factory.annotation.Autowired
         private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
 
+        @org.springframework.beans.factory.annotation.Autowired
+        private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+        /**
+         * ECOM FX income flag (V2026_09_07_01) — opt-IN, same reading as
+         * NetSpreadController: only an explicit 'true' adds fx_revenue to the
+         * spread and surfaces the FX column. Part of every cache key below so
+         * toggling the flag takes effect immediately.
+         */
+        private boolean fxEnabled(Long tenantId) {
+                return com.acquira.common.service.NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
+        }
+
         /**
          * Warm the executive first-load views this controller serves:
          * the Executive Dashboard summary, and the Volume & Revenue /
          * Loss-Making Merchants default pages. Keys mirror the endpoints'
-         * normalized key construction; defaults mirror CeoVolumeRevenue.jsx
+         * normalized key construction (default channel ALL + the tenant's FX
+         * flag); defaults mirror CeoVolumeRevenue.jsx
          * (MTD, page 0, size 50; loss view sorts net asc — worst first).
          */
         @jakarta.annotation.PostConstruct
         void registerWarmers() {
-                reportCacheWarmup.register("ceo-summary", tenantId -> reportCache.get(
+                final String chAll = com.acquira.common.service.ChannelSql.ALL;
+                reportCacheWarmup.register("ceo-summary", tenantId -> {
+                        boolean fx = fxEnabled(tenantId);
+                        reportCache.get(
                                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                                "ceoSummary:" + tenantId,
-                                () -> buildCeoSummary(tenantId)));
-                reportCacheWarmup.register("ceo-volume-revenue", tenantId -> reportCache.get(
+                                "ceoSummary:" + tenantId + ":ch" + chAll + ":fx" + fx,
+                                () -> buildCeoSummary(tenantId, chAll, fx));
+                });
+                reportCacheWarmup.register("ceo-volume-revenue", tenantId -> {
+                        boolean fx = fxEnabled(tenantId);
+                        reportCache.get(
                                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                                "ceoVolRev:" + tenantId + ":false:MTD:0:50:volume:desc",
+                                "ceoVolRev:" + tenantId + ":false:MTD:0:50:volume:desc:ch" + chAll + ":fx" + fx,
                                 () -> buildCeoVolumeRevenue(tenantId, "MTD", 0, 50,
-                                                "volume", "desc", null, false, null, false)));
-                reportCacheWarmup.register("loss-making", tenantId -> reportCache.get(
+                                                "volume", "desc", null, false, null, false, chAll, fx));
+                });
+                reportCacheWarmup.register("loss-making", tenantId -> {
+                        boolean fx = fxEnabled(tenantId);
+                        reportCache.get(
                                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                                "ceoVolRev:" + tenantId + ":true:MTD:0:50:net:asc",
+                                "ceoVolRev:" + tenantId + ":true:MTD:0:50:net:asc:ch" + chAll + ":fx" + fx,
                                 () -> buildCeoVolumeRevenue(tenantId, "MTD", 0, 50,
-                                                "net", "asc", null, true, null, false)));
+                                                "net", "asc", null, true, null, false, chAll, fx));
+                });
         }
 
         public BusinessController(MerchantActivitySummaryRepository activityRepository,
@@ -172,16 +196,28 @@ public class BusinessController {
          * msf − interchange − scheme_fee figure.
          */
         @GetMapping("/ceo-summary")
-        public ResponseEntity<Map<String, Object>> getCeoSummary() {
+        public ResponseEntity<Map<String, Object>> getCeoSummary(
+                        @RequestParam(defaultValue = "ALL") String channel) {
                 Long tenantId = resolveTenant();
                 if (tenantId == null) return ResponseEntity.status(403).build();
+                // POS / ECOM route the reads to the channel-scoped relation
+                // (ChannelSql); anything else is ALL = the untouched
+                // sum_daily_bank / sum_monthly_bank path. The normalized value
+                // (never raw request text) is what reaches the SQL and the key.
+                final String ch = com.acquira.common.service.ChannelSql.normalize(channel);
+                final boolean fx = fxEnabled(tenantId);
                 return ResponseEntity.ok(reportCache.get(
                                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                                "ceoSummary:" + tenantId,
-                                () -> buildCeoSummary(tenantId)));
+                                "ceoSummary:" + tenantId + ":ch" + ch + ":fx" + fx,
+                                () -> buildCeoSummary(tenantId, ch, fx)));
         }
 
-        private Map<String, Object> buildCeoSummary(Long tenantId) {
+        private Map<String, Object> buildCeoSummary(Long tenantId, String ch, boolean fxOn) {
+                // Channel scope: POS/ECOM aggregate the ChannelSql merchant-day
+                // relation to tenant level; ALL keeps the bank-summary reads
+                // byte-identical to the pre-channel behaviour.
+                final boolean chScoped = com.acquira.common.service.ChannelSql.isChannel(ch);
+                final String chRel = com.acquira.common.service.ChannelSql.merchantDay(ch);
                 // Anchor on latest available data.
                 Object maxD = entityManager
                                 .createNativeQuery("SELECT MAX(business_date) FROM sum_daily_bank WHERE tenant_id = :tid")
@@ -196,30 +232,41 @@ public class BusinessController {
                 int currentWeek = Math.min(5, ((elapsedDays - 1) / 7) + 1);
 
                 // ── MTD weekly buckets ─────────────────────────────────────
+                // Channel scope reads the same aggregate off the ChannelSql
+                // relation (which carries total_margin, not total_net_revenue);
+                // the ALL branch text is byte-identical to the pre-channel SQL.
+                String wkSql = chScoped
+                                ? "SELECT LEAST(5, ((CAST(EXTRACT(DAY FROM business_date) AS INTEGER) - 1) / 7) + 1) AS wk, " +
+                                  "SUM(total_txns), SUM(COALESCE(total_base_volume,0)), SUM(total_msf), " +
+                                  "SUM(COALESCE(total_interchange,0)), SUM(COALESCE(total_scheme_fee,0)), SUM(COALESCE(total_ecom_fee,0)), SUM(total_margin) " +
+                                  "FROM " + chRel + " s WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
+                                  "GROUP BY 1 ORDER BY 1"
+                                : "SELECT LEAST(5, ((CAST(EXTRACT(DAY FROM business_date) AS INTEGER) - 1) / 7) + 1) AS wk, " +
+                                  "SUM(total_txns), SUM(COALESCE(total_base_volume,0)), SUM(total_msf), " +
+                                  "SUM(COALESCE(total_interchange,0)), SUM(COALESCE(total_scheme_fee,0)), SUM(COALESCE(total_ecom_fee,0)), SUM(total_net_revenue) " +
+                                  "FROM sum_daily_bank WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
+                                  "GROUP BY 1 ORDER BY 1";
                 @SuppressWarnings("unchecked")
-                List<Object[]> wkRows = entityManager.createNativeQuery(
-                                "SELECT LEAST(5, ((CAST(EXTRACT(DAY FROM business_date) AS INTEGER) - 1) / 7) + 1) AS wk, " +
-                                "SUM(total_txns), SUM(COALESCE(total_base_volume,0)), SUM(total_msf), " +
-                                "SUM(COALESCE(total_interchange,0)), SUM(COALESCE(total_scheme_fee,0)), SUM(COALESCE(total_ecom_fee,0)), SUM(total_net_revenue) " +
-                                "FROM sum_daily_bank WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
-                                "GROUP BY 1 ORDER BY 1")
+                List<Object[]> wkRows = entityManager.createNativeQuery(wkSql)
                                 .setParameter("tid", tenantId)
                                 .setParameter("s", mtdStart)
                                 .setParameter("e", eff)
                                 .getResultList();
                 Map<Integer, Object[]> byWeek = new HashMap<>();
                 for (Object[] r : wkRows) byWeek.put(((Number) r[0]).intValue(), r);
-                // Ancillary revenue (DCC acquirer share + rental) lives on the
-                // tenant-day finance rollup, not on sum_daily_bank — same weekly
-                // bucketing so Net Spread lines up with the transaction figures.
+                // Ancillary revenue (DCC acquirer share + rental + FX) lives on
+                // the tenant-day finance rollup, not on sum_daily_bank — same
+                // weekly bucketing so Net Spread lines up with the transaction
+                // figures. In channel scope it comes off the same relation, so
+                // the wholesale attribution (DCC/rental->POS, FX->ECOM) holds.
                 Map<Integer, BigDecimal[]> ancByWeek = ancillaryBuckets(tenantId, mtdStart, eff,
-                                "LEAST(5, ((CAST(EXTRACT(DAY FROM business_date) AS INTEGER) - 1) / 7) + 1)");
+                                "LEAST(5, ((CAST(EXTRACT(DAY FROM business_date) AS INTEGER) - 1) / 7) + 1)", ch, fxOn);
 
                 List<Map<String, Object>> weeks = new ArrayList<>();
                 long mtdTxns = 0;
                 BigDecimal mtdVol = BigDecimal.ZERO, mtdMsf = BigDecimal.ZERO,
                                 mtdIc = BigDecimal.ZERO, mtdSf = BigDecimal.ZERO, mtdEc = BigDecimal.ZERO, mtdNet = BigDecimal.ZERO,
-                                mtdDcc = BigDecimal.ZERO, mtdRental = BigDecimal.ZERO;
+                                mtdDcc = BigDecimal.ZERO, mtdRental = BigDecimal.ZERO, mtdFx = BigDecimal.ZERO;
                 for (int w = 1; w <= currentWeek; w++) {
                         LocalDate from = mtdStart.plusDays((long) (w - 1) * 7);
                         LocalDate weekEnd = (w == 5) ? eff.withDayOfMonth(daysInMonth)
@@ -235,7 +282,7 @@ public class BusinessController {
                         BigDecimal ec = r != null ? toBigDecimal(r[6]) : BigDecimal.ZERO;
                         BigDecimal net = r != null ? toBigDecimal(r[7]) : BigDecimal.ZERO;
                         BigDecimal[] anc = ancByWeek.getOrDefault(w, ZERO_ANC);
-                        Map<String, Object> m = buildMetricBucket("Week " + w, txns, vol, msf, ic, sf, ec, net, anc[0], anc[1]);
+                        Map<String, Object> m = buildMetricBucket("Week " + w, txns, vol, msf, ic, sf, ec, net, anc[0], anc[1], anc[2], fxOn);
                         m.put("week", w);
                         m.put("from", from.toString());
                         m.put("to", to.toString());
@@ -251,39 +298,34 @@ public class BusinessController {
                         mtdNet = mtdNet.add(net);
                         mtdDcc = mtdDcc.add(anc[0]);
                         mtdRental = mtdRental.add(anc[1]);
+                        mtdFx = mtdFx.add(anc[2]);
                 }
 
                 // ── Prior-month pace (day 1 → same day-of-month, clamped) ──
                 LocalDate prevMtdStart = mtdStart.minusMonths(1);
                 LocalDate prevMtdEnd = prevMtdStart
                                 .plusDays(Math.min(elapsedDays, prevMtdStart.lengthOfMonth()) - 1L);
-                Object[] prevMtd = singleAggregate(tenantId, prevMtdStart, prevMtdEnd);
+                Object[] prevMtd = singleAggregate(tenantId, prevMtdStart, prevMtdEnd, ch, fxOn);
 
                 // ── YTD monthly buckets (sum_monthly_bank) ─────────────────
+                // Channel scope has no monthly pre-aggregate, so it buckets the
+                // ChannelSql relation by month_key over the year's date range
+                // (partition-prunable bounds, same shape as sum_monthly_bank).
                 int year = eff.getYear();
-                @SuppressWarnings("unchecked")
-                List<Object[]> moRows = entityManager.createNativeQuery(
-                                "SELECT month_key, total_txns, COALESCE(total_base_volume,0), total_msf, " +
-                                "COALESCE(total_interchange,0), COALESCE(total_scheme_fee,0), COALESCE(total_ecom_fee,0), total_net_revenue " +
-                                "FROM sum_monthly_bank WHERE tenant_id = :tid AND month_key BETWEEN :a AND :b " +
-                                "ORDER BY month_key")
-                                .setParameter("tid", tenantId)
-                                .setParameter("a", year * 100 + 1)
-                                .setParameter("b", year * 100 + 12)
-                                .getResultList();
+                List<Object[]> moRows = monthlyBuckets(tenantId, year, ch);
 
                 String[] moNames = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
                 // sum_monthly_bank carries no ancillary columns; bucket the
                 // tenant-day rollup by month_key over the same year instead.
                 Map<Integer, BigDecimal[]> ancByMonth = ancillaryBuckets(tenantId,
-                                LocalDate.of(year, 1, 1), LocalDate.of(year, 12, 31), MONTH_KEY_EXPR);
+                                LocalDate.of(year, 1, 1), LocalDate.of(year, 12, 31), MONTH_KEY_EXPR, ch, fxOn);
 
                 List<Map<String, Object>> months = new ArrayList<>();
                 long ytdTxns = 0;
                 BigDecimal ytdVol = BigDecimal.ZERO, ytdMsf = BigDecimal.ZERO,
                                 ytdIc = BigDecimal.ZERO, ytdSf = BigDecimal.ZERO, ytdEc = BigDecimal.ZERO, ytdNet = BigDecimal.ZERO,
-                                ytdDcc = BigDecimal.ZERO, ytdRental = BigDecimal.ZERO;
+                                ytdDcc = BigDecimal.ZERO, ytdRental = BigDecimal.ZERO, ytdFx = BigDecimal.ZERO;
                 for (Object[] r : moRows) {
                         int mk = ((Number) r[0]).intValue();
                         int moIdx = (mk % 100) - 1;
@@ -297,7 +339,7 @@ public class BusinessController {
                         BigDecimal[] anc = ancByMonth.getOrDefault(mk, ZERO_ANC);
                         Map<String, Object> m = buildMetricBucket(
                                         (moIdx >= 0 && moIdx < 12 ? moNames[moIdx] : String.valueOf(mk)),
-                                        txns, vol, msf, ic, sf, ec, net, anc[0], anc[1]);
+                                        txns, vol, msf, ic, sf, ec, net, anc[0], anc[1], anc[2], fxOn);
                         m.put("monthKey", mk);
                         m.put("current", mk == year * 100 + eff.getMonthValue());
                         months.add(m);
@@ -310,12 +352,13 @@ public class BusinessController {
                         ytdNet = ytdNet.add(net);
                         ytdDcc = ytdDcc.add(anc[0]);
                         ytdRental = ytdRental.add(anc[1]);
+                        ytdFx = ytdFx.add(anc[2]);
                 }
 
                 // ── Prior YTD (prior year Jan 1 → same day-of-year) ────────
                 LocalDate prevYtdStart = eff.withDayOfYear(1).minusYears(1);
                 LocalDate prevYtdEnd = eff.minusYears(1);
-                Object[] prevYtd = singleAggregate(tenantId, prevYtdStart, prevYtdEnd);
+                Object[] prevYtd = singleAggregate(tenantId, prevYtdStart, prevYtdEnd, ch, fxOn);
 
                 // ── MTD run-rate projection ────────────────────────────────
                 Map<String, Object> runRate = new LinkedHashMap<>();
@@ -326,7 +369,10 @@ public class BusinessController {
                                         .divide(BigDecimal.valueOf(elapsedDays), 6, RoundingMode.HALF_UP);
                         runRate.put("projectedVolume", mtdVol.multiply(factor).setScale(2, RoundingMode.HALF_UP));
                         runRate.put("projectedNetRevenue", mtdNet.multiply(factor).setScale(2, RoundingMode.HALF_UP));
+                        // FX joins the projected spread only when the tenant flag
+                        // is on — same rule as the headline netSpread figure.
                         runRate.put("projectedNetSpread", mtdNet.add(mtdDcc).add(mtdRental)
+                                        .add(fxOn ? mtdFx : BigDecimal.ZERO)
                                         .multiply(factor).setScale(2, RoundingMode.HALF_UP));
                         runRate.put("projectedTxns",
                                         BigDecimal.valueOf(mtdTxns).multiply(factor).setScale(0, RoundingMode.HALF_UP));
@@ -345,8 +391,8 @@ public class BusinessController {
                 mtd.put("end", eff.toString());
                 mtd.put("weeks", weeks);
                 mtd.put("totals", buildMetricBucket("MTD", mtdTxns, mtdVol, mtdMsf, mtdIc, mtdSf, mtdEc, mtdNet,
-                                mtdDcc, mtdRental));
-                mtd.put("prev", bucketFromAggregate("Prev MTD pace", prevMtd));
+                                mtdDcc, mtdRental, mtdFx, fxOn));
+                mtd.put("prev", bucketFromAggregate("Prev MTD pace", prevMtd, fxOn));
                 mtd.put("runRate", runRate);
 
                 Map<String, Object> ytd = new LinkedHashMap<>();
@@ -354,8 +400,8 @@ public class BusinessController {
                 ytd.put("year", year);
                 ytd.put("months", months);
                 ytd.put("totals", buildMetricBucket("YTD", ytdTxns, ytdVol, ytdMsf, ytdIc, ytdSf, ytdEc, ytdNet,
-                                ytdDcc, ytdRental));
-                ytd.put("prev", bucketFromAggregate("Prev YTD", prevYtd));
+                                ytdDcc, ytdRental, ytdFx, fxOn));
+                ytd.put("prev", bucketFromAggregate("Prev YTD", prevYtd, fxOn));
 
                 // ── Last full calendar year (month-wise) ───────────────────
                 // Same shape as the YTD block so the frontend renders it with the
@@ -363,25 +409,16 @@ public class BusinessController {
                 // bucket is marked "current" and the comparison baseline is the
                 // whole year before it (not a same-period slice).
                 int lastYearNum = year - 1;
-                @SuppressWarnings("unchecked")
-                List<Object[]> lyRows = entityManager.createNativeQuery(
-                                "SELECT month_key, total_txns, COALESCE(total_base_volume,0), total_msf, " +
-                                "COALESCE(total_interchange,0), COALESCE(total_scheme_fee,0), COALESCE(total_ecom_fee,0), total_net_revenue " +
-                                "FROM sum_monthly_bank WHERE tenant_id = :tid AND month_key BETWEEN :a AND :b " +
-                                "ORDER BY month_key")
-                                .setParameter("tid", tenantId)
-                                .setParameter("a", lastYearNum * 100 + 1)
-                                .setParameter("b", lastYearNum * 100 + 12)
-                                .getResultList();
+                List<Object[]> lyRows = monthlyBuckets(tenantId, lastYearNum, ch);
 
                 Map<Integer, BigDecimal[]> ancByLyMonth = ancillaryBuckets(tenantId,
-                                LocalDate.of(lastYearNum, 1, 1), LocalDate.of(lastYearNum, 12, 31), MONTH_KEY_EXPR);
+                                LocalDate.of(lastYearNum, 1, 1), LocalDate.of(lastYearNum, 12, 31), MONTH_KEY_EXPR, ch, fxOn);
 
                 List<Map<String, Object>> lyMonths = new ArrayList<>();
                 long lyTxns = 0;
                 BigDecimal lyVol = BigDecimal.ZERO, lyMsf = BigDecimal.ZERO,
                                 lyIc = BigDecimal.ZERO, lySf = BigDecimal.ZERO, lyEc = BigDecimal.ZERO, lyNet = BigDecimal.ZERO,
-                                lyDcc = BigDecimal.ZERO, lyRental = BigDecimal.ZERO;
+                                lyDcc = BigDecimal.ZERO, lyRental = BigDecimal.ZERO, lyFx = BigDecimal.ZERO;
                 for (Object[] r : lyRows) {
                         int mk = ((Number) r[0]).intValue();
                         int moIdx = (mk % 100) - 1;
@@ -395,7 +432,7 @@ public class BusinessController {
                         BigDecimal[] anc = ancByLyMonth.getOrDefault(mk, ZERO_ANC);
                         Map<String, Object> m = buildMetricBucket(
                                         (moIdx >= 0 && moIdx < 12 ? moNames[moIdx] : String.valueOf(mk)),
-                                        txns, vol, msf, ic, sf, ec, net, anc[0], anc[1]);
+                                        txns, vol, msf, ic, sf, ec, net, anc[0], anc[1], anc[2], fxOn);
                         m.put("monthKey", mk);
                         m.put("current", false);
                         lyMonths.add(m);
@@ -408,21 +445,24 @@ public class BusinessController {
                         lyNet = lyNet.add(net);
                         lyDcc = lyDcc.add(anc[0]);
                         lyRental = lyRental.add(anc[1]);
+                        lyFx = lyFx.add(anc[2]);
                 }
 
                 Object[] prevFullYear = singleAggregate(tenantId,
-                                LocalDate.of(lastYearNum - 1, 1, 1), LocalDate.of(lastYearNum - 1, 12, 31));
+                                LocalDate.of(lastYearNum - 1, 1, 1), LocalDate.of(lastYearNum - 1, 12, 31), ch, fxOn);
 
                 Map<String, Object> lastYear = new LinkedHashMap<>();
                 lastYear.put("label", "Last Year " + lastYearNum);
                 lastYear.put("year", lastYearNum);
                 lastYear.put("months", lyMonths);
                 lastYear.put("totals", buildMetricBucket("Last Year", lyTxns, lyVol, lyMsf, lyIc, lySf, lyEc, lyNet,
-                                lyDcc, lyRental));
-                lastYear.put("prev", bucketFromAggregate("Prev Year", prevFullYear));
+                                lyDcc, lyRental, lyFx, fxOn));
+                lastYear.put("prev", bucketFromAggregate("Prev Year", prevFullYear, fxOn));
 
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("effectiveDate", eff.toString());
+                response.put("channel", ch);
+                response.put("fxEnabled", fxOn);
                 response.put("mtd", mtd);
                 response.put("ytd", ytd);
                 response.put("lastYear", lastYear);
@@ -462,11 +502,17 @@ public class BusinessController {
                         @RequestParam(required = false) String search,
                         @RequestParam(defaultValue = "false") boolean lossOnly,
                         @RequestParam(required = false) String month,
-                        @RequestParam(defaultValue = "false") boolean export) {
+                        @RequestParam(defaultValue = "false") boolean export,
+                        @RequestParam(defaultValue = "ALL") String channel) {
                 Long tenantId = resolveTenant();
                 if (tenantId == null)
                         return ResponseEntity.status(403).body(Map.of("message",
                                         "No tenant selected, or you do not have access to this tenant."));
+                // POS / ECOM scope every read below through ChannelSql; anything
+                // else is ALL = the untouched sum_daily_terminal path. Only the
+                // normalized value ever reaches the SQL or the cache key.
+                final String ch = com.acquira.common.service.ChannelSql.normalize(channel);
+                final boolean fx = fxEnabled(tenantId);
 
                 // Enforce the sys_group_menu grant for whichever screen is being
                 // served. Without this the grants in V2026_07_05_02 / _04 were
@@ -483,7 +529,7 @@ public class BusinessController {
                 boolean cacheable = !export && (search == null || search.isBlank());
                 if (!cacheable) {
                         return ResponseEntity.ok(buildCeoVolumeRevenue(
-                                        tenantId, mode, page, size, sort, dir, search, lossOnly, month, export));
+                                        tenantId, mode, page, size, sort, dir, search, lossOnly, month, export, ch, fx));
                 }
                 // Key components are NORMALIZED to the same canonical values the
                 // build method resolves them to, never raw request text. Raw
@@ -495,19 +541,43 @@ public class BusinessController {
                                 : "YTD".equalsIgnoreCase(mode) ? "YTD"
                                 : "THIS_MONTH".equalsIgnoreCase(mode) ? "THIS_MONTH" : "MTD";
                 String sortKey = java.util.Set.of("volume", "txns", "msf", "interchange",
-                                "schemeFee", "ecomFee", "net", "margin", "dcc", "rental", "spread", "name", "mid")
+                                "schemeFee", "ecomFee", "net", "margin", "dcc", "rental", "fx", "spread", "name", "mid")
                                 .contains(sort) ? sort : "volume";
                 String dirKey = "asc".equalsIgnoreCase(dir) ? "asc" : "desc";
                 String key = "ceoVolRev:" + tenantId + ":" + lossOnly + ":" + periodKey
-                                + ":" + page + ":" + size + ":" + sortKey + ":" + dirKey;
+                                + ":" + page + ":" + size + ":" + sortKey + ":" + dirKey
+                                + ":ch" + ch + ":fx" + fx;
                 return ResponseEntity.ok(reportCache.get(
                                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
                                 () -> buildCeoVolumeRevenue(tenantId, mode, page, size, sort, dir,
-                                                search, lossOnly, month, export)));
+                                                search, lossOnly, month, export, ch, fx)));
+        }
+
+        /**
+         * Channel-class predicate for one sum_daily_terminal row, resolved from
+         * dim_terminal.type through terminal_channel_map with EXACTLY the
+         * backfill precedence of V2026_09_08_01 (tenant row beats country row,
+         * exact raw_type beats the '*' wildcard, unmatched defaults to 'POS').
+         * The map is tiny and the planner caches the correlated subplan, so
+         * this filters without touching partition pruning on business_date.
+         * Aliases are server-side constants; the channel literal is only ever
+         * one of the two ChannelSql fixed values.
+         */
+        private static String terminalChannelIs(String tAlias, String dtAlias, String channel) {
+                return "COALESCE((SELECT mm.channel FROM terminal_channel_map mm " +
+                                "WHERE mm.country_code = (SELECT tt.home_country_code FROM tenant tt WHERE tt.tenant_id = " + tAlias + ".tenant_id) " +
+                                "AND (mm.tenant_id IS NULL OR mm.tenant_id = " + tAlias + ".tenant_id) " +
+                                "AND (mm.raw_type = UPPER(TRIM(COALESCE(" + dtAlias + ".type, ''))) OR mm.raw_type = '*') " +
+                                "ORDER BY (mm.tenant_id IS NULL), (mm.raw_type = '*') LIMIT 1), 'POS') = '" + channel + "' ";
         }
 
         private Map<String, Object> buildCeoVolumeRevenue(Long tenantId, String mode, int page, int size,
-                        String sort, String dir, String search, boolean lossOnly, String month, boolean export) {
+                        String sort, String dir, String search, boolean lossOnly, String month, boolean export,
+                        String ch, boolean fxOn) {
+                // Channel scope routing (guarded: only the fixed POS/ECOM
+                // literals ever reach SQL — see ChannelSql.isChannel).
+                final boolean chScoped = com.acquira.common.service.ChannelSql.isChannel(ch);
+                final boolean chEcom = com.acquira.common.service.ChannelSql.ECOM.equals(ch);
                 // Anchor the period windows to the table this report actually READS.
                 // This used to come from sum_daily_bank while every figure below is
                 // read from sum_daily_terminal. Those are two independent, concurrent
@@ -573,6 +643,28 @@ public class BusinessController {
                 // last. One unpaged query is strictly cheaper than two paged ones.
                 if (export) page = 0;
 
+                // Channel-conditional aggregate expressions. On the ALL path
+                // every string below is byte-identical to the pre-channel text
+                // (FX terms only appear when the tenant flag is on), so existing
+                // plans and cached payloads are unchanged.
+                //   lossOnly + channel reads the ChannelSql merchant-day
+                //   relation, which carries margin as total_margin and the
+                //   channel-attributed ancillary columns inline — no anc join.
+                final boolean lossCh = lossOnly && chScoped;
+                String revExpr = lossCh ? "SUM(t.total_margin)" : "SUM(t.total_revenue)";
+                String dccExpr = lossCh ? "SUM(COALESCE(t.dcc_acquirer,0))"
+                                : chEcom ? "CAST(0 AS numeric)" : "MAX(COALESCE(anc.dcc,0))";
+                String rentalExpr = lossCh ? "SUM(COALESCE(t.rental_amount,0))"
+                                : chEcom ? "CAST(0 AS numeric)" : "MAX(COALESCE(anc.rental,0))";
+                // FX is attributed wholesale to ECOM, so the POS column is a
+                // constant zero; it is only selected at all when the flag is on.
+                String fxExpr = !fxOn ? "CAST(0 AS numeric)"
+                                : lossCh ? "SUM(COALESCE(t.fx_revenue,0))"
+                                : (chScoped && !chEcom) ? "CAST(0 AS numeric)"
+                                : "MAX(COALESCE(anc.fx,0))";
+                String spreadExpr = revExpr + " + " + dccExpr + " + " + rentalExpr
+                                + (fxOn ? " + " + fxExpr : "");
+
                 // Sort key -> aggregate expression (whitelist; user text never
                 // becomes a SQL identifier).
                 Map<String, String> sortCols = new HashMap<>();
@@ -586,20 +678,21 @@ public class BusinessController {
                 // let NULLS LAST park those merchants at the bottom in BOTH
                 // directions — ascending should have put them first.
                 sortCols.put("ecomFee",     "SUM(COALESCE(t.total_ecom_fee,0))");
-                sortCols.put("net",         "SUM(t.total_revenue)");
+                sortCols.put("net",         revExpr);
                 // Net margin % — the most useful ordering on the Loss-Making view
                 // (a large merchant losing 0.1% and a small one losing 40% are very
                 // different problems, and absolute net margin cannot separate them).
                 // NULL when volume is zero, so those rows land under NULLS LAST
                 // rather than being treated as 0% — consistent with marginPct below.
                 sortCols.put("margin",      "CASE WHEN SUM(t.total_base_volume) <> 0 " +
-                                            "THEN SUM(t.total_revenue) / SUM(t.total_base_volume) END");
+                                            "THEN " + revExpr + " / SUM(t.total_base_volume) END");
                 // Ancillary columns are pre-aggregated to the row grain (see the
                 // anc join below), so MAX() reads the one value without fanning
                 // out over the days in the group.
-                sortCols.put("dcc",         "MAX(COALESCE(anc.dcc,0))");
-                sortCols.put("rental",      "MAX(COALESCE(anc.rental,0))");
-                sortCols.put("spread",      "SUM(t.total_revenue) + MAX(COALESCE(anc.dcc,0)) + MAX(COALESCE(anc.rental,0))");
+                sortCols.put("dcc",         dccExpr);
+                sortCols.put("rental",      rentalExpr);
+                if (fxOn) sortCols.put("fx", fxExpr);
+                sortCols.put("spread",      spreadExpr);
                 sortCols.put("name",        "m.name");
                 sortCols.put("mid",         "m.mid");
                 String orderExpr = sortCols.getOrDefault(sort, "SUM(t.total_base_volume)");
@@ -622,7 +715,7 @@ public class BusinessController {
                 // lossOnly -> only merchants whose net margin over the window is
                 // negative (a loss). Applied as HAVING on the grouped aggregate so
                 // it flows identically into the page, count, and totals queries.
-                String havingLoss = lossOnly ? "HAVING SUM(t.total_revenue) < 0 " : "";
+                String havingLoss = lossOnly ? "HAVING " + revExpr + " < 0 " : "";
                 // lossOnly rolls up to MERCHANT level (MID only), not MID x SID. A
                 // merchant can be net-negative overall while individual stores are
                 // fine (or vice versa) — the loss list must reflect the merchant's
@@ -645,17 +738,61 @@ public class BusinessController {
                 //                            AMS MID-only) have no store to land
                 //                            on and are shown on the Loss-Making /
                 //                            Net Spread merchant rollups instead.
-                String ancJoin = lossOnly
-                                ? "LEFT JOIN (SELECT merchant_id, SUM(COALESCE(dcc_acquirer,0)) AS dcc, " +
-                                  "SUM(COALESCE(rental_amount,0)) AS rental FROM sum_daily_merchant " +
+                // Channel scope: the trading-store universe the even split runs
+                // over is restricted to stores that traded on the SELECTED
+                // channel, so a POS/ECOM view never lands revenue on a store
+                // with no row in that view.
+                String storeUniverse = chScoped
+                                ? "(SELECT DISTINCT t3.merchant_id, t3.store_id FROM sum_daily_terminal t3 " +
+                                  "LEFT JOIN dim_terminal dt3 ON dt3.terminal_id = t3.terminal_id AND dt3.tenant_id = t3.tenant_id " +
+                                  "            WHERE t3.tenant_id = :tid AND t3.business_date BETWEEN :s AND :e AND t3.store_id IS NOT NULL " +
+                                  "AND " + terminalChannelIs("t3", "dt3", ch) + ")"
+                                : "(SELECT DISTINCT merchant_id, store_id FROM sum_daily_terminal " +
+                                  "            WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e AND store_id IS NOT NULL)";
+                // ECOM FX income (sum_daily_merchant.fx_revenue, MID grain, no
+                // SID) rides the same merchant-level even-split rule as rental
+                // — it only joins the query when the tenant flag is on, so the
+                // flag-off ALL text stays byte-identical to the pre-FX SQL.
+                String fxLegMl = fxOn
+                                ? "        UNION ALL " +
+                                  "        SELECT merchant_id, 0 AS dcc, 0 AS rental, SUM(COALESCE(fx_revenue,0)) AS fx FROM sum_daily_merchant " +
+                                  "        WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e AND COALESCE(fx_revenue,0) <> 0 GROUP BY merchant_id"
+                                : "";
+                String ancJoin;
+                if (lossCh) {
+                        // Channel + merchant grain: the relation carries the
+                        // channel-attributed ancillary columns inline.
+                        ancJoin = "";
+                } else if (lossOnly) {
+                        ancJoin = "LEFT JOIN (SELECT merchant_id, SUM(COALESCE(dcc_acquirer,0)) AS dcc, " +
+                                  "SUM(COALESCE(rental_amount,0)) AS rental" +
+                                  (fxOn ? ", SUM(COALESCE(fx_revenue,0)) AS fx" : "") +
+                                  " FROM sum_daily_merchant " +
                                   "WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e GROUP BY merchant_id) anc " +
-                                  "ON anc.merchant_id = t.merchant_id "
-                                : "LEFT JOIN (SELECT u.merchant_id, u.store_id, SUM(u.dcc) AS dcc, SUM(u.rental) AS rental FROM (" +
-                                  "SELECT merchant_id, store_id, SUM(acquirer_share) AS dcc, 0 AS rental FROM fact_dcc_revenue " +
+                                  "ON anc.merchant_id = t.merchant_id ";
+                } else if (chEcom) {
+                        // ECOM store grain: DCC + rental are POS revenue, so the
+                        // only ancillary leg is the FX even split (flag on).
+                        ancJoin = !fxOn ? ""
+                                : "LEFT JOIN (SELECT st.merchant_id, st.store_id, ml.fx / st.n AS fx " +
+                                  "FROM (SELECT d.merchant_id, d.store_id, COUNT(*) OVER (PARTITION BY d.merchant_id) AS n " +
+                                  "      FROM " + storeUniverse + " d) st " +
+                                  "JOIN (SELECT merchant_id, SUM(COALESCE(fx_revenue,0)) AS fx FROM sum_daily_merchant " +
+                                  "      WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e AND COALESCE(fx_revenue,0) <> 0 GROUP BY merchant_id) ml " +
+                                  "ON ml.merchant_id = st.merchant_id) anc " +
+                                  "ON anc.merchant_id = t.merchant_id AND anc.store_id = t.store_id ";
+                } else {
+                        // ALL / POS store grain. POS carries the full DCC + rental
+                        // attribution; the FX leg only exists on ALL (flag on).
+                        boolean fxHere = fxOn && !chScoped;
+                        String fxCol = fxHere ? ", SUM(u.fx) AS fx" : "";
+                        String fx0 = fxHere ? ", 0 AS fx" : "";
+                        ancJoin = "LEFT JOIN (SELECT u.merchant_id, u.store_id, SUM(u.dcc) AS dcc, SUM(u.rental) AS rental" + fxCol + " FROM (" +
+                                  "SELECT merchant_id, store_id, SUM(acquirer_share) AS dcc, 0 AS rental" + fx0 + " FROM fact_dcc_revenue " +
                                   "WHERE tenant_id = :tid AND payment_date BETWEEN :s AND :e AND store_id IS NOT NULL " +
                                   "GROUP BY merchant_id, store_id " +
                                   "UNION ALL " +
-                                  "SELECT merchant_id, store_id, 0 AS dcc, SUM(rental_amount) AS rental FROM fact_rental " +
+                                  "SELECT merchant_id, store_id, 0 AS dcc, SUM(rental_amount) AS rental" + fx0 + " FROM fact_rental " +
                                   "WHERE tenant_id = :tid AND payment_date BETWEEN :s AND :e AND store_id IS NOT NULL " +
                                   "GROUP BY merchant_id, store_id " +
                                   // Merchant-level ancillary (no SID) split EVENLY across the
@@ -666,25 +803,40 @@ public class BusinessController {
                                   // stores month to month). Merchants with no trading store
                                   // in the window keep it as totals.unattributedAncillary.
                                   "UNION ALL " +
-                                  "SELECT st.merchant_id, st.store_id, ml.dcc / st.n AS dcc, ml.rental / st.n AS rental " +
+                                  "SELECT st.merchant_id, st.store_id, ml.dcc / st.n AS dcc, ml.rental / st.n AS rental" +
+                                  (fxHere ? ", ml.fx / st.n AS fx" : "") + " " +
                                   "FROM (SELECT d.merchant_id, d.store_id, COUNT(*) OVER (PARTITION BY d.merchant_id) AS n " +
-                                  "      FROM (SELECT DISTINCT merchant_id, store_id FROM sum_daily_terminal " +
-                                  "            WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e AND store_id IS NOT NULL) d) st " +
-                                  "JOIN (SELECT merchant_id, SUM(dcc) AS dcc, SUM(rental) AS rental FROM (" +
-                                  "        SELECT merchant_id, SUM(acquirer_share) AS dcc, 0 AS rental FROM fact_dcc_revenue " +
+                                  "      FROM " + storeUniverse + " d) st " +
+                                  "JOIN (SELECT merchant_id, SUM(dcc) AS dcc, SUM(rental) AS rental" + (fxHere ? ", SUM(fx) AS fx" : "") + " FROM (" +
+                                  "        SELECT merchant_id, SUM(acquirer_share) AS dcc, 0 AS rental" + (fxHere ? ", 0 AS fx" : "") + " FROM fact_dcc_revenue " +
                                   "        WHERE tenant_id = :tid AND payment_date BETWEEN :s AND :e AND store_id IS NULL AND merchant_id IS NOT NULL GROUP BY merchant_id " +
                                   "        UNION ALL " +
-                                  "        SELECT merchant_id, 0 AS dcc, SUM(rental_amount) AS rental FROM fact_rental " +
+                                  "        SELECT merchant_id, 0 AS dcc, SUM(rental_amount) AS rental" + (fxHere ? ", 0 AS fx" : "") + " FROM fact_rental " +
                                   "        WHERE tenant_id = :tid AND payment_date BETWEEN :s AND :e AND store_id IS NULL AND merchant_id IS NOT NULL GROUP BY merchant_id" +
+                                  (fxHere ? " " + fxLegMl : "") +
                                   "      ) x GROUP BY merchant_id) ml ON ml.merchant_id = st.merchant_id" +
                                   ") u GROUP BY u.merchant_id, u.store_id) anc " +
                                   "ON anc.merchant_id = t.merchant_id AND anc.store_id = t.store_id ";
+                }
+                // Channel scope, store grain: each terminal-day row is kept or
+                // dropped by its terminal's resolved channel class (dim_terminal
+                // LEFT JOIN — a row with no terminal dim defaults to POS, same
+                // as the V2026_09_08_01 backfill). lossOnly + channel swaps the
+                // FROM to the ChannelSql relation instead (merchant-day grain,
+                // channel + attribution already applied; no store columns, so
+                // the dim_store join is dropped with it).
+                String fromClause = lossCh
+                                ? "FROM " + com.acquira.common.service.ChannelSql.merchantDay(ch) + " t " +
+                                  "JOIN dim_merchant m ON m.merchant_id = t.merchant_id AND m.tenant_id = t.tenant_id "
+                                : "FROM sum_daily_terminal t " +
+                                  (chScoped ? "LEFT JOIN dim_terminal dt ON dt.terminal_id = t.terminal_id AND dt.tenant_id = t.tenant_id " : "") +
+                                  "JOIN dim_merchant m ON m.merchant_id = t.merchant_id AND m.tenant_id = t.tenant_id " +
+                                  "LEFT JOIN dim_store s ON s.store_id = t.store_id AND s.tenant_id = t.tenant_id ";
                 String base =
-                                "FROM sum_daily_terminal t " +
-                                "JOIN dim_merchant m ON m.merchant_id = t.merchant_id AND m.tenant_id = t.tenant_id " +
-                                "LEFT JOIN dim_store s ON s.store_id = t.store_id AND s.tenant_id = t.tenant_id " +
+                                fromClause +
                                 ancJoin +
                                 "WHERE t.tenant_id = :tid AND t.business_date BETWEEN :s AND :e " +
+                                (chScoped && !lossCh ? "AND " + terminalChannelIs("t", "dt", ch) : "") +
                                 (hasSearch
                                                 ? (lossOnly
                                                                 ? "AND (m.name ILIKE :q ESCAPE '\\' OR m.mid ILIKE :q ESCAPE '\\') "
@@ -697,8 +849,9 @@ public class BusinessController {
                 jakarta.persistence.Query rq = entityManager.createNativeQuery(
                                 "SELECT m.mid, " + sidSelect + ", m.name, " +
                                 "SUM(t.total_txns), SUM(t.total_base_volume), SUM(t.total_msf), " +
-                                "SUM(t.total_interchange), SUM(t.total_scheme_fee), SUM(COALESCE(t.total_ecom_fee,0)), SUM(t.total_revenue), " +
-                                "MAX(COALESCE(anc.dcc,0)), MAX(COALESCE(anc.rental,0)) " +
+                                "SUM(t.total_interchange), SUM(t.total_scheme_fee), SUM(COALESCE(t.total_ecom_fee,0)), " + revExpr + ", " +
+                                dccExpr + ", " + rentalExpr +
+                                (fxOn ? ", " + fxExpr : "") + " " +
                                 base +
                                 "ORDER BY " + orderExpr + " " + orderDir + " NULLS LAST" + tieBreak +
                                 (export ? "" : " LIMIT :lim OFFSET :off"));
@@ -746,9 +899,13 @@ public class BusinessController {
                                         : null);
                         BigDecimal dcc = toBigDecimal(r[10]);
                         BigDecimal rental = toBigDecimal(r[11]);
-                        BigDecimal spread = net.add(dcc).add(rental);
+                        // FX joins the row (own column + spread) only when the
+                        // tenant flag is on — same rule as NetSpreadRepository.
+                        BigDecimal rowFx = fxOn ? toBigDecimal(r[12]) : BigDecimal.ZERO;
+                        BigDecimal spread = net.add(dcc).add(rental).add(rowFx);
                         m.put("dccAcquirer", dcc);
                         m.put("rental", rental);
+                        if (fxOn) m.put("fx", rowFx);
                         m.put("netSpread", spread);
                         m.put("spreadPct", vol.signum() != 0
                                         ? spread.multiply(BigDecimal.valueOf(100)).divide(vol, 2, RoundingMode.HALF_UP)
@@ -767,11 +924,15 @@ public class BusinessController {
                                 "SELECT COUNT(*), COALESCE(SUM(x.c1),0), COALESCE(SUM(x.c2),0), COALESCE(SUM(x.c3),0), " +
                                 "COALESCE(SUM(x.c4),0), COALESCE(SUM(x.c5),0), COALESCE(SUM(x.c6),0), COALESCE(SUM(x.c7),0), " +
                                 "COALESCE(SUM(x.c8),0), COALESCE(SUM(x.c9),0), " +
-                                "COUNT(*) FILTER (WHERE x.c6 < 0 AND x.c6 + x.c8 + x.c9 >= 0) FROM ( " +
+                                (fxOn ? "COALESCE(SUM(x.c10),0), " : "") +
+                                // Rescued = negative on margin, non-negative on spread —
+                                // and the spread includes FX only when the flag is on.
+                                "COUNT(*) FILTER (WHERE x.c6 < 0 AND x.c6 + x.c8 + x.c9" + (fxOn ? " + x.c10" : "") + " >= 0) FROM ( " +
                                 "SELECT SUM(t.total_txns) c1, SUM(t.total_base_volume) c2, SUM(t.total_msf) c3, " +
-                                "SUM(t.total_interchange) c4, SUM(t.total_scheme_fee) c5, SUM(t.total_revenue) c6, " +
+                                "SUM(t.total_interchange) c4, SUM(t.total_scheme_fee) c5, " + revExpr + " c6, " +
                                 "SUM(COALESCE(t.total_ecom_fee,0)) c7, " +
-                                "MAX(COALESCE(anc.dcc,0)) c8, MAX(COALESCE(anc.rental,0)) c9 " +
+                                dccExpr + " c8, " + rentalExpr + " c9" +
+                                (fxOn ? ", " + fxExpr + " c10" : "") + " " +
                                 base + ") x");
                 tq.setParameter("tid", tenantId);
                 tq.setParameter("s", from);
@@ -797,16 +958,19 @@ public class BusinessController {
                                 : null);
                 BigDecimal tDcc = toBigDecimal(meta[8]);
                 BigDecimal tRental = toBigDecimal(meta[9]);
-                BigDecimal tSpread = tNet.add(tDcc).add(tRental);
+                BigDecimal tFx = fxOn ? toBigDecimal(meta[10]) : BigDecimal.ZERO;
+                BigDecimal tSpread = tNet.add(tDcc).add(tRental).add(tFx);
                 totals.put("dccAcquirer", tDcc);
                 totals.put("rental", tRental);
+                if (fxOn) totals.put("fx", tFx);
                 totals.put("netSpread", tSpread);
                 totals.put("spreadPct", tVol.signum() != 0
                                 ? tSpread.multiply(BigDecimal.valueOf(100)).divide(tVol, 2, RoundingMode.HALF_UP)
                                 : null);
                 // Rows negative on margin but non-negative on spread (all rows in
-                // the result set, not just the page).
-                totals.put("rescuedRows", ((Number) meta[10]).longValue());
+                // the result set, not just the page). The fx column, when
+                // selected, sits between the ancillary totals and this count.
+                totals.put("rescuedRows", ((Number) meta[fxOn ? 11 : 10]).longValue());
                 // MID x SID grain only: merchant-level ancillary (no SID) is split
                 // evenly across the merchant's trading stores (see ancJoin). Two
                 // figures are reported so the band can say so honestly:
@@ -816,18 +980,40 @@ public class BusinessController {
                 //                          with no trading store in the window,
                 //                          which therefore has no row at all.
                 BigDecimal unattributed = BigDecimal.ZERO, allocated = BigDecimal.ZERO;
-                if (!lossOnly) {
+                // ECOM carries no merchant-level DCC/rental, so with the FX flag
+                // off there is nothing merchant-level to account for at all.
+                if (!lossOnly && !(chEcom && !fxOn)) {
                         String searchAnd = hasSearch
                                         ? "AND (m.name ILIKE :q ESCAPE '\\' OR m.mid ILIKE :q ESCAPE '\\') " : "";
-                        String hasStore = "EXISTS (SELECT 1 FROM sum_daily_terminal t2 WHERE t2.tenant_id = m.tenant_id " +
-                                        "AND t2.merchant_id = m.merchant_id AND t2.business_date BETWEEN :s AND :e AND t2.store_id IS NOT NULL)";
-                        String mlSql =
-                                        "SELECT m.merchant_id, SUM(x.amt) AS amt FROM (" +
+                        // Channel scope: "has a trading store" means a store that
+                        // traded on the SELECTED channel — matching the even-split
+                        // universe above, so allocated/unattributed reconcile with
+                        // the rows actually shown.
+                        String hasStore = chScoped
+                                        ? "EXISTS (SELECT 1 FROM sum_daily_terminal t2 " +
+                                          "LEFT JOIN dim_terminal dt2 ON dt2.terminal_id = t2.terminal_id AND dt2.tenant_id = t2.tenant_id " +
+                                          "WHERE t2.tenant_id = m.tenant_id " +
+                                          "AND t2.merchant_id = m.merchant_id AND t2.business_date BETWEEN :s AND :e AND t2.store_id IS NOT NULL " +
+                                          "AND " + terminalChannelIs("t2", "dt2", ch) + ")"
+                                        : "EXISTS (SELECT 1 FROM sum_daily_terminal t2 WHERE t2.tenant_id = m.tenant_id " +
+                                          "AND t2.merchant_id = m.merchant_id AND t2.business_date BETWEEN :s AND :e AND t2.store_id IS NOT NULL)";
+                        // Legs by channel attribution: DCC + rental are POS-side
+                        // (ALL + POS); FX is ECOM-side (ALL + ECOM, flag on only —
+                        // the flag-off ALL text stays byte-identical to the pre-FX
+                        // SQL).
+                        String posLegs =
                                         "SELECT merchant_id, tenant_id, rental_amount AS amt FROM fact_rental " +
                                         "WHERE tenant_id = :tid AND payment_date BETWEEN :s AND :e AND store_id IS NULL " +
                                         "UNION ALL " +
                                         "SELECT merchant_id, tenant_id, acquirer_share AS amt FROM fact_dcc_revenue " +
-                                        "WHERE tenant_id = :tid AND payment_date BETWEEN :s AND :e AND store_id IS NULL) x " +
+                                        "WHERE tenant_id = :tid AND payment_date BETWEEN :s AND :e AND store_id IS NULL";
+                        String fxLeg =
+                                        "SELECT merchant_id, tenant_id, fx_revenue AS amt FROM sum_daily_merchant " +
+                                        "WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e AND COALESCE(fx_revenue,0) <> 0";
+                        String legs = chEcom ? fxLeg
+                                        : (fxOn && !chScoped ? posLegs + " UNION ALL " + fxLeg : posLegs);
+                        String mlSql =
+                                        "SELECT m.merchant_id, SUM(x.amt) AS amt FROM (" + legs + ") x " +
                                         "JOIN dim_merchant m ON m.merchant_id = x.merchant_id AND m.tenant_id = x.tenant_id " +
                                         "WHERE 1=1 " + searchAnd + "GROUP BY m.merchant_id, m.tenant_id";
                         jakarta.persistence.Query uq = entityManager.createNativeQuery(
@@ -855,6 +1041,8 @@ public class BusinessController {
                 response.put("dataThrough", eff.toString());
                 response.put("mode", resolvedMode);
                 response.put("lossOnly", lossOnly);
+                response.put("channel", ch);
+                response.put("fxEnabled", fxOn);
                 response.put("from", from.toString());
                 response.put("to", to.toString());
                 response.put("page", page);
@@ -865,24 +1053,76 @@ public class BusinessController {
                 return currencyMeta.attach(response);
         }
 
-        private static final BigDecimal[] ZERO_ANC = { BigDecimal.ZERO, BigDecimal.ZERO };
+        private static final BigDecimal[] ZERO_ANC = { BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO };
         /** YYYYMM integer from business_date — matches sum_monthly_bank.month_key. */
         private static final String MONTH_KEY_EXPR =
                         "CAST(EXTRACT(YEAR FROM business_date) AS INTEGER) * 100 + CAST(EXTRACT(MONTH FROM business_date) AS INTEGER)";
 
         /**
-         * Ancillary revenue (DCC acquirer share, rental) per bucket over the
-         * tenant-day finance rollup, the only bank-grain table that carries the
-         * columns (AncillarySql keeps them current). Bucket key -> {dcc, rental}.
+         * Month rows for a calendar year: [month_key, txns, volume, msf,
+         * interchange, scheme, ecom, net]. ALL reads sum_monthly_bank
+         * (byte-identical to the pre-channel SQL); POS/ECOM bucket the
+         * ChannelSql merchant-day relation by MONTH_KEY_EXPR over the year's
+         * date range (there is no channel-grain monthly pre-aggregate).
+         */
+        @SuppressWarnings("unchecked")
+        private List<Object[]> monthlyBuckets(Long tenantId, int year, String ch) {
+                if (com.acquira.common.service.ChannelSql.isChannel(ch)) {
+                        return entityManager.createNativeQuery(
+                                        "SELECT " + MONTH_KEY_EXPR + " AS mk, " +
+                                        "SUM(total_txns), SUM(COALESCE(total_base_volume,0)), SUM(total_msf), " +
+                                        "SUM(COALESCE(total_interchange,0)), SUM(COALESCE(total_scheme_fee,0)), SUM(COALESCE(total_ecom_fee,0)), SUM(total_margin) " +
+                                        "FROM " + com.acquira.common.service.ChannelSql.merchantDay(ch) + " s " +
+                                        "WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
+                                        "GROUP BY 1 ORDER BY 1")
+                                        .setParameter("tid", tenantId)
+                                        .setParameter("s", LocalDate.of(year, 1, 1))
+                                        .setParameter("e", LocalDate.of(year, 12, 31))
+                                        .getResultList();
+                }
+                return entityManager.createNativeQuery(
+                                "SELECT month_key, total_txns, COALESCE(total_base_volume,0), total_msf, " +
+                                "COALESCE(total_interchange,0), COALESCE(total_scheme_fee,0), COALESCE(total_ecom_fee,0), total_net_revenue " +
+                                "FROM sum_monthly_bank WHERE tenant_id = :tid AND month_key BETWEEN :a AND :b " +
+                                "ORDER BY month_key")
+                                .setParameter("tid", tenantId)
+                                .setParameter("a", year * 100 + 1)
+                                .setParameter("b", year * 100 + 12)
+                                .getResultList();
+        }
+
+        /**
+         * Ancillary revenue (DCC acquirer share, rental, ecom FX) per bucket.
+         * ALL reads the tenant-day finance rollup, the only bank-grain table
+         * that carries the columns (AncillarySql keeps them current) — the FX
+         * column only joins the query when the tenant flag is on, so the
+         * flag-off SQL stays byte-identical to the pre-FX text. POS/ECOM read
+         * the ChannelSql relation, whose wholesale attribution already zeroes
+         * DCC/rental on ECOM and FX on POS. Bucket key -> {dcc, rental, fx}.
          * The bucket expression is a server-side constant, never request text.
          */
-        private Map<Integer, BigDecimal[]> ancillaryBuckets(Long tenantId, LocalDate from, LocalDate to, String bucketExpr) {
+        private Map<Integer, BigDecimal[]> ancillaryBuckets(Long tenantId, LocalDate from, LocalDate to,
+                        String bucketExpr, String ch, boolean withFx) {
+                String sql;
+                if (com.acquira.common.service.ChannelSql.isChannel(ch)) {
+                        sql = "SELECT " + bucketExpr + " AS bk, " +
+                                        "COALESCE(SUM(dcc_acquirer),0), COALESCE(SUM(rental_amount),0), COALESCE(SUM(fx_revenue),0) " +
+                                        "FROM " + com.acquira.common.service.ChannelSql.merchantDay(ch) + " s " +
+                                        "WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
+                                        "GROUP BY 1";
+                } else if (withFx) {
+                        sql = "SELECT " + bucketExpr + " AS bk, " +
+                                        "COALESCE(SUM(dcc_acquirer),0), COALESCE(SUM(rental_amount),0), COALESCE(SUM(fx_revenue),0) " +
+                                        "FROM sum_daily_finance_rollup WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
+                                        "GROUP BY 1";
+                } else {
+                        sql = "SELECT " + bucketExpr + " AS bk, " +
+                                        "COALESCE(SUM(dcc_acquirer),0), COALESCE(SUM(rental_amount),0) " +
+                                        "FROM sum_daily_finance_rollup WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
+                                        "GROUP BY 1";
+                }
                 @SuppressWarnings("unchecked")
-                List<Object[]> rows = entityManager.createNativeQuery(
-                                "SELECT " + bucketExpr + " AS bk, " +
-                                "COALESCE(SUM(dcc_acquirer),0), COALESCE(SUM(rental_amount),0) " +
-                                "FROM sum_daily_finance_rollup WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e " +
-                                "GROUP BY 1")
+                List<Object[]> rows = entityManager.createNativeQuery(sql)
                                 .setParameter("tid", tenantId)
                                 .setParameter("s", from)
                                 .setParameter("e", to)
@@ -890,17 +1130,34 @@ public class BusinessController {
                 Map<Integer, BigDecimal[]> out = new HashMap<>();
                 for (Object[] r : rows) {
                         out.put(((Number) r[0]).intValue(),
-                                        new BigDecimal[] { toBigDecimal(r[1]), toBigDecimal(r[2]) });
+                                        new BigDecimal[] { toBigDecimal(r[1]), toBigDecimal(r[2]),
+                                                        r.length > 3 ? toBigDecimal(r[3]) : BigDecimal.ZERO });
                 }
                 return out;
         }
 
         /**
-         * One-row SUM aggregate over sum_daily_bank for a date window (settlement
-         * volume), plus the window's ancillary revenue from the finance rollup:
-         * [txns, volume, msf, interchange, scheme, ecom, net, dcc, rental].
+         * One-row SUM aggregate for a date window (settlement volume), plus the
+         * window's ancillary revenue: [txns, volume, msf, interchange, scheme,
+         * ecom, net, dcc, rental, fx]. ALL reads sum_daily_bank + the finance
+         * rollup (flag-off SQL byte-identical to the pre-FX text); POS/ECOM
+         * read everything off the ChannelSql relation in one pass.
          */
-        private Object[] singleAggregate(Long tenantId, LocalDate from, LocalDate to) {
+        private Object[] singleAggregate(Long tenantId, LocalDate from, LocalDate to, String ch, boolean withFx) {
+                if (com.acquira.common.service.ChannelSql.isChannel(ch)) {
+                        Object res = entityManager.createNativeQuery(
+                                        "SELECT COALESCE(SUM(total_txns),0), COALESCE(SUM(total_base_volume),0), " +
+                                        "COALESCE(SUM(total_msf),0), COALESCE(SUM(total_interchange),0), " +
+                                        "COALESCE(SUM(total_scheme_fee),0), COALESCE(SUM(total_ecom_fee),0), COALESCE(SUM(total_margin),0), " +
+                                        "COALESCE(SUM(dcc_acquirer),0), COALESCE(SUM(rental_amount),0), COALESCE(SUM(fx_revenue),0) " +
+                                        "FROM " + com.acquira.common.service.ChannelSql.merchantDay(ch) + " s " +
+                                        "WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e")
+                                        .setParameter("tid", tenantId)
+                                        .setParameter("s", from)
+                                        .setParameter("e", to)
+                                        .getSingleResult();
+                        return (Object[]) res;
+                }
                 Object res = entityManager.createNativeQuery(
                                 "SELECT COALESCE(SUM(total_txns),0), COALESCE(SUM(total_base_volume),0), " +
                                 "COALESCE(SUM(total_msf),0), COALESCE(SUM(total_interchange),0), " +
@@ -911,7 +1168,9 @@ public class BusinessController {
                                 .setParameter("e", to)
                                 .getSingleResult();
                 Object anc = entityManager.createNativeQuery(
-                                "SELECT COALESCE(SUM(dcc_acquirer),0), COALESCE(SUM(rental_amount),0) " +
+                                (withFx
+                                                ? "SELECT COALESCE(SUM(dcc_acquirer),0), COALESCE(SUM(rental_amount),0), COALESCE(SUM(fx_revenue),0) "
+                                                : "SELECT COALESCE(SUM(dcc_acquirer),0), COALESCE(SUM(rental_amount),0) ") +
                                 "FROM sum_daily_finance_rollup WHERE tenant_id = :tid AND business_date BETWEEN :s AND :e")
                                 .setParameter("tid", tenantId)
                                 .setParameter("s", from)
@@ -919,31 +1178,36 @@ public class BusinessController {
                                 .getSingleResult();
                 Object[] bank = (Object[]) res;
                 Object[] a = (Object[]) anc;
-                Object[] out = new Object[9];
+                Object[] out = new Object[10];
                 System.arraycopy(bank, 0, out, 0, 7);
                 out[7] = a[0];
                 out[8] = a[1];
+                out[9] = a.length > 2 ? a[2] : BigDecimal.ZERO;
                 return out;
         }
 
         /** {@link #buildMetricBucket} over a {@link #singleAggregate} row. */
-        private static Map<String, Object> bucketFromAggregate(String label, Object[] agg) {
+        private static Map<String, Object> bucketFromAggregate(String label, Object[] agg, boolean fxOn) {
                 return buildMetricBucket(label,
                                 toLong(agg[0]), toBigDecimal(agg[1]),
                                 toBigDecimal(agg[2]), toBigDecimal(agg[3]),
                                 toBigDecimal(agg[4]), toBigDecimal(agg[5]),
-                                toBigDecimal(agg[6]), toBigDecimal(agg[7]), toBigDecimal(agg[8]));
+                                toBigDecimal(agg[6]), toBigDecimal(agg[7]), toBigDecimal(agg[8]),
+                                toBigDecimal(agg[9]), fxOn);
         }
 
         /**
          * Bucket map: count / volume / msf / interchange / scheme fee / ecom fee /
          * net margin / DCC acquirer / rental / net spread + derived avgTicket,
          * marginPct, spreadPct. Net Spread = net margin + DCC acquirer share +
-         * rental (NetSpreadSql) — derived here, never stored.
+         * rental (NetSpreadSql) — derived here, never stored. When the tenant's
+         * FX flag is on, the bucket also carries the ecom FX income as its own
+         * "fx" field AND folds it into the spread (NetSpreadSql.spreadWithFx
+         * semantics); flag off keeps the payload shape unchanged.
          */
         private static Map<String, Object> buildMetricBucket(String label, long txns,
                         BigDecimal vol, BigDecimal msf, BigDecimal interchange, BigDecimal schemeFee, BigDecimal ecomFee, BigDecimal net,
-                        BigDecimal dccAcquirer, BigDecimal rental) {
+                        BigDecimal dccAcquirer, BigDecimal rental, BigDecimal fx, boolean fxOn) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("label", label);
                 m.put("txns", txns);
@@ -954,8 +1218,10 @@ public class BusinessController {
                 m.put("ecomFee", ecomFee);
                 m.put("netRevenue", net);
                 BigDecimal spread = net.add(dccAcquirer).add(rental);
+                if (fxOn) spread = spread.add(fx);
                 m.put("dccAcquirer", dccAcquirer);
                 m.put("rental", rental);
+                if (fxOn) m.put("fx", fx);
                 m.put("netSpread", spread);
                 m.put("spreadPct", vol.compareTo(BigDecimal.ZERO) > 0
                                 ? spread.multiply(BigDecimal.valueOf(100)).divide(vol, 2, RoundingMode.HALF_UP)

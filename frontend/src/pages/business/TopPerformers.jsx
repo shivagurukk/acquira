@@ -6,6 +6,7 @@ import { Box, Paper, Typography, Stack, IconButton, Tooltip } from '@mui/materia
 import { Trophy, TrendingUp, Users, UserPlus, Sparkles, Download, ArrowUpRight, ArrowDownRight, Receipt, Layers } from 'lucide-react';
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
+import ChannelToggle from '../../components/ChannelToggle';
 import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
@@ -288,6 +289,7 @@ const TopPerformers = () => {
     const [showFilters, setShowFilters] = useState(false);
     const [boardTab, setBoardTab] = useState('volume');
     const [topN, setTopN] = useState(10);
+    const [channel, setChannel] = useState('ALL'); // ALL | POS | ECOM (ChannelToggle)
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -296,7 +298,7 @@ const TopPerformers = () => {
     // so the board could show results for a window the user had already moved off.
     const reqSeq = React.useRef(0);
 
-    const fetchData = async (explicitFilters, explicitTopN) => {
+    const fetchData = async (explicitFilters, explicitTopN, explicitChannel) => {
         const f = explicitFilters || filters;
         const seq = ++reqSeq.current;
         setLoading(true);
@@ -306,6 +308,8 @@ const TopPerformers = () => {
             if (f.endDate) params.set('to', f.endDate);
             const n = explicitTopN || topN;
             if (n !== 10) params.set('top', n);
+            const ch = explicitChannel || channel;
+            if (ch !== 'ALL') params.set('channel', ch);
             const body = { ...f, startDate: undefined, endDate: undefined, datePreset: undefined };
             const res = await api.post(`/business/top-performers-filtered?${params.toString()}`, body);
             if (seq === reqSeq.current) setData(res.data);
@@ -316,7 +320,17 @@ const TopPerformers = () => {
         }
     };
 
-    useEffect(() => { fetchData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tenantVersion]);
+    // Channel scope must not survive a tenant switch — reset to ALL and fetch
+    // with the reset value (state updates land after this closure runs).
+    useEffect(() => {
+        setChannel('ALL');
+        fetchData(undefined, undefined, 'ALL');
+        /* eslint-disable-next-line react-hooks/exhaustive-deps */
+    }, [tenantVersion]);
+
+    // ECOM FX income (tenant flag netspread.fx_enabled) — when off, the FX
+    // stat/boards don't render and the backend spread excludes fx.
+    const fxEnabled = !!data?.fxEnabled;
 
     const concentrationCards = data ? [
         {
@@ -329,9 +343,16 @@ const TopPerformers = () => {
         },
         {
             title: 'Total Net Spread', value: fmt.currency(data.concentration.totalNetSpread),
-            subtitle: 'net margin + DCC (acquirer) + rental',
+            subtitle: fxEnabled
+                ? 'net margin + DCC (acquirer) + rental + ecom FX'
+                : 'net margin + DCC (acquirer) + rental',
             icon: Layers, color: 'var(--success, #059669)',
         },
+        ...(fxEnabled ? [{
+            title: 'FX Income', value: fmt.currency(data.concentration.totalFx),
+            subtitle: 'ecom FX margin (excl. Benefit PG)',
+            icon: Layers, color: 'var(--mix-ancillary, #A85D9C)',
+        }] : []),
         {
             title: 'Active Merchants', value: fmt.number(data.concentration.activeMerchantCount),
             icon: Users, color: 'var(--brand-alt, #3b82f6)',
@@ -374,6 +395,13 @@ const TopPerformers = () => {
                 isOpen={showFilters}
                 onClose={() => setShowFilters(false)}
             />
+
+            {/* POS / ECOM / All channel scope — refetches: the scoping happens
+                server-side (ChannelSql), not on the delivered payload. */}
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <ChannelToggle value={channel}
+                    onChange={(c) => { setChannel(c); fetchData(undefined, undefined, c); }} />
+            </Box>
 
             {grainNote && !loading && (
                 <Paper sx={{
@@ -497,6 +525,22 @@ const TopPerformers = () => {
                             valueKey="netSpread" valueFmt={fmt.currency}
                             onExport={() => exportToCSV(data.topRmsByNetSpread || [], 'top_rms_by_net_spread')}
                         />
+                        {fxEnabled && (<>
+                            <LeaderboardCard
+                                title={`Top ${boardN} Merchants — FX Income`} icon={Layers} color={SPREAD_HUE}
+                                rows={data.topMerchantsByFx || []} primaryKey="name" secondaryKey="mid"
+                                valueKey="fx" valueFmt={fmt.currency}
+                                emptyLabel="No ecom FX income in this window."
+                                onExport={() => exportToCSV(data.topMerchantsByFx || [], 'top_merchants_by_fx_income')}
+                            />
+                            <LeaderboardCard
+                                title={`Top ${boardN} RMs — FX Income`} icon={Layers} color={SPREAD_HUE}
+                                rows={data.topRmsByFx || []} primaryKey="name" secondaryKey="salesUserId"
+                                valueKey="fx" valueFmt={fmt.currency}
+                                emptyLabel="No ecom FX income in this window."
+                                onExport={() => exportToCSV(data.topRmsByFx || [], 'top_rms_by_fx_income')}
+                            />
+                        </>)}
                     </>)}
                     {boardTab === 'activity' && (<>
                         <LeaderboardCard

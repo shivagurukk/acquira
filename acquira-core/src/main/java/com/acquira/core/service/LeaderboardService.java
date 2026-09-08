@@ -64,13 +64,23 @@ public class LeaderboardService {
 
     /** Latest business_date for the tenant — the "today" all periods anchor to. */
     public LocalDate resolveAnchor(Long tenantId) {
+        return resolveAnchor(tenantId, com.acquira.common.service.ChannelSql.ALL);
+    }
+
+    /**
+     * Channel-scoped anchor (POS / ECOM selector): the latest trading day ON
+     * THAT CHANNEL, via {@link com.acquira.common.service.ChannelSql#merchantDay}.
+     * ALL keeps the original sum_daily_merchant read byte-for-byte.
+     */
+    public LocalDate resolveAnchor(Long tenantId, String channel) {
         try {
             // total_txns > 0: an ancillary-only day (rental/DCC loaded ahead
             // of that day's transaction file) must not drag the MTD/QTD/YTD
             // anchor past the last real trading day.
             LocalDate max = jdbcTemplate.queryForObject(
-                "SELECT MAX(business_date) FROM sum_daily_merchant "
-                + "WHERE tenant_id = ? AND COALESCE(total_txns,0) > 0",
+                "SELECT MAX(business_date) FROM "
+                + com.acquira.common.service.ChannelSql.merchantDay(channel)
+                + " sdm WHERE tenant_id = ? AND COALESCE(total_txns,0) > 0",
                 LocalDate.class, tenantId);
             return max != null ? max : LocalDate.now();
         } catch (Exception e) {

@@ -15,6 +15,7 @@ import {
     isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
 } from '../../utils/formatters';
 import { weekRules } from '../../utils/weekRules';
+import ChannelToggle from '../../components/ChannelToggle';
 
 /* ════════════════════════════════════════════════════════════════════
    Executive Daily Merchant Dashboard — the acquiring day, read as a
@@ -71,6 +72,7 @@ const FEE_LABELS = {
     sf:  'Scheme Fee',
     pg:  'Payment Gateway Fee',
     nm:  'Net Margin',
+    fx:  'FX Income',
 };
 
 const PAGE_SIZES = [25, 50, 100];
@@ -854,6 +856,9 @@ const DailyMerchantDashboard = () => {
     const [detailRow, setDetailRow] = useState(null);
     const [detailMix, setDetailMix] = useState(null);
     const [lastRefresh, setLastRefresh] = useState(null);
+    /* Executive channel selector: ALL keeps the request byte-identical to the
+       pre-selector page; POS/ECOM filter every read on channel_class. */
+    const [channel, setChannel] = useState('ALL');
     /* The table load waits for the calendar to resolve the default month/date;
        firing it immediately produced a second, thrown-away request (the first
        ran on the backend-default date, then the calendar answer changed the
@@ -910,7 +915,7 @@ const DailyMerchantDashboard = () => {
         try {
             const res = await api.post('/business/executive-daily-merchant', filters, {
                 signal,
-                params: { ...dateParams, page, size: pageSize, sort, dir },
+                params: { ...dateParams, page, size: pageSize, sort, dir, channel },
             });
             setData(res.data);
             setLastRefresh(new Date());
@@ -920,7 +925,7 @@ const DailyMerchantDashboard = () => {
         } finally {
             setLoading(false);
         }
-    }, [filters, dateParams, page, pageSize, sort, dir]);
+    }, [filters, dateParams, page, pageSize, sort, dir, channel]);
 
     useEffect(() => {
         if (!bootstrapped) return;
@@ -931,6 +936,7 @@ const DailyMerchantDashboard = () => {
 
     useEffect(() => {
         setPage(0); setMonth(''); setSelectedDates([]); setDetailRow(null);
+        setChannel('ALL');        // channel scope never carries across tenants
         setBootstrapped(false);   // wait for the new tenant's calendar
     }, [tenantVersion]);
 
@@ -940,12 +946,12 @@ const DailyMerchantDashboard = () => {
         let cancelled = false;
         setDetailMix(null);
         api.post('/business/executive-daily-merchant/breakdown', filters, {
-            params: { ...dateParams, merchantId: detailRow.merchantId },
+            params: { ...dateParams, merchantId: detailRow.merchantId, channel },
         })
             .then(res => { if (!cancelled) setDetailMix(res.data?.mix || null); })
             .catch(() => { if (!cancelled) setDetailMix(null); });
         return () => { cancelled = true; };
-    }, [detailRow, filters, dateParams]);
+    }, [detailRow, filters, dateParams, channel]);
 
     const toggleDate = (iso) => {
         setSelectedDates(l => l.includes(iso) ? l.filter(d => d !== iso) : [...l, iso].sort());
@@ -1042,11 +1048,12 @@ const DailyMerchantDashboard = () => {
         setExporting(true);
         try {
             const res = await api.post('/business/executive-daily-merchant', filters, {
-                params: { ...dateParams, sort, dir, export: true },
+                params: { ...dateParams, sort, dir, export: true, channel },
             });
             const rows = res.data?.content || [];
             const totals = res.data?.totals;
             const label = res.data?.selection || '';
+            const withFx = !!res.data?.fxEnabled;
             // Excel evaluates unquoted =,+,-,@ leads; merchant names come from
             // ingested master data, so force them to text.
             const esc = (v) => {
@@ -1063,14 +1070,17 @@ const DailyMerchantDashboard = () => {
                 ...(fx ? [`FX Rate,1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`] : []),
                 `Business Date,${res.data?.month ? res.data.month + ' (full month)'
                     : (res.data?.dates || []).join(' ') || label}`,
+                ...(channel !== 'ALL' ? [`Channel,${channel}`] : []),
                 ['SID', 'MID', 'Name', 'Vol', 'Count', FEE_LABELS.msf, FEE_LABELS.icf,
-                    FEE_LABELS.sf, FEE_LABELS.pg, FEE_LABELS.nm].join(','),
+                    FEE_LABELS.sf, FEE_LABELS.pg,
+                    ...(withFx ? [FEE_LABELS.fx] : []), FEE_LABELS.nm].join(','),
             ];
             rows.forEach(r => lines.push([
                 esc(r.sid), esc(r.mid), esc(r.merchantName),
                 cv(r.volume).toFixed(dp), num(r.count),
                 cv(r.msf).toFixed(msfDp), cv(r.icf).toFixed(dp),
-                cv(r.sf).toFixed(dp), cv(r.pg).toFixed(dp), cv(r.nm).toFixed(dp),
+                cv(r.sf).toFixed(dp), cv(r.pg).toFixed(dp),
+                ...(withFx ? [cv(r.fx).toFixed(dp)] : []), cv(r.nm).toFixed(dp),
             ].join(',')));
             // The server's own selection total, so the file verifies itself.
             if (totals) {
@@ -1079,6 +1089,7 @@ const DailyMerchantDashboard = () => {
                     cv(totals.volume).toFixed(dp), num(totals.count),
                     cv(totals.msf).toFixed(msfDp), cv(totals.icf).toFixed(dp),
                     cv(totals.sf).toFixed(dp), cv(totals.pg).toFixed(dp),
+                    ...(withFx ? [cv(totals.fx).toFixed(dp)] : []),
                     cv(totals.nm).toFixed(dp),
                 ].join(','));
             }
@@ -1108,6 +1119,18 @@ const DailyMerchantDashboard = () => {
 
     const rows = data?.content || [];
     const totals = data?.totals;
+    /* FX Income (ecom FX margin, tenant flag netspread.fx_enabled) is a
+       SEPARATE additive column — never folded into Net Margin here. The server
+       says when to show it (flag on AND the scope can carry FX: ALL or ECOM);
+       gating on the payload keeps the page honest if the flag flips. */
+    const fxOn = !!data?.fxEnabled;
+    /* FX rides at merchant-day grain, so it has no server-side sort key —
+       the column renders as a plain (non-sortable) header. */
+    const tableColumns = useMemo(() => (fxOn
+        ? [...COLUMNS.slice(0, -1),
+           { key: 'fx', label: FEE_LABELS.fx, align: 'right', wrap: true, noSort: true },
+           COLUMNS[COLUMNS.length - 1]]
+        : COLUMNS), [fxOn]);
     const trend = data?.trend || [];
     const mix = data?.mix;
     const totalRows = num(data?.totalElements);
@@ -1187,7 +1210,7 @@ const DailyMerchantDashboard = () => {
     /* One key per SELECTION (dates + filters). Anything that re-animates —
        ribbon wipe, bar growth, sparkline draw — is keyed on this, so a sort or
        page turn never replays motion on figures that did not change. */
-    const animKey = `${dateParams.dates || dateParams.month || ''}|${JSON.stringify(filters)}`;
+    const animKey = `${dateParams.dates || dateParams.month || ''}|${channel}|${JSON.stringify(filters)}`;
 
     /* Per-metric daily series across the month's loaded days, for the tile
        sparklines. Cost of sale is the three pay-away fees summed per day. */
@@ -1199,6 +1222,7 @@ const DailyMerchantDashboard = () => {
         msf:    loadedDays.map(t => num(t.msf)),
         cost:   loadedDays.map(costOf),
         nm:     loadedDays.map(t => num(t.nm)),
+        fx:     loadedDays.map(t => num(t.fx)),
     }), [loadedDays]);
 
     /* Period-over-period deltas, computed on a per-day basis from the month
@@ -1876,6 +1900,11 @@ const DailyMerchantDashboard = () => {
                                 {selectionText}
                             </div>
                         </div>
+                        {/* Channel scope: ALL is the untouched page; POS/ECOM
+                            re-run every read on channel_class. Page + drilldown
+                            reset because the result population changes. */}
+                        <ChannelToggle value={channel}
+                            onChange={(v) => { setChannel(v); setPage(0); setDetailRow(null); }} />
                         <button className="edm-focus edm-mast-btn" onClick={exportCsv}
                             disabled={exporting || !rows.length}>
                             <Download size={13} /> {exporting ? 'Exporting' : 'Export'}
@@ -2182,7 +2211,7 @@ const DailyMerchantDashboard = () => {
                                         delta={deltas?.msf} deltaLabel={deltas?.label}
                                         series={kpiSeries.msf} sparkColor="var(--cat-4, #B08C1E)" animKey={animKey} />
                                 </div>
-                                <div>
+                                <div style={fxOn ? cellDiv : undefined}>
                                     <Metric wide label="Cost of sale"
                                         raw={costTotal} format={fmt.currency}
                                         sub="interchange + scheme + gateway"
@@ -2190,6 +2219,18 @@ const DailyMerchantDashboard = () => {
                                         delta={deltas?.cost} deltaLabel={deltas?.label} invertDelta
                                         series={kpiSeries.cost} sparkColor="var(--cat-2, #CA5F28)" animKey={animKey} />
                                 </div>
+                                {/* Additive ecom FX income — separate from Net Margin,
+                                    shown only when the tenant flag is on and the scope
+                                    can carry FX (ALL / ECOM). */}
+                                {fxOn && (
+                                    <div>
+                                        <Metric wide label="FX Income"
+                                            raw={num(totals.fx)} format={fmt.currency}
+                                            sub="ecom FX margin · additive"
+                                            title={fullNum(totals.fx, currencySymbol)}
+                                            series={kpiSeries.fx} sparkColor="var(--cat-3, #3D7EA6)" animKey={animKey} />
+                                    </div>
+                                )}
                             </div>
 
                             <div style={{ padding: '15px 20px 16px' }}>
@@ -2255,13 +2296,14 @@ const DailyMerchantDashboard = () => {
                             <table className="edm-table">
                                 <thead>
                                     <tr>
-                                        {COLUMNS.map(c => {
+                                        {tableColumns.map(c => {
                                             const active = sort === c.key;
                                             return (
                                                 <th key={c.key}
                                                     className={`edm-th ${c.sticky ? `edm-c${c.sticky}` : ''}${c.wrap ? ' edm-th-wrap' : ''}`}
-                                                    onClick={() => onSort(c.key)} tabIndex={0}
-                                                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSort(c.key); } }}
+                                                    onClick={c.noSort ? undefined : () => onSort(c.key)}
+                                                    tabIndex={c.noSort ? undefined : 0}
+                                                    onKeyDown={c.noSort ? undefined : e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSort(c.key); } }}
                                                     aria-sort={active ? (dir === 'desc' ? 'descending' : 'ascending') : 'none'}
                                                     style={{ textAlign: c.align, color: active ? 'var(--table-head-text, var(--text))' : undefined }}>
                                                     {c.label}
@@ -2295,6 +2337,7 @@ const DailyMerchantDashboard = () => {
                                             <td className="edm-cell-num" title={fullNum(r.icf, currencySymbol)}>{money(r.icf)}</td>
                                             <td className="edm-cell-num" title={fullNum(r.sf, currencySymbol)}>{money(r.sf)}</td>
                                             <td className="edm-cell-num" title={fullNum(r.pg, currencySymbol)}>{money(r.pg)}</td>
+                                            {fxOn && <td className="edm-cell-num" title={fullNum(r.fx, currencySymbol)}>{money(r.fx)}</td>}
                                             <td className={`edm-cell-num ${num(r.nm) < 0 ? 'edm-nm-loss' : 'edm-nm-cell'}`}
                                                 style={{ '--heat': nmHeat(r.nm) }}>
                                                 <NmCell v={r.nm} />
@@ -2316,6 +2359,7 @@ const DailyMerchantDashboard = () => {
                                             <td className="edm-cell-num" title={fullNum(totals.icf, currencySymbol)}>{money(totals.icf)}</td>
                                             <td className="edm-cell-num" title={fullNum(totals.sf, currencySymbol)}>{money(totals.sf)}</td>
                                             <td className="edm-cell-num" title={fullNum(totals.pg, currencySymbol)}>{money(totals.pg)}</td>
+                                            {fxOn && <td className="edm-cell-num" title={fullNum(totals.fx, currencySymbol)}>{money(totals.fx)}</td>}
                                             <td className="edm-cell-num"><NmCell v={totals.nm} bold /></td>
                                         </tr>
                                     )}

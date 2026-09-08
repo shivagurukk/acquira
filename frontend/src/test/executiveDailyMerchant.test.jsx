@@ -161,6 +161,52 @@ describe('Executive Daily Merchant Dashboard — visual layer', () => {
         expect(container.querySelector('.edm-tip').textContent).toContain('No transactions loaded');
     });
 
+    it('sends channel=ALL by default and re-fetches with the toggled channel', async () => {
+        render(<DailyMerchantDashboard />);
+        await waitFor(() => expect(screen.getByText('Alpha Foods')).toBeInTheDocument());
+        // Every table fetch carries the channel; the default is the untouched ALL scope.
+        const firstCall = post.mock.calls.find(c => c[0] === '/business/executive-daily-merchant');
+        expect(firstCall[2].params.channel).toBe('ALL');
+
+        post.mockClear();
+        fireEvent.click(screen.getByRole('button', { name: 'Ecom' }));
+        await waitFor(() => expect(post).toHaveBeenCalled());
+        const ecomCall = post.mock.calls.find(c => c[0] === '/business/executive-daily-merchant');
+        expect(ecomCall[2].params.channel).toBe('ECOM');
+    });
+
+    it('hides the FX column when the payload does not enable it', async () => {
+        render(<DailyMerchantDashboard />);
+        await waitFor(() => expect(screen.getByText('Alpha Foods')).toBeInTheDocument());
+        expect(screen.queryByText('FX Income')).not.toBeInTheDocument();
+    });
+
+    it('renders the FX Income tile and table column when fxEnabled is on', async () => {
+        const fxPayload = {
+            ...PAYLOAD,
+            fxEnabled: true,
+            totals: { ...PAYLOAD.totals, fx: 55.5 },
+            content: ROWS.map(r => ({ ...r, fx: 11.1 })),
+            trend: TREND.map(t => ({ ...t, fx: 5 })),
+        };
+        post.mockImplementation((url) => {
+            if (url.endsWith('/breakdown')) return Promise.resolve({ data: { mix: PAYLOAD.mix } });
+            return Promise.resolve({ data: fxPayload });
+        });
+        const { container } = render(<DailyMerchantDashboard />);
+        await waitFor(() => expect(screen.getByText('Alpha Foods')).toBeInTheDocument());
+
+        // Tile (additive, separate from Net Margin) + one extra table column.
+        const tiles = [...container.querySelectorAll('.edm-tile')];
+        expect(tiles.some(t => t.textContent.includes('FX Income'))).toBe(true);
+        const headers = [...container.querySelectorAll('thead th')].map(h => h.textContent);
+        expect(headers).toContain('FX Income');
+        // FX column sits before Net Margin and each row renders its figure.
+        expect(headers.indexOf('FX Income')).toBe(headers.indexOf('Net Margin') - 1);
+        const firstRowCells = [...container.querySelectorAll('tbody tr')][0].querySelectorAll('td');
+        expect(firstRowCells.length).toBe(headers.length);
+    });
+
     it('opens the drilldown with the navy head and MID/SID badges', async () => {
         const { container } = render(<DailyMerchantDashboard />);
         await waitFor(() => expect(screen.getByText('Alpha Foods')).toBeInTheDocument());

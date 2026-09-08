@@ -7,6 +7,7 @@ import {
     ChevronUp, ChevronDown, CalendarRange, TrendingDown,
     Landmark, Receipt, Percent, Layers, Wallet,
 } from 'lucide-react';
+import ChannelToggle from '../components/ChannelToggle';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
@@ -83,11 +84,16 @@ const ALL_COLUMNS = [
     // Loss-Making merchant rollup they are the merchant's whole amount.
     { key: 'dcc',         label: 'DCC',            align: 'right', sortable: true },
     { key: 'rental',      label: 'Rental',         align: 'right', sortable: true },
+    // ECOM FX income (tenant flag netspread.fx_enabled) — only rendered when
+    // the backend says fxEnabled; the server then folds it into Net Spread.
+    { key: 'fx',          label: 'FX Income',      align: 'right', sortable: true },
     { key: 'spread',      label: 'Net Spread',     align: 'right', sortable: true },
 ];
 // lossOnly rolls the server-side query up to MID (merchant) level, so the
-// SID column has nothing meaningful to show — drop it from that view.
-const columnsFor = (lossOnly) => lossOnly ? ALL_COLUMNS.filter(c => c.key !== 'sid') : ALL_COLUMNS;
+// SID column has nothing meaningful to show — drop it from that view. The FX
+// column only exists when the tenant's netspread.fx_enabled flag is on.
+const columnsFor = (lossOnly, fxEnabled) => ALL_COLUMNS.filter(c =>
+    (lossOnly ? c.key !== 'sid' : true) && (fxEnabled ? true : c.key !== 'fx'));
 
 const PAGE_SIZE = 50;
 
@@ -157,6 +163,8 @@ const CeoVolumeRevenue = ({
     const [dir, setDir] = useState(lossOnly ? 'asc' : 'desc');  // loss: worst (most negative) first
     const [search, setSearch] = useState('');
     const [query, setQuery] = useState('');
+    // POS / ECOM / All channel scope (ChannelToggle; ChannelSql server-side).
+    const [channel, setChannel] = useState('ALL');
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -175,9 +183,11 @@ const CeoVolumeRevenue = ({
         return { mode: 'MTD' };
     }, [period, month]);
 
+    /* FX column only when the backend says the tenant flag is on. */
+    const fxEnabled = !!data?.fxEnabled;
     // lossOnly is a fixed prop (not state), so this only needs to react to it
     // in case a future caller ever toggles it live.
-    const visibleColumns = useMemo(() => columnsFor(lossOnly), [lossOnly]);
+    const visibleColumns = useMemo(() => columnsFor(lossOnly, fxEnabled), [lossOnly, fxEnabled]);
 
     useEffect(() => {
         clearTimeout(debounceRef.current);
@@ -191,7 +201,7 @@ const CeoVolumeRevenue = ({
             const res = await api.get('/business/ceo-volume-revenue', {
                 signal,
                 params: {
-                    ...periodParams, lossOnly: lossOnly || undefined,
+                    ...periodParams, lossOnly: lossOnly || undefined, channel,
                     page, size: PAGE_SIZE, sort, dir, search: query || undefined,
                 },
             });
@@ -207,7 +217,7 @@ const CeoVolumeRevenue = ({
         } finally {
             setLoading(false);
         }
-    }, [periodParams, lossOnly, page, sort, dir, query]);
+    }, [periodParams, lossOnly, channel, page, sort, dir, query]);
 
     useEffect(() => {
         const ac = new AbortController();
@@ -219,8 +229,9 @@ const CeoVolumeRevenue = ({
     // tenant switch must too. Staying on page 3 while moving to a tenant with
     // fewer loss rows returned an empty page with a non-zero totalRows, which
     // the empty state below used to report as "That's good news" — a false
-    // all-clear on a risk screen.
-    useEffect(() => { setPage(0); }, [tenantVersion]);
+    // all-clear on a risk screen. The channel scope resets to All with it —
+    // a POS/ECOM filter must never silently carry over to another bank.
+    useEffect(() => { setPage(0); setChannel('ALL'); }, [tenantVersion]);
 
     const onSort = (key) => {
         const col = visibleColumns.find(c => c.key === key);
@@ -233,7 +244,7 @@ const CeoVolumeRevenue = ({
     const exportCsv = async () => {
         setExporting(true);
         try {
-            const base = { ...periodParams, lossOnly: lossOnly || undefined, sort, dir, search: query || undefined };
+            const base = { ...periodParams, lossOnly: lossOnly || undefined, channel, sort, dir, search: query || undefined };
             // export=true returns the FULL result set in one response. Paging
             // through in 500-row chunks re-ran the grouped aggregate per chunk
             // (twice: rows + totals) and OFFSET re-sorted all skipped rows, so
@@ -259,8 +270,12 @@ const CeoVolumeRevenue = ({
             const msfDp = Math.max(4, dp);
             const cv = (v) => convertForDisplay(num(v), currencyCode);
             const fx = usdRateInfo(currencyCode);
+            // FX column only when the backend confirms the tenant flag for THIS
+            // response (not the possibly-stale on-screen data object).
+            const withFx = !!res.data?.fxEnabled;
             // Header mirrors the on-screen column order: SID first, MID second.
-            const spreadHeads = ['DCC (Acquirer)', 'Rental', 'Net Spread', 'Net Spread %'];
+            const spreadHeads = ['DCC (Acquirer)', 'Rental',
+                ...(withFx ? ['FX Income'] : []), 'Net Spread', 'Net Spread %'];
             const header = lossOnly
                 ? ['MID', 'Merchant', 'Count', 'Volume', 'MSF',
                     'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %', ...spreadHeads]
@@ -280,6 +295,7 @@ const CeoVolumeRevenue = ({
                 cv(r.ecomFee).toFixed(dp),
                 cv(r.netRevenue).toFixed(dp), pctCell(r.marginPct),
                 cv(r.dccAcquirer).toFixed(dp), cv(r.rental).toFixed(dp),
+                ...(withFx ? [cv(r.fx).toFixed(dp)] : []),
                 cv(r.netSpread).toFixed(dp), pctCell(r.spreadPct),
             ].join(',')));
             // Always append the server's own period-total aggregate (unbounded, matches
@@ -296,6 +312,7 @@ const CeoVolumeRevenue = ({
                     cv(exportTotals.ecomFee).toFixed(dp),
                     cv(exportTotals.netRevenue).toFixed(dp), pctCell(exportTotals.marginPct),
                     cv(exportTotals.dccAcquirer).toFixed(dp), cv(exportTotals.rental).toFixed(dp),
+                    ...(withFx ? [cv(exportTotals.fx).toFixed(dp)] : []),
                     cv(exportTotals.netSpread).toFixed(dp), pctCell(exportTotals.spreadPct),
                 ].join(','));
             }
@@ -303,7 +320,8 @@ const CeoVolumeRevenue = ({
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             const tag = (data?.mode || period).toString().toLowerCase().replace(/[^a-z0-9-]/g, '');
-            a.download = `${lossOnly ? 'loss-making' : 'volume-revenue'}-${tag}-${data?.effectiveDate || ''}.csv`;
+            const chTag = channel !== 'ALL' ? `-${channel.toLowerCase()}` : '';
+            a.download = `${lossOnly ? 'loss-making' : 'volume-revenue'}-${tag}${chTag}-${data?.effectiveDate || ''}.csv`;
             a.click();
             URL.revokeObjectURL(a.href);
         } catch (e) {
@@ -398,6 +416,10 @@ const CeoVolumeRevenue = ({
                                 borderRadius: 10, color: 'var(--text)', outline: 'none',
                             }} />
                     </div>
+
+                    {/* POS / ECOM / All channel scope (server-side, ChannelSql) */}
+                    <ChannelToggle value={channel}
+                        onChange={(ch) => { setChannel(ch); setPage(0); }} />
 
                     {/* period selector: MTD | YTD | This Month */}
                     <div style={{ display: 'inline-flex', background: 'var(--bg-card)',
@@ -539,7 +561,9 @@ const CeoVolumeRevenue = ({
                             <div>
                                 <StatTile icon={Layers} label="Net Spread"
                                     value={fmt.currency(num(totals.netSpread))}
-                                    caption={`margin + DCC ${fmt.currency(num(totals.dccAcquirer))} + rental ${fmt.currency(num(totals.rental))} · ${pct(totals.spreadPct)}`}
+                                    caption={fxEnabled
+                                        ? `margin + DCC ${fmt.currency(num(totals.dccAcquirer))} + rental ${fmt.currency(num(totals.rental))} + FX ${fmt.currency(num(totals.fx))} · ${pct(totals.spreadPct)}`
+                                        : `margin + DCC ${fmt.currency(num(totals.dccAcquirer))} + rental ${fmt.currency(num(totals.rental))} · ${pct(totals.spreadPct)}`}
                                     tone={num(totals.netSpread) >= 0 ? 'success' : 'danger'}
                                     title={fullNum(totals.netSpread, currencySymbol)} />
                             </div>
@@ -639,6 +663,9 @@ const CeoVolumeRevenue = ({
                                             </td>
                                             <td style={tdNum} title={fullNum(r.dccAcquirer, currencySymbol)}>{fmt.currency(num(r.dccAcquirer))}</td>
                                             <td style={tdNum} title={fullNum(r.rental, currencySymbol)}>{fmt.currency(num(r.rental))}</td>
+                                            {fxEnabled && (
+                                                <td style={tdNum} title={fullNum(r.fx, currencySymbol)}>{fmt.currency(num(r.fx))}</td>
+                                            )}
                                             <td style={{ ...tdNum, fontWeight: 700,
                                                 color: num(r.netSpread) >= 0 ? 'var(--text)' : '#dc2626' }}
                                                 title={`${fullNum(r.netSpread, currencySymbol)} · ${pct(r.spreadPct)} of volume`}>
@@ -673,6 +700,9 @@ const CeoVolumeRevenue = ({
                                             </td>
                                             <td style={tdTotal} title={fullNum(totals.dccAcquirer, currencySymbol)}>{fmt.currency(num(totals.dccAcquirer))}</td>
                                             <td style={tdTotal} title={fullNum(totals.rental, currencySymbol)}>{fmt.currency(num(totals.rental))}</td>
+                                            {fxEnabled && (
+                                                <td style={tdTotal} title={fullNum(totals.fx, currencySymbol)}>{fmt.currency(num(totals.fx))}</td>
+                                            )}
                                             <td style={{ ...tdTotal, color: num(totals.netSpread) >= 0 ? 'var(--text)' : '#dc2626' }}
                                                 title={`${fullNum(totals.netSpread, currencySymbol)} · ${pct(totals.spreadPct)} of volume`}>
                                                 {fmt.currency(num(totals.netSpread))}

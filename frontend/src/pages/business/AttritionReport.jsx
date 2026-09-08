@@ -12,6 +12,7 @@ import { exportToCSV } from '../../utils/exportUtils';
 import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../../theme/dataGridStyles';
 import { useDataBounds } from '../../hooks/useDataBounds';
 import DataBoundsBanner from '../../components/DataBoundsBanner';
+import ChannelToggle from '../../components/ChannelToggle';
 
 // ─── Local design tokens ─────────────────────────────────────────
 // Every colour routes through a CSS variable with a light-mode fallback so the
@@ -208,6 +209,12 @@ const AttritionReport = () => {
     // or merchant count. A churned whale and a churned minnow must not look
     // the same width.
     const [bandBasis, setBandBasis] = useState('value');
+    // Executive channel selector (POS / ECOM / All). 'ALL' keeps the request
+    // byte-identical to a body without the field (backend normalizes). The ref
+    // mirrors the state so fetchData closures never post a stale channel —
+    // seeded fetches fire in the same commit as setState.
+    const [channel, setChannel] = useState('ALL');
+    const channelRef = useRef('ALL');
     const [filters, setFilters] = useState({
         startDate: '', endDate: '',
         openDateStart: '', openDateEnd: '',
@@ -226,7 +233,10 @@ const AttritionReport = () => {
     // fetch fired in the same effect — posting the seeded object directly
     // guarantees the request body matches what the UI shows.
     const fetchData = async (override) => {
-        const body = (override && override.startDate !== undefined) ? override : filters;
+        const base = (override && override.startDate !== undefined) ? override : filters;
+        // The channel rides on the filter DTO (backend field `channel`); read
+        // from the ref so a toggle-triggered fetch posts the value just picked.
+        const body = { ...base, channel: channelRef.current };
         // Cancel any in-flight report request: rapid filter changes must not
         // let a slow older response land after (and overwrite) a newer one.
         fetchAbortRef.current?.abort();
@@ -291,6 +301,21 @@ const AttritionReport = () => {
         fetchData(seeded);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [boundsLoaded]);
+
+    // Tenant switch: back to the ALL scope — a channel picked on one tenant
+    // must never silently filter another tenant's report.
+    useEffect(() => {
+        setChannel('ALL');
+        channelRef.current = 'ALL';
+    }, [tenantVersion]);
+
+    // Toggle: commit state + ref together, then re-run the report on the
+    // current filters (the ref guarantees the request carries the new value).
+    const handleChannelChange = (v) => {
+        setChannel(v);
+        channelRef.current = v;
+        fetchData();
+    };
 
     // Churn-risk scores are precomputed by the batch and independent of the
     // attrition filters, so fetch once per tenant switch (not per report run).
@@ -802,6 +827,22 @@ const AttritionReport = () => {
                 loading={loading} showFilters={showFilters}
                 onToggleFilters={() => setShowFilters(!showFilters)} filters={filters}
             />
+            {/* ── Channel scope (POS / ECOM / All) ──
+                Changes the ACTIVITY BASIS of the whole report: statuses, windows
+                and totals are all recomputed on the scoped volumes server-side.
+                Sits outside the filter drawer because it is a report scope, not
+                a narrowing filter. */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 1.5, flexWrap: 'wrap' }}>
+                <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: T.textMut, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    Channel
+                </Typography>
+                <ChannelToggle value={channel} onChange={handleChannelChange} compact />
+                {channel !== 'ALL' && (
+                    <Typography sx={{ fontSize: '0.78rem', color: T.textSec }}>
+                        Statuses and comparisons are computed on {channel === 'POS' ? 'POS' : 'e-commerce'} activity only.
+                    </Typography>
+                )}
+            </Box>
             <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchData()} isOpen={showFilters} onClose={() => setShowFilters(false)} />
             <DataBoundsBanner
                 latest={latest}

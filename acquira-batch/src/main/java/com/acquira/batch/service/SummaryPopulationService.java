@@ -370,7 +370,7 @@ public class SummaryPopulationService {
                     jdbcTemplate.update("INSERT INTO sum_daily_full (tenant_id, business_date, merchant_id, store_id, mcc, " +
                         "channel, destination, card_scheme, card_type, is_opt_in, " +
                         "total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, " +
-                        "total_net_revenue, dcc_optin_count) " +
+                        "total_net_revenue, dcc_optin_count, channel_class) " +
                         "SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc, " +
                         "COALESCE(t.type,'POS'), f.destination, " +
                         "CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL' " +
@@ -380,7 +380,22 @@ public class SummaryPopulationService {
                         "COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), " +
                         "SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)), " +
                         "SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)), " +
-                        "COUNT(CASE WHEN f.dcc IS TRUE THEN 1 END) " +
+                        "COUNT(CASE WHEN f.dcc IS TRUE THEN 1 END), " +
+                        // channel_class: the ingest-stamped fact channel is the truth;
+                        // pre-stamp fact rows (never re-priced) fall back to the same
+                        // terminal_channel_map lookup the backfill migration used, so a
+                        // rebuild can never regress a correct class to the POS default.
+                        // COALESCE evaluates lazily - the correlated lookup only runs
+                        // for rows with a NULL fact channel. MIN() keeps it out of the
+                        // GROUP BY (the raw type determines the class, so all rows in a
+                        // group agree unless the map itself was edited between ingests).
+                        "MIN(COALESCE(f.channel, " +
+                        "(SELECT mm.channel FROM terminal_channel_map mm " +
+                        " WHERE mm.country_code = (SELECT tt.home_country_code FROM tenant tt WHERE tt.tenant_id = f.tenant_id) " +
+                        "   AND (mm.tenant_id IS NULL OR mm.tenant_id = f.tenant_id) " +
+                        "   AND (mm.raw_type = UPPER(TRIM(COALESCE(t.type,''))) OR mm.raw_type = '*') " +
+                        " ORDER BY (mm.tenant_id IS NULL), (mm.raw_type = '*') LIMIT 1), " +
+                        "'POS')) " +
                         "FROM fact_transaction f " +
                         "LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id " +
                         "LEFT JOIN dim_store st ON f.store_id=st.store_id AND st.tenant_id=f.tenant_id " +
@@ -394,7 +409,7 @@ public class SummaryPopulationService {
                         "DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf, " +
                         "total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, " +
                         "total_ecom_fee=EXCLUDED.total_ecom_fee, total_net_revenue=EXCLUDED.total_net_revenue, " +
-                        "dcc_optin_count=EXCLUDED.dcc_optin_count",
+                        "dcc_optin_count=EXCLUDED.dcc_optin_count, channel_class=EXCLUDED.channel_class",
                         tenantId)));
 
                 // sum_daily_local_debit_bin — the Local Debit Bank Dashboard

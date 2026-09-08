@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
+import ChannelToggle from '../../components/ChannelToggle';
 import EmptyState from '../../components/EmptyState';
 import MarginGlossaryHint from '../../components/MarginGlossary';
 import { useAuth } from '../../contexts/AuthContext';
@@ -531,6 +532,7 @@ const NetSpreadDashboard = () => {
     const [search, setSearch] = useState('');
     const [searchDraft, setSearchDraft] = useState('');
     const [lossOnly, setLossOnly] = useState(false);
+    const [channel, setChannel] = useState('ALL');   // ALL | POS | ECOM (ChannelToggle)
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(50);
     const [sort, setSort] = useState('spread');
@@ -607,7 +609,7 @@ const NetSpreadDashboard = () => {
             const res = await api.post('/business/net-spread', {}, {
                 signal,
                 params: {
-                    ...dateParams, page, size: pageSize, sort, dir, lossOnly,
+                    ...dateParams, page, size: pageSize, sort, dir, lossOnly, channel,
                     ...(search.trim() ? { search: search.trim() } : {}),
                 },
             });
@@ -619,7 +621,7 @@ const NetSpreadDashboard = () => {
         } finally {
             setLoading(false);
         }
-    }, [dateParams, page, pageSize, sort, dir, lossOnly, search]);
+    }, [dateParams, page, pageSize, sort, dir, lossOnly, channel, search]);
 
     useEffect(() => {
         if (!bootstrapped) return;
@@ -630,7 +632,7 @@ const NetSpreadDashboard = () => {
 
     useEffect(() => {
         setPage(0); setMonth(''); setSelectedDates([]); setDetailRow(null);
-        setSearch(''); setSearchDraft(''); setLossOnly(false);
+        setSearch(''); setSearchDraft(''); setLossOnly(false); setChannel('ALL');
         setBootstrapped(false);   // wait for the new tenant's calendar
     }, [tenantVersion]);
 
@@ -714,7 +716,7 @@ const NetSpreadDashboard = () => {
         try {
             const res = await api.post('/business/net-spread', {}, {
                 params: {
-                    ...dateParams, sort, dir, export: true, lossOnly,
+                    ...dateParams, sort, dir, export: true, lossOnly, channel,
                     ...(search.trim() ? { search: search.trim() } : {}),
                 },
             });
@@ -853,7 +855,7 @@ const NetSpreadDashboard = () => {
     const ancillaryLabel = fxEnabled ? 'DCC + rentals + FX' : 'DCC + rentals';
     const daysCovered = selectedDates.length || trend.length;
 
-    const animKey = `${dateParams.dates || dateParams.month || ''}|${search}|${lossOnly}`;
+    const animKey = `${dateParams.dates || dateParams.month || ''}|${search}|${lossOnly}|${channel}`;
 
     const loadedDays = useMemo(
         () => allMonthDays.map(d => trendByDate.get(d)).filter(Boolean), [allMonthDays, trendByDate]);
@@ -1397,6 +1399,8 @@ const NetSpreadDashboard = () => {
                         title="Only merchants negative on net margin — see which ones ancillary revenue rescues">
                         <LifeBuoy size={13} /> Margin-loss merchants
                     </button>
+                    <ChannelToggle value={channel}
+                        onChange={(c) => { setChannel(c); setPage(0); setDetailRow(null); }} />
                 </div>
             </section>
 

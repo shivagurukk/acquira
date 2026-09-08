@@ -81,11 +81,16 @@ public class BusinessAnalyticsController {
                 return;
             }
             resolveFilters(filters);
+            // Same canonicalisation + key shape as the live endpoint (channel
+            // normalised to ALL, tenant FX flag in the key) or the warm entry
+            // is never read.
+            filters.setChannel(com.acquira.common.service.ChannelSql.normalize(filters.getChannel()));
+            boolean fx = volumeRevenueRepository.isFxEnabled(tenantId);
             String fk = filterKey(filters);
             if (fk == null) return;
             reportCache.get(
                     com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                    "attritionMeta:" + tenantId + ":" + fk,
+                    "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk,
                     () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
         });
     }
@@ -231,14 +236,20 @@ public class BusinessAnalyticsController {
         // computes it once and threads it through both.
         // Cached on the POST-resolveFilters DTO (canonical: team-leader names
         // and industries are already resolved to ids/MCCs), so two spellings of
-        // the same effective filter share an entry.
+        // the same effective filter share an entry. The channel selector is
+        // canonicalised the same way (null/junk -> ALL) so a body without the
+        // field shares its entry with an explicit channel:"ALL"; the tenant FX
+        // flag joins the key because it changes the spread columns and must
+        // take effect immediately on toggle (NetSpreadSql contract).
+        filters.setChannel(com.acquira.common.service.ChannelSql.normalize(filters.getChannel()));
+        boolean fx = volumeRevenueRepository.isFxEnabled(tenantId);
         String fk = filterKey(filters);
         if (fk == null) {
             return volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId);
         }
         return reportCache.get(
                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                "attritionMeta:" + tenantId + ":" + fk,
+                "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk,
                 () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
     }
 

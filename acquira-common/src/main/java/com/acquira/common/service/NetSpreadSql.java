@@ -90,4 +90,19 @@ public final class NetSpreadSql {
     public static String sumSpread(String a) {
         return "COALESCE(SUM(" + spread(a) + "), 0)";
     }
+
+    /**
+     * The ONE reading of the {@code netspread.fx_enabled} tenant flag —
+     * OPT-IN, only an explicit 'true' enables FX (a tenant without
+     * ref_ecom_fx_rate rows would otherwise render a dead all-zero column).
+     * Every executive endpoint that surfaces FX resolves the flag through
+     * here and must include the result in its cache key so a toggle takes
+     * effect immediately.
+     */
+    public static boolean fxEnabled(org.springframework.jdbc.core.JdbcTemplate jdbc, Long tenantId) {
+        java.util.List<String> v = jdbc.queryForList(
+                "SELECT setting_value FROM tenant_setting WHERE tenant_id = ? AND setting_key = 'netspread.fx_enabled'",
+                String.class, tenantId);
+        return !v.isEmpty() && "true".equalsIgnoreCase(String.valueOf(v.get(0)).trim());
+    }
 }

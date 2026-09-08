@@ -199,7 +199,7 @@ export default function PulseHeroBand({ data, money, periodLabel, narrow }) {
           {s.totalSpread != null && (
             <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${D.border}` }}>
               <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mix-ancillary, #BA65A8)', textTransform: 'uppercase', letterSpacing: 1 }}>
-                Net Spread · margin + DCC + rental
+                Net Spread · margin + DCC + rental{data?.fxEnabled ? ' + FX' : ''}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
                 <span style={{ fontSize: narrow ? 22 : 26, fontWeight: 800, lineHeight: 1.1, color: D.text, letterSpacing: -0.3, ...NUM }}>
@@ -229,6 +229,10 @@ export default function PulseHeroBand({ data, money, periodLabel, narrow }) {
             display: 'flex', gap: narrow ? 20 : 30, flexWrap: 'wrap', marginTop: 20,
             paddingTop: 16, borderTop: `1px solid ${D.border}`,
           }}>
+            {/* ECOM FX income — a separate figure, only when the tenant's
+                netspread.fx_enabled flag is on (it is already inside the
+                spread above; rendering a dead zero column helps no one). */}
+            {data?.fxEnabled && <Stat label="FX Income" value={money(s.totalFx)} />}
             <Stat label="Teams" value={s.teamCount ?? '—'} />
             <Stat label="Sales Executives" value={s.salesExecutiveCount ?? '—'} />
             <Stat

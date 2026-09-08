@@ -1,5 +1,6 @@
 package com.acquira.common.repository;
 
+import com.acquira.common.service.ChannelSql;
 import com.acquira.common.service.NetSpreadSql;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -123,7 +124,7 @@ public class NetSpreadRepository {
      * column itself is always selected so the flag never hides stored data
      * from a diagnostic query — it only changes the headline sum.
      */
-    private static String aggSelect(boolean fxEnabled) {
+    private static String aggSelect(boolean fxEnabled, String channel) {
         return "SELECT m.merchant_id AS merchant_id, m.mid AS mid, m.name AS name, "
             + "SUM(COALESCE(s.total_txns,0)) AS cnt, "
             + "SUM(COALESCE(s.total_base_volume,0)) AS vol, "
@@ -137,7 +138,7 @@ public class NetSpreadRepository {
             + "SUM(COALESCE(s.rental_amount,0)) AS rental, "
             + "SUM(" + NetSpreadSql.fx("s") + ") AS fx, "
             + (fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s")) + " AS spread "
-            + "FROM sum_daily_merchant s JOIN dim_merchant m ON m.merchant_id = s.merchant_id ";
+            + "FROM " + ChannelSql.merchantDay(channel) + " s JOIN dim_merchant m ON m.merchant_id = s.merchant_id ";
     }
 
     /**
@@ -147,18 +148,18 @@ public class NetSpreadRepository {
     public Map<String, Object> getMerchants(Long tenantId, List<LocalDate> dateList,
             LocalDate rangeStart, LocalDate rangeEnd, String search,
             List<String> midList, List<String> sidList, String merchantName,
-            String sort, String dir, int page, int size, boolean fxEnabled) {
+            String sort, String dir, int page, int size, boolean fxEnabled, String channel) {
 
         Where w = where(tenantId, dateList, rangeStart, rangeEnd, search, midList, sidList, merchantName);
         String orderCol = SORT_COLS.getOrDefault(sort, "spread");
         String orderDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
 
         Long total = jdbcTemplate.queryForObject(
-                "SELECT COUNT(DISTINCT s.merchant_id) FROM sum_daily_merchant s "
+                "SELECT COUNT(DISTINCT s.merchant_id) FROM " + ChannelSql.merchantDay(channel) + " s "
                 + "JOIN dim_merchant m ON m.merchant_id = s.merchant_id " + w.sql,
                 Long.class, w.params.toArray());
 
-        StringBuilder sql = new StringBuilder(aggSelect(fxEnabled)).append(w.sql)
+        StringBuilder sql = new StringBuilder(aggSelect(fxEnabled, channel)).append(w.sql)
                 .append("GROUP BY m.merchant_id, m.mid, m.name ")
                 .append("ORDER BY ").append(orderCol).append(' ').append(orderDir)
                 .append(" NULLS LAST, m.merchant_id ");
@@ -206,7 +207,8 @@ public class NetSpreadRepository {
      */
     public Map<String, Object> getTotals(Long tenantId, List<LocalDate> dateList,
             LocalDate rangeStart, LocalDate rangeEnd, String search,
-            List<String> midList, List<String> sidList, String merchantName, boolean fxEnabled) {
+            List<String> midList, List<String> sidList, String merchantName, boolean fxEnabled,
+            String channel) {
 
         Where w = where(tenantId, dateList, rangeStart, rangeEnd, search, midList, sidList, merchantName);
 
@@ -220,7 +222,7 @@ public class NetSpreadRepository {
                 + "COUNT(*) FILTER (WHERE nm < 0 AND spread >= 0) rescued, "
                 + "COUNT(*) FILTER (WHERE spread < 0) loss_on_spread, "
                 + "COUNT(*) merchants "
-                + "FROM (" + aggSelect(fxEnabled) + w.sql + "GROUP BY m.merchant_id, m.mid, m.name) t";
+                + "FROM (" + aggSelect(fxEnabled, channel) + w.sql + "GROUP BY m.merchant_id, m.mid, m.name) t";
 
         return jdbcTemplate.query(sql, rs -> {
             Map<String, Object> t = new LinkedHashMap<>();
@@ -253,7 +255,7 @@ public class NetSpreadRepository {
      */
     public List<Map<String, Object>> getTrend(Long tenantId, LocalDate ctxStart, LocalDate ctxEnd,
             String search, List<String> midList, List<String> sidList, String merchantName,
-            boolean fxEnabled) {
+            boolean fxEnabled, String channel) {
 
         Where w = where(tenantId, null, ctxStart, ctxEnd, search, midList, sidList, merchantName);
 
@@ -265,7 +267,7 @@ public class NetSpreadRepository {
                 + "SUM(COALESCE(s.rental_amount,0)) rental, "
                 + "SUM(" + NetSpreadSql.fx("s") + ") fx, "
                 + (fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s")) + " spread "
-                + "FROM sum_daily_merchant s JOIN dim_merchant m ON m.merchant_id = s.merchant_id "
+                + "FROM " + ChannelSql.merchantDay(channel) + " s JOIN dim_merchant m ON m.merchant_id = s.merchant_id "
                 + w.sql
                 + "GROUP BY s.business_date ORDER BY s.business_date";
 
