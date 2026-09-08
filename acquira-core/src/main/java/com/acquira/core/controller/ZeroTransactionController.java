@@ -48,6 +48,16 @@ public class ZeroTransactionController {
         return repository.getZeroTransactionSummary(filters, rangeType, tenantId);
     }
 
+    // Terminal / POS estate health over the FULL filtered estate — the
+    // denominator the dormancy view lacks (active vs idle vs dormant vs never),
+    // plus utilization of the terminals that ARE still transacting. Deliberately
+    // takes no rangeType: estate thresholds are fixed at 7d / 30d.
+    @PostMapping("/estate")
+    public Map<String, Object> getEstateHealth(@RequestBody VolumeRevenueFilterDTO filters) {
+        Long tenantId = tenantService.getCurrentTenantId();
+        return repository.getEstateHealth(filters, tenantId);
+    }
+
     // Server-side paginated rows + total. status = ALL | IN30 | NEVER | IN7.
     @PostMapping("/page")
     public Map<String, Object> getPage(@RequestBody VolumeRevenueFilterDTO filters,

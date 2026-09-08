@@ -25,13 +25,16 @@ public class ApiKeyController {
     private final PasswordEncoder passwordEncoder;
     private final com.acquira.common.service.AuditService auditService;
     private final ApiRateLimiter rateLimiter;
+    private final com.acquira.core.config.ApiKeyVerificationCache verificationCache;
 
     public ApiKeyController(PasswordEncoder passwordEncoder,
                             com.acquira.common.service.AuditService auditService,
-                            ApiRateLimiter rateLimiter) {
+                            ApiRateLimiter rateLimiter,
+                            com.acquira.core.config.ApiKeyVerificationCache verificationCache) {
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
         this.rateLimiter = rateLimiter;
+        this.verificationCache = verificationCache;
     }
 
     @GetMapping
@@ -42,7 +45,7 @@ public class ApiKeyController {
         var query = em.createNativeQuery(
             "SELECT key_id, name, key_prefix, permissions, is_active, created_at, " +
             "last_used, request_count, created_by, expires_at, rate_limit_per_minute, " +
-            "allowed_ips, last_used_ip FROM api_key " +
+            "allowed_ips, last_used_ip, quota_per_day, rotated_at FROM api_key " +
             "WHERE tenant_id = :tid ORDER BY created_at DESC");
         query.setParameter("tid", tenantId);
 
@@ -63,6 +66,7 @@ public class ApiKeyController {
             m.put("lastUsed", r[6]); m.put("requestCount", r[7]); m.put("createdBy", r[8]);
             m.put("expiresAt", r[9]); m.put("rateLimitPerMinute", r[10]);
             m.put("allowedIps", r[11]); m.put("lastUsedIp", r[12]);
+            m.put("quotaPerDay", r[13]); m.put("rotatedAt", r[14]);
             result.add(m);
         }
         return ResponseEntity.ok(result);
@@ -114,11 +118,17 @@ public class ApiKeyController {
         if (rateLimit == null || rateLimit <= 0) rateLimit = 120;
         String allowedIps = body.get("allowedIps") != null ? body.get("allowedIps").toString().trim() : null;
         if (allowedIps != null && allowedIps.isBlank()) allowedIps = null;
+        Integer quotaPerDay = null;
+        Object qRaw = body.get("quotaPerDay");
+        if (qRaw != null && !qRaw.toString().isBlank()) {
+            try { quotaPerDay = Integer.valueOf(qRaw.toString()); } catch (Exception ignore) {}
+            if (quotaPerDay != null && quotaPerDay <= 0) quotaPerDay = null;
+        }
 
         em.createNativeQuery(
             "INSERT INTO api_key (tenant_id, name, key_hash, key_prefix, permissions, created_by, " +
-            "expires_at, rate_limit_per_minute, allowed_ips) " +
-            "VALUES (:tid, :name, :hash, :prefix, :perms, :user, :exp, :rate, :ips)")
+            "expires_at, rate_limit_per_minute, allowed_ips, quota_per_day) " +
+            "VALUES (:tid, :name, :hash, :prefix, :perms, :user, :exp, :rate, :ips, :quota)")
             .setParameter("tid", tenantId)
             .setParameter("name", body.get("name"))
             .setParameter("hash", keyHash)
@@ -128,6 +138,7 @@ public class ApiKeyController {
             .setParameter("exp", expiresAt)
             .setParameter("rate", rateLimit)
             .setParameter("ips", allowedIps)
+            .setParameter("quota", quotaPerDay)
             .executeUpdate();
 
         auditService.log("CREATE_API_KEY", "Created API key: " + body.get("name"));
@@ -170,6 +181,15 @@ public class ApiKeyController {
             if (ips != null && ips.isBlank()) ips = null;
             set.append(", allowed_ips = :ips"); params.put("ips", ips);
         }
+        if (body.containsKey("quotaPerDay")) {
+            Integer quota = null;
+            Object qRaw = body.get("quotaPerDay");
+            if (qRaw != null && !qRaw.toString().isBlank()) {
+                try { quota = Integer.valueOf(qRaw.toString()); } catch (Exception ignore) {}
+                if (quota != null && quota <= 0) quota = null;
+            }
+            set.append(", quota_per_day = :quota"); params.put("quota", quota);
+        }
         if (body.containsKey("expiresAt")) {
             LocalDateTime exp = null;
             Object expRaw = body.get("expiresAt");
@@ -206,8 +226,50 @@ public class ApiKeyController {
             .executeUpdate();
 
         rateLimiter.evict(id);
+        verificationCache.evictByKeyId(id);
         auditService.log("REVOKE_API_KEY", "Revoked API key ID: " + id);
         return ResponseEntity.ok(Map.of("message", "API key revoked"));
+    }
+
+    /**
+     * Rotate the credential in place: the row keeps its name, scopes, limits,
+     * IP allowlist and usage history, but gets a brand-new secret. The old
+     * secret stops working immediately (no grace overlap — callers that need
+     * zero-downtime rotation create a second key, cut over, then revoke).
+     */
+    @PostMapping("/{id}/rotate")
+    @Transactional
+    public ResponseEntity<?> rotateKey(@PathVariable Long id) {
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return ResponseEntity.status(403).build();
+
+        Object cnt = em.createNativeQuery(
+            "SELECT COUNT(*) FROM api_key WHERE key_id=:id AND tenant_id=:tid AND is_active=true")
+            .setParameter("id", id).setParameter("tid", tenantId).getSingleResult();
+        if (((Number) cnt).longValue() == 0) {
+            return ResponseEntity.status(404).body(Map.of("error", "Active key not found"));
+        }
+
+        String username = org.springframework.security.core.context.SecurityContextHolder
+            .getContext().getAuthentication().getName();
+        String rawKey = "aqr_" + UUID.randomUUID().toString().replace("-", "");
+        String keyPrefix = rawKey.substring(0, 12) + "...";
+
+        em.createNativeQuery(
+            "UPDATE api_key SET key_hash=:hash, key_prefix=:prefix, " +
+            "rotated_at=CURRENT_TIMESTAMP, rotated_by=:user, updated_at=CURRENT_TIMESTAMP " +
+            "WHERE key_id=:id AND tenant_id=:tid")
+            .setParameter("hash", passwordEncoder.encode(rawKey))
+            .setParameter("prefix", keyPrefix)
+            .setParameter("user", username)
+            .setParameter("id", id).setParameter("tid", tenantId)
+            .executeUpdate();
+
+        verificationCache.evictByKeyId(id);
+        auditService.log("ROTATE_API_KEY", "Rotated API key ID: " + id);
+
+        // Same contract as create: the plaintext leaves the server exactly once.
+        return ResponseEntity.ok(Map.of("apiKey", rawKey, "keyPrefix", keyPrefix));
     }
 
     // ─── Usage analytics (from api_request_log) ────────────────────────

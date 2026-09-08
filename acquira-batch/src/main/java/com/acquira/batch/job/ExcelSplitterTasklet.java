@@ -115,11 +115,65 @@ public class ExcelSplitterTasklet implements Tasklet {
     }
 
     /**
-     * Check if the source uses a combined "Transaction DateTime" column.
+     * How the source encodes the transaction time, decided from the header row.
+     *
+     * Two distinct layouts both use a header called "Transaction DateTime":
+     *
+     *  1. COMBINED  — a single "Transaction DateTime" column holds the whole
+     *     stamp ("10-JUN-25 19:06:14" or an Excel serial). No separate
+     *     "Transaction Date"/"Transaction Time" columns. We split it in two.
+     *
+     *  2. TIME-ONLY — the AFS Bahrain export carries a separate "Transaction
+     *     Date" column ("10-JUN-25") AND a "Transaction DateTime" column that,
+     *     despite its name, holds only the clock time ("19:06:14"). Here the
+     *     date stays in its own column and "Transaction DateTime" is the time.
+     *
+     * Previously both were funnelled through the alias
+     * "transaction datetime" -> "transaction date". In layout 2 the alias was
+     * suppressed (the real "transaction date" column already occupied that
+     * slot), so the splitter read the DATE-only column, found no time, and
+     * wrote an empty time — every transaction landed at 00:00. The peak-hour
+     * cards and the day x hour heatmap therefore reported 00:00 for everyone.
      */
-    private static boolean hasCombinedDateTime(Map<String, Integer> normalizedHeaderMap) {
-        return normalizedHeaderMap.containsKey("transaction datetime")
-                && !normalizedHeaderMap.containsKey("transaction time");
+    private static final class DateTimeMode {
+        final boolean active;   // special date/time handling is required
+        final int dtSrcIdx;     // source column index of "transaction datetime"
+        final boolean timeOnly; // a separate "transaction date" column exists,
+                                 // so the datetime column carries only the time
+
+        private DateTimeMode(boolean active, int dtSrcIdx, boolean timeOnly) {
+            this.active = active; this.dtSrcIdx = dtSrcIdx; this.timeOnly = timeOnly;
+        }
+
+        static DateTimeMode from(Map<String, Integer> normalizedHeaderMap) {
+            Integer dt = normalizedHeaderMap.get("transaction datetime");
+            // No combined column, or an explicit "transaction time" already
+            // carries the clock time -> nothing special to do.
+            if (dt == null || normalizedHeaderMap.containsKey("transaction time")) {
+                return new DateTimeMode(false, -1, false);
+            }
+            boolean separateDate = normalizedHeaderMap.containsKey("transaction date");
+            return new DateTimeMode(true, dt, separateDate);
+        }
+    }
+
+    /**
+     * Pull the clock-time portion out of a "Transaction DateTime" cell that is
+     * expected to be time-only (layout 2 above), tolerating the case where the
+     * export actually put a full stamp there.
+     */
+    private static String extractTimePart(String raw) {
+        if (raw == null) return "";
+        String v = raw.trim();
+        if (v.isEmpty()) return "";
+        String[] parts = splitDateTime(v);
+        // A real date+time (or a serial with a fractional part) yields a time.
+        if (parts[1] != null && !parts[1].isEmpty()) return parts[1];
+        // No date separator was found. If it reads like a clock time, the whole
+        // cell IS the time ("19:06:14"). splitDateTime would otherwise return it
+        // as the date part.
+        if (v.indexOf(':') >= 0) return v;
+        return "";
     }
 
     /**
@@ -252,11 +306,13 @@ public class ExcelSplitterTasklet implements Tasklet {
             headerMap.put(normalizeHeader(sourceHeaders[i]), i);
         }
         int[] sourceIndexes = buildSourceIndexes(headerMap);
-        boolean combinedDateTime = hasCombinedDateTime(headerMap);
+        DateTimeMode dtMode = DateTimeMode.from(headerMap);
+        boolean combinedDateTime = dtMode.active;
 
         System.out.println("=== CSV HEADER MAPPING ===");
         System.out.println("Source headers found: " + headerMap.keySet());
-        System.out.println("Combined DateTime mode: " + combinedDateTime);
+        System.out.println("Combined DateTime mode: " + combinedDateTime
+                + (combinedDateTime ? (dtMode.timeOnly ? " (time-only)" : " (split)") : ""));
         for (int i = 0; i < TARGET_HEADERS.length; i++) {
             String status = sourceIndexes[i] >= 0 ? "MAPPED (col " + sourceIndexes[i] + ")" : "*** MISSING (will be empty) ***";
             System.out.printf("  [%d] %-30s -> %s%n", i, TARGET_HEADERS[i], status);
@@ -301,10 +357,13 @@ public class ExcelSplitterTasklet implements Tasklet {
                 }
 
                 String splitDate = null, splitTime = null;
-                if (combinedDateTime) {
-                    int dtIdx = sourceIndexes[IDX_TRANSACTION_DATE];
-                    if (dtIdx >= 0 && dtIdx < fields.length) {
-                        String[] parts = splitDateTime(fields[dtIdx]);
+                if (combinedDateTime && dtMode.dtSrcIdx >= 0 && dtMode.dtSrcIdx < fields.length) {
+                    String rawDt = fields[dtMode.dtSrcIdx];
+                    if (dtMode.timeOnly) {
+                        // Date stays in its own column; this column is the time.
+                        splitTime = extractTimePart(rawDt);
+                    } else {
+                        String[] parts = splitDateTime(rawDt);
                         splitDate = parts[0];
                         splitTime = parts[1];
                     }
@@ -434,11 +493,13 @@ public class ExcelSplitterTasklet implements Tasklet {
                     }
                 }
                 int[] sourceIndexes = buildSourceIndexes(headerMap);
-                boolean combinedDateTime = hasCombinedDateTime(headerMap);
+                DateTimeMode dtMode = DateTimeMode.from(headerMap);
+                boolean combinedDateTime = dtMode.active;
 
                 System.out.println("=== EXCEL HEADER MAPPING ===");
                 System.out.println("Source headers found: " + headerMap.keySet());
-                System.out.println("Combined DateTime mode: " + combinedDateTime);
+                System.out.println("Combined DateTime mode: " + combinedDateTime
+                        + (combinedDateTime ? (dtMode.timeOnly ? " (time-only)" : " (split)") : ""));
                 for (int i = 0; i < TARGET_HEADERS.length; i++) {
                     String status = sourceIndexes[i] >= 0 ? "MAPPED (col " + sourceIndexes[i] + ")" : "*** MISSING (will be empty) ***";
                     System.out.printf("  [%d] %-30s -> %s%n", i, TARGET_HEADERS[i], status);
@@ -462,11 +523,15 @@ public class ExcelSplitterTasklet implements Tasklet {
 
                     String splitDate = null, splitTime = null;
                     if (combinedDateTime) {
-                        int dtIdx = sourceIndexes[IDX_TRANSACTION_DATE];
-                        String rawDt = safeCellText(row, dtIdx, maxCell);
-                        String[] parts = splitDateTime(rawDt);
-                        splitDate = parts[0];
-                        splitTime = parts[1];
+                        String rawDt = safeCellText(row, dtMode.dtSrcIdx, maxCell);
+                        if (dtMode.timeOnly) {
+                            // Date stays in its own column; this column is the time.
+                            splitTime = extractTimePart(rawDt);
+                        } else {
+                            String[] parts = splitDateTime(rawDt);
+                            splitDate = parts[0];
+                            splitTime = parts[1];
+                        }
                     }
 
                     sb.setLength(0);
@@ -475,10 +540,12 @@ public class ExcelSplitterTasklet implements Tasklet {
                         sb.append('"');
 
                         String val;
-                        if (combinedDateTime && i == IDX_TRANSACTION_DATE) {
-                            val = splitDate != null ? splitDate : "";
-                        } else if (combinedDateTime && i == IDX_TRANSACTION_TIME) {
-                            val = splitTime != null ? splitTime : "";
+                        if (combinedDateTime && i == IDX_TRANSACTION_DATE && splitDate != null) {
+                            // Only override when we split a combined column; in
+                            // time-only mode the real date column feeds this slot.
+                            val = splitDate;
+                        } else if (combinedDateTime && i == IDX_TRANSACTION_TIME && splitTime != null) {
+                            val = splitTime;
                         } else if (IS_MONEY_COL[i]) {
                             val = safeMoneyText(row, sourceIndexes[i], maxCell);
                         } else {

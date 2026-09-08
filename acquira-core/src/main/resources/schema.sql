@@ -150,7 +150,14 @@ ON CONFLICT (code) DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -241,6 +248,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -694,7 +702,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -1440,9 +1448,8 @@ ON CONFLICT (institution_id) DO NOTHING;
 -- 4.2 Default Users
 -- Password is 'password' (BCrypt encoded: $2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi)
 INSERT INTO users (username, password_hash, email, role, is_active, must_change_password) VALUES 
-('admin', '{noop}password', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, false)
-ON CONFLICT (username) DO UPDATE 
-SET password_hash = EXCLUDED.password_hash, must_change_password = FALSE, role = 'ROLE_SUPER_ADMIN';
+('admin', '$2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, true)
+ON CONFLICT (username) DO NOTHING;
 
 -- 4.3 Assign Access
 -- Admin -> Acquira Bank -> Super Admin (Group 1)
@@ -2029,7 +2036,14 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -2120,6 +2134,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -2573,7 +2588,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -3319,9 +3334,8 @@ ON CONFLICT (institution_id) DO NOTHING;
 -- 4.2 Default Users
 -- Password is 'password' (BCrypt encoded: $2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi)
 INSERT INTO users (username, password_hash, email, role, is_active, must_change_password) VALUES 
-('admin', '{noop}password', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, false)
-ON CONFLICT (username) DO UPDATE 
-SET password_hash = EXCLUDED.password_hash, must_change_password = FALSE, role = 'ROLE_SUPER_ADMIN';
+('admin', '$2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, true)
+ON CONFLICT (username) DO NOTHING;
 
 -- 4.3 Assign Access
 -- Admin -> Acquira Bank -> Super Admin (Group 1)
@@ -3909,7 +3923,14 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -4000,6 +4021,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -4453,7 +4475,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -5199,9 +5221,8 @@ ON CONFLICT (institution_id) DO NOTHING;
 -- 4.2 Default Users
 -- Password is 'password' (BCrypt encoded: $2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi)
 INSERT INTO users (username, password_hash, email, role, is_active, must_change_password) VALUES 
-('admin', '{noop}password', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, false)
-ON CONFLICT (username) DO UPDATE 
-SET password_hash = EXCLUDED.password_hash, must_change_password = FALSE, role = 'ROLE_SUPER_ADMIN';
+('admin', '$2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, true)
+ON CONFLICT (username) DO NOTHING;
 
 -- 4.3 Assign Access
 -- Admin -> Acquira Bank -> Super Admin (Group 1)
@@ -5789,7 +5810,14 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -5880,6 +5908,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -6333,7 +6362,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -7079,9 +7108,8 @@ ON CONFLICT (institution_id) DO NOTHING;
 -- 4.2 Default Users
 -- Password is 'password' (BCrypt encoded: $2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi)
 INSERT INTO users (username, password_hash, email, role, is_active, must_change_password) VALUES 
-('admin', '{noop}password', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, false)
-ON CONFLICT (username) DO UPDATE 
-SET password_hash = EXCLUDED.password_hash, must_change_password = FALSE, role = 'ROLE_SUPER_ADMIN';
+('admin', '$2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, true)
+ON CONFLICT (username) DO NOTHING;
 
 -- 4.3 Assign Access
 -- Admin -> Acquira Bank -> Super Admin (Group 1)
@@ -7670,7 +7698,14 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION get_current_tenant() RETURNS BIGINT AS '
     SELECT CAST(NULLIF(current_setting(''app.current_tenant'', true), '''') AS BIGINT);
 '
-LANGUAGE sql SECURITY DEFINER;
+-- STABLE (not the SQL default of VOLATILE): the value is a session GUC that is
+-- constant within a single statement, so the planner may evaluate it ONCE per
+-- query instead of once per row. This function backs the RLS policy on ~52
+-- tenant tables (tenant_id = get_current_tenant()); as VOLATILE it was
+-- re-evaluated per row, making RLS-enforced scans/inserts (e.g. the dim_terminal
+-- upsert and its dim_merchant/dim_store joins) scale badly. SECURITY DEFINER is
+-- retained so it can read the GUC regardless of the caller.
+LANGUAGE sql STABLE SECURITY DEFINER;
 
 
 -- ==================================================================================
@@ -7761,6 +7796,7 @@ INSERT INTO sys_menu (menu_name, path, icon_key, category, display_order) VALUES
 ('Upload Files',             '/upload',                           'Upload',          'OPERATIONS',     1),
 ('Server File Processor',    '/ops/server-file',                  'HardDrive',       'OPERATIONS',     2),
 ('Batch Logs',               '/ops/batch-logs',                   'Activity',        'OPERATIONS',     3),
+('Ingest Trust',             '/ops/ingest-trust',                 'ShieldCheck',     'OPERATIONS',     5),
 ('Email Manager',            '/business/emails',                  'Mail',            'OPERATIONS',     4),
 
 -- ADMINISTRATION
@@ -8214,7 +8250,7 @@ CREATE TABLE IF NOT EXISTS merchant_contact (
     tenant_id INT NOT NULL REFERENCES tenant(tenant_id),
     
     contact_name VARCHAR(150),
-    role VARCHAR(50), -- 'Primary', 'Technical', 'Finance', 'Emergency'
+    role VARCHAR(150), -- 'Primary', 'Technical', 'Finance', 'Emergency' (150 to fit *_contact_designation; staging allows 100)
     email VARCHAR(150),
     phone VARCHAR(50),
     is_primary BOOLEAN DEFAULT FALSE
@@ -8960,9 +8996,8 @@ ON CONFLICT (institution_id) DO NOTHING;
 -- 4.2 Default Users
 -- Password is 'password' (BCrypt encoded: $2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi)
 INSERT INTO users (username, password_hash, email, role, is_active, must_change_password) VALUES 
-('admin', '{noop}password', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, false)
-ON CONFLICT (username) DO UPDATE 
-SET password_hash = EXCLUDED.password_hash, must_change_password = FALSE, role = 'ROLE_SUPER_ADMIN';
+('admin', '$2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, true)
+ON CONFLICT (username) DO NOTHING;
 
 -- 4.3 Assign Access
 -- Admin -> Acquira Bank -> Super Admin (Group 1)
@@ -10035,9 +10070,10 @@ ON CONFLICT DO NOTHING;
 INSERT INTO role (role_name) VALUES ('ROLE_ADMIN'), ('ROLE_USER'), ('ROLE_SUPER_ADMIN') ON CONFLICT DO NOTHING;
 
 -- 4. Initial Admin User
--- Password is '{noop}password'
-INSERT INTO users (username, password_hash, email, role, is_active) 
-VALUES ('admin', '{noop}password', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true) 
+-- Seeded with a BCrypt hash of 'password' and must_change_password=TRUE so the
+-- first login is forced to rotate it. Never seed a {noop} plaintext credential.
+INSERT INTO users (username, password_hash, email, role, is_active, must_change_password)
+VALUES ('admin', '$2a$10$slYQmyNdGzTn7ZLBXBChFOC9f6kFjAqPhccnP6DxlTzceYkEGCcqi', 'admin@acquira.com', 'ROLE_SUPER_ADMIN', true, true)
 ON CONFLICT (username) DO NOTHING;
 
 -- 5. User Groups (schema.sql creates all groups; this is a safety fallback)

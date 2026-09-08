@@ -34,6 +34,34 @@ public class BatchConfig {
     }
 
     /**
+     * Executor for @Async external-DB pulls (IntegrationPullService.executePull).
+     *
+     * WHY IT EXISTS: there was no bean named "taskExecutor" and more than one
+     * TaskExecutor bean, so Spring's @Async default resolution found neither a
+     * unique candidate nor the conventional name and silently fell back to
+     * SimpleAsyncTaskExecutor — which creates an UNBOUNDED new thread per
+     * invocation. Each pull thread then blocks for up to 2h polling its batch
+     * job, so a burst of schedules/retries could spawn threads without limit.
+     *
+     * Bounded here instead. Pulls are long-lived and DB-connection-hungry, so
+     * the ceiling is deliberately low; CallerRunsPolicy applies natural
+     * backpressure rather than dropping a scheduled pull on the floor.
+     */
+    @Bean("integrationPullExecutor")
+    public TaskExecutor integrationPullExecutor() {
+        org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor ex =
+            new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
+        ex.setCorePoolSize(2);
+        ex.setMaxPoolSize(4);
+        ex.setQueueCapacity(50);
+        ex.setThreadNamePrefix("integration-pull-");
+        ex.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        ex.setWaitForTasksToCompleteOnShutdown(true);
+        ex.initialize();
+        return ex;
+    }
+
+    /**
      * Dedicated executor for Spring Batch job launches.
      *
      * Without this bean, Spring Batch's auto-configured JobLauncher uses

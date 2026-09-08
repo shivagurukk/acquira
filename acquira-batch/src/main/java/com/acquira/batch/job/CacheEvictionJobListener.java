@@ -25,9 +25,12 @@ public class CacheEvictionJobListener implements JobExecutionListener {
     private static final Logger log = LoggerFactory.getLogger(CacheEvictionJobListener.class);
 
     private final CacheManager cacheManager;
+    private final org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> warmup;
 
-    public CacheEvictionJobListener(CacheManager cacheManager) {
+    public CacheEvictionJobListener(CacheManager cacheManager,
+            org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> warmup) {
         this.cacheManager = cacheManager;
+        this.warmup = warmup;
     }
 
     @Override
@@ -38,5 +41,7 @@ public class CacheEvictionJobListener implements JobExecutionListener {
         }
         log.info("Report caches cleared after job {} ({})",
                 jobExecution.getJobInstance().getJobName(), jobExecution.getStatus());
+        warmup.ifAvailable(w -> w.requestWarm(
+                "job " + jobExecution.getJobInstance().getJobName()));
     }
 }

@@ -45,18 +45,32 @@ const formatTimestamp = (value) => {
     return `${mo} ${day}, ${hh}:${mm}:${ss}`;
 };
 
+/**
+ * Categories the backend actually writes — see AuditService.categoryFor() and
+ * AuditInterceptor.categorize(). The previous list (ADMIN/DATA/EXPORT/BATCH/AI/
+ * BUSINESS) matched nothing the server stores, so every option but AUTH filtered
+ * the table down to zero rows and USER_MGMT could not be selected at all.
+ */
+const CATEGORY_LABELS = {
+    AUTH: 'Authentication',
+    USER_MGMT: 'User management',
+    ADMINISTRATION: 'Administration',
+    OPERATIONS: 'Operations',
+    REPORTING: 'Reporting',
+    API: 'API',
+};
+
 /** Category → Badge tone. */
 const CATEGORY_TONES = {
     AUTH: 'brand',
-    ADMIN: 'danger',
-    DATA: 'success',
-    EXPORT: 'info',
-    BATCH: 'warning',
-    AI: 'brand',
-    BUSINESS: 'neutral',
+    USER_MGMT: 'info',
+    ADMINISTRATION: 'danger',
+    OPERATIONS: 'warning',
+    REPORTING: 'success',
+    API: 'neutral',
 };
 
-const CATEGORIES = ['AUTH', 'ADMIN', 'DATA', 'EXPORT', 'BATCH', 'AI', 'BUSINESS'];
+const CATEGORIES = Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }));
 
 const PAGE_SIZES = [
     { value: 20, label: '20 per page' },
@@ -284,7 +298,7 @@ const AuditLogViewer = () => {
             width: 120,
             render: (r) => {
                 const cat = r.category || 'N/A';
-                return <Badge tone={CATEGORY_TONES[cat] || 'neutral'}>{cat}</Badge>;
+                return <Badge tone={CATEGORY_TONES[cat] || 'neutral'}>{CATEGORY_LABELS[cat] || cat}</Badge>;
             },
         },
         { key: 'actionType', header: 'Action', sortable: true },

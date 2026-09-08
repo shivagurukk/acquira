@@ -486,10 +486,52 @@ public class BinManagementController {
         Map<String, String> derivedTableToSub = new LinkedHashMap<>();
         List<Object[]> dirRows = new ArrayList<>();
         List<String> problems = new ArrayList<>();
-        long[] c = new long[2]; // [0]=accepted records, [1]=unclassified
+        long[] c = new long[4]; // [0]=accepted records, [1]=unclassified, [2]=ebcdic-damaged, [3]=repaired
+        // SEGMENT COUNTING (2026-08-25). Per the manual (and the adjacency
+        // mapping above), every record between two trailers belongs to the
+        // table the NEXT trailer names. Trailer reconciliation therefore
+        // compares declared counts against the SEGMENT total, not against
+        // per-sub-id counts: EBCDIC-space damage ('@' = EBCDIC 0x40) corrupts
+        // timestamps, flags, sub-ids and even the IP0000T1 directory literal
+        // ("2011101414AIP00@@00T1IP0020T1 PAN MAPPIN…" on the live D260728
+        // T068's PAN-mapping table), so shape-based classification undercounts
+        // and every such table flagged COUNT_MISMATCH even though the delivery
+        // is complete. Damaged records are still counted where they sit — they
+        // are never reparsed, never staged and never promoted (the strict
+        // \d{19} validation quarantines them), so nothing is guessed.
+        long[] seg = new long[3]; // [0]=records in segment, [1]=damaged in segment, [2]=repaired in segment
+        long[] segGarbage = new long[1]; // bytes the walker skipped inside the current segment
+        Map<String, Long> segByTable = new LinkedHashMap<>();
+        Map<String, Long> segDamageByTable = new LinkedHashMap<>();
+        Map<String, Long> segRepairByTable = new LinkedHashMap<>();
+        Map<String, Long> segGarbageByTable = new LinkedHashMap<>();
 
-        long padBytes = walkRecords(data, size, rec -> {
+        long padBytes = walkRecords(data, size, () -> segGarbage[0]++, raw -> {
             c[0]++;
+            String rec = raw;
+            // '@'-REPAIR (2026-08-25, verified on the live D260728 T068): the
+            // corruption INSERTS EBCDIC-space bytes (0x40 = ASCII '@') into
+            // otherwise intact records — removing every '@' restores them
+            // exactly ("TRAIL@@ER RECORD…" -> "TRAILER RECORD…",
+            // "2011101414AIP00@@00T1IP0020T1…" -> a valid directory record).
+            // Repair is used for CLASSIFICATION AND COUNTING ONLY: pass 2
+            // stages the original bytes, so a repaired record still fails the
+            // strict promote-side validation and is quarantined — the repair
+            // makes trailers close their segments and counts reconcile, it
+            // never invents reference data.
+            if (!isKnownMpeShape(rec) && rec.indexOf('@') >= 0) {
+                String fix = rec.replace("@", "");
+                if (isKnownMpeShape(fix)) { rec = fix; c[3]++; seg[2]++; }
+                else if (rec.charAt(0) == '@') {
+                    // second observed damage shape: '@' + one arbitrary junk
+                    // byte PREPENDED to an intact record ("@S0309408A007…",
+                    // "@:2610508A027…") — drop the corrupt prefix.
+                    String drop2 = rec.length() > 2 ? rec.substring(2) : "";
+                    String drop1 = rec.substring(1);
+                    if (isKnownMpeShape(drop2)) { rec = drop2; c[3]++; seg[2]++; }
+                    else if (isKnownMpeShape(drop1)) { rec = drop1; c[3]++; seg[2]++; }
+                }
+            }
             if (rec.startsWith("UPDATE FILE")) {
                 hdr[0] = rec; hdr[1] = name.toUpperCase().contains("T167") ? "T167" : "T067";
                 if (rec.length() >= 27) { hdr[2] = rec.substring(15, 23).trim(); hdr[3] = rec.substring(23, 27).trim(); }
@@ -497,9 +539,15 @@ public class BinManagementController {
                 hdr[0] = rec; hdr[1] = name.toUpperCase().contains("T168") ? "T168" : "T068";
                 if (rec.length() >= 69) { hdr[2] = rec.substring(45, 54).trim(); hdr[3] = rec.substring(61, 69).trim(); }
             } else if (rec.startsWith("TRAILER RECORD")) {
-                String tableId = rec.length() >= 24 ? rec.substring(15, 24).replace(" ", "").trim() : "";
-                // NULs appear inside damaged trailer records — strip before parsing
-                int count = parseIntSafe(rec.replace('\u0000', ' '), 25, 33);
+                // '@' damage can sit INSIDE an otherwise well-prefixed trailer
+                // ("TRAILER RECORD I@@P0039T..."): the inserted bytes corrupt the
+                // table id AND shift the count field, so it declares nonsense
+                // (398 where the file carries ~39K records). Same insertion
+                // damage as everywhere else - removing '@' restores positions.
+                String trec = rec.indexOf('@') >= 0 ? rec.replace("@", "") : rec;
+                String tableId = trec.length() >= 24 ? trec.substring(15, 24).replace(" ", "").trim() : "";
+                // NULs appear inside damaged trailer records - strip before parsing
+                int count = parseIntSafe(trec.replace('\u0000', ' '), 25, 33);
                 if ("TABLEZZZZ".equals(tableId)) {
                     tzz[0] = count;
                 } else {
@@ -508,6 +556,13 @@ public class BinManagementController {
                     sinceTrailer.entrySet().stream().max(Map.Entry.comparingByValue())
                         .ifPresent(e -> derivedTableToSub.put(tableId, e.getKey()));
                     sinceTrailer.clear();
+                    // close the trailer segment: everything since the previous
+                    // trailer belongs to THIS table (damaged records included)
+                    segByTable.merge(tableId, seg[0], Long::sum);
+                    segDamageByTable.merge(tableId, seg[1], Long::sum);
+                    segRepairByTable.merge(tableId, seg[2], Long::sum);
+                    segGarbageByTable.merge(tableId, segGarbage[0], Long::sum);
+                    seg[0] = 0; seg[1] = 0; seg[2] = 0; segGarbage[0] = 0;
                 }
             } else if (rec.length() >= 246 && rec.regionMatches(11, "IP0000T1", 0, 8)) {
                 // directory record (IP0000T1)
@@ -521,21 +576,33 @@ public class BinManagementController {
                     rec.substring(74, 82).trim()                   // version
                 });
                 seenBySub.merge("dir", 1, Integer::sum);
+                seg[0]++;
             } else if (isDataRecord(rec)) {
                 String subId = rec.substring(8, 11);
                 seenBySub.merge(subId, 1, Integer::sum);
                 sinceTrailer.merge(subId, 1, Integer::sum);
+                seg[0]++;
                 if (c[0] % 2_000_000 == 0) {
                     log.info("MPE {}: pass 1 scanned {} records ({}s)", fileId, c[0],
                         (System.currentTimeMillis() - t0) / 1000);
                 }
+            } else if (rec.indexOf('@') >= 0 || rec.indexOf('\uFFFD') >= 0) {
+                // EBCDIC-space damage ('@' = EBCDIC 0x40 read as ASCII): the
+                // record is real but its timestamp/flag/sub-id/directory
+                // literal is corrupted, so no shape matches. Count it in the
+                // current trailer segment — its table's trailer declared it —
+                // but never stage or promote it (informational sample only).
+                c[2]++;
+                seg[0]++; seg[1]++;
+                if (problems.size() < 10) problems.add("ebcdic-damaged record (" + rec.length() + " bytes): "
+                        + rec.substring(0, Math.min(40, rec.length())));
             } else {
                 c[1]++;
                 if (problems.size() < 10) problems.add("unclassified record (" + rec.length() + " bytes): "
                         + rec.substring(0, Math.min(40, rec.length())));
             }
         });
-        long total = c[0], unknown = c[1];
+        long total = c[0], unknown = c[1], damaged = c[2];
 
         String fileType = hdr[1];
         if (fileType == null) {
@@ -543,26 +610,65 @@ public class BinManagementController {
                 "No documented IPM MPE header found (\"UPDATE FILE\" / \"REPLACEMENT FILE\") — not an MPE delivery?");
         }
 
-        // Reconcile per-table trailer counts against the pass-1 census. Prefer
-        // the adjacency-derived table->sub mapping; fall back to the
-        // directory's sub-indicator field. Data records for IP0000T1 are the
-        // directory rows themselves. EBCDIC-corrupted records land under
-        // '@@'-damaged sub-ids, so their tables report short — expected,
-        // surfaced as COUNT_MISMATCH, never guessed at.
+        // Reconcile per-table trailer counts against the pass-1 census —
+        // by TRAILER SEGMENT (2026-08-25): every record since the previous
+        // trailer belongs to the table this trailer names, so the segment
+        // total is the true per-table count even when EBCDIC damage makes
+        // individual records unclassifiable by shape. The old per-sub-id
+        // comparison flagged every damaged table COUNT_MISMATCH (live D260728
+        // T068: PAN-mapping directory rows with a corrupted IP0000T1 literal).
+        // Truly unclassified (non-'@') records still do NOT count, so a
+        // genuinely new record shape keeps surfacing as a mismatch.
+        // tableToSub stays sub-id/adjacency-derived — staging and promotion
+        // still select IP0040T1 records strictly by their intact sub-id.
         Map<String, String> tableToSub = new LinkedHashMap<>();
         for (Object[] d : dirRows) tableToSub.put((String) d[1], (String) d[3]);
         tableToSub.putAll(derivedTableToSub);
+        // CORRUPTION-AWARE VERDICT (2026-08-25). The live D260728 T068 is a
+        // COMPLETE delivery with ~30K corrupted bytes sprinkled through it:
+        // records with '@' insertions/prefixes (repairable), mangled fragments
+        // (countable), and records that dissolve entirely into pad bytes
+        // (unaccountable — exact per-table reconciliation is impossible by
+        // construction). A blanket COUNT_MISMATCH taught operators to ignore
+        // the status, which is worse than a nuanced one. Rules:
+        //   * HARD (status COUNT_MISMATCH): a table miscounts with NO
+        //     corruption evidence in its own segment (no damaged fragments,
+        //     no repairs, no skipped bytes) — a clean miscount means records
+        //     we do not understand; or the promoted table (IP0040T1) is short
+        //     more than 5% of its declared count; or the delivery has no
+        //     TABLEZZZZ final trailer (truncated upload).
+        //   * SOFT ("count short" note, status STAGED_DAMAGED): a miscount in
+        //     a segment with corruption evidence — recorded with the evidence,
+        //     never hidden, but not fatal. Promotion validation is unchanged:
+        //     only strictly-valid records ever reach ref_bin_range.
+        if (tzz[0] == null) {
+            problems.add("count mismatch container: no TABLEZZZZ final trailer — the delivery looks truncated");
+        }
         for (var e : declaredByTable.entrySet()) {
             String table = e.getKey();
             int declared = e.getValue();
-            int seen = "IP0000T1".equals(table)
-                ? seenBySub.getOrDefault("dir", 0)
-                : seenBySub.getOrDefault(tableToSub.getOrDefault(table, "???"), 0);
-            if (seen != declared) {
-                problems.add("count mismatch " + table + ": trailer declares " + declared + ", seen " + seen);
+            long seen = segByTable.getOrDefault(table, 0L);
+            if (seen == declared) continue;
+            long dmg = segDamageByTable.getOrDefault(table, 0L);
+            long rep = segRepairByTable.getOrDefault(table, 0L);
+            long garbage = segGarbageByTable.getOrDefault(table, 0L);
+            boolean corruptionEvidence = dmg > 0 || rep > 0 || garbage > 0;
+            long gap = Math.abs(seen - declared);
+            boolean promotedTable = "IP0040T1".equals(table);
+            if (!corruptionEvidence || (promotedTable && gap > Math.max(dmg, declared / 20L))) {
+                String msg = "count mismatch " + table + ": trailer declares " + declared + ", seen " + seen
+                    + " in its segment" + (corruptionEvidence ? "" : " (no corruption observed there — unexplained)");
+                problems.add(msg);
+                log.warn("MPE {}: HARD {}", fileId, msg);
+            } else {
+                problems.add("count short " + table + ": declares " + declared + ", seen " + seen
+                    + " — unrepairable corruption in its segment (" + dmg + " damaged fragment(s), "
+                    + rep + " repaired, " + garbage + " skipped bytes)");
             }
         }
-        String status = problems.stream().anyMatch(p -> p.startsWith("count mismatch")) ? "COUNT_MISMATCH" : "STAGED";
+        String status = problems.stream().anyMatch(p -> p.startsWith("count mismatch")) ? "COUNT_MISMATCH"
+            : (damaged > 0 || c[3] > 0 || problems.stream().anyMatch(p -> p.startsWith("count short"))) ? "STAGED_DAMAGED"
+            : "STAGED";
 
         // PASS 2 — persist only the account-range table's records.
         String ip40SubStage = tableToSub.get("IP0040T1");
@@ -605,13 +711,18 @@ public class BinManagementController {
                 d[0], d[1], d[2], sub, d[4], d[5], d[6], d[7], d[8],
                 declaredByTable.get((String) d[1]), seenBySub.getOrDefault(sub, 0));
         }
+        // The persisted note field is capped — order by severity so the line
+        // that DROVE the status is always visible: hard mismatches first,
+        // then count-short notes, then damage samples.
+        problems.sort(java.util.Comparator.comparingInt(p ->
+            p.startsWith("count mismatch") ? 0 : p.startsWith("count short") ? 1 : 2));
         String problemText = problems.isEmpty() ? null : stripNul(String.join("; ", problems));
         if (problemText != null && problemText.length() > 2000) problemText = problemText.substring(0, 2000);
         jdbcTemplate.update(
             "UPDATE mpe_file SET file_type=?, header_text=?, created_date=?, created_time=?, record_count=?, trailer_total=?, status=?, error_text=? WHERE id=?",
             fileType, stripNul(hdr[0]), hdr[2], hdr[3], total, tzz[0], status, problemText, fileId);
-        log.info("MPE {}: {} scan done — {} records seen, {} IP0040T1 staged, {} unknown, {} pad bytes, status {} ({}s)",
-            fileId, fileType, total, staged, unknown, padBytes, status, (System.currentTimeMillis() - t0) / 1000);
+        log.info("MPE {}: {} scan done — {} records seen, {} IP0040T1 staged, {} unknown, {} ebcdic-damaged, {} repaired, {} pad bytes, status {} ({}s)",
+            fileId, fileType, total, staged, unknown, damaged, c[3], padBytes, status, (System.currentTimeMillis() - t0) / 1000);
 
         // ─── PROMOTION into ref_bin_range (business-confirmed 2026-08-09) ───
         //   T068 = full replacement: DELETE all MASTERCARD rows, insert every
@@ -637,6 +748,15 @@ public class BinManagementController {
         return s == null ? null : s.replace('\u0000', ' ');
     }
 
+    /** True when the record matches ANY documented MPE record shape —
+     *  used both for direct classification and to validate an '@'-repair. */
+    private static boolean isKnownMpeShape(String rec) {
+        return rec.startsWith("UPDATE FILE") || rec.startsWith("REPLACEMENT FILE")
+            || rec.startsWith("TRAILER RECORD")
+            || (rec.length() >= 246 && rec.regionMatches(11, "IP0000T1", 0, 8))
+            || isDataRecord(rec);
+    }
+
     /** True when the record matches the documented data-record shape:
      *  7-digit effective timestamp, then A(ctive)/I(nactive), then sub-id. */
     private static boolean isDataRecord(String rec) {
@@ -656,13 +776,21 @@ public class BinManagementController {
      * twice. Returns the number of skipped pad/garbage bytes.
      */
     private static long walkRecords(java.nio.ByteBuffer data, int size, java.util.function.Consumer<String> sink) {
+        return walkRecords(data, size, null, sink);
+    }
+
+    /** onSkip fires once per skipped pad/garbage byte, so the caller can
+     *  attribute garbage to the trailer segment it fell inside — the
+     *  corruption evidence the reconciliation verdict is bounded by. */
+    private static long walkRecords(java.nio.ByteBuffer data, int size, Runnable onSkip,
+            java.util.function.Consumer<String> sink) {
         long padBytes = 0;
         int off = 0;
         while (off + 12 <= size) {
-            if (!(data.get(off) == 0 && data.get(off + 1) == 0)) { off++; padBytes++; continue; }
+            if (!(data.get(off) == 0 && data.get(off + 1) == 0)) { off++; padBytes++; if (onSkip != null) onSkip.run(); continue; }
             int len = ((data.get(off) & 0xFF) << 24) | ((data.get(off + 1) & 0xFF) << 16)
                     | ((data.get(off + 2) & 0xFF) << 8) | (data.get(off + 3) & 0xFF);
-            if (len < 12 || len > 20000 || off + 4 + len > size) { off++; padBytes++; continue; }
+            if (len < 12 || len > 20000 || off + 4 + len > size) { off++; padBytes++; if (onSkip != null) onSkip.run(); continue; }
             byte[] recBytes = new byte[len];
             data.get(off + 4, recBytes);
             String rec = new String(recBytes, java.nio.charset.StandardCharsets.US_ASCII);
@@ -671,7 +799,7 @@ public class BinManagementController {
                 || (rec.length() >= 246 && rec.regionMatches(11, "IP0000T1", 0, 8))
                 || isDataRecord(rec);
             boolean printable = len <= 1000 && rec.chars().limit(8).allMatch(ch -> ch >= 0x20 || ch == 0);
-            if (!known && !printable) { off++; padBytes++; continue; }
+            if (!known && !printable) { off++; padBytes++; if (onSkip != null) onSkip.run(); continue; }
             off += 4 + len;
             sink.accept(rec);
         }

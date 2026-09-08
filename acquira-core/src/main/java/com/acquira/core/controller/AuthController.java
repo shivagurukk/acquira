@@ -40,6 +40,7 @@ public class AuthController {
     private final com.acquira.common.repository.UserTenantAccessRepository userTenantAccessRepository;
     private final PasswordService passwordService;
     private final PasswordResetTokenRepository resetTokenRepository;
+    private final com.acquira.common.repository.LoginMfaTokenRepository mfaTokenRepository;
     private final EmailService emailService;
     private final RefreshTokenService refreshTokenService;
     private final com.acquira.common.service.AuditService auditService;
@@ -52,6 +53,13 @@ public class AuthController {
     private static final int OTP_MAX_ATTEMPTS = 5;   // verify-otp attempts before the token is burned
     private static final int TICKET_TTL_MINUTES = 10; // set-password ticket window after verify
     private static final java.security.SecureRandom OTP_RNG = new java.security.SecureRandom();
+
+    // ===== Login MFA (email OTP second factor) config =====
+    // TTL is per-tenant (security.mfa_otp_ttl_minutes, default 5); the attempt cap
+    // is fixed. Kept tighter than the reset OTP: the challenge is raised only for
+    // someone already sitting at the login form, so a long window buys nothing.
+    private static final int MFA_MAX_ATTEMPTS = 5;
+    private static final String MFA_GENERIC_FAIL = "Invalid or expired verification code.";
 
     // ===== IP-based rate limiter (defense-in-depth, kept alongside per-user lockout) =====
     // P2-7 fix: bucket key is now (ip|username), not just ip. Previously a single
@@ -79,6 +87,7 @@ public class AuthController {
             com.acquira.common.repository.UserTenantAccessRepository userTenantAccessRepository,
             PasswordService passwordService,
             PasswordResetTokenRepository resetTokenRepository,
+            com.acquira.common.repository.LoginMfaTokenRepository mfaTokenRepository,
             EmailService emailService,
             RefreshTokenService refreshTokenService,
             com.acquira.common.service.AuditService auditService,
@@ -94,6 +103,7 @@ public class AuthController {
         this.userTenantAccessRepository = userTenantAccessRepository;
         this.passwordService = passwordService;
         this.resetTokenRepository = resetTokenRepository;
+        this.mfaTokenRepository = mfaTokenRepository;
         this.emailService = emailService;
         this.refreshTokenService = refreshTokenService;
         this.auditService = auditService;
@@ -124,6 +134,10 @@ public class AuthController {
                 .orElse(DEFAULT_SESSION_TIMEOUT_MIN);
     }
 
+    // @Transactional so the MFA branch can clear + write the challenge row
+    // (a @Modifying bulk delete needs an active transaction, and startMfaChallenge
+    // is a self-invocation that the proxy would not wrap on its own).
+    @Transactional
     @PostMapping("/login")
     public ResponseEntity<?> createAuthenticationToken(
             @RequestBody AuthRequest authenticationRequest,
@@ -192,7 +206,8 @@ public class AuthController {
                 }
                 auditService.log("LOGIN_DENIED",
                         "User '" + dbUser.getUsername() + "' login denied: " + reason +
-                        " from " + clientIp);
+                        " from " + clientIp,
+                        dbUser.getUsername());
                 recordFailedAttempt(rateKey);
                 return ResponseEntity.status(401).body(Map.of("error", GENERIC_AUTH_FAILURE));
             }
@@ -241,7 +256,30 @@ public class AuthController {
             userRepository.save(user);
         }
 
-        final UserDetails userDetails = userDetailsService.loadUserByUsername(authenticationRequest.getUsername());
+        // ===== Second factor =====
+        // The password is correct, but when the tenant policy demands MFA no
+        // session is issued here. We hand back an opaque challenge ticket instead;
+        // /login/verify-mfa is the only path from here to a JWT.
+        if (user != null && isMfaRequired(user)) {
+            return startMfaChallenge(user, clientIp);
+        }
+
+        return issueSession(authenticationRequest.getUsername(), httpRequest);
+    }
+
+    /**
+     * Build the authenticated session response (tokens, tenants, menus, flags).
+     *
+     * Split out of {@code /login} so the MFA path can reach exactly the same
+     * response after the second factor clears — the two entry points must not be
+     * allowed to drift, or an MFA login would quietly miss things like the
+     * password-expiry check or the session cap.
+     */
+    private ResponseEntity<?> issueSession(String username,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+
+        User user = userRepository.findByUsername(username).orElse(null);
+        final UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 
         // Token lifetimes + concurrency come from the active security policy
         // (Admin > Security Settings: access_token_minutes, refresh_token_days,
@@ -264,7 +302,11 @@ public class AuthController {
             securityPolicyService.maxConcurrentSessions(policyTenantId));
 
         // #13: Audit successful login
-        auditService.log("LOGIN", "User '" + userDetails.getUsername() + "' logged in from " + getClientIp(httpRequest));
+        // The SecurityContext is not populated during login, so the username has
+        // to be passed explicitly — otherwise the login row lands anonymous.
+        auditService.log("LOGIN",
+                "User '" + userDetails.getUsername() + "' logged in from " + getClientIp(httpRequest),
+                userDetails.getUsername());
 
         // Get allowed tenants
         List<com.acquira.common.model.Tenant> allowedTenants = tenantService
@@ -302,7 +344,7 @@ public class AuthController {
         response.put("defaultTenantId", effectiveTenantId);
         response.put("roles", userDetails.getAuthorities());
         response.put("menus", menus);
-        response.put("username", authenticationRequest.getUsername());
+        response.put("username", username);
         response.put("userRole", user != null ? user.getRole() : "ROLE_USER");
         // Inactivity timeout (minutes) for the frontend idle-logout timer.
         response.put("sessionTimeoutMinutes", getSessionTimeoutMinutes(effectiveTenantId));
@@ -325,7 +367,8 @@ public class AuthController {
                 mustChange = true;
                 auditService.log("PASSWORD_EXPIRED",
                         "User '" + user.getUsername() + "' password expired (>"
-                                + expiryDays + "d); change required.");
+                                + expiryDays + "d); change required.",
+                        user.getUsername());
             }
         }
         if (mustChange) {
@@ -337,6 +380,235 @@ public class AuthController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookie.toString())
                 .body(response);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  LOGIN MFA — email OTP second factor
+    //
+    //  Gate order at /login: rate limit -> lockout -> password -> MFA. The
+    //  challenge is raised only AFTER the password is accepted, so it never
+    //  reveals whether a username exists and never emails a code to an address
+    //  the caller failed to authenticate as.
+    //
+    //  The ticket is opaque and confers nothing on its own: verify-mfa re-checks
+    //  the account is still active and unlocked before issuing any token, so an
+    //  account disabled mid-challenge cannot slip through.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /** Whether this user must clear an email OTP, per the tenant's policy. */
+    private boolean isMfaRequired(User user) {
+        // SSO accounts authenticate at the identity provider, which owns their MFA.
+        // They also may have no usable local password, so a code here is meaningless.
+        if (user.isSsoUser()) return false;
+        Long tenantId = tenantService.getDefaultTenantIdForUser(user.getUsername());
+        return securityPolicyService.mfaRequiredForRole(tenantId, user.getRole());
+    }
+
+    /**
+     * Create (or replace) the pending challenge for a user and email the code.
+     *
+     * Fails CLOSED: if the code cannot be delivered the sign-in is refused rather
+     * than waved through. A silent fall-through would turn "MFA on" into "MFA
+     * off" precisely when mail is broken, which is the opposite of what an admin
+     * asked for. The 503 tells the user to contact their administrator, and the
+     * server log names the real cause.
+     */
+    // No @Transactional here on purpose: this is called from /login on the same
+    // bean, and Spring's proxy does not intercept self-invocation — the annotation
+    // would be silently inert and the @Modifying delete below would blow up with
+    // TransactionRequiredException. /login carries the @Transactional instead, and
+    // this method runs inside it.
+    private ResponseEntity<?> startMfaChallenge(User user, String clientIp) {
+        String email = user.getEmail();
+        if (email == null || email.trim().isEmpty()) {
+            auditService.log("MFA_NO_EMAIL",
+                    "MFA required for '" + user.getUsername() + "' but the account has no email address.",
+                    user.getUsername());
+            return ResponseEntity.status(503).body(Map.of("error",
+                    "Two-factor authentication is required, but your account has no email address on file. "
+                            + "Contact your administrator."));
+        }
+
+        Long tenantId = tenantService.getDefaultTenantIdForUser(user.getUsername());
+        int ttlMinutes = securityPolicyService.mfaOtpTtlMinutes(tenantId);
+
+        // One live challenge per user — a fresh login invalidates any earlier code.
+        mfaTokenRepository.deleteByUserId(user.getId());
+
+        String otp = String.format("%06d", OTP_RNG.nextInt(1_000_000));
+        String ticket = UUID.randomUUID().toString();
+        mfaTokenRepository.save(new com.acquira.common.model.LoginMfaToken(
+                user, ticket, passwordEncoder.encode(otp),
+                LocalDateTime.now().plusMinutes(ttlMinutes), clientIp));
+
+        if (!emailService.sendLoginMfaOtp(email, user.getUsername(), otp, ttlMinutes)) {
+            // Burn the challenge we just wrote — nobody can ever answer it.
+            mfaTokenRepository.deleteByUserId(user.getId());
+            auditService.log("MFA_SEND_FAILED",
+                    "MFA code could not be emailed to '" + user.getUsername() + "'; sign-in refused.",
+                    user.getUsername());
+            return ResponseEntity.status(503).body(Map.of("error",
+                    "Could not send your verification code. Please contact your administrator."));
+        }
+
+        auditService.log("MFA_CHALLENGE",
+                "MFA code issued for '" + user.getUsername() + "' from " + clientIp,
+                user.getUsername());
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("mfaRequired", true);
+        body.put("mfaTicket", ticket);
+        body.put("expiresInMinutes", ttlMinutes);
+        // Masked destination so the user knows which inbox to check without the
+        // response disclosing a full address.
+        body.put("emailHint", maskEmail(email));
+        return ResponseEntity.ok(body);
+    }
+
+    /** j***@example.com — enough to recognise, not enough to harvest. */
+    private String maskEmail(String email) {
+        int at = email.indexOf('@');
+        if (at <= 0) return "your registered email";
+        String local = email.substring(0, at);
+        String masked = local.length() <= 1 ? local : local.charAt(0) + "***";
+        return masked + email.substring(at);
+    }
+
+    // ===== Verify the second factor → issue the real session =====
+    @Transactional
+    @PostMapping("/login/verify-mfa")
+    public ResponseEntity<?> verifyMfa(@RequestBody Map<String, String> payload,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+
+        String ticket = payload.get("mfaTicket");
+        String otp = payload.get("otp");
+        if (ticket == null || ticket.isBlank() || otp == null || otp.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Verification code is required"));
+        }
+
+        // Rate-limit code guesses per (ip|ticket) on top of the per-challenge
+        // attempt cap, so a script can't churn through fresh tickets quickly.
+        String rateKey = getClientIp(httpRequest) + "|mfa|" + ticket;
+        if (isRateLimited(rateKey, MAX_IP_ATTEMPTS)) {
+            return ResponseEntity.status(429).body(Map.of(
+                    "error", "Too many attempts. Please wait a moment and try again."));
+        }
+
+        // `challengeDead` tells the client the ticket can never be answered again,
+        // so it should send the user back to the password form. It is a separate
+        // field on purpose: the client must not infer this by pattern-matching the
+        // human-readable message, because the ordinary wrong-code text also says
+        // "expired" and a single typo would then cost the user their whole sign-in.
+        Optional<com.acquira.common.model.LoginMfaToken> tokenOpt =
+                mfaTokenRepository.findByTicketAndUsedFalse(ticket);
+        if (tokenOpt.isEmpty()) {
+            recordFailedAttempt(rateKey);
+            return ResponseEntity.status(401).body(Map.of(
+                    "error", MFA_GENERIC_FAIL, "challengeDead", true));
+        }
+        com.acquira.common.model.LoginMfaToken challenge = tokenOpt.get();
+
+        if (challenge.isExpired()) {
+            return ResponseEntity.status(401).body(Map.of(
+                    "error", "Your verification code has expired. Please sign in again.",
+                    "challengeDead", true));
+        }
+
+        if (challenge.getAttemptCount() >= MFA_MAX_ATTEMPTS) {
+            challenge.setUsed(true);
+            mfaTokenRepository.save(challenge);
+            auditService.log("MFA_LOCKED",
+                    "MFA challenge burned after " + MFA_MAX_ATTEMPTS + " bad codes for '"
+                            + challenge.getUser().getUsername() + "'",
+                    challenge.getUser().getUsername());
+            return ResponseEntity.status(429).body(Map.of(
+                    "error", "Too many incorrect codes. Please sign in again to get a new one.",
+                    "challengeDead", true));
+        }
+
+        if (!passwordEncoder.matches(otp.trim(), challenge.getOtpHash())) {
+            challenge.setAttemptCount(challenge.getAttemptCount() + 1);
+            mfaTokenRepository.save(challenge);
+            recordFailedAttempt(rateKey);
+            auditService.log("MFA_FAIL",
+                    "Bad MFA code for '" + challenge.getUser().getUsername() + "' from " + getClientIp(httpRequest),
+                    challenge.getUser().getUsername());
+            return ResponseEntity.status(401).body(Map.of("error", MFA_GENERIC_FAIL));
+        }
+
+        // Correct code — burn the challenge before issuing anything, so a replay
+        // of the same request cannot mint a second session.
+        challenge.setUsed(true);
+        mfaTokenRepository.save(challenge);
+
+        // Re-check account state: the challenge may have been raised minutes ago,
+        // and an admin could have disabled or locked the account in between.
+        User user = challenge.getUser();
+        if (!user.isActive() || user.isPendingApproval() || user.isAccountExpired() || user.isAccountLocked()) {
+            auditService.log("MFA_DENIED",
+                    "MFA passed but account '" + user.getUsername() + "' is no longer eligible to sign in.",
+                    user.getUsername());
+            return ResponseEntity.status(401).body(Map.of("error", GENERIC_AUTH_FAILURE));
+        }
+
+        loginAttempts.remove(rateKey);
+        auditService.log("MFA_OK",
+                "MFA verified for '" + user.getUsername() + "' from " + getClientIp(httpRequest),
+                user.getUsername());
+
+        return issueSession(user.getUsername(), httpRequest);
+    }
+
+    // ===== Resend the code for an in-flight challenge =====
+    // Re-keys the SAME ticket with a new code so the client doesn't have to
+    // re-enter the password, and resets the attempt counter with it.
+    @Transactional
+    @PostMapping("/login/resend-mfa")
+    public ResponseEntity<?> resendMfa(@RequestBody Map<String, String> payload,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+
+        String ticket = payload.get("mfaTicket");
+        if (ticket == null || ticket.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "No pending sign-in to resend for."));
+        }
+
+        String clientIp = getClientIp(httpRequest);
+        String rateKey = clientIp + "|mfaresend|" + ticket;
+        if (isRateLimited(rateKey, MAX_IP_ATTEMPTS)) {
+            return ResponseEntity.status(429).body(Map.of(
+                    "error", "Too many resend requests. Please wait a moment."));
+        }
+        recordFailedAttempt(rateKey);
+
+        Optional<com.acquira.common.model.LoginMfaToken> tokenOpt =
+                mfaTokenRepository.findByTicketAndUsedFalse(ticket);
+        if (tokenOpt.isEmpty() || tokenOpt.get().isExpired()) {
+            return ResponseEntity.status(401).body(Map.of(
+                    "error", "Your sign-in attempt has expired. Please sign in again.",
+                    "challengeDead", true));
+        }
+
+        com.acquira.common.model.LoginMfaToken challenge = tokenOpt.get();
+        User user = challenge.getUser();
+        Long tenantId = tenantService.getDefaultTenantIdForUser(user.getUsername());
+        int ttlMinutes = securityPolicyService.mfaOtpTtlMinutes(tenantId);
+
+        String otp = String.format("%06d", OTP_RNG.nextInt(1_000_000));
+        challenge.setOtpHash(passwordEncoder.encode(otp));
+        challenge.setAttemptCount(0);
+        challenge.setExpiresAt(LocalDateTime.now().plusMinutes(ttlMinutes));
+        mfaTokenRepository.save(challenge);
+
+        if (!emailService.sendLoginMfaOtp(user.getEmail(), user.getUsername(), otp, ttlMinutes)) {
+            return ResponseEntity.status(503).body(Map.of("error",
+                    "Could not send your verification code. Please contact your administrator."));
+        }
+
+        auditService.log("MFA_RESEND",
+                "MFA code resent for '" + user.getUsername() + "' from " + clientIp,
+                user.getUsername());
+        return ResponseEntity.ok(Map.of("message", "A new code has been sent.",
+                "expiresInMinutes", ttlMinutes));
     }
 
     // ===== Refresh Token Endpoint =====
@@ -420,7 +692,7 @@ public class AuthController {
         String username = org.springframework.security.core.context.SecurityContextHolder.getContext()
                 .getAuthentication().getName();
         int revoked = refreshTokenService.revokeAllForUser(username);
-        auditService.log("LOGOUT_ALL", "User '" + username + "' revoked " + revoked + " sessions");
+        auditService.log("LOGOUT_ALL", "User '" + username + "' revoked " + revoked + " sessions", username);
         // #12: Clear refresh token cookie
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString())
@@ -584,7 +856,8 @@ public class AuthController {
 
         emailService.sendPasswordResetOtp(user.getEmail(), user.getUsername(), otp, OTP_TTL_MINUTES);
         auditService.log("PWRESET_OTP_SENT",
-                "Password-reset OTP issued for '" + user.getUsername() + "' from " + getClientIp(httpRequest));
+                "Password-reset OTP issued for '" + user.getUsername() + "' from " + getClientIp(httpRequest),
+                user.getUsername());
 
         return ResponseEntity.ok(Map.of("message", OTP_GENERIC_SENT));
     }
@@ -620,7 +893,8 @@ public class AuthController {
             t.setUsed(true);
             resetTokenRepository.save(t);
             auditService.log("PWRESET_OTP_LOCKED",
-                    "Password-reset OTP locked (too many attempts) for '" + userOpt.get().getUsername() + "'");
+                    "Password-reset OTP locked (too many attempts) for '" + userOpt.get().getUsername() + "'",
+                    userOpt.get().getUsername());
             return ResponseEntity.status(429).body(Map.of("error",
                     "Too many incorrect attempts. Please request a new code."));
         }
@@ -692,7 +966,8 @@ public class AuthController {
         // previously-compromised login can't survive the reset.
         int revoked = refreshTokenService.revokeAllForUser(user.getUsername());
         auditService.log("PWRESET_DONE",
-                "Password reset via OTP for '" + user.getUsername() + "'; revoked " + revoked + " session(s).");
+                "Password reset via OTP for '" + user.getUsername() + "'; revoked " + revoked + " session(s).",
+                user.getUsername());
 
         return ResponseEntity.ok(Map.of("message", "Password has been reset successfully. You can now sign in."));
     }

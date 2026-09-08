@@ -73,7 +73,7 @@ const EXAMPLE_REQUEST = `curl -H "X-API-Key: aqr_your_key_here" \\
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
-const emptyForm = { name: '', permissions: ['read:transactions', 'read:merchants'], expiresAt: '', rateLimitPerMinute: 120, allowedIps: '' };
+const emptyForm = { name: '', permissions: ['read:transactions', 'read:merchants'], expiresAt: '', rateLimitPerMinute: 120, quotaPerDay: '', allowedIps: '' };
 
 const docColumns = [
     {
@@ -128,6 +128,7 @@ const ApiManagement = () => {
             permissions: Array.isArray(k.permissions) ? k.permissions : [],
             expiresAt: k.expiresAt ? String(k.expiresAt).substring(0, 10) : '',
             rateLimitPerMinute: k.rateLimitPerMinute || 120,
+            quotaPerDay: k.quotaPerDay || '',
             allowedIps: k.allowedIps || '',
         });
         setEditId(k.id);
@@ -143,6 +144,7 @@ const ApiManagement = () => {
             permissions: form.permissions,
             expiresAt: form.expiresAt || null,
             rateLimitPerMinute: Number(form.rateLimitPerMinute) || 120,
+            quotaPerDay: form.quotaPerDay ? Number(form.quotaPerDay) : null,
             allowedIps: form.allowedIps.trim() || null,
         };
         setSaving(true);
@@ -170,6 +172,20 @@ const ApiManagement = () => {
         if (!ok) return;
         try { await api.delete(`/admin/api-keys/${k.id}`); showToast('API key revoked', 'success'); loadKeys(); }
         catch (e) { showToast('Revoke failed: ' + (e.response?.data?.error || e.message), 'error'); }
+    };
+
+    const rotateKey = async (k) => {
+        const ok = await confirm({
+            title: 'Rotate this API key?',
+            message: `"${k.name}" keeps its scopes, limits and usage history, but gets a brand-new secret. The current secret stops working immediately — for zero-downtime rotation, create a second key and cut over instead.`,
+            confirmLabel: 'Rotate key',
+            tone: 'danger',
+        });
+        if (!ok) return;
+        try {
+            const res = await api.post(`/admin/api-keys/${k.id}/rotate`);
+            setCreatedKey(res.data); loadKeys();
+        } catch (e) { showToast('Rotate failed: ' + (e.response?.data?.error || e.message), 'error'); }
     };
 
     const viewUsage = async (id) => {
@@ -225,7 +241,7 @@ const ApiManagement = () => {
             header: 'Limits',
             nowrap: true,
             muted: true,
-            render: k => `${k.rateLimitPerMinute || 120}/min${k.allowedIps ? ' • IP-locked' : ''}`,
+            render: k => `${k.rateLimitPerMinute || 120}/min${k.quotaPerDay ? ` • ${Number(k.quotaPerDay).toLocaleString()}/day` : ''}${k.allowedIps ? ' • IP-locked' : ''}`,
         },
         {
             key: 'expiresAt',
@@ -285,6 +301,16 @@ const ApiManagement = () => {
                             icon={Edit2}
                             onClick={() => openEdit(k)}
                             aria-label={`Edit ${k.name}`}
+                        />
+                    )}
+                    {k.isActive && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            iconOnly
+                            icon={RefreshCw}
+                            onClick={() => rotateKey(k)}
+                            aria-label={`Rotate ${k.name}`}
                         />
                     )}
                     {k.isActive && (
@@ -620,11 +646,21 @@ const ApiManagement = () => {
                         </FormField>
                     </FormGrid>
 
-                    <FormField label="IP allowlist (optional)" hint="Comma-separated IPs. Blank allows any source IP.">
+                    <FormField label="Daily quota (req/day, optional)" hint="Hard ceiling per UTC day. Blank means no daily quota.">
+                        <Input
+                            type="number"
+                            min={1}
+                            value={form.quotaPerDay}
+                            onChange={e => setForm({ ...form, quotaPerDay: e.target.value })}
+                            placeholder="e.g. 50000"
+                        />
+                    </FormField>
+
+                    <FormField label="IP allowlist (optional)" hint="Comma-separated IPs or CIDR blocks (e.g. 10.20.0.0/16). Blank allows any source IP.">
                         <Input
                             value={form.allowedIps}
                             onChange={e => setForm({ ...form, allowedIps: e.target.value })}
-                            placeholder="10.0.0.1, 10.0.0.2"
+                            placeholder="10.0.0.1, 10.20.0.0/16"
                             mono
                         />
                     </FormField>
@@ -662,7 +698,7 @@ const ApiManagement = () => {
                  shown exactly once and only a hash is stored server side.      */}
             <Modal
                 open={!!createdKey}
-                title="API key created"
+                title="Your API key"
                 showClose={false}
                 closeOnOverlay={false}
                 footer={<Button variant="primary" onClick={() => setCreatedKey(null)}>Done</Button>}

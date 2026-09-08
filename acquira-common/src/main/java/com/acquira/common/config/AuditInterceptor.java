@@ -48,6 +48,23 @@ public class AuditInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
                                 Object handler, @Nullable Exception ex) {
         try {
+            Object startObj0 = request.getAttribute(START_ATTR);
+            Long elapsed = startObj0 instanceof Long start0
+                    ? System.currentTimeMillis() - start0
+                    : null;
+
+            // If a controller already logged a DESCRIPTIVE row for this request
+            // (e.g. "UNLOCK_USER"), that row is the audit record. Stamp the final
+            // status/duration onto it and do NOT add a generic one — otherwise
+            // every admin action produced two half-complete rows: this one with a
+            // username but a meaningless action ("PUT"), and the controller's with
+            // a real action but no HTTP outcome.
+            java.util.List<Long> recorded = AuditRequestRecorder.recordedIds(request);
+            if (!recorded.isEmpty()) {
+                recorder.applyOutcome(recorded, response.getStatus(), elapsed);
+                return;
+            }
+
             if (!shouldAudit(request)) {
                 return;
             }
@@ -63,10 +80,7 @@ public class AuditInterceptor implements HandlerInterceptor {
             entry.setUsername(currentUsername());
             entry.setTenantId(TenantContext.getCurrentTenant());
 
-            Object startObj = request.getAttribute(START_ATTR);
-            if (startObj instanceof Long start) {
-                entry.setDuration(System.currentTimeMillis() - start);
-            }
+            entry.setDuration(elapsed);
             if (ex != null) {
                 entry.setDetails(truncate("Exception: " + ex.getClass().getSimpleName()
                         + " - " + ex.getMessage(), 1000));
@@ -105,6 +119,11 @@ public class AuditInterceptor implements HandlerInterceptor {
         return mutating || sensitiveRead;
     }
 
+    /**
+     * Canonical categories: AUTH, USER_MGMT, ADMINISTRATION, OPERATIONS,
+     * REPORTING, API. Must stay in step with {@code AuditService.categoryFor()}
+     * and the dropdown in AuditLogViewer.jsx.
+     */
     private String categorize(String uri) {
         if (uri == null) return "API";
         if (uri.startsWith("/api/admin")) return "ADMINISTRATION";

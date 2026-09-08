@@ -2,8 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Globe, Users, User, Loader2, Calendar, RefreshCw, LayoutDashboard,
   DollarSign, Hash, Percent, ChevronRight, ChevronDown, Store,
-  TrendingUp, TrendingDown, Minus, X,
+  TrendingUp, TrendingDown, Minus, X, Layers,
 } from 'lucide-react';
+import MarginGlossaryHint from '../../components/MarginGlossary';
+import ChannelToggle from '../../components/ChannelToggle';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCompactCurrency } from '../../utils/formatters';
@@ -129,7 +131,7 @@ function Kpi({ label, value, sub, pct, icon: Icon, color }) {
 }
 
 // ── One row of the hierarchy tree ───────────────────────────────────────────
-function TreeRow({ node, depth, expanded, onToggle, onSelect, selectedKey }) {
+function TreeRow({ node, depth, expanded, onToggle, onSelect, selectedKey, fxEnabled }) {
   const tier = TIER[node.level] || TIER.agent;
   const Icon = tier.icon;
   const key = `${node.level}:${node.id ?? node.salesUserId ?? node.name}`;
@@ -174,14 +176,24 @@ function TreeRow({ node, depth, expanded, onToggle, onSelect, selectedKey }) {
         <td style={{ ...td, fontWeight: 600 }}>{fmt(node.newMerchants)}</td>
         <td style={{ ...td, fontWeight: 700 }}>{fmtM(node.totalVolume)}</td>
         <td style={{ ...td, color: Number(node.totalNet) < 0 ? T.danger : T.text }}>{fmtM(node.totalNet)}</td>
+        <td style={{ ...td, fontWeight: 600, color: Number(node.totalSpread) < 0 ? T.danger : T.text }}
+            title={node.spreadChangePct == null ? undefined : `${node.spreadChangePct > 0 ? '+' : ''}${node.spreadChangePct}% vs previous period`}>
+          {fmtM(node.totalSpread)}
+        </td>
+        {fxEnabled && (
+          <td style={{ ...td, color: T.textSec }} title="ECOM FX income (included in Net Spread)">
+            {fmtM(node.totalFx)}
+          </td>
+        )}
         <td style={td}>{fmt(node.totalTxns)}</td>
         <td style={td}><Delta pct={node.volumeChangePct} /></td>
+        <td style={td}><Delta pct={node.spreadChangePct} /></td>
       </tr>
       {isOpen && (node.children || []).map((child) => (
         <TreeRow
           key={`${child.level}:${child.id ?? child.salesUserId ?? child.name}`}
           node={child} depth={depth + 1} expanded={expanded}
-          onToggle={onToggle} onSelect={onSelect} selectedKey={selectedKey}
+          onToggle={onToggle} onSelect={onSelect} selectedKey={selectedKey} fxEnabled={fxEnabled}
         />
       ))}
     </>
@@ -189,7 +201,7 @@ function TreeRow({ node, depth, expanded, onToggle, onSelect, selectedKey }) {
 }
 
 // ── Agent drill-down ────────────────────────────────────────────────────────
-function AgentDrillDown({ agent, range, onClose }) {
+function AgentDrillDown({ agent, range, channel, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -199,7 +211,8 @@ function AgentDrillDown({ agent, range, onClose }) {
     (async () => {
       setLoading(true); setErr('');
       try {
-        const params = range.from && range.to ? { dateFrom: range.from, dateTo: range.to } : {};
+        // The drill carries the same channel scope as the tree it was opened from.
+        const params = { channel, ...(range.from && range.to ? { dateFrom: range.from, dateTo: range.to } : {}) };
         const r = await api.get(`/sales-portfolio/agent/${encodeURIComponent(agent.salesUserId)}`, { params });
         if (!cancelled) setData(r.data);
       } catch (e) {
@@ -209,9 +222,10 @@ function AgentDrillDown({ agent, range, onClose }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [agent.salesUserId, range.from, range.to]);
+  }, [agent.salesUserId, range.from, range.to, channel]);
 
   const merchants = data?.merchants || [];
+  const fxEnabled = !!data?.fxEnabled;
 
   return (
     <div style={{ ...CARD, marginTop: 16, border: `2px solid ${TIER.agent.color}` }}>
@@ -246,6 +260,8 @@ function AgentDrillDown({ agent, range, onClose }) {
                 <th style={th}>Assigned</th>
                 <th style={th}>Gross Volume</th>
                 <th style={th}>Net Margin</th>
+                <th style={th}>Net Spread</th>
+                {fxEnabled && <th style={th}>FX Income</th>}
                 <th style={th}>Txns</th>
                 <th style={th}>Last Txn</th>
                 <th style={{ ...th, textAlign: 'left' }}>Sales Lead</th>
@@ -267,6 +283,8 @@ function AgentDrillDown({ agent, range, onClose }) {
                   <td style={{ ...td, color: T.textSec }}>{fmtDate(m.assigned_date)}</td>
                   <td style={{ ...td, fontWeight: 700 }}>{fmtM(m.volume)}</td>
                   <td style={{ ...td, color: Number(m.net) < 0 ? T.danger : T.text }}>{fmtM(m.net)}</td>
+                  <td style={{ ...td, fontWeight: 600, color: Number(m.spread) < 0 ? T.danger : T.text }}>{fmtM(m.spread)}</td>
+                  {fxEnabled && <td style={{ ...td, color: T.textSec }}>{fmtM(m.fx)}</td>}
                   <td style={td}>{fmt(m.txn_count)}</td>
                   <td style={{ ...td, color: T.textSec }}>{fmtDate(m.last_txn_date)}</td>
                   <td style={{ ...td, textAlign: 'left', color: T.textSec }}>{m.current_sales_lead || '—'}</td>
@@ -289,6 +307,7 @@ export default function SalesExecutiveDashboard() {
   const [preset, setPreset] = useState('MONTH');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
+  const [channel, setChannel] = useState('ALL');   // ALL | POS | ECOM (ChannelToggle)
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -312,6 +331,7 @@ export default function SalesExecutiveDashboard() {
         params: {
           dateFrom: range.from, dateTo: range.to,
           compareFrom: compare.from, compareTo: compare.to,
+          channel,
         },
       });
       setData(r.data);
@@ -326,9 +346,12 @@ export default function SalesExecutiveDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [range, compare]);
+  }, [range, compare, channel]);
 
   useEffect(() => { load(); }, [load, tenantVersion]);
+
+  // A channel selection belongs to the tenant it was made on.
+  useEffect(() => { setChannel('ALL'); }, [tenantVersion]);
 
   const toggle = useCallback((key) => {
     setExpanded((prev) => {
@@ -403,6 +426,7 @@ export default function SalesExecutiveDashboard() {
               onChange={(e) => setCustomTo(e.target.value)} style={inputStyle} />
           </div>
         )}
+        <ChannelToggle value={channel} onChange={setChannel} />
         <div style={{ marginLeft: 'auto', fontSize: 11.5, color: T.textMut }}>
           {range.from && range.to
             ? <>Showing <b>{range.from} → {range.to}</b>{compare.from && <> · compared with <b>{compare.from} → {compare.to}</b></>}</>
@@ -417,6 +441,12 @@ export default function SalesExecutiveDashboard() {
                sub="vs previous period" pct={totals.volumeChangePct} />
           <Kpi label="Net Margin" value={fmtM(totals.totalNet)} icon={Percent} color={T.successDk}
                sub="vs previous period" pct={totals.netChangePct} />
+          <Kpi label="Net Spread" value={fmtM(totals.totalSpread)} icon={Layers} color="var(--mix-ancillary, #A85D9C)"
+               sub={`${Number(totals.spreadRate || 0).toFixed(2)}% of volume · vs previous`} pct={totals.spreadChangePct} />
+          {data?.fxEnabled && (
+            <Kpi label="FX Income" value={fmtM(totals.totalFx)} icon={Globe} color="var(--cat-3, #3D7EA6)"
+                 sub="ecom FX · included in Net Spread" />
+          )}
           <Kpi label="Transactions" value={fmt(totals.totalTxns)} icon={Hash} color="var(--accent-purple, #7c3aed)"
                sub="vs previous period" pct={totals.txnChangePct} />
           <Kpi label="Merchants" value={fmt(totals.merchantCount)} icon={Store} color={T.brand}
@@ -449,8 +479,11 @@ export default function SalesExecutiveDashboard() {
                 <th style={th}>New</th>
                 <th style={th}>Volume</th>
                 <th style={th}>Net Margin</th>
+                <th style={th}>Net Spread</th>
+                {data?.fxEnabled && <th style={th}>FX Income</th>}
                 <th style={th}>Txns</th>
                 <th style={th}>Δ Volume</th>
+                <th style={th}>Δ Spread</th>
               </tr>
             </thead>
             <tbody>
@@ -458,7 +491,7 @@ export default function SalesExecutiveDashboard() {
                 <TreeRow
                   key={`country:${node.id ?? node.name}`}
                   node={node} depth={0} expanded={expanded}
-                  onToggle={toggle} onSelect={select} selectedKey={selectedKey}
+                  onToggle={toggle} onSelect={select} selectedKey={selectedKey} fxEnabled={!!data?.fxEnabled}
                 />
               ))}
             </tbody>
@@ -467,13 +500,16 @@ export default function SalesExecutiveDashboard() {
       </div>
 
       {selectedAgent && (
-        <AgentDrillDown agent={selectedAgent} range={range} onClose={() => { setSelectedAgent(null); setSelectedKey(null); }} />
+        <AgentDrillDown agent={selectedAgent} range={range} channel={channel} onClose={() => { setSelectedAgent(null); setSelectedKey(null); }} />
       )}
 
-      <div style={{ fontSize: 11.5, color: T.textMut, marginTop: 10, lineHeight: 1.6 }}>
-        Volume is the single-currency settlement figure (store base currency), read from the pre-aggregated daily
-        summary. Net margin is MSF minus interchange and scheme fees. Merchant counts are the agent's whole portfolio;
-        only <b>New</b> is bounded by the selected period. Click any sales agent to see their merchants.
+      <div style={{ fontSize: 11.5, color: T.textMut, marginTop: 10, lineHeight: 1.6, display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <span style={{ flex: '1 1 480px' }}>
+          Volume is the single-currency settlement figure (store base currency), read from the pre-aggregated daily
+          summary. Merchant counts are the agent's whole portfolio;
+          only <b>New</b> is bounded by the selected period. Click any sales agent to see their merchants.
+        </span>
+        <MarginGlossaryHint />
       </div>
     </div>
   );

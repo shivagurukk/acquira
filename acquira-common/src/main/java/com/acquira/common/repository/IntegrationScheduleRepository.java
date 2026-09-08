@@ -10,5 +10,6 @@ public interface IntegrationScheduleRepository extends JpaRepository<Integration
     List<IntegrationSchedule> findByTenantIdOrderByCreatedAtDesc(Long tenantId);
     List<IntegrationSchedule> findByIsEnabledTrue();
     List<IntegrationSchedule> findByTenantIdAndIsEnabledTrue(Long tenantId);
+    long countByTenantIdAndIsEnabledTrue(Long tenantId);
     List<IntegrationSchedule> findByReportId(Long reportId);
 }

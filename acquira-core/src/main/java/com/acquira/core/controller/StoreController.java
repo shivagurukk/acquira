@@ -33,6 +33,6 @@ public class StoreController {
                 .map(s -> tenantId.equals(s.getTenantId()))
                 .orElse(false);
         if (!owned) return ResponseEntity.notFound().build();
-        return ResponseEntity.ok(terminalRepository.findByStoreId(id));
+        return ResponseEntity.ok(terminalRepository.findByTenantIdAndStoreId(tenantId, id));
     }
 }

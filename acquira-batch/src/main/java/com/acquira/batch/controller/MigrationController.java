@@ -83,7 +83,18 @@ public class MigrationController {
 
         // Run async
         Thread migrationThread = new Thread(() -> {
-            migrationService.startMigration(tenantId, sourceTable, startMonth, endMonth, columnMapping);
+            // Propagate tenant to this worker thread so TenantAspect sets the
+            // Postgres app.current_tenant RLS backstop. The service still scopes
+            // every query by the explicit tenantId param; this keeps the
+            // defense-in-depth session var consistent with the other async paths
+            // (FileUploadService, InterchangeNormalizationService) and avoids a
+            // bypass if RLS is ever forced.
+            com.acquira.common.config.TenantContext.setCurrentTenant(tenantId);
+            try {
+                migrationService.startMigration(tenantId, sourceTable, startMonth, endMonth, columnMapping);
+            } finally {
+                com.acquira.common.config.TenantContext.clear();
+            }
         }, "bulk-migration");
         migrationThread.setDaemon(true);
         migrationThread.start();
@@ -204,6 +215,14 @@ public class MigrationController {
                 "error", "This deletes and recalculates every summary table for the current tenant. Resend with \"confirm\": true."));
         }
 
+        // REPRICE (2026-08-29): when true, re-price fact_transaction from the
+        // CURRENT rate cards before rebuilding summaries — needed after an
+        // interchange/scheme rate-card change, which plain rebuild cannot pick up
+        // (it only re-aggregates the fees already stamped on fact). This MUTATES
+        // fact, so it is audited as a distinct action.
+        Object reprice = body.get("reprice");
+        final boolean repriceFact = Boolean.TRUE.equals(reprice) || "true".equalsIgnoreCase(String.valueOf(reprice));
+
         if (migrationService.isRunning()) {
             return ResponseEntity.status(409).body(Map.of(
                 "error", "Another migration or summary rebuild is already running. Wait for it to finish."));
@@ -211,20 +230,30 @@ public class MigrationController {
 
         String rangeLabel = (startMonth == null ? "auto" : startMonth) + " to " + (endMonth == null ? "auto" : endMonth);
         if (auditService != null) {
-            auditService.log("SUMMARY_REBUILD",
-                "Super-admin summary rebuild from fact_transaction: tenant=" + tenantId + " range=" + rangeLabel);
+            auditService.log(repriceFact ? "SUMMARY_REPRICE_REBUILD" : "SUMMARY_REBUILD",
+                (repriceFact ? "Super-admin re-price fact + summary rebuild" : "Super-admin summary rebuild from fact_transaction")
+                    + ": tenant=" + tenantId + " range=" + rangeLabel);
         }
 
         final java.time.YearMonth start = startMonth == null ? null : java.time.YearMonth.parse(startMonth);
         final java.time.YearMonth end = endMonth == null ? null : java.time.YearMonth.parse(endMonth);
         final Long targetTenant = tenantId;
         Thread rebuildThread = new Thread(() -> {
+            // Propagate tenant so TenantAspect sets the app.current_tenant RLS
+            // backstop on this worker thread (see the /start thread above).
+            com.acquira.common.config.TenantContext.setCurrentTenant(targetTenant);
             try {
-                migrationService.rebuildSummaries(targetTenant, start, end);
+                if (repriceFact) {
+                    migrationService.repriceAndRebuild(targetTenant, start, end);
+                } else {
+                    migrationService.rebuildSummaries(targetTenant, start, end);
+                }
             } catch (Exception e) {
                 // Progress already carries the FAILED phase; the thread must not die noisily.
+            } finally {
+                com.acquira.common.config.TenantContext.clear();
             }
-        }, "summary-rebuild");
+        }, repriceFact ? "reprice-rebuild" : "summary-rebuild");
         rebuildThread.setDaemon(true);
         rebuildThread.start();
 
@@ -232,7 +261,10 @@ public class MigrationController {
             "status", "STARTED",
             "tenantId", tenantId,
             "range", rangeLabel,
-            "message", "Summary rebuild started in background. Poll /api/admin/migration/progress for updates."
+            "reprice", repriceFact,
+            "message", (repriceFact
+                ? "Re-price + summary rebuild started in background. Poll /api/admin/migration/progress for updates."
+                : "Summary rebuild started in background. Poll /api/admin/migration/progress for updates.")
         ));
     }
 

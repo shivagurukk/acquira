@@ -75,8 +75,12 @@ public class RevenueLeakageDetectionService {
 
         LocalDate asOf;
         try {
+            // total_txns > 0: an ancillary-only day (rental/DCC ahead of the
+            // transaction file) must not slide the 7-day recent window off
+            // the real data and mass-flag DORMANT_REVENUE_LOSS.
             asOf = jdbc.queryForObject(
-                "SELECT MAX(business_date) FROM sum_daily_merchant WHERE tenant_id = ?",
+                "SELECT MAX(business_date) FROM sum_daily_merchant "
+                + "WHERE tenant_id = ? AND COALESCE(total_txns,0) > 0",
                 LocalDate.class, tenantId);
         } catch (Exception e) {
             asOf = null;

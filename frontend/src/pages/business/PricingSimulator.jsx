@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../../api/axios';
 import { explorerApi } from '../../api/explorer';
 import { formatCompactCurrency } from '../../utils/formatters';
+import { Tabs } from '../../components/ui';
+import SegmentMatrix from './PricingSimulatorMatrix';
 
 /*
  * What-If Pricing Simulator
@@ -48,20 +50,23 @@ const fmtSigned = (v) => (num(v) >= 0 ? '+' : '') + fmtMoney(v);
 const fmtBps = (v) => `${num(v).toFixed(1)} bps`;
 const fmtPct = (v) => `${num(v).toFixed(1)}%`;
 
-// ── design tokens (with hard fallbacks so it renders even if a var is missing) ──
+// ── Meridian steel tokens (the app's own system from index.css — this page
+//    previously used generic white/blue fallbacks that ignored the theme) ──
 const T = {
-  card: 'var(--bg-card, #ffffff)',
-  bg: 'var(--bg, #f8fafc)',
-  border: 'var(--border, #e5e7eb)',
-  text: 'var(--text, #0f172a)',
-  muted: 'var(--text-muted, #64748b)',
-  brand: 'var(--brand, #2563eb)',
-  pos: 'var(--success, #16a34a)',
-  neg: 'var(--danger, #dc2626)',
-  warn: 'var(--warning, #d97706)',
-  rlg: 'var(--radius-lg, 14px)',
-  rmd: 'var(--radius-md, 10px)',
-  shadow: 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.06))',
+  card: 'var(--surface, #EAF1FA)',
+  bg: 'var(--canvas, #F1F7FF)',
+  border: 'var(--hairline, #E4E7EC)',
+  text: 'var(--ink, #14295E)',
+  muted: 'var(--muted, #51618C)',
+  brand: 'var(--primary, #3F63B0)',
+  wash: 'var(--wash, #DCE8F7)',
+  pos: 'var(--chart-pos, #0FA070)',
+  neg: 'var(--negative, #B3382C)',
+  warn: 'var(--attention, #8C5E12)',
+  mono: "var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace)",
+  rlg: 12,
+  rmd: 8,
+  shadow: '0 1px 2px rgba(20,41,94,0.06)',
 };
 
 function Slider({ label, value, min, max, step, onChange, suffix, hint, accent }) {
@@ -95,6 +100,15 @@ function Chip({ label, value, sub, tone }) {
 }
 
 export default function PricingSimulator() {
+  // v2 feature flag — per-tenant tenant_setting pricing.simulator_enabled,
+  // served by GET /business/pricing-simulator/config. null = still loading.
+  const [config, setConfig] = useState(null);
+  // bump to make the segment matrix refetch alongside "Apply"
+  const [matrixKey, setMatrixKey] = useState(0);
+  // workspace tabs: the segment matrix is the primary tool; the v1 blended
+  // levers live behind the second tab instead of stacking above it.
+  const [tab, setTab] = useState('matrix');
+
   // cohort selection
   const [cohortDim, setCohortDim] = useState('ALL');
   const [cohortOptions, setCohortOptions] = useState([]);
@@ -200,8 +214,21 @@ export default function PricingSimulator() {
     }
   }, [buildRequests, startDate, endDate]);
 
-  // initial load
-  useEffect(() => { fetchBase(); /* eslint-disable-next-line */ }, []);
+  // v2 config gate — fetch the per-tenant flag first; only load data when enabled.
+  useEffect(() => {
+    let alive = true;
+    api.get('/business/pricing-simulator/config')
+      .then((res) => { if (alive) setConfig(res.data || { enabled: true }); })
+      // Older backend without the endpoint (or transient failure): behave as v1.
+      .catch(() => { if (alive) setConfig({ enabled: true }); });
+    return () => { alive = false; };
+  }, []);
+
+  // initial load (once the flag says the tenant calculates)
+  useEffect(() => {
+    if (config?.enabled) { fetchBase(); setMatrixKey((k) => k + 1); }
+    // eslint-disable-next-line
+  }, [config?.enabled]);
 
   // ── the model (all client-side) ──
   const scenario = useMemo(() => {
@@ -281,19 +308,42 @@ export default function PricingSimulator() {
 
   const toggleValue = (v) => setCohortValues((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
 
+  // Tenant has the simulator switched off (Settings → Regional & Data):
+  // render the notice and run NO calculations — the backend refuses them too.
+  if (config && !config.enabled) {
+    return (
+      <div style={{ padding: 24, color: T.text, maxWidth: 1280, margin: '0 auto' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>What-If Pricing Simulator</h1>
+        <div style={{ marginTop: 18, background: T.card, border: `1px solid ${T.border}`, borderRadius: T.rlg, boxShadow: T.shadow, padding: 40, textAlign: 'center' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Pricing calculations are disabled for this bank</div>
+          <div style={{ fontSize: 13, color: T.muted }}>
+            An administrator can re-enable them under Settings → Regional &amp; Data → Pricing Simulator.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: 24, color: T.text, maxWidth: 1280, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 18 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>What-If Pricing Simulator</h1>
-          <p style={{ fontSize: 13, color: T.muted, margin: '4px 0 0' }}>
-            Model MSF repricing, scheme-mix shifts and DCC capture against projected net margin and churn.
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', color: T.brand, marginBottom: 4 }}>
+            Pricing desk
+          </div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: -0.2 }}>Pricing Simulator</h1>
+          <p style={{ fontSize: 13, color: T.muted, margin: '4px 0 0', maxWidth: 560 }}>
+            Where margin is made and lost — per card scheme, card type and Local/Intl — and what a reprice is worth.
           </p>
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: T.muted, cursor: 'pointer' }}>
-          <input type="checkbox" checked={annualized} onChange={(e) => setAnnualized(e.target.checked)} />
-          Annualize (×365/{window.days}d)
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, color: annualized ? T.brand : T.muted,
+          cursor: 'pointer', border: `1px solid ${annualized ? T.brand : T.border}`, borderRadius: 999,
+          padding: '6px 14px', background: annualized ? T.wash : 'transparent', transition: 'all 120ms ease',
+        }}>
+          <input type="checkbox" checked={annualized} onChange={(e) => setAnnualized(e.target.checked)} style={{ accentColor: T.brand }} />
+          Annualized figures
         </label>
       </div>
 
@@ -324,27 +374,36 @@ export default function PricingSimulator() {
           )}
           <Field label="Start (optional)"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={selStyle} /></Field>
           <Field label="End (optional)"><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={selStyle} /></Field>
-          <button onClick={fetchBase} disabled={loading} style={{
+          <button onClick={() => { fetchBase(); setMatrixKey((k) => k + 1); }} disabled={loading} style={{
             padding: '9px 18px', borderRadius: T.rmd, border: 'none', background: T.brand, color: '#fff',
             fontWeight: 600, fontSize: 13, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1,
-          }}>{loading ? 'Loading…' : 'Load cohort'}</button>
+          }}>{loading ? 'Loading…' : 'Apply'}</button>
         </div>
         {window.start && (
-          <div style={{ fontSize: 12, color: T.muted, marginTop: 10 }}>
-            Window <b style={{ color: T.text }}>{window.start} → {window.end}</b> ({window.days} days) · figures {annualized ? 'annualized' : 'for the window'}
+          <div style={{ fontSize: 12, color: T.muted, marginTop: 10, fontFamily: T.mono }}>
+            {window.start} → {window.end} · {window.days} days · {annualized ? 'annualized' : 'window'} figures
           </div>
         )}
       </div>
 
-      {error && <div style={{ background: 'rgba(220,38,38,0.08)', border: `1px solid ${T.neg}`, color: T.neg, borderRadius: T.rmd, padding: 12, marginBottom: 18, fontSize: 13 }}>{error}</div>}
+      {error && <div style={{ background: 'rgba(179,56,44,0.08)', border: `1px solid ${T.neg}`, color: T.neg, borderRadius: T.rmd, padding: 12, marginBottom: 18, fontSize: 13 }}>{error}</div>}
 
-      {base && base.volume <= 0 && !loading && (
+      <Tabs
+        tabs={[
+          { key: 'matrix', label: 'Segment matrix' },
+          { key: 'whatif', label: 'Blended what-if' },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
+
+      {tab === 'whatif' && base && base.volume <= 0 && !loading && (
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: T.rlg, padding: 40, textAlign: 'center', color: T.muted }}>
           No volume for this cohort in the selected window. Widen the cohort or date range.
         </div>
       )}
 
-      {base && base.volume > 0 && scenario && (
+      {tab === 'whatif' && base && base.volume > 0 && scenario && (
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(0, 1.4fr)', gap: 18, alignItems: 'start' }}>
           {/* LEVERS */}
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: T.rlg, boxShadow: T.shadow, padding: 18 }}>
@@ -489,6 +548,19 @@ export default function PricingSimulator() {
               single scheme) don't narrow the DCC block, which is merchant-grained.
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── v2: Segment margin matrix (scheme × card type × local/intl) ──
+          Kept mounted across tab switches so levers/drill state survive. */}
+      {config?.enabled && (
+        <div style={{ display: tab === 'matrix' ? 'block' : 'none' }}>
+          <SegmentMatrix
+            reloadKey={matrixKey}
+            buildDto={() => buildRequests().dto}
+            elasticity={elasticity}
+            annualized={annualized}
+          />
         </div>
       )}
     </div>

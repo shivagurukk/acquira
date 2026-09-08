@@ -35,6 +35,7 @@ const AlertsNotifications  = lazy(() => import('./admin/AlertsNotifications'));
 const S3Settings           = lazy(() => import('./admin/S3Settings'));
 const IntegrationHub       = lazy(() => import('./admin/IntegrationHub'));
 const ApiManagement        = lazy(() => import('./admin/ApiManagement'));
+const Webhooks             = lazy(() => import('./admin/Webhooks'));
 const TenantManagement     = lazy(() => import('./TenantManagement'));
 const RbacGroups           = lazy(() => import('./RbacGroups'));
 const DatabaseMaintenance  = lazy(() => import('./admin/DatabaseMaintenance'));
@@ -97,6 +98,7 @@ const GROUPS = [
             { key: 's3',           label: 'Report Storage (S3)',   icon: HardDrive, keywords: 's3 bucket storage archive report', el: <S3Settings /> },
             { key: 'integrations', label: 'External Integrations', icon: Plug,      keywords: 'integration oracle sql server connection schedule', el: <IntegrationHub /> },
             { key: 'api-keys',     label: 'API Keys',              icon: KeyRound,  keywords: 'api key external x-api-key token', el: <ApiManagement /> },
+            { key: 'webhooks',     label: 'Webhooks',              icon: Plug,      keywords: 'webhook event push notification hmac signature delivery', el: <Webhooks /> },
             { key: 'leakage',      label: 'Revenue-Leakage Rules', icon: SlidersHorizontal, keywords: 'leakage threshold detection anomaly',
               el: <ComingSoon title="Revenue-Leakage Thresholds" note="Detection thresholds (the leakage.* keys) currently live in tenant_setting and are SQL-only. A form to manage them here is planned." /> },
         ],

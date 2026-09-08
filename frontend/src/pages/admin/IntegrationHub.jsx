@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Cable, Database, FileCode, Clock, ScrollText, Plus, Edit2, Trash2,
   CheckCircle, XCircle, RefreshCw, Play, Pause, Zap,
   Activity, Server, TestTube, RotateCcw, Eye,
+  AlertTriangle, Download, Upload,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
@@ -33,7 +34,7 @@ import {
 // accepts it back to mean "leave the existing ciphertext alone".
 const PASSWORD_SENTINEL = '__UNCHANGED__';
 
-const REPORT_TYPE_TONES = { MERCHANT: 'brand', TRANSACTION: 'success' };
+const REPORT_TYPE_TONES = { MERCHANT: 'brand', TRANSACTION: 'success', RENTAL: 'warning' };
 const DB_TYPE_TONES = { ORACLE: 'warning', POSTGRES: 'info', MSSQL: 'brand' };
 // StatusBadge maps RETRYING to neutral, which loses the "still working" signal,
 // so run status keeps an explicit tone map.
@@ -69,6 +70,23 @@ const emptyStateStyle = {
 
 const fmtDuration = (ms) => (ms ? `${(ms / 1000).toFixed(1)}s` : '—');
 const fmtDateTime = (v) => (v ? new Date(v).toLocaleString() : '—');
+const fmtAge = (v) => {
+  if (!v) return '—';
+  const ms = Date.now() - new Date(v).getTime();
+  if (ms < 0) return 'just now';
+  const h = Math.floor(ms / 3600000);
+  if (h < 1) return `${Math.max(1, Math.floor(ms / 60000))}m ago`;
+  if (h < 48) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+};
+
+// Freshness = "did this feed land when its schedule said it should?" (server-computed)
+const FRESHNESS_META = {
+  FRESH: { label: 'Fresh', tone: 'success' },
+  LATE: { label: 'Late', tone: 'danger' },
+  NEVER: { label: 'Never ran', tone: 'warning' },
+  UNSCHEDULED: { label: 'No schedule', tone: 'neutral' },
+};
 
 /** Renders an ad-hoc result set (dynamic columns) returned by a SQL validation. */
 const PreviewTable = ({ result, maxHeight = 240 }) => {
@@ -95,15 +113,55 @@ const PreviewTable = ({ result, maxHeight = 240 }) => {
 const OverviewTab = () => {
   const { tenantVersion } = useAuth();
   const [data, setData] = useState(null);
+  const [health, setHealth] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [importSummary, setImportSummary] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef(null);
 
   const load = useCallback(async () => {
-    try { const res = await api.get('/admin/integration/overview'); setData(res.data); }
-    catch { showToast('Could not load the integration overview', 'error'); }
+    try {
+      const [res, h] = await Promise.all([
+        api.get('/admin/integration/overview'),
+        api.get('/admin/integration/health'),
+      ]);
+      setData(res.data); setHealth(h.data || []);
+    } catch { showToast('Could not load the integration overview', 'error'); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load, tenantVersion]);
+
+  // Config bundle download — passwords and SQL approvals never leave the server.
+  const exportConfig = async () => {
+    try {
+      const r = await api.get('/admin/integration/export');
+      const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `acquira-integration-config-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { showToast('Export failed', 'error'); }
+  };
+
+  const onImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    try {
+      const bundle = JSON.parse(await file.text());
+      const r = await api.post('/admin/integration/import', bundle);
+      setImportSummary(r.data);
+      load();
+    } catch (err) {
+      showToast(err?.response?.status === 403
+        ? 'Only a Super Admin can import integration config'
+        : `Import failed: ${err.response?.data?.error || err.message}`, 'error');
+    } finally { setImporting(false); }
+  };
 
   if (!loading && !data) {
     return (
@@ -149,6 +207,17 @@ const OverviewTab = () => {
 
   return (
     <Stack gap="sm">
+      <Row between>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+          Auto-refreshes every 30 seconds.
+        </span>
+        <span className="ui-row" style={{ gap: 8 }}>
+          <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={onImportFile} />
+          <Button size="sm" icon={Download} onClick={exportConfig}>Export config</Button>
+          <Button size="sm" icon={Upload} loading={importing} onClick={() => fileRef.current?.click()}>Import config</Button>
+        </span>
+      </Row>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-lg)' }}>
         {stats.map((s) => (
           <Card key={s.label} pad>
@@ -190,6 +259,54 @@ const OverviewTab = () => {
         </div>
       </Card>
 
+      {health.length > 0 && (
+        <Card title="Feed health">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 'var(--space-lg)', padding: 'var(--space-lg)' }}>
+            {health.map((f) => {
+              const meta = FRESHNESS_META[f.freshness] || FRESHNESS_META.UNSCHEDULED;
+              return (
+                <div
+                  key={f.reportId}
+                  style={{
+                    border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
+                    padding: '12px 14px',
+                    borderLeft: `3px solid ${toneFg(meta.tone === 'neutral' ? 'info' : meta.tone)}`,
+                  }}
+                >
+                  <div className="ui-row ui-row--between" style={{ marginBottom: 6, flexWrap: 'nowrap' }}>
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {f.name}
+                    </span>
+                    <Badge tone={meta.tone} dot>{meta.label}</Badge>
+                  </div>
+                  <div className="ui-row" style={{ gap: 6, marginBottom: 8 }}>
+                    <Badge tone={REPORT_TYPE_TONES[f.reportType] || 'neutral'}>{f.reportType}</Badge>
+                    {!f.approved && <Badge tone="warning">Not approved</Badge>}
+                    {!f.scheduled && f.freshness !== 'UNSCHEDULED' && <Badge tone="neutral">Unscheduled</Badge>}
+                    {f.failStreak > 0 && (
+                      <Badge tone="danger" title={`${f.failStreak} consecutive failed run(s)`}>
+                        <AlertTriangle size={11} style={{ marginRight: 3, verticalAlign: -1 }} />
+                        {f.failStreak}× failed
+                      </Badge>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'grid', gap: 2 }}>
+                    <span title={fmtDateTime(f.lastSuccessAt)}>
+                      Last success: <strong style={{ color: 'var(--text)' }}>{fmtAge(f.lastSuccessAt)}</strong>
+                      {f.rowsLastSuccess != null ? ` · ${f.rowsLastSuccess} rows` : ''}
+                    </span>
+                    <span>
+                      7 days: {f.success7d}/{f.runs7d} succeeded
+                      {f.avgDurationMs7d > 0 ? ` · avg ${fmtDuration(f.avgDurationMs7d)}` : ''}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
       <Card title="Recent runs">
         <DataTable
           columns={runColumns}
@@ -199,6 +316,41 @@ const OverviewTab = () => {
           empty={<div style={emptyStateStyle}>No runs yet.</div>}
         />
       </Card>
+
+      {/* ── Import result ─────────────────────────────────────── */}
+      <Modal
+        open={!!importSummary}
+        onClose={() => setImportSummary(null)}
+        title="Import complete"
+        subtitle="New connections arrive inactive without passwords; new schedules arrive disabled; imported SQL is unapproved."
+        footer={<Button onClick={() => setImportSummary(null)}>Close</Button>}
+      >
+        {importSummary && (
+          <div className="ui-stack ui-stack--sm">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-lg)', fontSize: '0.83rem' }}>
+              <div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', fontWeight: 600 }}>Connections</div>
+                {importSummary.connectionsCreated} new · {importSummary.connectionsUpdated} updated
+              </div>
+              <div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', fontWeight: 600 }}>Reports</div>
+                {importSummary.reportsCreated} new · {importSummary.reportsUpdated} updated
+              </div>
+              <div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', fontWeight: 600 }}>Schedules</div>
+                {importSummary.schedulesCreated} new · {importSummary.schedulesUpdated} updated
+              </div>
+            </div>
+            {importSummary.warnings?.length > 0 && (
+              <Alert tone="warning" title="Follow-ups">
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.78rem' }}>
+                  {importSummary.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                </ul>
+              </Alert>
+            )}
+          </div>
+        )}
+      </Modal>
     </Stack>
   );
 };
@@ -220,6 +372,10 @@ const ConnectionsTab = () => {
   const [editId, setEditId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // In-modal pre-save test (like the report tab's "Test query"): dry-runs the
+  // draft against /connections/test-adhoc without persisting anything.
+  const [modalTesting, setModalTesting] = useState(false);
+  const [modalTestResult, setModalTestResult] = useState(null);
 
   const load = async () => {
     try { const r = await api.get('/admin/integration/connections'); setConnections(r.data); }
@@ -228,10 +384,35 @@ const ConnectionsTab = () => {
   };
   useEffect(() => { load(); }, [tenantVersion]);
 
-  const openAdd = () => { setForm(emptyConnection); setEditId(null); setError(null); setModal(true); };
+  const openAdd = () => { setForm(emptyConnection); setEditId(null); setError(null); setModalTestResult(null); setModal(true); };
   // On edit, blank the password field (server sends the __UNCHANGED__ sentinel, never the
   // real value). Empty means "keep the stored password"; a typed value replaces it.
-  const openEdit = (c) => { setForm({ ...c, encryptedPassword: '' }); setEditId(c.id); setError(null); setModal(true); };
+  const openEdit = (c) => { setForm({ ...c, encryptedPassword: '' }); setEditId(c.id); setError(null); setModalTestResult(null); setModal(true); };
+
+  // A stale PASS/FAIL against different fields is worse than none — any edit
+  // to the draft clears the last test result.
+  useEffect(() => { setModalTestResult(null); }, [form]);
+
+  const testDraft = async () => {
+    setModalTestResult(null);
+    if (!form.host?.trim() || !form.dbName?.trim()) {
+      setModalTestResult({ success: false, message: 'Fill in host and database name first' });
+      return;
+    }
+    if (!editId && !form.encryptedPassword?.trim()) {
+      setModalTestResult({ success: false, message: 'Enter a password to test the connection' });
+      return;
+    }
+    setModalTesting(true);
+    try {
+      // On edit a blank password means "use the stored one" — the server
+      // resolves it from the id, the real value never round-trips.
+      const r = await api.post('/admin/integration/connections/test-adhoc', { ...form, id: editId || undefined });
+      setModalTestResult(r.data);
+    } catch (e) {
+      setModalTestResult({ success: false, message: e.response?.data?.message || e.response?.data?.error || 'Test failed' });
+    } finally { setModalTesting(false); }
+  };
 
   const save = async (e) => {
     e?.preventDefault();
@@ -418,7 +599,10 @@ const ConnectionsTab = () => {
               />
             </FormField>
 
-            <FormField label="Timeout (seconds)">
+            <FormField
+              label="Timeout (seconds)"
+              hint="Applies to the whole source query, not just connecting. High-volume transaction feeds (hundreds of thousands of rows) usually need 300–600s — at the 30s default the pull fails and retries into the same timeout."
+            >
               <Input
                 type="number"
                 value={form.timeoutSeconds}
@@ -434,6 +618,32 @@ const ConnectionsTab = () => {
               />
             </FormField>
           </FormGrid>
+
+          <div>
+            <div className="ui-row">
+              <Button size="sm" variant="subtle" icon={TestTube} loading={modalTesting} onClick={testDraft}>
+                Test connection
+              </Button>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                Tries these credentials against the database without saving.
+                {editId ? ' A blank password uses the stored one.' : ''}
+              </span>
+            </div>
+
+            {modalTestResult && (
+              <div style={{ marginTop: 10 }}>
+                {modalTestResult.success ? (
+                  <Alert tone="success" title="Connection successful" />
+                ) : (
+                  <Alert tone="danger" title="Connection failed">
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '0.72rem', maxHeight: 120, overflow: 'auto' }}>
+                      {modalTestResult.message}
+                    </pre>
+                  </Alert>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </Modal>
     </>
@@ -459,6 +669,7 @@ const ReportsTab = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [validating, setValidating] = useState(null);
+  const [approving, setApproving] = useState(null);
   const [preview, setPreview] = useState(null);
   // In-modal dry-run (validate BEFORE saving) — separate state so it doesn't clash
   // with the card-level Validate flow.
@@ -476,6 +687,50 @@ const ReportsTab = () => {
 
   const filtered = subTab === 'ALL' ? reports : reports.filter((r) => r.reportType === subTab);
 
+  // Approval is what lets a report's SQL run against the source database, so
+  // it is a deliberate, separately-audited action rather than part of the edit
+  // form. Super Admin only — the API returns 403 for anyone else.
+  const approve = async (r) => {
+    const ok = await confirm({
+      title: 'Approve this SQL for execution?',
+      message: `"${r.name}" will be allowed to run against ${r.connection?.name || 'the source database'} on its schedule. `
+          + 'Review the SQL first — it executes with the stored service credentials. '
+          + 'Editing the SQL later automatically revokes this approval.',
+      confirmLabel: 'Approve',
+    });
+    if (!ok) return;
+    setApproving(r.id);
+    try {
+      await api.post(`/admin/integration/reports/${r.id}/approve`);
+      showToast('Report approved', 'success');
+      load();
+    } catch (e) {
+      showToast(e?.response?.status === 403
+        ? 'Only a Super Admin can approve report SQL'
+        : 'Could not approve report', 'error');
+    } finally { setApproving(null); }
+  };
+
+  const revokeApproval = async (r) => {
+    const ok = await confirm({
+      title: 'Revoke approval?',
+      message: `"${r.name}" will stop running until it is approved again. Any scheduled pull will fail with a clear message.`,
+      confirmLabel: 'Revoke approval',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setApproving(r.id);
+    try {
+      await api.delete(`/admin/integration/reports/${r.id}/approve`);
+      showToast('Approval revoked', 'success');
+      load();
+    } catch (e) {
+      showToast(e?.response?.status === 403
+        ? 'Only a Super Admin can change report approval'
+        : 'Could not revoke approval', 'error');
+    } finally { setApproving(null); }
+  };
+
   const openAdd = () => {
     setForm({ ...emptyReport, connectionId: connections[0]?.id || '' });
     setEditId(null); setError(null); setPreview(null); setModalPreview(null); setModal(true);
@@ -484,16 +739,6 @@ const ReportsTab = () => {
     setForm({ ...r, connectionId: r.connection?.id || '' });
     setEditId(r.id); setError(null); setPreview(null); setModalPreview(null); setModal(true);
   };
-
-  // Client-side JSON validation for the column mapping before it reaches the server
-  // (the server parse fails silently and the mapping just gets ignored otherwise).
-  const validateMappingJson = () => {
-    const raw = (form.columnMapping || '').trim();
-    if (!raw) return true;
-    try { const o = JSON.parse(raw); return o && typeof o === 'object' && !Array.isArray(o); }
-    catch { return false; }
-  };
-  const mappingInvalid = !!form.columnMapping?.trim() && !validateMappingJson();
 
   // Dry-run the current draft query against the selected connection, without saving.
   const testQuery = async () => {
@@ -511,7 +756,6 @@ const ReportsTab = () => {
   const save = async (e) => {
     e?.preventDefault();
     setError(null);
-    if (!validateMappingJson()) { setError('Column mapping is not valid JSON (expected {"SQL_COL":"staging_field"}).'); return; }
     setSaving(true);
     try {
       const payload = { ...form };
@@ -568,6 +812,31 @@ const ReportsTab = () => {
       sortValue: (r) => r.connection?.name,
       render: (r) => r.connection?.name || '—',
     },
+    {
+      // A report only runs once its SQL is approved — the backend blocks the
+      // pull otherwise, so this is the single most important thing to see here.
+      key: 'approvedBy',
+      header: 'Approval',
+      sortable: true,
+      sortValue: (r) => (r.approvedBy ? 1 : 0),
+      render: (r) => {
+        if (!r.approvedBy) {
+          return <Badge tone="warning" title="This report will not run until a Super Admin approves its SQL.">Not approved</Badge>;
+        }
+        if (r.approvedBy === 'LEGACY-PRE-APPROVAL') {
+          return (
+            <Badge tone="info" title="Approved automatically during the upgrade. Review and re-approve for a clean audit trail.">
+              Legacy
+            </Badge>
+          );
+        }
+        return (
+          <Badge tone="success" title={`Approved by ${r.approvedBy}${r.approvedAt ? ` on ${new Date(r.approvedAt).toLocaleString()}` : ''}`}>
+            Approved
+          </Badge>
+        );
+      },
+    },
     { key: 'description', header: 'Description', muted: true, render: (r) => r.description || 'No description' },
     {
       key: 'sqlText',
@@ -592,6 +861,9 @@ const ReportsTab = () => {
       nowrap: true,
       render: (r) => (
         <>
+          {r.approvedBy
+            ? <Button size="sm" variant="ghost" loading={approving === r.id} onClick={() => revokeApproval(r)}>Revoke</Button>
+            : <Button size="sm" variant="primary" loading={approving === r.id} onClick={() => approve(r)}>Approve</Button>}
           <Button size="sm" icon={TestTube} loading={validating === r.id} onClick={() => validate(r.id)}>Validate</Button>
           <Button size="sm" variant="ghost" iconOnly icon={Edit2} onClick={() => openEdit(r)} aria-label={`Edit ${r.name}`} />
           <Button size="sm" variant="danger-ghost" iconOnly icon={Trash2} onClick={() => remove(r)} aria-label={`Deactivate ${r.name}`} />
@@ -604,6 +876,8 @@ const ReportsTab = () => {
     { key: 'ALL', label: 'All reports', count: reports.length },
     { key: 'MERCHANT', label: 'Merchant', count: reports.filter((r) => r.reportType === 'MERCHANT').length },
     { key: 'TRANSACTION', label: 'Transaction', count: reports.filter((r) => r.reportType === 'TRANSACTION').length },
+    { key: 'RENTAL', label: 'Rental', count: reports.filter((r) => r.reportType === 'RENTAL').length },
+    { key: 'DCC', label: 'DCC Revenue', count: reports.filter((r) => r.reportType === 'DCC').length },
   ];
 
   return (
@@ -664,6 +938,8 @@ const ReportsTab = () => {
                 options={[
                   { value: 'MERCHANT', label: 'Merchant' },
                   { value: 'TRANSACTION', label: 'Transaction' },
+                  { value: 'RENTAL', label: 'Rental' },
+                  { value: 'DCC', label: 'DCC Revenue' },
                 ]}
               />
             </FormField>
@@ -682,7 +958,7 @@ const ReportsTab = () => {
             <div className="ui-form-grid--span">
               <FormField
                 label="SQL query"
-                hint="Use :year :month :dateFrom :dateTo as parameters."
+                hint="Use :year :month :dateFrom :dateTo as parameters. Changing this SQL revokes the report's approval — a Super Admin must approve it again before it will run."
               >
                 <Textarea
                   mono
@@ -691,7 +967,11 @@ const ReportsTab = () => {
                   onChange={(e) => setForm({ ...form, sqlText: e.target.value })}
                   placeholder={form.reportType === 'MERCHANT'
                     ? 'SELECT merchant_id AS mid, merchant_name, status AS merchant_status, ...\nFROM merchants WHERE created_year = :year'
-                    : 'SELECT mid, merchant_name, payment_date, txn_currency_amount, card_scheme, ...\nFROM transactions WHERE payment_date BETWEEN :dateFrom AND :dateTo'}
+                    : form.reportType === 'RENTAL'
+                      ? 'SELECT mid, sid, tid, rental_amount, payment_date\nFROM rentals WHERE payment_date BETWEEN :dateFrom AND :dateTo'
+                      : form.reportType === 'DCC'
+                        ? 'SELECT sid, merchant_share, acquirer_share, payment_date\nFROM dcc_revenue WHERE payment_date BETWEEN :dateFrom AND :dateTo'
+                        : 'SELECT mid, merchant_name, payment_date, txn_currency_amount, card_scheme, ...\nFROM transactions WHERE payment_date BETWEEN :dateFrom AND :dateTo'}
                 />
               </FormField>
 
@@ -723,21 +1003,6 @@ const ReportsTab = () => {
                 </div>
               )}
             </div>
-
-            <FormField
-              label="Column mapping (JSON)"
-              className="ui-form-grid--span"
-              hint={'Maps SQL columns to staging fields, for example { "sql_column": "staging_field" }.'}
-              error={mappingInvalid ? 'Not valid JSON' : undefined}
-            >
-              <Textarea
-                mono
-                rows={3}
-                value={form.columnMapping}
-                onChange={(e) => setForm({ ...form, columnMapping: e.target.value })}
-                placeholder='{"MERCHANT_ID":"mid", "MERCHANT_NAME":"merchant_name", "PAYMENT_DT":"payment_date"}'
-              />
-            </FormField>
 
             <FormField label="Description" className="ui-form-grid--span">
               <Input
@@ -778,6 +1043,7 @@ const ReportsTab = () => {
 const emptySchedule = {
   reportId: '', frequencyLabel: 'DAILY', cronExpression: '0 0 2 * * *', timezone: 'UTC', isEnabled: true,
   preconditionEnabled: false, preconditionSql: '',
+  alertOnFailure: true, alertEmails: '',
 };
 
 const SchedulesTab = () => {
@@ -793,6 +1059,9 @@ const SchedulesTab = () => {
   const [editId, setEditId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  // Live "next fire times" preview for the cron being edited — catches a cron
+  // that parses but never fires the way you meant, BEFORE it is saved.
+  const [cronPreview, setCronPreview] = useState(null);
 
   const load = async () => {
     try {
@@ -803,8 +1072,24 @@ const SchedulesTab = () => {
   };
   useEffect(() => { load(); }, [tenantVersion]);
 
-  const openAdd = () => { setForm({ ...emptySchedule, reportId: reports[0]?.id || '' }); setEditId(null); setModal(true); };
-  const openEdit = (s) => { setForm({ ...s, reportId: s.report?.id || '' }); setEditId(s.id); setModal(true); };
+  // Debounced cron preview while the editor is open.
+  useEffect(() => {
+    if (!modal) return undefined;
+    if (!form.cronExpression?.trim()) { setCronPreview(null); return undefined; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.post('/admin/integration/schedules/preview-cron', {
+          cronExpression: form.cronExpression,
+          timezone: form.timezone,
+        });
+        setCronPreview(r.data);
+      } catch { setCronPreview(null); }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [modal, form.cronExpression, form.timezone]);
+
+  const openAdd = () => { setForm({ ...emptySchedule, reportId: reports[0]?.id || '' }); setEditId(null); setCronPreview(null); setModal(true); };
+  const openEdit = (s) => { setForm({ ...s, reportId: s.report?.id || '' }); setEditId(s.id); setCronPreview(null); setModal(true); };
 
   const save = async (e) => {
     e?.preventDefault();
@@ -875,7 +1160,21 @@ const SchedulesTab = () => {
       sortable: true,
       render: (s) => <StatusBadge status={s.isEnabled ? 'Active' : 'Paused'} />,
     },
-    { key: 'cronExpression', header: 'Cron', mono: true, nowrap: true },
+    {
+      key: 'cronExpression',
+      header: 'Cron',
+      nowrap: true,
+      render: (s) => (
+        <div>
+          <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '0.78rem' }}>
+            {s.cronExpression}
+          </div>
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+            {s.frequencyLabel || 'Custom'} · {s.timezone || 'UTC'}
+          </div>
+        </div>
+      ),
+    },
     {
       key: 'preconditionEnabled',
       header: 'Gate',
@@ -884,15 +1183,63 @@ const SchedulesTab = () => {
         ? <Badge tone="info" title={s.preconditionSql || ''}>Upstream check</Badge>
         : '—'),
     },
-    { key: 'frequencyLabel', header: 'Frequency', muted: true, render: (s) => s.frequencyLabel || 'Custom' },
-    { key: 'timezone', header: 'Timezone', muted: true, render: (s) => s.timezone || 'UTC' },
+    {
+      key: 'nextRunIso',
+      header: 'Next run',
+      sortable: true,
+      nowrap: true,
+      muted: true,
+      render: (s) => (s.isEnabled
+        ? fmtDateTime(s.nextRunIso)
+        : <span className="ui-td--muted">Paused</span>),
+    },
     {
       key: 'lastRunAt',
       header: 'Last run',
       sortable: true,
       nowrap: true,
-      muted: true,
-      render: (s) => fmtDateTime(s.lastRunAt),
+      render: (s) => (
+        <span className="ui-row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+          {s.lastRunStatus && (
+            <Badge
+              tone={RUN_STATUS_TONES[s.lastRunStatus] || 'neutral'}
+              dot
+              title={s.lastRunError || undefined}
+            >
+              {s.lastRunStatus}
+            </Badge>
+          )}
+          <span style={{ color: 'var(--text-secondary)' }}>{fmtDateTime(s.lastRunAt)}</span>
+        </span>
+      ),
+    },
+    {
+      // Last 5 run outcomes, oldest → newest, so a flapping schedule is
+      // visible without opening run history.
+      key: 'recentRunStatuses',
+      header: 'History',
+      nowrap: true,
+      render: (s) => {
+        const runs = s.recentRunStatuses || [];
+        if (!runs.length) return <span className="ui-td--muted">—</span>;
+        const ordered = [...runs].reverse();
+        return (
+          <span
+            title={`Last ${ordered.length} runs (oldest → newest): ${ordered.join(', ')}`}
+            style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}
+          >
+            {ordered.map((st, i) => (
+              <span
+                key={i}
+                style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  background: RUN_STATUS_TONES[st] ? toneFg(RUN_STATUS_TONES[st]) : 'var(--text-muted)',
+                }}
+              />
+            ))}
+          </span>
+        );
+      },
     },
     {
       key: '_actions',
@@ -985,6 +1332,7 @@ const SchedulesTab = () => {
           <FormField
             label="Cron expression"
             hint="6-field Spring cron (sec min hour dom mon dow). The Quartz '?' token is not supported."
+            error={cronPreview && cronPreview.valid === false ? cronPreview.error : undefined}
           >
             <Input
               mono
@@ -994,6 +1342,22 @@ const SchedulesTab = () => {
             />
           </FormField>
 
+          {cronPreview?.valid && cronPreview.nextRuns?.length > 0 && (
+            <div
+              style={{
+                fontSize: '0.75rem', color: 'var(--text-secondary)',
+                padding: '8px 12px', background: 'var(--bg-subtle)',
+                borderRadius: 'var(--radius-md)',
+              }}
+            >
+              <span style={{ fontWeight: 600, color: 'var(--text)' }}>Next runs ({form.timezone || 'UTC'}): </span>
+              {cronPreview.nextRuns.map((iso) => new Date(iso).toLocaleString(undefined, {
+                timeZone: form.timezone || 'UTC', weekday: 'short', day: 'numeric', month: 'short',
+                hour: '2-digit', minute: '2-digit',
+              })).join('  ·  ')}
+            </div>
+          )}
+
           <FormField label="Timezone">
             <Select
               value={form.timezone}
@@ -1001,6 +1365,13 @@ const SchedulesTab = () => {
               options={TIMEZONES}
             />
           </FormField>
+
+          <Checkbox
+            checked={form.isEnabled !== false}
+            onChange={(e) => setForm({ ...form, isEnabled: e.target.checked })}
+            label="Enabled"
+            hint="Paused schedules keep their configuration but never fire."
+          />
 
           <Checkbox
             checked={!!form.preconditionEnabled}
@@ -1020,6 +1391,26 @@ const SchedulesTab = () => {
                 value={form.preconditionSql || ''}
                 onChange={(e) => setForm({ ...form, preconditionSql: e.target.value })}
                 placeholder="SELECT COUNT(*) FROM batch_control WHERE business_date = CURRENT_DATE AND status = 'COMPLETED'"
+              />
+            </FormField>
+          )}
+
+          <Checkbox
+            checked={form.alertOnFailure !== false}
+            onChange={(e) => setForm({ ...form, alertOnFailure: e.target.checked })}
+            label="Email alert on failure"
+            hint="Sends one email per failed run — only when the FINAL retry attempt fails, never while retries are still pending. Uses this tenant's SMTP settings."
+          />
+
+          {form.alertOnFailure !== false && (
+            <FormField
+              label="Alert recipients"
+              hint="Comma-separated email addresses. Leave blank for no alerts."
+            >
+              <Input
+                value={form.alertEmails || ''}
+                onChange={(e) => setForm({ ...form, alertEmails: e.target.value })}
+                placeholder="ops@bank.com, data-team@bank.com"
               />
             </FormField>
           )}
@@ -1079,18 +1470,25 @@ const RunHistoryTab = () => {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState('');
+  const [reportFilter, setReportFilter] = useState('');
+  const [reports, setReports] = useState([]);
   const [detail, setDetail] = useState(null);
+
+  useEffect(() => {
+    api.get('/admin/integration/reports').then((r) => setReports(r.data || [])).catch(() => {});
+  }, [tenantVersion]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page, size: 20 });
       if (statusFilter) params.append('status', statusFilter);
+      if (reportFilter) params.append('reportId', reportFilter);
       const r = await api.get('/admin/integration/runs?' + params.toString());
       setRuns(r.data.content || []); setTotal(r.data.totalElements || 0);
     } catch { showToast('Could not load run history', 'error'); }
     finally { setLoading(false); }
-  }, [page, statusFilter]);
+  }, [page, statusFilter, reportFilter]);
 
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load, tenantVersion]);
 
@@ -1123,7 +1521,21 @@ const RunHistoryTab = () => {
       render: (r) => <Badge tone={RUN_STATUS_TONES[r.status] || 'neutral'} dot>{r.status}</Badge>,
     },
     { key: 'attempt', header: 'Attempt', numeric: true, render: (r) => `${r.attemptNumber}/${r.maxRetries}` },
-    { key: 'rows', header: 'Rows', numeric: true, render: (r) => `${r.rowsProcessed ?? 0}/${r.rowsFetched ?? 0}` },
+    {
+      key: 'rows',
+      header: 'Rows',
+      numeric: true,
+      render: (r) => (
+        <span className="ui-row" style={{ gap: 6, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
+          {r.status === 'SUCCESS' && (r.rowsFetched ?? 0) === 0 && (
+            <Badge tone="warning" title="The pull succeeded but the query returned zero rows — check the source or the date window.">
+              Empty
+            </Badge>
+          )}
+          {`${r.rowsProcessed ?? 0}/${r.rowsFetched ?? 0}`}
+        </span>
+      ),
+    },
     { key: 'durationMs', header: 'Duration', numeric: true, align: 'right', muted: true, render: (r) => fmtDuration(r.durationMs) },
     { key: 'startTime', header: 'Started', sortable: true, nowrap: true, muted: true, render: (r) => fmtDateTime(r.startTime) },
     {
@@ -1168,7 +1580,16 @@ const RunHistoryTab = () => {
             variant="pills"
           />
         </div>
-        <Button icon={RefreshCw} onClick={load}>Refresh</Button>
+        <span className="ui-row" style={{ gap: 8 }}>
+          <Select
+            value={reportFilter}
+            onChange={(e) => { setReportFilter(e.target.value); setPage(0); }}
+            placeholder="All reports"
+            options={[{ value: '', label: 'All reports' },
+              ...reports.map((r) => ({ value: String(r.id), label: r.name }))]}
+          />
+          <Button icon={RefreshCw} onClick={load}>Refresh</Button>
+        </span>
       </Row>
 
       <Card

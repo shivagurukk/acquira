@@ -192,14 +192,22 @@ export const AuthProvider = ({ children }) => {
     const currencyDecimals = Number.isInteger(rawDecimals) ? rawDecimals
         : (rawDecimals != null && !isNaN(Number(rawDecimals)) ? Number(rawDecimals) : null);
 
+    // ISO country of the bank itself (tenant.home_country_code). Drives anything
+    // that is a local convention rather than a currency fact — today the working
+    // week: AE is Sat+Sun, BH/OM/EG are Fri+Sat. Same no-fallback rule as the
+    // currency above: unknown stays null and the caller decides.
+    const homeCountryCode = activeTenant?.homeCountryCode || null;
+
     // Keep the shared formatters (utils/formatters.js) in sync with the active
     // tenant so formatCurrency()/createFmt() render in the right currency AND
     // at the right precision app-wide. tenantVersion is in the dep list so a
     // switch (Egypt → Bahrain → Egypt) can never leave stale currency/decimals
     // behind, even if two tenants happened to share a currency code.
     useEffect(() => {
-        setDefaultCurrency(currencyCode, currencyDecimals);
-    }, [currencyCode, currencyDecimals, auth.tenantVersion, auth.activeTenantId]);
+        // The symbol is passed so the display-currency layer can recognise
+        // tenant-symbol-labelled money (see usdRateFor in formatters.js).
+        setDefaultCurrency(currencyCode, currencyDecimals, currencySymbol);
+    }, [currencyCode, currencyDecimals, currencySymbol, auth.tenantVersion, auth.activeTenantId]);
 
     // Per-tenant locale (date format + timezone) — same pattern as currency.
     // Fetched from GET /users/me/locale (tenant_setting locale.* keys) whenever
@@ -241,6 +249,8 @@ export const AuthProvider = ({ children }) => {
         isSuperAdmin, isAdmin, activeTenant,
         // #16: Currency
         currencyCode, currencySymbol, currencyDecimals, formatCurrency,
+        // Bank's own country — local conventions (e.g. which days are the weekend)
+        homeCountryCode,
         // Per-tenant locale (date format + timezone)
         dateFormat: tenantLocale.dateFormat, timezone: tenantLocale.timezone,
     };

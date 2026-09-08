@@ -85,7 +85,9 @@ public class AnalyticsExplorerController {
         // ----- dim_merchant (dm) — identical expression on both grains (same join) -----
         MERCHANT_FIELDS.put("mid",              dim("dm.mid",              "MID",              "identity",       Src.MERCHANT));
         MERCHANT_FIELDS.put("merchant_name",    dim("dm.name",             "Merchant Name",   "identity",       Src.MERCHANT));
-        MERCHANT_FIELDS.put("mcc",              dim("dm.mcc",              "MCC",             "classification", Src.MERCHANT));
+        // MCC is a STORE attribute (dim_store.mcc drives every rollup and the fee
+        // engine); dim_merchant.mcc is only MAX() across stores. Read the store.
+        MERCHANT_FIELDS.put("mcc",              dim("ds.mcc",              "MCC",             "classification", Src.STORE));
         MERCHANT_FIELDS.put("industry",         dim("dm.industry",         "Industry",        "classification", Src.MERCHANT));
         MERCHANT_FIELDS.put("city",             dim("dm.city",             "City",            "location",       Src.MERCHANT));
         MERCHANT_FIELDS.put("merchant_status",  dim("dm.status",           "Merchant Status", "status",         Src.MERCHANT));

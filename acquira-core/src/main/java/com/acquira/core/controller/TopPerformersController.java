@@ -1,6 +1,8 @@
 package com.acquira.core.controller;
 
 import com.acquira.common.dto.VolumeRevenueFilterDTO;
+import com.acquira.common.service.ChannelSql;
+import com.acquira.common.service.NetSpreadSql;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
@@ -54,10 +56,22 @@ import java.util.stream.Collectors;
 @PreAuthorize("@menuAccess.canAccess('/business/top-performers')")
 public class TopPerformersController {
 
+    /** Default board depth; the UI can request 10–50 via the `top` param. */
     private static final int TOP_N = 10;
+    private static final int TOP_N_MAX = 50;
+
+    /** Clamp the caller-supplied board depth to [10, 50]. */
+    private static int resolveTopN(Integer top) {
+        if (top == null) return TOP_N;
+        return Math.max(TOP_N, Math.min(TOP_N_MAX, top));
+    }
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    /** Backs the shared netspread.fx_enabled flag read (NetSpreadSql.fxEnabled). */
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     @Autowired
     private com.acquira.core.service.SalesTeamService salesTeamService;
@@ -68,6 +82,65 @@ public class TopPerformersController {
     /** Stamps the tenant's currency onto every money-bearing response. */
     @Autowired
     private CurrencyMeta currencyMeta;
+
+    @Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    /** Serializes the resolved filter DTO into a stable cache-key suffix. */
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    @Autowired
+    private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the default first-load board: current calendar month-to-date with
+     * the untouched filter drawer. The template mirrors TopPerformers.jsx
+     * emptyFilters() minus startDate/endDate/datePreset (stripped before the
+     * POST) — every list an EMPTY ARRAY and merchantName "", or the
+     * serialized filter key won't match the live request.
+     *
+     * The window uses the SERVER's calendar date the same way the endpoint
+     * does for period=MTD; a viewer whose browser date differs (timezone
+     * straddling midnight) just misses the warm entry — no wrong data.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("top-performers", tenantId -> {
+            LocalDate today = LocalDate.now();
+            String from = today.withDayOfMonth(1).toString();
+            String to = today.toString();
+            VolumeRevenueFilterDTO filter;
+            try {
+                filter = objectMapper.readValue("{"
+                        + "\"partnerList\":[],\"rmList\":[],\"teamLeaderList\":[],"
+                        + "\"mccList\":[],\"industryList\":[],\"sectorList\":[],"
+                        + "\"midList\":[],\"sidList\":[],\"merchantName\":\"\","
+                        + "\"destinationList\":[],\"schemeList\":[],\"cardTypeList\":[],"
+                        + "\"channelList\":[],\"terminalTypeList\":[]"
+                        + "}", VolumeRevenueFilterDTO.class);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return;
+            }
+            resolveFilters(filter, tenantId);
+            LocalDate[] curWindow = resolveWindow("MTD", from, to);
+            boolean cardGrain = usesCardFilters(filter);
+            String fk;
+            try {
+                fk = objectMapper.writeValueAsString(filter);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return;
+            }
+            boolean fx = NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
+            reportCache.get(
+                    com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                    "topPerformers:" + tenantId + ":" + curWindow[0] + ":" + curWindow[1]
+                            + ":" + cardGrain + ":MTD:" + TOP_N + ":fx" + fx
+                            + ":ch" + ChannelSql.ALL + ":" + fk,
+                    () -> buildTopPerformers(filter, tenantId, cardGrain, curWindow, "MTD", TOP_N,
+                            fx, ChannelSql.ALL));
+        });
+    }
 
     private void resolveFilters(VolumeRevenueFilterDTO filters, Long tenantId) {
         if (notEmpty(filters.getTeamLeaderList()) && tenantId != null) {
@@ -81,6 +154,8 @@ public class TopPerformersController {
             @RequestParam(defaultValue = "MTD") String period,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer top,
+            @RequestParam(defaultValue = "ALL") String channel,
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
 
         Long tenantId = tenantService.getCurrentTenantId();
@@ -88,16 +163,55 @@ public class TopPerformersController {
         if (filter == null) filter = new VolumeRevenueFilterDTO();
         resolveFilters(filter, tenantId);
 
+        // POS / ECOM route to the channel-scoped relation (ChannelSql);
+        // anything else is ALL = the untouched sum_daily_merchant read.
+        final String ch = ChannelSql.normalize(channel);
+        // ECOM FX income flag — part of the cache key so a toggle takes effect
+        // immediately (same rule as NetSpreadController).
+        final boolean fx = NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
+
+        // Key on the RESOLVED window (period defaults derive from today's date)
+        // and the resolved filter DTO, so equivalent requests share an entry.
         LocalDate[] curWindow = resolveWindow(period, from, to);
         boolean cardGrain = usesCardFilters(filter);
+        final int topN = resolveTopN(top);
+        final VolumeRevenueFilterDTO f = filter;
+        String fk;
+        try {
+            fk = objectMapper.writeValueAsString(filter);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            fk = null;
+        }
+        if (fk == null) {
+            return buildTopPerformers(f, tenantId, cardGrain, curWindow, period, topN, fx, ch);
+        }
+        // period is part of the key even though the window is already resolved:
+        // the payload echoes response.put("period", period), so period=MTD and
+        // an equivalent explicit from/to must not share an entry or one caller
+        // reads the other's period label.
+        return reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "topPerformers:" + tenantId + ":" + curWindow[0] + ":" + curWindow[1]
+                        + ":" + cardGrain + ":" + period + ":" + topN + ":fx" + fx
+                        + ":ch" + ch + ":" + fk,
+                () -> buildTopPerformers(f, tenantId, cardGrain, curWindow, period, topN, fx, ch));
+    }
 
-        List<Map<String, Object>> current = runAggregate(filter, tenantId, cardGrain, curWindow[0], curWindow[1]);
+    private Map<String, Object> buildTopPerformers(VolumeRevenueFilterDTO filter, Long tenantId,
+            boolean cardGrain, LocalDate[] curWindow, String period, int topN,
+            boolean fxEnabled, String channel) {
+
+        List<Map<String, Object>> current = runAggregate(filter, tenantId, cardGrain,
+                curWindow[0], curWindow[1], fxEnabled, channel);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("grain", cardGrain ? "insight" : "merchant");
         response.put("period", period);
         response.put("from", curWindow[0].toString());
         response.put("to", curWindow[1].toString());
+        response.put("topN", topN);
+        response.put("channel", channel);
+        response.put("fxEnabled", fxEnabled);
 
         // Only merchants with actual volume are eligible for the "top" boards —
         // zero-volume merchants would just clutter a volume/net-revenue ranking.
@@ -105,32 +219,45 @@ public class TopPerformersController {
                 .filter(r -> toDouble(r.get("volume")) > 0)
                 .collect(Collectors.toList());
 
-        response.put("topMerchantsByVolume", rank(withVolume, "volume", TOP_N));
-        response.put("topMerchantsByNetRevenue", rank(withVolume, "netRevenue", TOP_N));
-        response.put("topMerchantsByTxns", rank(withVolume, "txns", TOP_N));
+        response.put("topMerchantsByVolume", rank(withVolume, "volume", topN));
+        response.put("topMerchantsByNetRevenue", rank(withVolume, "netRevenue", topN));
+        response.put("topMerchantsByNetSpread", rank(withVolume, "netSpread", topN));
+        response.put("topMerchantsByTxns", rank(withVolume, "txns", topN));
 
         Map<String, String> displayNames = agentDisplayNames(tenantId);
         List<Map<String, Object>> rmAgg = groupByRm(withVolume, displayNames);
-        response.put("topRmsByVolume", rank(rmAgg, "volume", TOP_N));
-        response.put("topRmsByNetRevenue", rank(rmAgg, "netRevenue", TOP_N));
+        response.put("topRmsByVolume", rank(rmAgg, "volume", topN));
+        response.put("topRmsByNetRevenue", rank(rmAgg, "netRevenue", topN));
+        response.put("topRmsByNetSpread", rank(rmAgg, "netSpread", topN));
 
-        response.put("topMccs", topMccs(filter, tenantId, curWindow[0], curWindow[1]));
+        // FX-income boards only exist where the tenant opted in — a tenant
+        // without the flag would just get an all-zero ranking.
+        if (fxEnabled) {
+            response.put("topMerchantsByFx", rank(withVolume, "fx", topN));
+            response.put("topRmsByFx", rank(rmAgg, "fx", topN));
+        }
+
+        response.put("topMccs", topMccs(filter, tenantId, curWindow[0], curWindow[1], topN, channel));
 
         // Effective onboarding dates back both remaining onboarding boards.
         Map<String, LocalDate> firstTxn = firstTxnDates(tenantId, cardGrain, curWindow[0], curWindow[1]);
         response.put("topSignedByRm", computeSignedByRm(current, firstTxn,
-                curWindow[0], curWindow[1], displayNames));
+                curWindow[0], curWindow[1], displayNames, topN));
         response.put("topNewMerchants", computeNewMerchants(withVolume, firstTxn,
-                curWindow[0], curWindow[1]));
+                curWindow[0], curWindow[1], topN));
 
         double totalVolume = current.stream().mapToDouble(r -> toDouble(r.get("volume"))).sum();
         double totalNet = current.stream().mapToDouble(r -> toDouble(r.get("netRevenue"))).sum();
+        double totalSpread = current.stream().mapToDouble(r -> toDouble(r.get("netSpread"))).sum();
+        double totalFx = current.stream().mapToDouble(r -> toDouble(r.get("fx"))).sum();
         double top10Volume = withVolume.stream()
                 .sorted((a, b) -> Double.compare(toDouble(b.get("volume")), toDouble(a.get("volume"))))
                 .limit(TOP_N).mapToDouble(r -> toDouble(r.get("volume"))).sum();
         Map<String, Object> concentration = new LinkedHashMap<>();
         concentration.put("totalVolume", totalVolume);
         concentration.put("totalNetRevenue", totalNet);
+        concentration.put("totalNetSpread", totalSpread);
+        concentration.put("totalFx", totalFx);
         concentration.put("activeMerchantCount", withVolume.size());
         concentration.put("top10SharePct", totalVolume > 0 ? round2(top10Volume / totalVolume * 100) : 0);
         response.put("concentration", concentration);
@@ -197,7 +324,7 @@ public class TopPerformersController {
     // ─────────────────────────────────────────────────────────────
 
     private List<Map<String, Object>> runAggregate(VolumeRevenueFilterDTO f, Long tenantId,
-            boolean cardGrain, LocalDate from, LocalDate to) {
+            boolean cardGrain, LocalDate from, LocalDate to, boolean fxEnabled, String channel) {
 
         boolean needMcc = notEmpty(f.getMccList());
         boolean needSid = notEmpty(f.getSidList());
@@ -215,13 +342,51 @@ public class TopPerformersController {
         sql.append("       m.referral_partner AS referralPartner, m.created_date AS createdDate, ");
         sql.append("       m.date_of_onboarding AS dateOfOnboarding, ");
         if (cardGrain) {
+            // Channel scope: sum_daily_insight has NO channel_class (its
+            // `channel` column is the raw terminal type), so POS/ECOM
+            // card-grain reads route to sum_daily_full — the same card-filter
+            // columns plus the normalized channel_class stamped by
+            // V2026_09_08_01. Its volume is SETTLEMENT (it carries no
+            // cardholder figure); ALL keeps the untouched insight read.
+            boolean chScoped = ChannelSql.isChannel(channel);
+            String cardTable = chScoped ? "sum_daily_full" : "sum_daily_insight";
             sql.append("       COALESCE(SUM(s.total_volume), 0) AS volume, ");
             sql.append("       COALESCE(SUM(s.total_txns), 0) AS txns, ");
             sql.append("       COALESCE(SUM(s.total_msf), 0) AS msf, ");
-            sql.append("       COALESCE(SUM(s.total_msf), 0) AS netRevenue ");
+            sql.append("       COALESCE(SUM(s.total_msf), 0) AS netRevenue, ");
+            // Ancillary revenue (DCC acquirer share + rental, and opted-in
+            // ecom FX) is merchant-day grain and cannot be sliced by card
+            // dimension; it is read whole from sum_daily_merchant per
+            // merchant, on top of the MSF proxy — attributed by channel scope
+            // the same way ChannelSql.merchantDay does: DCC + rental are
+            // POS-only, FX income is ECOM-only.
+            String anc = null;
+            if (ChannelSql.ECOM.equals(channel)) {
+                if (fxEnabled) anc = "COALESCE(a.fx_revenue,0)";
+            } else if (ChannelSql.POS.equals(channel)) {
+                anc = "COALESCE(a.dcc_acquirer,0) + COALESCE(a.rental_amount,0)";
+            } else {
+                anc = "COALESCE(a.dcc_acquirer,0) + COALESCE(a.rental_amount,0)"
+                        + (fxEnabled ? " + COALESCE(a.fx_revenue,0)" : "");
+            }
+            if (anc != null) {
+                sql.append("       COALESCE(SUM(s.total_msf), 0) + COALESCE((SELECT SUM(" + anc + ") ");
+                sql.append("         FROM sum_daily_merchant a WHERE a.merchant_id = m.merchant_id AND a.tenant_id = m.tenant_id ");
+                sql.append("         AND a.business_date BETWEEN :from AND :to), 0) AS netSpread, ");
+            } else {
+                sql.append("       COALESCE(SUM(s.total_msf), 0) AS netSpread, ");
+            }
+            if (fxEnabled && !ChannelSql.POS.equals(channel)) {
+                sql.append("       COALESCE((SELECT SUM(COALESCE(a2.fx_revenue,0)) ");
+                sql.append("         FROM sum_daily_merchant a2 WHERE a2.merchant_id = m.merchant_id AND a2.tenant_id = m.tenant_id ");
+                sql.append("         AND a2.business_date BETWEEN :from AND :to), 0) AS fx ");
+            } else {
+                sql.append("       0 AS fx ");
+            }
             sql.append("FROM dim_merchant m ");
-            sql.append("LEFT JOIN sum_daily_insight s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id ");
+            sql.append("LEFT JOIN " + cardTable + " s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id ");
             sql.append("  AND s.business_date BETWEEN :from AND :to ");
+            if (chScoped) sql.append("  AND s.channel_class = :chClass ");
             if (notEmpty(f.getSchemeList())) sql.append("  AND s.card_scheme IN (:schemes) ");
             if (notEmpty(f.getCardTypeList())) sql.append("  AND s.card_type IN (:cardTypes) ");
             if (notEmpty(f.getDestinationList())) sql.append("  AND s.destination IN (:destinations) ");
@@ -230,9 +395,16 @@ public class TopPerformersController {
             sql.append("       COALESCE(SUM(s.total_base_volume), 0) AS volume, ");
             sql.append("       COALESCE(SUM(s.total_txns), 0) AS txns, ");
             sql.append("       COALESCE(SUM(s.total_msf), 0) AS msf, ");
-            sql.append("       COALESCE(SUM(COALESCE(s.total_msf,0) - COALESCE(s.total_interchange,0) - COALESCE(s.total_scheme_fee,0)), 0) AS netRevenue ");
+            // Net margin / net spread from the shared definition (NetSpreadSql):
+            // the batch 4-leg margin, plus DCC acquirer share and rental —
+            // plus FX income where the tenant opted in (netspread.fx_enabled).
+            sql.append("       " + NetSpreadSql.sumMargin("s") + " AS netRevenue, ");
+            sql.append("       " + (fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s")) + " AS netSpread, ");
+            sql.append("       COALESCE(SUM(" + NetSpreadSql.fx("s") + "), 0) AS fx ");
             sql.append("FROM dim_merchant m ");
-            sql.append("LEFT JOIN sum_daily_merchant s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id ");
+            // ALL = sum_daily_merchant verbatim; POS/ECOM = the channel-scoped
+            // relation with identical column names (ChannelSql.merchantDay).
+            sql.append("LEFT JOIN " + ChannelSql.merchantDay(channel) + " s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id ");
             sql.append("  AND s.business_date BETWEEN :from AND :to ");
         }
         sql.append("WHERE m.tenant_id = :tid ");
@@ -256,6 +428,7 @@ public class TopPerformersController {
         q.setParameter("from", from);
         q.setParameter("to", to);
         if (cardGrain) {
+            if (ChannelSql.isChannel(channel)) q.setParameter("chClass", channel);
             if (notEmpty(f.getSchemeList())) q.setParameter("schemes", f.getSchemeList());
             if (notEmpty(f.getCardTypeList())) q.setParameter("cardTypes", f.getCardTypeList());
             if (notEmpty(f.getDestinationList())) q.setParameter("destinations", f.getDestinationList());
@@ -289,6 +462,8 @@ public class TopPerformersController {
             m.put("txns", toDouble(row[9]));
             m.put("msf", toDouble(row[10]));
             m.put("netRevenue", toDouble(row[11]));
+            m.put("netSpread", toDouble(row[12]));
+            m.put("fx", toDouble(row[13]));
             result.add(m);
         }
         return result;
@@ -303,7 +478,7 @@ public class TopPerformersController {
      * sheet doesn't know keeps its bare code.
      */
     private List<Map<String, Object>> topMccs(VolumeRevenueFilterDTO f, Long tenantId,
-            LocalDate from, LocalDate to) {
+            LocalDate from, LocalDate to, int topN, String channel) {
 
         boolean needMerchant = notEmpty(f.getPartnerList()) || notEmpty(f.getRmList())
                 || notEmpty(f.getTeamLeaderList()) || notEmpty(f.getMidList())
@@ -320,6 +495,9 @@ public class TopPerformersController {
         sql.append("FROM sum_daily_full s ");
         sql.append("WHERE s.tenant_id = :tid AND s.business_date BETWEEN :from AND :to ");
         sql.append("  AND s.mcc IS NOT NULL ");
+        // POS/ECOM scope — sum_daily_full carries the normalized channel_class
+        // (V2026_09_08_01) precisely for this equality; ALL adds nothing.
+        if (ChannelSql.isChannel(channel)) sql.append("  AND s.channel_class = :chClass ");
         if (notEmpty(f.getSchemeList())) sql.append("  AND s.card_scheme IN (:schemes) ");
         if (notEmpty(f.getCardTypeList())) sql.append("  AND s.card_type IN (:cardTypes) ");
         if (notEmpty(f.getDestinationList())) sql.append("  AND s.destination IN (:destinations) ");
@@ -336,12 +514,13 @@ public class TopPerformersController {
             sql.append(") ");
         }
         sql.append("GROUP BY s.mcc HAVING COALESCE(SUM(s.total_volume), 0) > 0 ");
-        sql.append("ORDER BY volume DESC LIMIT ").append(TOP_N);
+        sql.append("ORDER BY volume DESC LIMIT ").append(topN);
 
         Query q = entityManager.createNativeQuery(sql.toString());
         q.setParameter("tid", tenantId);
         q.setParameter("from", from);
         q.setParameter("to", to);
+        if (ChannelSql.isChannel(channel)) q.setParameter("chClass", channel);
         if (notEmpty(f.getSchemeList())) q.setParameter("schemes", f.getSchemeList());
         if (notEmpty(f.getCardTypeList())) q.setParameter("cardTypes", f.getCardTypeList());
         if (notEmpty(f.getDestinationList())) q.setParameter("destinations", f.getDestinationList());
@@ -435,6 +614,8 @@ public class TopPerformersController {
                 a.put("salesEmail", null);
                 a.put("volume", 0.0);
                 a.put("netRevenue", 0.0);
+                a.put("netSpread", 0.0);
+                a.put("fx", 0.0);
                 a.put("msf", 0.0);
                 a.put("merchantCount", 0);
                 return a;
@@ -447,6 +628,8 @@ public class TopPerformersController {
             }
             agg.put("volume", toDouble(agg.get("volume")) + toDouble(r.get("volume")));
             agg.put("netRevenue", toDouble(agg.get("netRevenue")) + toDouble(r.get("netRevenue")));
+            agg.put("netSpread", toDouble(agg.get("netSpread")) + toDouble(r.get("netSpread")));
+            agg.put("fx", toDouble(agg.get("fx")) + toDouble(r.get("fx")));
             agg.put("msf", toDouble(agg.get("msf")) + toDouble(r.get("msf")));
             agg.put("merchantCount", (Integer) agg.get("merchantCount") + 1);
         }
@@ -485,7 +668,7 @@ public class TopPerformersController {
      */
     private List<Map<String, Object>> computeSignedByRm(List<Map<String, Object>> current,
             Map<String, LocalDate> firstTxnDates, LocalDate from, LocalDate to,
-            Map<String, String> displayNames) {
+            Map<String, String> displayNames, int topN) {
         Map<String, Map<String, Object>> byRm = new LinkedHashMap<>();
         for (Map<String, Object> r : current) {
             if (!inWindow(onboardDate(r, firstTxnDates), from, to)) continue;
@@ -508,7 +691,7 @@ public class TopPerformersController {
                     return byCount != 0 ? byCount
                             : Double.compare(toDouble(b.get("volume")), toDouble(a.get("volume")));
                 })
-                .limit(TOP_N)
+                .limit(topN)
                 .collect(Collectors.toList());
         int rank = 1;
         for (Map<String, Object> r : ranked) { r.put("rank", rank++); }
@@ -524,11 +707,11 @@ public class TopPerformersController {
      * transactions.
      */
     private List<Map<String, Object>> computeNewMerchants(List<Map<String, Object>> withVolume,
-            Map<String, LocalDate> firstTxnDates, LocalDate from, LocalDate to) {
+            Map<String, LocalDate> firstTxnDates, LocalDate from, LocalDate to, int topN) {
         List<Map<String, Object>> newOnes = withVolume.stream()
                 .filter(r -> inWindow(onboardDate(r, firstTxnDates), from, to))
                 .sorted((a, b) -> Double.compare(toDouble(b.get("volume")), toDouble(a.get("volume"))))
-                .limit(TOP_N)
+                .limit(topN)
                 .map(LinkedHashMap::new)
                 .collect(Collectors.toList());
         int rank = 1;

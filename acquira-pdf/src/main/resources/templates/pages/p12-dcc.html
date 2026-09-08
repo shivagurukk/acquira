@@ -36,6 +36,18 @@
                     <div style="font-size: 24px; font-weight: 900; color: #FBBF24; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" th:text="${dto.currencyCode} + ' ' + ${dto.dccPerformance.dccOptoutVolume != null ? #numbers.formatDecimal(dto.dccPerformance.dccOptoutVolume, 1, 'COMMA', dto.currencyDecimals, 'POINT') : '0'}"><span th:text="${dto.currencyCode}">AED</span> 0</div>
                     <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">Volume from declined opt-ins</div>
                 </div>
+                <!-- Measured DCC earnings from the DCC revenue feed (merchant share).
+                     Rendered ONLY when the month has feed rows — never a zero
+                     dressed up as a measurement, and never the old volume × 3% guess. -->
+                <th:block th:if="${dto.dccPerformance.dccRevenueSource == 'FEED'}">
+                <div style="flex: 0 0 auto; width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
+                <div style="flex: 1 1 0; min-width: 150px; text-align: center;">
+                    <div style="font-size: 8px; font-weight: 700; color: #6EE7B7; letter-spacing: 0.06em; text-transform: uppercase;">Your DCC Earnings</div>
+                    <div style="font-size: 22px; font-weight: 900; color: #6EE7B7; margin-top: 4px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
+                         th:text="${dto.currencyCode + ' ' + #numbers.formatDecimal(dto.dccPerformance.dccMerchantRevenue, 1, 'COMMA', dto.currencyDecimals, 'POINT')}">AED 0</div>
+                    <div style="font-size: 8px; color: rgba(255,255,255,0.5); margin-top: 3px;">Merchant share, per the DCC statement</div>
+                </div>
+                </th:block>
                 <div style="flex: 0 0 auto; width: 1px; height: 52px; background: rgba(255,255,255,0.12);"></div>
                 <div style="flex: 1 1 0; min-width: 160px; text-align: right;">
                     <div style="font-size: 8px; font-weight: 700; color: #93C5FD; letter-spacing: 0.06em; text-transform: uppercase;">Conversion Rate</div>

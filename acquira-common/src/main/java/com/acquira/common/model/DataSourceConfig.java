@@ -44,14 +44,18 @@ public class DataSourceConfig {
         ORACLE, POSTGRES, MSSQL
     }
 
+    /** SECURITY: see IntegrationConnection.getJdbcUrl — same injection risk. */
     public String getJdbcUrl() {
+        String h = com.acquira.common.util.JdbcTargetValidator.requireValidHost(host);
+        int p = com.acquira.common.util.JdbcTargetValidator.requireValidPort(port);
+        String db = com.acquira.common.util.JdbcTargetValidator.requireValidDbName(dbName);
         switch (dbType) {
             case ORACLE:
-                return "jdbc:oracle:thin:@" + host + ":" + port + "/" + dbName;
+                return "jdbc:oracle:thin:@" + h + ":" + p + "/" + db;
             case POSTGRES:
-                return "jdbc:postgresql://" + host + ":" + port + "/" + dbName;
+                return "jdbc:postgresql://" + h + ":" + p + "/" + db;
             case MSSQL:
-                return "jdbc:sqlserver://" + host + ":" + port + ";databaseName=" + dbName
+                return "jdbc:sqlserver://" + h + ":" + p + ";databaseName=" + db
                         + ";encrypt=true;trustServerCertificate=true";
             default:
                 throw new IllegalArgumentException("Unsupported DB Type: " + dbType);

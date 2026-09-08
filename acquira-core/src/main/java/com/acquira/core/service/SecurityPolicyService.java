@@ -123,6 +123,43 @@ public class SecurityPolicyService {
         return v > 0 ? v : 10;
     }
 
+    // ===== Multi-factor authentication (email OTP at login) =====
+    // Written by Admin > Security Settings as security.require_mfa_for_all and
+    // security.require_mfa_for_admins. Both default to false, so an environment
+    // that has never touched the setting behaves exactly as before.
+
+    /** True when every user of this tenant must clear an email OTP at login. */
+    public boolean requireMfaForAll(Long tenantId) {
+        return getBool(load(tenantId), "require_mfa_for_all", false);
+    }
+
+    /** True when admin-role users of this tenant must clear an email OTP at login. */
+    public boolean requireMfaForAdmins(Long tenantId) {
+        return getBool(load(tenantId), "require_mfa_for_admins", false);
+    }
+
+    /**
+     * Whether the given role must complete MFA in this tenant.
+     *
+     * The "admins" flag is a subset of the "all" flag, so either one being set is
+     * enough for an admin. Roles are matched on the ROLE_ADMIN / ROLE_SUPER_ADMIN
+     * suffix so both the prefixed and bare forms resolve the same way.
+     */
+    public boolean mfaRequiredForRole(Long tenantId, String role) {
+        Map<String, String> m = load(tenantId);
+        if (getBool(m, "require_mfa_for_all", false)) return true;
+        if (!getBool(m, "require_mfa_for_admins", false)) return false;
+        if (role == null) return false;
+        String r = role.trim().toUpperCase();
+        return r.endsWith("ADMIN") || r.endsWith("SUPER_ADMIN");
+    }
+
+    /** Minutes a login MFA code stays valid (default 5). */
+    public int mfaOtpTtlMinutes(Long tenantId) {
+        int v = getInt(load(tenantId), "mfa_otp_ttl_minutes", 5);
+        return v > 0 ? v : 5;
+    }
+
     /** Plain holder for the resolved password policy. */
     public static class PasswordPolicy {
         public int minLength = 8;

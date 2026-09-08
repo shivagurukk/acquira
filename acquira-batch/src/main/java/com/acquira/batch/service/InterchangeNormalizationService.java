@@ -621,8 +621,15 @@ public class InterchangeNormalizationService {
                     "          AND payment_date >= ? AND payment_date < ? GROUP BY merchant_id) mv " +
                     "    ON mv.merchant_id = f2.merchant_id " +
                     "  WHERE f2.tenant_id = ? AND f2.payment_date >= ? AND f2.payment_date < ? " +
-                    ") x WHERE f.transaction_id = x.transaction_id",
-                    runId, tenantId, start, end, tenantId, start, end);
+                    // PERF (2026-08-26): the outer f carries its own tenant + sargable
+                    // payment_date range. Joining on transaction_id alone cannot prune
+                    // partitions (fact_transaction is ranged on payment_date), so this
+                    // scanned every partition of the table. The predicates are implied
+                    // by the join — every x row already satisfies them — so semantics
+                    // are unchanged. Same fix as the ingest fee UPDATE.
+                    ") x WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? " +
+                    "AND f.transaction_id = x.transaction_id",
+                    runId, tenantId, start, end, tenantId, start, end, tenantId, start, end);
 
                 // 2. Per-merchant rounding residual onto the merchant's largest
                 //    transaction (deterministic tie-break on transaction_id), so
@@ -639,8 +646,11 @@ public class InterchangeNormalizationService {
                     "  JOIN fact_transaction f2 ON f2.merchant_id = s.merchant_id AND f2.tenant_id = ? " +
                     "    AND f2.payment_date >= ? AND f2.payment_date < ? " +
                     "  ORDER BY s.merchant_id, COALESCE(f2.store_base_currency_amount,0) DESC, f2.transaction_id " +
-                    ") r WHERE f.transaction_id = r.transaction_id",
-                    runId, tenantId, start, end, tenantId, start, end);
+                    // PERF (2026-08-26): outer tenant + range for partition pruning;
+                    // implied by the join (r's rows are already tenant+range bound).
+                    ") r WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? " +
+                    "AND f.transaction_id = r.transaction_id",
+                    runId, tenantId, start, end, tenantId, start, end, tenantId, start, end);
 
                 // 3. Merchant-less rows keep their values too and receive their
                 //    volume-weighted slice of the bucket's extra, residual on the
@@ -657,12 +667,15 @@ public class InterchangeNormalizationService {
                     "UPDATE fact_transaction f SET interchange_fee = COALESCE(f.interchange_fee,0) + (? - t.total) FROM (" +
                     "  SELECT COALESCE(SUM(interchange_fee),0) total FROM fact_transaction " +
                     "  WHERE tenant_id = ? AND merchant_id IS NULL AND payment_date >= ? AND payment_date < ?) t " +
-                    "WHERE f.transaction_id = (" +
+                    // PERF (2026-08-26): outer tenant + range for partition pruning;
+                    // implied — the selected transaction_id comes from that same scope.
+                    "WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? " +
+                    "AND f.transaction_id = (" +
                     "  SELECT transaction_id FROM fact_transaction " +
                     "  WHERE tenant_id = ? AND merchant_id IS NULL AND payment_date >= ? AND payment_date < ? " +
                     "  ORDER BY COALESCE(store_base_currency_amount,0) DESC, transaction_id LIMIT 1) " +
                     "  AND (? - t.total) <> 0",
-                    unattributedNormalized, tenantId, start, end, tenantId, start, end, unattributedNormalized);
+                    unattributedNormalized, tenantId, start, end, tenantId, start, end, tenantId, start, end, unattributedNormalized);
 
                 // 4. Hard verification — any drift rolls the whole month back.
                 BigDecimal newTotal = jdbcTemplate.queryForObject(

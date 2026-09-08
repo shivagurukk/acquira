@@ -10,7 +10,7 @@ import {
     Play as PlayArrow, CheckCircle2 as CheckCircle, XCircle as ErrorIcon,
     Folder, Database as Storage, Ban as Cancel,
 } from 'lucide-react';
-import api from '../api/axios';
+import api, { UPLOAD_TIMEOUT, isTimeoutError } from '../api/axios';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLL_DURATION_MS = 30 * 60 * 1000;  // 30-minute cap per batch
@@ -28,6 +28,10 @@ const STATUS_COLORS = {
     ABANDONED:  { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
     SKIPPED:    { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
     RUNNING:    { bg: '#fefce8', color: '#ca8a04', border: '#fef08a' },
+    // Folder-run safety outcomes (backend, 2026-09-03): not loaded, by design.
+    SKIPPED_UPSTREAM_FAILURE:       { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
+    SKIPPED_PREVIOUS_STILL_RUNNING: { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
+    TIMED_OUT_STILL_RUNNING:        { bg: '#fefce8', color: '#ca8a04', border: '#fef08a' },
 };
 
 const getStatusStyle = (status) => STATUS_COLORS[status] || STATUS_COLORS.RUNNING;
@@ -200,7 +204,17 @@ const ServerFileProcessor = () => {
         setActiveStep(3); // Process transactions (the longest stage)
 
         try {
-            const res = await api.post(`/upload/process-server-file?path=${encodeURIComponent(serverPath.trim())}`);
+            // This endpoint is deliberately BLOCKING and SEQUENTIAL: it only returns
+            // once every file in the folder has reached a terminal state. The axios
+            // default of 60s therefore aborts every real batch client-side while the
+            // server carries on ingesting — the screen reports a failure for work
+            // that is actually running. Use the long upload timeout like every other
+            // ingest screen; nginx's proxy_read_timeout (600s) is the real ceiling.
+            const res = await api.post(
+                `/upload/process-server-file?path=${encodeURIComponent(serverPath.trim())}`,
+                null,
+                { timeout: UPLOAD_TIMEOUT }
+            );
             const data = res.data;
 
             if (data.error) {
@@ -231,10 +245,11 @@ const ServerFileProcessor = () => {
             if (data.fileResults) {
                 data.fileResults.forEach((fr, idx) => {
                     const ok = fr.status === 'SUCCESS' || fr.status === 'COMPLETED';
-                    const icon = ok ? '✅' : '❌';
+                    const skipped = String(fr.status || '').startsWith('SKIPPED') || fr.status === 'TIMED_OUT_STILL_RUNNING';
+                    const icon = ok ? '✅' : skipped ? '⏭️' : '❌';
                     const detail = ok
-                        ? `done (${fr.sizeMB} MB, Tenant: ${fr.entity || '—'})`
-                        : (fr.error || 'failed');
+                        ? `done (${fr.sizeMB} MB, Tenant: ${fr.entity || '—'})${fr.archivedTo ? ` → moved to ${fr.archivedTo}` : ''}`
+                        : (fr.error || 'failed') + (fr.archivedTo ? ` → moved to ${fr.archivedTo}` : '');
                     addLog(`${icon} [${idx + 1}/${data.fileResults.length}] ${fr.type}: ${fr.file} — ${detail}`);
                 });
             }
@@ -252,6 +267,18 @@ const ServerFileProcessor = () => {
 
         } catch (err) {
             setPhase('input');
+            // A client-side abort or a proxy 504 says nothing about what the server
+            // did — the batch is almost certainly still ingesting. Re-running the
+            // same folder here is how a load gets applied twice, so send the user
+            // to Batch Monitoring instead of implying the run failed.
+            if (isTimeoutError(err) || err.response?.status === 504) {
+                const stalled = 'The batch is taking longer than the request could stay open. '
+                    + 'It is still running on the server — check Batch Monitoring for live status. '
+                    + 'Do NOT re-run this folder until it finishes.';
+                setErrorMsg(stalled);
+                addLog(`⚠️ ${stalled}`);
+                return;
+            }
             const msg = err.response?.data?.error || err.response?.data || err.message;
             setErrorMsg(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
             addLog(`❌ ${typeof msg === 'object' ? JSON.stringify(msg) : String(msg)}`);
@@ -530,8 +557,10 @@ const ServerFileProcessor = () => {
                                                             <Chip label={fr.type} size="small"
                                                                 sx={{
                                                                     fontSize: '0.65rem', fontWeight: 700, height: 22,
-                                                                    bgcolor: fr.type === 'MERCHANT' ? 'var(--wash)' : '#fce7f3',
-                                                                    color: fr.type === 'MERCHANT' ? 'var(--primary)' : '#be185d',
+                                                                    bgcolor: fr.type === 'MERCHANT' ? 'var(--wash)'
+                                                                        : fr.type === 'RENTAL' ? '#fef3c7' : '#fce7f3',
+                                                                    color: fr.type === 'MERCHANT' ? 'var(--primary)'
+                                                                        : fr.type === 'RENTAL' ? '#92400e' : '#be185d',
                                                                 }}
                                                             />
                                                         </TableCell>
@@ -549,8 +578,11 @@ const ServerFileProcessor = () => {
                                                                 }}
                                                             />
                                                         </TableCell>
-                                                        <TableCell sx={{ fontSize: '0.78rem', color: '#0f172a', fontWeight: 500 }}>
-                                                            {(fr.status === 'SUCCESS' || fr.status === 'COMPLETED') ? '✓' : (fr.error ? '—' : '')}
+                                                        <TableCell sx={{ fontSize: '0.78rem', color: '#0f172a', fontWeight: 500 }}
+                                                            title={fr.error || (fr.archivedTo ? `Moved to ${fr.archivedTo}` : undefined)}>
+                                                            {(fr.status === 'SUCCESS' || fr.status === 'COMPLETED')
+                                                                ? (fr.archivedTo ? `✓ ${fr.archivedTo}` : '✓')
+                                                                : (fr.error ? <span style={{ color: '#b45309' }}>{fr.error}</span> : '')}
                                                         </TableCell>
                                                     </TableRow>
                                                 );

@@ -92,6 +92,10 @@ public class MenuController {
                 {"Top Performers",         "/business/top-performers",   "Trophy",       "EXECUTIVE",      5},
                 // Safety net for V2026_08_15_01__destination_dashboard_menu.sql
                 {"Destination Dashboard",  "/business/destination-dashboard", "Globe",   "BUSINESS",      18},
+                // Safety net for V2026_09_05_02__pricing_simulator_v2.sql — the
+                // route existed since v1 but never had a sys_menu row, and the
+                // v2 backend gates on @menuAccess for this path.
+                {"Pricing Simulator",      "/business/pricing-simulator", "SlidersHorizontal", "BUSINESS", 19},
                 // ── SALES suite ──────────────────────────────────────────────
                 // Routes for all five screens exist in App.jsx, but only Team
                 // Management and Leaderboard ever had sys_menu rows (from an

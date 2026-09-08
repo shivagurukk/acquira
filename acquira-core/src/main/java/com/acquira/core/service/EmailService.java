@@ -277,4 +277,33 @@ public class EmailService {
             log.warn("[EMAIL] OTP email not sent (no SMTP). Reset OTP for {}: {}", username, otp);
         }
     }
+
+    /**
+     * Second-factor code for a login that already passed the password check.
+     *
+     * Returns whether delivery succeeded — the caller MUST honour that. Unlike
+     * the password-reset OTP (where a silent failure just stalls a reset), this
+     * code is the only way through the login gate, so a false result has to
+     * surface as an error rather than let the sign-in continue.
+     */
+    public boolean sendLoginMfaOtp(String toEmail, String username, String otp, int ttlMinutes) {
+        boolean sent = sendEmail(
+                toEmail,
+                "Your Acquira sign-in code",
+                "Hello " + (username != null ? username : "") + ",\n\n"
+                        + "Your sign-in verification code is:\n\n"
+                        + "    " + otp + "\n\n"
+                        + "It is valid for " + ttlMinutes + " minutes and can be used once.\n\n"
+                        + "If you did not try to sign in, someone may have your password. "
+                        + "Change it immediately and tell your administrator.\n\n"
+                        + "— Acquira Team");
+        if (!sent) {
+            // Never log the code itself here. The reset flow does that as a dev
+            // convenience, but this code guards an active session for someone who
+            // already holds the password — logging it would defeat the factor.
+            log.error("[EMAIL] Login MFA code could not be delivered to '{}' (SMTP not configured or failing). "
+                    + "The sign-in will be refused. Configure SMTP or disable MFA in Security Settings.", username);
+        }
+        return sent;
+    }
 }

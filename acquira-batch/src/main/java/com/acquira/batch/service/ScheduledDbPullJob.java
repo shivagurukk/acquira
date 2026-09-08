@@ -35,6 +35,7 @@ public class ScheduledDbPullJob {
 
     private final UniversalDatabaseClient dbClient;
     private final MetricCalculatorService calculator;
+    private final com.acquira.common.service.TenantStatusService tenantStatusService;
 
     // Master on/off switch for the nightly 2 AM ingestion job. Defaults to
     // FALSE (disabled). To re-enable, set in application.properties:
@@ -75,6 +76,14 @@ public class ScheduledDbPullJob {
         if (query.getTenantId() == null) {
             log.warn("Skipping report '{}' (id={}) — tenantId is not set. Update report_query_config.tenant_id to enable.",
                 query.getReportName(), query.getId());
+            return;
+        }
+
+        // TENANT OFF-SWITCH: a deactivated tenant's external database must not
+        // be connected to or queried by the nightly job.
+        if (tenantStatusService.isInactive(query.getTenantId())) {
+            log.info("Skipping report '{}' (id={}) — tenant {} is not active.",
+                query.getReportName(), query.getId(), query.getTenantId());
             return;
         }
 

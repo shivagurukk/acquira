@@ -125,6 +125,18 @@ public class UserController {
         return !"ROLE_SUPER_ADMIN".equals(role.trim());
     }
 
+    /**
+     * SECURITY: CustomUserDetailsService promotes membership of the "Super Admin"
+     * group to ROLE_SUPER_ADMIN authority. Assigning that group is therefore
+     * equivalent to assigning the super-admin role and must be restricted the same
+     * way — only a super admin may hand it out.
+     */
+    private boolean mayAssignGroup(com.acquira.common.model.SysUserGroup group) {
+        if (group == null || group.getGroupName() == null) return true;
+        if (isSuperAdmin()) return true;
+        return !"Super Admin".equalsIgnoreCase(group.getGroupName().trim());
+    }
+
     // ===== CREATE USER (with username + email duplicate check) =====
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
@@ -583,6 +595,15 @@ public class UserController {
         com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId).orElse(null);
         if (group == null) return notFound("Group");
 
+        // SECURITY: roleInTenant and the group name both flow into the granted
+        // authorities (CustomUserDetailsService), so an unguarded value here lets a
+        // bank admin mint ROLE_SUPER_ADMIN for themselves. Only a super admin may
+        // assign a super-admin role or the "Super Admin" group.
+        if (!mayAssignRole(roleInTenant) || !mayAssignGroup(group)) {
+            return ResponseEntity.status(403)
+                    .body(Map.of("error", "You are not allowed to assign this role or group"));
+        }
+
         List<com.acquira.common.model.UserTenantAccess> existing = accessRepository.findAllByUser(user);
 
         // The very first grant must be the default — otherwise login resolves no
@@ -642,6 +663,13 @@ public class UserController {
 
         com.acquira.common.model.SysUserGroup group = groupRepository.findById(groupId).orElse(null);
         if (group == null) return notFound("Group");
+
+        // SECURITY: see addTenantAccess — block a non-super-admin from assigning a
+        // super-admin role or the "Super Admin" group (privilege escalation).
+        if (!mayAssignRole(roleInTenant) || !mayAssignGroup(group)) {
+            return ResponseEntity.status(403)
+                    .body(Map.of("error", "You are not allowed to assign this role or group"));
+        }
 
         access.setSysUserGroup(group);
         access.setRoleInTenant(roleInTenant == null || roleInTenant.isEmpty() ? null : roleInTenant);

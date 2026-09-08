@@ -51,7 +51,11 @@ public class MerchantSegmentController {
         if (tenantId == null) return ResponseEntity.status(403).build();
 
         String sql =
-            "SELECT s.merchant_id, m.mid, m.name, m.mcc, m.sales_email, " +
+            "SELECT s.merchant_id, m.mid, m.name, " +
+            // MCC lives on the store; a multi-MCC merchant lists all of them.
+            "       (SELECT STRING_AGG(DISTINCT ds.mcc, ',' ORDER BY ds.mcc) FROM dim_store ds " +
+            "         WHERE ds.merchant_id = s.merchant_id AND ds.tenant_id = s.tenant_id AND ds.mcc IS NOT NULL) AS mcc, " +
+            "       m.sales_email, " +
             "       s.primary_segment, s.secondary_tags, s.segment_reason, s.segment_score, " +
             "       s.total_volume, s.net_revenue, s.net_margin_pct, s.effective_bps, s.net_take_bps, " +
             "       s.volume_growth_pct, s.days_since_last, s.calc_date " +

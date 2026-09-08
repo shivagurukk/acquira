@@ -38,6 +38,10 @@ yarn-error.log*
 logs/
 reports/
 data/
+# ...but frontend/src/data holds SOURCE data bundled into the build (the
+# unanchored data/ rule above matches it too, and a missing file there fails
+# the Docker frontend build, not just a local run).
+!frontend/src/data/
 temp/
 backups/
 
@@ -76,8 +80,28 @@ application-prod.properties
 *.ps1
 
 # ─── Migration Artifacts ───
+# Root-level scratch folder for one-off migration exports/dumps.
 migration/
+# ...but the Flyway-style scripts under db/migration ARE source: application.properties
+# lists them in spring.sql.init.schema-locations, so a clone without them cannot boot.
+!acquira-core/src/main/resources/db/migration/
+# ...except the local scratch copies sitting inside it.
+acquira-core/src/main/resources/db/migration/New folder/
+acquira-core/src/main/resources/db/migration/New folder.zip
 MIGRATION_GUIDE.md
 
 # ─── Root-level loose src folder (if any — NOT the module src folders) ───
 /src/
+
+# SECURITY: sensitive data artifacts must never be committed (real merchant PII,
+# transaction dumps, DB snapshots). Directories reports/ data/ backups/ temp/ are
+# already ignored; these cover stray root-level exports and dumps.
+/bulk_merchants.csv
+/bulk_transactions.csv
+/test_report.pdf
+/*sample*.xlsx
+/transactions_*.xlsx
+/all-migrations.sql
+/schema-snapshot.sql
+/prod-missing-*.sql
+*.dump

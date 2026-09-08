@@ -48,14 +48,24 @@ const UploadPage = () => {
             setShowSummary(true);
         } else {
             setStatus('processing');
-            // FIX: derive real progress from stepNumber/totalSteps when available,
+            // Derive real progress from stepNumber/totalSteps when available,
             // falling back to the progress field, then 0. Previously this showed
             // a time-based fake percentage unrelated to actual batch progress.
+            // Clamped: stepNumber can exceed a stale totalSteps.
             const realPct = uploadProgress.stepNumber && uploadProgress.totalSteps
-                ? Math.round((uploadProgress.stepNumber / uploadProgress.totalSteps) * 100)
+                ? Math.min(100, Math.round((uploadProgress.stepNumber / uploadProgress.totalSteps) * 100))
                 : (uploadProgress.progress >= 0 ? uploadProgress.progress : 0);
-            setMsg(`Processing... ${realPct}%`);
-            setUploadPercent(realPct);
+            // Accepted but not yet running: Spring Batch persists the execution as
+            // STARTING and only then hands it to batchTaskExecutor, so a job waiting
+            // for a free slot has zero step executions. Say that plainly rather than
+            // implying work is underway — a backlog looked identical to a hang.
+            if (!uploadProgress.currentStep && !uploadProgress.stepNumber) {
+                setMsg('Queued — waiting for a free batch slot. Check Batch Monitoring for jobs already running.');
+                setUploadPercent(0);
+            } else {
+                setMsg(`Processing... ${realPct}%`);
+                setUploadPercent(realPct);
+            }
         }
     }, [uploadProgress]);
 
@@ -181,7 +191,7 @@ const UploadPage = () => {
                         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
                         <FinancialLoader />
                         </div>
-                        {jobDetails.currentStep && (
+                        {jobDetails.currentStep ? (
                         <div style={{
                         textAlign: 'center', marginBottom: 14,
                         fontSize: '0.9rem', fontWeight: 600, color: 'var(--text,#111827)',
@@ -192,6 +202,20 @@ const UploadPage = () => {
                         {' '}· step {jobDetails.stepNumber} of {jobDetails.totalSteps}
                         </span>
                         : null}
+                        </div>
+                        ) : (
+                        /* No step executions yet: the job is accepted but waiting for a
+                           batch slot. Say so — msg is only rendered in the error state, so
+                           without this the queued case shows a bare spinner at 0% and reads
+                           as a hang. */
+                        <div style={{
+                        textAlign: 'center', marginBottom: 14,
+                        fontSize: '0.9rem', fontWeight: 600, color: 'var(--text,#111827)',
+                        }}>
+                        Queued
+                        <span style={{ display: 'block', marginTop: 4, fontSize: '0.78rem', fontWeight: 500, color: 'var(--text-muted,#9ca3af)' }}>
+                        Waiting for a free batch slot — check Batch Monitoring for jobs already running.
+                        </span>
                         </div>
                         )}
                         <StageTracker stages={stages} currentStepName={jobDetails.currentStep} stepNumber={jobDetails.stepNumber} totalSteps={jobDetails.totalSteps} progress={uploadPercent} />
@@ -297,11 +321,21 @@ const ProgressBar = ({ value, label, color = 'var(--primary)' }) => (
 );
 
 const StageTracker = ({ stages, currentStepName, stepNumber, totalSteps, progress }) => {
-    // FIX: determine the active stage from the real currentStepName when available,
+    // Determine the active stage from the real currentStepName when available,
     // falling back to the progress-based range detection.
-    const activeIdx = currentStepName
-        ? stages.findIndex(s => s.stepKeys && s.stepKeys.some(k => currentStepName.toLowerCase().includes(k)))
-        : stages.findIndex(s => progress >= s.range[0] && progress < s.range[1]);
+    //
+    // A job that Spring Batch has accepted but not yet given a thread to reports
+    // no step executions at all, so currentStepName is undefined and progress is
+    // 0 — which the range fallback used to resolve to stage 0, lighting up
+    // "Splitting" for a job that had not started. That made a queued job
+    // indistinguishable from one genuinely splitting a file. Light nothing
+    // instead; the caller shows an explicit "Queued" message.
+    const notStarted = !currentStepName && !stepNumber;
+    const activeIdx = notStarted
+        ? -1
+        : currentStepName
+            ? stages.findIndex(s => s.stepKeys && s.stepKeys.some(k => currentStepName.toLowerCase().includes(k)))
+            : stages.findIndex(s => progress >= s.range[0] && progress < s.range[1]);
     return (
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, marginBottom: 16 }}>
             {stages.map((s, i) => {

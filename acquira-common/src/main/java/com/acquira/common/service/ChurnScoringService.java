@@ -154,10 +154,16 @@ public class ChurnScoringService {
             "  SUM(CASE WHEN s.business_date BETWEEN ? AND ? THEN COALESCE(s.total_base_volume,0) ELSE 0 END) AS pm_vol, " +
             "  SUM(CASE WHEN s.business_date >= ? THEN COALESCE(s.total_base_volume,0) ELSE 0 END) AS cm_vol, " +
             "  MAX(CASE WHEN COALESCE(s.total_txns,0) > 0 THEN s.business_date END) AS last_active, " +
-            "  STDDEV_POP(COALESCE(s.total_base_volume,0)) AS vol_sd, " +
-            "  AVG(COALESCE(s.total_base_volume,0)) AS vol_mean " +
+            // FILTERed on total_txns > 0: ancillary-only rows (rental/DCC on
+            // a no-sale day, all txn measures 0) would depress the mean and
+            // inflate the volatility feature.
+            "  STDDEV_POP(COALESCE(s.total_base_volume,0)) FILTER (WHERE COALESCE(s.total_txns,0) > 0) AS vol_sd, " +
+            "  AVG(COALESCE(s.total_base_volume,0)) FILTER (WHERE COALESCE(s.total_txns,0) > 0) AS vol_mean " +
             "FROM sum_daily_merchant s " +
             "WHERE s.tenant_id = ? AND s.merchant_id IS NOT NULL " +
+            // total_txns > 0 also gates membership: a merchant whose only rows
+            // in the window are ancillary charges is not a churn candidate.
+            "  AND COALESCE(s.total_txns,0) > 0 " +
             "  AND s.business_date >= ? AND s.business_date <= ? " +
             "GROUP BY s.merchant_id";
 
@@ -526,8 +532,11 @@ public class ChurnScoringService {
 
     private LocalDate maxBusinessDate(Long tenantId) {
         try {
+            // total_txns > 0: ancillary-only days (rental/DCC ahead of the
+            // transaction file) must not shift every feature/training window.
             return jdbc.queryForObject(
-                "SELECT MAX(business_date) FROM sum_daily_merchant WHERE tenant_id = ?",
+                "SELECT MAX(business_date) FROM sum_daily_merchant "
+                + "WHERE tenant_id = ? AND COALESCE(total_txns,0) > 0",
                 LocalDate.class, tenantId);
         } catch (Exception e) {
             return null;

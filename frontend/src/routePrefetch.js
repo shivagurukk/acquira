@@ -47,6 +47,9 @@ const ROUTE_IMPORTS = {
     '/business/zero-transaction': () => import('./pages/business/ZeroTransactionReport'),
     '/business/heatmap': () => import('./pages/business/MerchantHeatmap'),
     '/business/daily-dashboard': () => import('./pages/business/DailyMerchantDashboard'),
+    '/business/industry-analytics': () => import('./pages/business/IndustryAnalytics'),
+    '/business/revenue-mix': () => import('./pages/business/RevenueMix'),
+    '/business/volume-drop': () => import('./pages/business/VolumeDrop'),
     '/business/merchant-analytics': () => import('./pages/business/MerchantAnalyticsReport'),
     '/business/comparison': () => import('./pages/business/MerchantComparison'),
     '/business/opportunity': () => import('./pages/business/OpportunityIntelligence'),
@@ -72,6 +75,9 @@ const ROUTE_IMPORTS = {
     '/upload': () => import('./pages/UploadPage'),
     '/ops/server-file': () => import('./pages/ServerFileProcessor'),
     '/ops/batch-logs': () => import('./pages/BatchMonitoring'),
+    '/ops/ingest-trust': () => import('./pages/ops/IngestTrust'),
+    '/ops/scheme-billing-reference': () => import('./pages/ops/SchemeBillingReference'),
+    '/ops/daily-digest': () => import('./pages/ops/DailyDigest'),
     '/business/emails': () => import('./pages/StatementEmails'),
     '/business/revenue-leakage': () => import('./pages/business/RevenueLeakage'),
 
@@ -95,6 +101,7 @@ const ROUTE_IMPORTS = {
     '/admin/bin-management': () => import('./pages/admin/BinManagement'),
     '/admin/alerts': () => import('./pages/admin/AlertsNotifications'),
     '/admin/api-management': () => import('./pages/admin/ApiManagement'),
+    '/admin/webhooks': () => import('./pages/admin/Webhooks'),
 };
 
 const PREFETCHED = new Set();

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { createFmt } from '../../utils/formatters';
+import { weekRules } from '../../utils/weekRules';
 import api from '../../api/axios';
 import { Box, Paper, Typography, Stack, Tooltip, MenuItem, Select, FormControl, Chip, Autocomplete, TextField, Button } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
@@ -32,6 +33,10 @@ const T = {
     success:  'var(--success, #059669)',
     danger:   'var(--danger, #dc2626)',
     warning:  'var(--warning, #d97706)',
+    // "This is the one you picked" green, shared with the Executive Daily
+    // Merchant Dashboard's day picker. Deeper than the mint --success so white
+    // label text clears 4.5:1 on it.
+    select:   'var(--select-green, #12805C)',
 };
 
 // Merchant status → muted tint chip, mirroring STATUS_META on the Attrition
@@ -43,8 +48,12 @@ const STATUS_META = {
 };
 
 const DailyMerchantDashboard = () => {
-    const { currencySymbol, currencyDecimals, tenantVersion } = useAuth();
+    const { currencySymbol, currencyDecimals, tenantVersion, homeCountryCode } = useAuth();
     const formatCurrency = useMemo(() => createFmt(currencySymbol, currencyDecimals).currency, [currencySymbol, currencyDecimals]);
+    /* The weekend is the tenant's, not a fixed Sat+Sun: this grid used to shade
+       Saturday and Sunday for every bank, which is right for the UAE and wrong
+       for Bahrain, Oman and Egypt (Fri+Sat). */
+    const week = useMemo(() => weekRules(homeCountryCode), [homeCountryCode]);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filterOptions, setFilterOptions] = useState({ sids: [], mids: [] });
@@ -195,13 +204,16 @@ const DailyMerchantDashboard = () => {
     const isSelected = (sel) => filters.year === sel.year && filters.month === sel.month;
     const selectMonth = (sel) => setFilters(prev => ({ ...prev, year: sel.year, month: sel.month }));
 
+    /* A chosen month is GREEN, matching the day picker on the Executive Daily
+       Merchant Dashboard — selection reads as its own signal rather than more
+       of the page's brand blue. Deep enough that the white label clears 4.5:1. */
     const quickBtnSx = (active) => ({
         height: 40, px: 2, borderRadius: 2, textTransform: 'none', fontWeight: 700,
         fontSize: '0.8rem', boxShadow: 'none',
-        bgcolor: active ? T.brand : T.card,
+        bgcolor: active ? T.select : T.card,
         color: active ? '#fff' : T.textSec,
-        border: '1px solid', borderColor: active ? T.brand : T.border,
-        '&:hover': { bgcolor: active ? 'var(--brand-dark, #1d4ed8)' : T.subtle },
+        border: '1px solid', borderColor: active ? T.select : T.border,
+        '&:hover': { bgcolor: active ? 'var(--select-green-dark, #0C6547)' : T.subtle },
     });
 
     const extraControls = (
@@ -254,18 +266,22 @@ const DailyMerchantDashboard = () => {
     // the tooltip; the peak day gets a thin accent ring.
     const dayColumns = Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
         const dow = new Date(filters.year, filters.month - 1, day).getDay();
-        const isWeekend = dow === 0 || dow === 6;
+        const isWeekend = week.weekendDays.includes(dow);
         const isToday = todayDay === day;
         return {
             field: `day_${day}`, headerName: `${day}`, width: 34, align: 'center', headerAlign: 'center',
             headerClassName: isToday ? 'daycol-today' : (isWeekend ? 'daycol-weekend' : undefined),
+            // The whole column carries the weekend ground, not just its header —
+            // the rhythm of the trading week should be readable down the grid.
+            cellClassName: isWeekend && !isToday ? 'daycol-weekend' : undefined,
             sortable: false,
             renderCell: (params) => {
                 const val = Number((params.row.dailyVolumes || {})[day]) || 0;
                 const rowMax = params.row.dailyMax || 0;
                 const isPeak = val > 0 && rowMax > 0 && val === rowMax;
                 const intensity = rowMax > 0 ? Math.max(val / rowMax, 0.14) : 0;
-                const dateLabel = new Date(filters.year, filters.month - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
+                const dateLabel = new Date(filters.year, filters.month - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })
+                    + (isWeekend ? ' · weekend' : '');
                 const pctOfPeak = rowMax > 0 ? Math.round((val / rowMax) * 100) : 0;
                 return (
                     <Tooltip arrow title={val > 0 ? `${dateLabel}: ${formatCurrency(val)} (${pctOfPeak}% of month peak)` : `${dateLabel}: no volume`}>
@@ -387,7 +403,14 @@ const DailyMerchantDashboard = () => {
 
             <Paper sx={{
                 ...premiumTableWrapper,
-                '& .daycol-weekend': { bgcolor: T.subtle },
+                // A translucent grey, not --bg-subtle: in the light palette
+                // subtle (#EFF4FB) and card (#EAF1FA) are five units apart and
+                // the weekend column was invisible. This darkens in light mode
+                // and lightens in dark, and !important is needed to beat MUI's
+                // own column-header background.
+                '& .daycol-weekend': {
+                    bgcolor: 'color-mix(in srgb, var(--chart-alt, #64748B) 15%, transparent) !important',
+                },
                 '& .daycol-today': { bgcolor: 'var(--brand-light, #eff6ff)', borderBottom: `2px solid ${T.brand} !important` },
             }}>
                 <DataGrid
@@ -408,6 +431,16 @@ const DailyMerchantDashboard = () => {
                             ))}
                         </Box>
                         <Typography variant="caption" color={T.textMut} fontWeight={600}>Row peak (per merchant)</Typography>
+                        {/* Which columns are shaded, and why — the answer differs
+                            by bank, so the grid should say it rather than assume
+                            the reader knows their own country's week. */}
+                        <Box sx={{ width: 1, borderLeft: `1px solid ${T.borderLt}`, height: 16, mx: 1 }} />
+                        <Box sx={{ width: 16, height: 12, borderRadius: '2px',
+                            bgcolor: 'color-mix(in srgb, var(--chart-alt, #64748B) 15%, transparent)',
+                            border: `1px solid ${T.borderLt}` }} />
+                        <Typography variant="caption" color={T.textMut} fontWeight={600}>
+                            Weekend ({week.longLabel})
+                        </Typography>
                     </Stack>
                 )}
             </Paper>
