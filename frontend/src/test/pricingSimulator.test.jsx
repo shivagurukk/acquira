@@ -144,6 +144,45 @@ describe('Pricing Simulator — pricing desk layout', () => {
     expect(apiPost).not.toHaveBeenCalled();
   });
 
+  it('opens on the 90D preset anchored to the data bounds, not today', async () => {
+    wireApis();
+    render(<PricingSimulator />);
+    await waitFor(() => expect(screen.getByText(/margin by segment/i)).toBeTruthy());
+
+    // bounds.latest = 2026-08-26 → 90 days ending there
+    const matrixCall = apiPost.mock.calls.find(([url]) => url.includes('/segment-matrix'));
+    expect(matrixCall[1].endDate).toBe('2026-08-26');
+    expect(matrixCall[1].startDate).toBe('2026-05-29');
+
+    // preset row present, custom dates hidden until Custom is picked
+    expect(screen.getByRole('button', { name: '90D' })).toBeTruthy();
+    expect(document.querySelector('input[type="date"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    expect(document.querySelectorAll('input[type="date"]').length).toBe(2);
+  });
+
+  it('marks the scope dirty on edits and shows the export button once a delta is set', async () => {
+    wireApis();
+    render(<PricingSimulator />);
+    await waitFor(() => expect(screen.getByText(/margin by segment/i)).toBeTruthy());
+
+    // untouched scope → quiet Refresh; edited scope → Apply changes + warning
+    expect(screen.getByRole('button', { name: /refresh/i })).toBeTruthy();
+    fireEvent.change(document.querySelector('select'), { target: { value: 'mid' } });
+    expect(await screen.findByRole('button', { name: /apply changes/i })).toBeTruthy();
+    expect(screen.getByText(/scope edited/i)).toBeTruthy();
+    // cohort value picker offers a search box
+    expect(screen.getByPlaceholderText(/search merchant/i)).toBeTruthy();
+
+    // set a repricing delta → plan bar with churn assumption + CSV export
+    fireEvent.click(screen.getByTitle('VISA · CREDIT · Local'));
+    const slider = (await screen.findByText(/raise msf by/i)).closest('div').parentElement.querySelector('input[type="range"]');
+    fireEvent.change(slider, { target: { value: '20' } });
+    expect(await screen.findByText(/repricing plan · 1 segment/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /export plan/i })).toBeTruthy();
+    expect(screen.getAllByText(/churn assumption/i).length).toBeGreaterThan(0);
+  });
+
   it('switches to the blended what-if workspace', async () => {
     wireApis();
     render(<PricingSimulator />);

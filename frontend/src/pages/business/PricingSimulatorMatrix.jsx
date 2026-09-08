@@ -62,6 +62,30 @@ function daysBetween(a, b) {
   return d > 0 ? d : 30;
 }
 
+/** Download the current repricing plan as CSV — one row per adjusted segment. */
+function exportPlan(model, annualNote) {
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [
+    `Repricing plan,${new Date().toISOString().slice(0, 10)},${annualNote} figures`,
+    'Scheme,Card type,Destination,Volume,Current MSF bps,Raise by bps,Churn haircut %,Uplift',
+  ];
+  model.adjusted.forEach((a) => lines.push([
+    a.seg.scheme, a.seg.cardType, DEST_LABEL[a.seg.destination] || a.seg.destination,
+    num(a.seg.volume).toFixed(2), a.seg.msfBps == null ? '' : num(a.seg.msfBps).toFixed(1),
+    a.bpsUp, (a.churnFrac * 100).toFixed(1), a.uplift.toFixed(2),
+  ].map(esc).join(',')));
+  lines.push(['TOTAL', '', '', '', '', '', '', model.totalUplift.toFixed(2)].map(esc).join(','));
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const el = document.createElement('a');
+  el.href = url; el.download = `repricing-plan_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(el); el.click();
+  document.body.removeChild(el); URL.revokeObjectURL(url);
+}
+
 function Slider({ label, value, min, max, step, onChange, suffix, hint, accent }) {
   return (
     <div style={{ marginBottom: 14 }}>
@@ -126,7 +150,7 @@ function orderCardTypes(types) {
   return [...known, ...other, ...tail];
 }
 
-export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annualized }) {
+export default function SegmentMatrix({ reloadKey, buildDto, elasticity, setElasticity, annualized }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -134,11 +158,11 @@ export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annuali
   const [deltas, setDeltas] = useState({});              // {segKey: bps}
   const [drill, setDrill] = useState(null);              // {key, rows, p25, median, loading}
   const [merchant, setMerchant] = useState(null);        // {mid, name} → opens the MID-wise panel
+  const panelRef = React.useRef(null);                   // selected-segment panel, for scroll-into-view
 
-  useEffect(() => {
-    if (!reloadKey) return;
-    let alive = true;
+  const load = React.useCallback(() => {
     setLoading(true); setError(null); setSelected(null); setDrill(null); setDeltas({}); setMerchant(null);
+    let alive = true;
     api.post('/business/pricing-simulator/segment-matrix', buildDto())
       .then((res) => { if (alive) setData(res.data || null); })
       .catch((e) => {
@@ -150,6 +174,19 @@ export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annuali
     return () => { alive = false; };
     // eslint-disable-next-line
   }, [reloadKey]);
+
+  useEffect(() => {
+    if (!reloadKey) return undefined;
+    return load();
+  }, [reloadKey, load]);
+
+  // Selecting a cell opens a panel BELOW the table — bring it on screen so the
+  // click visibly does something even on a tall matrix.
+  useEffect(() => {
+    if (selected && panelRef.current && typeof panelRef.current.scrollIntoView === 'function') {
+      panelRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [selected]);
 
   const model = useMemo(() => {
     if (!data || !Array.isArray(data.segments)) return null;
@@ -215,12 +252,22 @@ export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annuali
   return (
     <div style={{ color: T.text }}>
       {loading && (
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: T.rlg, padding: 32, textAlign: 'center', color: T.muted, fontSize: 13 }}>
-          Computing segment margins…
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: T.rlg, padding: 20 }}>
+          <style>{'@keyframes psm-sh{0%,100%{opacity:1}50%{opacity:.45}}'}</style>
+          <div style={{ fontSize: 13, color: T.muted, marginBottom: 14 }}>Computing segment margins…</div>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} style={{
+              height: 46, borderRadius: T.rmd, background: T.wash, marginBottom: 8,
+              animation: 'psm-sh 1.3s ease infinite', animationDelay: `${i * 120}ms`,
+            }} />
+          ))}
         </div>
       )}
       {error && !loading && (
-        <div style={{ background: 'rgba(179,56,44,0.08)', border: `1px solid ${T.neg}`, color: T.neg, borderRadius: T.rmd, padding: 12, fontSize: 13 }}>{error}</div>
+        <div style={{ background: 'rgba(179,56,44,0.08)', border: `1px solid ${T.neg}`, color: T.neg, borderRadius: T.rmd, padding: 12, fontSize: 13, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ flex: 1, minWidth: 200 }}>{error}</span>
+          <button onClick={load} style={{ ...ghostBtn, borderColor: T.neg, color: T.neg }}>Retry</button>
+        </div>
       )}
 
       {model && !loading && model.segs.length === 0 && (
@@ -246,7 +293,12 @@ export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annuali
           {/* ── the matrix ────────────────────────────────────────────── */}
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: T.rlg, boxShadow: T.shadow, padding: '16px 16px 14px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>Margin by segment</div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Margin by segment</div>
+                <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>
+                  Select a cell to inspect it and build a repricing plan.
+                </div>
+              </div>
               <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', fontSize: 11, color: T.muted }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                   <span style={{ width: 14, height: 4, borderRadius: 2, background: T.navy, display: 'inline-block' }} /> cost
@@ -361,7 +413,7 @@ export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annuali
               const churnFrac = clamp((elasticity / 100) * (bpsUp / 10), 0, 0.30);
               const uplift = (num(s.volume) * bpsUp / 10000) * (1 - churnFrac) * model.annualFactor;
               return (
-                <div style={{ marginTop: 14, borderTop: `1px solid ${T.border}`, paddingTop: 14, display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) minmax(0, 1.6fr)', gap: 18, alignItems: 'start' }}>
+                <div ref={panelRef} style={{ marginTop: 14, borderTop: `1px solid ${T.border}`, paddingTop: 14, display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) minmax(0, 1.6fr)', gap: 18, alignItems: 'start' }}>
                   <div>
                     <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: T.brand, marginBottom: 3 }}>Selected segment</div>
                     <div style={{ fontSize: 14, fontWeight: 700 }}>
@@ -468,12 +520,13 @@ export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annuali
               />
             )}
 
-            {/* uplift summary across all adjusted segments */}
+            {/* repricing plan — every adjusted segment, its uplift, the churn
+                assumption that haircuts it, and a CSV to take to the pricing desk */}
             {model.adjusted.length > 0 && (
               <div style={{ marginTop: 14, borderTop: `1px solid ${T.border}`, paddingTop: 14, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                 <div>
                   <div style={{ fontSize: 10.5, color: T.muted, textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 700, marginBottom: 4 }}>
-                    Total segment uplift · {annualNote}
+                    Repricing plan · {model.adjusted.length} segment{model.adjusted.length > 1 ? 's' : ''} · {annualNote}
                   </div>
                   <div style={{ fontSize: 22, fontWeight: 700, fontFamily: T.mono, color: model.totalUplift >= 0 ? T.pos : T.neg }}>
                     {fmtSigned(model.totalUplift)}
@@ -485,7 +538,22 @@ export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annuali
                       {a.seg.scheme} · {a.seg.cardType.toLowerCase()} · {DEST_LABEL[a.seg.destination]} +{a.bpsUp}bps → {fmtSigned(a.uplift)}
                     </div>
                   ))}
+                  {model.adjusted.length > 4 && <div>… {model.adjusted.length - 4} more in the export</div>}
                 </div>
+                {typeof setElasticity === 'function' && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, whiteSpace: 'nowrap' }}>
+                    Churn assumption
+                    <input
+                      type="number" min={0} max={8} step={0.1} value={elasticity}
+                      onChange={(e) => setElasticity(clamp(num(e.target.value), 0, 8))}
+                      style={{ width: 52, padding: '3px 6px', borderRadius: 6, border: `1px solid ${T.border}`, background: T.card, color: T.text, fontSize: 12, fontFamily: T.mono, textAlign: 'right' }}
+                    />
+                    % / +10bps
+                  </label>
+                )}
+                <button onClick={() => exportPlan(model, annualNote)} style={{ ...ghostBtn, borderColor: T.brand, color: T.brand }}>
+                  Export plan (CSV)
+                </button>
                 <button onClick={() => setDeltas({})} style={ghostBtn}>Clear all</button>
               </div>
             )}
@@ -493,7 +561,7 @@ export default function SegmentMatrix({ reloadKey, buildDto, elasticity, annuali
             <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.6, marginTop: 14, borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
               Realized rates from priced summaries — interchange, scheme and ecom fees as the fee engine computed them, so caps and
               tier blends are already reflected. Untyped volume is shown separately and cannot be repriced until it is classified.
-              Uplift applies the churn-elasticity assumption from the Blended what-if tab.
+              Uplift is haircut by the churn assumption shown in the repricing plan ({num(elasticity).toFixed(1)}% of volume per +10 bps).
             </div>
           </div>
         </>
@@ -618,7 +686,7 @@ function MerchantPanel({ mid, name, buildDto, benchmarks, elasticity, annualFact
                             value={bpsUp || ''}
                             placeholder="0"
                             onChange={(e) => setDeltas((p) => ({ ...p, [key]: clamp(num(e.target.value), 0, 200) }))}
-                            style={{ width: 56, padding: '3px 6px', borderRadius: 6, border: `1px solid ${bpsUp ? T.pos : T.border}`, background: '#fff', color: T.text, fontSize: 12, fontFamily: T.mono, textAlign: 'right' }}
+                            style={{ width: 56, padding: '3px 6px', borderRadius: 6, border: `1px solid ${bpsUp ? T.pos : T.border}`, background: T.card, color: T.text, fontSize: 12, fontFamily: T.mono, textAlign: 'right' }}
                           /> <span style={{ fontSize: 10, color: T.muted }}>bps</span>
                         </span>
                       )}

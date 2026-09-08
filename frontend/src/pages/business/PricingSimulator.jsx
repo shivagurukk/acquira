@@ -113,8 +113,13 @@ export default function PricingSimulator() {
   const [cohortDim, setCohortDim] = useState('ALL');
   const [cohortOptions, setCohortOptions] = useState([]);
   const [cohortValues, setCohortValues] = useState([]);
+  const [valueQuery, setValueQuery] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  // scope edited since the last Apply — drives the Apply button's "pending" state
+  const [dirty, setDirty] = useState(false);
+  // which window preset is lit (null = custom dates / untouched)
+  const [preset, setPreset] = useState('90D');
 
   // fetched base aggregate
   const [base, setBase] = useState(null);
@@ -133,6 +138,7 @@ export default function PricingSimulator() {
   // ── load distinct cohort values when dimension changes ──
   useEffect(() => {
     setCohortValues([]);
+    setValueQuery('');
     const def = COHORTS[cohortDim];
     if (!def || !def.distinct) { setCohortOptions([]); return; }
     let alive = true;
@@ -143,12 +149,16 @@ export default function PricingSimulator() {
   }, [cohortDim]);
 
   // ── build request payloads for the current cohort/window ──
-  const buildRequests = useCallback(() => {
+  // `overrides` lets a window preset apply itself in one click without waiting
+  // for the date state round-trip.
+  const buildRequests = useCallback((overrides = {}) => {
     const def = COHORTS[cohortDim];
     const filtered = !!(def.dtoKey && cohortValues.length);
+    const s = overrides.startDate !== undefined ? overrides.startDate : startDate;
+    const e = overrides.endDate !== undefined ? overrides.endDate : endDate;
     const dto = {};
-    if (startDate) dto.startDate = startDate;
-    if (endDate) dto.endDate = endDate;
+    if (s) dto.startDate = s;
+    if (e) dto.endDate = e;
     if (filtered) dto[def.dtoKey] = cohortValues;
 
     const filters = {};
@@ -157,10 +167,10 @@ export default function PricingSimulator() {
   }, [cohortDim, cohortValues, startDate, endDate]);
 
   // ── fetch base aggregate (summary grain only) ──
-  const fetchBase = useCallback(async () => {
-    setLoading(true); setError(null);
+  const fetchBase = useCallback(async (overrides = {}) => {
+    setLoading(true); setError(null); setDirty(false);
     try {
-      const { dto, filters, filtered } = buildRequests();
+      const { dto, filters, filtered } = buildRequests(overrides);
 
       // 1) revenue-kpis (cohort) — anchors the window, gives effective MSF rate + DCC block.
       const kpiRes = await api.post('/business/revenue-kpis', dto);
@@ -224,9 +234,15 @@ export default function PricingSimulator() {
     return () => { alive = false; };
   }, []);
 
-  // initial load (once the flag says the tenant calculates)
+  // initial load (once the flag says the tenant calculates) — open on the
+  // 90-day preset anchored to the data's own latest date, so the first paint
+  // always covers real data even when the feed is behind.
   useEffect(() => {
-    if (config?.enabled) { fetchBase(); setMatrixKey((k) => k + 1); }
+    if (config?.enabled) {
+      const r = presetRange('90D');
+      setStartDate(r.startDate); setEndDate(r.endDate);
+      fetchBase(r); setMatrixKey((k) => k + 1);
+    }
     // eslint-disable-next-line
   }, [config?.enabled]);
 
@@ -306,7 +322,44 @@ export default function PricingSimulator() {
     setRawShares(rs); setDccTarget(Math.round(base.dccOptinRatePct)); setMsfDeltaBps(0);
   };
 
-  const toggleValue = (v) => setCohortValues((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
+  const toggleValue = (v) => {
+    setDirty(true);
+    setCohortValues((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
+  };
+
+  // ── window presets, anchored on the LATEST summary date (not "today") so a
+  //    dataset that ends last month still shows data on every preset ──
+  const applyScope = (overrides = {}) => { fetchBase(overrides); setMatrixKey((k) => k + 1); };
+  const anchorEnd = () => {
+    const latest = config?.bounds?.latest;
+    return latest ? String(latest).slice(0, 10) : new Date().toISOString().slice(0, 10);
+  };
+  const WINDOW_PRESETS = ['30D', '90D', '180D', 'YTD'];
+  const presetRange = (p) => {
+    const end = anchorEnd();
+    const e = new Date(end);
+    let s;
+    if (p === 'YTD') s = `${e.getFullYear()}-01-01`;
+    else {
+      const d = new Date(e); d.setDate(d.getDate() - (parseInt(p, 10) - 1));
+      s = d.toISOString().slice(0, 10);
+    }
+    return { startDate: s, endDate: end };
+  };
+  // One click = new result: a preset sets the dates AND applies immediately.
+  const pickPreset = (p) => {
+    const r = presetRange(p);
+    setPreset(p); setStartDate(r.startDate); setEndDate(r.endDate);
+    applyScope(r);
+  };
+
+  // cohort value list: selected values first, then matches of the search box
+  const visibleOptions = useMemo(() => {
+    const q = valueQuery.trim().toLowerCase();
+    const rest = cohortOptions.filter((v) => !cohortValues.includes(v)
+      && (!q || String(v).toLowerCase().includes(q)));
+    return [...cohortValues, ...rest].slice(0, 120);
+  }, [cohortOptions, cohortValues, valueQuery]);
 
   // Tenant has the simulator switched off (Settings → Regional & Data):
   // render the notice and run NO calculations — the backend refuses them too.
@@ -347,38 +400,107 @@ export default function PricingSimulator() {
         </label>
       </div>
 
-      {/* Cohort bar */}
+      {/* Scope bar — cohort · window · Apply. One row, reads left to right. */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: T.rlg, boxShadow: T.shadow, padding: 16, marginBottom: 18 }}>
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <Field label="Cohort">
-            <select value={cohortDim} onChange={(e) => setCohortDim(e.target.value)} style={selStyle}>
+            <select value={cohortDim} onChange={(e) => { setCohortDim(e.target.value); setDirty(true); }} style={selStyle}>
               {Object.entries(COHORTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
           </Field>
-          {cohortDim !== 'ALL' && (
-            <Field label={`${COHORTS[cohortDim].label} values ${cohortValues.length ? `(${cohortValues.length})` : ''}`}>
-              <div style={{ maxHeight: 92, overflowY: 'auto', border: `1px solid ${T.border}`, borderRadius: T.rmd, padding: 6, minWidth: 240, display: 'flex', flexWrap: 'wrap', gap: 6, background: T.bg }}>
-                {cohortOptions.length === 0 && <span style={{ fontSize: 12, color: T.muted }}>No values</span>}
-                {cohortOptions.slice(0, 300).map((v) => {
-                  const on = cohortValues.includes(v);
-                  return (
-                    <button key={v} onClick={() => toggleValue(v)} style={{
-                      fontSize: 12, padding: '3px 8px', borderRadius: 999, cursor: 'pointer',
-                      border: `1px solid ${on ? T.brand : T.border}`,
-                      background: on ? T.brand : T.card, color: on ? '#fff' : T.text,
-                    }}>{String(v)}</button>
-                  );
-                })}
-              </div>
-            </Field>
+
+          <Field label="Window">
+            <div style={{ display: 'inline-flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rmd, padding: 2, gap: 2 }}>
+              {WINDOW_PRESETS.map((p) => (
+                <button key={p} onClick={() => pickPreset(p)} disabled={loading} style={{
+                  border: 'none', cursor: 'pointer', borderRadius: 6, padding: '6px 11px',
+                  fontSize: 12.5, fontWeight: 600, fontFamily: T.mono,
+                  background: preset === p ? T.wash : 'transparent',
+                  color: preset === p ? T.brand : T.muted,
+                }}>{p}</button>
+              ))}
+              <button onClick={() => setPreset(null)} style={{
+                border: 'none', cursor: 'pointer', borderRadius: 6, padding: '6px 11px',
+                fontSize: 12.5, fontWeight: 600,
+                background: preset === null ? T.wash : 'transparent',
+                color: preset === null ? T.brand : T.muted,
+              }}>Custom</button>
+            </div>
+          </Field>
+
+          {preset === null && (
+            <>
+              <Field label="Start">
+                <input type="date" value={startDate}
+                  onChange={(e) => { setStartDate(e.target.value); setDirty(true); }} style={selStyle} />
+              </Field>
+              <Field label="End">
+                <input type="date" value={endDate}
+                  onChange={(e) => { setEndDate(e.target.value); setDirty(true); }} style={selStyle} />
+              </Field>
+            </>
           )}
-          <Field label="Start (optional)"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={selStyle} /></Field>
-          <Field label="End (optional)"><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={selStyle} /></Field>
-          <button onClick={() => { fetchBase(); setMatrixKey((k) => k + 1); }} disabled={loading} style={{
-            padding: '9px 18px', borderRadius: T.rmd, border: 'none', background: T.brand, color: '#fff',
-            fontWeight: 600, fontSize: 13, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1,
-          }}>{loading ? 'Loading…' : 'Apply'}</button>
+
+          <button onClick={() => applyScope()} disabled={loading} style={{
+            padding: '9px 18px', borderRadius: T.rmd, cursor: loading ? 'wait' : 'pointer',
+            border: `1px solid ${T.brand}`, fontWeight: 600, fontSize: 13,
+            background: dirty ? T.brand : 'transparent',
+            color: dirty ? '#fff' : T.brand,
+            opacity: loading ? 0.7 : 1, transition: 'all 120ms ease',
+          }}>{loading ? 'Loading…' : dirty ? 'Apply changes' : 'Refresh'}</button>
+
+          {dirty && !loading && (
+            <span style={{ fontSize: 12, color: T.warn, alignSelf: 'center' }}>
+              Scope edited — figures below still show the previous scope.
+            </span>
+          )}
         </div>
+
+        {/* cohort value picker: search first, wall of chips second */}
+        {cohortDim !== 'ALL' && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+              <input
+                type="search"
+                value={valueQuery}
+                onChange={(e) => setValueQuery(e.target.value)}
+                placeholder={`Search ${COHORTS[cohortDim].label.toLowerCase()}…`}
+                style={{ ...selStyle, minWidth: 240, background: T.bg }}
+              />
+              <span style={{ fontSize: 12, color: cohortValues.length ? T.text : T.muted, fontWeight: 600 }}>
+                {cohortValues.length
+                  ? `${cohortValues.length} selected`
+                  : 'None selected — the whole bank is used until you pick values'}
+              </span>
+              {cohortValues.length > 0 && (
+                <button onClick={() => { setCohortValues([]); setDirty(true); }} style={ghostBtn}>Clear</button>
+              )}
+            </div>
+            <div style={{ maxHeight: 110, overflowY: 'auto', border: `1px solid ${T.border}`, borderRadius: T.rmd, padding: 6, display: 'flex', flexWrap: 'wrap', gap: 6, background: T.bg }}>
+              {visibleOptions.length === 0 && (
+                <span style={{ fontSize: 12, color: T.muted, padding: '3px 4px' }}>
+                  {valueQuery ? 'No matches for this search.' : 'No values in this window.'}
+                </span>
+              )}
+              {visibleOptions.map((v) => {
+                const on = cohortValues.includes(v);
+                return (
+                  <button key={v} onClick={() => toggleValue(v)} style={{
+                    fontSize: 12, padding: '3px 8px', borderRadius: 999, cursor: 'pointer',
+                    border: `1px solid ${on ? T.brand : T.border}`,
+                    background: on ? T.brand : T.card, color: on ? '#fff' : T.text,
+                  }}>{String(v)}</button>
+                );
+              })}
+              {cohortOptions.length > 120 && (
+                <span style={{ fontSize: 11, color: T.muted, alignSelf: 'center', padding: '0 4px' }}>
+                  showing first 120 — type to narrow
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {window.start && (
           <div style={{ fontSize: 12, color: T.muted, marginTop: 10, fontFamily: T.mono }}>
             {window.start} → {window.end} · {window.days} days · {annualized ? 'annualized' : 'window'} figures
@@ -559,6 +681,7 @@ export default function PricingSimulator() {
             reloadKey={matrixKey}
             buildDto={() => buildRequests().dto}
             elasticity={elasticity}
+            setElasticity={setElasticity}
             annualized={annualized}
           />
         </div>
