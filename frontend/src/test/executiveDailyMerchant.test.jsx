@@ -108,8 +108,16 @@ describe('Executive Daily Merchant Dashboard — visual layer', () => {
 
         const ribbon = container.querySelector('.edm-ribbon');
         expect(ribbon).toBeTruthy();
-        // Interchange is 1800 / 2600 of the pool — wide enough for its own label.
-        expect([...ribbon.querySelectorAll('.edm-ribbon-lbl')].map(l => l.textContent)).toContain('69%');
+        // Two segments only (2026-09-08): Expenses = the three pay-away fees,
+        // Revenue = the kept net margin. Both wide enough for their own label.
+        const segs = [...ribbon.querySelectorAll('.edm-ribbon-seg')];
+        expect(segs.length).toBe(2);
+        expect([...ribbon.querySelectorAll('.edm-ribbon-lbl')].map(l => l.textContent))
+            .toEqual(['84%', '16%']);
+        expect(segs[0].getAttribute('title')).toContain('Expenses');
+        // The fees the segment folds together stay on its hover.
+        expect(segs[0].getAttribute('title')).toContain('Interchange Fee');
+        expect(segs[1].getAttribute('title')).toContain('Revenue');
 
         const ranks = [...container.querySelectorAll('.edm-rank')].map(r => r.textContent);
         expect(ranks).toContain('01');

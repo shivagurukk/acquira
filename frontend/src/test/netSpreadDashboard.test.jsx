@@ -96,19 +96,24 @@ describe('Net Spread Dashboard — visual layer', () => {
         expect(tiles.some(t => t.includes('(not added)'))).toBe(true);
     });
 
-    it('extends the ribbon with the ancillary segments', async () => {
+    it('splits the ribbon into expenses and revenue, ancillary folded in', async () => {
         const { container } = render(<NetSpreadDashboard />);
         await waitFor(() => expect(screen.getByText('Alpha Foods')).toBeInTheDocument());
 
         const legend = [...container.querySelectorAll('.edm-panel')]
             .find(p => p.textContent.includes('From MSF to Net Spread'));
         expect(legend).toBeTruthy();
-        expect(legend.textContent).toContain('DCC (Acquirer Share)');
-        expect(legend.textContent).toContain('Rental Income');
-        // Pool = 1800+260+130+410+170+210 = 2980; DCC 170 and rental 210 both
-        // exist, so the ribbon draws six segments.
+        expect(legend.textContent).toContain('Expenses');
+        expect(legend.textContent).toContain('Revenue');
+
+        // Two segments only (2026-09-08): Expenses = 1800+260+130 = 2190,
+        // Revenue = net spread = 410+170+210 = 790. Pool 2980.
         const ribbon = legend.querySelector('.edm-ribbon');
-        expect(ribbon.querySelectorAll('.edm-ribbon-seg').length).toBe(6);
+        const segs = [...ribbon.querySelectorAll('.edm-ribbon-seg')];
+        expect(segs.length).toBe(2);
+        // The ancillary legs the Revenue segment folds together stay on its hover.
+        expect(segs[1].getAttribute('title')).toContain('DCC (Acquirer Share)');
+        expect(segs[1].getAttribute('title')).toContain('Rental Income');
     });
 
     it('states the rescue story in numbers and badges the rescued row', async () => {
@@ -176,9 +181,12 @@ describe('Net Spread Dashboard — visual layer', () => {
         const tiles = [...container.querySelectorAll('.edm-tile')].map(t => t.textContent);
         expect(tiles.some(t => t.includes('+ FX income'))).toBe(true);
 
+        // The ribbon folds FX into the Revenue segment, so its hover — not the
+        // legend — is where FX shows up once the two-segment split landed.
         const legend = [...container.querySelectorAll('.edm-panel')]
             .find(p => p.textContent.includes('From MSF to Net Spread'));
-        expect(legend.textContent).toContain('FX Income');
+        const revenueSeg = legend.querySelectorAll('.edm-ribbon-seg')[1];
+        expect(revenueSeg.getAttribute('title')).toContain('FX Income');
 
         const totalRow = container.querySelector('.edm-total-row');
         expect(totalRow.textContent).toContain('90.00');   // FX total

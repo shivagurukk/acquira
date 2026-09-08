@@ -212,28 +212,39 @@ const Metric = ({
     );
 };
 
-/* ── Spread ribbon: the Daily Merchant fee ribbon EXTENDED. The pool is
-   MSF + DCC + rentals; the pay-away fees step down one ramp, the kept
-   margin breaks to jade, and the two ancillary legs continue in their own
-   green shades — the bar walks left-to-right from cost to Net Spread. ── */
+/* ── Spread ribbon: the Daily Merchant fee ribbon EXTENDED, and like it
+   split TWO ways since 2026-09-08 — Expenses (the pay-away fees) against
+   Revenue (everything kept: net margin + DCC + rentals + FX = Net Spread).
+   The per-component segments were folded away because the bar's job is the
+   one break between money leaving and money kept; the components stay on
+   the hover, in the table and in the export. ── */
 const SpreadRibbon = ({ totals, money, share, compact = false, animKey, fxEnabled = false }) => {
     const icf = num(totals?.icf), sf = num(totals?.sf), pg = num(totals?.pg);
     const nm = num(totals?.nm), dcc = num(totals?.dcc), rental = num(totals?.rental);
     const fxv = fxEnabled ? num(totals?.fx) : 0;
-    const pool = icf + sf + pg + Math.max(nm, 0) + dcc + rental + Math.max(fxv, 0);
+    const expenses = icf + sf + pg;
+    // Revenue is the Net Spread itself, so the ribbon and the Net Spread tile
+    // can never disagree. A negative margin can drag it below zero.
+    const revenue = nm + dcc + rental + fxv;
+    const pool = expenses + Math.max(revenue, 0);
     if (pool <= 0) return null;
+    const expenseDetail = [
+        `${FEE_LABELS.icf} ${money(icf)}`,
+        `${FEE_LABELS.sf} ${money(sf)}`,
+        `${FEE_LABELS.pg} ${money(pg)}`,
+    ].join(' · ');
+    const revenueDetail = [
+        `${FEE_LABELS.nm} ${money(nm)}`,
+        `${FEE_LABELS.dcc} ${money(dcc)}`,
+        `${FEE_LABELS.rental} ${money(rental)}`,
+        ...(fxEnabled ? [`${FEE_LABELS.fx} ${money(fxv)}`] : []),
+    ].join(' · ');
     const segs = [
-        { key: 'icf', label: FEE_LABELS.icf, value: icf, color: 'var(--imp-1)' },
-        { key: 'sf',  label: FEE_LABELS.sf,  value: sf,  color: 'var(--imp-2)' },
-        { key: 'pg',  label: FEE_LABELS.pg,  value: pg,  color: 'var(--imp-3)' },
-        ...(nm >= 0
-            ? [{ key: 'nm', label: FEE_LABELS.nm, value: nm, color: 'var(--mix-margin)' }]
-            : [{ key: 'loss', label: 'Margin Loss', value: Math.abs(nm), color: 'var(--danger)', overflow: true }]),
-        { key: 'dcc',    label: FEE_LABELS.dcc,    value: dcc,    color: 'var(--success, #2E9E6B)' },
-        { key: 'rental', label: FEE_LABELS.rental, value: rental, color: 'var(--cat-5, #4E8D7C)' },
-        ...(fxEnabled
-            ? [{ key: 'fx', label: FEE_LABELS.fx, value: Math.max(fxv, 0), color: 'var(--cat-3, #3D7EA6)' }]
-            : []),
+        { key: 'expenses', label: 'Expenses', value: expenses, color: 'var(--imp-1)', detail: expenseDetail },
+        ...(revenue >= 0
+            ? [{ key: 'revenue', label: 'Revenue', value: revenue, color: 'var(--mix-margin)', detail: revenueDetail }]
+            : [{ key: 'loss', label: 'Spread Loss', value: Math.abs(revenue), color: 'var(--danger)',
+                 overflow: true, detail: revenueDetail }]),
     ];
     const drawn = segs.filter(s => s.value > 0);
 
@@ -244,7 +255,8 @@ const SpreadRibbon = ({ totals, money, share, compact = false, animKey, fxEnable
                     const pct = (s.value / pool) * 100;
                     return (
                         <div key={s.key} className="edm-ribbon-seg"
-                            title={`${s.label} · ${money(s.value)} · ${share(s.value, pool)}`}
+                            title={`${s.label} · ${money(s.value)} · ${share(s.value, pool)}`
+                                + (s.detail ? `\n${s.detail}` : '')}
                             style={{ width: `${pct}%`, background: s.color, opacity: s.overflow ? 0.9 : 1 }}>
                             {!compact && pct >= 11 && (
                                 <span className="edm-ribbon-lbl">{pct.toFixed(0)}%</span>
@@ -1674,7 +1686,7 @@ const NetSpreadDashboard = () => {
                                 }}>
                                     <span className="edm-eyebrow edm-eyebrow-rule">From MSF to Net Spread</span>
                                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                        fee income split into what was paid away and what was kept, then the ancillary legs on top
+                                        expenses paid away against the revenue kept — net margin plus the ancillary legs
                                     </span>
                                 </div>
                                 <SpreadRibbon totals={totals} money={money} share={share}

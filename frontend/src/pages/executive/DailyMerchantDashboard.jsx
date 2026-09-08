@@ -415,28 +415,34 @@ const Metric = ({
     );
 };
 
-/* ── Fee ribbon: MSF decomposed into what is paid away and what is kept.
-   Segments are proportional to the gross fee pool; a loss is shown as a
-   distinct overflow segment rather than a negative width. Segments wide
-   enough to hold it carry their own share label. ── */
+/* ── Fee ribbon: the gross fee pool split TWO ways — what is paid away
+   (Expenses) and what is kept (Revenue). The per-fee segments (interchange,
+   scheme, gateway) were folded into one Expenses block on 2026-09-08: the
+   bar answers "how much of the MSF do we keep?", and three shades of the
+   same answer only diluted it. The individual fees are still available on
+   the Expenses hover and in the table/export. A loss is shown as a distinct
+   overflow segment rather than a negative width. ── */
 const FeeRibbon = ({ totals, money, share, compact = false, animKey }) => {
     const icf = num(totals?.icf), sf = num(totals?.sf), pg = num(totals?.pg), nm = num(totals?.nm);
-    const pool = icf + sf + pg + Math.max(nm, 0);
+    const expenses = icf + sf + pg;
+    const pool = expenses + Math.max(nm, 0);
     if (pool <= 0) return null;
-    // The three paid-away fees step down ONE ramp (imperial 1→3): they are the
-    // same kind of thing — money leaving — so they should read as one block that
-    // shades, not three unrelated hues. Only the kept margin breaks to jade, and
-    // that break is the whole point of the bar.
+    // Expenses keep the head of the imperial ramp (money leaving); Revenue
+    // breaks to jade. That single break is the whole point of the bar.
+    const expenseDetail = [
+        `${FEE_LABELS.icf} ${money(icf)}`,
+        `${FEE_LABELS.sf} ${money(sf)}`,
+        `${FEE_LABELS.pg} ${money(pg)}`,
+    ].join(' · ');
     const segs = [
-        { key: 'icf', label: FEE_LABELS.icf, value: icf, color: 'var(--imp-1)' },
-        { key: 'sf',  label: FEE_LABELS.sf,  value: sf,  color: 'var(--imp-2)' },
-        { key: 'pg',  label: FEE_LABELS.pg,  value: pg,  color: 'var(--imp-3)' },
+        { key: 'expenses', label: 'Expenses', value: expenses, color: 'var(--imp-1)', detail: expenseDetail },
         ...(nm >= 0
-            ? [{ key: 'nm', label: FEE_LABELS.nm, value: nm, color: 'var(--mix-margin)' }]
+            ? [{ key: 'revenue', label: 'Revenue', value: nm, color: 'var(--mix-margin)',
+                 detail: `${FEE_LABELS.nm} kept from MSF` }]
             : [{ key: 'loss', label: 'Loss', value: Math.abs(nm), color: 'var(--danger)', overflow: true }]),
     ];
-    // The bar only draws components that exist; the legend lists all four, so a
-    // zero fee reads as "none charged" instead of a missing part of the stack.
+    // The bar only draws components that exist; the legend lists both, so a
+    // zero side reads as "none" instead of a missing part of the stack.
     const drawn = segs.filter(s => s.value > 0);
 
     return (
@@ -446,7 +452,8 @@ const FeeRibbon = ({ totals, money, share, compact = false, animKey }) => {
                     const pct = (s.value / pool) * 100;
                     return (
                         <div key={s.key} className="edm-ribbon-seg"
-                            title={`${s.label} · ${money(s.value)} · ${share(s.value, pool)}`}
+                            title={`${s.label} · ${money(s.value)} · ${share(s.value, pool)}`
+                                + (s.detail ? `\n${s.detail}` : '')}
                             style={{ width: `${pct}%`, background: s.color, opacity: s.overflow ? 0.9 : 1 }}>
                             {!compact && pct >= 11 && (
                                 <span className="edm-ribbon-lbl">{pct.toFixed(0)}%</span>
