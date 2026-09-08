@@ -208,6 +208,11 @@ const ExecutiveDashboard = () => {
   const mtdRevenue = n(mtd.totalRevenue);
   const mtdMargin = n(mtd.totalVolume) > 0 ? (mtdRevenue / n(mtd.totalVolume)) * 100 : 0;
   const mtdTxns = n(mtd.totalTxns);
+  // ECOM FX income — backend only sends it for tenants with netspread.fx_enabled,
+  // so the tiles appear (and the strip widens to 7) only where FX is real revenue.
+  const fxEnabled = data?.fxEnabled === true;
+  const fxToday = n(daily.fxIncome);
+  const fxMtd = n(mtd.fxIncome);
   const mtdVolLastYear = n(data?.mtdVolumeLastYear);
   const yoyPct = mtdVolLastYear > 0 ? ((n(mtd.totalVolume) - mtdVolLastYear) / mtdVolLastYear) * 100 : null;
   const dormantMerchants = n(data?.dormantMerchants);
@@ -221,6 +226,9 @@ const ExecutiveDashboard = () => {
         ["Today's Revenue", n(daily.totalRevenue)],
         ['MTD Volume', n(mtd.totalVolume)],
         ['MTD Net Margin', mtdRevenue],
+        // FX rows only for tenants that have it — an all-zero column in the
+        // export would read as "we made no FX income", not "not applicable".
+        ...(fxEnabled ? [["Today's FX Income", fxToday], ['MTD FX Income', fxMtd]] : []),
         ['MTD Transactions', mtdTxns],
         // Money → tenant precision (3dp for BHD); the % rows below stay at 2dp.
         ['MTD Avg Ticket', avgTicket.toFixed(resolveDecimals(currencyDecimals, currencyCode))],
@@ -295,8 +303,12 @@ const ExecutiveDashboard = () => {
 
       {/* Secondary metrics — one quiet strip, hairline-divided */}
       <div className="ex-card" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 4, marginBottom: 16, overflow: 'hidden' }}>
-        <div className="ex-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
+        <div className="ex-strip" style={{ display: 'grid', gridTemplateColumns: `repeat(${fxEnabled ? 7 : 6}, 1fr)` }}>
           <StatCell label="MTD Net Margin" value={fmtMoney(mtdRevenue, true)} sub={`${mtdMargin.toFixed(1)}% margin`} />
+          {fxEnabled && (
+            <StatCell label="MTD FX Income" value={fmtMoney(fxMtd, true)}
+              sub={`${fmtMoney(fxToday, true)} today`} />
+          )}
           <StatCell label="MTD Transactions" value={fmtNum(mtdTxns, true)} sub="this month" countTo={mtdTxns} integer />
           <StatCell label="Avg Ticket" value={fmtMoney(avgTicket)} sub="per transaction" />
           <StatCell label="YoY Volume"
