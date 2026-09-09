@@ -307,6 +307,10 @@ const AttritionReport = () => {
     useEffect(() => {
         setChannel('ALL');
         channelRef.current = 'ALL';
+        // Force the initial-load skeleton back on and drop the old tenant's rows,
+        // so the switch shows a loader instead of the previous tenant's report
+        // until the new bounds resolve and the report re-runs.
+        setInitialLoaded(false); setData([]); setLoading(true);
     }, [tenantVersion]);
 
     // Toggle: commit state + ref together, then re-run the report on the

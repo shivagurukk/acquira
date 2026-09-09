@@ -945,6 +945,11 @@ const DailyMerchantDashboard = () => {
         setPage(0); setMonth(''); setSelectedDates([]); setDetailRow(null);
         setChannel('ALL');        // channel scope never carries across tenants
         setBootstrapped(false);   // wait for the new tenant's calendar
+        // Drop the previous tenant's rows and force the skeleton until the new
+        // tenant's data lands — otherwise the page flashes the old tenant's
+        // numbers (firstLoad needs loading=true AND data=null across the gap
+        // while we re-bootstrap the calendar, since load() waits on bootstrapped).
+        setData(null); setLoading(true);
     }, [tenantVersion]);
 
     /* Drilldown: pull the merchant's scheme / card / destination split. */

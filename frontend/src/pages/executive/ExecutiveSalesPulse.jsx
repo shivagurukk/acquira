@@ -107,8 +107,10 @@ export default function ExecutiveSalesPulse() {
 
   useEffect(() => { fetchPulse(); }, [fetchPulse, tenantVersion]);
 
-  // A channel selection belongs to the tenant it was made on.
-  useEffect(() => { setChannel('ALL'); }, [tenantVersion]);
+  // A channel selection belongs to the tenant it was made on. Clear the old
+  // tenant's data too so the skeleton (loading && !data) shows on switch instead
+  // of flashing the previous tenant's pulse.
+  useEffect(() => { setChannel('ALL'); setData(null); setLoading(true); }, [tenantVersion]);
 
   // Filter options. Failures here are non-fatal: the page still works with the
   // filters empty, so a broken lookup must not take the whole screen down.

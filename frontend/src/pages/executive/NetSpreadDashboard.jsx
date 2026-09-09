@@ -646,6 +646,10 @@ const NetSpreadDashboard = () => {
         setPage(0); setMonth(''); setSelectedDates([]); setDetailRow(null);
         setSearch(''); setSearchDraft(''); setLossOnly(false); setChannel('ALL');
         setBootstrapped(false);   // wait for the new tenant's calendar
+        // Drop the previous tenant's rows and force the skeleton until the new
+        // tenant's data lands — otherwise the page flashes the old tenant's
+        // numbers across the re-bootstrap gap (load() waits on bootstrapped).
+        setData(null); setLoading(true);
     }, [tenantVersion]);
 
     const toggleDate = (iso) => {
