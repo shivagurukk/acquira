@@ -1049,7 +1049,7 @@ const Dashboard = () => {
 
                     {/* ── Breakdown table ── */}
                     <div className="dx-card" style={{ overflow: 'hidden' }}>
-                        <div style={{ overflowX: 'auto' }}>
+                        <div className="acq-scroll" style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>

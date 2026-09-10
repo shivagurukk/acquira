@@ -593,7 +593,7 @@ const CeoVolumeRevenue = ({
                     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)',
                         borderRadius: 14, overflow: 'hidden',
                         boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))' }}>
-                        <div style={{ overflowX: 'auto', maxHeight: '68vh', overflowY: 'auto' }}>
+                        <div className="acq-scroll" style={{ overflowX: 'auto', maxHeight: '68vh', overflowY: 'auto' }}>
                             <table className="cvr-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid var(--border)' }}>

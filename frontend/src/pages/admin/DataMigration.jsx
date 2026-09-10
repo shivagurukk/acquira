@@ -556,8 +556,8 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
   const [reprice, setReprice] = useState(false);
 
   // Summaries are rebuilt a whole month at a time (monthly rollups have to be
-  // re-derived from every day in the month), so a picked date widens to the
-  // month that contains it. The label below says so explicitly.
+  // re-derived from every day in the month). The month inputs already yield
+  // YYYY-MM; slicing keeps this safe for any stray day-level value.
   const monthOf = (d) => (d ? d.slice(0, 7) : '');
 
   const rangeLabel = (dates.start || dates.end)
@@ -589,9 +589,9 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
       <Alert tone="info" title="How it works">
         Recalculates every summary table (<code>sum_daily_*</code>, <code>sum_monthly_*</code>) and
         the dashboard metrics directly from <code>fact_transaction</code> for the current tenant,
-        month by month. Pick the start and end dates you want covered — because the monthly
-        rollups are re-derived from every day in a month, the rebuild always runs over the whole
-        months containing those dates. Nothing is ingested and no transactions are changed — use this after
+        month by month. Pick the start and end month you want covered — the rebuild loops over
+        every month in that range, one at a time. Leave a bound blank to run to the first or last
+        transaction. Nothing is ingested and no transactions are changed — use this after
         correcting transaction data directly in the database, so every dashboard replicates the
         change end to end without re-uploading files.
       </Alert>
@@ -607,19 +607,19 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
       >
         <Stack gap="sm">
           <FormGrid cols={4}>
-            <FormField label="Start date" hint="Leave blank to start from the first transaction.">
+            <FormField label="Start month" hint="Leave blank to start from the first transaction.">
               <Input
-                type="date"
+                type="month"
                 value={dates.start}
-                max={new Date().toISOString().slice(0, 10)}
+                max={new Date().toISOString().slice(0, 7)}
                 onChange={e => { const v = e.target.value; setDates(d => ({ ...d, start: v })); setArmed(false); }}
               />
             </FormField>
-            <FormField label="End date" hint="Leave blank to end at the last transaction.">
+            <FormField label="End month" hint="Leave blank to end at the last transaction.">
               <Input
-                type="date"
+                type="month"
                 value={dates.end}
-                max={new Date().toISOString().slice(0, 10)}
+                max={new Date().toISOString().slice(0, 7)}
                 onChange={e => { const v = e.target.value; setDates(d => ({ ...d, end: v })); setArmed(false); }}
               />
             </FormField>
@@ -627,7 +627,7 @@ const RebuildSummariesPanel = ({ activeTenantId, progress, onRefresh, refreshing
 
           {(dates.start || dates.end) && (
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Rebuilds whole months: <strong>{rangeLabel}</strong>
+              Rebuilds every month, one at a time: <strong>{rangeLabel}</strong>
             </span>
           )}
 

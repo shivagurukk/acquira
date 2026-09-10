@@ -360,6 +360,22 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
+/* Data-table scroll boxes need a bar you can actually SEE and grab — the 4px
+   overlay hairline above fades out on Windows and reads as "stuck" in a big
+   table. Opt a scroll container in with class="acq-scroll" (same 12px treatment
+   the executive ledger grids already use). Class specificity beats the bare
+   ::-webkit-scrollbar rules above, so only the tables that ask for it change. */
+.acq-scroll { scrollbar-gutter: stable; scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 34%, transparent) transparent; }
+.acq-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+.acq-scroll::-webkit-scrollbar-track { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.acq-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 30%, transparent);
+  border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+.acq-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 50%, transparent); background-clip: content-box; }
+.acq-scroll::-webkit-scrollbar-corner { background: transparent; }
+
 /* ══════════════════════════════════════════════════════════════
    PAGE TRANSITIONS — opacity only, ≤150ms
    ══════════════════════════════════════════════════════════════ */
