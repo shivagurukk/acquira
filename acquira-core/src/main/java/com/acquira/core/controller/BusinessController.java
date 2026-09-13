@@ -54,6 +54,30 @@ public class BusinessController {
         }
 
         /**
+         * MIDs hidden from the Loss-Making Merchants list only — tenant_setting
+         * 'lossmaking.excluded_mids', comma-separated (e.g. the bank's own
+         * internal/test merchants that run at a loss by design). Volume &amp;
+         * Revenue and every other screen still show them. Sorted + distinct so
+         * the cache-key suffix is stable regardless of how the list was typed.
+         */
+        private List<String> lossExcludedMids(Long tenantId) {
+                List<String> v = jdbcTemplate.queryForList(
+                                "SELECT setting_value FROM tenant_setting WHERE tenant_id = ? AND setting_key = 'lossmaking.excluded_mids'",
+                                String.class, tenantId);
+                if (v.isEmpty() || v.get(0) == null) return List.of();
+                return java.util.Arrays.stream(v.get(0).split(","))
+                                .map(String::trim).filter(s -> !s.isEmpty())
+                                .distinct().sorted().toList();
+        }
+
+        /** Cache-key suffix so editing the exclusion list takes effect immediately. */
+        private String lossExclKey(Long tenantId, boolean lossOnly) {
+                if (!lossOnly) return "";
+                List<String> ex = lossExcludedMids(tenantId);
+                return ex.isEmpty() ? "" : ":ex" + String.join(",", ex);
+        }
+
+        /**
          * Warm the executive first-load views this controller serves:
          * the Executive Dashboard summary, and the Volume & Revenue /
          * Loss-Making Merchants default pages. Keys mirror the endpoints'
@@ -91,7 +115,8 @@ public class BusinessController {
                         boolean fx = fxEnabled(tenantId);
                         reportCache.get(
                                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                                "ceoVolRev:" + tenantId + ":true:MTD:0:50:net:asc:ch" + chAll + ":fx" + fx,
+                                "ceoVolRev:" + tenantId + ":true:MTD:0:50:net:asc:ch" + chAll + ":fx" + fx
+                                                + lossExclKey(tenantId, true),
                                 () -> buildCeoVolumeRevenue(tenantId, "MTD", 0, 50,
                                                 "net", "asc", null, true, null, false, chAll, fx));
                 });
@@ -554,7 +579,7 @@ public class BusinessController {
                 String dirKey = "asc".equalsIgnoreCase(dir) ? "asc" : "desc";
                 String key = "ceoVolRev:" + tenantId + ":" + lossOnly + ":" + periodKey
                                 + ":" + page + ":" + size + ":" + sortKey + ":" + dirKey
-                                + ":ch" + ch + ":fx" + fx;
+                                + ":ch" + ch + ":fx" + fx + lossExclKey(tenantId, lossOnly);
                 return ResponseEntity.ok(reportCache.get(
                                 com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
                                 () -> buildCeoVolumeRevenue(tenantId, mode, page, size, sort, dir,
@@ -724,6 +749,11 @@ public class BusinessController {
                 // negative (a loss). Applied as HAVING on the grouped aggregate so
                 // it flows identically into the page, count, and totals queries.
                 String havingLoss = lossOnly ? "HAVING " + revExpr + " < 0 " : "";
+                // Tenant-configured MIDs never listed as loss-makers (and so
+                // left out of the page's TOTAL row too). WHERE, not HAVING:
+                // the rows are dropped before aggregation.
+                final List<String> excludedMids = lossOnly ? lossExcludedMids(tenantId) : List.of();
+                final boolean hasExcl = !excludedMids.isEmpty();
                 // lossOnly rolls up to MERCHANT level (MID only), not MID x SID. A
                 // merchant can be net-negative overall while individual stores are
                 // fine (or vice versa) — the loss list must reflect the merchant's
@@ -845,6 +875,7 @@ public class BusinessController {
                                 ancJoin +
                                 "WHERE t.tenant_id = :tid AND t.business_date BETWEEN :s AND :e " +
                                 (chScoped && !lossCh ? "AND " + terminalChannelIs("t", "dt", ch) : "") +
+                                (hasExcl ? "AND m.mid NOT IN (:exMids) " : "") +
                                 (hasSearch
                                                 ? (lossOnly
                                                                 ? "AND (m.name ILIKE :q ESCAPE '\\' OR m.mid ILIKE :q ESCAPE '\\') "
@@ -867,6 +898,7 @@ public class BusinessController {
                 rq.setParameter("s", from);
                 rq.setParameter("e", to);
                 if (hasSearch) rq.setParameter("q", "%" + searchTerm + "%");
+                if (hasExcl) rq.setParameter("exMids", excludedMids);
                 if (!export) {
                         rq.setParameter("lim", size);
                         rq.setParameter("off", (long) page * size);
@@ -946,6 +978,7 @@ public class BusinessController {
                 tq.setParameter("s", from);
                 tq.setParameter("e", to);
                 if (hasSearch) tq.setParameter("q", "%" + searchTerm + "%");
+                if (hasExcl) tq.setParameter("exMids", excludedMids);
                 Object[] meta = (Object[]) tq.getSingleResult();
                 long totalRows = ((Number) meta[0]).longValue();
                 // Shift by one: index 0 is the row count, 1..7 are the totals.
