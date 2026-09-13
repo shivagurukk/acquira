@@ -416,8 +416,10 @@ const Dashboard = () => {
     }, [channel]);
 
     useEffect(() => { load(); }, [load, tenantVersion]);
-    // A POS/ECOM scope must never silently carry over to another bank.
-    useEffect(() => { setChannel('ALL'); }, [tenantVersion]);
+    // A POS/ECOM scope must never silently carry over to another bank, and
+    // neither must the previous bank's figures — drop them so the skeleton
+    // shows, not stale numbers.
+    useEffect(() => { setChannel('ALL'); setData(null); }, [tenantVersion]);
     useEffect(() => { setRange({ from: 0, to: -1 }); }, [mode, data]);
 
     /* ECOM FX income (tenant flag netspread.fx_enabled) — when off, the FX
@@ -614,7 +616,12 @@ const Dashboard = () => {
         URL.revokeObjectURL(a.href);
     }, [viewTotals, viewData, derived, mode, modeLabel, period, data, currencySymbol, currencyCode, currencyDecimals, isFiltered, channel, fxEnabled]);
 
-    if (loading) return <SkeletonLoader type="dashboard" />;
+    // Skeleton only when there is nothing to show yet (first load / tenant
+    // switch). A channel or refresh reload keeps the current figures on
+    // screen, dimmed, instead of blanking the whole page — the POS/ECOM
+    // toggle used to feel like a full page reload.
+    if (loading && !data) return <SkeletonLoader type="dashboard" />;
+    const refreshing = loading && !!data;
 
     if (error) return (
         <div style={{ padding: 32 }}>
@@ -640,9 +647,12 @@ const Dashboard = () => {
         { label: 'Scheme Fee', ccy: true },
         { label: 'PG Fee', ccy: true },
         { label: 'Net Margin', ccy: true },
-        // DCC + rental folded into one column (both are zero on most weeks);
-        // the cell's hover carries the split. Net Spread stays last and bold.
-        { label: 'Ancillary', ccy: true },
+        // Ancillary legs each get their own column (user, 2026-09-13) —
+        // DCC / Rental / FX, with FX only when the tenant flag is on.
+        // Net Spread stays last and bold.
+        { label: 'DCC', ccy: true },
+        { label: 'Rental', ccy: true },
+        ...(fxEnabled ? [{ label: 'FX Income', ccy: true }] : []),
         { label: 'Net Spread', ccy: true },
     ];
 
@@ -652,6 +662,7 @@ const Dashboard = () => {
                 .rail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
                 .rail-grid > div + div { border-left: 1px solid var(--border-light); }
                 @media (max-width: 900px) { .rail-grid > div + div { border-left: none; border-top: 1px solid var(--border-light); } }
+                @keyframes exec-spin { to { transform: rotate(360deg); } }
                 .exec-row { transition: background 180ms ease; }
                 .exec-row:hover { background: var(--bg-hover); }
                 .seg-btn { border: none; cursor: pointer; border-radius: 8; }
@@ -792,7 +803,8 @@ const Dashboard = () => {
                         <Download size={14} /> Export
                     </button>
                     <button onClick={load} title="Refresh" style={{ ...GHOST_BTN, padding: 9, color: 'var(--text-secondary)' }}>
-                        <RefreshCw size={15} />
+                        <RefreshCw size={15} style={refreshing
+                            ? { animation: 'exec-spin 1s linear infinite' } : undefined} />
                     </button>
                 </div>
             </div>
@@ -801,7 +813,9 @@ const Dashboard = () => {
                 <EmptyState title={`No ${modeLabel} data`}
                     description="No transactions found for this period yet. Upload data to populate the dashboard." />
             ) : (
-                <>
+                <div style={refreshing
+                    ? { opacity: 0.55, transition: 'opacity 200ms ease', pointerEvents: 'none' }
+                    : { opacity: 1, transition: 'opacity 200ms ease' }}>
                     {/* ── Primary hero band (4 tiles, sparkline shape) ── */}
                     <div style={{ display: 'grid', gap: 14, marginBottom: 14,
                         gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
@@ -1132,9 +1146,19 @@ const Dashboard = () => {
                                                     <span style={rateInline}>({b.marginPct.toFixed(2)}%)</span>
                                                 </td>
                                                 <td style={{ ...tdNum, color: SERIES.ancillary }}
-                                                    title={`DCC (acquirer) ${fullNum(b.dccAcquirer, currencySymbol)} · Rental ${fullNum(b.rental, currencySymbol)}${fxEnabled ? ` · FX ${fullNum(b.fx, currencySymbol)}` : ''}`}>
-                                                    {fmt.amount(b.dccAcquirer + b.rental + (fxEnabled ? b.fx : 0))}
+                                                    title={`DCC (acquirer) ${fullNum(b.dccAcquirer, currencySymbol)}`}>
+                                                    {fmt.amount(b.dccAcquirer)}
                                                 </td>
+                                                <td style={{ ...tdNum, color: SERIES.ancillary }}
+                                                    title={fullNum(b.rental, currencySymbol)}>
+                                                    {fmt.amount(b.rental)}
+                                                </td>
+                                                {fxEnabled && (
+                                                    <td style={{ ...tdNum, color: SERIES.ancillary }}
+                                                        title={fullNum(b.fx, currencySymbol)}>
+                                                        {fmt.amount(b.fx)}
+                                                    </td>
+                                                )}
                                                 <td style={{ ...tdNum, fontWeight: 700,
                                                     color: b.netSpread >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
                                                     title={`${fullNum(b.netSpread, currencySymbol)} · ${b.spreadPct.toFixed(4)}% of volume`}>
@@ -1167,9 +1191,19 @@ const Dashboard = () => {
                                             <span style={rateInline}>({num(vt.marginPct).toFixed(2)}%)</span>
                                         </td>
                                         <td style={{ ...tdTotal, color: SERIES.ancillary }}
-                                            title={`DCC (acquirer) ${fullNum(vt.dccAcquirer, currencySymbol)} · Rental ${fullNum(vt.rental, currencySymbol)}${fxEnabled ? ` · FX ${fullNum(vt.fx, currencySymbol)}` : ''}`}>
-                                            {fmt.amount(num(vt.dccAcquirer) + num(vt.rental) + (fxEnabled ? num(vt.fx) : 0))}
+                                            title={`DCC (acquirer) ${fullNum(vt.dccAcquirer, currencySymbol)}`}>
+                                            {fmt.amount(num(vt.dccAcquirer))}
                                         </td>
+                                        <td style={{ ...tdTotal, color: SERIES.ancillary }}
+                                            title={fullNum(vt.rental, currencySymbol)}>
+                                            {fmt.amount(num(vt.rental))}
+                                        </td>
+                                        {fxEnabled && (
+                                            <td style={{ ...tdTotal, color: SERIES.ancillary }}
+                                                title={fullNum(vt.fx, currencySymbol)}>
+                                                {fmt.amount(num(vt.fx))}
+                                            </td>
+                                        )}
                                         <td style={{ ...tdTotal, color: num(vt.netSpread) >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
                                             title={fullNum(vt.netSpread, currencySymbol)}>
                                             {fmt.amount(num(vt.netSpread))}
@@ -1180,7 +1214,7 @@ const Dashboard = () => {
                             </table>
                         </div>
                     </div>
-                </>
+                </div>
             )}
         </div>
     );

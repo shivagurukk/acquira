@@ -66,10 +66,18 @@ public class BusinessController {
                 final String chAll = com.acquira.common.service.ChannelSql.ALL;
                 reportCacheWarmup.register("ceo-summary", tenantId -> {
                         boolean fx = fxEnabled(tenantId);
-                        reportCache.get(
-                                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                                "ceoSummary:" + tenantId + ":ch" + chAll + ":fx" + fx,
-                                () -> buildCeoSummary(tenantId, chAll, fx));
+                        // Warm all three channel scopes, not just ALL: the POS/ECOM
+                        // toggle is one click away on the landing page, and a cold
+                        // channel-scoped build aggregates sum_daily_full across two
+                        // years — multi-second on large tenants.
+                        for (String ch : new String[] { chAll,
+                                        com.acquira.common.service.ChannelSql.POS,
+                                        com.acquira.common.service.ChannelSql.ECOM }) {
+                                reportCache.get(
+                                        com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                                        "ceoSummary:" + tenantId + ":ch" + ch + ":fx" + fx,
+                                        () -> buildCeoSummary(tenantId, ch, fx));
+                        }
                 });
                 reportCacheWarmup.register("ceo-volume-revenue", tenantId -> {
                         boolean fx = fxEnabled(tenantId);
