@@ -71,6 +71,9 @@ public class ReportCacheWarmup {
     });
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean rerunRequested = new AtomicBoolean(false);
+    /** Tenants whose data just changed — warmed FIRST on the next pass, so the
+     *  bank that uploaded isn't queued behind every other tenant's warm set. */
+    private final java.util.Set<Long> priorityTenants = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public ReportCacheWarmup(TenantRepository tenantRepository,
             @Value("${acquira.report-cache.warmup.enabled:true}") boolean enabled) {
@@ -84,7 +87,13 @@ public class ReportCacheWarmup {
 
     /** Schedule a warm pass; safe from any thread, never blocks the caller. */
     public void requestWarm(String reason) {
+        requestWarm(reason, null);
+    }
+
+    /** As {@link #requestWarm(String)}, warming {@code tenantId} before the rest. */
+    public void requestWarm(String reason, Long tenantId) {
         if (!enabled || warmers.isEmpty()) return;
+        if (tenantId != null) priorityTenants.add(tenantId);
         rerunRequested.set(true);
         log.info("Report cache warmup requested ({})", reason);
         scheduleDrainIfIdle();
@@ -114,11 +123,16 @@ public class ReportCacheWarmup {
         int ok = 0, failed = 0;
         List<Tenant> tenants;
         try {
-            tenants = tenantRepository.findAll();
+            tenants = new java.util.ArrayList<>(tenantRepository.findAll());
         } catch (Exception e) {
             log.warn("Report cache warmup skipped: could not list tenants", e);
             return;
         }
+        // Snapshot-and-remove, so an id added mid-pass survives for the rerun.
+        java.util.Set<Long> first = new java.util.HashSet<>(priorityTenants);
+        priorityTenants.removeAll(first);
+        tenants.sort(java.util.Comparator.comparing(
+                (Tenant t) -> !first.contains(t.getTenantId())));
         for (Tenant tenant : tenants) {
             if (tenant.getTenantId() == null) continue;
             if (tenant.getStatus() != null && !"ACTIVE".equalsIgnoreCase(tenant.getStatus())) continue;
@@ -127,6 +141,7 @@ public class ReportCacheWarmup {
                 // abandon this pass; the drain loop starts a fresh one.
                 if (rerunRequested.get()) {
                     log.info("Report cache warmup restarting: caches cleared mid-run");
+                    priorityTenants.addAll(first);
                     return;
                 }
                 try {

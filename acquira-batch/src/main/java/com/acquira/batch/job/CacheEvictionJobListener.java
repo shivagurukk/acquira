@@ -41,7 +41,8 @@ public class CacheEvictionJobListener implements JobExecutionListener {
         }
         log.info("Report caches cleared after job {} ({})",
                 jobExecution.getJobInstance().getJobName(), jobExecution.getStatus());
+        Long tenantId = jobExecution.getJobParameters().getLong("tenantId");
         warmup.ifAvailable(w -> w.requestWarm(
-                "job " + jobExecution.getJobInstance().getJobName()));
+                "job " + jobExecution.getJobInstance().getJobName(), tenantId));
     }
 }

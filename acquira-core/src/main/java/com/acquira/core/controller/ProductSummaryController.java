@@ -49,8 +49,26 @@ public class ProductSummaryController {
     private final ReportCache reportCache;
     private final JdbcTemplate jdbcTemplate;
 
+    private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
     private boolean fxEnabled(Long tenantId) {
         return NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
+    }
+
+    /**
+     * Warm the page's first-load requests: the calendar, then the latest
+     * loaded month — the frontend sends month=latest.slice(0,7), so the key
+     * and the cached "month"/"selection" fields match that request exactly.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("product-summary", tenantId -> {
+            getCalendar();
+            List<LocalDate> recent = volumeRevenueRepository.getRecentBusinessDates(tenantId, 1);
+            if (recent.isEmpty()) return;
+            YearMonth ym = YearMonth.from(recent.get(0));
+            getProductSummary(null, null, ym.toString());
+        });
     }
 
     @PostMapping("/product-summary")

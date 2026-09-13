@@ -45,6 +45,27 @@ public class VolumeDropController {
     @Autowired
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
+    @Autowired
+    private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the page's first fetch: the drawer's EMPTY_LISTS body with
+     * startDate null and endDate = end of the latest loaded month (the backend
+     * then clamps it to the latest date). Same DTO shape as RevenueMix's
+     * default, so the serialized filterKey matches the live request.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("volume-drop", tenantId -> {
+            Object latest = volumeDropRepository.getBounds(tenantId).get("latest");
+            if (latest == null) return;
+            VolumeRevenueFilterDTO f = RevenueMixController.defaultOpenFilter(Map.of("latest", latest));
+            f.setStartDate(null);
+            f.setEndDate(java.time.YearMonth.from(LocalDate.parse(latest.toString())).atEndOfMonth());
+            getRows(f);
+        });
+    }
+
     private String filterKey(VolumeRevenueFilterDTO filter) {
         try {
             return objectMapper.writeValueAsString(filter);

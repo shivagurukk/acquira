@@ -33,6 +33,21 @@ public class MidSidSummaryController {
 
     private final MidSidSummaryRepository repository;
     private final ReportCache reportCache;
+    private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the latest-month-to-date window for all three channel scopes — the
+     * strip's default, and the window most executive pages open on. Pages
+     * showing a different window still compute on first view (a cheap count).
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("mid-sid-summary", tenantId -> {
+            for (String ch : new String[] {"ALL", "POS", "ECOM"}) {
+                getSummary(null, null, ch);
+            }
+        });
+    }
 
     /**
      * Distinct active MID and SID counts for a date window.
