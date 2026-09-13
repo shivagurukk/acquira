@@ -46,15 +46,69 @@ const toneFg = (tone) => `var(--${tone})`;
 // Spring's CronExpression (used by DynamicSchedulerService) is 6-field and does NOT
 // accept Quartz's '?' token — day-of-week/day-of-month use '*' or names. Quartz-style
 // crons here would be saved but silently never fire.
-const FREQ_OPTIONS = [
-  { label: 'Every hour', value: 'HOURLY', cron: '0 0 * * * *' },
-  { label: 'Daily at 2 AM', value: 'DAILY', cron: '0 0 2 * * *' },
-  { label: 'Daily at 6 AM', value: 'DAILY_6AM', cron: '0 0 6 * * *' },
-  { label: 'Daily at 10 PM', value: 'DAILY_10PM', cron: '0 0 22 * * *' },
-  { label: 'Weekly (Sun 3 AM)', value: 'WEEKLY', cron: '0 0 3 * * SUN' },
-  { label: 'Monthly (1st, 2 AM)', value: 'MONTHLY', cron: '0 0 2 1 * *' },
-  { label: 'Custom', value: 'CUSTOM', cron: '' },
+//
+// Operators pick a plain time, not a cron: FREQ_MODES + a time-of-day (and a
+// weekday / day-of-month where relevant) build the 6-field cron for them. The
+// raw expression stays reachable via the Advanced escape hatch (frequency =
+// Custom) for the rare schedule the friendly controls can't express.
+const FREQ_MODES = [
+  { label: 'Every hour', value: 'HOURLY' },
+  { label: 'Daily', value: 'DAILY' },
+  { label: 'Weekly', value: 'WEEKLY' },
+  { label: 'Monthly', value: 'MONTHLY' },
+  { label: 'Custom (raw cron)', value: 'CUSTOM' },
 ];
+
+// Spring cron day-of-week accepts MON–SUN names; we emit names for readability.
+const WEEKDAYS = [
+  { value: 'MON', label: 'Monday' },
+  { value: 'TUE', label: 'Tuesday' },
+  { value: 'WED', label: 'Wednesday' },
+  { value: 'THU', label: 'Thursday' },
+  { value: 'FRI', label: 'Friday' },
+  { value: 'SAT', label: 'Saturday' },
+  { value: 'SUN', label: 'Sunday' },
+];
+const DOW_NUM = { 0: 'SUN', 7: 'SUN', 1: 'MON', 2: 'TUE', 3: 'WED', 4: 'THU', 5: 'FRI', 6: 'SAT' };
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// Friendly parts → 6-field Spring cron (sec min hour dom mon dow).
+const buildCron = (freq, { time = '02:00', weekday = 'MON', dom = 1 } = {}) => {
+  const [hh, mm] = (time || '02:00').split(':').map((x) => parseInt(x, 10) || 0);
+  switch (freq) {
+    case 'HOURLY': return `0 ${mm} * * * *`;
+    case 'DAILY': return `0 ${mm} ${hh} * * *`;
+    case 'WEEKLY': return `0 ${mm} ${hh} * * ${weekday}`;
+    case 'MONTHLY': return `0 ${mm} ${hh} ${dom} * *`;
+    default: return '';
+  }
+};
+
+// Best-effort reverse of buildCron: returns { freq, time, weekday, dom } for a
+// simple expression, or null when the cron is too complex for the picker (→ Custom).
+const parseCron = (cron) => {
+  if (!cron) return null;
+  const f = cron.trim().split(/\s+/);
+  if (f.length !== 6) return null;
+  const [sec, min, hour, dom, mon, dow] = f;
+  const isNum = (s) => /^\d+$/.test(s);
+  if (sec !== '0' || mon !== '*') return null;
+  if (isNum(min) && hour === '*' && dom === '*' && dow === '*') {
+    return { freq: 'HOURLY', time: `00:${pad2(+min)}`, weekday: 'MON', dom: 1 };
+  }
+  if (isNum(min) && isNum(hour) && dom === '*' && dow === '*') {
+    return { freq: 'DAILY', time: `${pad2(+hour)}:${pad2(+min)}`, weekday: 'MON', dom: 1 };
+  }
+  if (isNum(min) && isNum(hour) && dom === '*' && dow !== '*') {
+    const wd = isNum(dow) ? DOW_NUM[+dow] : WEEKDAYS.find((w) => w.value === dow.toUpperCase())?.value;
+    if (wd) return { freq: 'WEEKLY', time: `${pad2(+hour)}:${pad2(+min)}`, weekday: wd, dom: 1 };
+  }
+  if (isNum(min) && isNum(hour) && isNum(dom) && dow === '*') {
+    return { freq: 'MONTHLY', time: `${pad2(+hour)}:${pad2(+min)}`, weekday: 'MON', dom: +dom };
+  }
+  return null;
+};
 
 // Africa/Cairo is required for the Egypt tenant: Egypt observes DST and the
 // Gulf zones do not, so a Gulf substitute schedules jobs an hour off for half
@@ -1062,6 +1116,10 @@ const SchedulesTab = () => {
   // Live "next fire times" preview for the cron being edited — catches a cron
   // that parses but never fires the way you meant, BEFORE it is saved.
   const [cronPreview, setCronPreview] = useState(null);
+  // Friendly time-picker parts (time-of-day / weekday / day-of-month) that
+  // drive the cron for every non-Custom frequency. UI-only — never sent to the
+  // backend, which stores frequencyLabel + cronExpression.
+  const [cronParts, setCronParts] = useState({ time: '02:00', weekday: 'MON', dom: 1 });
 
   const load = async () => {
     try {
@@ -1088,8 +1146,25 @@ const SchedulesTab = () => {
     return () => clearTimeout(t);
   }, [modal, form.cronExpression, form.timezone]);
 
-  const openAdd = () => { setForm({ ...emptySchedule, reportId: reports[0]?.id || '' }); setEditId(null); setCronPreview(null); setModal(true); };
-  const openEdit = (s) => { setForm({ ...s, reportId: s.report?.id || '' }); setEditId(s.id); setCronPreview(null); setModal(true); };
+  const openAdd = () => {
+    setForm({ ...emptySchedule, reportId: reports[0]?.id || '' });
+    setCronParts({ time: '02:00', weekday: 'MON', dom: 1 });
+    setEditId(null); setCronPreview(null); setModal(true);
+  };
+  const openEdit = (s) => {
+    // Recover the friendly parts from the stored cron so re-opening a schedule
+    // shows the same picker state, not a raw expression the operator must re-read.
+    const parsed = parseCron(s.cronExpression);
+    setForm({
+      ...s,
+      reportId: s.report?.id || '',
+      frequencyLabel: parsed ? parsed.freq : 'CUSTOM',
+    });
+    setCronParts(parsed
+      ? { time: parsed.time, weekday: parsed.weekday, dom: parsed.dom }
+      : { time: '02:00', weekday: 'MON', dom: 1 });
+    setEditId(s.id); setCronPreview(null); setModal(true);
+  };
 
   const save = async (e) => {
     e?.preventDefault();
@@ -1133,10 +1208,28 @@ const SchedulesTab = () => {
     catch { showToast('Delete failed', 'error'); }
   };
 
+  // Switch frequency: for every friendly mode rebuild the cron from the current
+  // time-picker parts; for Custom keep whatever cron is there so the operator
+  // can hand-edit it.
   const setFreq = (val) => {
-    const opt = FREQ_OPTIONS.find((f) => f.value === val);
-    setForm({ ...form, frequencyLabel: val, cronExpression: opt?.cron || form.cronExpression });
+    setForm({
+      ...form,
+      frequencyLabel: val,
+      cronExpression: val === 'CUSTOM' ? form.cronExpression : buildCron(val, cronParts),
+    });
   };
+
+  // Edit a time-picker part → recompute the cron (unless we're in raw-cron mode).
+  const setPart = (patch) => {
+    const next = { ...cronParts, ...patch };
+    setCronParts(next);
+    if (form.frequencyLabel !== 'CUSTOM') {
+      setForm({ ...form, cronExpression: buildCron(form.frequencyLabel, next) });
+    }
+  };
+
+  // "Advanced": drop to raw-cron editing, pre-filled with the generated cron.
+  const enableRawCron = () => setForm({ ...form, frequencyLabel: 'CUSTOM' });
 
   const columns = [
     {
@@ -1325,22 +1418,77 @@ const SchedulesTab = () => {
             <Select
               value={form.frequencyLabel}
               onChange={(e) => setFreq(e.target.value)}
-              options={FREQ_OPTIONS.map((f) => ({ value: f.value, label: f.label }))}
+              options={FREQ_MODES.map((f) => ({ value: f.value, label: f.label }))}
             />
           </FormField>
 
-          <FormField
-            label="Cron expression"
-            hint="6-field Spring cron (sec min hour dom mon dow). The Quartz '?' token is not supported."
-            error={cronPreview && cronPreview.valid === false ? cronPreview.error : undefined}
-          >
-            <Input
-              mono
-              value={form.cronExpression}
-              onChange={(e) => setForm({ ...form, cronExpression: e.target.value })}
-              placeholder="0 0 2 * * *"
-            />
-          </FormField>
+          {form.frequencyLabel === 'HOURLY' && (
+            <FormField label="Minute past the hour" hint="Runs every hour at this minute.">
+              <Select
+                value={String(parseInt(cronParts.time.split(':')[1] || '0', 10))}
+                onChange={(e) => setPart({ time: `00:${pad2(+e.target.value)}` })}
+                options={[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
+                  .map((m) => ({ value: String(m), label: `:${pad2(m)}` }))}
+              />
+            </FormField>
+          )}
+
+          {(form.frequencyLabel === 'DAILY' || form.frequencyLabel === 'WEEKLY' || form.frequencyLabel === 'MONTHLY') && (
+            <FormField label="Time of day" hint="Fires in the timezone selected below.">
+              <Input
+                type="time"
+                value={cronParts.time}
+                onChange={(e) => setPart({ time: e.target.value || '00:00' })}
+                style={{ maxWidth: 160 }}
+              />
+            </FormField>
+          )}
+
+          {form.frequencyLabel === 'WEEKLY' && (
+            <FormField label="Day of week">
+              <Select value={cronParts.weekday} onChange={(e) => setPart({ weekday: e.target.value })} options={WEEKDAYS} />
+            </FormField>
+          )}
+
+          {form.frequencyLabel === 'MONTHLY' && (
+            <FormField label="Day of month" hint="1–28, so it fires every month (including February).">
+              <Select
+                value={String(cronParts.dom)}
+                onChange={(e) => setPart({ dom: parseInt(e.target.value, 10) || 1 })}
+                options={Array.from({ length: 28 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))}
+              />
+            </FormField>
+          )}
+
+          {form.frequencyLabel === 'CUSTOM' ? (
+            <FormField
+              label="Cron expression"
+              hint="6-field Spring cron (sec min hour dom mon dow). The Quartz '?' token is not supported."
+              error={cronPreview && cronPreview.valid === false ? cronPreview.error : undefined}
+            >
+              <Input
+                mono
+                value={form.cronExpression}
+                onChange={(e) => setForm({ ...form, cronExpression: e.target.value })}
+                placeholder="0 0 2 * * *"
+              />
+            </FormField>
+          ) : (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Generated cron:{' '}
+              <code style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', color: 'var(--text)' }}>
+                {form.cronExpression}
+              </code>
+              {' · '}
+              <button
+                type="button"
+                onClick={enableRawCron}
+                style={{ background: 'none', border: 'none', padding: 0, color: 'var(--brand)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}
+              >
+                Advanced: edit raw cron
+              </button>
+            </div>
+          )}
 
           {cronPreview?.valid && cronPreview.nextRuns?.length > 0 && (
             <div
