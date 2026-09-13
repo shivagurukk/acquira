@@ -1,0 +1,270 @@
+{
+  "_source": "Mastercard Data Integrity Monitoring Program (DIMP) — Acquirer Clearing Dual Message System Edits (1240), 2026-07-28",
+  "_note": "Named acquiring-clearing data-integrity edits. Some are checkable from the clearing file alone (format/presence); MATCH edits compare clearing vs authorization and need the auth feed.",
+  "edits": [
+    {
+      "editNumber": "2",
+      "name": "MERCHANT ID",
+      "title": "Merchant ID",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the values in Data Element (DE) 42 (Acceptor ID) to ensure that each Acceptor ID, or Merchant ID, has a unique address.",
+      "editCriteria": "Mastercard considers transactions noncompliant when the same Merchant ID value found in DE 42 appears in multiple transactions, but these values are not consistent: DE 43 (Acceptor Name and Location), subfield 2 (Acceptor Street Address) DE 43, subfield 3 (Acceptor City Name) DE 43, subfield 4 (Acceptor Postal Code) DE 43, subfield 5 (Acceptor Country Subdivision Code) Exclusions: Transactions with Private Data Subelement (PDS) 0208 (Additional Merchant Data), subfield 1 (Service Provider ID) populated. This edit only applies to face-to-face transactions."
+    },
+    {
+      "editNumber": "3",
+      "name": "INV DE43",
+      "title": "Invalid Values DE 43",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the values in Data Element (DE) 43 (Acceptor Name and Location) to ensure they are valid and properly formatted.",
+      "editCriteria": "Mastercard considers transactions noncompliant when any of these subedits apply:"
+    },
+    {
+      "editNumber": "4",
+      "name": "CNTRY GEO",
+      "title": "Country Code or Postal Code Verification (1240)",
+      "billingCode": "2DC0100",
+      "regions": "This edit applies to these countries: Afghanistan, Albania, Argentina, Australia, Austria, Belgium, Brazil, Canada, Colombia, Costa Rica, Croatia, Czech Republic, Denmark, Finland, France, Germany, Greece, Hungary, India, Israel, Italy Japan, Korea, Kuwait, Malaysia, Netherlands, New Zealand, Norway, Philippines, Poland, Puerto Rico, Russian Federation, Singapore, South Africa, Sweden, Switzerland, Taiwan, Thailand, Türkiye, Ukraine, United Kingdom, United States, and Venezuela",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the postal code or country code values submitted in Data Element (DE) 43 (Acceptor Name and Location) to ensure values are present, valid, and correspond to the appropriate Point of Service (POS) location.",
+      "editCriteria": "Mastercard considers transactions noncompliant when any of these subedits apply:"
+    },
+    {
+      "editNumber": "5",
+      "name": "INV_STREET",
+      "title": "Invalid Street Address (1240)",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the street address values in Data Element (DE) 43 (Acceptor Name and Location), subfield 2 (Acceptor Street Address) of First Presentment/1240 transactions to ensure they are valid and properly formatted.",
+      "editCriteria": "Mastercard considers First Presentment/1240 transactions noncompliant when any of these subedits apply:"
+    },
+    {
+      "editNumber": "6",
+      "name": "INV ADDR",
+      "title": "Invalid City/Address",
+      "billingCode": "2DC0100",
+      "regions": "Global (Some subedits apply to select countries.)",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the values in Data Element (DE) 43 (Acceptor Name and Location) of First Presentment/1240 transactions to ensure the city name is valid and corresponds appropriately to the provided postal code.",
+      "editCriteria": "Mastercard considers First Presentment/1240 transactions noncompliant when any of these subedits apply:"
+    },
+    {
+      "editNumber": "7",
+      "name": "TERM POS",
+      "title": "Terminal POS Input Capability (1240)",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the card data input capability in Data Element (DE) 22 (Point of Service [POS] Entry Mode) to ensure it corresponds appropriately to the terminal operating environment and card data input mode.",
+      "editCriteria": "Mastercard considers transactions noncompliant when any of these subedits apply:"
+    },
+    {
+      "editNumber": "8",
+      "name": "TRACE_ID",
+      "title": "Trace ID Match",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the Trace ID value in the First Presentment/1240 to ensure it is populated with the same values contained in the related the Authorization Request Response/0110 message.",
+      "editCriteria": "Mastercard considers transactions noncompliant when Data Element (DE) 63 (Transaction Life Cycle ID), subfield 2 (Trace ID) does not match the data in DE 63 (Network Data) and DE 15 (Settlement Date) of the authorization response. The Trace ID consists of the Network Reference Number (nine positions) followed by the Network Date (four positions–MMDD), followed by two spaces. For each transaction authorized through the network (“online-authorized transactions”), IPM DE 63 subfield 2 (Trace ID) of the First Presentment/1240 message must be populated with the same values contained in the related authorization message. Exclusions: Transactions where online authorization is not requested or required, such as offline-authorized chip-read transactions, credit (purchase return) transactions, payment transactions, and collection only transactions."
+    },
+    {
+      "editNumber": "9",
+      "name": "POST_CD_MATCH",
+      "title": "Postal Code Match",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the postal code value present in the First Presentment/1240 message to ensure that it matches the postal code value submitted in the Authorization Request/0100.",
+      "editCriteria": "Mastercard considers transactions noncompliant when Data Element (DE) 43 (Acceptor Name and Location), subfield 4 (Acceptor Postal Code) of the First Presentment/1240 message does not match DE 61 (Point-of-Service [POS] Data), subfield 14 (Acceptor Postal Code) of the Authorization/0100 message. This edit only monitors face-to-face transactions."
+    },
+    {
+      "editNumber": "10",
+      "name": "POS_AUTH",
+      "title": "POS Authorization Values",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the data in Data Element (DE) 22 (Point-of-Service [POS] Entry Mode) of the First Presentment/1240 to ensure that it corresponds appropriately to the data in DE 61 (POS Data) of the Authorization Request/0100.",
+      "editCriteria": "Mastercard considers transactions noncompliant when any of these subedits apply:"
+    },
+    {
+      "editNumber": "11",
+      "name": "C_PF_ID",
+      "title": "Clearing Payment Facilitator ID",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the values in Private Data Subelement (PDS) 0208 (Additional Merchant Data) to ensure that when a Service Provider ID (previously Payment Facilitator ID) is present, a Seller ID is also present, and that all values submitted in the First Presentment/1240 match the corresponding values in the Authorization Request/0100.",
+      "editCriteria": "Mastercard considers transactions noncompliant when any of these subedits apply:"
+    },
+    {
+      "editNumber": "13",
+      "name": "MCC_MATCH",
+      "title": "Merchant Category Code Match",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors Data Element (DE) 26 (Acceptor Business Code [MCC]) in the clearing message to ensure it matches the MCC in the corresponding authorization request.",
+      "editCriteria": "Mastercard identifies transactions monitored under this edit by Clearing First Presentment/1240 MCC. Mastercard considers transactions noncompliant when the value in Clearing First Presentment/1240 DE 26 does not match the value in DE 18 (Merchant Type [MCC]) of the corresponding Authorization Request/0100 record. Exclusions: MCCs between 3000 and 3350, 4112, 4511, 4722, 7800, 7801, 7802, 7995, and 9406"
+    },
+    {
+      "editNumber": "14",
+      "name": "MERCH_DBA_NAME_MATCH",
+      "title": "Merchant DBA Name Match",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the merchant Doing Business As (DBA) name in the First Presentment/1240 to ensure it matches the DBA name in the corresponding Authorization Request/0100.",
+      "editCriteria": "Mastercard considers transactions noncompliant when Data Element (DE) 43 (Acceptor Name and Location), subfield 1 (Acceptor Name) of the First Presentment/1240 and DE 43, subfield 1 of the Authorization Request/0100 are not the same value."
+    },
+    {
+      "editNumber": "16",
+      "name": "TERM_INPUT_MATCH",
+      "title": "Terminal Input Capability Indicator Match",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the Terminal Input Capability Indicator in the First Presentment/1240 to ensure it matches the Terminal Input Capability Indicator in the corresponding Authorization Request/0100.",
+      "editCriteria": "Mastercard considers transactions noncompliant when any of these criteria applies: Clearing Data Element (DE) 22 (Point-of-Service [POS] Entry Mode), subfield 1 (Terminal Data: Card Data Input Capability) is 0 (Input capability unknown or unspecified) and authorization DE 61 (POS Data), subfield 11 (POS Card Data Terminal Input Capability Indicator) is not 0 (Input capability unknown or unspecified) Clearing DE 22, subfield 1 is 1 (No POS terminal used [for example, voice/ARU authorization or other transactions that originated from a data server]) and authorization DE 61, subfield 11 is not 1 (no terminal used; server) Clearing DE 22, subfield 1 is 2 (Terminal supports magnetic stripe input only) and authorization DE 61, subfield 11 is not 2 (magnetic stripe input only) Clearing DE 22, subfield 1 is M (Contactless EMV/Chip [Proximity Chip]) and authorization DE 61, subfield 11 is not 3 (Contactless EMV/Chip) Clearing DE 22, subfield 1 is A (Contactless Mag Stripe [Proximity Chip]) and authorization DE 61, subfield 11 is not 4 (Contactless Mag Stripe) Clearing DE 22, subfield 1 is D (Terminal supports EMV contact chip input and magnetic stripe input) and authorization DE 61, subfield 11 is not 5 (Terminal supports EMV contact chip input and magnetic stripe input) Clearing DE 22, subfield 1 is 6 (Terminal supports key entry input only) and authorization DE 61, subfield 11 is not 6 (Terminal supports key entry input only) Clearing DE 22, subfield 1 is B (Terminal supports magnetic stripe input and key entry input) and authorization DE 61, subfield 11 is not 7 (Terminal supports magnetic stripe input and key entry input) Clearing DE 22, subfield 1 is C (Terminal supports EMV contact chip input, magnetic stripe input and key entry input) and authorization DE 61, subfield 11 is not 8 (Terminal supports EMV contact chip input, magnetic stripe input, and key entry input) Clearing DE 22, subfield 1 is 5 (Terminal supports EMV contact chip input only) and authorization DE 61, subfield 11 is not 9 (Terminal supports EMV contact chip input only)"
+    },
+    {
+      "editNumber": "17",
+      "name": "AAV_RATE_CLEAR_TRAN",
+      "title": "Valid AAV for Authenticated Transactions (1240)",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the Accountholder Authentication Value (AAV) in transactions that were authenticated through 3DS 1.0 or EMV 3DS to ensure it is valid and corresponds appropriately to the security level indicator (SLI).",
+      "editCriteria": "Mastercard considers transactions noncompliant when Private Data Subelement (PDS) 0052 (Electronic Commerce Security Level Indicator [SLI]) contains a valid SLI (211, 212 or 215), but PDS 0185 (AAV) does not begin with j, k, or h."
+    },
+    {
+      "editNumber": "18",
+      "name": "DS_TRAN_ID_CLEAR_TRANS",
+      "title": "Directory Server Transaction ID (1240)",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors transactions authenticated through EMV 3-D Secure to ensure that the Directory Server (DS) Transaction ID is present.",
+      "editCriteria": "Mastercard considers transactions noncompliant when all of these are true: Private Data Subelement (PDS) 0052 (Electronic Commerce Security Level Indicator) is 211, 212, 216, or 217 PDS 0185 (Accountholder Authentication Value) has a leading indicator of k indicating the transaction was authenticated through EMV 3DS PDS 0184 (Directory Server Transaction ID) is missing"
+    },
+    {
+      "editNumber": "20",
+      "name": "Cross Border_TC28_Force Post",
+      "title": "Cross Border TC28 Force Post 1240",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the values in Data Element (DE) 63 (Transaction Life Cycle ID), subfield 2 (Trace ID) and DE 2 (Primary Account Number [PAN]) to help ensure that when a First Presentment/1240 Cross-Border Payment Transaction is present an authorization request is also present.",
+      "editCriteria": "Mastercard considers transactions noncompliant when the First Presentment/1240 Cross-Border Payment Transaction does not have a matching authorization request within the 30 the days before the Clearing record submission. Mastercard identifies a Cross-Border transaction when the DE 43 (Acceptor Name and Location), subfield 6 (Acceptor Country Code) is not equal to the Issuer Country. Mastercard identifies a Payment Transaction when the DE 3 (Processing Code), subfield 1 (Cardholder Transaction Type), is 28. Exclusions: Intra-EEA, United Kingdom and Gibraltar Cross-Border Transactions, Collection Only Transactions, Reversals, and Rebates. Mastercard identifies a rebate when the Private Data Subelement (PDS) 0043 (Program Registration ID), is C02 (Mastercard rebate), and when the acceptor business code (MCC) is 6555 (MA Initiated Rewards/Rebate) in DE 18 (Merchant Type)."
+    },
+    {
+      "editNumber": "21",
+      "name": "High Risk MCC Mismatch",
+      "title": "High Risk MCC Mismatch",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the Data Element (DE) 26 (Acceptor Business Code [MCC]) in the clearing message to ensure it matches the MCC value in the corresponding authorization request for high risk MCCs.",
+      "editCriteria": "Mastercard identifies high risk transactions monitored under this edit by one of these values in the Clearing First Presentment/1240 DE 26: 7800 Government Owned Lottery (U.S. Region Only) 7801 Internet Gambling (U.S. Region Only) 7802 Government Licensed Horse/Dog Racing (U.S. Region Only) 7995 Gambling Transactions 9406 Government-owned Lottery (Specific Countries) Mastercard considers transactions noncompliant when the value in the Clearing First Presentment/1240 DE 26 does not match the value in DE 18 (Merchant Type [MCC]) of the corresponding Authorization Request/0100 record. This edit is not eligible for extensions."
+    },
+    {
+      "editNumber": "22",
+      "name": "POI Currency Conversion 1240",
+      "title": "POI Currency Conversion 1240",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors point-of-interaction (POI) currency conversion (also known as dynamic currency conversion [DCC]) card-present/cardholder-present POS and ATM transactions to ensure that when DCC is applied, it is not applied to accounts that issuers or Mastercard designate as not allowing DCC.",
+      "editCriteria": "Mastercard identifies transactions monitored under this edit by these criteria: Data Element (DE) 22, subfield 5 (Cardholder Present Data) is 0 (Cardholder present) DE 22, subfield 6 (Card Present Data) is 1 (Card present) Declared DCC: In any occurrence of DE 54, subfield 2 (Additional Amount, Amount Type) is 58 (Amount, POI Amount) Mastercard considers transactions noncompliant when: the account is within an issuer account range identified in the IPM Member Parameter Extract (MPE) table resource file as prohibiting DCC - Cardholder Currency Indicator field value of: C (Do not provide POI currency conversion (or DCC) corporate client optout) or T (Do not provide POI currency conversion (or DCC) according to Mastercard Rules travel cards or multi-currency accounts)."
+    },
+    {
+      "editNumber": "24",
+      "name": "Merchant Cntry of Origin 1240",
+      "title": "Merchant Country of Origin 1240",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors government-controlled merchants to help ensure that the acquirer populates the numeric country code of the government entity that owns or controls the merchant in Private Data Subelement (PDS) 0213 (Merchant Country of Origin) in the clearing First Presentment/1240 messages.",
+      "editCriteria": "Mastercard identifies transactions monitored under this edit by these criteria: Data Element (DE) 26 (Acceptor Business Code [MCC]) equals: 9211 (Court costs including alimony and child support) 9222 (Fines) 9311 (Tax payments) 9399 (Government services - not elsewhere classified) 9402 (Postal services - government only) 9405 (Intra-government purchases-government only) 9406 (Government-owned lottery [global, excluding U.S. region]) Mastercard considers transactions noncompliant when: PDS 0213 is not populated or is not a valid country code. Exclusions: DE 3 (Processing Code), subfield 1 (Cardholder Transaction Type) is 28 (Payment Transaction) Reversals This edit is not eligible for extensions."
+    },
+    {
+      "editNumber": "25",
+      "name": "Purchase Return Trace ID",
+      "title": "Purchase Return Trace ID",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the Trace ID value in the 1240 Credit (Purchase Return) First Presentment message to ensure that it is populated with the same value contained in the corresponding 0110 Authorization Response message.",
+      "editCriteria": "Mastercard identifies transactions monitored under this edit by these criteria: Data Element (DE) 3 (Processing Code), subfield 1 (Cardholder Transaction Type) is 20 (Purchase Return/Refund) Mastercard considers transactions noncompliant when: DE 63 (Transaction Life Cycle ID), subfield 2 (Trace ID) does not match the data in DE 63 (Network Data) and DE 15 (Settlement Date) of the authorization response Exclusions: Contactless aggregated transit transaction refunds: Private Data Subelement (PDS) 0210 (Transit Program), subfield 1 (Transit Transaction Type Indicator) is: 03 (Post-Authorized Aggregated) 04 (Authorized Aggregated Split Clearing) 05 (Other) 06 (Post-authorized Aggregated Maestro ). Transportation and Mastercard defined airline travel transactions; DE 26 (Acceptor Business Code [MCC]) equal to 4112, 4511 or is within the range 3000 to 3350. Mastercard Initiated Rebate/Reward MCC 6555. Transactions where online authorization is not requested or required. For example: offline-authorized chip-read transactions, payment transactions, and collection only transactions. Select Commercial Card Products. Refer to the Transaction Processing Rules , 3.3.1 \"Mastercard POS Transaction Authorization Procedures.\" Argentina domestic promotion/campaign The Trace ID consists of the network reference number followed by the network date. For each transaction authorized by using the network (\"online authorized transactions\"), IPM DE 63 subfield 2 (Trace ID) of the First Presentment/1240 message must be populated with the same values contained in the related authorization message."
+    },
+    {
+      "editNumber": "26",
+      "name": "Acceptor Contact Data 1240",
+      "title": "Acceptor Contact Data 1240",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors First Presentment/1240 messages to ensure that the Acceptor Customer Service Phone Number and Acceptor URL address contains valid values defined and formatted to the specifications in the Mastercard Network Processing Dual Message Clearing System Guide.",
+      "editCriteria": null
+    },
+    {
+      "editNumber": "27",
+      "name": "Transaction Link ID 1240",
+      "title": "Transaction Link ID 1240",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the First Presentment/1240 messages for Transaction Link Identifier (TLID) enablement and ensures that the lifecycle TLID validation action indicator is submitted properly without any validation issues.",
+      "editCriteria": "Mastercard identifies transactions monitored under this edit by these criteria: First Presentment/1240 transaction messages Mastercard considers transactions noncompliant when: DE 105 (Multi-Use Transaction Identification Data), subelement 001 (Transaction Link ID [TLID]) is not populated or it does not match the data in DE 105, subelement 001 in the authorization response message Exclusions: Transactions where online authorization is not requested or required. Refer to the Transaction Processing Rules , 3.3.1 Mastercard POS Transaction Authorization Procedures . Contactless aggregated transit transaction refunds: Private Data Subelement (PDS) 0210 (Transit Program), subfield 1 (Transit Transaction Type Indicator) is: 03 (Post-Authorized Aggregated) 04 (Authorized Aggregated Split Clearing) 05 (Other) 06 (Post-authorized Aggregated Maestro®)"
+    },
+    {
+      "editNumber": "28",
+      "name": "PDS 0027 Flex Code",
+      "title": "PDS 0027 Flex Code",
+      "billingCode": "2DC0100",
+      "regions": "Brazil",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors First Presentment/1240 messages for Brazil Flex Cards domestic transactions to ensure that acquirers are properly populating the Flex Code in Private Data Subelement (PDS) 0027.",
+      "editCriteria": "Mastercard identifies transactions monitored under this edit by these criteria: Issuer and acceptor countries are Brazil First Presentment/1240 clearing system messages PDS 0027 (Flex Code) is populated Mastercard considers transactions noncompliant when: PDS 0027 is updated by Mastercard Transaction Enablement."
+    },
+    {
+      "editNumber": "29",
+      "name": "MPOS Match",
+      "title": "MPOS Match",
+      "billingCode": "2DC0100",
+      "regions": "Global",
+      "messageType": "1240",
+      "program": "Acquirer Clearing (DMS)",
+      "description": "This edit monitors the acceptance data to verify that the mPOS acceptance device type in the First Presentment/1240 clearing message matches the corresponding mPOS acceptance device type submitted in the associated Authorization Request/0100 message, and that the PIN entry capability value in the clearing message aligns with the corresponding authorization value.",
+      "editCriteria": "Mastercard identifies transactions monitored under this edit by these criteria: PDS 0023 (Terminal Type) is CT9 (MPOS Acceptance Device) Mastercard considers transactions noncompliant when either of these are true: The value in PDS 0018 (Acceptance Data), subfield 1 (mPOS Acceptance Device Type) does not match DE 48 (Additional Data: Private Use), subelement 21 (Acceptance Data), subfield 1 (mPOS Acceptance Device Type) of the corresponding authorization message. Comparison of Clearing DE 22 (Point of Service [POS] Entry Mode), subfield 2 (Terminal Data, Cardholder Authentication Capability) to Authorization DE 22 (POS Entry Mode), subfield 2 (POS Terminal PIN Entry Mode) Clearing DE 22, subfield 2 is 9 (Unknown; data unavailable) and Authorization DE 22, subfield 2 is not 0 (Unspecified or unknown) Clearing DE 22, subfield 2 is 1 (Terminal has PIN entry capability) and Authorization DE 22, subfield 2 is not 1 (Terminal has PIN entry capability) Clearing DE 22, subfield 2 is 0 (Terminal does not have PIN entry capability) and Authorization DE 22, subfield 2 is not 2 (Terminal does not have PIN entry capability) Clearing DE 22, subfield 2 is 3 (MPOS Software-based PIN Entry Capability) and Authorization DE 22, subfield 2 is not 3 (mPOS Software-based PIN entry capability) Clearing DE 22, subfield 2 is 5 (Terminal has PIN entry capability but PIN pad is not currently Operative) and Authorization DE 22, subfield 2 is not 8 (Terminal has PIN entry capability but PIN pad is not currently operative)"
+    }
+  ]
+}

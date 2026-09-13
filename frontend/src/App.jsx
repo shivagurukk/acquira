@@ -61,6 +61,9 @@ const ExecutiveDailyMerchant = lazy(() => import('./pages/executive/DailyMerchan
 const NetSpreadDashboard = lazy(() => import('./pages/executive/NetSpreadDashboard'));
 // Product Summary — per-tenant P&L by revenue product (POS/ECOM acquiring + DCC + rental + FX)
 const ProductSummary = lazy(() => import('./pages/executive/ProductSummary'));
+const InterchangeOutgoing = lazy(() => import('./pages/interchange/Outgoing'));
+const InterchangeIncoming = lazy(() => import('./pages/interchange/Incoming'));
+const DimpDashboard = lazy(() => import('./pages/interchange/DimpDashboard'));
 const SalesTargetManagement = lazy(() => import('./pages/sales/SalesTargetManagement'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const TenantManagement = lazy(() => import('./pages/TenantManagement'));
@@ -128,6 +131,11 @@ function App() {
               <Route path="/executive/daily-merchant" element={<ExecutiveDailyMerchant />} />
               <Route path="/executive/net-spread" element={<NetSpreadDashboard />} />
               <Route path="/executive/product-summary" element={<ProductSummary />} />
+
+              {/* Interchange — scheme clearing-file data integrity */}
+              <Route path="/interchange/outgoing" element={<InterchangeOutgoing />} />
+              <Route path="/interchange/incoming" element={<InterchangeIncoming />} />
+              <Route path="/interchange/dimp" element={<DimpDashboard />} />
 
               {/* Merchant MGT */}
               <Route path="/merchants" element={<MerchantHierarchy />} />
