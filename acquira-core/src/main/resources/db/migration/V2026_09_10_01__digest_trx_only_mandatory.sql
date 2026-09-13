@@ -22,11 +22,20 @@ ALTER TABLE digest_config ALTER COLUMN require_trx      SET DEFAULT TRUE;
 
 -- 2. Existing tenants: relax the three optional feeds, and make sure
 --    transactions is mandatory everywhere.
+--
+--    ONE-TIME flip, guarded on this migration's own ledger row: after it has
+--    run, an admin turning DCC or rental back on for a tenant is a deliberate
+--    choice, and re-running this file must not silently undo it. The NOT
+--    EXISTS makes the re-run a no-op (and keeps the file splitter-safe — no
+--    DO block / $$).
 UPDATE digest_config
    SET require_dcc      = FALSE,
        require_rental   = FALSE,
        require_merchant = FALSE,
-       require_trx      = TRUE;
+       require_trx      = TRUE
+ WHERE NOT EXISTS (
+       SELECT 1 FROM schema_migration_log
+        WHERE filename = 'V2026_09_10_01__digest_trx_only_mandatory.sql');
 
 -- 3. Unblock days already held only by the now-optional feeds. Clearing
 --    waiting_on lets the next sweep re-gate them against transactions alone;
@@ -36,3 +45,5 @@ UPDATE digest_dispatch
  WHERE status = 'PENDING'
    AND waiting_on IS NOT NULL
    AND waiting_on NOT LIKE '%TRX%';
+
+INSERT INTO schema_migration_log (filename) VALUES ('V2026_09_10_01__digest_trx_only_mandatory.sql') ON CONFLICT (filename) DO NOTHING;

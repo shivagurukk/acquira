@@ -32,3 +32,5 @@ DELETE FROM sys_menu
    '/admin/integration/schedules',
    '/admin/integration/runs'
  );
+
+INSERT INTO schema_migration_log (filename) VALUES ('V2026_09_10_02__integration_hub_single_menu.sql') ON CONFLICT (filename) DO NOTHING;

@@ -35,3 +35,5 @@ CROSS JOIN sys_menu m
 WHERE m.path = '/executive/product-summary'
   AND g.group_name IN ('SUPER_ADMIN', 'ADMIN')
 ON CONFLICT (group_id, menu_id) DO NOTHING;
+
+INSERT INTO schema_migration_log (filename) VALUES ('V2026_09_10_03__product_summary_menu.sql') ON CONFLICT (filename) DO NOTHING;

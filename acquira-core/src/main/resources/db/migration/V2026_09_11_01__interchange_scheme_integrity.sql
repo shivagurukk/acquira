@@ -155,3 +155,5 @@ CREATE TABLE IF NOT EXISTS stg_visa_clearing_raw (
     loaded_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS ix_stg_visa_clearing_run ON stg_visa_clearing_raw (ingest_run_id, record_no);
+
+INSERT INTO schema_migration_log (filename) VALUES ('V2026_09_11_01__interchange_scheme_integrity.sql') ON CONFLICT (filename) DO NOTHING;
