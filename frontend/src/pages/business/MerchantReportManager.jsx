@@ -5,7 +5,7 @@ import {
     FormControlLabel, Switch, Dialog, DialogContent
 } from '@mui/material';
 import {
-    FileText, Zap, Clock, FileCheck, Building2, AlertTriangle, Shield,
+    FileText, Zap, Clock, FileCheck, Building2, AlertTriangle, Shield, UploadCloud,
     // Aliased to the former @mui/icons-material names so usage below is unchanged.
     Play as PlayArrow, CheckCircle2 as CheckCircle, XCircle as ErrorIcon,
     RefreshCw as Refresh, Clock as AccessTime, BarChart3 as Assessment,
@@ -145,10 +145,20 @@ const MerchantReportManager = () => {
     const logsEndRef = useRef(null);
     const pollRef = useRef(null);
     const jobIdRef = useRef(null);
+    // Post-hoc S3 upload of already-generated PDFs: null | {phase, uploaded, failed, total, message}
+    const [s3Upload, setS3Upload] = useState(null);
+    const s3PollRef = useRef(null);
 
     useEffect(() => { if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
-    useEffect(() => { fetchMerchants(); return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, []);
-    useEffect(() => { fetchMerchants(); }, [activeTenantId]);
+    useEffect(() => {
+        fetchMerchants();
+        fetchGeneratedReports();
+        return () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+            if (s3PollRef.current) clearInterval(s3PollRef.current);
+        };
+    }, []);
+    useEffect(() => { fetchMerchants(); fetchGeneratedReports(); setS3Upload(null); }, [activeTenantId]);
 
     const startPolling = useCallback((jobId) => {
         if (pollRef.current) clearInterval(pollRef.current);
@@ -226,6 +236,57 @@ const MerchantReportManager = () => {
             window.URL.revokeObjectURL(url);
         } catch (e) { console.error('Download failed:', e); }
     };
+
+    // Push the month's already-generated PDFs to the tenant's S3 bucket
+    // (for batches that were run without the "Upload to S3" toggle).
+    const handleUploadToS3 = async () => {
+        if (s3Upload?.phase === 'RUNNING') return;
+        setS3Upload({ phase: 'STARTING' });
+        try {
+            const res = await api.post('/business/insights/upload-to-s3');
+            const d = res.data || {};
+            if (d.status !== 'STARTED' || !d.jobId) {
+                setS3Upload({ phase: d.status || 'ERROR', message: d.message || 'Could not start the S3 upload.' });
+                return;
+            }
+            setS3Upload({ phase: 'RUNNING', uploaded: 0, failed: 0, total: d.totalFiles });
+            if (s3PollRef.current) clearInterval(s3PollRef.current);
+            s3PollRef.current = setInterval(async () => {
+                try {
+                    const st = (await api.get(`/business/insights/s3-upload-status/${d.jobId}`)).data;
+                    setS3Upload(st);
+                    if (st.phase === 'COMPLETED' || st.phase === 'FAILED') {
+                        clearInterval(s3PollRef.current); s3PollRef.current = null;
+                    }
+                } catch (e) { console.error('S3 upload poll error:', e); }
+            }, POLL_INTERVAL);
+        } catch (err) {
+            setS3Upload({ phase: 'ERROR', message: err?.response?.data?.message || err?.response?.data?.error || err.message });
+        }
+    };
+
+    // Compact status strip + button reused in both the idle and completed panels.
+    const renderS3UploadControl = () => (
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+            <Button variant="outlined" size="small" startIcon={<UploadCloud size={16} />}
+                onClick={handleUploadToS3}
+                disabled={s3Upload?.phase === 'RUNNING' || s3Upload?.phase === 'STARTING'}
+                sx={{ borderRadius: 2.5, textTransform: 'none', fontWeight: 700, borderColor: '#06b6d4', color: '#0e7490', '&:hover': { borderColor: '#0891b2', bgcolor: '#ecfeff' } }}>
+                {s3Upload?.phase === 'RUNNING' || s3Upload?.phase === 'STARTING' ? 'Uploading to S3…' : 'Upload to S3 Bucket'}
+            </Button>
+            {s3Upload?.phase === 'RUNNING' && (
+                <Chip size="small" label={`Uploading ${(s3Upload.uploaded || 0) + (s3Upload.failed || 0)}/${s3Upload.total || '?'}…`}
+                    sx={{ bgcolor: '#ecfeff', color: '#0e7490', fontWeight: 700 }} />
+            )}
+            {s3Upload?.phase === 'COMPLETED' && (
+                <Chip size="small" label={`✓ ${s3Upload.uploaded || 0} uploaded${s3Upload.failed ? ` · ${s3Upload.failed} failed` : ''}`}
+                    sx={{ bgcolor: s3Upload.failed ? '#fffbeb' : '#f0fdf4', color: s3Upload.failed ? '#92400e' : '#166534', fontWeight: 700 }} />
+            )}
+            {(s3Upload?.phase === 'S3_DISABLED' || s3Upload?.phase === 'S3_UNAVAILABLE' || s3Upload?.phase === 'NO_REPORTS' || s3Upload?.phase === 'ERROR' || s3Upload?.phase === 'FAILED') && (
+                <Typography variant="caption" fontWeight="600" color="#b45309">{s3Upload.message || 'S3 upload failed.'}</Typography>
+            )}
+        </Box>
+    );
 
     const handleStartClick = () => {
         // Validate scope-specific input before opening the tenant confirm dialog.
@@ -355,6 +416,18 @@ const MerchantReportManager = () => {
                                             <Grid item xs={12} sm={4}><StatBadge icon={<AccessTime />} label="Est. Duration" value={`~${estimatedTime} min`} color="secondary" /></Grid>
                                             <Grid item xs={12} sm={4}><StatBadge icon={<AutoGraph />} label="Report Type" value="PDF Insight" color="info" /></Grid>
                                         </Grid>
+
+                                        {generatedReports.length > 0 && (
+                                            <Box sx={{ mb: 4, px: 2.5, py: 2, borderRadius: 3, bgcolor: '#ecfeff', border: '1px solid #a5f3fc', display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+                                                <Box display="flex" alignItems="center" gap={1.5}>
+                                                    <FileCheck size={18} color="#0e7490" />
+                                                    <Typography variant="body2" fontWeight="700" color="#164e63">
+                                                        {generatedReports.length} report{generatedReports.length === 1 ? '' : 's'} already generated on disk
+                                                    </Typography>
+                                                </Box>
+                                                {renderS3UploadControl()}
+                                            </Box>
+                                        )}
 
                                         <Box textAlign="center" py={3}>
                                             {/* ── Generation scope ── */}
@@ -581,6 +654,8 @@ const MerchantReportManager = () => {
                                                             sx={{ borderRadius: 3, px: 5, py: 1.5, fontWeight: 'bold', background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`, boxShadow: '0 4px 14px rgba(0,0,0,0.15)', '&:hover': { boxShadow: '0 6px 20px rgba(0,0,0,0.25)' } }}>
                                                             ⬇ Download All ({generatedReports.length} PDFs as ZIP)
                                                         </Button>
+                                                        {/* Post-hoc S3 push — for batches run without the S3 toggle */}
+                                                        {!sendS3 && <Box mt={2}>{renderS3UploadControl()}</Box>}
                                                     </Box>
                                                 )}
                                                 {generatedReports.length > 0 && (
@@ -610,7 +685,7 @@ const MerchantReportManager = () => {
                                                     </Paper>
                                                 )}
                                                 <Box textAlign="center">
-                                                    <Button onClick={() => { setStatus('idle'); setLogs([]); setGeneratedReports([]); setSendEmail(false); setSendS3(false); setProgress({ current: 0, total: merchants.length, success: 0, failed: 0 }); }} sx={{ color: 'text.secondary', fontWeight: 'bold' }}>
+                                                    <Button onClick={() => { setStatus('idle'); setLogs([]); setSendEmail(false); setSendS3(false); setS3Upload(null); setProgress({ current: 0, total: merchants.length, success: 0, failed: 0 }); fetchGeneratedReports(); }} sx={{ color: 'text.secondary', fontWeight: 'bold' }}>
                                                         Start New Batch
                                                     </Button>
                                                 </Box>

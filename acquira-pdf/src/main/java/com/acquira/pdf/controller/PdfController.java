@@ -904,6 +904,129 @@ public class PdfController {
         return s.trim().replaceAll("^\"|\"$", "").trim();
     }
 
+    // ─── Post-hoc S3 upload of already-generated reports ─────────────────
+    //
+    // Batch generation only archives to S3 when sendS3=true was set at start.
+    // These endpoints let a user push a month's ALREADY-GENERATED PDFs to the
+    // tenant's bucket afterwards, without regenerating anything:
+    //
+    //   POST /upload-to-s3?year=&month=      → starts an async upload job
+    //   GET  /s3-upload-status/{jobId}       → poll progress
+    //
+    // Runs async (a big book can hold thousands of PDFs) with the same
+    // in-memory, tenant-guarded status pattern as batch jobs.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /** jobId → live status map. Values mutated by the worker thread; CHM gives visibility. */
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, Object>> s3UploadJobs =
+            new ConcurrentHashMap<>();
+
+    @PostMapping("/upload-to-s3")
+    public ResponseEntity<Map<String, Object>> uploadReportsToS3(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            return ResponseEntity.status(403).body(Map.of(
+                "status", "NO_TENANT", "message", "Tenant context is required."));
+        }
+        if (reportS3UploadService == null) {
+            return ResponseEntity.ok(Map.of(
+                "status",  "S3_UNAVAILABLE",
+                "message", "S3 upload service is not available on this deployment."));
+        }
+        if (!reportS3UploadService.isEnabled(tenantId)) {
+            return ResponseEntity.ok(Map.of(
+                "status",  "S3_DISABLED",
+                "message", "S3 archival is not enabled for this tenant. "
+                         + "Configure it under Admin > S3 Settings, then retry."));
+        }
+
+        try {
+            YearMonth targetMonth = resolveTargetMonth(year, month);
+            String bankShortCode  = resolveBankShortCode();
+            Path folder           = monthFolder(targetMonth, bankShortCode);
+
+            List<Path> pdfs = new ArrayList<>();
+            if (Files.exists(folder)) {
+                try (Stream<Path> files = Files.list(folder)) {
+                    files.filter(p -> p.toString().endsWith(".pdf")).sorted().forEach(pdfs::add);
+                }
+            }
+            if (pdfs.isEmpty()) {
+                return ResponseEntity.ok(Map.of(
+                    "status",      "NO_REPORTS",
+                    "targetMonth", targetMonth.toString(),
+                    "message",     "No generated PDFs found for " + targetMonth + " — generate reports first."));
+            }
+
+            String jobId = "s3up-" + UUID.randomUUID();
+            ConcurrentHashMap<String, Object> job = new ConcurrentHashMap<>();
+            job.put("jobId",       jobId);
+            job.put("tenantId",    tenantId);
+            job.put("targetMonth", targetMonth.toString());
+            job.put("total",       pdfs.size());
+            job.put("uploaded",    0);
+            job.put("failed",      0);
+            job.put("phase",       "RUNNING");
+            s3UploadJobs.put(jobId, job);
+
+            final String capturedBankCode = bankShortCode;
+            final String capturedYearMonth = targetMonth.toString();
+            Thread worker = new Thread(() -> {
+                TenantContext.setCurrentTenant(tenantId);
+                int ok = 0, fail = 0;
+                try {
+                    for (Path pdf : pdfs) {
+                        try {
+                            boolean uploaded = reportS3UploadService.uploadIfEnabled(
+                                    tenantId, pdf, capturedBankCode, capturedYearMonth);
+                            if (uploaded) ok++; else fail++;
+                        } catch (Exception e) {
+                            fail++;
+                            log.error("[S3-POSTHOC] Upload error for {}: {}", pdf.getFileName(), e.getMessage());
+                        }
+                        job.put("uploaded", ok);
+                        job.put("failed",   fail);
+                    }
+                    job.put("phase", "COMPLETED");
+                    log.info("[S3-POSTHOC] Done — {} uploaded, {} failed ({} tenant:{})",
+                            ok, fail, capturedYearMonth, tenantId);
+                } catch (Exception e) {
+                    job.put("phase", "FAILED");
+                    job.put("message", e.getMessage());
+                    log.error("[S3-POSTHOC] Job {} failed: {}", jobId, e.getMessage());
+                } finally {
+                    TenantContext.clear();
+                }
+            }, "s3-posthoc-upload");
+            worker.setDaemon(true);
+            worker.start();
+
+            return ResponseEntity.ok(Map.of(
+                "status",      "STARTED",
+                "jobId",       jobId,
+                "totalFiles",  pdfs.size(),
+                "targetMonth", targetMonth.toString()));
+        } catch (Exception e) {
+            log.error("[S3-POSTHOC] Failed to start upload", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/s3-upload-status/{jobId}")
+    public ResponseEntity<Map<String, Object>> getS3UploadStatus(@PathVariable String jobId) {
+        ConcurrentHashMap<String, Object> job = s3UploadJobs.get(jobId);
+        // Tenant guard: a job is visible only to the tenant that started it.
+        if (job == null || !Objects.equals(job.get("tenantId"), TenantContext.getCurrentTenant())) {
+            return ResponseEntity.notFound().build();
+        }
+        Map<String, Object> out = new LinkedHashMap<>(job);
+        out.remove("tenantId");
+        return ResponseEntity.ok(out);
+    }
+
     // ─── Batch Monitoring ──────────────────────────────────────────────
 
     /** A batch job is visible/cancellable only within the tenant that started it. */

@@ -85,6 +85,11 @@ public class ReportS3UploadService implements S3Uploader {
         }
     }
 
+    @Override
+    public boolean isEnabled(Long tenantId) {
+        return tenantId != null && getBool(tenantId, KEY_ENABLED, false);
+    }
+
     /** Convenience wrapper — restores tenant context around the upload call */
     public void uploadAfterEmail(Long tenantId, Path pdfPath, String bankCode, String yearMonth) {
         try {
