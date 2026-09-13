@@ -94,10 +94,10 @@ export default function DailyDigest() {
                 enabled: !!c.data.enabled,
                 recipients: c.data.recipients || '',
                 quietMinutes: c.data.quiet_minutes ?? 15,
-                requireMerchant: c.data.require_merchant !== false,
-                requireTrx: c.data.require_trx !== false,
-                requireDcc: c.data.require_dcc !== false,
-                requireRental: c.data.require_rental !== false,
+                requireMerchant: c.data.require_merchant === true,
+                requireTrx: true, // transactions are always mandatory
+                requireDcc: c.data.require_dcc === true,
+                requireRental: c.data.require_rental === true,
                 backfillWindowDays: c.data.backfill_window_days ?? 3,
                 sendNotBefore: c.data.send_not_before || '',
             });
@@ -270,20 +270,22 @@ export default function DailyDigest() {
                     </Card>
 
                     <Card pad title="Required feeds"
-                        subtitle="The digest waits for every feed switched on here. Switch one off if this bank does not receive that feed.">
+                        subtitle="Transactions are always required. DCC, rentals and merchant master are optional — switch one on only if this bank receives that feed and you want the digest to wait for it.">
                         <FormGrid>
+                            <FormField label="Merchant transactions"
+                                hint="Always required — the digest never sends a day without transactions.">
+                                <Switch checked disabled />
+                            </FormField>
                             <FormField label="Merchant master"
-                                hint="Occasional upsert feed — passes once the bank's merchant dimension has ever been loaded.">
+                                hint="Optional. Occasional upsert feed — passes once the bank's merchant dimension has ever been loaded.">
                                 <Switch checked={cfg.requireMerchant} onChange={setToggle('requireMerchant')} />
                             </FormField>
-                            <FormField label="Merchant transactions">
-                                <Switch checked={cfg.requireTrx} onChange={setToggle('requireTrx')} />
-                            </FormField>
-                            <FormField label="DCC revenue">
+                            <FormField label="DCC revenue"
+                                hint="Optional. Wait for the DCC feed before sending.">
                                 <Switch checked={cfg.requireDcc} onChange={setToggle('requireDcc')} />
                             </FormField>
                             <FormField label="Rentals / one-time fees"
-                                hint="Monthly feed — a rental file covering the month satisfies every day in it.">
+                                hint="Optional. Monthly feed — a rental file covering the month satisfies every day in it.">
                                 <Switch checked={cfg.requireRental} onChange={setToggle('requireRental')} />
                             </FormField>
                         </FormGrid>

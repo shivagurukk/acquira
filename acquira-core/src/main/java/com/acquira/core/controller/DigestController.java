@@ -104,16 +104,19 @@ public class DigestController {
             }
         }
 
+        // Transactions are the ONLY mandatory feed (decision 2026-09-10): a bank
+        // that just loads transactions must be able to complete. DCC / rental /
+        // merchant are optional and default OFF — an admin turns one on only if
+        // the bank actually receives that feed.
         jdbc.update(
             "UPDATE digest_config SET enabled = ?, recipients = ?, quiet_minutes = ?, "
-            + "require_merchant = ?, require_trx = ?, require_dcc = ?, require_rental = ?, "
+            + "require_merchant = ?, require_trx = TRUE, require_dcc = ?, require_rental = ?, "
             + "backfill_window_days = ?, send_not_before = ?, "
             + "updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?",
             enabled, String.join(",", parsed), quiet,
-            boolOf(body.get("requireMerchant"), true),
-            boolOf(body.get("requireTrx"), true),
-            boolOf(body.get("requireDcc"), true),
-            boolOf(body.get("requireRental"), true),
+            boolOf(body.get("requireMerchant"), false),
+            boolOf(body.get("requireDcc"), false),
+            boolOf(body.get("requireRental"), false),
             window, notBefore, username(), tid);
         return getConfig();
     }
