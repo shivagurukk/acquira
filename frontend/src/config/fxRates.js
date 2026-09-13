@@ -15,8 +15,8 @@
 // (and FX_RATE_AS_OF) manually, or move it to a tenant setting if execs start
 // caring about precision. The UI labels converted figures as indicative.
 export const USD_PER_UNIT = {
-    BHD: 2.65252,
-    AED: 0.27229,
+    BHD: 2.6525199,   // 1 / 0.377   (pegged)
+    AED: 0.2722941,   // 1 / 3.6725  (pegged)
     OMR: 2.60078,
     SAR: 0.26667,
     QAR: 0.27473,
@@ -26,4 +26,4 @@ export const USD_PER_UNIT = {
 
 // Stamp shown next to converted figures / in CSV footers so nobody mistakes
 // an indicative conversion for a booked rate.
-export const FX_RATE_AS_OF = '2026-08-28';
+export const FX_RATE_AS_OF = '2026-09-10';

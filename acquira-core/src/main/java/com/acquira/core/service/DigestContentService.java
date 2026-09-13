@@ -39,10 +39,13 @@ public class DigestContentService {
         public String institution;
         public String currency;
 
-        public Map<String, BigDecimal> totals = new LinkedHashMap<>();     // cnt/vol/msf/icf/sf/pg/nm/dcc/rental/spread
+        public Map<String, BigDecimal> totals = new LinkedHashMap<>();     // cnt/vol/msf/icf/sf/pg/nm/dcc/rental/fx/spread
         public Map<String, BigDecimal> prevWeek = new LinkedHashMap<>();   // same keys, same weekday last week
         public Map<String, BigDecimal> mtdAvg = new LinkedHashMap<>();     // same keys, MTD daily average
         public int mtdDays;
+
+        /** Tenant opted into ECOM FX income (netspread.fx_enabled) — see NetSpreadSql. */
+        public boolean fxEnabled;
 
         public List<MerchantLine> topMerchants = new ArrayList<>();
         public List<MerchantLine> gainers = new ArrayList<>();
@@ -55,8 +58,15 @@ public class DigestContentService {
         public BigDecimal internationalVol = BigDecimal.ZERO;
     }
 
-    private static final String TOTALS_SELECT =
-            "SELECT COALESCE(SUM(s.total_txns),0) cnt, "
+    /**
+     * FX income is an opt-in leg of the spread (tenant_setting
+     * {@code netspread.fx_enabled}), so the totals query is built per tenant:
+     * flag on → spread includes FX, exactly as the executive endpoints read it.
+     * Building this as a constant with {@link NetSpreadSql#sumSpread} is what
+     * made the emailed Net Spread disagree with the dashboards for FX tenants.
+     */
+    private static String totalsSelect(boolean fxEnabled) {
+        return "SELECT COALESCE(SUM(s.total_txns),0) cnt, "
             + "COALESCE(SUM(s.total_base_volume),0) vol, "
             + "COALESCE(SUM(s.total_msf),0) msf, "
             + "COALESCE(SUM(s.total_interchange),0) icf, "
@@ -65,11 +75,13 @@ public class DigestContentService {
             + NetSpreadSql.sumMargin("s") + " nm, "
             + "COALESCE(SUM(s.dcc_acquirer),0) dcc, "
             + "COALESCE(SUM(s.rental_amount),0) rental, "
-            + NetSpreadSql.sumSpread("s") + " spread "
+            + "COALESCE(SUM(" + NetSpreadSql.fx("s") + "),0) fx, "
+            + (fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s")) + " spread "
             + "FROM sum_daily_merchant s WHERE s.tenant_id = ? AND s.business_date ";
+    }
 
     private static final String[] TOTAL_KEYS =
-            {"cnt", "vol", "msf", "icf", "sf", "pg", "nm", "dcc", "rental", "spread"};
+            {"cnt", "vol", "msf", "icf", "sf", "pg", "nm", "dcc", "rental", "fx", "spread"};
 
     public DigestData build(Long tenantId, LocalDate date) {
         DigestData d = new DigestData();
@@ -80,12 +92,13 @@ public class DigestContentService {
                 + "COALESCE(base_currency, 'AED') AS ccy FROM tenant WHERE tenant_id = ?", tenantId);
         d.institution = (String) tenant.get("institution");
         d.currency = (String) tenant.get("ccy");
+        d.fxEnabled = NetSpreadSql.fxEnabled(jdbc, tenantId);
 
-        d.totals = totalsFor(tenantId, "= ?", date);
-        d.prevWeek = totalsFor(tenantId, "= ?", date.minusWeeks(1));
+        d.totals = totalsFor(tenantId, d.fxEnabled, "= ?", date);
+        d.prevWeek = totalsFor(tenantId, d.fxEnabled, "= ?", date.minusWeeks(1));
 
         LocalDate monthStart = date.withDayOfMonth(1);
-        Map<String, BigDecimal> mtd = totalsFor(tenantId, "BETWEEN ? AND ?", monthStart, date);
+        Map<String, BigDecimal> mtd = totalsFor(tenantId, d.fxEnabled, "BETWEEN ? AND ?", monthStart, date);
         Integer days = jdbc.queryForObject(
                 "SELECT COUNT(DISTINCT business_date) FROM sum_daily_merchant "
                 + "WHERE tenant_id = ? AND business_date BETWEEN ? AND ? AND COALESCE(total_txns,0) > 0",
@@ -102,11 +115,12 @@ public class DigestContentService {
         return d;
     }
 
-    private Map<String, BigDecimal> totalsFor(Long tenantId, String datePredicate, Object... dates) {
+    private Map<String, BigDecimal> totalsFor(Long tenantId, boolean fxEnabled,
+                                              String datePredicate, Object... dates) {
         Object[] params = new Object[1 + dates.length];
         params[0] = tenantId;
         System.arraycopy(dates, 0, params, 1, dates.length);
-        return jdbc.query(TOTALS_SELECT + datePredicate, rs -> {
+        return jdbc.query(totalsSelect(fxEnabled) + datePredicate, rs -> {
             Map<String, BigDecimal> m = new LinkedHashMap<>();
             if (rs.next()) {
                 for (String k : TOTAL_KEYS) {

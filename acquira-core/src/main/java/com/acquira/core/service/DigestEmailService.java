@@ -63,8 +63,8 @@ public class DigestEmailService {
 
         h.append("<div style=\"color:").append(MUTED).append(";font-size:11px;padding:14px 4px 0;\">")
          .append("USD figures are indicative, converted at the pegged/reference rates of ")
-         .append(FxRates.AS_OF).append(" — not booked rates. Generated automatically by Acquira once all "
-                 + "of the day's feeds were loaded.")
+         .append(FxRates.AS_OF).append(" — not booked rates. Generated automatically by Acquira once the "
+                 + "day's required feeds were loaded.")
          .append("</div></div></div>");
         return h.toString();
     }
@@ -119,12 +119,16 @@ public class DigestEmailService {
         feeRow(h, d, "Net margin", d.totals.get("nm"), false);
         feeRow(h, d, "DCC income (acquirer share)", d.totals.get("dcc"), false);
         feeRow(h, d, "Rental income", d.totals.get("rental"), false);
+        // FX is an opt-in leg: shown only where the tenant has it, so the rows
+        // always add up to the Net Spread below them.
+        if (d.fxEnabled) feeRow(h, d, "FX income (e-commerce)", d.totals.get("fx"), false);
         h.append("<tr><td colspan=\"2\" style=\"border-top:1px solid ").append(LINE).append(";\"></td></tr>");
         feeRow(h, d, "Net Spread", d.totals.get("spread"), false);
         h.append("</table>").append(cardClose());
     }
 
     private void feeRow(StringBuilder h, DigestData d, String label, BigDecimal v, boolean deduction) {
+        if (v == null) v = BigDecimal.ZERO;
         boolean total = label.startsWith("Net");
         h.append("<tr><td style=\"padding:4px 0;color:")
          .append(deduction ? MUTED : INK).append(";")

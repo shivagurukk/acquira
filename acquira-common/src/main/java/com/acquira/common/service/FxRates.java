@@ -20,11 +20,11 @@ public final class FxRates {
 
     /** Stamp shown next to converted figures so nobody mistakes an indicative
      *  conversion for a booked rate. */
-    public static final String AS_OF = "2026-08-28";
+    public static final String AS_OF = "2026-09-10";
 
     private static final Map<String, BigDecimal> USD_PER_UNIT = Map.of(
-            "BHD", new BigDecimal("2.65252"),
-            "AED", new BigDecimal("0.27229"),
+            "BHD", new BigDecimal("2.6525199"),   // 1 / 0.377   (pegged)
+            "AED", new BigDecimal("0.2722941"),   // 1 / 3.6725  (pegged)
             "OMR", new BigDecimal("2.60078"),
             "SAR", new BigDecimal("0.26667"),
             "QAR", new BigDecimal("0.27473"),

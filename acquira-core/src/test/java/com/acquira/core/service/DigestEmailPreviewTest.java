@@ -13,6 +13,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -26,6 +28,16 @@ class DigestEmailPreviewTest {
 
     private static Map<String, BigDecimal> totals(String cnt, String vol, String msf, String icf,
             String sf, String pg, String dcc, String rental) {
+        return totals(cnt, vol, msf, icf, sf, pg, dcc, rental, "0", false);
+    }
+
+    /**
+     * {@code fxInSpread} mirrors the tenant's netspread.fx_enabled flag: the FX
+     * leg joins the spread only for an opted-in tenant, exactly as
+     * NetSpreadSql.sumSpreadWithFx does in the query.
+     */
+    private static Map<String, BigDecimal> totals(String cnt, String vol, String msf, String icf,
+            String sf, String pg, String dcc, String rental, String fx, boolean fxInSpread) {
         Map<String, BigDecimal> m = new LinkedHashMap<>();
         m.put("cnt", bd(cnt));
         m.put("vol", bd(vol));
@@ -37,7 +49,9 @@ class DigestEmailPreviewTest {
         m.put("nm", nm);
         m.put("dcc", bd(dcc));
         m.put("rental", bd(rental));
-        m.put("spread", nm.add(bd(dcc)).add(bd(rental)));
+        m.put("fx", bd(fx));
+        BigDecimal spread = nm.add(bd(dcc)).add(bd(rental));
+        m.put("spread", fxInSpread ? spread.add(bd(fx)) : spread);
         return m;
     }
 
@@ -99,11 +113,51 @@ class DigestEmailPreviewTest {
         assertTrue(html.contains("Net Spread"));
         assertTrue(subject.contains("Daily Digest"));
 
+        // FX is off for this tenant, so the leg must not appear at all.
+        assertFalse(html.contains("FX income"));
+
         Path out = Path.of("target", "digest-sample.html");
         Files.createDirectories(out.getParent());
         Files.writeString(out,
                 "<!-- Subject: " + subject + " -->\n" + html, StandardCharsets.UTF_8);
         System.out.println("SUBJECT: " + subject);
+        System.out.println("WROTE: " + out.toAbsolutePath());
+    }
+
+    /**
+     * An FX-enabled tenant must show the FX leg AND carry it in Net Spread —
+     * the email used to print a spread that excluded FX while the Net Spread
+     * dashboard included it, so the two disagreed on the same day.
+     */
+    @Test
+    void fxEnabledTenantShowsFxLegAndCarriesItInTheSpread() throws Exception {
+        DigestData d = new DigestData();
+        d.businessDate = LocalDate.of(2026, 9, 3);
+        d.institution = "AFSB";
+        d.currency = "BHD";
+        d.fxEnabled = true;
+        d.totals = totals("48213", "1243570.512", "14922.847", "8105.216", "1741.000",
+                "623.410", "1105.220", "1875.000", "742.360", true);
+        d.prevWeek = totals("45120", "1178430.226", "14141.163", "7680.905", "1649.802",
+                "590.771", "1042.610", "1875.000", "701.900", true);
+        d.mtdDays = 0;
+
+        DigestEmailService svc = new DigestEmailService();
+        String html = svc.render(d);
+
+        assertTrue(html.contains("FX income"), "FX-enabled tenant must show the FX row");
+
+        // Net Spread on screen = margin + DCC + rental + FX. Recomputing it here
+        // from the fee-stack inputs is the point: it catches a renderer that
+        // shows the FX row but totals without it (or the reverse).
+        BigDecimal expected = d.totals.get("nm")
+                .add(d.totals.get("dcc")).add(d.totals.get("rental")).add(d.totals.get("fx"));
+        assertEquals(0, expected.compareTo(d.totals.get("spread")),
+                "spread must include the FX leg for an opted-in tenant");
+
+        Path out = Path.of("target", "digest-sample-fx.html");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, html, StandardCharsets.UTF_8);
         System.out.println("WROTE: " + out.toAbsolutePath());
     }
 }
