@@ -13,6 +13,7 @@ import { premiumDataGridStyles, premiumTableWrapper, pageContainer } from '../..
 import { useDataBounds } from '../../hooks/useDataBounds';
 import DataBoundsBanner from '../../components/DataBoundsBanner';
 import ChannelToggle from '../../components/ChannelToggle';
+import MidSidSummary from '../../components/MidSidSummary';
 
 // ─── Local design tokens ─────────────────────────────────────────
 // Every colour routes through a CSS variable with a light-mode fallback so the
@@ -846,6 +847,10 @@ const AttritionReport = () => {
                         Statuses and comparisons are computed on {channel === 'POS' ? 'POS' : 'e-commerce'} activity only.
                     </Typography>
                 )}
+                {/* Active MID/SID over the report's [startDate, endDate] window */}
+                <Box sx={{ ml: 'auto' }}>
+                    <MidSidSummary from={filters.startDate || undefined} to={filters.endDate || undefined} channel={channel} compact />
+                </Box>
             </Box>
             <BusinessFilters filters={filters} onChange={setFilters} onApply={() => fetchData()} isOpen={showFilters} onClose={() => setShowFilters(false)} />
             <DataBoundsBanner

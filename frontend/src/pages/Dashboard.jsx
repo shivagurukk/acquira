@@ -11,6 +11,7 @@ import {
     BarChart, ComposedChart, Legend,
 } from 'recharts';
 import ChannelToggle from '../components/ChannelToggle';
+import MidSidSummary from '../components/MidSidSummary';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import ChartGradients from '../components/ChartGradients';
@@ -468,6 +469,14 @@ const Dashboard = () => {
         () => chartData.slice(fromIdx, toIdx + 1),
         [chartData, fromIdx, toIdx]);
 
+    // Window for the shared MID/SID strip: date bounds of the visible buckets
+    // (each week/month bucket carries its own from/to), so the counts track the
+    // MTD/YTD mode and the client-side bucket-range filter exactly.
+    const midSidWindow = useMemo(() => {
+        if (!viewData.length) return { from: undefined, to: undefined };
+        return { from: viewData[0].from, to: viewData[viewData.length - 1].to };
+    }, [viewData]);
+
     const [bestIdx, worstIdx] = useMemo(() => {
         let bi = -1, wi = -1, bv = -Infinity, wv = Infinity;
         viewData.forEach((b, i) => {
@@ -758,6 +767,9 @@ const Dashboard = () => {
 
                     {/* POS / ECOM / All channel scope (server-side, ChannelSql) */}
                     <ChannelToggle value={channel} onChange={setChannel} />
+
+                    {/* Active MID/SID over the visible bucket window */}
+                    <MidSidSummary from={midSidWindow.from} to={midSidWindow.to} channel={channel} compact />
 
                     <div style={{ display: 'inline-flex', background: 'var(--bg-subtle)',
                         border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>

@@ -8,6 +8,7 @@ import {
     Landmark, Receipt, Percent, Layers, Wallet,
 } from 'lucide-react';
 import ChannelToggle from '../components/ChannelToggle';
+import MidSidSummary from '../components/MidSidSummary';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
@@ -404,6 +405,8 @@ const CeoVolumeRevenue = ({
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    {/* Active MID/SID for the resolved period window, matching the table */}
+                    <MidSidSummary from={data?.from} to={displayTo} channel={channel} compact />
                     {/* search */}
                     <div style={{ position: 'relative' }}>
                         <Search size={14} style={{ position: 'absolute', left: 10, top: '50%',

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import MarginGlossaryHint from '../../components/MarginGlossary';
 import ChannelToggle from '../../components/ChannelToggle';
+import MidSidSummary from '../../components/MidSidSummary';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCompactCurrency } from '../../utils/formatters';
@@ -427,6 +428,7 @@ export default function SalesExecutiveDashboard() {
           </div>
         )}
         <ChannelToggle value={channel} onChange={setChannel} />
+        <MidSidSummary from={range.from || undefined} to={range.to || undefined} channel={channel} compact />
         <div style={{ marginLeft: 'auto', fontSize: 11.5, color: T.textMut }}>
           {range.from && range.to
             ? <>Showing <b>{range.from} → {range.to}</b>{compare.from && <> · compared with <b>{compare.from} → {compare.to}</b></>}</>

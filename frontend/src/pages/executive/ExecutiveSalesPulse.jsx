@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Activity, Loader2 } from 'lucide-react';
 import api from '../../api/axios';
 import ChannelToggle from '../../components/ChannelToggle';
+import MidSidSummary from '../../components/MidSidSummary';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCompactCurrency } from '../../utils/formatters';
 import { T, CARD } from '../../theme/salesTokens';
@@ -225,6 +226,9 @@ export default function ExecutiveSalesPulse() {
           </Select>
 
           <ChannelToggle value={channel} onChange={setChannel} />
+
+          {/* Active MID/SID for the resolved period window (data.period) */}
+          <MidSidSummary from={data?.period?.from} to={data?.period?.to} channel={channel} compact />
 
           {/* Every filter change refetches on its own; a Refresh button implied
               the page could go stale, which it cannot. A quiet spinner covers

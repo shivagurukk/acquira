@@ -7,6 +7,7 @@ import { Trophy, TrendingUp, Users, UserPlus, Sparkles, Download, ArrowUpRight, 
 import PremiumReportHeader from '../../components/PremiumReportHeader';
 import BusinessFilters from '../../components/BusinessFilters';
 import ChannelToggle from '../../components/ChannelToggle';
+import MidSidSummary from '../../components/MidSidSummary';
 import KpiCards from '../../components/KpiCards';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import { exportToCSV } from '../../utils/exportUtils';
@@ -398,7 +399,9 @@ const TopPerformers = () => {
 
             {/* POS / ECOM / All channel scope — refetches: the scoping happens
                 server-side (ChannelSql), not on the delivered payload. */}
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 1.5 }}>
+                {/* Active MID/SID over the board's resolved window */}
+                <MidSidSummary from={data?.from} to={data?.to} channel={channel} compact />
                 <ChannelToggle value={channel}
                     onChange={(c) => { setChannel(c); fetchData(undefined, undefined, c); }} />
             </Box>

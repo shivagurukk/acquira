@@ -8,6 +8,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import ChannelToggle from '../../components/ChannelToggle';
 import EmptyState from '../../components/EmptyState';
+import MidSidSummary from '../../components/MidSidSummary';
 import MarginGlossaryHint from '../../components/MarginGlossary';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
@@ -831,6 +832,14 @@ const NetSpreadDashboard = () => {
         () => trend.reduce((a, t) => Math.max(a, num(t.volume)), 0) || 1, [trend]);
 
     const monthDateSet = useMemo(() => new Set(monthDates), [monthDates]);
+    // Window for the shared MID/SID strip: the picked days, or the whole loaded
+    // month when nothing is hand-picked. Min/max ISO bounds is all the strip needs.
+    const midSidWindow = useMemo(() => {
+        const src = selectedDates.length ? selectedDates : monthDates;
+        if (!src.length) return { from: undefined, to: undefined };
+        const s = [...src].sort();
+        return { from: s[0], to: s[s.length - 1] };
+    }, [selectedDates, monthDates]);
     const allMonthDays = useMemo(() => {
         const m = /^(\d{4})-(\d{2})$/.exec(month || '');
         if (!m) return [];
@@ -1467,6 +1476,8 @@ const NetSpreadDashboard = () => {
                             )}
                         </div>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto', flexWrap: 'wrap' }}>
+                    <MidSidSummary from={midSidWindow.from} to={midSidWindow.to} channel={channel} compact />
                     {behindLatest && (
                         <button className="edm-focus"
                             onClick={() => { setMonth(latestMonth); setSelectedDates([latest]); setPage(0); }}
@@ -1479,6 +1490,7 @@ const NetSpreadDashboard = () => {
                             Latest data is {pillLabel(latest)} — go there
                         </button>
                     )}
+                    </div>
                 </div>
 
                 {calWeeks.length > 0 ? (

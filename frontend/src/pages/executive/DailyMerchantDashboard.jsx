@@ -16,6 +16,7 @@ import {
 } from '../../utils/formatters';
 import { weekRules } from '../../utils/weekRules';
 import ChannelToggle from '../../components/ChannelToggle';
+import MidSidSummary from '../../components/MidSidSummary';
 
 /* ════════════════════════════════════════════════════════════════════
    Executive Daily Merchant Dashboard — the acquiring day, read as a
@@ -1173,6 +1174,14 @@ const DailyMerchantDashboard = () => {
        tenant's week, so its weekend always lands on the last two columns.
        null = lead/tail blank. */
     const monthDateSet = useMemo(() => new Set(monthDates), [monthDates]);
+    // Window for the shared MID/SID strip: the picked days, or the whole loaded
+    // month when nothing is hand-picked. Min/max ISO bounds is all the strip needs.
+    const midSidWindow = useMemo(() => {
+        const src = selectedDates.length ? selectedDates : monthDates;
+        if (!src.length) return { from: undefined, to: undefined };
+        const s = [...src].sort();
+        return { from: s[0], to: s[s.length - 1] };
+    }, [selectedDates, monthDates]);
     /* Every calendar day of the month — a day with no transactions is still a
        real business date, so it stays selectable and reports its own emptiness
        rather than being unclickable. */
@@ -2017,6 +2026,8 @@ const DailyMerchantDashboard = () => {
                             )}
                         </div>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto', flexWrap: 'wrap' }}>
+                    <MidSidSummary from={midSidWindow.from} to={midSidWindow.to} channel={channel} compact />
                     {behindLatest && (
                         <button className="edm-focus"
                             onClick={() => { setMonth(latestMonth); setSelectedDates([latest]); setPage(0); }}
@@ -2029,6 +2040,7 @@ const DailyMerchantDashboard = () => {
                             Latest data is {pillLabel(latest)} — go there
                         </button>
                     )}
+                    </div>
                 </div>
 
                 {calWeeks.length > 0 ? (
