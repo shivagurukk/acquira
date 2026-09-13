@@ -38,6 +38,7 @@ const CCY_TOGGLE_PATHS = new Set([
     '/executive/sales',                 // Executive Sales Pulse
     '/executive/daily-merchant',        // Daily Merchant Performance
     '/executive/net-spread',            // Net Spread Dashboard
+    '/executive/product-summary',       // Product Summary
 ]);
 const CCY_KEY = 'acquira_display_ccy';
 function loadUsdDisplay() {

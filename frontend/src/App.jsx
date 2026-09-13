@@ -59,6 +59,8 @@ const ExecutiveSalesPulse = lazy(() => import('./pages/executive/ExecutiveSalesP
 const ExecutiveDailyMerchant = lazy(() => import('./pages/executive/DailyMerchantDashboard'));
 // Net Spread — replica of the executive daily page at merchant grain, plus DCC + rental legs
 const NetSpreadDashboard = lazy(() => import('./pages/executive/NetSpreadDashboard'));
+// Product Summary — per-tenant P&L by revenue product (POS/ECOM acquiring + DCC + rental + FX)
+const ProductSummary = lazy(() => import('./pages/executive/ProductSummary'));
 const SalesTargetManagement = lazy(() => import('./pages/sales/SalesTargetManagement'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const TenantManagement = lazy(() => import('./pages/TenantManagement'));
@@ -125,6 +127,7 @@ function App() {
               <Route path="/executive/sales" element={<ExecutiveSalesPulse />} />
               <Route path="/executive/daily-merchant" element={<ExecutiveDailyMerchant />} />
               <Route path="/executive/net-spread" element={<NetSpreadDashboard />} />
+              <Route path="/executive/product-summary" element={<ProductSummary />} />
 
               {/* Merchant MGT */}
               <Route path="/merchants" element={<MerchantHierarchy />} />
