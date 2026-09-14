@@ -88,7 +88,10 @@ public class DigestContentService {
         d.businessDate = date;
 
         Map<String, Object> tenant = jdbc.queryForMap(
-                "SELECT COALESCE(institution_id, 'Tenant ' || tenant_id) AS institution, "
+                // bank_name is the display name; institution_id is a logical code
+                // ("BANK001", sometimes a bare number) and must never headline the email.
+                "SELECT COALESCE(NULLIF(TRIM(bank_name), ''), NULLIF(TRIM(bank_short_code), ''), "
+                + "institution_id, 'Tenant ' || tenant_id) AS institution, "
                 + "COALESCE(base_currency, 'AED') AS ccy FROM tenant WHERE tenant_id = ?", tenantId);
         d.institution = (String) tenant.get("institution");
         d.currency = (String) tenant.get("ccy");
