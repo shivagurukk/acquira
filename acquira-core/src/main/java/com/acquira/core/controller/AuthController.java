@@ -441,7 +441,7 @@ public class AuthController {
                 user, ticket, passwordEncoder.encode(otp),
                 LocalDateTime.now().plusMinutes(ttlMinutes), clientIp));
 
-        if (!emailService.sendLoginMfaOtp(email, user.getUsername(), otp, ttlMinutes)) {
+        if (!emailService.sendLoginMfaOtp(tenantId, email, user.getUsername(), otp, ttlMinutes)) {
             // Burn the challenge we just wrote — nobody can ever answer it.
             mfaTokenRepository.deleteByUserId(user.getId());
             auditService.log("MFA_SEND_FAILED",
@@ -599,7 +599,7 @@ public class AuthController {
         challenge.setExpiresAt(LocalDateTime.now().plusMinutes(ttlMinutes));
         mfaTokenRepository.save(challenge);
 
-        if (!emailService.sendLoginMfaOtp(user.getEmail(), user.getUsername(), otp, ttlMinutes)) {
+        if (!emailService.sendLoginMfaOtp(tenantId, user.getEmail(), user.getUsername(), otp, ttlMinutes)) {
             return ResponseEntity.status(503).body(Map.of("error",
                     "Could not send your verification code. Please contact your administrator."));
         }
@@ -854,7 +854,10 @@ public class AuthController {
         LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(OTP_TTL_MINUTES);
         resetTokenRepository.save(new PasswordResetToken(user, otpHash, expiresAt, true));
 
-        emailService.sendPasswordResetOtp(user.getEmail(), user.getUsername(), otp, OTP_TTL_MINUTES);
+        // Pre-login: no TenantContext yet, so resolve the user's tenant explicitly
+        // or the tenant's SMTP Settings config is skipped and no email goes out.
+        Long tenantId = tenantService.getDefaultTenantIdForUser(user.getUsername());
+        emailService.sendPasswordResetOtp(tenantId, user.getEmail(), user.getUsername(), otp, OTP_TTL_MINUTES);
         auditService.log("PWRESET_OTP_SENT",
                 "Password-reset OTP issued for '" + user.getUsername() + "' from " + getClientIp(httpRequest),
                 user.getUsername());

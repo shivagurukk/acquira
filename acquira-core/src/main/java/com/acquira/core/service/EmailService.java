@@ -83,7 +83,16 @@ public class EmailService {
      * neither is available (caller logs & skips).
      */
     private ResolvedSender resolveSender() {
-        Long tenantId = TenantContext.getCurrentTenant();
+        return resolveSender(TenantContext.getCurrentTenant());
+    }
+
+    /**
+     * Same as {@link #resolveSender()} but with an explicit tenant. Pre-login
+     * flows (password-reset OTP, login MFA) run with NO TenantContext, so they
+     * must pass the user's tenant here — otherwise the tenant's SMTP Settings
+     * config is silently skipped and only the spring.mail.* fallback is tried.
+     */
+    private ResolvedSender resolveSender(Long tenantId) {
         if (tenantId != null) {
             Optional<EmailSmtpConfig> active = smtpConfigService.getActiveRaw(tenantId);
             if (active.isPresent()) {
@@ -109,7 +118,12 @@ public class EmailService {
      * @return true if handed to the mail server, false if no SMTP configured / send failed.
      */
     public boolean sendEmail(String toEmail, String subject, String body) {
-        ResolvedSender rs = resolveSender();
+        return sendEmail(TenantContext.getCurrentTenant(), toEmail, subject, body);
+    }
+
+    /** Tenant-explicit variant for pre-login flows where TenantContext is unset. */
+    public boolean sendEmail(Long tenantId, String toEmail, String subject, String body) {
+        ResolvedSender rs = resolveSender(tenantId);
         if (rs == null) {
             log.warn("[EMAIL] No SMTP configured (no active tenant config, no spring.mail.*). "
                     + "Would send to {}: {}", toEmail, subject);
@@ -257,13 +271,15 @@ public class EmailService {
     }
 
     /**
-     * Send a 6-digit password-reset OTP. Runs pre-login (no tenant context), so
-     * it uses the same property-fallback sender path as the link email above.
+     * Send a 6-digit password-reset OTP. Runs pre-login (no TenantContext), so
+     * the caller passes the user's tenant explicitly to reach that tenant's
+     * SMTP Settings config; spring.mail.* remains the fallback.
      * If no SMTP is configured the OTP is logged (dev fallback) so the flow can
      * still be completed locally.
      */
-    public void sendPasswordResetOtp(String toEmail, String username, String otp, int ttlMinutes) {
+    public void sendPasswordResetOtp(Long tenantId, String toEmail, String username, String otp, int ttlMinutes) {
         boolean sent = sendEmail(
+                tenantId,
                 toEmail,
                 "Your Acquira verification code",
                 "Hello " + (username != null ? username : "") + ",\n\n"
@@ -286,8 +302,9 @@ public class EmailService {
      * code is the only way through the login gate, so a false result has to
      * surface as an error rather than let the sign-in continue.
      */
-    public boolean sendLoginMfaOtp(String toEmail, String username, String otp, int ttlMinutes) {
+    public boolean sendLoginMfaOtp(Long tenantId, String toEmail, String username, String otp, int ttlMinutes) {
         boolean sent = sendEmail(
+                tenantId,
                 toEmail,
                 "Your Acquira sign-in code",
                 "Hello " + (username != null ? username : "") + ",\n\n"
