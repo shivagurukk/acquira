@@ -717,8 +717,29 @@ public class PlaywrightPdfService {
     //  BATCH GENERATION
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    /**
+     * Canonical on-disk report filename: {@code Insight_<name>_<MID>_<YYYY-MM>.pdf}.
+     *
+     * <p>The bank MID is part of the key because the name alone is NOT unique — two
+     * merchants with the same (or identically-sanitized) name would otherwise write
+     * to the same path, so one PDF silently overwrote the other and the email/S3
+     * step attached the surviving merchant's report to BOTH merchants (a
+     * cross-merchant data leak within a tenant). Any code that reconstructs the
+     * path (the post-batch email/S3 loops) MUST call this method rather than
+     * rebuild the string, so the write site and the readers can never drift.
+     */
+    public static String reportFileName(String merchantName, String mid, String targetYearMonth) {
+        String safeName = sanitizeForFile(merchantName != null && !merchantName.isBlank() ? merchantName : "Merchant");
+        String safeMid  = sanitizeForFile(mid != null && !mid.isBlank() ? mid : "NA");
+        return "Insight_" + safeName + "_" + safeMid + "_" + targetYearMonth + ".pdf";
+    }
+
+    private static String sanitizeForFile(String s) {
+        return s.replaceAll("[^a-zA-Z0-9.\\-]", "_");
+    }
+
     public BatchJobStatus generateBatch(
-            List<long[]> merchantIdList, List<String> merchantNames,
+            List<long[]> merchantIdList, List<String> merchantNames, List<String> merchantMids,
             java.util.function.BiFunction<Long, long[], MerchantInsightsDTO> dataFetcher,
             String targetFolder, String monthYear, String targetYearMonth) {
 
@@ -757,6 +778,8 @@ public class PlaywrightPdfService {
                     final long merchantId = merchantIdList.get(i)[0];
                     final long[] idContext = merchantIdList.get(i);
                     final String merchantName = merchantNames.get(i);
+                    final String merchantMid = (merchantMids != null && i < merchantMids.size())
+                            ? merchantMids.get(i) : null;
 
                     CompletableFuture<Void> future = CompletableFuture
                         .supplyAsync(() -> {
@@ -809,8 +832,7 @@ public class PlaywrightPdfService {
                             if (pdfBytes == null || status.cancelled) return;
                             long t0 = System.nanoTime();
                             try {
-                                String safeName = merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-                                Path path = Paths.get(targetFolder, "Insight_" + safeName + "_" + targetYearMonth + ".pdf");
+                                Path path = Paths.get(targetFolder, reportFileName(merchantName, merchantMid, targetYearMonth));
                                 Files.write(path, pdfBytes);
                                 status.succeeded.incrementAndGet();
                                 status.totalWriteMs.addAndGet((System.nanoTime() - t0) / 1_000_000);

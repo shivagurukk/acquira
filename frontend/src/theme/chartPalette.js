@@ -49,6 +49,11 @@ export const SERIES = {
        --mix-* set in index.css, validated per mode as a categorical
        palette; each segment body is a soft vertical gradient of its hue. */
     netRevenue:  'var(--mix-margin)',
+    /* Ancillary income (DCC acquirer share + rental): the non-margin part of
+       Net Spread. Its own hue so a spread figure can be read as "margin +
+       this" at a glance. */
+    ancillary:   'var(--mix-ancillary)',
+    netSpread:   'var(--mix-ancillary)',
     marginPct:   'var(--chart-line)',
     interchange: 'var(--mix-interchange)',
     schemeFee:   'var(--mix-scheme)',

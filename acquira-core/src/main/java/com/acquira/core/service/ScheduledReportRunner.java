@@ -48,6 +48,7 @@ public class ScheduledReportRunner {
     private final ReportExportService exportService;
     private final EmailService emailService;
     private final ObjectMapper objectMapper;
+    private final com.acquira.common.service.TenantStatusService tenantStatusService;
 
     @Value("${app.reports.dir:/opt/acquira/reports}")
     private String reportsDir;
@@ -72,6 +73,18 @@ public class ScheduledReportRunner {
                     continue;
                 }
                 if (s.getNextRunAt().isAfter(now)) continue;
+
+                // TENANT OFF-SWITCH: deactivating a tenant silences ALL its
+                // schedules at once — no one has to remember to toggle every
+                // report_schedule row off. nextRunAt still advances so the
+                // schedule doesn't fire a backlog if the tenant is reactivated.
+                if (tenantStatusService.isInactive(s.getTenantId())) {
+                    log.info("[report-schedule] schedule {} skipped — tenant {} is not active",
+                        s.getId(), s.getTenantId());
+                    s.setNextRunAt(nextRun(s));
+                    scheduleRepo.save(s);
+                    continue;
+                }
 
                 execute(s);
                 s.setLastRunAt(LocalDateTime.now());

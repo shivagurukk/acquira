@@ -25,6 +25,20 @@ public class MerchantMetricCalculator {
             return metrics;
         }
 
+        // Ancillary-only rows (rental/DCC charged on a day with no card
+        // transactions; AncillarySql writes them with an EXPLICIT total_txns=0
+        // and every transaction measure 0) are not trading days. Left in, they
+        // drag the daily average and min to 0, inflate the volatility index,
+        // and flip stability to "Unstable" for a merchant whose only anomaly
+        // was paying rent — so they are excluded from every row-count-based
+        // stat. A NULL total_txns is a legacy transaction row and is kept.
+        dailyRecords = dailyRecords.stream()
+                .filter(r -> r.getTotalTxns() == null || r.getTotalTxns() > 0)
+                .collect(Collectors.toList());
+        if (dailyRecords.isEmpty()) {
+            return metrics;
+        }
+
         // Basic Stats
         BigDecimal totalVol = BigDecimal.ZERO;
         BigDecimal maxVol = BigDecimal.ZERO;

@@ -25,6 +25,76 @@ public class BusinessAnalyticsController {
     @Autowired
     private com.acquira.common.service.DataBoundsService dataBoundsService;
 
+    @Autowired
+    private com.acquira.common.service.ReportCache reportCache;
+
+    /** Serializes the resolved filter DTO into a stable cache-key suffix. */
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    private String filterKey(VolumeRevenueFilterDTO filters) {
+        try {
+            return objectMapper.writeValueAsString(filters);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // Unkeyable filters just mean an uncached (direct) execution.
+            return null;
+        }
+    }
+
+    @Autowired
+    private com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+
+    /**
+     * Warm the shared gates first — data-bounds and filter-options are the
+     * first request of nearly every report page (both are @Cacheable / cached
+     * per tenant underneath) — then the Attrition Report's seeded first run.
+     *
+     * The attrition filter template mirrors AttritionReport.jsx: the seeded
+     * body sends every list as an EMPTY ARRAY and merchantName as "", with
+     * startDate = first of the latest data month and endDate = the latest
+     * data date (from /data-bounds). Any drift from that shape changes the
+     * serialized filter key and the warm entry is simply never read.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmers() {
+        reportCacheWarmup.register("data-bounds+filter-options", tenantId -> {
+            dataBoundsService.getBounds(tenantId);
+            volumeRevenueRepository.getFilterOptions(tenantId);
+        });
+        reportCacheWarmup.register("attrition-report", tenantId -> {
+            Map<String, Object> bounds = dataBoundsService.getBounds(tenantId);
+            Object latest = bounds.get("latest");
+            if (latest == null) return;
+            String latestYmd = String.valueOf(latest).substring(0, 10);
+            String template = "{"
+                    + "\"startDate\":\"" + latestYmd.substring(0, 7) + "-01\","
+                    + "\"endDate\":\"" + latestYmd + "\","
+                    + "\"partnerList\":[],\"mccList\":[],\"industryList\":[],"
+                    + "\"rmList\":[],\"teamLeaderList\":[],\"sectorList\":[],"
+                    + "\"destinationList\":[],\"schemeList\":[],\"cardTypeList\":[],"
+                    + "\"channelList\":[],\"merchantName\":\"\",\"midList\":[],\"sidList\":[]"
+                    + "}";
+            VolumeRevenueFilterDTO filters;
+            try {
+                filters = objectMapper.readValue(template, VolumeRevenueFilterDTO.class);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return;
+            }
+            resolveFilters(filters);
+            // Same canonicalisation + key shape as the live endpoint (channel
+            // normalised to ALL, tenant FX flag in the key) or the warm entry
+            // is never read.
+            filters.setChannel(com.acquira.common.service.ChannelSql.normalize(filters.getChannel()));
+            boolean fx = volumeRevenueRepository.isFxEnabled(tenantId);
+            String fk = filterKey(filters);
+            if (fk == null) return;
+            reportCache.get(
+                    com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                    "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk,
+                    () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
+        });
+    }
+
     private void resolveFilters(VolumeRevenueFilterDTO filters) {
         if (filters.getTeamLeaderList() != null && !filters.getTeamLeaderList().isEmpty()) {
             Long tenantId = tenantService.getCurrentTenantId();
@@ -164,7 +234,23 @@ public class BusinessAnalyticsController {
         // Rows + meta computed the "latest loaded business date" separately —
         // same query, run twice, on every page load. getAttritionReportWithMeta
         // computes it once and threads it through both.
-        return volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId);
+        // Cached on the POST-resolveFilters DTO (canonical: team-leader names
+        // and industries are already resolved to ids/MCCs), so two spellings of
+        // the same effective filter share an entry. The channel selector is
+        // canonicalised the same way (null/junk -> ALL) so a body without the
+        // field shares its entry with an explicit channel:"ALL"; the tenant FX
+        // flag joins the key because it changes the spread columns and must
+        // take effect immediately on toggle (NetSpreadSql contract).
+        filters.setChannel(com.acquira.common.service.ChannelSql.normalize(filters.getChannel()));
+        boolean fx = volumeRevenueRepository.isFxEnabled(tenantId);
+        String fk = filterKey(filters);
+        if (fk == null) {
+            return volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId);
+        }
+        return reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk,
+                () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
     }
 
     @PreAuthorize("@menuAccess.canAccess('/business/retention')")
@@ -213,6 +299,13 @@ public class BusinessAnalyticsController {
     public Map<String, List<String>> getFilterOptions() {
         // Pass tenant context so dropdown lists are scoped to the user's tenant.
         // Falls through to the unscoped variant when tenantId is null.
+        // DO NOT wrap this call in ReportCache.get: the repository method is
+        // itself @Cacheable on CACHE_LOOKUPS, and nesting a cache write inside
+        // Caffeine's compute on the same cache violates ConcurrentHashMap's
+        // no-recursive-update rule (IllegalStateException on a bin collision).
+        // The inner @Cacheable also carries unless="#result.isEmpty()" so a
+        // transient DB failure is not pinned — an outer unconditional cache
+        // would hold the empty map for the full TTL.
         Long tenantId = tenantService.getCurrentTenantId();
         return volumeRevenueRepository.getFilterOptions(tenantId);
     }

@@ -40,6 +40,18 @@ function ExecRow({ row, money, onSelect }) {
       </td>
       <td style={{ ...td, fontWeight: 700 }}>{money(row.sales)}</td>
       <td style={td}><Delta pct={row.growthPct} /></td>
+      <td style={{ ...td, fontWeight: 600 }}
+          title={[
+            Number(row.volume) > 0 ? `${(Number(row.spread) / Number(row.volume) * 100).toFixed(2)}% of volume` : null,
+            row.spreadGrowthPct == null ? null : `${row.spreadGrowthPct > 0 ? '+' : ''}${row.spreadGrowthPct}% vs previous`,
+          ].filter(Boolean).join(' · ') || undefined}>
+        {money(row.spread)}
+        {Number(row.volume) > 0 && (
+          <span style={{ marginLeft: 5, fontSize: 10.5, fontWeight: 500, color: T.textMut }}>
+            {(Number(row.spread) / Number(row.volume) * 100).toFixed(2)}%
+          </span>
+        )}
+      </td>
       <td style={td}>
         {row.teamContribution == null
           ? <span style={{ color: T.textMut }}>—</span>
@@ -79,6 +91,9 @@ function ExecCard({ row, money, onSelect }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <MomentumChip state={row.momentum} compact />
         <Delta pct={row.growthPct} size={11.5} />
+        <span style={{ fontSize: 11, color: T.textMut, fontVariantNumeric: 'tabular-nums' }}>
+          Spread {money(row.spread)}
+        </span>
         <span style={{ fontSize: 11, color: T.textMut }}>
           {row.teamContribution == null ? '—' : `${Math.round(row.teamContribution)}% of team`}
         </span>
@@ -128,6 +143,7 @@ export default function TeamLeadSection({ team, money, narrow, expanded, onToggl
         <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
           <Metric label="Team Sales" value={money(team.teamSales)} strong />
           <Metric label="Growth" value={<Delta pct={team.teamGrowth} />} />
+          <Metric label="Net Spread" value={money(team.teamSpread)} />
           <Metric
             label="Needs Attention"
             value={
@@ -164,6 +180,7 @@ export default function TeamLeadSection({ team, money, narrow, expanded, onToggl
                   <th style={{ ...th, textAlign: 'left' }}>Sales Executive</th>
                   <th style={th}>Sales</th>
                   <th style={th}>vs Previous</th>
+                  <th style={th}>Net Spread</th>
                   <th style={th}>Contribution</th>
                   <th style={th}>Target</th>
                   <th style={{ ...th, textAlign: 'left' }}>Status</th>

@@ -133,6 +133,24 @@ public class MerchantInsightService {
      */
     private record CurrencyView(String code, String symbol, int decimals) {}
 
+    /**
+     * Weekend days for the tenant's home country (AE → Sat+Sun, BH/OM/EG/... →
+     * Fri+Sat — see {@link WeekRules}). The PDF's weekday/weekend split used the
+     * Western Mon–Fri convention for every tenant, counting Friday — Bahrain's
+     * main weekend day — as a weekday. Failure falls back to the Fri+Sat default
+     * rather than failing the report: the split is a narrative stat, not money.
+     */
+    private java.util.Set<java.time.DayOfWeek> weekendDaysForTenant(Long tenantId) {
+        String cc = null;
+        try {
+            cc = tenantRepository.findById(tenantId)
+                    .map(com.acquira.common.model.Tenant::getHomeCountryCode).orElse(null);
+        } catch (RuntimeException e) {
+            log.warn("weekend-rule lookup failed for tenant {} — using Fri+Sat default: {}", tenantId, e.toString());
+        }
+        return WeekRules.weekendDays(cc);
+    }
+
     /** Currency-aware money formatter — the ONLY way monetary text is built here. */
     private static String money(BigDecimal v, int decimals) {
         if (v == null) v = BigDecimal.ZERO;
@@ -232,6 +250,8 @@ public class MerchantInsightService {
         // Currency (code + symbol + decimals) memoised per tenant. A bulk chunk is
         // normally single-tenant, so this is one CurrencyResolver call per chunk.
         Map<Long, CurrencyView> currencyByTenant = new HashMap<>();
+        // Weekend rule (tenant home country) memoised the same way.
+        Map<Long, java.util.Set<java.time.DayOfWeek>> weekendByTenant = new HashMap<>();
 
         // ===== Build DTOs per merchant (pure in-memory) =====
         Map<Long, MerchantInsightsDTO> result = new HashMap<>();
@@ -259,11 +279,13 @@ public class MerchantInsightService {
                     throw new IllegalStateException("merchant " + mid + " has no tenant — cannot resolve currency");
                 }
                 CurrencyView ccy = currencyByTenant.computeIfAbsent(owningTenant, this::requireCurrency);
+                java.util.Set<java.time.DayOfWeek> weekendDays =
+                    weekendByTenant.computeIfAbsent(owningTenant, this::weekendDaysForTenant);
 
                 // Build DTO using existing logic
                 MerchantInsightsDTO dto = buildDtoFromPrefetched(
                     mid, currentDaily, prevDaily, currentAttrs2, prevAttrs2,
-                    trends, cardAgg, startOfMonth, endOfMonth, ccy);
+                    trends, cardAgg, startOfMonth, endOfMonth, ccy, weekendDays);
                 result.put(mid, dto);
             } catch (Exception e) {
                 log.warn("[BULK] Failed to build DTO for merchant {}: {}", mid, e.getMessage());
@@ -285,7 +307,8 @@ public class MerchantInsightService {
             List<Map<String, Object>> monthlyTrends,
             CardLoyaltyAggregates cardAgg,
             LocalDate startOfMonth, LocalDate endOfMonth,
-            CurrencyView ccy) {
+            CurrencyView ccy,
+            java.util.Set<java.time.DayOfWeek> weekendDays) {
 
         Map<String, BigDecimal> currentAgg = aggregateDaily(currentDailyRows);
         Map<String, BigDecimal> prevAgg = aggregateDaily(prevDailyRows);
@@ -293,7 +316,8 @@ public class MerchantInsightService {
         MerchantInsightsDTO dto = new MerchantInsightsDTO();
         currentDailyRows = fillMissingDays(currentDailyRows, startOfMonth, endOfMonth, merchantId);
 
-        dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows, ccy.decimals()));
+        dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows, currentAttributes,
+                weekendDays, ccy.decimals()));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
         dto.setLoyalty(buildLoyalty(cardAgg, endOfMonth));
         dto.setDemographics(buildDemographics(currentAttributes, prevAttributes, monthlyTrends, ccy.code()));
@@ -307,6 +331,7 @@ public class MerchantInsightService {
         // sum_monthly_card, which is keyed by card_number+month). Override here so
         // the cover page, executive summary and scorecard agree with page 9.
         overrideCustomersFromLoyalty(dto, ccy.decimals());
+        overrideTopCustomerSpend(dto, cardAgg, ccy.decimals());
 
         // Currency was resolved in BULK by the caller (getBulkInsights) and passed
         // in — no per-merchant merchantRepository.findById / tenantRepository.findById
@@ -418,7 +443,8 @@ public class MerchantInsightService {
         String currencyCode = ccy.code();
         int ccyDecimals = ccy.decimals();
 
-        dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows, ccyDecimals));
+        dto.setOverview(buildOverview(currentAgg, prevAgg, currentDailyRows, prevDailyRows, currentAttributes,
+                weekendDaysForTenant(tenantId), ccyDecimals));
         dto.setAchievements(buildAchievements(currentDailyRows, currentAttributes));
         dto.setLoyalty(buildLoyalty(cardAgg, endOfMonth));
 
@@ -428,6 +454,7 @@ public class MerchantInsightService {
         // FIX 1 (UNIQUE CUSTOMERS): override the customers Kpi using true distinct
         // card count from loyalty.totalUniqueCards. See note in buildDtoFromPrefetched.
         overrideCustomersFromLoyalty(dto, ccyDecimals);
+        overrideTopCustomerSpend(dto, cardAgg, ccyDecimals);
 
         dto.setCurrencySymbol(currencySymbol);
         dto.setCurrencyCode(currencyCode);
@@ -635,7 +662,13 @@ public class MerchantInsightService {
     private BusinessOverview buildOverview(Map<String, BigDecimal> current, Map<String, BigDecimal> previous,
             List<com.acquira.common.model.SumDailyMerchant> currentRows,
             List<com.acquira.common.model.SumDailyMerchant> prevRows,
+            List<com.acquira.common.model.SumDailyMerchantAttribute> currentAttrs,
+            java.util.Set<java.time.DayOfWeek> weekendDays,
             int ccyDecimals) {
+
+        // Trading-day DOW (from DOW_HOUR attrs) — null for pre-migration months,
+        // where we fall back to the settlement-date derivation below.
+        TradingDowAgg trading = aggregateTradingDow(currentAttrs);
 
         Kpi sales = createKpi(current.get("total_sales"), previous.get("total_sales"), ccyDecimals);
         Kpi txns = createKpi(current.get("total_txns"), previous.get("total_txns"), 0);
@@ -661,8 +694,12 @@ public class MerchantInsightService {
                     ? LocalDate.ofEpochDay(current.get("max_txns_epoch_day").longValue()) : null)
                 .build();
 
-        List<ChartData> salesByDow = aggregateByDayOfWeek(currentRows, true);
-        List<ChartData> txnsByDow = aggregateByDayOfWeek(currentRows, false);
+        List<ChartData> salesByDow = trading != null
+                ? chartFromDowArray(trading.sales)
+                : aggregateByDayOfWeek(currentRows, true);
+        List<ChartData> txnsByDow = trading != null
+                ? chartFromDowArray(toBigDecimalArray(trading.txns))
+                : aggregateByDayOfWeek(currentRows, false);
         List<ChartData> salesByWeek = aggregateByWeekOfMonth(currentRows);
 
         // FIX C: avgTxnsPerCustomer formatted with one decimal place (e.g. "1.2" not "1")
@@ -698,11 +735,57 @@ public class MerchantInsightService {
                 .prevCustomers(createKpi(previous.get("unique_customers"), BigDecimal.ZERO, 0))
                 .prevAvgTxnValue(createKpi(prevAvgTxnVal, BigDecimal.ZERO, ccyDecimals))
                 .prevMaxDailySales(createKpi(previous.get("max_daily_sales"), BigDecimal.ZERO, ccyDecimals))
-                .weekdayRevenuePct(calcWeekdayPct(currentRows))
-                .weekendRevenuePct(calcWeekendPct(currentRows))
-                .peakDayName(findPeakDay(currentRows))
+                .weekdayRevenuePct(trading != null
+                        ? calcWeekdayPct(trading.sales, weekendDays)
+                        : calcWeekdayPct(currentRows, weekendDays))
+                .weekendRevenuePct(new BigDecimal(100).subtract(trading != null
+                        ? calcWeekdayPct(trading.sales, weekendDays)
+                        : calcWeekdayPct(currentRows, weekendDays)))
+                .peakDayName(trading != null ? peakDayFromArray(trading.sales) : findPeakDay(currentRows))
                 .dailyAverage(dailyAvg)
                 .build();
+    }
+
+    /**
+     * Trading-day day-of-week aggregates from DOW_HOUR attribute rows
+     * (attribute_value = '<isoDow>|<hour>', 1=Mon..7=Sun, weekday and hour both
+     * taken from fact_transaction.transaction_date — the real trading
+     * timestamp). For feeds that settle next-day (AFS BH), business_date is the
+     * settlement day, so every DOW chart derived from it was one day late:
+     * "Monday" was really Sunday's trading. Returns null when the window has no
+     * DOW_HOUR rows (data ingested before the attribute existed) — callers then
+     * fall back to the old settlement-date DOW.
+     */
+    private static class TradingDowAgg {
+        final BigDecimal[] sales = new BigDecimal[7];   // 0=Mon..6=Sun
+        final long[] txns = new long[7];
+        /** "Mon|19" → volume, matching buildRevenueHeatmap's grid keys */
+        final Map<String, BigDecimal> grid = new HashMap<>();
+        TradingDowAgg() { Arrays.fill(sales, BigDecimal.ZERO); }
+    }
+
+    private TradingDowAgg aggregateTradingDow(List<com.acquira.common.model.SumDailyMerchantAttribute> attrs) {
+        String[] dayNames = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+        TradingDowAgg agg = new TradingDowAgg();
+        boolean any = false;
+        for (com.acquira.common.model.SumDailyMerchantAttribute a : attrs) {
+            if (!"DOW_HOUR".equals(a.getAttributeType()) || a.getAttributeValue() == null) continue;
+            String v = a.getAttributeValue();
+            int sep = v.indexOf('|');
+            if (sep <= 0) continue;
+            int dow, hour;
+            try {
+                dow = Integer.parseInt(v.substring(0, sep));
+                hour = Integer.parseInt(v.substring(sep + 1));
+            } catch (NumberFormatException e) { continue; }
+            if (dow < 1 || dow > 7 || hour < 0 || hour > 23) continue;
+            any = true;
+            BigDecimal vol = a.getMetricVolume() != null ? a.getMetricVolume() : BigDecimal.ZERO;
+            agg.sales[dow - 1] = agg.sales[dow - 1].add(vol);
+            agg.txns[dow - 1] += a.getMetricCount() != null ? a.getMetricCount() : 0;
+            agg.grid.merge(dayNames[dow - 1] + "|" + String.format("%02d", hour), vol, BigDecimal::add);
+        }
+        return any ? agg : null;
     }
 
     private List<ChartData> aggregateByDayOfWeek(List<com.acquira.common.model.SumDailyMerchant> rows, boolean useSales) {
@@ -739,20 +822,53 @@ public class MerchantInsightService {
         return result;
     }
 
-    private BigDecimal calcWeekdayPct(List<com.acquira.common.model.SumDailyMerchant> rows) {
+    private static final String[] DOW_FULL_NAMES =
+            { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" };
+
+    private List<ChartData> chartFromDowArray(BigDecimal[] values) {
+        List<ChartData> result = new ArrayList<>();
+        for (int i = 0; i < 7; i++) {
+            result.add(ChartData.builder().label(DOW_FULL_NAMES[i]).value(values[i]).build());
+        }
+        return result;
+    }
+
+    private static BigDecimal[] toBigDecimalArray(long[] values) {
+        BigDecimal[] out = new BigDecimal[values.length];
+        for (int i = 0; i < values.length; i++) out[i] = new BigDecimal(values[i]);
+        return out;
+    }
+
+    /** Weekday share of a Mon-first DOW volume array, per the tenant's weekend. */
+    private BigDecimal calcWeekdayPct(BigDecimal[] dowSales, java.util.Set<java.time.DayOfWeek> weekendDays) {
         BigDecimal weekday = BigDecimal.ZERO, total = BigDecimal.ZERO;
-        for (com.acquira.common.model.SumDailyMerchant r : rows) {
-            BigDecimal v = getBaseVolume(r);
-            total = total.add(v);
-            if (r.getBusinessDate().getDayOfWeek().getValue() <= 5) weekday = weekday.add(v);
+        for (int i = 0; i < 7; i++) {
+            total = total.add(dowSales[i]);
+            if (!weekendDays.contains(java.time.DayOfWeek.of(i + 1))) weekday = weekday.add(dowSales[i]);
         }
         return total.compareTo(BigDecimal.ZERO) > 0
                 ? weekday.multiply(new BigDecimal(100)).divide(total, 0, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
     }
 
-    private BigDecimal calcWeekendPct(List<com.acquira.common.model.SumDailyMerchant> rows) {
-        return new BigDecimal(100).subtract(calcWeekdayPct(rows));
+    private String peakDayFromArray(BigDecimal[] dowSales) {
+        int maxIdx = 0;
+        for (int i = 1; i < 7; i++)
+            if (dowSales[i].compareTo(dowSales[maxIdx]) > 0) maxIdx = i;
+        return DOW_FULL_NAMES[maxIdx];
+    }
+
+    private BigDecimal calcWeekdayPct(List<com.acquira.common.model.SumDailyMerchant> rows,
+            java.util.Set<java.time.DayOfWeek> weekendDays) {
+        BigDecimal weekday = BigDecimal.ZERO, total = BigDecimal.ZERO;
+        for (com.acquira.common.model.SumDailyMerchant r : rows) {
+            BigDecimal v = getBaseVolume(r);
+            total = total.add(v);
+            if (!weekendDays.contains(r.getBusinessDate().getDayOfWeek())) weekday = weekday.add(v);
+        }
+        return total.compareTo(BigDecimal.ZERO) > 0
+                ? weekday.multiply(new BigDecimal(100)).divide(total, 0, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
     }
 
     private String findPeakDay(List<com.acquira.common.model.SumDailyMerchant> rows) {
@@ -799,8 +915,11 @@ public class MerchantInsightService {
                 .build()).collect(Collectors.toList());
 
         List<ChartData> hourData = aggregateHoursAllDay(attrs);
-        List<ChartData> salesAtvByDow = buildSalesAndAtvByDow(dailyRows);
-        List<ChartData> revenueHeatmap = buildRevenueHeatmap(dailyRows, attrs);
+        TradingDowAgg trading = aggregateTradingDow(attrs);
+        List<ChartData> salesAtvByDow = trading != null
+                ? salesAndAtvFromTradingDow(trading)
+                : buildSalesAndAtvByDow(dailyRows);
+        List<ChartData> revenueHeatmap = buildRevenueHeatmap(dailyRows, attrs, trading);
         List<ChartData> txnSizeDist = buildTxnSizeDistribution(attrs);
 
         BusinessAchievements ach = BusinessAchievements.builder()
@@ -820,15 +939,23 @@ public class MerchantInsightService {
 
     private List<ChartData> buildRevenueHeatmap(
             List<com.acquira.common.model.SumDailyMerchant> dailyRows,
-            List<com.acquira.common.model.SumDailyMerchantAttribute> attrs) {
+            List<com.acquira.common.model.SumDailyMerchantAttribute> attrs,
+            TradingDowAgg trading) {
         String[] dayNames = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
         Map<String, BigDecimal> grid = new HashMap<>();
-        for (com.acquira.common.model.SumDailyMerchantAttribute a : attrs) {
-            if ("HOUR".equals(a.getAttributeType()) && a.getBusinessDate() != null) {
-                int dow = a.getBusinessDate().getDayOfWeek().getValue() - 1;
-                String hour = String.format("%02d", Integer.parseInt(a.getAttributeValue()));
-                String key = dayNames[dow] + "|" + hour;
-                grid.merge(key, a.getMetricVolume(), BigDecimal::add);
+        if (trading != null) {
+            // Preferred: DOW_HOUR attrs pair the real trading weekday with the real
+            // hour. The legacy path below pairs the settlement day's weekday with
+            // the trading hour, which is one day late on next-day-settling feeds.
+            grid.putAll(trading.grid);
+        } else {
+            for (com.acquira.common.model.SumDailyMerchantAttribute a : attrs) {
+                if ("HOUR".equals(a.getAttributeType()) && a.getBusinessDate() != null) {
+                    int dow = a.getBusinessDate().getDayOfWeek().getValue() - 1;
+                    String hour = String.format("%02d", Integer.parseInt(a.getAttributeValue()));
+                    String key = dayNames[dow] + "|" + hour;
+                    grid.merge(key, a.getMetricVolume(), BigDecimal::add);
+                }
             }
         }
         // FIX BUG: clamp each heatmap cell to zero. Refund transactions carry a
@@ -1018,6 +1145,19 @@ public class MerchantInsightService {
             normalized.merge(display, entry.getValue(), BigDecimal::add);
         }
         return normalized;
+    }
+
+    /** Sales + ATV per trading weekday from DOW_HOUR attrs (preferred over the
+     *  settlement-date variant below when the data carries them). */
+    private List<ChartData> salesAndAtvFromTradingDow(TradingDowAgg trading) {
+        List<ChartData> result = new ArrayList<>();
+        for (int i = 0; i < 7; i++) {
+            BigDecimal atv = trading.txns[i] > 0
+                    ? trading.sales[i].divide(new BigDecimal(trading.txns[i]), 0, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            result.add(ChartData.builder().label(DOW_FULL_NAMES[i]).value(trading.sales[i]).value2(atv).build());
+        }
+        return result;
     }
 
     private List<ChartData> buildSalesAndAtvByDow(List<com.acquira.common.model.SumDailyMerchant> rows) {
@@ -1336,6 +1476,7 @@ public class MerchantInsightService {
             List<com.acquira.common.model.SumDailyMerchant> prevRows,
             List<java.util.Map<String, Object>> monthlyTrends) {
         BigDecimal eligVol = BigDecimal.ZERO, optinVol = BigDecimal.ZERO, optoutVol = BigDecimal.ZERO;
+        BigDecimal acquirerShare = BigDecimal.ZERO, merchantShare = BigDecimal.ZERO, rental = BigDecimal.ZERO;
         long eligCount = 0, optinCount = 0;
         for (com.acquira.common.model.SumDailyMerchant r : currentRows) {
             eligVol = eligVol.add(r.getDccEligibleVolume() != null ? r.getDccEligibleVolume() : BigDecimal.ZERO);
@@ -1343,12 +1484,22 @@ public class MerchantInsightService {
             optoutVol = optoutVol.add(r.getDccOptoutVolume() != null ? r.getDccOptoutVolume() : BigDecimal.ZERO);
             eligCount += r.getDccEligibleCount() != null ? r.getDccEligibleCount() : 0;
             optinCount += r.getDccOptinCount() != null ? r.getDccOptinCount() : 0;
+            // Real DCC revenue from the DCC feed (fact_dcc_revenue → AncillarySql),
+            // replacing the old volume × 3% guess.
+            acquirerShare = acquirerShare.add(r.getDccAcquirer() != null ? r.getDccAcquirer() : BigDecimal.ZERO);
+            merchantShare = merchantShare.add(r.getDccMerchant() != null ? r.getDccMerchant() : BigDecimal.ZERO);
+            rental = rental.add(r.getRentalAmount() != null ? r.getRentalAmount() : BigDecimal.ZERO);
         }
+        boolean feedPresent = acquirerShare.signum() != 0 || merchantShare.signum() != 0;
 
         BigDecimal conversionRate = eligCount > 0
                 ? new BigDecimal(optinCount * 100.0 / eligCount).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-        // Kept for backward compat on the DTO; not displayed in PDF.
-        BigDecimal missedRevenue = optoutVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
+        // "Missed" revenue is now the merchant's OWN measured DCC earning rate
+        // (merchant share ÷ opted-in volume) applied to the opted-out volume —
+        // no feed, no rate, no number. The unconfirmed 3% is gone.
+        BigDecimal missedRevenue = (feedPresent && optinVol.signum() > 0)
+                ? optoutVol.multiply(merchantShare).divide(optinVol, 2, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
 
         List<ChartData> missed = new ArrayList<>(), opt = new ArrayList<>(), rateTrend = new ArrayList<>();
         for (java.util.Map<String, Object> r : monthlyTrends) {
@@ -1368,8 +1519,8 @@ public class MerchantInsightService {
         }
 
         long optoutCount = eligCount - optinCount;
-        // Kept for backward compat on the DTO; not displayed in PDF.
-        BigDecimal revenueGenerated = optinVol.multiply(new BigDecimal("0.03")).setScale(0, RoundingMode.HALF_UP);
+        // The merchant's realised DCC earnings for the month, straight from the feed.
+        BigDecimal revenueGenerated = merchantShare.setScale(2, RoundingMode.HALF_UP);
 
         DccPerformance dcc = DccPerformance.builder()
                 .missedOpportunityTrend(missed).optOutOptInTrend(opt).eligibilityTrend(new ArrayList<>())
@@ -1390,6 +1541,10 @@ public class MerchantInsightService {
         dcc.setTotalIntlTxnCount(eligCount);
         dcc.setTotalIntlVolume(eligVol);
         dcc.setDccRevenueGenerated(revenueGenerated);
+        dcc.setDccMerchantRevenue(merchantShare.setScale(2, RoundingMode.HALF_UP));
+        dcc.setDccAcquirerRevenue(acquirerShare.setScale(2, RoundingMode.HALF_UP));
+        dcc.setRentalIncome(rental.setScale(2, RoundingMode.HALF_UP));
+        dcc.setDccRevenueSource(feedPresent ? "FEED" : "NONE");
         dcc.setOptOutDeclineRate(eligCount > 0
                 ? new BigDecimal(optoutCount * 100.0 / eligCount).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO);
 
@@ -1442,6 +1597,10 @@ public class MerchantInsightService {
         final Map<String, Long> spendBandCounts = new HashMap<>();
         /** trend window: monthKey → {cards with 1 visit, 2-4 visits, 5+ visits} */
         final Map<Integer, long[]> monthlyFreq = new HashMap<>();
+        /** current month: highest total spend by one card (true "top customer") */
+        BigDecimal topCardSpend;
+        /** previous month: same, for the MoM arrow on the tile */
+        BigDecimal prevTopCardSpend;
     }
 
     /**
@@ -1454,6 +1613,19 @@ public class MerchantInsightService {
             int trendStartKey, int trendEndKey) {
         requireTenant(tenantId);
         Map<Long, CardLoyaltyAggregates> result = new HashMap<>();
+        // Top single-card spend, current month + previous month (for the tile's
+        // MoM arrow). The prev key is the month before currentStartKey.
+        int prevKey = previousMonthKey(currentStartKey);
+        for (Object[] row : sumMonthlyCardRepository.topCardSpendPerMerchant(
+                tenantId, merchantIds, currentStartKey, currentEndKey)) {
+            result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
+                .topCardSpend = toBigDecimal(row[1]);
+        }
+        for (Object[] row : sumMonthlyCardRepository.topCardSpendPerMerchant(
+                tenantId, merchantIds, prevKey, prevKey)) {
+            result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
+                .prevTopCardSpend = toBigDecimal(row[1]);
+        }
         for (Object[] row : sumMonthlyCardRepository.aggregateVisitHistogram(
                 tenantId, merchantIds, currentStartKey, currentEndKey)) {
             result.computeIfAbsent(((Number) row[0]).longValue(), k -> new CardLoyaltyAggregates())
@@ -1473,6 +1645,34 @@ public class MerchantInsightService {
                     ((Number) row[4]).longValue()});
         }
         return result;
+    }
+
+    /** yyyyMM key of the month before the given yyyyMM key (handles year wrap). */
+    private static int previousMonthKey(int monthKey) {
+        int year = monthKey / 100, month = monthKey % 100;
+        return month == 1 ? (year - 1) * 100 + 12 : year * 100 + (month - 1);
+    }
+
+    private static BigDecimal toBigDecimal(Object o) {
+        if (o == null) return null;
+        if (o instanceof BigDecimal) return (BigDecimal) o;
+        return new BigDecimal(o.toString());
+    }
+
+    /**
+     * Override the "Top Customer Spend" KPI with the true highest per-CARD spend
+     * for the month (from sum_monthly_card). aggregateDaily() only had
+     * sum_daily_merchant.top_spending_amount, whose max across days is the best
+     * single card-DAY — a cardholder spending across several days was
+     * understated (LULU 2026-08: printed 4,687.200, actual top card 5,719.170).
+     * Months without sum_monthly_card rows keep the daily-max fallback.
+     */
+    private void overrideTopCustomerSpend(MerchantInsightsDTO dto, CardLoyaltyAggregates cardAgg, int ccyDecimals) {
+        if (dto.getOverview() == null || dto.getOverview().getPeakStats() == null || cardAgg == null) return;
+        BigDecimal top = cardAgg.topCardSpend;
+        if (top == null || top.compareTo(BigDecimal.ZERO) <= 0) return;
+        BigDecimal prev = cardAgg.prevTopCardSpend != null ? cardAgg.prevTopCardSpend : BigDecimal.ZERO;
+        dto.getOverview().getPeakStats().setHighestCustomerSpend(createKpi(top, prev, ccyDecimals));
     }
 
     private ConsumerLoyalty buildLoyalty(CardLoyaltyAggregates cardAgg, LocalDate endOfMonth) {

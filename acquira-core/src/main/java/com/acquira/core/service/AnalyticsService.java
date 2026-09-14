@@ -4,6 +4,8 @@ import com.acquira.common.config.TenantContext;
 import com.acquira.common.model.SumDailyBank;
 import com.acquira.common.repository.SumDailyBankRepository;
 import com.acquira.common.repository.SumDailyMerchantRepository;
+import com.acquira.common.service.NetSpreadSql;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -19,15 +21,32 @@ public class AnalyticsService {
     private final SumDailyMerchantRepository sumDailyMerchantRepository;
     private final com.acquira.common.repository.MerchantRepository merchantRepository;
     private final com.acquira.common.repository.MerchantActivitySummaryRepository merchantActivitySummaryRepository;
+    /** Only for the ECOM FX income tiles — sum_daily_merchant.fx_revenue has no JPA projection. */
+    private final JdbcTemplate jdbcTemplate;
 
     public AnalyticsService(SumDailyBankRepository sumDailyBankRepository,
             SumDailyMerchantRepository sumDailyMerchantRepository,
             com.acquira.common.repository.MerchantRepository merchantRepository,
-            com.acquira.common.repository.MerchantActivitySummaryRepository merchantActivitySummaryRepository) {
+            com.acquira.common.repository.MerchantActivitySummaryRepository merchantActivitySummaryRepository,
+            JdbcTemplate jdbcTemplate) {
         this.sumDailyBankRepository = sumDailyBankRepository;
         this.sumDailyMerchantRepository = sumDailyMerchantRepository;
         this.merchantRepository = merchantRepository;
         this.merchantActivitySummaryRepository = merchantActivitySummaryRepository;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /**
+     * SUM(fx_revenue) over sum_daily_merchant for [start, end] — the same source
+     * every other executive FX read uses (maintained by AncillarySql), so the
+     * dashboard tile always agrees with Net Spread and the business screens.
+     */
+    private BigDecimal sumFx(Long tenantId, LocalDate start, LocalDate end) {
+        BigDecimal v = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(COALESCE(fx_revenue, 0)), 0) FROM sum_daily_merchant "
+                        + "WHERE tenant_id = ? AND business_date BETWEEN ? AND ?",
+                BigDecimal.class, tenantId, start, end);
+        return v != null ? v : BigDecimal.ZERO;
     }
 
     public Map<String, Object> getExecutiveDashboard(LocalDate date) { // Date is usually "Today" or specific business
@@ -111,6 +130,23 @@ public class AnalyticsService {
             response.put("activeMerchantsSnapshot", 0L);
             response.put("dormantMerchants", 0L);
         }
+
+        // 7. ECOM FX income — opt-in tenants only. Flag resolved through the one
+        // reader (NetSpreadSql.fxEnabled) so a tenant with no seeded rate rows
+        // never renders a dead all-zero tile.
+        boolean fxEnabled = false;
+        try {
+            fxEnabled = NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
+            if (fxEnabled) {
+                snapshot.put("fxIncome", sumFx(tenantId, date, date));
+                mtd.put("fxIncome", sumFx(tenantId, startOfMonth, date));
+            }
+        } catch (Exception e) {
+            // Defensive, same posture as the lifecycle counts above: an FX read
+            // problem must not take the whole dashboard down.
+            fxEnabled = false;
+        }
+        response.put("fxEnabled", fxEnabled);
 
         return response;
     }

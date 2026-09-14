@@ -31,8 +31,10 @@ public class GroupAnalyticsController {
     // joins dim_store on top of it), so the same metric set applies everywhere.
     // Volume basis is total_base_volume (settlement, single-currency) per the
     // platform rule — NOT total_volume (cardholder currency).
+    // merchant_count FILTERs on total_txns > 0: ancillary-only rows (rental/
+    // DCC on a no-sale day) must not count a merchant as part of the group.
     private static final String METRICS_SELECT =
-            "COUNT(DISTINCT s.merchant_id) as merchant_count, " +
+            "COUNT(DISTINCT s.merchant_id) FILTER (WHERE COALESCE(s.total_txns,0) > 0) as merchant_count, " +
             "SUM(s.total_txns) as total_txns, " +
             "SUM(s.total_base_volume) as total_volume, " +
             "SUM(s.total_msf) as total_msf, " +

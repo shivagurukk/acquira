@@ -33,4 +33,13 @@ public interface S3Uploader {
      *         {@code false} if S3 is enabled but the upload failed
      */
     boolean uploadIfEnabled(Long tenantId, Path pdfPath, String bankCode, String yearMonth);
+
+    /**
+     * Whether S3 archival is switched on for this tenant. Lets callers
+     * distinguish "upload succeeded" from "S3 disabled — nothing happened"
+     * (uploadIfEnabled returns true for both) before starting a bulk push.
+     */
+    default boolean isEnabled(Long tenantId) {
+        return false;
+    }
 }

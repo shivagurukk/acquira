@@ -422,7 +422,9 @@ public class ForecastController {
         boolean needStore = listNonEmpty(filter.getMccList());
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT m.mid, m.name, m.created_date, m.sales_email, m.referral_partner, ");
-        sql.append("  MAX(s.business_date) AS last_txn, ");
+        // total_txns > 0: ancillary-only rows (rental/DCC on a no-sale day)
+        // must not reset a declining merchant's inactivity signal to "today".
+        sql.append("  MAX(CASE WHEN COALESCE(s.total_txns,0) > 0 THEN s.business_date END) AS last_txn, ");
         sql.append("  SUM(CASE WHEN s.business_date >= :l30 THEN s.total_base_volume ELSE 0 END) AS vol30, ");
         sql.append("  SUM(CASE WHEN s.business_date >= :p30s AND s.business_date <= :p30e THEN s.total_base_volume ELSE 0 END) AS volPrev30, ");
         sql.append("  SUM(CASE WHEN s.business_date >= :l30 THEN s.total_txns ELSE 0 END) AS txn30, ");
@@ -756,7 +758,10 @@ public class ForecastController {
         sql.append("WITH rmtot AS ( ");
         sql.append("  SELECT m.sales_email AS rm, ");
         sql.append("    SUM(s.total_base_volume) AS vol, SUM(s.total_msf) AS msf, ");
-        sql.append("    SUM(s.total_txns) AS txns, COUNT(DISTINCT s.merchant_id) AS active_merchants ");
+        // FILTER: an ancillary-only row (rental/DCC, no transactions) must
+        // not count a merchant as active for the RM benchmark.
+        sql.append("    SUM(s.total_txns) AS txns, ");
+        sql.append("    COUNT(DISTINCT s.merchant_id) FILTER (WHERE COALESCE(s.total_txns,0) > 0) AS active_merchants ");
         sql.append("  FROM sum_daily_merchant s ");
         sql.append("  JOIN dim_merchant m ON s.merchant_id = m.merchant_id AND m.tenant_id = s.tenant_id ");
         sql.append("  WHERE s.tenant_id = :tid AND s.business_date >= :start AND s.business_date <= :asOf ");

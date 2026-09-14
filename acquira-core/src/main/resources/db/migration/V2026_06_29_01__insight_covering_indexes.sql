@@ -1,0 +1,127 @@
+-- ============================================================
+-- V2026_06_29_01: Covering indexes for sum_daily_insight at scale
+-- ============================================================
+-- WHY
+-- ---
+-- sum_daily_insight is the cross-tab that powers the Analytics Explorer,
+-- Interactive Explorer, Insight Hub, Merchant Comparison, and every
+-- dimension-filtered Business/Finance KPI + trend. Its grain is
+--   (tenant, date, merchant, store, terminal, scheme, type, destination,
+--    channel, opt_in)
+-- so it is by far the largest summary table — at 10 tenants x ~999K txns/day
+-- x 5 years it can reach the hundreds-of-millions to multi-billion row range,
+-- depending on dimensional cardinality.
+--
+-- Both query engines (AnalyticsExplorerController summary grain, alias s; and
+-- VolumeRevenueRepository, alias s) drive every read the same way:
+--
+--   WHERE s.tenant_id = ?              -- always
+--     AND s.business_date BETWEEN ? AND ?   -- always (partition pruning)
+--     [AND s.card_scheme  IN (...)]    -- Explorer card filters
+--     [AND s.card_type    IN (...)]
+--     [AND s.destination  IN (...)]
+--     [AND s.channel      IN (...)]
+--   GROUP BY <merchant_id/store_id>  OR  <card_scheme/card_type/destination/channel>
+--   -- aggregating SUM(total_txns), SUM(total_volume), SUM(total_msf)
+--
+-- The only existing index, idx_sum_insight_tenant_date (tenant_id,
+-- business_date), correctly serves the leading predicate but stops there.
+-- Once a tenant's date slice is large, PostgreSQL still reads every matching
+-- row from the heap to (a) apply the card-level filters, (b) fetch merchant_id
+-- / store_id for the GROUP BY + dim joins, and (c) read the three SUM columns.
+-- That heap read is the cost that turns these screens from milliseconds into
+-- tens of seconds.
+--
+-- WHAT
+-- ----
+-- Two composite covering indexes, each INCLUDE-ing the three measure columns
+-- so the common aggregations become index-only scans (no heap visit) on top of
+-- the already-pruned partition:
+--
+--   1. idx_sdi_merchant_rollup  — merchant/store-grained rollups
+--        (VolumeRevenueRepository: volume-revenue, merchant-financial,
+--         performance dashboard, debit/prepaid, attrition, etc.)
+--   2. idx_sdi_card_rollup      — card-dimension cross-tabs + card filters
+--        (Explorer / Interactive / scheme & card-type breakdowns)
+--
+-- Both lead with (tenant_id, business_date) to match the mandatory predicates
+-- and to keep partition pruning + range scan intact.
+--
+-- PARTITIONED-TABLE NOTE
+-- ----------------------
+-- sum_daily_insight is partitioned by RANGE (business_date). Creating an index
+-- on the partitioned PARENT (PostgreSQL 11+) automatically creates a matching
+-- local index on every existing and future partition, so this one statement
+-- covers _y2024 / _y2025 / _default and any monthly partitions added later by
+-- PartitionMaintenanceService. No per-partition DDL needed.
+--
+-- HOW THIS RUNS (same mechanism as V2026_05_07_01__performance_indexes.sql)
+-- ------------------------------------------------------------------------
+-- This project does NOT use Flyway/Liquibase. SQL is applied via Spring's
+-- spring.sql.init mechanism, which runs each listed script inside a
+-- transaction. CREATE INDEX CONCURRENTLY is illegal inside a transaction, so
+-- the auto-run statements below are PLAIN CREATE INDEX (IF NOT EXISTS, so the
+-- build cost is paid once and skipped on later startups).
+--
+-- Wire it in application*.properties alongside the existing perf-index file:
+--   spring.sql.init.schema-locations=classpath:schema.sql,\
+--       classpath:db/migration/V2026_05_07_01__performance_indexes.sql,\
+--       classpath:db/migration/V2026_06_29_01__insight_covering_indexes.sql
+--
+-- FIRST-RUN WARNING (large existing table)
+-- ----------------------------------------
+-- A plain CREATE INDEX on the parent takes a lock that blocks writes to each
+-- partition while its local index builds. On an already-large sum_daily_insight
+-- this can block the ingest/upsert path (populateSummaryStep) for minutes. For
+-- a production cutover, build these ONCE by hand with the CONCURRENTLY variants
+-- at the bottom BEFORE deploying this build, so the auto-run block finds the
+-- indexes already present and becomes an instant no-op.
+-- ============================================================
+
+-- ── 1. Merchant/store rollup path (VolumeRevenueRepository) ──
+-- Range-scan the tenant/date slice, group by merchant_id/store_id, sum the
+-- measures straight from the index. store_id is included as a key (not just an
+-- INCLUDE column) because several rollups GROUP BY both m.mid and st.sid, and
+-- store_id is the join key to dim_store.
+CREATE INDEX IF NOT EXISTS idx_sdi_merchant_rollup
+    ON sum_daily_insight (tenant_id, business_date, merchant_id, store_id)
+    INCLUDE (total_txns, total_volume, total_msf);
+
+-- ── 2. Card-dimension cross-tab path (Explorer / Interactive) ──
+-- Serves both the card-level IN (...) filters and the GROUP BY on
+-- scheme/type/destination/channel, with the SUMs answered from the index.
+CREATE INDEX IF NOT EXISTS idx_sdi_card_rollup
+    ON sum_daily_insight (tenant_id, business_date, card_scheme, card_type, destination, channel)
+    INCLUDE (total_txns, total_volume, total_msf);
+
+-- ============================================================
+-- MANUAL CONCURRENTLY VARIANTS (run ONE AT A TIME, outside any transaction)
+-- ============================================================
+-- Run by hand via psql on a large production DB BEFORE deploying this build so
+-- the auto-run block above becomes an instant no-op. CONCURRENTLY on a
+-- partitioned parent: PostgreSQL creates the parent index INVALID, then you
+-- build each partition's index concurrently and the parent validates. The
+-- simplest robust approach is to create the parent index ONLY (ONLY keyword)
+-- then CONCURRENTLY build per partition, or — most operationally simple — just
+-- create concurrently per partition and attach. For a straightforward path,
+-- create the parent index normally during a low-traffic window; the partitions
+-- are individually far smaller than the whole.
+--
+-- Per-partition concurrent build example (repeat for every partition):
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sdi_merchant_rollup_y2026
+--       ON sum_daily_insight_y2026 (tenant_id, business_date, merchant_id, store_id)
+--       INCLUDE (total_txns, total_volume, total_msf);
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sdi_card_rollup_y2026
+--       ON sum_daily_insight_y2026 (tenant_id, business_date, card_scheme, card_type, destination, channel)
+--       INCLUDE (total_txns, total_volume, total_msf);
+--
+-- Then create the parent index with ONLY so it just attaches the existing
+-- partition indexes without rebuilding:
+--
+--   CREATE INDEX IF NOT EXISTS idx_sdi_merchant_rollup
+--       ON ONLY sum_daily_insight (tenant_id, business_date, merchant_id, store_id)
+--       INCLUDE (total_txns, total_volume, total_msf);
+--   ALTER INDEX idx_sdi_merchant_rollup ATTACH PARTITION idx_sdi_merchant_rollup_y2026;
+--   -- (repeat ATTACH for each partition; once all attached the parent is VALID)
+-- ============================================================

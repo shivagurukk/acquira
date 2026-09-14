@@ -32,6 +32,83 @@ public class ExecutiveDailyMerchantController {
     private static final int MAX_PAGE_SIZE = 500;
 
     private final VolumeRevenueRepository volumeRevenueRepository;
+    private final com.acquira.common.service.ReportCache reportCache;
+    /** Serializes the filter DTO into a stable cache-key suffix. */
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final com.acquira.common.service.ReportCacheWarmup reportCacheWarmup;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    /**
+     * ECOM FX income opt-in (tenant_setting netspread.fx_enabled, explicit
+     * 'true' only). Folded into every cache key that carries FX figures so a
+     * toggle takes effect immediately — the NetSpreadSql contract.
+     */
+    private boolean fxEnabled(Long tenantId) {
+        return com.acquira.common.service.NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
+    }
+
+    /**
+     * Warm the page's first-load requests: the calendar feed, then the table
+     * for the latest loaded date with the frontend's initial (empty) filters.
+     * The filter template mirrors DailyMerchantDashboard.jsx EMPTY_FILTERS —
+     * empty ARRAYS, not nulls, or the serialized filter key won't match the
+     * live request and the warm entry is never read.
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmer() {
+        reportCacheWarmup.register("executive-daily-merchant", tenantId -> {
+            reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+                    "edmCalendar:" + tenantId + ":months", () -> {
+                        Map<String, Object> response = new HashMap<>();
+                        response.put("months", volumeRevenueRepository.getBusinessMonths(tenantId, 24));
+                        List<LocalDate> l = volumeRevenueRepository.getRecentBusinessDates(tenantId, 1);
+                        response.put("latest", l.isEmpty() ? null : l.get(0).toString());
+                        return response;
+                    });
+            List<LocalDate> recent = volumeRevenueRepository.getRecentBusinessDates(tenantId, 1);
+            if (recent.isEmpty()) return;
+            LocalDate latest = recent.get(0);
+            java.time.YearMonth ym = java.time.YearMonth.from(latest);
+            reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+                    "edmCalendar:" + tenantId + ":" + ym, () -> {
+                        Map<String, Object> response = new HashMap<>();
+                        List<LocalDate> ds = volumeRevenueRepository.getBusinessDatesInMonth(
+                                tenantId, ym.atDay(1), ym.atEndOfMonth());
+                        response.put("month", ym.toString());
+                        response.put("dates", ds.stream().map(LocalDate::toString).toList());
+                        return response;
+                    });
+            VolumeRevenueFilterDTO filter;
+            try {
+                filter = objectMapper.readValue(
+                        "{\"mccList\":[],\"destinationList\":[],\"cardTypeList\":[],\"schemeList\":[],\"rmList\":[]}",
+                        VolumeRevenueFilterDTO.class);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return;
+            }
+            String fk = filterKey(filter);
+            if (fk == null) return;
+            List<LocalDate> dates = List.of(latest);
+            // Same key shape as the live endpoint: default channel ALL, and the
+            // tenant's FX flag resolved the same way.
+            boolean fx = fxEnabled(tenantId);
+            String ch = com.acquira.common.service.ChannelSql.ALL;
+            String key = "execDaily:" + tenantId + ":" + dates
+                    + ":0:50:volume:desc:fx" + fx + ":ch" + ch + ":" + fk;
+            reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                    () -> buildDailyMerchants(filter, dates, null, null, null,
+                            latest.toString(), null, "volume", "desc", 0, 50, false, tenantId, fk, fx, ch));
+        });
+    }
+
+    /** Filter DTO as a key suffix, or null when it cannot be serialized (→ skip caching). */
+    private String filterKey(VolumeRevenueFilterDTO filter) {
+        try {
+            return objectMapper.writeValueAsString(filter);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return null;
+        }
+    }
 
     /**
      * One round trip returns both the KPI totals and the table page, so the
@@ -60,11 +137,15 @@ public class ExecutiveDailyMerchantController {
             @RequestParam(defaultValue = "desc") String dir,
             @RequestParam(defaultValue = "false") boolean export,
             @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "ALL") String channel,
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
 
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
         if (filter == null) filter = new VolumeRevenueFilterDTO();
+        // POS / ECOM filter on sum_daily_full.channel_class; anything else is
+        // ALL = the untouched (byte-identical) read.
+        final String ch = com.acquira.common.service.ChannelSql.normalize(channel);
 
         List<LocalDate> dateList = null;
         LocalDate rangeStart = null, rangeEnd = null;
@@ -113,11 +194,67 @@ public class ExecutiveDailyMerchantController {
         if (size <= 0) size = 50;
         if (size > MAX_PAGE_SIZE) size = MAX_PAGE_SIZE;
 
+        boolean fx = fxEnabled(tenantId);
+        // Cache the common shapes only: exports return the full result set and
+        // search keys would churn the small reportData cap per keystroke.
+        String fk = (export || (search != null && !search.isBlank())) ? null : filterKey(filter);
+        if (fk == null) {
+            return ResponseEntity.ok(buildDailyMerchants(filter, dateList, rangeStart, rangeEnd,
+                    month, selectionLabel, search, sort, dir, page, size, export, tenantId, null, fx, ch));
+        }
+        final VolumeRevenueFilterDTO f = filter;
+        final List<LocalDate> fDates = dateList;
+        final LocalDate fStart = rangeStart, fEnd = rangeEnd;
+        final int fPage = page, fSize = size;
+        final String fLabel = selectionLabel;
+        // Key on the RESOLVED selection, never the raw month param: the branch
+        // above tests month.isBlank() but a `month=` (empty, non-null) request
+        // keyed on the raw value would collapse every date selection onto one
+        // entry and serve the wrong day. rangeStart/rangeEnd are non-null iff
+        // the month branch was taken; otherwise fDates (distinct+sorted, so its
+        // toString is order-stable) identifies the selection exactly.
+        String selection = fStart != null ? (fStart + ".." + fEnd) : String.valueOf(fDates);
+        String key = "execDaily:" + tenantId + ":" + selection
+                + ":" + fPage + ":" + fSize + ":" + sort + ":" + dir + ":fx" + fx + ":ch" + ch + ":" + fk;
+        // Page/sort-independent parts (totals, trend, mix) get their own inner
+        // cache keys (built from fk in buildDailyMerchants) so a page or sort
+        // click only re-runs the table query.
+        final String innerFk = fk;
+        return ResponseEntity.ok(reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                () -> buildDailyMerchants(f, fDates, fStart, fEnd, month, fLabel,
+                        search, sort, dir, fPage, fSize, false, tenantId, innerFk, fx, ch)));
+    }
+
+    /**
+     * fk (the serialized filter DTO) keys the page/sort-independent parts
+     * (totals, trend, mix) in CACHE_LOOKUPS — a different cache than the outer
+     * CACHE_REPORT_DATA entry this method computes into, so the nested-compute
+     * contract in ReportCache holds. Null fk (search / export / unserializable
+     * filter) skips the inner caching entirely.
+     */
+    private Map<String, Object> buildDailyMerchants(VolumeRevenueFilterDTO filter,
+            List<LocalDate> dateList, LocalDate rangeStart, LocalDate rangeEnd,
+            String month, String selectionLabel, String search, String sort, String dir,
+            int page, int size, boolean export, Long tenantId, String fk,
+            boolean fx, String channel) {
+
+        final String lookups = com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS;
+        // Same resolved-selection identity as the outer cache key. The inner
+        // keys carry fx + channel too — both change the SQL these parts run.
+        final String selection = rangeStart != null
+                ? (rangeStart + ".." + rangeEnd) : String.valueOf(dateList);
+        final String variant = ":fx" + fx + ":ch" + channel;
+
         Map<String, Object> pageResult = volumeRevenueRepository.getExecutiveDailyMerchant(
                 filter, dateList, rangeStart, rangeEnd, search, sort, dir,
-                export ? 0 : page, export ? -1 : size, tenantId);
-        Map<String, Object> totals = volumeRevenueRepository.getExecutiveDailyMerchantTotals(
-                filter, dateList, rangeStart, rangeEnd, search, tenantId);
+                export ? 0 : page, export ? -1 : size, tenantId, fx, channel);
+        java.util.function.Supplier<Map<String, Object>> totalsLoader =
+                () -> volumeRevenueRepository.getExecutiveDailyMerchantTotals(
+                        filter, dateList, rangeStart, rangeEnd, search, tenantId, fx, channel);
+        Map<String, Object> totals = fk == null ? totalsLoader.get()
+                : reportCache.get(lookups,
+                        "execDailyTotals:" + tenantId + ":" + selection + variant + ":" + fk, totalsLoader);
 
         Map<String, Object> response = new HashMap<>();
         // Context data for the month ribbon + mix strips. Skipped on export —
@@ -127,10 +264,24 @@ public class ExecutiveDailyMerchantController {
                     : dateList.get(0).withDayOfMonth(1);
             LocalDate ctxEnd = rangeEnd != null ? rangeEnd
                     : ctxStart.withDayOfMonth(ctxStart.lengthOfMonth());
-            response.put("trend", volumeRevenueRepository.getExecutiveDailyMerchantTrend(
-                    filter, ctxStart, ctxEnd, search, tenantId));
-            response.put("mix", volumeRevenueRepository.getExecutiveDailyMerchantMix(
-                    filter, dateList, rangeStart, rangeEnd, search, tenantId, null));
+            // The trend covers the whole ctx month regardless of which days are
+            // selected, so it is keyed on the ctx window (plus filters), letting
+            // every date selection inside one month share a single computation.
+            java.util.function.Supplier<List<Map<String, Object>>> trendLoader =
+                    () -> volumeRevenueRepository.getExecutiveDailyMerchantTrend(
+                            filter, ctxStart, ctxEnd, search, tenantId, fx, channel);
+            response.put("trend", fk == null ? trendLoader.get()
+                    : reportCache.get(lookups,
+                            "execDailyTrend:" + tenantId + ":" + ctxStart + ".." + ctxEnd + variant + ":" + fk,
+                            trendLoader));
+            // ":all:" occupies the merchantId slot of the breakdown endpoint's
+            // execDailyMix keys, so the two can never collide.
+            java.util.function.Supplier<Map<String, List<Map<String, Object>>>> mixLoader =
+                    () -> volumeRevenueRepository.getExecutiveDailyMerchantMix(
+                            filter, dateList, rangeStart, rangeEnd, search, tenantId, null, channel);
+            response.put("mix", fk == null ? mixLoader.get()
+                    : reportCache.get(lookups,
+                            "execDailyMix:" + tenantId + ":all:" + selection + variant + ":" + fk, mixLoader));
         }
         // businessDate kept for the single-date case (frontend pill highlight);
         // selection is the human-readable summary for every mode.
@@ -140,12 +291,17 @@ public class ExecutiveDailyMerchantController {
                 : dateList.stream().map(LocalDate::toString).toList());
         response.put("month", month != null && !month.isBlank() ? month.trim() : null);
         response.put("selection", selectionLabel);
+        response.put("channel", channel);
+        // FX column gating for the frontend: the tenant flag AND a scope FX can
+        // exist on (FX is ECOM income — the POS scope hides the column rather
+        // than rendering dead zeros).
+        response.put("fxEnabled", fx && !com.acquira.common.service.ChannelSql.POS.equals(channel));
         response.put("totals", totals);
         response.put("content", pageResult.get("content"));
         response.put("totalElements", pageResult.get("totalElements"));
         response.put("page", export ? 0 : page);
         response.put("size", size);
-        return ResponseEntity.ok(response);
+        return response;
     }
 
     /**
@@ -160,11 +316,13 @@ public class ExecutiveDailyMerchantController {
             @RequestParam(required = false) List<String> dates,
             @RequestParam(required = false) String month,
             @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "ALL") String channel,
             @RequestBody(required = false) VolumeRevenueFilterDTO filter) {
 
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
         if (filter == null) filter = new VolumeRevenueFilterDTO();
+        final String ch = com.acquira.common.service.ChannelSql.normalize(channel);
 
         List<LocalDate> dateList = null;
         LocalDate rangeStart = null, rangeEnd = null;
@@ -190,10 +348,28 @@ public class ExecutiveDailyMerchantController {
             return ResponseEntity.badRequest().build();
         }
 
+        String fk = (search != null && !search.isBlank()) ? null : filterKey(filter);
+        final VolumeRevenueFilterDTO f = filter;
+        final List<LocalDate> fDates = dateList;
+        final LocalDate fStart = rangeStart, fEnd = rangeEnd;
+        // Same resolved-selection keying rule as the main endpoint. Cached in
+        // CACHE_LOOKUPS, not CACHE_REPORT_DATA: the mix is one small map per
+        // merchant, and per-merchant keys in the tightly-capped report cache
+        // would evict the genuinely expensive whole-report entries one grid
+        // click at a time.
+        String selection = fStart != null ? (fStart + ".." + fEnd) : String.valueOf(fDates);
+        Map<String, List<Map<String, Object>>> mix = fk == null
+                ? volumeRevenueRepository.getExecutiveDailyMerchantMix(
+                        f, fDates, fStart, fEnd, search, tenantId, merchantId, ch)
+                : reportCache.get(
+                        com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+                        "execDailyMix:" + tenantId + ":" + merchantId + ":" + selection + ":ch" + ch + ":" + fk,
+                        () -> volumeRevenueRepository.getExecutiveDailyMerchantMix(
+                                f, fDates, fStart, fEnd, search, tenantId, merchantId, ch));
+
         Map<String, Object> response = new HashMap<>();
         response.put("merchantId", merchantId);
-        response.put("mix", volumeRevenueRepository.getExecutiveDailyMerchantMix(
-                filter, dateList, rangeStart, rangeEnd, search, tenantId, merchantId));
+        response.put("mix", mix);
         return ResponseEntity.ok(response);
     }
 
@@ -224,7 +400,6 @@ public class ExecutiveDailyMerchantController {
         Long tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) return ResponseEntity.status(403).build();
 
-        Map<String, Object> response = new HashMap<>();
         if (month != null && !month.isBlank()) {
             java.time.YearMonth ym;
             try {
@@ -232,15 +407,25 @@ public class ExecutiveDailyMerchantController {
             } catch (java.time.format.DateTimeParseException e) {
                 return ResponseEntity.badRequest().build();
             }
-            List<LocalDate> dates = volumeRevenueRepository.getBusinessDatesInMonth(
-                    tenantId, ym.atDay(1), ym.atEndOfMonth());
-            response.put("month", ym.toString());
-            response.put("dates", dates.stream().map(LocalDate::toString).toList());
-        } else {
-            response.put("months", volumeRevenueRepository.getBusinessMonths(tenantId, 24));
-            List<LocalDate> latest = volumeRevenueRepository.getRecentBusinessDates(tenantId, 1);
-            response.put("latest", latest.isEmpty() ? null : latest.get(0).toString());
+            return ResponseEntity.ok(reportCache.get(
+                    com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+                    "edmCalendar:" + tenantId + ":" + ym, () -> {
+                        Map<String, Object> response = new HashMap<>();
+                        List<LocalDate> dates = volumeRevenueRepository.getBusinessDatesInMonth(
+                                tenantId, ym.atDay(1), ym.atEndOfMonth());
+                        response.put("month", ym.toString());
+                        response.put("dates", dates.stream().map(LocalDate::toString).toList());
+                        return response;
+                    }));
         }
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(reportCache.get(
+                com.acquira.common.config.ReportCacheConfig.CACHE_LOOKUPS,
+                "edmCalendar:" + tenantId + ":months", () -> {
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("months", volumeRevenueRepository.getBusinessMonths(tenantId, 24));
+                    List<LocalDate> latest = volumeRevenueRepository.getRecentBusinessDates(tenantId, 1);
+                    response.put("latest", latest.isEmpty() ? null : latest.get(0).toString());
+                    return response;
+                }));
     }
 }

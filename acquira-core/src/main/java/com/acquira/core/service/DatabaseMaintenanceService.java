@@ -50,6 +50,8 @@ public class DatabaseMaintenanceService {
         // as much as the originals'.
         "sum_daily_full", "sum_daily_explorer", "sum_daily_merchant_destination",
         "sum_monthly_insight", "merchant_daily_metrics",
+        // Finance Summary tenant-day rollup — DELETE+INSERT per ingested day.
+        "sum_daily_finance_rollup",
         "stg_trnx_raw", "stg_merchant_master_raw",
         // Snapshot tables: rewritten per upload (~rows-per-merchant each run) and
         // pruned by the 90-day retention pass — delete churn needs vacuuming.

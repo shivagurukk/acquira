@@ -8,6 +8,8 @@ data:
   SPRING_DATASOURCE_URL: "jdbc:postgresql://acquira-db:5432/postgres"
   SPRING_DATASOURCE_USERNAME: "postgres"
   APP_REPORTS_DIR: "/opt/acquira/reports"
-  # Local kind: turn schema init ON so the DB self-creates (skips migration Job).
-  # On AWS keep this "never" and run the migration Job instead.
-  SPRING_SQL_INIT_MODE: "always"
+  # Keep "never" in every shared/prod cluster and run the migration Job (08-*)
+  # to install the schema. "always" re-runs schema.sql (DDL DROPs + re-seed) on
+  # EVERY pod start/rolling deploy — only flip it to "always" for a throwaway
+  # local kind DB, then flip it back.
+  SPRING_SQL_INIT_MODE: "never"
