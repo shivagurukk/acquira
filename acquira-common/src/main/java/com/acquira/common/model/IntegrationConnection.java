@@ -89,8 +89,14 @@ public class IntegrationConnection {
                 return "jdbc:postgresql://" + h + ":" + p + "/" + db;
             case MSSQL:
                 boolean trust = trustServerCert == null || trustServerCert;
+                // packetSize=32767 (max): the default 8000-byte TDS packets add
+                // measurable per-packet overhead when draining wide NVARCHAR
+                // result sets (UTF-16 on the wire) over a WAN/VPN — the merchant
+                // master pull streams 100+ MB. Larger packets = fewer round
+                // trips through TLS + any inspecting firewall.
                 return "jdbc:sqlserver://" + h + ":" + p + ";databaseName=" + db
-                        + ";encrypt=true;trustServerCertificate=" + trust;
+                        + ";encrypt=true;trustServerCertificate=" + trust
+                        + ";packetSize=32767";
             default:
                 throw new IllegalArgumentException("Unsupported DB Type: " + dbType);
         }
