@@ -680,11 +680,11 @@ public class IntegrationPullService {
                             processed++;
                         }
                         if (batch.size() >= INSERT_BATCH_SIZE) {
-                            jdbcTemplate.batchUpdate(insertSql, batch);
+                            flushMultiRow(insertSql, batch);
                             batch.clear();
                         }
                     }
-                    if (!batch.isEmpty()) jdbcTemplate.batchUpdate(insertSql, batch);
+                    if (!batch.isEmpty()) flushMultiRow(insertSql, batch);
                     return new PullResult(fetched, processed);
                 }
             }
@@ -693,6 +693,57 @@ public class IntegrationPullService {
                     + e.getMessage() + timeoutHint(e, timeout), e);
         } finally {
             netTimeoutExec.shutdownNow();
+        }
+    }
+
+    /**
+     * Flush one staging batch as MULTI-ROW INSERT statements — the same
+     * technique the file-upload staging writer uses — instead of
+     * jdbcTemplate.batchUpdate.
+     *
+     * WHY (2026-09-15 'Merchant Pull' incident): batchUpdate executes each row
+     * as its own statement unless the pgjdbc URL carries
+     * reWriteBatchedInserts=true — and the deployed DB_URL env var replaces
+     * the whole URL, so the flag from application.properties is NOT
+     * guaranteed in the cluster. Over app->RDS latency that turned every
+     * 2,000-row staging flush into 2,000 round trips (~2 min each; a 35k-row
+     * merchant pull took 36 minutes while the source query itself returned in
+     * seconds, and every flush tripped Hikari's 60s leak detector). A
+     * multi-row VALUES statement is one round trip per chunk regardless of
+     * driver flags, matching the file path's ~250ms per 800 rows.
+     *
+     * Chunks are capped so paramsPerRow * rows stays under PostgreSQL's
+     * 65,535 bind-parameter limit (stg_trnx_raw has 33 params/row).
+     */
+    private void flushMultiRow(String insertSql, List<Object[]> batch) {
+        if (batch.isEmpty()) return;
+        long t0 = System.currentTimeMillis();
+        int paramsPerRow = batch.get(0).length;
+        int maxRows = Math.max(1, 65_000 / paramsPerRow);
+
+        String sqlTrim = insertSql.strip();
+        int valuesIdx = sqlTrim.lastIndexOf("VALUES");
+        String head = sqlTrim.substring(0, valuesIdx + "VALUES".length());
+        String rowGroup = sqlTrim.substring(valuesIdx + "VALUES".length()).strip(); // "(?,...,CURRENT_TIMESTAMP)"
+
+        for (int from = 0; from < batch.size(); from += maxRows) {
+            List<Object[]> slice = batch.subList(from, Math.min(from + maxRows, batch.size()));
+            StringBuilder sql = new StringBuilder(head.length() + slice.size() * (rowGroup.length() + 1) + 2);
+            sql.append(head).append(' ');
+            for (int i = 0; i < slice.size(); i++) {
+                if (i > 0) sql.append(',');
+                sql.append(rowGroup);
+            }
+            Object[] flat = new Object[slice.size() * paramsPerRow];
+            int p = 0;
+            for (Object[] row : slice) {
+                for (Object v : row) flat[p++] = v;
+            }
+            jdbcTemplate.update(sql.toString(), flat);
+        }
+        long elapsed = System.currentTimeMillis() - t0;
+        if (elapsed > 200) {
+            log.info("[Integration] staging flush rows={} in {}ms", batch.size(), elapsed);
         }
     }
 
