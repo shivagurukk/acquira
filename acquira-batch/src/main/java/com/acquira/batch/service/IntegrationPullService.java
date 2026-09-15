@@ -455,8 +455,11 @@ public class IntegrationPullService {
             try (PreparedStatement ps = NamedParamBinder.prepare(conn, sql, params)) {
                 ps.setQueryTimeout(timeout);
                 ps.setMaxRows(MAX_PULL_ROWS);
+                long tQuery = System.currentTimeMillis();
                 try (ResultSet rs = ps.executeQuery()) {
                     List<Map<String, Object>> rows = mapResultSet(rs);
+                    log.info("[Integration] External query on {} returned {} row(s) in {}ms",
+                            config.getName(), rows.size(), System.currentTimeMillis() - tQuery);
                     if (rows.size() >= MAX_PULL_ROWS) {
                         log.warn("[Integration] Pull for '{}' hit the {}-row safety ceiling — result may be truncated.",
                                 config.getName(), MAX_PULL_ROWS);
@@ -678,7 +681,17 @@ public class IntegrationPullService {
                     int flushes = 0;
                     long lastProgressLog = streamStart;
                     long tFetch = System.currentTimeMillis();
+                    long tRow = System.currentTimeMillis();
                     while (rs.next()) {
+                        // A single rs.next() blocking for seconds means the SOURCE
+                        // stopped producing (cursor page fault, source DB stall,
+                        // VPN hiccup) — say so with the row position, instead of
+                        // the whole pull just looking slow.
+                        long rowWaitMs = System.currentTimeMillis() - tRow;
+                        if (rowWaitMs > 5_000) {
+                            log.warn("[Integration] source stalled: waited {}ms for row {} from {}",
+                                    rowWaitMs, fetched + 1, config.getName());
+                        }
                         // A pull that hits the row ceiling is a PARTIAL extract.
                         // Applying it would silently publish an incomplete
                         // day/month (REPLACE deletes the real rows first) with
@@ -723,6 +736,7 @@ public class IntegrationPullService {
                             }
                             tFetch = System.currentTimeMillis();
                         }
+                        tRow = System.currentTimeMillis();
                     }
                     sourceMs += System.currentTimeMillis() - tFetch;
                     if (!batch.isEmpty()) {
@@ -790,7 +804,19 @@ public class IntegrationPullService {
             for (Object[] row : slice) {
                 for (Object v : row) flat[p++] = v;
             }
+            long tStmt = System.currentTimeMillis();
             jdbcTemplate.update(sql.toString(), flat);
+            long stmtMs = System.currentTimeMillis() - tStmt;
+            // One multi-row INSERT should be a single round trip; anything past
+            // ~2s means the DB or the network path to it is struggling — name
+            // the statement size so throughput (rows/s, KB/s) can be computed
+            // straight from the log line.
+            if (stmtMs > 2_000) {
+                log.warn("[Integration] SLOW staging statement: {} row(s), {} params, sql {} KB in {}ms",
+                        slice.size(), flat.length, sql.length() / 1024, stmtMs);
+            } else {
+                log.debug("[Integration] staging statement: {} row(s) in {}ms", slice.size(), stmtMs);
+            }
         }
         long elapsed = System.currentTimeMillis() - t0;
         if (elapsed > 200) {

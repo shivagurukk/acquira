@@ -114,7 +114,18 @@ public class TenantConnectionDataSourceConfig {
 
         @Override
         public Connection getConnection() throws SQLException {
-            return applySessionState(super.getConnection());
+            long t0 = System.currentTimeMillis();
+            Connection conn = super.getConnection();
+            long waitMs = System.currentTimeMillis() - t0;
+            // A checkout should be near-instant; a wait here means the pool is
+            // exhausted (every connection borrowed) — the caller's statement
+            // isn't slow, it's QUEUED. Distinguishing the two is essential when
+            // reading batch/pull timings.
+            if (waitMs > 1_000) {
+                log.warn("Connection checkout waited {}ms — pool under pressure (thread {})",
+                        waitMs, Thread.currentThread().getName());
+            }
+            return applySessionState(conn);
         }
 
         @Override
