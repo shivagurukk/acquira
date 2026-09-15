@@ -745,10 +745,14 @@ public class BusinessController {
                 String searchTerm = hasSearch
                                 ? search.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                                 : null;
-                // lossOnly -> only merchants whose net margin over the window is
-                // negative (a loss). Applied as HAVING on the grouped aggregate so
-                // it flows identically into the page, count, and totals queries.
-                String havingLoss = lossOnly ? "HAVING " + revExpr + " < 0 " : "";
+                // lossOnly -> only merchants whose NET SPREAD over the window is
+                // negative (a loss). Spread — not margin — is the business's true
+                // bottom line per merchant (margin + DCC + rental + FX when on):
+                // a merchant negative on margin but pulled to break-even by
+                // ancillary income is NOT a loss-maker and no longer appears here.
+                // Applied as HAVING on the grouped aggregate so it flows
+                // identically into the page, count, and totals queries.
+                String havingLoss = lossOnly ? "HAVING " + spreadExpr + " < 0 " : "";
                 // Tenant-configured MIDs never listed as loss-makers (and so
                 // left out of the page's TOTAL row too). WHERE, not HAVING:
                 // the rows are dropped before aggregation.
@@ -950,9 +954,6 @@ public class BusinessController {
                         m.put("spreadPct", vol.signum() != 0
                                         ? spread.multiply(BigDecimal.valueOf(100)).divide(vol, 2, RoundingMode.HALF_UP)
                                         : null);
-                        // A margin-loss row the ancillary lines pull back to break-even
-                        // or better — the Loss-Making view's "rescued" read.
-                        m.put("rescued", net.signum() < 0 && spread.signum() >= 0);
                         out.add(m);
                 }
 
@@ -963,11 +964,8 @@ public class BusinessController {
                 jakarta.persistence.Query tq = entityManager.createNativeQuery(
                                 "SELECT COUNT(*), COALESCE(SUM(x.c1),0), COALESCE(SUM(x.c2),0), COALESCE(SUM(x.c3),0), " +
                                 "COALESCE(SUM(x.c4),0), COALESCE(SUM(x.c5),0), COALESCE(SUM(x.c6),0), COALESCE(SUM(x.c7),0), " +
-                                "COALESCE(SUM(x.c8),0), COALESCE(SUM(x.c9),0), " +
-                                (fxOn ? "COALESCE(SUM(x.c10),0), " : "") +
-                                // Rescued = negative on margin, non-negative on spread —
-                                // and the spread includes FX only when the flag is on.
-                                "COUNT(*) FILTER (WHERE x.c6 < 0 AND x.c6 + x.c8 + x.c9" + (fxOn ? " + x.c10" : "") + " >= 0) FROM ( " +
+                                "COALESCE(SUM(x.c8),0), COALESCE(SUM(x.c9),0)" +
+                                (fxOn ? ", COALESCE(SUM(x.c10),0)" : "") + " FROM ( " +
                                 "SELECT SUM(t.total_txns) c1, SUM(t.total_base_volume) c2, SUM(t.total_msf) c3, " +
                                 "SUM(t.total_interchange) c4, SUM(t.total_scheme_fee) c5, " + revExpr + " c6, " +
                                 "SUM(COALESCE(t.total_ecom_fee,0)) c7, " +
@@ -1008,10 +1006,6 @@ public class BusinessController {
                 totals.put("spreadPct", tVol.signum() != 0
                                 ? tSpread.multiply(BigDecimal.valueOf(100)).divide(tVol, 2, RoundingMode.HALF_UP)
                                 : null);
-                // Rows negative on margin but non-negative on spread (all rows in
-                // the result set, not just the page). The fx column, when
-                // selected, sits between the ancillary totals and this count.
-                totals.put("rescuedRows", ((Number) meta[fxOn ? 11 : 10]).longValue());
                 // MID x SID grain only: merchant-level ancillary (no SID) is split
                 // evenly across the merchant's trading stores (see ancJoin). Two
                 // figures are reported so the band can say so honestly:

@@ -42,12 +42,11 @@ export const CATEGORICAL = [
    stays scarce; fee components take the categorical slots. */
 export const SERIES = {
     volume:      'var(--chart-3)',
-    /* Cost & Margin Mix stack — one hue per segment (user's call) so each
-       cost keeps its own identity and margin reads instantly as "kept":
-       margin jade-green, interchange the deep imperial it always wore,
-       scheme fee a lighter sky blue, PG fee copper. Tokens are the
-       --mix-* set in index.css, validated per mode as a categorical
-       palette; each segment body is a soft vertical gradient of its hue. */
+    /* Cost & Margin Mix stack — monochrome blue ramp (user's call): deep
+       navy interchange at the base, mid-blue scheme fee, lighter PG fee,
+       and a light-blue margin cap that reads as "kept". Tokens are the
+       --mix-* set in index.css, re-picked per mode for contrast; each
+       segment body is a soft vertical gradient of its shade. */
     netRevenue:  'var(--mix-margin)',
     /* Ancillary income (DCC acquirer share + rental): the non-margin part of
        Net Spread. Its own hue so a spread figure can be read as "margin +

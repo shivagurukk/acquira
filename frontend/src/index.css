@@ -45,15 +45,14 @@
   --imp-4: #93AAF4;
   --chart-royal: var(--imp-2);
 
-  /* Cost & Margin Mix stack — one hue per segment so each cost carries its
-     own identity and the green margin cap reads as "what we keep".
-     Validated as a categorical set (CVD + contrast) against --surface;
-     the deep interchange imperial is a deliberate anchor below the
-     lightness band, relieved by segment gaps, legend and the table. */
-  --mix-margin:      #0E8F64;   /* jade-deep — the kept margin */
-  --mix-interchange: var(--imp-1);
-  --mix-scheme:      #2B7FD4;   /* sky — lighter, clearly apart from imperial */
-  --mix-pg:          #CA5F28;   /* copper — PG fee */
+  /* Cost & Margin Mix stack — monochrome blue ramp (user's call): every
+     segment is a shade of blue, deep navy at the base rising to the light
+     margin cap, so the stack reads as one gradient column. Adjacent steps
+     stay apart thanks to the 2px surface gaps, legend and the table. */
+  --mix-margin:      #8FB4EA;   /* light blue cap — the kept margin */
+  --mix-interchange: #24386B;   /* deep navy base */
+  --mix-scheme:      #3A62B4;
+  --mix-pg:          #5E87CF;
   /* Ancillary income (DCC acquirer share + rental) — the part of Net Spread
      that is NOT fee margin. Plum from the validated cat set so it never reads
      as margin-green or as a cost. */
@@ -718,12 +717,12 @@ html.dark {
   --imp-4: #B4C4F8;
   --chart-royal: var(--imp-2);
 
-  /* Cost & Margin Mix stack — dark-mode steps re-picked (not auto-flipped)
-     and validated against the dark surface; all six checks pass here. */
-  --mix-margin:      #25A87B;
-  --mix-interchange: #4356E0;
-  --mix-scheme:      #3E9AE8;
-  --mix-pg:          #D5763A;
+  /* Cost & Margin Mix stack — dark-mode blue ramp re-picked (not
+     auto-flipped) so each step keeps contrast against the dark surface. */
+  --mix-margin:      #9DBFF2;
+  --mix-interchange: #3D5BB8;
+  --mix-scheme:      #5379D2;
+  --mix-pg:          #6F97E2;
   --mix-ancillary:   var(--cat-5);
   --chart-line: #C7CFDA;
   --chart-pos: #34B98A;

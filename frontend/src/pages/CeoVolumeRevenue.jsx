@@ -27,7 +27,9 @@ import {
    read only, never fact_transaction).
 
    Reused for the Loss-Making Merchants screen via the `lossOnly` prop
-   (adds lossOnly=true -> HAVING net_revenue < 0 server-side). lossOnly
+   (adds lossOnly=true -> HAVING net SPREAD < 0 server-side: margin + DCC
+   + rental + FX when enabled — the true bottom line, so a merchant whose
+   ancillary income covers a margin loss is not listed). lossOnly
    also rolls the server-side query up to MID (merchant) level instead
    of MID x SID, so a merchant's overall position is evaluated as a
    whole rather than flagging/hiding individual stores independently
@@ -116,31 +118,51 @@ const buildMonthOptions = (anchorISO, n = 12) => {
     return opts;
 };
 
-/* ── KPI stat tile: uppercase micro-label + tabular-nums value + caption ── */
+/* ── KPI stat card: accent top bar + tinted icon chip + tabular-nums value.
+   Each metric is its own card (not a cell in one shared panel) — the band
+   reads as a row of cards with a soft hover lift, tone-coloured per metric. ── */
 const StatTile = ({ icon: Icon, label, value, caption, tone, title }) => {
-    const valueColor =
+    const accent =
         tone === 'danger'  ? '#dc2626' :
-        tone === 'success' ? '#059669' : 'var(--text)';
+        tone === 'success' ? '#059669' : 'var(--brand, #3b82f6)';
+    const valueColor = tone ? accent : 'var(--text)';
     return (
-        <div title={title} style={{ padding: '16px 20px', minWidth: 0 }}>
-            <div style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em',
-                textTransform: 'uppercase', color: 'var(--text-muted, #94a3b8)',
-                whiteSpace: 'nowrap',
-            }}>
-                <Icon size={12} strokeWidth={2.2} />
-                {label}
+        <div className="cvr-card" title={title} style={{
+            position: 'relative', minWidth: 0, padding: '15px 18px 14px',
+            background: 'var(--bg-card)', border: '1px solid var(--border)',
+            borderRadius: 14, overflow: 'hidden',
+            boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))',
+        }}>
+            {/* tone accent bar */}
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3,
+                background: accent, opacity: 0.9 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                    width: 26, height: 26, borderRadius: 8, flex: 'none',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    color: accent,
+                    background: `color-mix(in srgb, ${accent} 12%, transparent)`,
+                }}>
+                    <Icon size={13} strokeWidth={2.2} />
+                </span>
+                <span style={{
+                    fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em',
+                    textTransform: 'uppercase', color: 'var(--text-muted, #94a3b8)',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                    {label}
+                </span>
             </div>
             <div style={{
-                marginTop: 7, fontSize: 21, fontWeight: 700, color: valueColor,
+                marginTop: 9, fontSize: 21, fontWeight: 700, color: valueColor,
                 letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums',
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
                 {value}
             </div>
             {caption && (
-                <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-secondary)',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {caption}
                 </div>
             )}
@@ -160,7 +182,8 @@ const CeoVolumeRevenue = ({
     const [period, setPeriod] = useState('MTD');
     const [month, setMonth] = useState('');           // 'YYYY-MM' when period==='MONTH'
     const [page, setPage] = useState(0);
-    const [sort, setSort] = useState(lossOnly ? 'net' : 'volume');
+    // loss: sort on net SPREAD (the loss definition), worst first.
+    const [sort, setSort] = useState(lossOnly ? 'spread' : 'volume');
     const [dir, setDir] = useState(lossOnly ? 'asc' : 'desc');  // loss: worst (most negative) first
     const [search, setSearch] = useState('');
     const [query, setQuery] = useState('');
@@ -370,10 +393,26 @@ const CeoVolumeRevenue = ({
     return (
         <div style={{ padding: '24px 28px', width: '100%', maxWidth: '100%', margin: 0, boxSizing: 'border-box' }}>
             <style>{`
+                .cvr-card { transition: transform .15s ease, box-shadow .15s ease; }
+                .cvr-card:hover { transform: translateY(-2px);
+                    box-shadow: 0 6px 16px rgba(16,24,40,0.08); }
                 .cvr-table tbody tr { transition: background .12s ease; }
-                .cvr-table tbody tr:hover { background: var(--bg-hover, rgba(148,163,184,0.07)); }
+                /* zebra on the detail rows only (the totals row styles itself) */
+                .cvr-table tbody tr.cvr-row:nth-child(even) {
+                    background: rgba(148,163,184,0.05); }
+                /* loss rows: faint red wash + a red accent stripe on the left */
+                .cvr-table tbody tr.cvr-loss-row {
+                    background: rgba(220,38,38,0.035);
+                    box-shadow: inset 3px 0 0 rgba(220,38,38,0.55); }
+                .cvr-table tbody tr.cvr-row:hover {
+                    background: var(--bg-hover, rgba(148,163,184,0.10)); }
+                .cvr-table tbody tr.cvr-loss-row:hover {
+                    background: rgba(220,38,38,0.07); }
                 .cvr-table thead th { position: sticky; top: 0; z-index: 1;
                     background: var(--bg-subtle, #f8fafc); }
+                .cvr-table thead th::after { content: ''; position: absolute;
+                    left: 0; right: 0; bottom: 0; height: 2px;
+                    background: var(--border); }
             `}</style>
 
             {/* ── Header ── */}
@@ -398,7 +437,7 @@ const CeoVolumeRevenue = ({
                         {subtitleSuffix}
                         {lossOnly && <>
                             <span style={{ color: 'var(--border)' }}>·</span>
-                            <span style={{ color: '#dc2626', fontWeight: 600 }}>net margin &lt; 0 only</span>
+                            <span style={{ color: '#dc2626', fontWeight: 600 }}>net spread &lt; 0 only</span>
                         </>}
                         <MarginGlossaryHint compact style={{ marginLeft: 2 }} />
                     </div>
@@ -504,72 +543,49 @@ const CeoVolumeRevenue = ({
                     {/* ── KPI summary band (period totals) ── */}
                     {totals && (
                         <div style={{
-                            background: 'var(--bg-card)', border: '1px solid var(--border)',
-                            borderRadius: 14, marginBottom: 14, overflow: 'hidden',
-                            boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))',
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                            display: 'grid', gap: 12, marginBottom: 16,
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(178px, 1fr))',
                         }}>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Layers}
-                                    label={lossOnly ? 'Loss Rows' : 'Rows'}
-                                    value={totalRows.toLocaleString()}
-                                    caption={lossOnly && num(totals.rescuedRows) > 0 ? (
-                                        <span title="Merchants negative on net margin whose DCC and rental income bring them to break-even or better"
-                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                                            {num(totals.txns).toLocaleString()} transactions
-                                            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
-                                                padding: '1px 7px', borderRadius: 999,
-                                                color: 'var(--success-text, #059669)',
-                                                background: 'var(--success-bg, rgba(5,150,105,0.10))' }}>
-                                                {num(totals.rescuedRows).toLocaleString()} RESCUED
-                                            </span>
-                                        </span>
-                                    ) : `${num(totals.txns).toLocaleString()} transactions`}
-                                    tone={lossOnly ? 'danger' : undefined} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Wallet} label="Volume"
-                                    value={fmt.currency(num(totals.volume))}
-                                    caption="settlement currency"
-                                    title={fullNum(totals.volume, currencySymbol)} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Receipt} label="MSF"
-                                    value={fmt.currency(num(totals.msf))}
-                                    caption="gross fee revenue"
-                                    title={formatMsf(totals.msf, currencySymbol)} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Landmark} label="Costs"
-                                    value={fmt.currency(totalCosts)}
-                                    caption="interchange + scheme + ECOM"
-                                    title={fullNum(totalCosts, currencySymbol)} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={lossOnly ? TrendingDown : Receipt}
-                                    label={lossOnly ? 'Total Net Loss' : 'Net Margin'}
-                                    value={fmt.currency(num(totals.netRevenue))}
-                                    caption={lossOnly ? 'across loss rows' : 'MSF − costs'}
-                                    tone={num(totals.netRevenue) >= 0 ? 'success' : 'danger'}
-                                    title={fullNum(totals.netRevenue, currencySymbol)} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Percent} label="Net Margin %"
-                                    value={pct(totals.marginPct)}
-                                    caption="net margin ÷ volume"
-                                    tone={totals.marginPct == null ? undefined
-                                        : num(totals.marginPct) >= 0 ? 'success' : 'danger'} />
-                            </div>
-                            <div>
-                                <StatTile icon={Layers} label="Net Spread"
-                                    value={fmt.currency(num(totals.netSpread))}
-                                    caption={fxEnabled
+                            <StatTile icon={Layers}
+                                label={lossOnly ? 'Loss Merchants' : 'Rows'}
+                                value={totalRows.toLocaleString()}
+                                caption={`${num(totals.txns).toLocaleString()} transactions`}
+                                tone={lossOnly ? 'danger' : undefined} />
+                            <StatTile icon={Wallet} label="Volume"
+                                value={fmt.currency(num(totals.volume))}
+                                caption="settlement currency"
+                                title={fullNum(totals.volume, currencySymbol)} />
+                            <StatTile icon={Receipt} label="MSF"
+                                value={fmt.currency(num(totals.msf))}
+                                caption="gross fee revenue"
+                                title={formatMsf(totals.msf, currencySymbol)} />
+                            <StatTile icon={Landmark} label="Costs"
+                                value={fmt.currency(totalCosts)}
+                                caption="interchange + scheme + ECOM"
+                                title={fullNum(totalCosts, currencySymbol)} />
+                            <StatTile icon={Receipt} label="Net Margin"
+                                value={fmt.currency(num(totals.netRevenue))}
+                                caption="MSF − costs"
+                                tone={num(totals.netRevenue) >= 0 ? 'success' : 'danger'}
+                                title={fullNum(totals.netRevenue, currencySymbol)} />
+                            <StatTile icon={Percent} label="Net Margin %"
+                                value={pct(totals.marginPct)}
+                                caption="net margin ÷ volume"
+                                tone={totals.marginPct == null ? undefined
+                                    : num(totals.marginPct) >= 0 ? 'success' : 'danger'} />
+                            {/* On the Loss-Making view the spread IS the loss — the
+                                filter runs on net spread < 0, so this card is the
+                                headline figure. */}
+                            <StatTile icon={lossOnly ? TrendingDown : Layers}
+                                label={lossOnly ? 'Total Net Loss' : 'Net Spread'}
+                                value={fmt.currency(num(totals.netSpread))}
+                                caption={lossOnly
+                                    ? `net spread across loss merchants · ${pct(totals.spreadPct)}`
+                                    : fxEnabled
                                         ? `margin + DCC ${fmt.currency(num(totals.dccAcquirer))} + rental ${fmt.currency(num(totals.rental))} + FX ${fmt.currency(num(totals.fx))} · ${pct(totals.spreadPct)}`
                                         : `margin + DCC ${fmt.currency(num(totals.dccAcquirer))} + rental ${fmt.currency(num(totals.rental))} · ${pct(totals.spreadPct)}`}
-                                    tone={num(totals.netSpread) >= 0 ? 'success' : 'danger'}
-                                    title={fullNum(totals.netSpread, currencySymbol)} />
-                            </div>
+                                tone={num(totals.netSpread) >= 0 ? 'success' : 'danger'}
+                                title={fullNum(totals.netSpread, currencySymbol)} />
                         </div>
                     )}
 
@@ -626,8 +642,8 @@ const CeoVolumeRevenue = ({
                                 <tbody>
                                     {rows.map((r, i) => (
                                         <tr key={`${r.mid}-${r.sid}-${i}`}
-                                            style={{ borderBottom: '1px solid var(--border-light, var(--border))',
-                                                background: lossOnly ? 'rgba(220,38,38,0.03)' : 'transparent' }}>
+                                            className={lossOnly ? 'cvr-row cvr-loss-row' : 'cvr-row'}
+                                            style={{ borderBottom: '1px solid var(--border-light, var(--border))' }}>
                                             {!lossOnly && (
                                                 <td style={{ ...tdText, fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{r.sid || '—'}</td>
                                             )}
@@ -673,15 +689,6 @@ const CeoVolumeRevenue = ({
                                                 color: num(r.netSpread) >= 0 ? 'var(--text)' : '#dc2626' }}
                                                 title={`${fullNum(r.netSpread, currencySymbol)} · ${pct(r.spreadPct)} of volume`}>
                                                 {fmt.currency(num(r.netSpread))}
-                                                {r.rescued && (
-                                                    <span title="Negative on net margin, non-negative once DCC and rental are added"
-                                                        style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
-                                                            padding: '1px 6px', borderRadius: 999,
-                                                            color: 'var(--success-text, #059669)',
-                                                            background: 'var(--success-bg, rgba(5,150,105,0.10))' }}>
-                                                        RESCUED
-                                                    </span>
-                                                )}
                                             </td>
                                         </tr>
                                     ))}

@@ -59,10 +59,10 @@ const num = (v) => (v == null ? 0 : Number(v));
 /* ─── Chart palette ───
    Colours come from theme/chartPalette (the shared blue system) as CSS custom
    properties, so both schemes are handled by the stylesheet and no mode flag
-   is needed here. The Cost & Margin Mix stack gives every segment its own
-   hue (validated as a categorical set), so identity survives any stacking
-   order — but keep the costs at the base and margin on top: the green cap
-   is the "what we keep" read the panel is built around. */
+   is needed here. The Cost & Margin Mix stack is a monochrome blue ramp —
+   deep navy at the base rising to a light cap — so keep the costs at the
+   base and margin on top: the light-blue cap is the "what we keep" read
+   the panel is built around. */
 const C = {
     volume:      SERIES.volume,
     marginPct:   SERIES.marginPct,
@@ -1014,7 +1014,7 @@ const Dashboard = () => {
                         </ChartCard>
 
                         <ChartCard title="Cost & Margin Mix"
-                            subtitle="Costs at the base — the green cap is what we keep">
+                            subtitle="Costs at the base — the light-blue cap is what we keep">
                             {/* height matches the two panels + their labels next door */}
                             <ResponsiveContainer width="100%" height={344}>
                                 <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -1037,8 +1037,8 @@ const Dashboard = () => {
                                         between segments, not as an outline. `fill` is what the
                                         Legend swatch reads — the Cells paint the gradients.
                                         Stack order: the three costs rise from the baseline,
-                                        margin caps the bar so the green "kept" band is the
-                                        first thing the eye lands on. Legend and tooltip
+                                        margin caps the bar so the light-blue "kept" band is
+                                        the first thing the eye lands on. Legend and tooltip
                                         inherit this order. */}
                                     <Bar dataKey="interchange" name="Interchange" stackId="c"
                                         fill={C.interchange} maxBarSize={30}

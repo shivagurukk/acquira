@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Tooltip } from '@mui/material';
 import { Store, Hash } from 'lucide-react';
 import api from '../api/axios';
 import { formatNumber } from '../utils/formatters';
@@ -41,8 +42,11 @@ export default function MidSidSummary({ from, to, channel = 'ALL', compact = fal
     const mids = data ? data.mids : null;
     const sids = data ? data.sids : null;
 
-    const cell = (icon, label, value) => (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+    /* `definition` surfaces on hover so the strip explains its own terms —
+       what counts as "active", and at which grain, for the window shown. */
+    const cell = (icon, label, value, definition) => (
+        <Tooltip title={definition} arrow placement="bottom">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, cursor: 'help' }}>
             <span style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 width: 30, height: 30, borderRadius: 8, flexShrink: 0,
@@ -61,6 +65,7 @@ export default function MidSidSummary({ from, to, channel = 'ALL', compact = fal
                 }}>{label}</span>
             </div>
         </div>
+        </Tooltip>
     );
 
     return (
@@ -74,9 +79,11 @@ export default function MidSidSummary({ from, to, channel = 'ALL', compact = fal
                 ...style,
             }}
         >
-            {cell(<Hash size={16} strokeWidth={2.4} />, 'Active MIDs', mids)}
+            {cell(<Hash size={16} strokeWidth={2.4} />, 'Active MIDs', mids,
+                'Merchant IDs (MIDs) with at least one transaction in the period and channel shown on this screen.')}
             <span style={{ width: 1, alignSelf: 'stretch', background: 'var(--border, #e2e8f0)' }} />
-            {cell(<Store size={16} strokeWidth={2.4} />, 'Active SIDs', sids)}
+            {cell(<Store size={16} strokeWidth={2.4} />, 'Active SIDs', sids,
+                'Store IDs (SIDs) — individual stores / terminals under the MIDs — with at least one transaction in the period and channel shown on this screen.')}
         </div>
     );
 }
