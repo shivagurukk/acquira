@@ -78,9 +78,22 @@ public final class AncillarySql {
             + "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET "
             + "rental_amount = EXCLUDED.rental_amount";
 
-    // ECOM FX income (V2026_09_07_01, BH calc sheet): per ECOM transaction NOT
-    // carried by Benefit PG, in a currency with a ref_ecom_fx_rate row,
+    // ECOM FX income (V2026_09_07_01, BH calc sheet): per ECOM transaction
+    // carried by MPGS, in a currency with a ref_ecom_fx_rate row,
     //   fx = multiplier * (settlement/cost_rate - settlement/board_rate).
+    // SCOPE (finance decisions 2026-09-15):
+    //  * ECOM: only where MPGS actually processed the transaction
+    //    (dim_terminal.type = 'MPGS'). The original "every ECOM gateway except
+    //    Benefit PG" scope also swept up ECOM PROFILE / AFS ONE traffic (and
+    //    ECOM rows with no dim_terminal match) — in Aug 2026 that overstated
+    //    tenant-8 FX ~8.2k vs ~1.0k BHD of genuine MPGS FX, dominated by
+    //    RAIN's ECOM PROFILE KWD volume.
+    //  * POS: only for merchants with a MID-SPECIFIC (negotiated) rate row —
+    //    fr.mid_specific — never on tenant-default rates. Reconciles TAP's
+    //    Aug 2026 POS foreign-currency volume (~1.75k BHD FX) that finance
+    //    books but "ECOM only" missed. Per-transaction scoping is deliberate:
+    //    a merchant on multiple gateways (e.g. TAP) earns FX on its MPGS
+    //    e-com and its POS legs, not on ECOM PROFILE / AFS ONE.
     // A mid-specific rate row beats the tenant default (LATERAL ... LIMIT 1,
     // leading zeros stripped from BOTH mids — feed MIDs are zero-padded).
     // Refund rows carry a NEGATIVE store_base_currency_amount (volume-signing,
@@ -100,15 +113,17 @@ public final class AncillarySql {
             + "JOIN dim_merchant m ON m.merchant_id = f.merchant_id AND m.tenant_id = f.tenant_id "
             + "LEFT JOIN dim_terminal dt ON dt.terminal_id = f.terminal_id AND dt.tenant_id = f.tenant_id "
             + "JOIN LATERAL ("
-            + "  SELECT r.board_rate, r.cost_rate, r.multiplier FROM ref_ecom_fx_rate r "
+            + "  SELECT r.board_rate, r.cost_rate, r.multiplier, (r.mid IS NOT NULL) AS mid_specific "
+            + "  FROM ref_ecom_fx_rate r "
             + "  WHERE r.tenant_id = f.tenant_id "
             + "    AND r.txn_currency = UPPER(TRIM(f.txn_currency)) "
             + "    AND (r.mid IS NULL OR LTRIM(r.mid, '0') = LTRIM(m.mid, '0')) "
             + "  ORDER BY (r.mid IS NOT NULL) DESC LIMIT 1"
             + ") fr ON TRUE "
             + "WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? "
-            + "AND f.merchant_id IS NOT NULL AND f.channel = 'ECOM' "
-            + "AND UPPER(TRIM(COALESCE(dt.type, ''))) <> 'BENEFIT PG' "
+            + "AND f.merchant_id IS NOT NULL "
+            + "AND ((f.channel = 'ECOM' AND UPPER(TRIM(COALESCE(dt.type, ''))) = 'MPGS') "
+            + "  OR (f.channel = 'POS' AND fr.mid_specific)) "
             + "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id "
             + "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET "
             + "fx_revenue = EXCLUDED.fx_revenue";
@@ -157,15 +172,17 @@ public final class AncillarySql {
             + "JOIN dim_merchant m ON m.merchant_id = f.merchant_id AND m.tenant_id = f.tenant_id "
             + "LEFT JOIN dim_terminal dt ON dt.terminal_id = f.terminal_id AND dt.tenant_id = f.tenant_id "
             + "JOIN LATERAL ("
-            + "  SELECT r.board_rate, r.cost_rate, r.multiplier FROM ref_ecom_fx_rate r "
+            + "  SELECT r.board_rate, r.cost_rate, r.multiplier, (r.mid IS NOT NULL) AS mid_specific "
+            + "  FROM ref_ecom_fx_rate r "
             + "  WHERE r.tenant_id = f.tenant_id "
             + "    AND r.txn_currency = UPPER(TRIM(f.txn_currency)) "
             + "    AND (r.mid IS NULL OR LTRIM(r.mid, '0') = LTRIM(m.mid, '0')) "
             + "  ORDER BY (r.mid IS NOT NULL) DESC LIMIT 1"
             + ") fr ON TRUE "
             + "WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? "
-            + "AND f.merchant_id IS NOT NULL AND f.channel = 'ECOM' "
-            + "AND UPPER(TRIM(COALESCE(dt.type, ''))) <> 'BENEFIT PG' "
+            + "AND f.merchant_id IS NOT NULL "
+            + "AND ((f.channel = 'ECOM' AND UPPER(TRIM(COALESCE(dt.type, ''))) = 'MPGS') "
+            + "  OR (f.channel = 'POS' AND fr.mid_specific)) "
             + "GROUP BY f.tenant_id, DATE(f.payment_date) "
             + "ON CONFLICT (tenant_id, business_date) DO UPDATE SET "
             + "fx_revenue = EXCLUDED.fx_revenue";
