@@ -94,6 +94,17 @@ public final class AncillarySql {
     //    books but "ECOM only" missed. Per-transaction scoping is deliberate:
     //    a merchant on multiple gateways (e.g. TAP) earns FX on its MPGS
     //    e-com and its POS legs, not on ECOM PROFILE / AFS ONE.
+    //  * ECOM fallback for NEGOTIATED merchants (2026-09-15 follow-up):
+    //    dim_terminal.type is current state, not what priced the transaction —
+    //    master re-uploads overwrite it, the AMS feed carries the literal
+    //    token 'NONE' for typeless terminals, and auto-created terminals have
+    //    NULL type — so a strict type='MPGS' test drops genuine MPGS e-com
+    //    volume for merchants whose TIDs are typed NONE/NULL/a POS device.
+    //    Per the 2026-08-28 default-gateway rule ("an ECOM txn with no
+    //    gateway-specific row prices as MPGS"), an ECOM row of a MID-SPECIFIC
+    //    merchant earns FX unless its terminal is affirmatively typed as one
+    //    of the OTHER ecom gateways. Tenant-default merchants stay strict
+    //    (type='MPGS' only) so the RAIN/no-terminal overstatement stays closed.
     // A mid-specific rate row beats the tenant default (LATERAL ... LIMIT 1,
     // leading zeros stripped from BOTH mids — feed MIDs are zero-padded).
     // Refund rows carry a NEGATIVE store_base_currency_amount (volume-signing,
@@ -122,7 +133,9 @@ public final class AncillarySql {
             + ") fr ON TRUE "
             + "WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? "
             + "AND f.merchant_id IS NOT NULL "
-            + "AND ((f.channel = 'ECOM' AND UPPER(TRIM(COALESCE(dt.type, ''))) = 'MPGS') "
+            + "AND ((f.channel = 'ECOM' AND (UPPER(TRIM(COALESCE(dt.type, ''))) = 'MPGS' "
+            + "       OR (fr.mid_specific AND UPPER(TRIM(COALESCE(dt.type, ''))) NOT IN "
+            + "           ('ECOM PROFILE', 'AFS ONE', 'BENEFIT PG', 'PAY ON', 'PAY BY LINK')))) "
             + "  OR (f.channel = 'POS' AND fr.mid_specific)) "
             + "GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id "
             + "ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET "
@@ -181,7 +194,9 @@ public final class AncillarySql {
             + ") fr ON TRUE "
             + "WHERE f.tenant_id = ? AND f.payment_date >= ? AND f.payment_date < ? "
             + "AND f.merchant_id IS NOT NULL "
-            + "AND ((f.channel = 'ECOM' AND UPPER(TRIM(COALESCE(dt.type, ''))) = 'MPGS') "
+            + "AND ((f.channel = 'ECOM' AND (UPPER(TRIM(COALESCE(dt.type, ''))) = 'MPGS' "
+            + "       OR (fr.mid_specific AND UPPER(TRIM(COALESCE(dt.type, ''))) NOT IN "
+            + "           ('ECOM PROFILE', 'AFS ONE', 'BENEFIT PG', 'PAY ON', 'PAY BY LINK')))) "
             + "  OR (f.channel = 'POS' AND fr.mid_specific)) "
             + "GROUP BY f.tenant_id, DATE(f.payment_date) "
             + "ON CONFLICT (tenant_id, business_date) DO UPDATE SET "
