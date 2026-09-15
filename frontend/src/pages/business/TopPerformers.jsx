@@ -349,6 +349,18 @@ const TopPerformers = () => {
                 : 'net margin + DCC (acquirer) + rental',
             icon: Layers, color: 'var(--success, #059669)',
         },
+        // Ancillary split — the DCC/rental (and FX) legs already inside Net
+        // Spread, surfaced the same way the Executive Summary breaks them out.
+        {
+            title: 'DCC (Acquirer)', value: fmt.currency(data.concentration.totalDcc),
+            subtitle: 'acquirer share of DCC (in Net Spread)',
+            icon: Layers, color: 'var(--mix-ancillary, #A85D9C)',
+        },
+        {
+            title: 'Rental', value: fmt.currency(data.concentration.totalRental),
+            subtitle: 'POS / terminal rental (in Net Spread)',
+            icon: Layers, color: 'var(--mix-ancillary, #A85D9C)',
+        },
         ...(fxEnabled ? [{
             title: 'FX Income', value: fmt.currency(data.concentration.totalFx),
             subtitle: 'ecom FX margin (excl. Benefit PG)',

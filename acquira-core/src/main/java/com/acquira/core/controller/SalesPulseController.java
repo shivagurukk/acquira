@@ -111,9 +111,13 @@ public class SalesPulseController {
 
     @jakarta.annotation.PostConstruct
     void registerWarmer() {
-        reportCacheWarmup.register("sales-pulse", tenantId ->
-                cachedBuild(tenantId, "MTD", "", "", null, null, SalesTargetResolver.DEFAULT_METRIC,
-                        ChannelSql.ALL));
+        reportCacheWarmup.register("sales-pulse", tenantId -> {
+            // All three channel scopes — the POS/ECOM toggle is one click away
+            // and a cold channel-scoped build is multi-second on large tenants.
+            for (String ch : new String[] { ChannelSql.ALL, ChannelSql.POS, ChannelSql.ECOM }) {
+                cachedBuild(tenantId, "MTD", "", "", null, null, SalesTargetResolver.DEFAULT_METRIC, ch);
+            }
+        });
     }
 
     // ═══════════════════════════════════════════════════════════

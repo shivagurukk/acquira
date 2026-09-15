@@ -77,13 +77,17 @@ public class SalesPortfolioController {
             java.time.LocalDate prevStart = from.minusMonths(1);
             java.time.LocalDate compareTo = prevStart.plusDays(days);
             boolean fx = NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
-            reportCache.get(
-                    com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                    "salesExec:" + tenantId + ":" + from + ":" + today
-                            + ":" + prevStart + ":" + compareTo
-                            + ":ch" + ChannelSql.ALL + ":fx" + fx,
-                    () -> buildExecutiveDashboard(tenantId, from.toString(), today.toString(),
-                            prevStart.toString(), compareTo.toString(), ChannelSql.ALL, fx));
+            // All three channel scopes — the POS/ECOM toggle is one click away
+            // and a cold channel-scoped build is multi-second on large tenants.
+            for (String ch : new String[] { ChannelSql.ALL, ChannelSql.POS, ChannelSql.ECOM }) {
+                reportCache.get(
+                        com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                        "salesExec:" + tenantId + ":" + from + ":" + today
+                                + ":" + prevStart + ":" + compareTo
+                                + ":ch" + ch + ":fx" + fx,
+                        () -> buildExecutiveDashboard(tenantId, from.toString(), today.toString(),
+                                prevStart.toString(), compareTo.toString(), ch, fx));
+            }
         });
     }
 
@@ -298,6 +302,11 @@ public class SalesPortfolioController {
             + " " + NetSpreadSql.sumMargin("sdm") + " AS net,"
             + " " + (fxEnabled ? NetSpreadSql.sumSpreadWithFx("sdm") : NetSpreadSql.sumSpread("sdm")) + " AS spread,"
             + (fxEnabled ? " COALESCE(SUM(" + NetSpreadSql.fx("sdm") + "), 0) AS fx," : "")
+            // DCC / rental split for the ancillary columns — the merchant-day
+            // relation (plain or channel-scoped) carries both with the
+            // wholesale POS-attribution already applied by ChannelSql.
+            + " COALESCE(SUM(COALESCE(sdm.dcc_acquirer,0)), 0) AS dcc,"
+            + " COALESCE(SUM(COALESCE(sdm.rental_amount,0)), 0) AS rental,"
             + " COALESCE(SUM(sdm.total_txns), 0) AS txns"
             + " FROM " + ChannelSql.merchantDay(channel) + " sdm"
             + " JOIN dim_merchant m ON sdm.merchant_id = m.merchant_id AND sdm.tenant_id = m.tenant_id"
@@ -331,6 +340,8 @@ public class SalesPortfolioController {
         node.put("totalSpread", current != null ? num(current.get("spread")) : 0.0);
         // fx is only selected when the tenant flag is on; num(null) = 0 otherwise.
         node.put("totalFx", current != null ? num(current.get("fx")) : 0.0);
+        node.put("totalDcc", current != null ? num(current.get("dcc")) : 0.0);
+        node.put("totalRental", current != null ? num(current.get("rental")) : 0.0);
         node.put("totalTxns", current != null ? num(current.get("txns")) : 0.0);
         node.put("prevVolume", previous != null ? num(previous.get("volume")) : 0.0);
         node.put("prevNet", previous != null ? num(previous.get("net")) : 0.0);
@@ -354,7 +365,8 @@ public class SalesPortfolioController {
         node.put("email", email);
 
         String[] additive = {"merchantCount", "activeMerchants", "inactiveMerchants", "newMerchants",
-            "transactingMerchants", "totalVolume", "totalMsf", "totalNet", "totalSpread", "totalFx", "totalTxns",
+            "transactingMerchants", "totalVolume", "totalMsf", "totalNet", "totalSpread", "totalFx",
+            "totalDcc", "totalRental", "totalTxns",
             "prevVolume", "prevNet", "prevSpread", "prevFx", "prevTxns", "agentCount"};
         for (String k : additive) node.put(k, 0.0);
         for (Map<String, Object> c : children) {

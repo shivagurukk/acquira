@@ -132,13 +132,17 @@ public class TopPerformersController {
                 return;
             }
             boolean fx = NetSpreadSql.fxEnabled(jdbcTemplate, tenantId);
-            reportCache.get(
-                    com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                    "topPerformers:" + tenantId + ":" + curWindow[0] + ":" + curWindow[1]
-                            + ":" + cardGrain + ":MTD:" + TOP_N + ":fx" + fx
-                            + ":ch" + ChannelSql.ALL + ":" + fk,
-                    () -> buildTopPerformers(filter, tenantId, cardGrain, curWindow, "MTD", TOP_N,
-                            fx, ChannelSql.ALL));
+            // All three channel scopes — the POS/ECOM toggle is one click away
+            // and a cold channel-scoped build is multi-second on large tenants.
+            for (String ch : new String[] { ChannelSql.ALL, ChannelSql.POS, ChannelSql.ECOM }) {
+                reportCache.get(
+                        com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                        "topPerformers:" + tenantId + ":" + curWindow[0] + ":" + curWindow[1]
+                                + ":" + cardGrain + ":MTD:" + TOP_N + ":fx" + fx
+                                + ":ch" + ch + ":" + fk,
+                        () -> buildTopPerformers(filter, tenantId, cardGrain, curWindow, "MTD", TOP_N,
+                                fx, ch));
+            }
         });
     }
 
@@ -250,6 +254,8 @@ public class TopPerformersController {
         double totalNet = current.stream().mapToDouble(r -> toDouble(r.get("netRevenue"))).sum();
         double totalSpread = current.stream().mapToDouble(r -> toDouble(r.get("netSpread"))).sum();
         double totalFx = current.stream().mapToDouble(r -> toDouble(r.get("fx"))).sum();
+        double totalDcc = current.stream().mapToDouble(r -> toDouble(r.get("dcc"))).sum();
+        double totalRental = current.stream().mapToDouble(r -> toDouble(r.get("rental"))).sum();
         double top10Volume = withVolume.stream()
                 .sorted((a, b) -> Double.compare(toDouble(b.get("volume")), toDouble(a.get("volume"))))
                 .limit(TOP_N).mapToDouble(r -> toDouble(r.get("volume"))).sum();
@@ -258,6 +264,8 @@ public class TopPerformersController {
         concentration.put("totalNetRevenue", totalNet);
         concentration.put("totalNetSpread", totalSpread);
         concentration.put("totalFx", totalFx);
+        concentration.put("totalDcc", totalDcc);
+        concentration.put("totalRental", totalRental);
         concentration.put("activeMerchantCount", withVolume.size());
         concentration.put("top10SharePct", totalVolume > 0 ? round2(top10Volume / totalVolume * 100) : 0);
         response.put("concentration", concentration);
@@ -379,9 +387,21 @@ public class TopPerformersController {
             if (fxEnabled && !ChannelSql.POS.equals(channel)) {
                 sql.append("       COALESCE((SELECT SUM(COALESCE(a2.fx_revenue,0)) ");
                 sql.append("         FROM sum_daily_merchant a2 WHERE a2.merchant_id = m.merchant_id AND a2.tenant_id = m.tenant_id ");
-                sql.append("         AND a2.business_date BETWEEN :from AND :to), 0) AS fx ");
+                sql.append("         AND a2.business_date BETWEEN :from AND :to), 0) AS fx, ");
             } else {
-                sql.append("       0 AS fx ");
+                sql.append("       0 AS fx, ");
+            }
+            // DCC / rental split for the ancillary columns — same wholesale
+            // channel attribution as `anc` above (POS-only legs; ECOM emits 0).
+            if (!ChannelSql.ECOM.equals(channel)) {
+                sql.append("       COALESCE((SELECT SUM(COALESCE(a3.dcc_acquirer,0)) ");
+                sql.append("         FROM sum_daily_merchant a3 WHERE a3.merchant_id = m.merchant_id AND a3.tenant_id = m.tenant_id ");
+                sql.append("         AND a3.business_date BETWEEN :from AND :to), 0) AS dcc, ");
+                sql.append("       COALESCE((SELECT SUM(COALESCE(a4.rental_amount,0)) ");
+                sql.append("         FROM sum_daily_merchant a4 WHERE a4.merchant_id = m.merchant_id AND a4.tenant_id = m.tenant_id ");
+                sql.append("         AND a4.business_date BETWEEN :from AND :to), 0) AS rental ");
+            } else {
+                sql.append("       0 AS dcc, 0 AS rental ");
             }
             sql.append("FROM dim_merchant m ");
             sql.append("LEFT JOIN " + cardTable + " s ON s.merchant_id = m.merchant_id AND s.tenant_id = m.tenant_id ");
@@ -400,7 +420,12 @@ public class TopPerformersController {
             // plus FX income where the tenant opted in (netspread.fx_enabled).
             sql.append("       " + NetSpreadSql.sumMargin("s") + " AS netRevenue, ");
             sql.append("       " + (fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s")) + " AS netSpread, ");
-            sql.append("       COALESCE(SUM(" + NetSpreadSql.fx("s") + "), 0) AS fx ");
+            sql.append("       COALESCE(SUM(" + NetSpreadSql.fx("s") + "), 0) AS fx, ");
+            // DCC / rental split — the merchant-day relation (plain or
+            // channel-scoped) carries both columns with the wholesale
+            // POS-attribution already applied by ChannelSql.
+            sql.append("       COALESCE(SUM(COALESCE(s.dcc_acquirer,0)), 0) AS dcc, ");
+            sql.append("       COALESCE(SUM(COALESCE(s.rental_amount,0)), 0) AS rental ");
             sql.append("FROM dim_merchant m ");
             // ALL = sum_daily_merchant verbatim; POS/ECOM = the channel-scoped
             // relation with identical column names (ChannelSql.merchantDay).
@@ -464,6 +489,8 @@ public class TopPerformersController {
             m.put("netRevenue", toDouble(row[11]));
             m.put("netSpread", toDouble(row[12]));
             m.put("fx", toDouble(row[13]));
+            m.put("dcc", toDouble(row[14]));
+            m.put("rental", toDouble(row[15]));
             result.add(m);
         }
         return result;
@@ -616,6 +643,8 @@ public class TopPerformersController {
                 a.put("netRevenue", 0.0);
                 a.put("netSpread", 0.0);
                 a.put("fx", 0.0);
+                a.put("dcc", 0.0);
+                a.put("rental", 0.0);
                 a.put("msf", 0.0);
                 a.put("merchantCount", 0);
                 return a;
@@ -630,6 +659,8 @@ public class TopPerformersController {
             agg.put("netRevenue", toDouble(agg.get("netRevenue")) + toDouble(r.get("netRevenue")));
             agg.put("netSpread", toDouble(agg.get("netSpread")) + toDouble(r.get("netSpread")));
             agg.put("fx", toDouble(agg.get("fx")) + toDouble(r.get("fx")));
+            agg.put("dcc", toDouble(agg.get("dcc")) + toDouble(r.get("dcc")));
+            agg.put("rental", toDouble(agg.get("rental")) + toDouble(r.get("rental")));
             agg.put("msf", toDouble(agg.get("msf")) + toDouble(r.get("msf")));
             agg.put("merchantCount", (Integer) agg.get("merchantCount") + 1);
         }

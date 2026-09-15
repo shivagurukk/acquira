@@ -181,6 +181,12 @@ function TreeRow({ node, depth, expanded, onToggle, onSelect, selectedKey, fxEna
             title={node.spreadChangePct == null ? undefined : `${node.spreadChangePct > 0 ? '+' : ''}${node.spreadChangePct}% vs previous period`}>
           {fmtM(node.totalSpread)}
         </td>
+        <td style={{ ...td, color: T.textSec }} title="Acquirer share of DCC revenue (included in Net Spread)">
+          {fmtM(node.totalDcc)}
+        </td>
+        <td style={{ ...td, color: T.textSec }} title="POS / terminal rental income (included in Net Spread)">
+          {fmtM(node.totalRental)}
+        </td>
         {fxEnabled && (
           <td style={{ ...td, color: T.textSec }} title="ECOM FX income (included in Net Spread)">
             {fmtM(node.totalFx)}
@@ -445,6 +451,10 @@ export default function SalesExecutiveDashboard() {
                sub="vs previous period" pct={totals.netChangePct} />
           <Kpi label="Net Spread" value={fmtM(totals.totalSpread)} icon={Layers} color="var(--mix-ancillary, #A85D9C)"
                sub={`${Number(totals.spreadRate || 0).toFixed(2)}% of volume · vs previous`} pct={totals.spreadChangePct} />
+          <Kpi label="DCC (Acquirer)" value={fmtM(totals.totalDcc)} icon={Globe} color="var(--mix-ancillary, #A85D9C)"
+               sub="acquirer DCC share · in Net Spread" />
+          <Kpi label="Rental" value={fmtM(totals.totalRental)} icon={Layers} color="var(--mix-ancillary, #A85D9C)"
+               sub="POS / terminal rental · in Net Spread" />
           {data?.fxEnabled && (
             <Kpi label="FX Income" value={fmtM(totals.totalFx)} icon={Globe} color="var(--cat-3, #3D7EA6)"
                  sub="ecom FX · included in Net Spread" />
@@ -482,6 +492,8 @@ export default function SalesExecutiveDashboard() {
                 <th style={th}>Volume</th>
                 <th style={th}>Net Margin</th>
                 <th style={th}>Net Spread</th>
+                <th style={th}>DCC</th>
+                <th style={th}>Rental</th>
                 {data?.fxEnabled && <th style={th}>FX Income</th>}
                 <th style={th}>Txns</th>
                 <th style={th}>Δ Volume</th>

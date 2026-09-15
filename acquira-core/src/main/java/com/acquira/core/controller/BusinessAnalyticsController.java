@@ -74,24 +74,30 @@ public class BusinessAnalyticsController {
                     + "\"destinationList\":[],\"schemeList\":[],\"cardTypeList\":[],"
                     + "\"channelList\":[],\"merchantName\":\"\",\"midList\":[],\"sidList\":[]"
                     + "}";
-            VolumeRevenueFilterDTO filters;
-            try {
-                filters = objectMapper.readValue(template, VolumeRevenueFilterDTO.class);
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                return;
-            }
-            resolveFilters(filters);
-            // Same canonicalisation + key shape as the live endpoint (channel
-            // normalised to ALL, tenant FX flag in the key) or the warm entry
-            // is never read.
-            filters.setChannel(com.acquira.common.service.ChannelSql.normalize(filters.getChannel()));
             boolean fx = volumeRevenueRepository.isFxEnabled(tenantId);
-            String fk = filterKey(filters);
-            if (fk == null) return;
-            reportCache.get(
-                    com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                    "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk,
-                    () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
+            // Same canonicalisation + key shape as the live endpoint (channel
+            // normalised, tenant FX flag in the key) or the warm entry is
+            // never read. All three channel scopes are warmed — the POS/ECOM
+            // toggle is one click away and a cold channel-scoped build is
+            // multi-second on large tenants.
+            for (String ch : new String[] { com.acquira.common.service.ChannelSql.ALL,
+                    com.acquira.common.service.ChannelSql.POS,
+                    com.acquira.common.service.ChannelSql.ECOM }) {
+                VolumeRevenueFilterDTO filters;
+                try {
+                    filters = objectMapper.readValue(template, VolumeRevenueFilterDTO.class);
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    return;
+                }
+                resolveFilters(filters);
+                filters.setChannel(ch);
+                String fk = filterKey(filters);
+                if (fk == null) return;
+                reportCache.get(
+                        com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                        "attritionMeta:" + tenantId + ":fx" + fx + ":" + fk,
+                        () -> volumeRevenueRepository.getAttritionReportWithMeta(filters, tenantId));
+            }
         });
     }
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Download, PackageOpen } from 'lucide-react';
 import api from '../../api/axios';
 import EmptyState from '../../components/EmptyState';
+import MidSidSummary from '../../components/MidSidSummary';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../../contexts/ToastContext';
 import {
@@ -272,6 +273,10 @@ const ProductSummary = () => {
                     </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+                    {/* Active MID/SID strip — same window as the selected month
+                        (server echoes start/end); no channel selector here, so
+                        the strip reads the ALL scope. */}
+                    <MidSidSummary from={data?.start || undefined} to={data?.end || undefined} compact />
                     <select className="ps-select" value={month}
                         onChange={(e) => setMonth(e.target.value)} aria-label="Period">
                         {latest && !months.includes(latest.slice(0, 7)) && (

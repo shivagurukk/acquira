@@ -89,15 +89,19 @@ public class ExecutiveDailyMerchantController {
             String fk = filterKey(filter);
             if (fk == null) return;
             List<LocalDate> dates = List.of(latest);
-            // Same key shape as the live endpoint: default channel ALL, and the
-            // tenant's FX flag resolved the same way.
+            // Same key shape as the live endpoint, warmed for all three channel
+            // scopes — the POS/ECOM toggle is one click away and a cold
+            // channel-scoped build is multi-second on large tenants.
             boolean fx = fxEnabled(tenantId);
-            String ch = com.acquira.common.service.ChannelSql.ALL;
-            String key = "execDaily:" + tenantId + ":" + dates
-                    + ":0:50:volume:desc:fx" + fx + ":ch" + ch + ":" + fk;
-            reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
-                    () -> buildDailyMerchants(filter, dates, null, null, null,
-                            latest.toString(), null, "volume", "desc", 0, 50, false, tenantId, fk, fx, ch));
+            for (String ch : new String[] { com.acquira.common.service.ChannelSql.ALL,
+                    com.acquira.common.service.ChannelSql.POS,
+                    com.acquira.common.service.ChannelSql.ECOM }) {
+                String key = "execDaily:" + tenantId + ":" + dates
+                        + ":0:50:volume:desc:fx" + fx + ":ch" + ch + ":" + fk;
+                reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                        () -> buildDailyMerchants(filter, dates, null, null, null,
+                                latest.toString(), null, "volume", "desc", 0, 50, false, tenantId, fk, fx, ch));
+            }
         });
     }
 

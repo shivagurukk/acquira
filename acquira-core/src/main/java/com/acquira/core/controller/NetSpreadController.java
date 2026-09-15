@@ -102,13 +102,18 @@ public class NetSpreadController {
             if (fk == null) return;
             List<LocalDate> dates = List.of(latest);
             boolean fx = fxEnabled(tenantId);
-            String key = "netSpread:" + tenantId + ":" + dates
-                    + ":0:50:spread:desc:false:fx" + fx
-                    + ":ch" + com.acquira.common.service.ChannelSql.ALL + ":" + fk;
-            reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
-                    () -> buildNetSpread(filter, dates, null, null, null,
-                            latest.toString(), null, "spread", "desc", 0, 50, false, false, tenantId, fx,
-                            com.acquira.common.service.ChannelSql.ALL));
+            // All three channel scopes — the POS/ECOM toggle is one click away
+            // and a cold channel-scoped build is multi-second on large tenants.
+            for (String ch : new String[] { com.acquira.common.service.ChannelSql.ALL,
+                    com.acquira.common.service.ChannelSql.POS,
+                    com.acquira.common.service.ChannelSql.ECOM }) {
+                String key = "netSpread:" + tenantId + ":" + dates
+                        + ":0:50:spread:desc:false:fx" + fx
+                        + ":ch" + ch + ":" + fk;
+                reportCache.get(com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA, key,
+                        () -> buildNetSpread(filter, dates, null, null, null,
+                                latest.toString(), null, "spread", "desc", 0, 50, false, false, tenantId, fx, ch));
+            }
         });
     }
 

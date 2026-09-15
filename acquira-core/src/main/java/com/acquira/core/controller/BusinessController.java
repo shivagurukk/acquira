@@ -103,22 +103,35 @@ public class BusinessController {
                                         () -> buildCeoSummary(tenantId, ch, fx));
                         }
                 });
+                // Volume & Revenue / Loss-Making warm all three channel scopes for
+                // the same reason ceo-summary does: the POS/ECOM toggle is one
+                // click away, and a cold channel-scoped build is multi-second.
                 reportCacheWarmup.register("ceo-volume-revenue", tenantId -> {
                         boolean fx = fxEnabled(tenantId);
-                        reportCache.get(
-                                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                                "ceoVolRev:" + tenantId + ":false:MTD:0:50:volume:desc:ch" + chAll + ":fx" + fx,
-                                () -> buildCeoVolumeRevenue(tenantId, "MTD", 0, 50,
-                                                "volume", "desc", null, false, null, false, chAll, fx));
+                        for (String ch : new String[] { chAll,
+                                        com.acquira.common.service.ChannelSql.POS,
+                                        com.acquira.common.service.ChannelSql.ECOM }) {
+                                reportCache.get(
+                                        com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                                        "ceoVolRev:" + tenantId + ":false:MTD:0:50:volume:desc:ch" + ch + ":fx" + fx,
+                                        () -> buildCeoVolumeRevenue(tenantId, "MTD", 0, 50,
+                                                        "volume", "desc", null, false, null, false, ch, fx));
+                        }
                 });
                 reportCacheWarmup.register("loss-making", tenantId -> {
                         boolean fx = fxEnabled(tenantId);
-                        reportCache.get(
-                                com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
-                                "ceoVolRev:" + tenantId + ":true:MTD:0:50:net:asc:ch" + chAll + ":fx" + fx
-                                                + lossExclKey(tenantId, true),
-                                () -> buildCeoVolumeRevenue(tenantId, "MTD", 0, 50,
-                                                "net", "asc", null, true, null, false, chAll, fx));
+                        for (String ch : new String[] { chAll,
+                                        com.acquira.common.service.ChannelSql.POS,
+                                        com.acquira.common.service.ChannelSql.ECOM }) {
+                                reportCache.get(
+                                        com.acquira.common.config.ReportCacheConfig.CACHE_REPORT_DATA,
+                                        // Loss view sorts on net SPREAD asc (worst first) —
+                                        // mirrors CeoVolumeRevenue.jsx lossOnly defaults.
+                                        "ceoVolRev:" + tenantId + ":true:MTD:0:50:spread:asc:ch" + ch + ":fx" + fx
+                                                        + lossExclKey(tenantId, true),
+                                        () -> buildCeoVolumeRevenue(tenantId, "MTD", 0, 50,
+                                                        "spread", "asc", null, true, null, false, ch, fx));
+                        }
                 });
         }
 
