@@ -305,8 +305,9 @@ public class IntegrationPullService {
             // The file path streams (split + chunked ingest), so the pull now
             // does too: fetchSize on the external cursor, INSERT_BATCH_SIZE
             // flushes into staging, memory stays flat regardless of window size.
-            log.info("[Integration] Pulling {} report '{}' for tenant {} (attempt {}/{})",
-                    report.getReportType(), report.getName(), tenantId, attemptNumber, runLog.getMaxRetries());
+            log.info("[Integration] Pulling {} report '{}' for tenant {} — window {}..{} (attempt {}/{})",
+                    report.getReportType(), report.getName(), tenantId,
+                    runLog.getDateRangeFrom(), runLog.getDateRangeTo(), attemptNumber, runLog.getMaxRetries());
 
             // CONCURRENCY (2026-09-05): staging is shared per tenant, and the
             // wipe inside pullToStaging would destroy a RUNNING file/server-folder
@@ -585,7 +586,10 @@ public class IntegrationPullService {
         // Clear existing staging for this tenant (same convention as the file
         // path's clean-staging step; safe against concurrent uploads thanks to
         // assertNoRunningIngestForTenant in executePull).
-        jdbcTemplate.update("DELETE FROM " + stagingTable + " WHERE tenant_id = ?", tenantId);
+        long tWipe = System.currentTimeMillis();
+        int wiped = jdbcTemplate.update("DELETE FROM " + stagingTable + " WHERE tenant_id = ?", tenantId);
+        log.info("[Integration] {} staging wipe: {} stale row(s) removed from {} in {}ms",
+                report.getReportType(), wiped, stagingTable, System.currentTimeMillis() - tWipe);
 
         PullResult r = streamQueryToStaging(config, report.getSqlText(), params, insertSql, mapper);
         if (skips.total > 0) {
@@ -619,7 +623,10 @@ public class IntegrationPullService {
 
         java.util.concurrent.ExecutorService netTimeoutExec =
                 java.util.concurrent.Executors.newSingleThreadExecutor();
+        long tConnect = System.currentTimeMillis();
         try (Connection extConn = DriverManager.getConnection(url, props)) {
+            log.info("[Integration] Connected to {} in {}ms", config.getName(),
+                    System.currentTimeMillis() - tConnect);
             extConn.setReadOnly(true); // Safety: prevent accidental writes to external DB
             // Postgres only streams with autoCommit off (otherwise the driver
             // buffers the full result client-side, defeating the point); Oracle
@@ -635,7 +642,12 @@ public class IntegrationPullService {
             try (PreparedStatement ps = NamedParamBinder.prepare(extConn, sql, params)) {
                 ps.setQueryTimeout(timeout);
                 ps.setFetchSize(FETCH_SIZE);
+                log.info("[Integration] Executing source query (queryTimeout={}s, fetchSize={})...",
+                        timeout, FETCH_SIZE);
+                long tQuery = System.currentTimeMillis();
                 try (ResultSet rs = ps.executeQuery()) {
+                    log.info("[Integration] Source query returned in {}ms — streaming rows",
+                            System.currentTimeMillis() - tQuery);
                     ResultSetMetaData meta = rs.getMetaData();
                     int colCount = meta.getColumnCount();
                     // Labels are lower-cased ONCE here, not per row. Lookup keys
@@ -654,6 +666,18 @@ public class IntegrationPullService {
                     List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
                     long fetched = 0;
                     int processed = 0;
+                    // Timing split so a slow pull names its bottleneck in the log:
+                    // sourceMs  = time spent in rs.next()/getObject (external DB + network),
+                    // insertMs  = time spent flushing to local staging.
+                    // The 2026-09-15 'Merchant Pull' spent 36 minutes here with no
+                    // output at all — never again: progress is logged on the first
+                    // flush, on any slow flush, and at least every 30 seconds.
+                    long streamStart = System.currentTimeMillis();
+                    long sourceMs = 0;
+                    long insertMs = 0;
+                    int flushes = 0;
+                    long lastProgressLog = streamStart;
+                    long tFetch = System.currentTimeMillis();
                     while (rs.next()) {
                         // A pull that hits the row ceiling is a PARTIAL extract.
                         // Applying it would silently publish an incomplete
@@ -680,11 +704,38 @@ public class IntegrationPullService {
                             processed++;
                         }
                         if (batch.size() >= INSERT_BATCH_SIZE) {
+                            long batchFetchMs = System.currentTimeMillis() - tFetch;
+                            sourceMs += batchFetchMs;
+                            long tIns = System.currentTimeMillis();
                             flushMultiRow(insertSql, batch);
+                            long batchInsertMs = System.currentTimeMillis() - tIns;
+                            insertMs += batchInsertMs;
+                            flushes++;
                             batch.clear();
+
+                            long now = System.currentTimeMillis();
+                            boolean slow = batchFetchMs > 10_000 || batchInsertMs > 5_000;
+                            if (flushes == 1 || slow || now - lastProgressLog >= 30_000) {
+                                log.info("[Integration] progress: {} row(s) fetched, {} staged | last batch: source fetch {}ms, staging insert {}ms | elapsed {}s",
+                                        fetched, processed, batchFetchMs, batchInsertMs,
+                                        (now - streamStart) / 1000);
+                                lastProgressLog = now;
+                            }
+                            tFetch = System.currentTimeMillis();
                         }
                     }
-                    if (!batch.isEmpty()) flushMultiRow(insertSql, batch);
+                    sourceMs += System.currentTimeMillis() - tFetch;
+                    if (!batch.isEmpty()) {
+                        long tIns = System.currentTimeMillis();
+                        flushMultiRow(insertSql, batch);
+                        insertMs += System.currentTimeMillis() - tIns;
+                        flushes++;
+                    }
+                    long totalMs = System.currentTimeMillis() - streamStart;
+                    log.info("[Integration] staging complete: {} row(s) fetched, {} staged in {}s "
+                                    + "(source fetch {}s, staging insert {}s, {} flush(es), avg {} row/s)",
+                            fetched, processed, totalMs / 1000, sourceMs / 1000, insertMs / 1000, flushes,
+                            totalMs > 0 ? fetched * 1000 / totalMs : fetched);
                     return new PullResult(fetched, processed);
                 }
             }
