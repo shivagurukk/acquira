@@ -487,14 +487,14 @@ const ConnectionsTab = () => {
 
   const remove = async (c) => {
     const ok = await confirm({
-      title: 'Deactivate connection?',
-      message: `"${c.name}" (${c.dbType}) will stop serving report pulls. Reports and schedules that use it will fail until it is restored.`,
-      confirmLabel: 'Deactivate connection',
+      title: 'Delete connection?',
+      message: `"${c.name}" (${c.dbType}) will be permanently deleted, together with every report and schedule that uses it. Run history is kept. This cannot be undone.`,
+      confirmLabel: 'Delete connection',
       tone: 'danger',
     });
     if (!ok) return;
-    try { await api.delete(`/admin/integration/connections/${c.id}`); showToast('Connection deactivated', 'success'); load(); }
-    catch { showToast('Failed to deactivate connection', 'error'); }
+    try { await api.delete(`/admin/integration/connections/${c.id}`); showToast('Connection deleted', 'success'); load(); }
+    catch { showToast('Failed to delete connection', 'error'); }
   };
 
   const test = async (id) => {
@@ -551,7 +551,7 @@ const ConnectionsTab = () => {
         <>
           <Button size="sm" icon={TestTube} loading={testing === c.id} onClick={() => test(c.id)}>Test</Button>
           <Button size="sm" variant="ghost" iconOnly icon={Edit2} onClick={() => openEdit(c)} aria-label={`Edit ${c.name}`} />
-          <Button size="sm" variant="danger-ghost" iconOnly icon={Trash2} onClick={() => remove(c)} aria-label={`Deactivate ${c.name}`} />
+          <Button size="sm" variant="danger-ghost" iconOnly icon={Trash2} onClick={() => remove(c)} aria-label={`Delete ${c.name}`} />
         </>
       ),
     },
@@ -831,14 +831,14 @@ const ReportsTab = () => {
 
   const remove = async (r) => {
     const ok = await confirm({
-      title: 'Deactivate report config?',
-      message: `"${r.name}" will stop being pulled. Schedules bound to it will no longer produce data.`,
-      confirmLabel: 'Deactivate report',
+      title: 'Delete report config?',
+      message: `"${r.name}" will be permanently deleted, along with any schedules bound to it. Run history is kept. This cannot be undone.`,
+      confirmLabel: 'Delete report',
       tone: 'danger',
     });
     if (!ok) return;
-    try { await api.delete(`/admin/integration/reports/${r.id}`); showToast('Report deactivated', 'success'); load(); }
-    catch { showToast('Failed to deactivate report', 'error'); }
+    try { await api.delete(`/admin/integration/reports/${r.id}`); showToast('Report deleted', 'success'); load(); }
+    catch { showToast('Failed to delete report', 'error'); }
   };
 
   const columns = [
@@ -920,7 +920,7 @@ const ReportsTab = () => {
             : <Button size="sm" variant="primary" loading={approving === r.id} onClick={() => approve(r)}>Approve</Button>}
           <Button size="sm" icon={TestTube} loading={validating === r.id} onClick={() => validate(r.id)}>Validate</Button>
           <Button size="sm" variant="ghost" iconOnly icon={Edit2} onClick={() => openEdit(r)} aria-label={`Edit ${r.name}`} />
-          <Button size="sm" variant="danger-ghost" iconOnly icon={Trash2} onClick={() => remove(r)} aria-label={`Deactivate ${r.name}`} />
+          <Button size="sm" variant="danger-ghost" iconOnly icon={Trash2} onClick={() => remove(r)} aria-label={`Delete ${r.name}`} />
         </>
       ),
     },

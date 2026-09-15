@@ -11,4 +11,5 @@ public interface IntegrationReportRepository extends JpaRepository<IntegrationRe
     List<IntegrationReport> findByTenantIdAndReportType(Long tenantId, IntegrationReport.ReportType reportType);
     List<IntegrationReport> findByTenantIdAndIsActiveTrue(Long tenantId);
     List<IntegrationReport> findByTenantIdAndReportTypeAndIsActiveTrue(Long tenantId, IntegrationReport.ReportType reportType);
+    List<IntegrationReport> findByConnectionId(Long connectionId);
 }

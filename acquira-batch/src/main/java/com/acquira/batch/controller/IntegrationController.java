@@ -144,18 +144,39 @@ public class IntegrationController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    /**
+     * HARD delete (changed 2026-09-14 — was a soft isActive=false flip that
+     * left the row in the list forever). Cascades explicitly because the
+     * schema's FKs have no ON DELETE clause: every report on the connection
+     * goes down with it (schedules cancelled and removed, run-log history
+     * kept but detached).
+     */
     @DeleteMapping("/connections/{id}")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<?> deleteConnection(@PathVariable Long id) {
         Long tenantId = TenantContext.getCurrentTenant();
         return connectionRepo.findById(id)
                 .filter(c -> c.getTenantId().equals(tenantId))
                 .map(c -> {
-                    c.setIsActive(false);
-                    c.setUpdatedAt(LocalDateTime.now());
-                    connectionRepo.save(c);
-                    return ResponseEntity.ok(Map.of("message", "Connection deactivated"));
+                    List<IntegrationReport> reports = reportRepo.findByConnectionId(c.getId());
+                    reports.forEach(this::hardDeleteReport);
+                    connectionRepo.delete(c);
+                    log.info("[Integration] Connection {} '{}' deleted (tenant {}, cascaded {} reports)",
+                            c.getId(), c.getName(), tenantId, reports.size());
+                    return ResponseEntity.ok(Map.of("message", "Connection deleted"));
                 })
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    /** Shared cascade: schedules cancelled + removed, run logs detached, report removed. */
+    private void hardDeleteReport(IntegrationReport r) {
+        for (IntegrationSchedule s : scheduleRepo.findByReportId(r.getId())) {
+            schedulerService.cancelSchedule(s.getId());
+            runLogRepo.detachSchedule(s.getId());
+            scheduleRepo.delete(s);
+        }
+        runLogRepo.detachReport(r.getId());
+        reportRepo.delete(r);
     }
 
     /**
@@ -298,16 +319,21 @@ public class IntegrationController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    /**
+     * HARD delete (changed 2026-09-14 — was a soft isActive=false flip).
+     * Schedules bound to the report are cancelled and removed; run-log
+     * history rows are kept with their report/schedule FKs nulled.
+     */
     @DeleteMapping("/reports/{id}")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<?> deleteReport(@PathVariable Long id) {
         Long tenantId = TenantContext.getCurrentTenant();
         return reportRepo.findById(id)
                 .filter(r -> r.getTenantId().equals(tenantId))
                 .map(r -> {
-                    r.setIsActive(false);
-                    r.setUpdatedAt(LocalDateTime.now());
-                    reportRepo.save(r);
-                    return ResponseEntity.ok(Map.of("message", "Report deactivated"));
+                    hardDeleteReport(r);
+                    log.info("[Integration] Report {} '{}' deleted (tenant {})", r.getId(), r.getName(), tenantId);
+                    return ResponseEntity.ok(Map.of("message", "Report deleted"));
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -635,12 +661,17 @@ public class IntegrationController {
     }
 
     @DeleteMapping("/schedules/{id}")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<?> deleteSchedule(@PathVariable Long id) {
         Long tenantId = TenantContext.getCurrentTenant();
         return scheduleRepo.findById(id)
                 .filter(s -> s.getTenantId().equals(tenantId))
                 .map(s -> {
                     schedulerService.cancelSchedule(s.getId());
+                    // Run logs reference the schedule with a plain FK (no ON
+                    // DELETE) — a schedule that has ever run could not be
+                    // deleted at all before this detach.
+                    runLogRepo.detachSchedule(s.getId());
                     scheduleRepo.delete(s);
                     return ResponseEntity.ok(Map.of("message", "Schedule deleted"));
                 })
