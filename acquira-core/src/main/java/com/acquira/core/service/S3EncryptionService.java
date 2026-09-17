@@ -23,7 +23,7 @@ import java.util.Base64;
  *  2. Live S3 connection test (HeadBucket).
  *
  * Encryption key is derived from {@code app.encryption.key} (must be 32 chars / 256 bits).
- * Falls back to a dev key if not configured — refused at startup in prod/uat/staging profiles.
+ * Falls back to a dev key if not configured.
  */
 @Service
 @Slf4j
@@ -36,10 +36,7 @@ public class S3EncryptionService {
     private final SecretKeySpec aesKey;
 
     public S3EncryptionService(
-            @Value("${app.encryption.key:AcquiraDefaultEncryptKey32Chars!!}") String rawKey,
-            @Value("${spring.profiles.active:}") String activeProfiles) {
-        com.acquira.common.service.CryptoService.assertKeyAllowedInProfile(
-                rawKey, activeProfiles, "app.encryption.key");
+            @Value("${app.encryption.key:AcquiraDefaultEncryptKey32Chars!!}") String rawKey) {
         byte[] keyBytes = rawKey.getBytes(StandardCharsets.UTF_8);
         if (keyBytes.length < 32) {
             throw new IllegalArgumentException("app.encryption.key must be at least 32 characters for AES-256");

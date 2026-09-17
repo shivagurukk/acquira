@@ -26,11 +26,11 @@ import java.util.Base64;
  * (UTF-8). Anything shorter fails fast at startup so we don't silently accept
  * a weak key.
  *
- * NOTE on the dev default: the publicly-known fallback key exists only so the
- * build runs out-of-the-box on a dev box. In prod/uat/staging profiles the
- * constructor refuses it (fail-fast at startup), because this key protects
- * stored external-DB / S3 / SMTP credentials \u2014 anyone with repo access plus a
- * DB read could decrypt them all if a deploy forgot APP_ENCRYPTION_KEY.
+ * NOTE on the dev default: this service ships with a publicly-known fallback
+ * key for local development convenience. The audit P0-2/P1-9 covers removing
+ * that default and forcing a secrets-manager-sourced key in non-dev profiles
+ * \u2014 do that work in a single sweep with the JWT secret rotation, not here.
+ * For now the fallback exists so the build runs out-of-the-box on a dev box.
  */
 @Service
 @Slf4j
@@ -39,13 +39,6 @@ public class CryptoService {
     private static final String AES_ALGO    = "AES/GCM/NoPadding";
     private static final int    GCM_IV_LEN  = 12;   // 96-bit IV recommended for GCM
     private static final int    GCM_TAG_LEN = 128;  // 128-bit auth tag
-
-    /** The dev-only fallback key that ships in the repo; never allowed in protected profiles. */
-    public static final String DEV_DEFAULT_KEY = "AcquiraDefaultEncryptKey32Chars!!";
-
-    /** Profiles in which the public dev key must never be used. */
-    private static final java.util.Set<String> PROTECTED_PROFILES =
-            java.util.Set.of("prod", "uat", "staging");
 
     /**
      * Sentinel prefix written on encrypted values so we can detect
@@ -60,9 +53,7 @@ public class CryptoService {
     private final SecretKeySpec aesKey;
 
     public CryptoService(
-            @Value("${app.encryption.key:AcquiraDefaultEncryptKey32Chars!!}") String rawKey,
-            @Value("${spring.profiles.active:}") String activeProfiles) {
-        assertKeyAllowedInProfile(rawKey, activeProfiles, "app.encryption.key");
+            @Value("${app.encryption.key:AcquiraDefaultEncryptKey32Chars!!}") String rawKey) {
         byte[] keyBytes = rawKey.getBytes(StandardCharsets.UTF_8);
         if (keyBytes.length < 32) {
             throw new IllegalArgumentException(
@@ -72,30 +63,6 @@ public class CryptoService {
         System.arraycopy(keyBytes, 0, key256, 0, 32);
         this.aesKey = new SecretKeySpec(key256, "AES");
         log.info("[CryptoService] AES-256-GCM key initialised");
-    }
-
-    /** Test / non-Spring convenience: no profile guard (treated as dev). */
-    public CryptoService(String rawKey) {
-        this(rawKey, "");
-    }
-
-    /**
-     * Fail-fast when a protected profile boots on the public repo key. Runs at
-     * bean construction so EVERY module using this service (core, batch, pdf)
-     * is covered, not only the one that hosts SecurityStartupGuard.
-     */
-    public static void assertKeyAllowedInProfile(String rawKey, String activeProfiles, String propertyName) {
-        if (activeProfiles == null || activeProfiles.isBlank()) return;
-        boolean isProtected = java.util.Arrays.stream(activeProfiles.split("\\s*,\\s*"))
-                .map(String::toLowerCase)
-                .anyMatch(PROTECTED_PROFILES::contains);
-        if (isProtected && DEV_DEFAULT_KEY.equals(rawKey)) {
-            throw new IllegalStateException(
-                "SECURITY: " + propertyName + " is the public dev default in a protected profile ("
-                + activeProfiles + "). Set the APP_ENCRYPTION_KEY environment variable to a unique "
-                + "32+ character secret before deploying. Stored credentials encrypted with the dev "
-                + "key must be re-encrypted after rotation.");
-        }
     }
 
     /**

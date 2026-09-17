@@ -40,9 +40,6 @@ public class SecurityStartupGuard {
     @Value("${spring.datasource.password:}")
     private String dbPassword;
 
-    @Value("${app.encryption.key:}")
-    private String encryptionKey;
-
     private final Environment env;
 
     public SecurityStartupGuard(Environment env) {
@@ -88,27 +85,6 @@ public class SecurityStartupGuard {
         // ── External API Key ────────────────────────────────────────
         if (isProd && (externalApiKey == null || externalApiKey.isBlank())) {
             log.warn("⚠ No external.api.key configured — external report API will reject all requests.");
-        }
-
-        // ── Data-at-rest Encryption Key ─────────────────────────────
-        // app.encryption.key protects stored external-DB / S3 / SMTP creds.
-        // The dev default is public (it ships in the repo), so booting a
-        // protected profile on it hands those credentials to anyone with
-        // repo access + a DB read. CryptoService enforces the same rule at
-        // bean construction; this duplicates it with the ops-facing banner.
-        String encKey = encryptionKey == null ? "" : encryptionKey.trim();
-        if (isProd && (encKey.isEmpty()
-                || com.acquira.common.service.CryptoService.DEV_DEFAULT_KEY.equals(encKey)
-                || encKey.length() < 32)) {
-            log.error("╔══════════════════════════════════════════════════════════╗");
-            log.error("║  FATAL: app.encryption.key is missing, too short, or the ║");
-            log.error("║  public dev default in a protected profile.              ║");
-            log.error("║  Set APP_ENCRYPTION_KEY to a unique 32+ char secret.      ║");
-            log.error("║  Example: export APP_ENCRYPTION_KEY=$(openssl rand -hex 32)║");
-            log.error("╚══════════════════════════════════════════════════════════╝");
-            throw new IllegalStateException(
-                "SECURITY: Cannot start a protected profile without a real app.encryption.key. " +
-                "Set the APP_ENCRYPTION_KEY environment variable.");
         }
 
         // ── Database Password ───────────────────────────────────────

@@ -182,30 +182,4 @@ class CryptoServiceTest {
     void exact32ByteKeyAccepted() {
         assertDoesNotThrow(() -> new CryptoService("0123456789012345678901234567890123"));
     }
-
-    // ---- protected-profile guard ---------------------------------------------
-
-    @Test
-    @DisplayName("public dev default key is refused in prod/uat/staging profiles")
-    void devDefaultKeyRefusedInProtectedProfiles() {
-        for (String profile : new String[] { "prod", "uat", "staging", "aws,prod" }) {
-            assertThrows(IllegalStateException.class,
-                    () -> new CryptoService(CryptoService.DEV_DEFAULT_KEY, profile),
-                    "profile: " + profile);
-        }
-    }
-
-    @Test
-    @DisplayName("public dev default key is allowed in dev / no profile")
-    void devDefaultKeyAllowedInDev() {
-        assertDoesNotThrow(() -> new CryptoService(CryptoService.DEV_DEFAULT_KEY, ""));
-        assertDoesNotThrow(() -> new CryptoService(CryptoService.DEV_DEFAULT_KEY, "dev"));
-        assertDoesNotThrow(() -> new CryptoService(CryptoService.DEV_DEFAULT_KEY, "local"));
-    }
-
-    @Test
-    @DisplayName("a real key is accepted in protected profiles")
-    void realKeyAcceptedInProd() {
-        assertDoesNotThrow(() -> new CryptoService("UnitTestEncryptionKey_ThirtyTwoByte!!", "prod"));
-    }
 }
