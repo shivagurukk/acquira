@@ -78,11 +78,11 @@ public class MenuController {
                 {"Email Manager",          "/business/emails",          "Mail",        "OPERATIONS",       4},
                 {"Email Campaigns",        "/admin/email-campaigns",    "MailOpen",    "OPERATIONS",       5},
                 {"Alerts & Notifications", "/admin/alerts",             "BellRing",    "OPERATIONS",       6},
+                // One sidebar entry only — Connections, Report Configs, Schedules
+                // and Run History are tabs INSIDE the hub, not separate menu rows.
+                // V2026_09_10_02 deletes the four legacy sub-rows; the safety net
+                // must not recreate them here.
                 {"Integration Hub",        "/admin/integration",        "Cable",       "DATA INTEGRATION", 1},
-                {"DB Connections",         "/admin/integration/connections","Database", "DATA INTEGRATION", 2},
-                {"Report Configs",         "/admin/integration/reports","FileCode",    "DATA INTEGRATION", 3},
-                {"Schedules",              "/admin/integration/schedules","Clock",     "DATA INTEGRATION", 4},
-                {"Run History",            "/admin/integration/runs",   "ScrollText",  "DATA INTEGRATION", 5},
                 // Business-analytics pages added post-seed are registered here so they
                 // appear in the sidebar without a separate DB migration. display_order
                 // 15 keeps Retention next to Attrition in the Business group.
@@ -92,6 +92,10 @@ public class MenuController {
                 {"Top Performers",         "/business/top-performers",   "Trophy",       "EXECUTIVE",      5},
                 // Safety net for V2026_08_15_01__destination_dashboard_menu.sql
                 {"Destination Dashboard",  "/business/destination-dashboard", "Globe",   "BUSINESS",      18},
+                // Safety net for V2026_09_05_02__pricing_simulator_v2.sql — the
+                // route existed since v1 but never had a sys_menu row, and the
+                // v2 backend gates on @menuAccess for this path.
+                {"Pricing Simulator",      "/business/pricing-simulator", "SlidersHorizontal", "BUSINESS", 19},
                 // ── SALES suite ──────────────────────────────────────────────
                 // Routes for all five screens exist in App.jsx, but only Team
                 // Management and Leaderboard ever had sys_menu rows (from an

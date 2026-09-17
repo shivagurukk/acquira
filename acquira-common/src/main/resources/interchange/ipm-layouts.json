@@ -1,0 +1,4219 @@
+{
+  "_source": "Mastercard Network Processing — Dual Message Clearing System Guide (DITA export, Aug 2026)",
+  "_note": "IPM data-element + PDS dictionary. format: n=numeric, a=alpha, an=alphanumeric, ans=alphanumeric+special, b=binary; variable=true means LLVAR/LLLVAR length-prefixed.",
+  "dataElements": {
+    "1": {
+      "de": 1,
+      "name": "Bit Map, Secondary",
+      "dataRepresentation": "b-8; Binary, Fixed",
+      "format": "b",
+      "minLen": 8,
+      "maxLen": 8,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "2": {
+      "de": 2,
+      "name": "Primary Account Number [PAN]",
+      "dataRepresentation": "n...19; LLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 19,
+      "variable": true,
+      "lengthRepresentation": "2 positions",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "3": {
+      "de": 3,
+      "name": "Processing Code",
+      "dataRepresentation": "n-6; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "Yes"
+    },
+    "4": {
+      "de": 4,
+      "name": "Amount, Transaction",
+      "dataRepresentation": "n-12; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "5": {
+      "de": 5,
+      "name": "Amount, Reconciliation",
+      "dataRepresentation": "n-12; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "6": {
+      "de": 6,
+      "name": "Amount, Cardholder Billing",
+      "dataRepresentation": "n-12; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "9": {
+      "de": 9,
+      "name": "Conversion Rate, Reconciliation",
+      "dataRepresentation": "n-8; Numeric, Fixed",
+      "format": "n",
+      "minLen": 8,
+      "maxLen": 8,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "10": {
+      "de": 10,
+      "name": "Conversion Rate, Cardholder Billing",
+      "dataRepresentation": "n-8; Numeric, Fixed",
+      "format": "n",
+      "minLen": 8,
+      "maxLen": 8,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "12": {
+      "de": 12,
+      "name": "Date and Time, Local Transaction",
+      "dataRepresentation": "n-12; YYMMDDhhmmss; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "Yes"
+    },
+    "14": {
+      "de": 14,
+      "name": "Date, Expiration",
+      "dataRepresentation": "n-4; YYMM; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "22": {
+      "de": 22,
+      "name": "Point of Service [POS] Entry Mode",
+      "dataRepresentation": "an-12; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 12,
+      "maxLen": 12,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "Yes"
+    },
+    "23": {
+      "de": 23,
+      "name": "Card Sequence Number",
+      "dataRepresentation": "n-3; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Right",
+      "childFields": "No"
+    },
+    "24": {
+      "de": 24,
+      "name": "Function Code",
+      "dataRepresentation": "n-3; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "25": {
+      "de": 25,
+      "name": "Message Reason Code",
+      "dataRepresentation": "n-4; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Right",
+      "childFields": "No"
+    },
+    "26": {
+      "de": 26,
+      "name": "Acceptor Business Code [MCC]",
+      "dataRepresentation": "n-4; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "30": {
+      "de": 30,
+      "name": "Amounts, Original",
+      "dataRepresentation": "n-24; Numeric, Fixed",
+      "format": "n",
+      "minLen": 24,
+      "maxLen": 24,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Right",
+      "childFields": "Yes"
+    },
+    "31": {
+      "de": 31,
+      "name": "Acquirer Reference Data",
+      "dataRepresentation": "n-23; Numeric, Fixed",
+      "format": "n",
+      "minLen": 23,
+      "maxLen": 23,
+      "variable": false,
+      "lengthRepresentation": "2 positions",
+      "justification": "N/A",
+      "childFields": "Yes"
+    },
+    "32": {
+      "de": 32,
+      "name": "Acquiring Institution ID Code",
+      "dataRepresentation": "n...11; LLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 11,
+      "variable": true,
+      "lengthRepresentation": "2 positions",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "33": {
+      "de": 33,
+      "name": "Forwarding Institution ID Code",
+      "dataRepresentation": "n...11; LLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 11,
+      "variable": true,
+      "lengthRepresentation": "2 positions",
+      "justification": "Right",
+      "childFields": "No"
+    },
+    "37": {
+      "de": 37,
+      "name": "Retrieval Reference Number",
+      "dataRepresentation": "ans-12; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 12,
+      "maxLen": 12,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "38": {
+      "de": 38,
+      "name": "Approval Code",
+      "dataRepresentation": "ans-6; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 6,
+      "maxLen": 6,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Left",
+      "childFields": "No"
+    },
+    "40": {
+      "de": 40,
+      "name": "Service Code",
+      "dataRepresentation": "n-3; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "41": {
+      "de": 41,
+      "name": "Acceptor Terminal ID",
+      "dataRepresentation": "ans-8; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 8,
+      "maxLen": 8,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Left",
+      "childFields": "No"
+    },
+    "42": {
+      "de": 42,
+      "name": "Acceptor ID",
+      "dataRepresentation": "ans-15; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 15,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "43": {
+      "de": 43,
+      "name": "Acceptor Name and Location",
+      "dataRepresentation": "ans...99; LLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 20,
+      "maxLen": 99,
+      "variable": true,
+      "lengthRepresentation": "2 positions",
+      "justification": "Left",
+      "childFields": "Yes"
+    },
+    "48": {
+      "de": 48,
+      "name": "Additional Data",
+      "dataRepresentation": "ans...999; LLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 8,
+      "maxLen": 999,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "Left",
+      "childFields": "Yes"
+    },
+    "49": {
+      "de": 49,
+      "name": "Currency Code, Transaction",
+      "dataRepresentation": "n-3; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "50": {
+      "de": 50,
+      "name": "Currency Code, Reconciliation",
+      "dataRepresentation": "n-3; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "51": {
+      "de": 51,
+      "name": "Currency Code, Cardholder Billing",
+      "dataRepresentation": "n-3; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "54": {
+      "de": 54,
+      "name": "Amounts, Additional",
+      "dataRepresentation": "ans...240; LLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 20,
+      "maxLen": 240,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "See subfields",
+      "childFields": "Yes"
+    },
+    "55": {
+      "de": 55,
+      "name": "Integrated Circuit Card [ICC] System-Related Data",
+      "dataRepresentation": "b...255; LLLVAR; Binary, Variable",
+      "format": "b",
+      "minLen": 1,
+      "maxLen": 255,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "N/A",
+      "childFields": "Yes"
+    },
+    "62": {
+      "de": 62,
+      "name": "Additional Data 2",
+      "dataRepresentation": "ans...999; LLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 8,
+      "maxLen": 999,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "Left",
+      "childFields": "Yes"
+    },
+    "63": {
+      "de": 63,
+      "name": "Transaction Life Cycle ID",
+      "dataRepresentation": "ans-16; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 16,
+      "maxLen": 16,
+      "variable": false,
+      "lengthRepresentation": "3 positions",
+      "justification": "See subfields",
+      "childFields": "Yes"
+    },
+    "71": {
+      "de": 71,
+      "name": "Message Number",
+      "dataRepresentation": "n-8; Numeric, Fixed",
+      "format": "n",
+      "minLen": 8,
+      "maxLen": 8,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "72": {
+      "de": 72,
+      "name": "Data Record",
+      "dataRepresentation": "ans...999; LLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 999,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "Left",
+      "childFields": "No"
+    },
+    "73": {
+      "de": 73,
+      "name": "Date, Action",
+      "dataRepresentation": "n-6; YYMMDD; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6,
+      "variable": false,
+      "lengthRepresentation": "N/A",
+      "justification": "N/A",
+      "childFields": "No"
+    },
+    "93": {
+      "de": 93,
+      "name": "Transaction Destination Institution ID Code",
+      "dataRepresentation": "n...11; LLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 11,
+      "variable": true,
+      "lengthRepresentation": "2 positions",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "94": {
+      "de": 94,
+      "name": "Transaction Originator Institution ID Code",
+      "dataRepresentation": "n...11; LLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 11,
+      "variable": true,
+      "lengthRepresentation": "2 positions",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "95": {
+      "de": 95,
+      "name": "Card Issuer Reference Data",
+      "dataRepresentation": "n-10; LLVAR; Numeric, Fixed",
+      "format": "n",
+      "minLen": 10,
+      "maxLen": 10,
+      "variable": false,
+      "lengthRepresentation": "2 positions",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "100": {
+      "de": 100,
+      "name": "Receiving Institution ID Code",
+      "dataRepresentation": "n...11; LLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 11,
+      "variable": true,
+      "lengthRepresentation": "2 positions",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "105": {
+      "de": 105,
+      "name": "Multi-Use Transaction Identification Data",
+      "dataRepresentation": "ans...999; LLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 999,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "N/A",
+      "childFields": "Yes"
+    },
+    "111": {
+      "de": 111,
+      "name": "Amount, Currency Conversion Assessment",
+      "dataRepresentation": "n-12; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12,
+      "variable": false,
+      "lengthRepresentation": "3 positions",
+      "justification": "Right with leading zeros",
+      "childFields": "No"
+    },
+    "123": {
+      "de": 123,
+      "name": "Additional Data 3",
+      "dataRepresentation": "ans...999; LLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 999,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "Left",
+      "childFields": "Yes"
+    },
+    "124": {
+      "de": 124,
+      "name": "Additional Data 4",
+      "dataRepresentation": "ans...999; LLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 999,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "Left",
+      "childFields": "Yes"
+    },
+    "125": {
+      "de": 125,
+      "name": "Additional Data 5",
+      "dataRepresentation": "ans...999; LLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 8,
+      "maxLen": 999,
+      "variable": true,
+      "lengthRepresentation": "3 positions",
+      "justification": "Left",
+      "childFields": "Yes"
+    }
+  },
+  "pds": {
+    "0622": {
+      "pds": 622,
+      "name": "Motor Fuel Service Type",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0656": {
+      "pds": 656,
+      "name": "Full VAT Amounts",
+      "dataRepresentation": "ans...28; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 28
+    },
+    "0692": {
+      "pds": 692,
+      "name": "Weekly Rental Amount",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0393": {
+      "pds": 393,
+      "name": "Credits, Fee Amounts in Reconciliation Currency",
+      "dataRepresentation": "an...216; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 18,
+      "maxLen": 216
+    },
+    "0207": {
+      "pds": 207,
+      "name": "Wallet Identifier",
+      "dataRepresentation": "an-3; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0718": {
+      "pds": 718,
+      "name": "Employee/Temp Name/ID",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0586": {
+      "pds": 586,
+      "name": "Gift Shop Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0198": {
+      "pds": 198,
+      "name": "Device Type",
+      "dataRepresentation": "ans-2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0724": {
+      "pds": 724,
+      "name": "Regular Hours Rate",
+      "dataRepresentation": "n-7; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 7,
+      "maxLen": 7
+    },
+    "0784": {
+      "pds": 784,
+      "name": "Fleet Item Description",
+      "dataRepresentation": "ans…35; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 35
+    },
+    "0694": {
+      "pds": 694,
+      "name": "One Way Drop Off Charge",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0401": {
+      "pds": 401,
+      "name": "Credits, Transaction Number",
+      "dataRepresentation": "n-10; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0662": {
+      "pds": 662,
+      "name": "Sample Number",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0554": {
+      "pds": 554,
+      "name": "Conference Room Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0264": {
+      "pds": 264,
+      "name": "Original Retrieval Reason for Request",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0589": {
+      "pds": 589,
+      "name": "Invoice Creation Date/Time",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0711": {
+      "pds": 711,
+      "name": "Fire Safety Act Indicator",
+      "dataRepresentation": "an-1; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0677": {
+      "pds": 677,
+      "name": "Customer VAT Number",
+      "dataRepresentation": "ans…20; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0640": {
+      "pds": 640,
+      "name": "Call Time Period",
+      "dataRepresentation": "an-2; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0381": {
+      "pds": 381,
+      "name": "Credits, Transaction Amount in Transaction Currency",
+      "dataRepresentation": "an-17; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0022": {
+      "pds": 22,
+      "name": "Additional Terminal Operating Environments",
+      "dataRepresentation": "an-1; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0506": {
+      "pds": 506,
+      "name": "Ticket Number",
+      "dataRepresentation": "ans-15; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0539": {
+      "pds": 539,
+      "name": "Total Amount Charged on Card",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0208": {
+      "pds": 208,
+      "name": "Additional Merchant Data",
+      "dataRepresentation": "an...26; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 11,
+      "maxLen": 26
+    },
+    "0509": {
+      "pds": 509,
+      "name": "Issue Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0511": {
+      "pds": 511,
+      "name": "Travel Agency Name",
+      "dataRepresentation": "ans...25; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 25
+    },
+    "0243": {
+      "pds": 243,
+      "name": "MasterCom Retrieval Response Data",
+      "dataRepresentation": "ans...38; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 6,
+      "maxLen": 38
+    },
+    "0068": {
+      "pds": 68,
+      "name": "Financial Account Information",
+      "dataRepresentation": "ans...64; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 9,
+      "maxLen": 64
+    },
+    "0594": {
+      "pds": 594,
+      "name": "Party Contact",
+      "dataRepresentation": "ans…305; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 61,
+      "maxLen": 305
+    },
+    "0276": {
+      "pds": 276,
+      "name": "Fee Amounts, Additional",
+      "dataRepresentation": "an...384; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 48,
+      "maxLen": 384
+    },
+    "0029": {
+      "pds": 29,
+      "name": "QR Dynamic Code Data",
+      "dataRepresentation": "ans...237; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 237
+    },
+    "0575": {
+      "pds": 575,
+      "name": "Departure Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0618": {
+      "pds": 618,
+      "name": "Medical Services Product Number Qualifier",
+      "dataRepresentation": "an-2; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0597": {
+      "pds": 597,
+      "name": "Total Tax Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0615": {
+      "pds": 615,
+      "name": "Medical Services Ship to Health Industry Number",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0252": {
+      "pds": 252,
+      "name": "MasterCom Image Metadata",
+      "dataRepresentation": "ans...124; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 24,
+      "maxLen": 124
+    },
+    "0529": {
+      "pds": 529,
+      "name": "Fare Basis Code",
+      "dataRepresentation": "ans...15; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 15
+    },
+    "0749": {
+      "pds": 749,
+      "name": "Delivery Party Address Information",
+      "dataRepresentation": "ans…300; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 50,
+      "maxLen": 300
+    },
+    "0003": {
+      "pds": 3,
+      "name": "Licensed Product Identifier",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0670": {
+      "pds": 670,
+      "name": "Payer/User Information",
+      "dataRepresentation": "ans…104; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 104
+    },
+    "0052": {
+      "pds": 52,
+      "name": "Electronic Commerce Security Level Indicator",
+      "dataRepresentation": "n-3; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0253": {
+      "pds": 253,
+      "name": "MasterCom System Enhanced Data",
+      "dataRepresentation": "ans...992; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 992
+    },
+    "0141": {
+      "pds": 141,
+      "name": "Customer Currency Conversion Revenue Data",
+      "dataRepresentation": "n-25; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 25,
+      "maxLen": 25
+    },
+    "0275": {
+      "pds": 275,
+      "name": "Account Level Management [ALM] Service Data",
+      "dataRepresentation": "ans...38; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 38
+    },
+    "0191": {
+      "pds": 191,
+      "name": "Originating Message Format",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0157": {
+      "pds": 157,
+      "name": "Alternate Processor Indicator",
+      "dataRepresentation": "ans–4; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0748": {
+      "pds": 748,
+      "name": "Delivery Party Information",
+      "dataRepresentation": "ans…150; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 50,
+      "maxLen": 150
+    },
+    "0387": {
+      "pds": 387,
+      "name": "Amount, Net Mexico Domestic VAT in Reconciliation Currency",
+      "dataRepresentation": "an-16; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 16,
+      "maxLen": 16
+    },
+    "0591": {
+      "pds": 591,
+      "name": "Party Name",
+      "dataRepresentation": "ans…120; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 40,
+      "maxLen": 120
+    },
+    "0268": {
+      "pds": 268,
+      "name": "Amount, Partial Transaction",
+      "dataRepresentation": "n-15; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0717": {
+      "pds": 717,
+      "name": "IATA Client Code",
+      "dataRepresentation": "ans…17; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 17
+    },
+    "0744": {
+      "pds": 744,
+      "name": "Shipping Party Information",
+      "dataRepresentation": "ans…150; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 50,
+      "maxLen": 150
+    },
+    "0524": {
+      "pds": 524,
+      "name": "City of Destination Airport Code",
+      "dataRepresentation": "ans-5; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 5,
+      "maxLen": 5
+    },
+    "0367": {
+      "pds": 367,
+      "name": "Reconciled, Card Program Identifier",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0649": {
+      "pds": 649,
+      "name": "Call Usage Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0708": {
+      "pds": 708,
+      "name": "Movie Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0689": {
+      "pds": 689,
+      "name": "Corporate Identifier",
+      "dataRepresentation": "ans…12; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 12
+    },
+    "0171": {
+      "pds": 171,
+      "name": "Alternate Acceptor Description Data",
+      "dataRepresentation": "ans...201; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 201
+    },
+    "0058": {
+      "pds": 58,
+      "name": "Token Assurance Level",
+      "dataRepresentation": "n-2; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0537": {
+      "pds": 537,
+      "name": "Taxes",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0246": {
+      "pds": 246,
+      "name": "MasterCom Sender Memo",
+      "dataRepresentation": "ans...100; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 100
+    },
+    "0527": {
+      "pds": 527,
+      "name": "Exchange Ticket",
+      "dataRepresentation": "ans-15; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0635": {
+      "pds": 635,
+      "name": "Tax Amount 2",
+      "dataRepresentation": "n...12; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 12
+    },
+    "0522": {
+      "pds": 522,
+      "name": "Service Class Code",
+      "dataRepresentation": "ans-2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0517": {
+      "pds": 517,
+      "name": "NAICS Code",
+      "dataRepresentation": "ans-15; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0150": {
+      "pds": 150,
+      "name": "Additional Recurring Payments Information",
+      "dataRepresentation": "ans-26; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 26,
+      "maxLen": 26
+    },
+    "0584": {
+      "pds": 584,
+      "name": "Restaurant Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0658": {
+      "pds": 658,
+      "name": "Call Connect Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0568": {
+      "pds": 568,
+      "name": "Rental Class ID",
+      "dataRepresentation": "ans-4; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0196": {
+      "pds": 196,
+      "name": "Mobile Phone Reload Data",
+      "dataRepresentation": "ans...47; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 47
+    },
+    "0525": {
+      "pds": 525,
+      "name": "Stop Over Code",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0610": {
+      "pds": 610,
+      "name": "Destination Country Code",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0664": {
+      "pds": 664,
+      "name": "Start Station",
+      "dataRepresentation": "ans…30; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 30
+    },
+    "0753": {
+      "pds": 753,
+      "name": "Detail Tax Amount 6",
+      "dataRepresentation": "ans…46; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 46
+    },
+    "0604": {
+      "pds": 604,
+      "name": "Transaction Supplemental Data 1",
+      "dataRepresentation": "ans…672; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "maxLen": 672
+    },
+    "0533": {
+      "pds": 533,
+      "name": "Arrival Time",
+      "dataRepresentation": "ans-5; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 5,
+      "maxLen": 5
+    },
+    "0035": {
+      "pds": 35,
+      "name": "Digital Receipts URL",
+      "dataRepresentation": "ans...255; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 255
+    },
+    "0001": {
+      "pds": 1,
+      "name": "Mastercard Mapping Service Account Number",
+      "dataRepresentation": "ans…21; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 6,
+      "maxLen": 21
+    },
+    "0634": {
+      "pds": 634,
+      "name": "Tax Amount 1",
+      "dataRepresentation": "n...12; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 12
+    },
+    "0225": {
+      "pds": 225,
+      "name": "Syntax Return, Original Message Reason Code",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0678": {
+      "pds": 678,
+      "name": "Unique Invoice Number",
+      "dataRepresentation": "ans…17; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 17
+    },
+    "0579": {
+      "pds": 579,
+      "name": "Invoice Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0625": {
+      "pds": 625,
+      "name": "User Telephone Number",
+      "dataRepresentation": "ans…25; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 25
+    },
+    "0241": {
+      "pds": 241,
+      "name": "MasterCom Control Number",
+      "dataRepresentation": "ans...7; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 7
+    },
+    "0255": {
+      "pds": 255,
+      "name": "MasterCom Message Type",
+      "dataRepresentation": "ans...7; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 7
+    },
+    "0043": {
+      "pds": 43,
+      "name": "Transaction Type Identifier",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0181": {
+      "pds": 181,
+      "name": "Installment Payment Data",
+      "dataRepresentation": "ans...68; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 50,
+      "maxLen": 68
+    },
+    "0180": {
+      "pds": 180,
+      "name": "Domestic Acceptor Tax ID",
+      "dataRepresentation": "ans...20; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0762": {
+      "pds": 762,
+      "name": "Data Source",
+      "dataRepresentation": "n-2; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0189": {
+      "pds": 189,
+      "name": "Point-of-Interaction [POI] Phone Data",
+      "dataRepresentation": "ans-41; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 41,
+      "maxLen": 41
+    },
+    "0566": {
+      "pds": 566,
+      "name": "Rental Location Country",
+      "dataRepresentation": "as-3; TAGLLL; Alphabetic, Special Characters, Fixed",
+      "format": "as",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0540": {
+      "pds": 540,
+      "name": "Room Service Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0122": {
+      "pds": 122,
+      "name": "Processing Mode",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0669": {
+      "pds": 669,
+      "name": "Transportation Other Code",
+      "dataRepresentation": "n-3; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0553": {
+      "pds": 553,
+      "name": "Rental Rate",
+      "dataRepresentation": "ans-13; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0743": {
+      "pds": 743,
+      "name": "Unit of Measure",
+      "dataRepresentation": "ans…3; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 3
+    },
+    "0534": {
+      "pds": 534,
+      "name": "Total Non-Room Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0140": {
+      "pds": 140,
+      "name": "Amount, Cardholder Billing Amounts USD",
+      "dataRepresentation": "n-24; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 24,
+      "maxLen": 24
+    },
+    "0698": {
+      "pds": 698,
+      "name": "Fuel Charge",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0726": {
+      "pds": 726,
+      "name": "Overtime Hours Rate",
+      "dataRepresentation": "n-7; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 7,
+      "maxLen": 7
+    },
+    "0714": {
+      "pds": 714,
+      "name": "Exchange Ticket Amount",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0681": {
+      "pds": 681,
+      "name": "Authorized Contact Phone",
+      "dataRepresentation": "ans…17; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 17
+    },
+    "0631": {
+      "pds": 631,
+      "name": "Driver Number/ID Number",
+      "dataRepresentation": "ans…17; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 17
+    },
+    "0515": {
+      "pds": 515,
+      "name": "Additional Acceptor Information",
+      "dataRepresentation": "ans...40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0572": {
+      "pds": 572,
+      "name": "Guest Number",
+      "dataRepresentation": "ans-25; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 25,
+      "maxLen": 25
+    },
+    "0690": {
+      "pds": 690,
+      "name": "No Show Indicator",
+      "dataRepresentation": "an-1; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0710": {
+      "pds": 710,
+      "name": "Health Club Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0183": {
+      "pds": 183,
+      "name": "Brazil Post-Dated Transaction Data",
+      "dataRepresentation": "ans...39; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 39
+    },
+    "0006": {
+      "pds": 6,
+      "name": "Applied Business Service Arrangement",
+      "dataRepresentation": "ans-10; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0046": {
+      "pds": 46,
+      "name": "Japan Common Merchant Code",
+      "dataRepresentation": "ans-4; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0791": {
+      "pds": 791,
+      "name": "Fleet Prompted Data 2",
+      "dataRepresentation": "ans…38; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 38
+    },
+    "0005": {
+      "pds": 5,
+      "name": "Message Error Indicator",
+      "dataRepresentation": "ans...140; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 140
+    },
+    "0505": {
+      "pds": 505,
+      "name": "Passenger Name",
+      "dataRepresentation": "ans...29; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 29
+    },
+    "0729": {
+      "pds": 729,
+      "name": "Requestor Name or ID",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0723": {
+      "pds": 723,
+      "name": "Regular Hours Worked",
+      "dataRepresentation": "n-7; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 7,
+      "maxLen": 7
+    },
+    "0661": {
+      "pds": 661,
+      "name": "Traffic Code",
+      "dataRepresentation": "n-3; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0644": {
+      "pds": 644,
+      "name": "Call From Information",
+      "dataRepresentation": "ans-145; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 145,
+      "maxLen": 145
+    },
+    "0230": {
+      "pds": 230,
+      "name": "Fulfillment Document Code",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0565": {
+      "pds": 565,
+      "name": "Rental Location State/Province",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0587": {
+      "pds": 587,
+      "name": "Laundry and Dry Cleaning Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0633": {
+      "pds": 633,
+      "name": "Coupon/Discount Amount",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0386": {
+      "pds": 386,
+      "name": "Credits, Mexico Domestic VAT Amount in Reconciliation Currency",
+      "dataRepresentation": "an...57; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 19,
+      "maxLen": 57
+    },
+    "0158": {
+      "pds": 158,
+      "name": "Business Activity",
+      "dataRepresentation": "ans…34; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 34
+    },
+    "0250": {
+      "pds": 250,
+      "name": "MasterCom Endpoints",
+      "dataRepresentation": "n-14; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0399": {
+      "pds": 399,
+      "name": "Amount, Net Extended Precision in Reconciliation Currency",
+      "dataRepresentation": "an-19; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 19,
+      "maxLen": 19
+    },
+    "0704": {
+      "pds": 704,
+      "name": "Prepaid Expenses",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0195": {
+      "pds": 195,
+      "name": "Installment Data",
+      "dataRepresentation": "an...27; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 3,
+      "maxLen": 27
+    },
+    "0444": {
+      "pds": 444,
+      "name": "Resubmission Code",
+      "dataRepresentation": "n-11; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 11,
+      "maxLen": 11
+    },
+    "0777": {
+      "pds": 777,
+      "name": "Promotion Code",
+      "dataRepresentation": "ans…6; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 6
+    },
+    "0400": {
+      "pds": 400,
+      "name": "Debits, Transaction Number",
+      "dataRepresentation": "n-10; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0033": {
+      "pds": 33,
+      "name": "Enhanced Acceptor Geolocation",
+      "dataRepresentation": "ans...42; TAGLLLVAR, Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 22,
+      "maxLen": 42
+    },
+    "0147": {
+      "pds": 147,
+      "name": "Extended Precision Amounts",
+      "dataRepresentation": "n...576; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 48,
+      "maxLen": 576
+    },
+    "0026": {
+      "pds": 26,
+      "name": "File Reversal Indicator",
+      "dataRepresentation": "an...7; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 7
+    },
+    "0773": {
+      "pds": 773,
+      "name": "Payment Method Information",
+      "dataRepresentation": "an…140; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 14,
+      "maxLen": 140
+    },
+    "0756": {
+      "pds": 756,
+      "name": "Passenger Description",
+      "dataRepresentation": "ans-5; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 5,
+      "maxLen": 5
+    },
+    "0641": {
+      "pds": 641,
+      "name": "Product Code",
+      "dataRepresentation": "ans…15; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 15
+    },
+    "0585": {
+      "pds": 585,
+      "name": "Mini-Bar Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0194": {
+      "pds": 194,
+      "name": "Remote Payments Program Data",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0164": {
+      "pds": 164,
+      "name": "Currency Cross Rates",
+      "dataRepresentation": "ans...230; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 23,
+      "maxLen": 230
+    },
+    "0501": {
+      "pds": 501,
+      "name": "Transaction Description",
+      "dataRepresentation": "n-16; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 16,
+      "maxLen": 16
+    },
+    "0179": {
+      "pds": 179,
+      "name": "Long Running Transaction [LRT] Indicator",
+      "dataRepresentation": "ans-2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0569": {
+      "pds": 569,
+      "name": "Internet Access Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0504": {
+      "pds": 504,
+      "name": "Travel Agency Fee",
+      "dataRepresentation": "ans...42; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 42
+    },
+    "0721": {
+      "pds": 721,
+      "name": "Job Code",
+      "dataRepresentation": "ans…20; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0682": {
+      "pds": 682,
+      "name": "Detail Tax Amount 1",
+      "dataRepresentation": "ans…46; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 46
+    },
+    "0630": {
+      "pds": 630,
+      "name": "Vehicle Number",
+      "dataRepresentation": "ans…17; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 17
+    },
+    "0602": {
+      "pds": 602,
+      "name": "Party Supplemental Data 1",
+      "dataRepresentation": "ans…672; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 84,
+      "maxLen": 672
+    },
+    "0396": {
+      "pds": 396,
+      "name": "Amount, Net Total in Reconciliation Currency",
+      "dataRepresentation": "an-17; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0757": {
+      "pds": 757,
+      "name": "Transportation Service Provider",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0146": {
+      "pds": 146,
+      "name": "Amounts, Transaction Fee",
+      "dataRepresentation": "n...432; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 36,
+      "maxLen": 432
+    },
+    "0643": {
+      "pds": 643,
+      "name": "Item Quantity",
+      "dataRepresentation": "n-13; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0688": {
+      "pds": 688,
+      "name": "Acceptor Contact E-mail Address",
+      "dataRepresentation": "ans…60; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 6,
+      "maxLen": 60
+    },
+    "0218": {
+      "pds": 218,
+      "name": "Cardholder/Merchant Initiated Transaction Indicator",
+      "dataRepresentation": "an-4; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0775": {
+      "pds": 775,
+      "name": "Department Code",
+      "dataRepresentation": "ans…8; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 8
+    },
+    "0080": {
+      "pds": 80,
+      "name": "Amount, Tax",
+      "dataRepresentation": "an...60; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 20,
+      "maxLen": 60
+    },
+    "0516": {
+      "pds": 516,
+      "name": "Austin-Tetra Number",
+      "dataRepresentation": "ans-15; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0538": {
+      "pds": 538,
+      "name": "Endorsements/Restrictions",
+      "dataRepresentation": "ans...20; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0730": {
+      "pds": 730,
+      "name": "Supervisor/Reports to",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0676": {
+      "pds": 676,
+      "name": "Acceptor VAT Number",
+      "dataRepresentation": "ans…20; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0655": {
+      "pds": 655,
+      "name": "Call Long Distance Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0394": {
+      "pds": 394,
+      "name": "Amount, Net Transaction in Reconciliation Currency",
+      "dataRepresentation": "an-17; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0545": {
+      "pds": 545,
+      "name": "Renter Name",
+      "dataRepresentation": "ans...40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0266": {
+      "pds": 266,
+      "name": "First Chargeback/Fee Collection Return Data",
+      "dataRepresentation": "ans...127; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 127
+    },
+    "0011": {
+      "pds": 11,
+      "name": "Additional PAN Data",
+      "dataRepresentation": "ans...714; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 21,
+      "maxLen": 714
+    },
+    "0202": {
+      "pds": 202,
+      "name": "Primary Account Number [PAN] Syntax Error",
+      "dataRepresentation": "ans...19; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 6,
+      "maxLen": 19
+    },
+    "0638": {
+      "pds": 638,
+      "name": "Call To Information",
+      "dataRepresentation": "ans-146; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 146,
+      "maxLen": 146
+    },
+    "0562": {
+      "pds": 562,
+      "name": "Banquet Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0609": {
+      "pds": 609,
+      "name": "Destination State/Province Code",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0374": {
+      "pds": 374,
+      "name": "Reconciled, Processing Code",
+      "dataRepresentation": "n-2; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0663": {
+      "pds": 663,
+      "name": "Free-Form Description",
+      "dataRepresentation": "ans…992; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 992
+    },
+    "0705": {
+      "pds": 705,
+      "name": "Total Non-Room Tax Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0611": {
+      "pds": 611,
+      "name": "Sequence Number",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0608": {
+      "pds": 608,
+      "name": "Destination Postal Code",
+      "dataRepresentation": "ans-10; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0727": {
+      "pds": 727,
+      "name": "Temp Start Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0178": {
+      "pds": 178,
+      "name": "Alternate Acceptor Description Data 2",
+      "dataRepresentation": "ans...201; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 201
+    },
+    "0014": {
+      "pds": 14,
+      "name": "Digital Account Reference Number",
+      "dataRepresentation": "n...19; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 19
+    },
+    "0301": {
+      "pds": 301,
+      "name": "File Amount, Checksum",
+      "dataRepresentation": "n-16; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 16,
+      "maxLen": 16
+    },
+    "0027": {
+      "pds": 27,
+      "name": "Flex Code",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0548": {
+      "pds": 548,
+      "name": "Rental Return Country",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0740": {
+      "pds": 740,
+      "name": "Delivery Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0222": {
+      "pds": 222,
+      "name": "Mexico Domestic Dispute Resolution Documentation Image-Related Data",
+      "dataRepresentation": "ans-65; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 65,
+      "maxLen": 65
+    },
+    "0552": {
+      "pds": 552,
+      "name": "Customer Service Toll-Free [800] Number",
+      "dataRepresentation": "ans-17; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0057": {
+      "pds": 57,
+      "name": "Transaction Category Indicator",
+      "dataRepresentation": "ans–2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0574": {
+      "pds": 574,
+      "name": "Arrival Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0445": {
+      "pds": 445,
+      "name": "Original Transaction Information",
+      "dataRepresentation": "ans...992; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 11,
+      "maxLen": 992
+    },
+    "0763": {
+      "pds": 763,
+      "name": "VAT Suppression Indicator",
+      "dataRepresentation": "ans-2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0707": {
+      "pds": 707,
+      "name": "Valet Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0105": {
+      "pds": 105,
+      "name": "File ID",
+      "dataRepresentation": "n-25; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 25,
+      "maxLen": 25
+    },
+    "0210": {
+      "pds": 210,
+      "name": "Transit Program",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0209": {
+      "pds": 209,
+      "name": "Service Provider Role",
+      "dataRepresentation": "n-11; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 11,
+      "maxLen": 11
+    },
+    "0783": {
+      "pds": 783,
+      "name": "Fleet Product Code",
+      "dataRepresentation": "n-3; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0647": {
+      "pds": 647,
+      "name": "Extended Item Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0626": {
+      "pds": 626,
+      "name": "Billing Statement Period",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0254": {
+      "pds": 254,
+      "name": "MasterCom Member Enhanced Data",
+      "dataRepresentation": "ans...992; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 992
+    },
+    "0697": {
+      "pds": 697,
+      "name": "Late Charge",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0137": {
+      "pds": 137,
+      "name": "Fee Collection Control Number",
+      "dataRepresentation": "n...20; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 17,
+      "maxLen": 20
+    },
+    "0160": {
+      "pds": 160,
+      "name": "Settlement Data, Multiple",
+      "dataRepresentation": "n...108; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 18,
+      "maxLen": 108
+    },
+    "0267": {
+      "pds": 267,
+      "name": "Second Presentment/Fee Collection Resubmission Data",
+      "dataRepresentation": "ans...127; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 127
+    },
+    "0675": {
+      "pds": 675,
+      "name": "Additional Transaction Description Data",
+      "dataRepresentation": "ans…15; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 15
+    },
+    "0541": {
+      "pds": 541,
+      "name": "Lounge/Bar Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0507": {
+      "pds": 507,
+      "name": "Issuing Carrier",
+      "dataRepresentation": "ans-4; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0221": {
+      "pds": 221,
+      "name": "Domestic Merchant Tax ID",
+      "dataRepresentation": "ans...20; TAGLLLVAR; Alphanumeric, Special Character, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0794": {
+      "pds": 794,
+      "name": "Fleet Prompted Data 5",
+      "dataRepresentation": "ans…38; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 38
+    },
+    "0446": {
+      "pds": 446,
+      "name": "Transaction Fee Amount, Syntax Error",
+      "dataRepresentation": "ans-12; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0392": {
+      "pds": 392,
+      "name": "Debits, Fee Amounts in Reconciliation Currency",
+      "dataRepresentation": "an...216; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 18,
+      "maxLen": 216
+    },
+    "0245": {
+      "pds": 245,
+      "name": "MasterCom Arbitration Chargeback Sender Processing Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0754": {
+      "pds": 754,
+      "name": "Delivery Party Contact",
+      "dataRepresentation": "ans…305; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 61,
+      "maxLen": 305
+    },
+    "0573": {
+      "pds": 573,
+      "name": "Invoice Number",
+      "dataRepresentation": "ans…25; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 25
+    },
+    "0598": {
+      "pds": 598,
+      "name": "Total Tax Collected Indicator",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0619": {
+      "pds": 619,
+      "name": "User Name",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0709": {
+      "pds": 709,
+      "name": "Business Center Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0447": {
+      "pds": 447,
+      "name": "Additional Message Error Information",
+      "dataRepresentation": "ans...50; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 9,
+      "maxLen": 50
+    },
+    "0190": {
+      "pds": 190,
+      "name": "Partner ID Code",
+      "dataRepresentation": "ans...6; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 6
+    },
+    "0636": {
+      "pds": 636,
+      "name": "Call Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0402": {
+      "pds": 402,
+      "name": "Total, Transaction Number",
+      "dataRepresentation": "n-10; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0398": {
+      "pds": 398,
+      "name": "Credits, Extended Precision Amount in Reconciliation Currency",
+      "dataRepresentation": "an...252; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 21,
+      "maxLen": 252
+    },
+    "0110": {
+      "pds": 110,
+      "name": "Transmission ID",
+      "dataRepresentation": "n-25; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 25,
+      "maxLen": 25
+    },
+    "0660": {
+      "pds": 660,
+      "name": "Customer Reference",
+      "dataRepresentation": "ans...190; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 19,
+      "maxLen": 190
+    },
+    "0595": {
+      "pds": 595,
+      "name": "Acceptor Type",
+      "dataRepresentation": "ans-8; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 8,
+      "maxLen": 8
+    },
+    "0732": {
+      "pds": 732,
+      "name": "Discount Amount",
+      "dataRepresentation": "ans-18; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 18,
+      "maxLen": 18
+    },
+    "0736": {
+      "pds": 736,
+      "name": "Tracking Number or Pickup Number",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0228": {
+      "pds": 228,
+      "name": "Retrieval Document Code",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0220": {
+      "pds": 220,
+      "name": "Brazil Merchant Tax ID",
+      "dataRepresentation": "an...14; TAGLLL; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 11,
+      "maxLen": 14
+    },
+    "0560": {
+      "pds": 560,
+      "name": "Audio Visual Charges",
+      "dataRepresentation": "ans…14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0535": {
+      "pds": 535,
+      "name": "Fare",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0249": {
+      "pds": 249,
+      "name": "MasterCom Record ID",
+      "dataRepresentation": "ns...10; TAGLLLVAR; Numeric, Special Characters, Variable",
+      "format": "ns",
+      "minLen": 1,
+      "maxLen": 10
+    },
+    "0299": {
+      "pds": 299,
+      "name": "Mexico Domestic Settlement Data for Fees and VAT",
+      "dataRepresentation": "ans...67; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 67
+    },
+    "0543": {
+      "pds": 543,
+      "name": "Gratuity Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0204": {
+      "pds": 204,
+      "name": "Amount, Syntax Error",
+      "dataRepresentation": "ans-12; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0580": {
+      "pds": 580,
+      "name": "Room Rate",
+      "dataRepresentation": "ans-13; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0685": {
+      "pds": 685,
+      "name": "Type of Supply",
+      "dataRepresentation": "an-2; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0280": {
+      "pds": 280,
+      "name": "Source File ID",
+      "dataRepresentation": "n-25; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 25,
+      "maxLen": 25
+    },
+    "0546": {
+      "pds": 546,
+      "name": "Rental Return City",
+      "dataRepresentation": "ans...25; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 25
+    },
+    "0637": {
+      "pds": 637,
+      "name": "Call Time",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0372": {
+      "pds": 372,
+      "name": "Reconciled, Transaction Function",
+      "dataRepresentation": "n-7; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 7,
+      "maxLen": 7
+    },
+    "0576": {
+      "pds": 576,
+      "name": "Folio Number",
+      "dataRepresentation": "ans…25; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 25
+    },
+    "0172": {
+      "pds": 172,
+      "name": "Sole Proprietor Name",
+      "dataRepresentation": "ans...30; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 30
+    },
+    "0359": {
+      "pds": 359,
+      "name": "Reconciled, Settlement Activity",
+      "dataRepresentation": "ans...67; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 67
+    },
+    "0211": {
+      "pds": 211,
+      "name": "Terminal Compliant Indicator",
+      "dataRepresentation": "n-2; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0032": {
+      "pds": 32,
+      "name": "Enhanced Acceptor Name",
+      "dataRepresentation": "ans...100; TAGLLLVAR, Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 100
+    },
+    "0217": {
+      "pds": 217,
+      "name": "Special Acceptance Conditions Data",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0673": {
+      "pds": 673,
+      "name": "Date of Anticipated Receipt of Funds",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0370": {
+      "pds": 370,
+      "name": "Reconciled, Account Range",
+      "dataRepresentation": "n...38; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 19,
+      "maxLen": 38
+    },
+    "0197": {
+      "pds": 197,
+      "name": "National Use Tax Data",
+      "dataRepresentation": "n-53; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 53,
+      "maxLen": 53
+    },
+    "0593": {
+      "pds": 593,
+      "name": "Party Postal Information",
+      "dataRepresentation": "ans…46; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 25,
+      "maxLen": 46
+    },
+    "0770": {
+      "pds": 770,
+      "name": "Additional Acceptor Inquiry Information",
+      "dataRepresentation": "ans…73; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 25,
+      "maxLen": 73
+    },
+    "0368": {
+      "pds": 368,
+      "name": "Reconciled, Transaction Function Group Code",
+      "dataRepresentation": "ans-2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0182": {
+      "pds": 182,
+      "name": "Installment Payment Cardholder Statement Data",
+      "dataRepresentation": "ans-87; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 87,
+      "maxLen": 87
+    },
+    "0170": {
+      "pds": 170,
+      "name": "Acceptor Inquiry Information",
+      "dataRepresentation": "ans...57; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 16,
+      "maxLen": 57
+    },
+    "0750": {
+      "pds": 750,
+      "name": "Delivery Party Postal Information",
+      "dataRepresentation": "ans…41; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 25,
+      "maxLen": 41
+    },
+    "0532": {
+      "pds": 532,
+      "name": "Total Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0016": {
+      "pds": 16,
+      "name": "Digital Service Provider",
+      "dataRepresentation": "ans...10; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 5,
+      "maxLen": 10
+    },
+    "0607": {
+      "pds": 607,
+      "name": "Duty Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0761": {
+      "pds": 761,
+      "name": "Travel Agency ID",
+      "dataRepresentation": "ans…15; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 15
+    },
+    "0592": {
+      "pds": 592,
+      "name": "Party Address",
+      "dataRepresentation": "ans…240; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 40,
+      "maxLen": 240
+    },
+    "0728": {
+      "pds": 728,
+      "name": "Temp Week Ending",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0248": {
+      "pds": 248,
+      "name": "MasterCom Image Review Memo",
+      "dataRepresentation": "ans...100; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 100
+    },
+    "0536": {
+      "pds": 536,
+      "name": "Fee",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0651": {
+      "pds": 651,
+      "name": "Procedure ID",
+      "dataRepresentation": "ans-9; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 9,
+      "maxLen": 9
+    },
+    "0018": {
+      "pds": 18,
+      "name": "Acceptance Data",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0138": {
+      "pds": 138,
+      "name": "Source Message Number ID",
+      "dataRepresentation": "n-8; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 8,
+      "maxLen": 8
+    },
+    "0512": {
+      "pds": 512,
+      "name": "Total Fare",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0674": {
+      "pds": 674,
+      "name": "Additional Trace/Reference Number Used by Acceptor",
+      "dataRepresentation": "ans…19; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 19
+    },
+    "0668": {
+      "pds": 668,
+      "name": "Reduction Data",
+      "dataRepresentation": "ans-26; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 26,
+      "maxLen": 26
+    },
+    "0192": {
+      "pds": 192,
+      "name": "Payment Transaction Initiator",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0735": {
+      "pds": 735,
+      "name": "Service Descriptor Codes",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0530": {
+      "pds": 530,
+      "name": "Flight Number",
+      "dataRepresentation": "ans-5; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 5,
+      "maxLen": 5
+    },
+    "0142": {
+      "pds": 142,
+      "name": "Additional Service Data For Issuers",
+      "dataRepresentation": "ans-15; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0632": {
+      "pds": 632,
+      "name": "Product Type Code",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0542": {
+      "pds": 542,
+      "name": "Transportation Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0551": {
+      "pds": 551,
+      "name": "Rental Check-Out Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0521": {
+      "pds": 521,
+      "name": "Carrier Code",
+      "dataRepresentation": "ans-2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0502": {
+      "pds": 502,
+      "name": "Custom Identifier",
+      "dataRepresentation": "ans...82; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 7,
+      "maxLen": 82
+    },
+    "0665": {
+      "pds": 665,
+      "name": "Destination Station",
+      "dataRepresentation": "ans…30; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 30
+    },
+    "0605": {
+      "pds": 605,
+      "name": "Transaction Supplemental Data 2",
+      "dataRepresentation": "ans…672; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 84,
+      "maxLen": 672
+    },
+    "0044": {
+      "pds": 44,
+      "name": "Program Participation Indicator",
+      "dataRepresentation": "ans...20; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0298": {
+      "pds": 298,
+      "name": "Amount, Mexico Domestic Transaction Fee",
+      "dataRepresentation": "n...432; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 36,
+      "maxLen": 432
+    },
+    "0557": {
+      "pds": 557,
+      "name": "Maximum Free Miles [or Kilometers]",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0578": {
+      "pds": 578,
+      "name": "Billing Adjustment",
+      "dataRepresentation": "ans-15; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0503": {
+      "pds": 503,
+      "name": "Travel Agency Sequence Number",
+      "dataRepresentation": "ans-4; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0793": {
+      "pds": 793,
+      "name": "Fleet Prompted Data 4",
+      "dataRepresentation": "ans…38; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 38
+    },
+    "0205": {
+      "pds": 205,
+      "name": "Syntax Return, Message Error Indicator",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0185": {
+      "pds": 185,
+      "name": "Accountholder Authentication Value",
+      "dataRepresentation": "ans...32; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 32
+    },
+    "0702": {
+      "pds": 702,
+      "name": "Other Charges",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0646": {
+      "pds": 646,
+      "name": "Unit Price",
+      "dataRepresentation": "ans-13; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0722": {
+      "pds": 722,
+      "name": "Flat Rate Indicator",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0725": {
+      "pds": 725,
+      "name": "Overtime Hours Worked",
+      "dataRepresentation": "n-7; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 7,
+      "maxLen": 7
+    },
+    "0559": {
+      "pds": 559,
+      "name": "Vehicle Insurance",
+      "dataRepresentation": "ans-13; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0653": {
+      "pds": 653,
+      "name": "Service Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0184": {
+      "pds": 184,
+      "name": "Directory Server Transaction ID",
+      "dataRepresentation": "ans-36; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 36,
+      "maxLen": 36
+    },
+    "0531": {
+      "pds": 531,
+      "name": "Departure Time",
+      "dataRepresentation": "ans-5; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 5,
+      "maxLen": 5
+    },
+    "0639": {
+      "pds": 639,
+      "name": "Call Duration",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0719": {
+      "pds": 719,
+      "name": "Employee Social Security Number or ID",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0385": {
+      "pds": 385,
+      "name": "Debits, Mexico Domestic VAT Amount in Reconciliation Currency",
+      "dataRepresentation": "an...57; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 19,
+      "maxLen": 57
+    },
+    "0549": {
+      "pds": 549,
+      "name": "Rental Return Location ID",
+      "dataRepresentation": "ans-10; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0265": {
+      "pds": 265,
+      "name": "Initial Presentment/Fee Collection Data",
+      "dataRepresentation": "ans...110; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 110
+    },
+    "0599": {
+      "pds": 599,
+      "name": "Corporation VAT Number",
+      "dataRepresentation": "ans…20; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0015": {
+      "pds": 15,
+      "name": "Clearing Currency Conversion Identifier",
+      "dataRepresentation": "ans-7; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 7,
+      "maxLen": 7
+    },
+    "0056": {
+      "pds": 56,
+      "name": "Mastercard Electronic Card Indicator",
+      "dataRepresentation": "a-1; TAGLLL; Alphabetic, Fixed",
+      "format": "a",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0378": {
+      "pds": 378,
+      "name": "Original/Reversal Totals Indicator",
+      "dataRepresentation": "a-1; TAGLLL, Alphabetic, Fixed",
+      "format": "a",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0514": {
+      "pds": 514,
+      "name": "Total Taxes",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0590": {
+      "pds": 590,
+      "name": "Party Identification",
+      "dataRepresentation": "an-2; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0687": {
+      "pds": 687,
+      "name": "Unique VAT Invoice Reference Number",
+      "dataRepresentation": "ans…17; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 17
+    },
+    "0260": {
+      "pds": 260,
+      "name": "Edit Exclusion Indicator",
+      "dataRepresentation": "ans...4; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 4
+    },
+    "0776": {
+      "pds": 776,
+      "name": "Alternate Custom Identifier",
+      "dataRepresentation": "ans…410; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 82,
+      "maxLen": 410
+    },
+    "0671": {
+      "pds": 671,
+      "name": "Date of Funds Requested",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0759": {
+      "pds": 759,
+      "name": "Delivery Order Number",
+      "dataRepresentation": "ans…15; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 15
+    },
+    "0017": {
+      "pds": 17,
+      "name": "Interchange Structure Indicator",
+      "dataRepresentation": "an–2; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0508": {
+      "pds": 508,
+      "name": "Customer Code",
+      "dataRepresentation": "ans...25; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 25
+    },
+    "0679": {
+      "pds": 679,
+      "name": "Commodity Code",
+      "dataRepresentation": "ans…15; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 15
+    },
+    "0742": {
+      "pds": 742,
+      "name": "Package Weight",
+      "dataRepresentation": "ans-12; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0173": {
+      "pds": 173,
+      "name": "Legal Corporate Name",
+      "dataRepresentation": "ans...30; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 30
+    },
+    "0659": {
+      "pds": 659,
+      "name": "Other Description",
+      "dataRepresentation": "ans…60; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 60
+    },
+    "0667": {
+      "pds": 667,
+      "name": "Generic Data",
+      "dataRepresentation": "ans-46; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 46,
+      "maxLen": 46
+    },
+    "0270": {
+      "pds": 270,
+      "name": "Embedded Interchange Data",
+      "dataRepresentation": "ans...91; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 32,
+      "maxLen": 91
+    },
+    "0612": {
+      "pds": 612,
+      "name": "Ship Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0741": {
+      "pds": 741,
+      "name": "Number of Packages",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0174": {
+      "pds": 174,
+      "name": "Dun & Bradstreet Number",
+      "dataRepresentation": "n-15; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0235": {
+      "pds": 235,
+      "name": "Mastercard Assigned Incentive Identifier",
+      "dataRepresentation": "n-3; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0650": {
+      "pds": 650,
+      "name": "Zero Cost to Customer Indicator",
+      "dataRepresentation": "a-1; TAGLLL; Alphabetic, Fixed",
+      "format": "a",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0624": {
+      "pds": 624,
+      "name": "User Account Number",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0177": {
+      "pds": 177,
+      "name": "Cross-border",
+      "dataRepresentation": "a–2; TAGLLL; Alphabetic, Fixed",
+      "format": "a",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0603": {
+      "pds": 603,
+      "name": "Party Supplemental Data 2",
+      "dataRepresentation": "ans…672; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 84,
+      "maxLen": 672
+    },
+    "0200": {
+      "pds": 200,
+      "name": "Fraud Notification Date",
+      "dataRepresentation": "n-8; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 8,
+      "maxLen": 8
+    },
+    "0049": {
+      "pds": 49,
+      "name": "Installment Payment Data - Ecuador",
+      "dataRepresentation": "n...18; TAGLLLVAR; Numeric, Variable",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 18
+    },
+    "0752": {
+      "pds": 752,
+      "name": "Detail Tax Amount 5",
+      "dataRepresentation": "ans…46; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 46
+    },
+    "0369": {
+      "pds": 369,
+      "name": "Reconciled, Acquirer’s BIN",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0686": {
+      "pds": 686,
+      "name": "Tax Exempt Indicator",
+      "dataRepresentation": "an-1; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0733": {
+      "pds": 733,
+      "name": "Subtotal Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0616": {
+      "pds": 616,
+      "name": "Contract Number",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0213": {
+      "pds": 213,
+      "name": "Merchant Country of Origin",
+      "dataRepresentation": "n-3; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0577": {
+      "pds": 577,
+      "name": "Property Phone Number",
+      "dataRepresentation": "ans-17; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0567": {
+      "pds": 567,
+      "name": "Rental Location ID",
+      "dataRepresentation": "ans-10; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0581": {
+      "pds": 581,
+      "name": "Total Room Tax",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0045": {
+      "pds": 45,
+      "name": "Mastercard Generated Installment Identifier",
+      "dataRepresentation": "a-1; TAGLLL; Alphabetic, Fixed",
+      "format": "a",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0620": {
+      "pds": 620,
+      "name": "Oil Company Brand Name",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0629": {
+      "pds": 629,
+      "name": "Odometer Reading",
+      "dataRepresentation": "ans…7; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 7
+    },
+    "0700": {
+      "pds": 700,
+      "name": "Towing Charges",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0751": {
+      "pds": 751,
+      "name": "Detail Tax Amount 4",
+      "dataRepresentation": "ans…46; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 46
+    },
+    "0758": {
+      "pds": 758,
+      "name": "Transportation Services Offered",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0746": {
+      "pds": 746,
+      "name": "Shipping Party Postal Information",
+      "dataRepresentation": "ans…41; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 25,
+      "maxLen": 41
+    },
+    "0360": {
+      "pds": 360,
+      "name": "Reconciled, Transaction Sequence Identifier",
+      "dataRepresentation": "n-10; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0712": {
+      "pds": 712,
+      "name": "Net Fuel Price",
+      "dataRepresentation": "n-13; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0059": {
+      "pds": 59,
+      "name": "Token Requestor ID",
+      "dataRepresentation": "n-11; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 11,
+      "maxLen": 11
+    },
+    "0790": {
+      "pds": 790,
+      "name": "Fleet Prompted Data 1",
+      "dataRepresentation": "ans…38; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 38
+    },
+    "0561": {
+      "pds": 561,
+      "name": "Adjusted Amount",
+      "dataRepresentation": "ans-13; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0262": {
+      "pds": 262,
+      "name": "Documentation Indicator",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0004": {
+      "pds": 4,
+      "name": "Funding Account Information",
+      "dataRepresentation": "an...36; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 3,
+      "maxLen": 36
+    },
+    "0073": {
+      "pds": 73,
+      "name": "Additional Commercial Issuer Data",
+      "dataRepresentation": "ans-63; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 63,
+      "maxLen": 63
+    },
+    "0149": {
+      "pds": 149,
+      "name": "Currency Codes, Amounts, Original",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0028": {
+      "pds": 28,
+      "name": "Mastercard Merchant Presented QR [MPQR] Receiving Account Number",
+      "dataRepresentation": "ans...34; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 34
+    },
+    "0106": {
+      "pds": 106,
+      "name": "Clearing Optimizer Information",
+      "dataRepresentation": "n-13; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0731": {
+      "pds": 731,
+      "name": "Time Sheet Number",
+      "dataRepresentation": "ans…20; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 20
+    },
+    "0306": {
+      "pds": 306,
+      "name": "File Message Counts",
+      "dataRepresentation": "n-8; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 8,
+      "maxLen": 8
+    },
+    "0395": {
+      "pds": 395,
+      "name": "Amount, Net Fee in Reconciliation Currency",
+      "dataRepresentation": "an-16; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 16,
+      "maxLen": 16
+    },
+    "0715": {
+      "pds": 715,
+      "name": "Ancillary Service Charges",
+      "dataRepresentation": "an...84; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 14,
+      "maxLen": 84
+    },
+    "0737": {
+      "pds": 737,
+      "name": "Shipping Net Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0645": {
+      "pds": 645,
+      "name": "Item Unit of Measure",
+      "dataRepresentation": "ans…12; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 12
+    },
+    "0547": {
+      "pds": 547,
+      "name": "Rental Return State/Province",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0684": {
+      "pds": 684,
+      "name": "Detail Tax Amount 3",
+      "dataRepresentation": "ans…46; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 46
+    },
+    "0654": {
+      "pds": 654,
+      "name": "Debit or Credit Indicator",
+      "dataRepresentation": "as-1; TAGLLL; Alphabetic, Special Characters, Fixed",
+      "format": "as",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0375": {
+      "pds": 375,
+      "name": "Member Reconciliation Indicator 1",
+      "dataRepresentation": "ans...50; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 50
+    },
+    "0699": {
+      "pds": 699,
+      "name": "Lodging Total Tax Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0002": {
+      "pds": 2,
+      "name": "GCMS Product Identifier",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0720": {
+      "pds": 720,
+      "name": "Job Description",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0745": {
+      "pds": 745,
+      "name": "Shipping Party Address",
+      "dataRepresentation": "ans…300; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 50,
+      "maxLen": 300
+    },
+    "0693": {
+      "pds": 693,
+      "name": "Total Authorized Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0760": {
+      "pds": 760,
+      "name": "Credit Card Slip Number",
+      "dataRepresentation": "ans…8; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 8
+    },
+    "0556": {
+      "pds": 556,
+      "name": "Total Miles [or Kilometers]",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0563": {
+      "pds": 563,
+      "name": "Program Code",
+      "dataRepresentation": "ans-2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0247": {
+      "pds": 247,
+      "name": "MasterCom Receiver Memo",
+      "dataRepresentation": "ans...100; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 100
+    },
+    "0600": {
+      "pds": 600,
+      "name": "Acceptor Reference Number",
+      "dataRepresentation": "ans…25; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 25
+    },
+    "0734": {
+      "pds": 734,
+      "name": "Miscellaneous Expenses",
+      "dataRepresentation": "ans…216; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 54,
+      "maxLen": 216
+    },
+    "0716": {
+      "pds": 716,
+      "name": "Travel Authorization Code",
+      "dataRepresentation": "ans…64; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 64
+    },
+    "0621": {
+      "pds": 621,
+      "name": "Purchase Time",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0244": {
+      "pds": 244,
+      "name": "MasterCom Chargeback Support Documentation Dates",
+      "dataRepresentation": "ans...12; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 6,
+      "maxLen": 12
+    },
+    "0176": {
+      "pds": 176,
+      "name": "Mastercard Assigned ID",
+      "dataRepresentation": "ans-6; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0627": {
+      "pds": 627,
+      "name": "Billing Event 1",
+      "dataRepresentation": "ans…540; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 54,
+      "maxLen": 540
+    },
+    "0764": {
+      "pds": 764,
+      "name": "Healthcare Eligible Status Indicator",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0696": {
+      "pds": 696,
+      "name": "Extra Mileage Charge",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0596": {
+      "pds": 596,
+      "name": "Acceptor Tax ID",
+      "dataRepresentation": "ans-21; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 21,
+      "maxLen": 21
+    },
+    "0526": {
+      "pds": 526,
+      "name": "Conjunction Ticket",
+      "dataRepresentation": "ans-15; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0012": {
+      "pds": 12,
+      "name": "Authorization Matching Data",
+      "dataRepresentation": "ans...48; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 48
+    },
+    "0384": {
+      "pds": 384,
+      "name": "Amount, Net Transaction in Transaction Currency",
+      "dataRepresentation": "an-17; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0042": {
+      "pds": 42,
+      "name": "Merchant Capability",
+      "dataRepresentation": "an-1; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0251": {
+      "pds": 251,
+      "name": "MasterCom Fulfillment Document Code",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0071": {
+      "pds": 71,
+      "name": "Chip to Magnetic Stripe Conversion Service Indicator",
+      "dataRepresentation": "ans-4; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0302": {
+      "pds": 302,
+      "name": "Reconciled, Member Activity",
+      "dataRepresentation": "a-1; TAGLLL; Alphabetic, Fixed",
+      "format": "a",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0023": {
+      "pds": 23,
+      "name": "Terminal Type",
+      "dataRepresentation": "ans-3; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 3,
+      "maxLen": 3
+    },
+    "0570": {
+      "pds": 570,
+      "name": "Early Departure Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0397": {
+      "pds": 397,
+      "name": "Debits, Extended Precision Amount in Reconciliation Currency",
+      "dataRepresentation": "an...252; TAGLLLVAR; Alphanumeric, Variable",
+      "format": "an",
+      "minLen": 21,
+      "maxLen": 252
+    },
+    "0165": {
+      "pds": 165,
+      "name": "Settlement Indicator",
+      "dataRepresentation": "ans...30; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 30
+    },
+    "0695": {
+      "pds": 695,
+      "name": "Regular Mileage Charge",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0747": {
+      "pds": 747,
+      "name": "Shipping Party Contact",
+      "dataRepresentation": "ans…305; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 61,
+      "maxLen": 305
+    },
+    "0781": {
+      "pds": 781,
+      "name": "Fleet Spend Control Enforced",
+      "dataRepresentation": "an-16; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 16,
+      "maxLen": 16
+    },
+    "0771": {
+      "pds": 771,
+      "name": "Cost Center Information",
+      "dataRepresentation": "ans…36; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 18,
+      "maxLen": 36
+    },
+    "0025": {
+      "pds": 25,
+      "name": "Message Reversal Indicator",
+      "dataRepresentation": "ans...7; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 7
+    },
+    "0518": {
+      "pds": 518,
+      "name": "Line Item Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0558": {
+      "pds": 558,
+      "name": "Miles/Kilometers Indicator",
+      "dataRepresentation": "as-1; TAGLLL; Alphabetic, Special Characters, Fixed",
+      "format": "as",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0785": {
+      "pds": 785,
+      "name": "Fleet Item Quantity",
+      "dataRepresentation": "n-13; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 13,
+      "maxLen": 13
+    },
+    "0657": {
+      "pds": 657,
+      "name": "Half VAT Amounts",
+      "dataRepresentation": "ans…28; TAGLLLVAR, Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 28
+    },
+    "0691": {
+      "pds": 691,
+      "name": "Days Rented",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0528": {
+      "pds": 528,
+      "name": "Coupon Number",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0628": {
+      "pds": 628,
+      "name": "Billing Event 2",
+      "dataRepresentation": "ans…540; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 54,
+      "maxLen": 540
+    },
+    "0786": {
+      "pds": 786,
+      "name": "Fleet Item Unit of Measure",
+      "dataRepresentation": "ans…12; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 12
+    },
+    "0792": {
+      "pds": 792,
+      "name": "Fleet Prompted Data 3",
+      "dataRepresentation": "ans…38; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 38
+    },
+    "0642": {
+      "pds": 642,
+      "name": "Item Description",
+      "dataRepresentation": "ans…35; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 35
+    },
+    "0519": {
+      "pds": 519,
+      "name": "Additional Fuel Location Information",
+      "dataRepresentation": "an-14; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0544": {
+      "pds": 544,
+      "name": "Rental Agreement Number",
+      "dataRepresentation": "ans-9; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 9,
+      "maxLen": 9
+    },
+    "0148": {
+      "pds": 148,
+      "name": "Currency Exponents",
+      "dataRepresentation": "ans...60; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 4,
+      "maxLen": 60
+    },
+    "0613": {
+      "pds": 613,
+      "name": "Ship-From Postal Code",
+      "dataRepresentation": "ans-10; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 10,
+      "maxLen": 10
+    },
+    "0799": {
+      "pds": 799,
+      "name": "Test Case Traceability Identifiers",
+      "dataRepresentation": "ans…165; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 33,
+      "maxLen": 165
+    },
+    "0186": {
+      "pds": 186,
+      "name": "Program Protocol",
+      "dataRepresentation": "an-1; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0583": {
+      "pds": 583,
+      "name": "Phone Charges",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0782": {
+      "pds": 782,
+      "name": "Fleet Fuel Information",
+      "dataRepresentation": "n-35; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 35,
+      "maxLen": 35
+    },
+    "0021": {
+      "pds": 21,
+      "name": "Transaction Type Indicator",
+      "dataRepresentation": "ans-1; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0755": {
+      "pds": 755,
+      "name": "Line Item Total Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0588": {
+      "pds": 588,
+      "name": "Other Services",
+      "dataRepresentation": "ans...102; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 17,
+      "maxLen": 102
+    },
+    "0683": {
+      "pds": 683,
+      "name": "Detail Tax Amount 2",
+      "dataRepresentation": "ans…46; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 46
+    },
+    "0701": {
+      "pds": 701,
+      "name": "Extra Charges",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0623": {
+      "pds": 623,
+      "name": "Motor Fuel Information",
+      "dataRepresentation": "ns-35; TAGLLL; Numeric, Special Characters, Fixed",
+      "format": "ns",
+      "minLen": 35,
+      "maxLen": 35
+    },
+    "0380": {
+      "pds": 380,
+      "name": "Debits, Transaction Amount In Transaction Currency",
+      "dataRepresentation": "an-17; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0199": {
+      "pds": 199,
+      "name": "Funding Transaction Information",
+      "dataRepresentation": "ans...199; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 199
+    },
+    "0300": {
+      "pds": 300,
+      "name": "Reconciled, File",
+      "dataRepresentation": "n-25; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 25,
+      "maxLen": 25
+    },
+    "0159": {
+      "pds": 159,
+      "name": "Settlement Data",
+      "dataRepresentation": "ans...67; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 67
+    },
+    "0706": {
+      "pds": 706,
+      "name": "Cash Advances",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0390": {
+      "pds": 390,
+      "name": "Debits, Transaction Amount in Reconciliation Currency",
+      "dataRepresentation": "an-17; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0212": {
+      "pds": 212,
+      "name": "Merchant Data Services",
+      "dataRepresentation": "ans-5; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 5,
+      "maxLen": 5
+    },
+    "0510": {
+      "pds": 510,
+      "name": "Travel Agency Code",
+      "dataRepresentation": "ans-8; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 8,
+      "maxLen": 8
+    },
+    "0010": {
+      "pds": 10,
+      "name": "Currency Rate Service",
+      "dataRepresentation": "ans...7; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 7
+    },
+    "0582": {
+      "pds": 582,
+      "name": "Program Code",
+      "dataRepresentation": "ans-2; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 2,
+      "maxLen": 2
+    },
+    "0739": {
+      "pds": 739,
+      "name": "Pickup Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0145": {
+      "pds": 145,
+      "name": "Amount, Alternate Transaction Fee",
+      "dataRepresentation": "n-15; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 15,
+      "maxLen": 15
+    },
+    "0034": {
+      "pds": 34,
+      "name": "Acceptor Logo URL",
+      "dataRepresentation": "ans...255; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 255
+    },
+    "0520": {
+      "pds": 520,
+      "name": "Travel Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0648": {
+      "pds": 648,
+      "name": "Item Discount",
+      "dataRepresentation": "ans-20; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 20,
+      "maxLen": 20
+    },
+    "0297": {
+      "pds": 297,
+      "name": "Amount, Mexico Domestic Tax [VAT]",
+      "dataRepresentation": "ans...60; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 20,
+      "maxLen": 60
+    },
+    "0738": {
+      "pds": 738,
+      "name": "Incentive Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0606": {
+      "pds": 606,
+      "name": "Freight Amount",
+      "dataRepresentation": "ans-14; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 14,
+      "maxLen": 14
+    },
+    "0206": {
+      "pds": 206,
+      "name": "Late Presentment Indicator",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0772": {
+      "pds": 772,
+      "name": "Driver License/State Issued ID Information",
+      "dataRepresentation": "ans…18; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 15,
+      "maxLen": 18
+    },
+    "0703": {
+      "pds": 703,
+      "name": "Total Room Nights",
+      "dataRepresentation": "n-4; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 4,
+      "maxLen": 4
+    },
+    "0188": {
+      "pds": 188,
+      "name": "Private Data, Proprietary Service Data",
+      "dataRepresentation": "ans...987; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 7,
+      "maxLen": 987
+    },
+    "0564": {
+      "pds": 564,
+      "name": "Rental Location City",
+      "dataRepresentation": "ans…25; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 25
+    },
+    "0550": {
+      "pds": 550,
+      "name": "Rental Return Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0680": {
+      "pds": 680,
+      "name": "Authorized Contact Name",
+      "dataRepresentation": "ans…36; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 36
+    },
+    "0601": {
+      "pds": 601,
+      "name": "Party Nature of Filing",
+      "dataRepresentation": "a-1; TAGLLL; Alphabetic, Fixed",
+      "format": "a",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0713": {
+      "pds": 713,
+      "name": "Restricted Ticket Indicator",
+      "dataRepresentation": "an-1; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0513": {
+      "pds": 513,
+      "name": "Total Fees",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0175": {
+      "pds": 175,
+      "name": "Acceptor URL Address",
+      "dataRepresentation": "ans...255; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 255
+    },
+    "0555": {
+      "pds": 555,
+      "name": "Rate Per Mile [or Per Kilometer]",
+      "dataRepresentation": "n-12; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 12,
+      "maxLen": 12
+    },
+    "0523": {
+      "pds": 523,
+      "name": "City of Origin Airport Code",
+      "dataRepresentation": "ans-5; TAGLLL; Alphanumeric, Special Characters, Fixed",
+      "format": "ans",
+      "minLen": 5,
+      "maxLen": 5
+    },
+    "0072": {
+      "pds": 72,
+      "name": "Authentication Indicator",
+      "dataRepresentation": "n-1; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0391": {
+      "pds": 391,
+      "name": "Credits, Transaction Amount in Reconciliation Currency",
+      "dataRepresentation": "an-17; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 17,
+      "maxLen": 17
+    },
+    "0030": {
+      "pds": 30,
+      "name": "QR Initiated Transaction",
+      "dataRepresentation": "an-1; TAGLLL; Alphanumeric, Fixed",
+      "format": "an",
+      "minLen": 1,
+      "maxLen": 1
+    },
+    "0261": {
+      "pds": 261,
+      "name": "Risk Management Approval Code",
+      "dataRepresentation": "n-11; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 11,
+      "maxLen": 11
+    },
+    "0571": {
+      "pds": 571,
+      "name": "Guest Name",
+      "dataRepresentation": "ans…40; TAGLLLVAR; Alphanumeric, Special Characters, Variable",
+      "format": "ans",
+      "minLen": 1,
+      "maxLen": 40
+    },
+    "0614": {
+      "pds": 614,
+      "name": "Order Date",
+      "dataRepresentation": "n-6; TAGLLL; Numeric, Fixed",
+      "format": "n",
+      "minLen": 6,
+      "maxLen": 6
+    },
+    "0617": {
+      "pds": 617,
+      "name": "Medical Services Price Adjustment",
+      "dataRepresentation": "a-1; TAGLLL; Alphabetic, Fixed",
+      "format": "a",
+      "minLen": 1,
+      "maxLen": 1
+    }
+  }
+}

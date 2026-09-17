@@ -28,6 +28,12 @@ public class VolumeRevenueFilterDTO {
 
     private String optInStatus; // "ALL", "OPT_IN", "OPT_OUT"
 
+    // Executive channel selector (2026-09-08): 'ALL' | 'POS' | 'ECOM', always
+    // passed through ChannelSql.normalize before it goes anywhere near SQL.
+    // Distinct from channelList (raw terminal-channel values on the insight
+    // cross-tab) — this one routes reads by sum_daily_full.channel_class.
+    private String channel;
+
     // New Filters
     private LocalDate openDateStart;
     private LocalDate openDateEnd;

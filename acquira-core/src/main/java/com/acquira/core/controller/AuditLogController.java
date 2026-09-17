@@ -96,7 +96,7 @@ public class AuditLogController {
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats() {
-        LocalDateTime startOfDay = LocalDateTime.now().withHour(0).withMinute(0).withSecond(0);
+        LocalDateTime startOfDay = LocalDateTime.now().toLocalDate().atStartOfDay();
         // Tenant-isolation fix: scope the "today" count to the active tenant for
         // bank admins; super-admins get the platform-wide count.
         final boolean superAdmin = isSuperAdmin();
@@ -116,9 +116,35 @@ public class AuditLogController {
 
         long totalToday = auditLogRepository.count(todaySpec);
 
-        return ResponseEntity.ok(Map.of(
-                "totalToday", totalToday,
-                "errorRate", 0));
+        // Errors today: 4xx/5xx responses. Rows without a status (descriptive
+        // action rows that never got an HTTP outcome) are simply not errors.
+        Specification<AuditLog> errorSpec = todaySpec.and(
+                (root, query, cb) -> cb.greaterThanOrEqualTo(root.get("statusCode"), 400));
+        long errorsToday = auditLogRepository.count(errorSpec);
+
+        // Distinct usernames seen today, same tenant scoping as above. A
+        // non-super-admin with no resolvable tenant sees nothing, matching the
+        // list/export behaviour rather than leaking a platform-wide number.
+        long activeUsers;
+        if (superAdmin) {
+            activeUsers = auditLogRepository.countActiveUsersSince(startOfDay);
+        } else if (tenantId == null) {
+            activeUsers = 0;
+        } else {
+            activeUsers = auditLogRepository.countActiveUsersSinceForTenant(startOfDay, tenantId);
+        }
+
+        double errorRate = totalToday == 0 ? 0.0 : (errorsToday * 100.0) / totalToday;
+
+        // These three were previously hardcoded to 0 in the response (and the
+        // remaining two were never sent at all), so three of the four tiles on
+        // the Audit Logs screen always read zero regardless of activity.
+        Map<String, Object> stats = new java.util.HashMap<>();
+        stats.put("totalToday", totalToday);
+        stats.put("errors", errorsToday);
+        stats.put("activeUsers", activeUsers);
+        stats.put("errorRate", Math.round(errorRate * 10.0) / 10.0);
+        return ResponseEntity.ok(stats);
     }
 
     private Specification<AuditLog> buildSpec(String search, String category, String action, String username,

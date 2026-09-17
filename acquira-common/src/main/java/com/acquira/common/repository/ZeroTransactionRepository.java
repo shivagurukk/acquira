@@ -222,15 +222,56 @@ public class ZeroTransactionRepository {
     // buckets / aggregators / page rows all read from it.
     // ============================================================
 
-    private String baseCte(VolumeRevenueFilterDTO f, Long tenantId) {
+    /**
+     * base = one row per terminal in the filtered estate.
+     *
+     * [ESTATE HEALTH] The CTE now also carries each terminal's TRAILING-30-DAY
+     * activity (txns / volume / days-with-activity), sourced from a single
+     * LEFT JOIN LATERAL over the same (tenant_id, terminal_id, business_date)
+     * index the last_txn subquery already rides. This is what separates a
+     * dormancy report from an estate-health report: "last_txn" only answers
+     * *when did it stop*, while active_days30 answers *was it ever really
+     * working* — a terminal that fired on 2 of the last 30 days is a sick
+     * terminal even though it is technically "active".
+     *
+     * last_txn is deliberately left as the original correlated subquery — every
+     * range/status/bucket predicate in this class is defined against it and has
+     * been debugged against real data (see the 2026-07-06 FLOW FIX above). The
+     * lateral only ADDS columns; it changes no existing predicate.
+     *
+     * The 30-day window reuses :cutoff30 (= anchor - 30d) rather than binding a
+     * second identical parameter, so it always resolves for every caller.
+     *
+     * withActivity gates the lateral. Postgres will NOT remove a LEFT JOIN
+     * LATERAL whose output columns go unread (join removal only applies to base
+     * relations with a proving unique index), so leaving it in unconditionally
+     * would charge every callsite a second per-terminal index probe — including
+     * /summary and the pagination COUNT, neither of which reads those columns.
+     * Callers that need trailing activity pass true; everyone else pays nothing.
+     */
+    private String baseCte(VolumeRevenueFilterDTO f, Long tenantId, boolean withActivity) {
         String innerTenant = (tenantId != null) ? " AND s.tenant_id = :tenantId" : "";
         StringBuilder b = new StringBuilder();
         b.append("WITH base AS (SELECT m.name AS merchant_name, COALESCE(st.legal_name, m.name) AS entity_name, ");
         b.append("m.referral_partner AS aggregator_name, m.mid AS mid, st.sid AS sid, st.name AS store_name, t.tid AS tid, ");
         b.append("(SELECT MAX(s.business_date) FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id")
-         .append(innerTenant).append(") AS last_txn ");
-        b.append("FROM dim_terminal t JOIN dim_store st ON t.store_id = st.store_id ");
-        b.append("JOIN dim_merchant m ON st.merchant_id = m.merchant_id WHERE 1=1 ");
+         .append(innerTenant).append(") AS last_txn");
+        if (withActivity) {
+            // terminal_key is the numeric surrogate — needed so the estate trend
+            // query can join sum_daily_terminal back to the filtered base.
+            b.append(", t.terminal_id AS terminal_key, ");
+            b.append("COALESCE(act.txns30, 0) AS txns30, COALESCE(act.vol30, 0) AS vol30, ");
+            b.append("COALESCE(act.active_days30, 0) AS active_days30");
+        }
+        b.append(" FROM dim_terminal t JOIN dim_store st ON t.store_id = st.store_id ");
+        b.append("JOIN dim_merchant m ON st.merchant_id = m.merchant_id ");
+        if (withActivity) {
+            b.append("LEFT JOIN LATERAL (SELECT SUM(s.total_txns) AS txns30, SUM(s.total_volume) AS vol30, ");
+            b.append("COUNT(DISTINCT s.business_date) FILTER (WHERE COALESCE(s.total_txns, 0) > 0) AS active_days30 ");
+            b.append("FROM sum_daily_terminal s WHERE s.terminal_id = t.terminal_id").append(innerTenant);
+            b.append(" AND s.business_date > :cutoff30 AND s.business_date <= :anchorDate) act ON TRUE ");
+        }
+        b.append("WHERE 1=1 ");
         if (tenantId != null) b.append("AND m.tenant_id = :tenantId AND st.tenant_id = :tenantId AND t.tenant_id = :tenantId ");
         if (f.getPartnerList() != null && !f.getPartnerList().isEmpty()) b.append("AND m.referral_partner IN (:partners) ");
         if (f.getMerchantName() != null && !f.getMerchantName().isBlank()) b.append("AND (m.name ILIKE :merchName OR st.legal_name ILIKE :merchName) ");
@@ -299,7 +340,8 @@ public class ZeroTransactionRepository {
     public Map<String, Object> getZeroTransactionSummary(VolumeRevenueFilterDTO f, String rangeType, Long tenantId) {
         requireTenant(tenantId);
         LocalDate anchor = resolveAnchor(tenantId);
-        String cte = baseCte(f, tenantId);
+        // Dormancy counts read last_txn only — no trailing-activity lateral needed.
+        String cte = baseCte(f, tenantId, false);
         String rangeCond = rangeCondition(rangeType);
 
         // Counts come in TWO grains:
@@ -397,14 +439,18 @@ public class ZeroTransactionRepository {
                                                       int page, int size, Long tenantId) {
         requireTenant(tenantId);
         LocalDate anchor = resolveAnchor(tenantId);
-        String cte = baseCte(f, tenantId);
+        // Rows carry trailing activity; the COUNT does not read it, so it runs
+        // against the cheap variant.
+        String cte = baseCte(f, tenantId, true);
+        String cteLite = baseCte(f, tenantId, false);
         boolean bucketed = status != null && !"ALL".equals(status) && !status.isBlank();
         String pred = bucketed ? statusPredicate(status) : rangePredicate(rangeType);
         int safeSize = Math.min(Math.max(size, 1), 1000);
         int offset = Math.max(page, 0) * safeSize;
 
         String rowSql = cte +
-            "SELECT merchant_name, entity_name, aggregator_name, mid, sid, store_name, tid, last_txn " +
+            "SELECT merchant_name, entity_name, aggregator_name, mid, sid, store_name, tid, last_txn, " +
+            "txns30, vol30, active_days30 " +
             "FROM base WHERE 1=1 " + pred +
             " ORDER BY (CASE WHEN last_txn < :cutoff30 THEN 3 WHEN last_txn IS NULL THEN 2 ELSE 1 END) DESC, " +
             " last_txn ASC NULLS LAST, mid ASC, tid ASC LIMIT :size OFFSET :offset";
@@ -415,7 +461,7 @@ public class ZeroTransactionRepository {
         @SuppressWarnings("unchecked")
         List<Object[]> rows = rq.getResultList();
 
-        String countSql = cte + "SELECT COUNT(*) FROM base WHERE 1=1 " + pred;
+        String countSql = cteLite + "SELECT COUNT(*) FROM base WHERE 1=1 " + pred;
         Query cq = entityManager.createNativeQuery(countSql);
         bindCommon(cq, countSql, f, tenantId, anchor);
         long total = num(cq.getSingleResult());
@@ -428,6 +474,127 @@ public class ZeroTransactionRepository {
         out.put("asOf", anchor.toString());
         return out;
     }
+
+    // ============================================================
+    // TERMINAL / POS ESTATE HEALTH
+    // ============================================================
+
+    /**
+     * Estate health over the FULL filtered terminal base — deliberately
+     * range-independent.
+     *
+     * The rest of this report only ever looks at the inactive slice, which
+     * means it can tell you 400 terminals went quiet but never tells you
+     * whether that is 400 out of 500 (the estate is collapsing) or 400 out of
+     * 40,000 (routine churn). Estate health supplies that denominator, plus the
+     * gradient the dormancy view is blind to:
+     *
+     *   ACTIVE   last txn within 7d of the anchor
+     *   IDLE     last txn 7–30d ago   → still recoverable, still carrying volume
+     *   DORMANT  last txn > 30d ago
+     *   NEVER    no txn on record
+     *
+     * On top of that, "utilization" splits ACTIVE terminals by how many of the
+     * trailing 30 days they actually fired on. A terminal that transacted twice
+     * in a month is functionally dead hardware sitting on a merchant counter —
+     * it never appears in a zero-transaction report, and it is exactly the row a
+     * field/estate team wants to visit.
+     *
+     * volumeAtRisk is the trailing-30d volume of the IDLE bucket only. Dormant
+     * and never terminals contribute nothing over that window by definition, so
+     * quoting a figure for them would be fabricated; the honest number is the
+     * volume that is still on the table and still saveable.
+     */
+    public Map<String, Object> getEstateHealth(VolumeRevenueFilterDTO f, Long tenantId) {
+        requireTenant(tenantId);
+        LocalDate anchor = resolveAnchor(tenantId);
+        String cte = baseCte(f, tenantId, true);
+
+        String sql = cte +
+            "SELECT COUNT(*) AS total_t, COUNT(DISTINCT mid) AS total_m, " +
+            "COUNT(*) FILTER (WHERE last_txn >= :cutoff7) AS active_t, " +
+            "COUNT(DISTINCT mid) FILTER (WHERE last_txn >= :cutoff7) AS active_m, " +
+            "COUNT(*) FILTER (WHERE last_txn >= :cutoff30 AND last_txn < :cutoff7) AS idle_t, " +
+            "COUNT(*) FILTER (WHERE last_txn < :cutoff30) AS dormant_t, " +
+            "COUNT(*) FILTER (WHERE last_txn IS NULL) AS never_t, " +
+            // Under-used = still 'active' but fired on 5 or fewer of the last 30 days.
+            "COUNT(*) FILTER (WHERE last_txn >= :cutoff7 AND active_days30 <= 5) AS lowuse_t, " +
+            "COALESCE(SUM(vol30) FILTER (WHERE last_txn >= :cutoff30 AND last_txn < :cutoff7), 0) AS vol_at_risk, " +
+            "COALESCE(SUM(vol30), 0) AS vol_30, COALESCE(SUM(txns30), 0) AS txns_30, " +
+            // Utilization spread across the WHOLE estate (terminal grain).
+            "COUNT(*) FILTER (WHERE active_days30 = 0) AS u0, " +
+            "COUNT(*) FILTER (WHERE active_days30 BETWEEN 1 AND 5) AS u5, " +
+            "COUNT(*) FILTER (WHERE active_days30 BETWEEN 6 AND 15) AS u15, " +
+            "COUNT(*) FILTER (WHERE active_days30 BETWEEN 16 AND 25) AS u25, " +
+            "COUNT(*) FILTER (WHERE active_days30 > 25) AS u30 " +
+            "FROM base";
+        Query q = entityManager.createNativeQuery(sql);
+        bindCommon(q, sql, f, tenantId, anchor);
+        Object[] r = (Object[]) q.getSingleResult();
+
+        long totalT = num(r[0]), activeT = num(r[2]), idleT = num(r[4]);
+        long dormantT = num(r[5]), neverT = num(r[6]), lowUseT = num(r[7]);
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("asOf", anchor.toString());
+        out.put("totalTerminals", totalT);
+        out.put("totalMerchants", num(r[1]));
+        out.put("activeTerminals", activeT);
+        out.put("activeMerchants", num(r[3]));
+        out.put("idleTerminals", idleT);
+        out.put("dormantTerminals", dormantT);
+        out.put("neverTerminals", neverT);
+        out.put("lowUseTerminals", lowUseT);
+        // Estate utilization = share of the estate that transacted in the last 7d.
+        out.put("utilizationPct", totalT == 0 ? 0d : Math.round((activeT * 1000d) / totalT) / 10d);
+        out.put("volumeAtRisk", dec(r[8]));
+        out.put("volume30", dec(r[9]));
+        out.put("txns30", num(r[10]));
+
+        List<Map<String, Object>> util = new ArrayList<>();
+        util.add(bucket("0 days", num(r[11])));
+        util.add(bucket("1–5 days", num(r[12])));
+        util.add(bucket("6–15 days", num(r[13])));
+        util.add(bucket("16–25 days", num(r[14])));
+        util.add(bucket("26–30 days", num(r[15])));
+        out.put("utilization", util);
+
+        // Estate composition, ordered healthiest → worst so the UI bar reads
+        // left-to-right as decay.
+        List<Map<String, Object>> comp = new ArrayList<>();
+        comp.add(bucket("Active", activeT));
+        comp.add(bucket("Idle 7–30d", idleT));
+        comp.add(bucket("Dormant 30d+", dormantT));
+        comp.add(bucket("Never", neverT));
+        out.put("composition", comp);
+
+        // Daily count of distinct transacting terminals across the trailing 30
+        // days — a falling line means the estate is shrinking even while the
+        // headline dormancy counts look flat.
+        String trendSql = cte +
+            "SELECT s.business_date, COUNT(DISTINCT s.terminal_id) AS live_t, " +
+            "COALESCE(SUM(s.total_txns), 0) AS txns " +
+            "FROM sum_daily_terminal s JOIN base b ON b.terminal_key = s.terminal_id " +
+            "WHERE s.tenant_id = :tenantId AND s.business_date > :cutoff30 " +
+            "AND s.business_date <= :anchorDate AND COALESCE(s.total_txns, 0) > 0 " +
+            "GROUP BY s.business_date ORDER BY s.business_date";
+        Query tq = entityManager.createNativeQuery(trendSql);
+        bindCommon(tq, trendSql, f, tenantId, anchor);
+        @SuppressWarnings("unchecked")
+        List<Object[]> trendRows = tq.getResultList();
+        List<Map<String, Object>> trend = new ArrayList<>();
+        for (Object[] tr : trendRows) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("date", String.valueOf(tr[0]));
+            m.put("terminals", num(tr[1]));
+            m.put("txns", num(tr[2]));
+            trend.add(m);
+        }
+        out.put("trend", trend);
+        return out;
+    }
+
+    private double dec(Object o) { return (o instanceof Number n) ? n.doubleValue() : 0d; }
 
     /** daysInactive and status thresholds are relative to the DATA anchor. */
     private List<Map<String, Object>> processResults(List<Object[]> rows, LocalDate anchor) {
@@ -469,6 +636,20 @@ public class ZeroTransactionRepository {
                 } else {
                     map.put("status", "Inactive 7–30");
                 }
+            }
+
+            // [ESTATE HEALTH] Trailing-30d activity, present only on the /page
+            // shape (11 cols). The two legacy list endpoints build their own
+            // 8-column SQL, so guard on length rather than assuming.
+            if (row.length > 10) {
+                long txns30 = num(row[8]);
+                long activeDays = num(row[10]);
+                map.put("txns30", txns30);
+                map.put("volume30", row[9] instanceof Number bn ? bn.doubleValue() : 0d);
+                map.put("activeDays30", activeDays);
+                // Utilization = share of the trailing 30 days on which the
+                // terminal actually transacted. 0 for dead/never terminals.
+                map.put("utilization30", Math.round((activeDays / 30.0) * 1000) / 10.0);
             }
 
             result.add(map);

@@ -1,0 +1,93 @@
+-- ============================================================================
+-- TEMPLATE — country rate-card seed  (NOT a live migration; .txt on purpose so
+-- spring.sql.init never picks it up. Do NOT add this file to schema-locations.)
+--
+-- PURPOSE
+-- -------
+-- After V2026_07_31_02 the interchange engine is COUNTRY-LEVEL: onboarding a new
+-- country (Oman / Bahrain / Egypt / ...) is pure DATA — seed rate rows keyed by
+-- country_code with tenant_id = NULL (country default). No code/schema change.
+--
+-- HOW TO USE
+-- ----------
+-- 1. Copy this file to a real, versioned migration name, e.g.
+-- 	  V2026_08_XX_01__rate_card_oman.sql
+-- 2. Replace the two placeholders throughout:
+-- 	  {{COUNTRY_CODE}}   ISO-3166 alpha-2, must exist in ref_country. OM / BH / EG.
+-- 	  {{CAP_CCY}}        ISO-4217 currency the caps below are denominated in
+-- 	                     (OMR for OM, BHD for BH, EGP for EG). Percentages are
+-- 	                     currency-agnostic; only cap_amount / *_ticket bounds are
+-- 	                     in this currency. NOTE OMR & BHD are 3-decimal (1000
+-- 	                     minor units) — see ref_country.decimal_notation_value.
+-- 3. Fill the VALUES rows with the country's REAL interchange / scheme rates.
+--    The rows below are the UAE ('AE') card, left ONLY as a structural example —
+--    DELETE or overwrite every rate before shipping. Do NOT ship AE numbers for
+--    another country.
+-- 4. Add the new file to spring.sql.init.schema-locations in BOTH
+--    application.properties and application-prod.properties (at the end).
+-- 5. Set each tenant in this country: UPDATE tenant SET home_country_code =
+--    '{{COUNTRY_CODE}}' WHERE ... ;  (defaults to 'AE').
+-- 6. BACKFILL: fees compute at INGEST, so existing rows keep their old fee until
+--    re-ingested. Re-upload / re-pull the affected months for this country's
+--    tenants to recompute interchange + scheme fee off the new card.
+--
+-- IDEMPOTENCY / SPLITTER RULES (keep them):
+--   * NO $$ dollar-quoting anywhere (Spring ScriptUtils splits on ';').
+--   * interchange_rate_local match columns are nullable, so ON CONFLICT can't
+--     make the seed idempotent — guard with NOT EXISTS (country has zero rows).
+--   * scheme_fee_rate / mcc_sector_map keys are keyed via unique indexes that
+--     COALESCE tenant_id/scheme_group — a NOT EXISTS guard is used here too so
+--     the file is safe on whichever unique key the table currently carries.
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. MCC -> sector for this country (country default: tenant_id NULL).
+-- ---------------------------------------------------------------------------
+INSERT INTO mcc_sector_map (tenant_id, country_code, mcc, sector)
+SELECT NULL, '{{COUNTRY_CODE}}', v.mcc, v.sector
+FROM (VALUES
+    -- ('8211','Edu'), ('5541','Gas'), ('9211','Govt'), ...  <-- REAL rows here
+    ('0000','_REPLACE_ME_')
+) AS v(mcc, sector)
+WHERE NOT EXISTS (
+    SELECT 1 FROM mcc_sector_map x WHERE x.country_code = '{{COUNTRY_CODE}}' AND x.tenant_id IS NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- 2. Scheme fee grid (dest x channel x scheme_group; scheme_group NULL = any).
+-- ---------------------------------------------------------------------------
+INSERT INTO scheme_fee_rate (tenant_id, country_code, dest, channel, scheme_group, fee_pct)
+SELECT NULL, '{{COUNTRY_CODE}}', v.dest, v.channel, v.scheme_group, v.fee_pct
+FROM (VALUES
+    -- ('DOMESTIC','POS','Visa', 0.001100), ('INTERNATIONAL','ECOM',NULL,0.009000), ...
+    ('DOMESTIC','POS', CAST(NULL AS VARCHAR), CAST(0.0 AS NUMERIC))   -- <-- REAL rows here
+) AS v(dest, channel, scheme_group, fee_pct)
+WHERE NOT EXISTS (
+    SELECT 1 FROM scheme_fee_rate x WHERE x.country_code = '{{COUNTRY_CODE}}' AND x.tenant_id IS NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- 3. Interchange rate card (priority DESC wins; NULL match column = wildcard).
+--    cap_amount / min_ticket / max_ticket are in {{CAP_CCY}}. Set
+--    cap_currency_code = '{{CAP_CCY}}'.
+-- ---------------------------------------------------------------------------
+INSERT INTO interchange_rate_local
+    (tenant_id, country_code, cap_currency_code, priority, dest, channel, scheme_group,
+     card_type, tier, mcc_sector, mcc, min_ticket, max_ticket,
+     interchange_pct, cap_amount, label)
+SELECT NULL, '{{COUNTRY_CODE}}', '{{CAP_CCY}}', v.priority, v.dest, v.channel, v.scheme_group,
+       v.card_type, v.tier, v.mcc_sector, v.mcc,
+       v.min_ticket::numeric, v.max_ticket::numeric, v.interchange_pct::numeric, v.cap_amount::numeric, v.label
+FROM (VALUES
+    -- priority, dest, channel, scheme_group, card_type, tier, mcc_sector, mcc, min_ticket, max_ticket, interchange_pct, cap_amount, label
+    (1, 'INTERNATIONAL', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0.018500, NULL, 'Intl flat 1.85 (REPLACE)')
+    -- , (10,'DOMESTIC',NULL,'Visa','CREDIT','Standard',NULL,NULL,NULL,NULL, 0.011500, NULL, 'Local Visa Std')
+    -- , ... REAL rows here
+) AS v(priority, dest, channel, scheme_group, card_type, tier, mcc_sector, mcc,
+       min_ticket, max_ticket, interchange_pct, cap_amount, label)
+WHERE NOT EXISTS (
+    SELECT 1 FROM interchange_rate_local x WHERE x.country_code = '{{COUNTRY_CODE}}' AND x.tenant_id IS NULL
+);
+
+-- Optional run-once log entry (rename to match the real migration filename):
+-- INSERT INTO schema_migration_log (filename) VALUES ('V2026_08_XX_01__rate_card_{{COUNTRY_CODE}}.sql') ON CONFLICT (filename) DO NOTHING;

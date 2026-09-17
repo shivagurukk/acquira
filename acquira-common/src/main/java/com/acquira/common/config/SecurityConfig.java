@@ -63,6 +63,16 @@ public class SecurityConfig {
                         .requestMatchers("/api/external/**").permitAll()  // External API — uses X-API-Key auth
                         .requestMatchers("/api/v1/**").permitAll()         // External Data API v1 — X-API-Key auth (ApiKeyAuthFilter)
 
+                        // Health probes (k8s liveness/readiness). Only health is
+                        // exposed via management.endpoints; details are hidden.
+                        .requestMatchers("/actuator/health/**", "/actuator/health").permitAll()
+
+                        // Generated OpenAPI + Swagger UI. Gated by
+                        // springdoc.api-docs.enabled (prod default OFF -> 404);
+                        // when enabled the docs are deliberately public — they
+                        // describe shapes, never data.
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+
                         // Admin endpoints — require ADMIN or SUPER_ADMIN
                         .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
 

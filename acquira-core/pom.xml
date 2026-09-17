@@ -28,6 +28,12 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>apache-client</artifactId>
         </dependency>
+        <!-- Health/liveness/readiness for k8s probes and ops tooling.
+             Only health+info are exposed (see application.properties). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
     </dependencies>
     <build>
         <plugins>

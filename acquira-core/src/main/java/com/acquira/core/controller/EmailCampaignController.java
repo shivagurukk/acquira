@@ -20,6 +20,11 @@ import java.util.*;
 @RequestMapping("/api/email-campaigns")
 @RequiredArgsConstructor
 @Slf4j
+// SECURITY: creates/launches marketing campaigns that email the tenant's
+// merchants from its SMTP identity, and exposes templates and send logs.
+// Restricted to admins — previously any authenticated user could list/create/
+// launch campaigns (confirmed reachable by ROLE_USER).
+@org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
 public class EmailCampaignController {
 
     private final EmailTemplateConfigRepository templateRepo;
@@ -234,7 +239,7 @@ public class EmailCampaignController {
         if (!owned) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(campaignLogRepo.findByCampaignIdOrderBySentAtDesc(id, PageRequest.of(page, size)));
+        return ResponseEntity.ok(campaignLogRepo.findByTenantIdAndCampaignIdOrderBySentAtDesc(tenantId, id, PageRequest.of(page, size)));
     }
 
     @GetMapping("/campaigns/{id}/stats")
