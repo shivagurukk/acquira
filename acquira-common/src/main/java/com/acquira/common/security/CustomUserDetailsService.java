@@ -1,6 +1,5 @@
 package com.acquira.common.security;
 
-import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -54,6 +53,8 @@ public class CustomUserDetailsService implements UserDetailsService {
         List<org.springframework.security.core.GrantedAuthority> authorities = AuthorityUtils
                 .createAuthorityList(roles.toArray(new String[0]));
 
-        return new User(user.getUsername(), user.getPassword(), authorities);
+        // Carry the loaded entities so JwtRequestFilter doesn't repeat these
+        // two queries on every request (was 4 DB hits/request, 2 duplicated).
+        return new AcquiraUserDetails(user, accessList, authorities);
     }
 }

@@ -121,7 +121,11 @@ public class JwtRequestFilter extends OncePerRequestFilter {
             if (jwtUtil.validateToken(jwt, userDetails)) {
 
                 // ===== SECURITY FIX: Check if user is still active =====
-                User dbUser = userRepository.findByUsername(username).orElse(null);
+                // Reuse the entity CustomUserDetailsService just loaded instead of
+                // re-running findByUsername — this filter runs on EVERY request.
+                User dbUser = (userDetails instanceof AcquiraUserDetails aud)
+                        ? aud.getDomainUser()
+                        : userRepository.findByUsername(username).orElse(null);
                 if (dbUser == null || !dbUser.isActive()) {
                     logger.warn("Rejected token for inactive/deleted user: " + username);
                     chain.doFilter(request, response);
@@ -172,7 +176,11 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
                 // ===== Tenant Context Resolution (with validation) =====
                 try {
-                    List<UserTenantAccess> accessList = userTenantAccessRepository.findByUser(dbUser);
+                    // Same dedupe as above: the access list was loaded once in
+                    // CustomUserDetailsService — don't query it a second time.
+                    List<UserTenantAccess> accessList = (userDetails instanceof AcquiraUserDetails aud)
+                            ? aud.getTenantAccess()
+                            : userTenantAccessRepository.findByUser(dbUser);
 
                     // Super Admin can access ANY tenant without explicit UserTenantAccess rows
                     boolean isSuperAdmin = "ROLE_SUPER_ADMIN".equals(dbUser.getRole());
