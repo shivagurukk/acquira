@@ -25,7 +25,11 @@ import org.springframework.transaction.PlatformTransactionManager;
  * Server File Processor, scheduled pull), decision 2026-08-31.
  *
  * File shape (header-name mapped, order-independent):
- *   SID, Tenant Id, Merchant Share, Acquirer Share, Date
+ *   SID, Tenant Id, Merchant Share, Acquirer Share, Date        (store level)
+ *   MID, Tenant Id, Acquirer Share [, Merchant Share], Date     (merchant level)
+ * A row resolves by SID when present, else by MID (leading zeros ignored —
+ * feed MIDs are zero-padded); MID rows land with store_id/sid NULL, which is
+ * all the summary layer needs since AncillarySql rolls up per merchant.
  * Amounts are tenant base currency, MAJOR units. The "Tenant Id" column
  * (bank short code, institution id, or numeric tenant id) is VALIDATED
  * against the tenant the upload resolved to — a mismatched row is REJECTED;
@@ -78,6 +82,7 @@ public class DccRevenueJobConfig {
     public static class DccRow {
         Long tenantId;
         String sid;
+        String mid;
         String fileTenantId;
         java.math.BigDecimal merchantShare;
         java.math.BigDecimal acquirerShare;
@@ -168,6 +173,9 @@ public class DccRevenueJobConfig {
         reader.setRowMapper((row, rowNum) -> {
             DccRow r = new DccRow();
             r.sid = MerchantMasterJobConfig.normalizeSid(reader.getCellValue(row, "SID"));
+            String mid = reader.getCellValue(row, "MID");
+            if (mid == null || mid.trim().isEmpty()) mid = reader.getCellValue(row, "Merchant Id");
+            r.mid = MerchantMasterJobConfig.normalizeSid(mid);
             r.fileTenantId = reader.getCellValue(row, "Tenant Id");
             r.merchantShare = parseDecimal(reader.getCellValue(row, "Merchant Share"));
             r.acquirerShare = parseDecimal(reader.getCellValue(row, "Acquirer Share"));
@@ -182,6 +190,9 @@ public class DccRevenueJobConfig {
             ExcelItemReader<DccRow> rr = (ExcelItemReader<DccRow>) rd;
             DccRow r = new DccRow();
             r.sid = MerchantMasterJobConfig.normalizeSid(rr.getCsvCellValue("SID"));
+            String mid = rr.getCsvCellValue("MID");
+            if (mid == null || mid.trim().isEmpty()) mid = rr.getCsvCellValue("Merchant Id");
+            r.mid = MerchantMasterJobConfig.normalizeSid(mid);
             r.fileTenantId = rr.getCsvCellValue("Tenant Id");
             r.merchantShare = parseDecimal(rr.getCsvCellValue("Merchant Share"));
             r.acquirerShare = parseDecimal(rr.getCsvCellValue("Acquirer Share"));
@@ -217,8 +228,8 @@ public class DccRevenueJobConfig {
     @Bean
     public ItemWriter<DccRow> dccWriter() {
         final String sqlPrefix = "INSERT INTO stg_dcc_revenue_raw "
-                + "(tenant_id, sid, file_tenant_id, merchant_share, acquirer_share, payment_date, load_time) VALUES ";
-        final String onePh = "(?,?,?,?,?,?,CURRENT_TIMESTAMP)";
+                + "(tenant_id, sid, mid, file_tenant_id, merchant_share, acquirer_share, payment_date, load_time) VALUES ";
+        final String onePh = "(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)";
         return chunk -> {
             java.util.List<? extends DccRow> items = chunk.getItems();
             if (items.isEmpty()) return;
@@ -233,6 +244,7 @@ public class DccRevenueJobConfig {
                 for (DccRow r : items) {
                     ps.setObject(p++, r.tenantId, java.sql.Types.INTEGER);
                     ps.setString(p++, trunc(r.sid, 50));
+                    ps.setString(p++, trunc(r.mid, 50));
                     ps.setString(p++, trunc(r.fileTenantId, 50));
                     ps.setBigDecimal(p++, r.merchantShare);
                     ps.setBigDecimal(p++, r.acquirerShare);
@@ -266,11 +278,12 @@ public class DccRevenueJobConfig {
         return (contribution, chunkContext) -> {
             long t0 = System.currentTimeMillis();
 
-            // 1. Reject rows that can never apply.
+            // 1. Reject rows that can never apply. A row needs SID or MID —
+            //    SID wins when both are present (a MID-level file has no SID).
             int rejMissing = jdbcTemplate.update(
                 "UPDATE stg_dcc_revenue_raw SET status='REJECTED', "
-                + "error_message='Missing SID, share amount or date' "
-                + "WHERE tenant_id=? AND status='PENDING' AND (sid IS NULL "
+                + "error_message='Missing SID/MID, share amount or date' "
+                + "WHERE tenant_id=? AND status='PENDING' AND ((sid IS NULL AND mid IS NULL) "
                 + "OR (merchant_share IS NULL AND acquirer_share IS NULL) OR payment_date IS NULL)",
                 tenantId);
 
@@ -298,8 +311,18 @@ public class DccRevenueJobConfig {
             int unmatched = jdbcTemplate.update(
                 "UPDATE stg_dcc_revenue_raw r SET status='UNMATCHED', "
                 + "error_message='SID not found in dim_store' "
-                + "WHERE r.tenant_id=? AND r.status='PENDING' "
+                + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.sid IS NOT NULL "
                 + "AND NOT EXISTS (SELECT 1 FROM dim_store d WHERE d.tenant_id=r.tenant_id AND d.sid=r.sid)",
+                tenantId);
+
+            //    MID rows resolve against dim_merchant instead; leading zeros
+            //    are ignored on both sides (feed MIDs are zero-padded).
+            int unmatchedMid = jdbcTemplate.update(
+                "UPDATE stg_dcc_revenue_raw r SET status='UNMATCHED', "
+                + "error_message='MID not found in dim_merchant' "
+                + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.sid IS NULL "
+                + "AND NOT EXISTS (SELECT 1 FROM dim_merchant m WHERE m.tenant_id=r.tenant_id "
+                + "  AND LTRIM(m.mid, '0') = LTRIM(r.mid, '0'))",
                 tenantId);
 
             // 4. REPLACE-BY-DATE: wipe this tenant's fact rows for exactly the
@@ -312,16 +335,33 @@ public class DccRevenueJobConfig {
                 + "WHERE tenant_id=? AND status='PENDING')",
                 tenantId, tenantId);
 
-            // 5. Apply — resolve SID -> dim_store, denormalize merchant_id so
-            //    merchant rollups never join at read time.
+            // 5. Apply — SID rows resolve via dim_store (denormalizing
+            //    merchant_id so merchant rollups never join at read time).
             int inserted = jdbcTemplate.update(
                 "INSERT INTO fact_dcc_revenue (tenant_id, merchant_id, store_id, sid, "
                 + "merchant_share, acquirer_share, payment_date) "
                 + "SELECT r.tenant_id, s.merchant_id, s.store_id, r.sid, "
                 + "COALESCE(r.merchant_share,0), COALESCE(r.acquirer_share,0), r.payment_date "
                 + "FROM stg_dcc_revenue_raw r JOIN dim_store s ON s.tenant_id=r.tenant_id AND s.sid=r.sid "
-                + "WHERE r.tenant_id=? AND r.status='PENDING'",
+                + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.sid IS NOT NULL",
                 tenantId);
+
+            //    MID rows resolve via dim_merchant, store_id/sid stay NULL.
+            //    dim_merchant can carry duplicate MID rows (re-uploaded
+            //    masters), so pick one merchant_id per normalized MID —
+            //    MIN() keeps the apply deterministic and single-row.
+            int insertedMid = jdbcTemplate.update(
+                "INSERT INTO fact_dcc_revenue (tenant_id, merchant_id, store_id, sid, "
+                + "merchant_share, acquirer_share, payment_date) "
+                + "SELECT r.tenant_id, mm.merchant_id, NULL, NULL, "
+                + "COALESCE(r.merchant_share,0), COALESCE(r.acquirer_share,0), r.payment_date "
+                + "FROM stg_dcc_revenue_raw r JOIN ("
+                + "  SELECT LTRIM(mid, '0') AS mid_key, MIN(merchant_id) AS merchant_id "
+                + "  FROM dim_merchant WHERE tenant_id=? GROUP BY LTRIM(mid, '0')"
+                + ") mm ON mm.mid_key = LTRIM(r.mid, '0') "
+                + "WHERE r.tenant_id=? AND r.status='PENDING' AND r.sid IS NULL",
+                tenantId, tenantId);
+            inserted += insertedMid;
 
             // Collect the touched dates BEFORE flipping status, then mark done.
             java.util.List<java.time.LocalDate> dates = jdbcTemplate.query(
@@ -339,10 +379,12 @@ public class DccRevenueJobConfig {
             //    design — replace is per uploaded date, not per file history).
             com.acquira.common.service.AncillarySql.applyDates(jdbcTemplate, tenantId, dates);
 
-            log.info("[DCC] Tenant {} apply: {} fact rows inserted over {} date(s) ({} prior rows wiped), "
-                    + "{} processed, {} unmatched, {} rejected ({} tenant-mismatch) in {} ms",
-                    tenantId, inserted, dates.size(), wiped,
-                    processed, unmatched, rejMissing + rejTenant, rejTenant,
+            log.info("[DCC] Tenant {} apply: {} fact rows inserted ({} MID-level) over {} date(s) "
+                    + "({} prior rows wiped), {} processed, {} unmatched ({} MID), "
+                    + "{} rejected ({} tenant-mismatch) in {} ms",
+                    tenantId, inserted, insertedMid, dates.size(), wiped,
+                    processed, unmatched + unmatchedMid, unmatchedMid,
+                    rejMissing + rejTenant, rejTenant,
                     System.currentTimeMillis() - t0);
             return RepeatStatus.FINISHED;
         };

@@ -903,15 +903,16 @@ public class IntegrationPullService {
 
     private static final String DCC_STAGING_INSERT = """
             INSERT INTO stg_dcc_revenue_raw (
-                tenant_id, sid, file_tenant_id, merchant_share, acquirer_share, payment_date, load_time
-            ) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                tenant_id, sid, mid, file_tenant_id, merchant_share, acquirer_share, payment_date, load_time
+            ) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         """;
 
     /**
      * Maps one source row to stg_dcc_revenue_raw insert args; null = skipped.
-     * Mapped staging fields: sid, merchant_share, acquirer_share, payment_date
-     * (file_tenant_id optional — validated, never used for routing). The apply
-     * step (DccRevenueJobConfig.applyDccTasklet) then does the same validation
+     * Mapped staging fields: sid OR mid (store- vs merchant-level feed),
+     * merchant_share, acquirer_share, payment_date (file_tenant_id optional —
+     * validated, never used for routing). The apply step
+     * (DccRevenueJobConfig.applyDccTasklet) then does the same validation
      * and replace-by-date apply as the file path.
      */
     private Object[] mapDccArgs(Map<String, Object> row, Map<String, String> columnMap,
@@ -927,6 +928,7 @@ public class IntegrationPullService {
             return new Object[]{
                 tenantId,
                 str(getMapped(row, columnMap, "sid")),
+                str(getMapped(row, columnMap, "mid")),
                 str(getMapped(row, columnMap, "file_tenant_id")),
                 merchantShare,
                 acquirerShare,

@@ -355,7 +355,9 @@ public class NetSpreadController {
             + "FROM fact_dcc_revenue WHERE tenant_id = ?", tenantId);
 
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-            "SELECT raw_id, status, error_message, sid, file_tenant_id, "
+            // COALESCE keeps the exception grid's SID column meaningful for
+            // MID-level files (their rows have no SID).
+            "SELECT raw_id, status, error_message, COALESCE(sid, mid) AS sid, mid, file_tenant_id, "
             + "merchant_share, acquirer_share, payment_date, load_time "
             + "FROM stg_dcc_revenue_raw WHERE tenant_id = ? AND status IN ('REJECTED','UNMATCHED') "
             + "ORDER BY status, raw_id LIMIT 500", tenantId);

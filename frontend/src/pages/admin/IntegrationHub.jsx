@@ -1024,7 +1024,7 @@ const ReportsTab = () => {
                     : form.reportType === 'RENTAL'
                       ? 'SELECT mid, sid, tid, rental_amount, payment_date\nFROM rentals WHERE payment_date BETWEEN :dateFrom AND :dateTo'
                       : form.reportType === 'DCC'
-                        ? 'SELECT sid, merchant_share, acquirer_share, payment_date\nFROM dcc_revenue WHERE payment_date BETWEEN :dateFrom AND :dateTo'
+                        ? 'SELECT sid, merchant_share, acquirer_share, payment_date\nFROM dcc_revenue WHERE payment_date BETWEEN :dateFrom AND :dateTo\n-- merchant-level source: SELECT mid instead of sid'
                         : 'SELECT mid, merchant_name, payment_date, txn_currency_amount, card_scheme, ...\nFROM transactions WHERE payment_date BETWEEN :dateFrom AND :dateTo'}
                 />
               </FormField>
