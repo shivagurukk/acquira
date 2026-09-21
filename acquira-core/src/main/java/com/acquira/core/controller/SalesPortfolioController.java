@@ -274,8 +274,9 @@ public class SalesPortfolioController {
                 : "0";
         String sql = "SELECT m.sales_user_id AS agent,"
             + " COUNT(*) AS merchant_count,"
-            + " COUNT(*) FILTER (WHERE UPPER(COALESCE(m.status, '')) = 'ACTIVE') AS active_merchants,"
-            + " COUNT(*) FILTER (WHERE UPPER(COALESCE(m.status, '')) <> 'ACTIVE') AS inactive_merchants,"
+            // Status vocabulary differs per feed: BH sends Open/Closed, others Active.
+            + " COUNT(*) FILTER (WHERE UPPER(COALESCE(m.status, '')) IN ('ACTIVE','OPEN','LIVE','ENABLED')) AS active_merchants,"
+            + " COUNT(*) FILTER (WHERE UPPER(COALESCE(m.status, '')) NOT IN ('ACTIVE','OPEN','LIVE','ENABLED')) AS inactive_merchants,"
             + " " + newExpr + " AS new_merchants"
             + " FROM dim_merchant m"
             + " WHERE m.tenant_id = ? AND m.sales_user_id IS NOT NULL AND m.sales_user_id <> ''"

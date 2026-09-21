@@ -29,6 +29,8 @@ const fmt = (v) => v == null ? '—' : Number(v).toLocaleString('en-US', { maxim
 // fmtM renders MONEY — it now carries the tenant currency and the tenant's
 // decimal precision (3dp for BHD) instead of a bare, unlabelled number.
 const fmtM = (v) => formatCompactCurrency(v);
+// Status vocabulary differs per feed: BH sends Open/Closed, others Active.
+const ACTIVE_STATUSES = new Set(['ACTIVE', 'OPEN', 'LIVE', 'ENABLED']);
 const fmtDate = (v) => {
   if (!v) return '—';
   const d = new Date(v);
@@ -283,8 +285,8 @@ function AgentDrillDown({ agent, range, channel, onClose }) {
                   <td style={td}>
                     <span style={{
                       padding: '2px 8px', borderRadius: 11, fontSize: 11, fontWeight: 600,
-                      background: String(m.status).toUpperCase() === 'ACTIVE' ? T.successBg : T.subtle,
-                      color: String(m.status).toUpperCase() === 'ACTIVE' ? T.successTx : T.textMut,
+                      background: ACTIVE_STATUSES.has(String(m.status).toUpperCase()) ? T.successBg : T.subtle,
+                      color: ACTIVE_STATUSES.has(String(m.status).toUpperCase()) ? T.successTx : T.textMut,
                     }}>{m.status || 'UNKNOWN'}</span>
                   </td>
                   <td style={{ ...td, color: T.textSec }}>{fmtDate(m.assigned_date)}</td>
