@@ -104,6 +104,14 @@ public class EmailQueueProcessor {
         this.cryptoService = cryptoService;
     }
 
+    /**
+     * Tenant on/off switch — LAST LINE OF DEFENSE for outbound mail: rows
+     * queued before a tenant was deactivated must not be delivered after.
+     * Field injection to leave the two-arg constructor (and its tests) alone.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.acquira.common.service.TenantStatusService tenantStatusService;
+
     @Scheduled(fixedDelay = POLL_INTERVAL_MS)
     public void processQueue() {
         List<Map<String, Object>> pending;
@@ -172,6 +180,16 @@ public class EmailQueueProcessor {
                 ? ((Number) row.get("tenant_id")).longValue() : null;
 
         try {
+            // TENANT OFF-SWITCH: fail the row terminally (no retries) — a
+            // deactivated tenant's queued statements must never go out, and
+            // leaving them PENDING would just re-select them every cycle.
+            if (tenantStatusService != null && tenantStatusService.isInactive(tenantId)) {
+                jdbc.update("UPDATE email_queue SET status = 'FAILED', error_message = ? WHERE id = ?",
+                        "Tenant " + tenantId + " is not active — sending suppressed", id);
+                log.info("[EMAIL-QUEUE] Row {} suppressed — tenant {} is not active", id, tenantId);
+                return false;
+            }
+
             SmtpContext smtp = resolveSender(senderCache, tenantId);
             if (smtp == null) {
                 // No SMTP configured for this tenant — fail the row with a clear reason.

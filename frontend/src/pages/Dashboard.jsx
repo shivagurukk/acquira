@@ -10,11 +10,17 @@ import {
     Tooltip as ReTooltip, ResponsiveContainer, ReferenceLine, Cell,
     BarChart, ComposedChart, Legend,
 } from 'recharts';
+import ChannelToggle from '../components/ChannelToggle';
+import MidSidSummary from '../components/MidSidSummary';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import ChartGradients from '../components/ChartGradients';
+import MarginGlossaryHint from '../components/MarginGlossary';
 import { useAuth } from '../contexts/AuthContext';
-import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
+import {
+    createFmt, formatMsf, resolveDecimals,
+    isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
+} from '../utils/formatters';
 import {
     SERIES, GRID_PROPS, AXIS_PROPS, LEGEND_PROPS, ANIM, gradientId,
 } from '../theme/chartPalette';
@@ -53,10 +59,10 @@ const num = (v) => (v == null ? 0 : Number(v));
 /* ─── Chart palette ───
    Colours come from theme/chartPalette (the shared blue system) as CSS custom
    properties, so both schemes are handled by the stylesheet and no mode flag
-   is needed here. The Cost & Margin Mix stack gives every segment its own
-   hue (validated as a categorical set), so identity survives any stacking
-   order — but keep the costs at the base and margin on top: the green cap
-   is the "what we keep" read the panel is built around. */
+   is needed here. The Cost & Margin Mix stack is a monochrome blue ramp —
+   deep navy at the base rising to a light cap — so keep the costs at the
+   base and margin on top: the light-blue cap is the "what we keep" read
+   the panel is built around. */
 const C = {
     volume:      SERIES.volume,
     marginPct:   SERIES.marginPct,
@@ -83,8 +89,9 @@ const deltaPct = (cur, prev) => {
    third of a Bahraini fils figure. Without a symbol it is a count. */
 const fullNum = (v, sym = '') => {
     if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    const d = resolveDecimals();
-    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+    // Executive display-currency toggle: convert + relabel when USD is active.
+    const d = isUsdDisplay(sym) ? 2 : resolveDecimals();
+    return displayCurrencyCode(sym) + ' ' + convertForDisplay(v, sym).toLocaleString('en-US',
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
@@ -200,7 +207,7 @@ const useCountUp = (target, duration = 900) => {
    count up on load; `sparkId` keys the gradient because `accent` is now a
    CSS custom property, not a hex. */
 const HeroTile = ({ label, raw, format, fullValue, deltaPct: dp, deltaSuffix, compareLabel, invertDelta,
-    icon: Icon, accent, spark, sparkId, sub, index = 0 }) => {
+    icon: Icon, accent, spark, sparkId, sub, secondary, index = 0 }) => {
     const shown = useCountUp(raw);
     return (
         <div className="dx-card dx-edge dx-rise hero-tile"
@@ -225,6 +232,16 @@ const HeroTile = ({ label, raw, format, fullValue, deltaPct: dp, deltaSuffix, co
                 lineHeight: 1.05, letterSpacing: '-0.02em', position: 'relative',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>{format(shown)}</div>
+            {/* Optional second reading under the headline (e.g. Net Spread beneath
+                Net Margin) — keeps the hero at four tiles instead of orphaning a
+                fifth on the next row at laptop widths. */}
+            {secondary && (
+                <div style={{ marginTop: -2, fontSize: 12.5, color: 'var(--text-secondary)',
+                    fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {secondary}
+                </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, position: 'relative' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 38, justifyContent: 'flex-end' }}>
                     <DeltaChip pct={dp} compareLabel={compareLabel} invert={invertDelta} suffix={deltaSuffix} />
@@ -298,7 +315,7 @@ const GLASS_TOOLTIP = {
     fontSize: 12.5, color: 'var(--text)', minWidth: 210,
 };
 
-const BucketTooltip = ({ active, payload, label, fmt }) => {
+const BucketTooltip = ({ active, payload, label, fmt, fxEnabled = false }) => {
     if (!active || !payload || !payload.length) return null;
     const d = payload[0].payload;
     return (
@@ -316,6 +333,10 @@ const BucketTooltip = ({ active, payload, label, fmt }) => {
                 ['PG Fee', fmt.currency(d.ecomFee)],
                 ['Net Margin', fmt.currency(d.netRevenue)],
                 ['Net Margin %', `${num(d.marginPct).toFixed(2)}%`],
+                ['DCC (Acquirer)', fmt.currency(d.dccAcquirer)],
+                ['Rental', fmt.currency(d.rental)],
+                ...(fxEnabled ? [['FX Income', fmt.currency(d.fx)]] : []),
+                ['Net Spread', fmt.currency(d.netSpread)],
             ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, padding: '1.5px 0' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>{k}</span>
@@ -373,6 +394,8 @@ const Dashboard = () => {
     const fmt = useMemo(() => createFmt(currencySymbol, currencyDecimals), [currencySymbol, currencyDecimals]);
 
     const [mode, setMode] = useState('MTD');
+    // POS / ECOM / All channel scope (ChannelToggle; ChannelSql server-side).
+    const [channel, setChannel] = useState('ALL');
     // Bucket-range filter (client-side): indices into the loaded buckets.
     // to === -1 means "through the last bucket".
     const [range, setRange] = useState({ from: 0, to: -1 });
@@ -383,17 +406,25 @@ const Dashboard = () => {
     const load = useCallback(async () => {
         setLoading(true); setError(null);
         try {
-            const res = await api.get('/business/ceo-summary');
+            const res = await api.get('/business/ceo-summary', { params: { channel } });
             setData(res.data);
         } catch (e) {
             setError(e?.response?.data?.message || 'Failed to load summary');
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [channel]);
 
     useEffect(() => { load(); }, [load, tenantVersion]);
+    // A POS/ECOM scope must never silently carry over to another bank, and
+    // neither must the previous bank's figures — drop them so the skeleton
+    // shows, not stale numbers.
+    useEffect(() => { setChannel('ALL'); setData(null); }, [tenantVersion]);
     useEffect(() => { setRange({ from: 0, to: -1 }); }, [mode, data]);
+
+    /* ECOM FX income (tenant flag netspread.fx_enabled) — when off, the FX
+       tile/rows don't render and the backend spread excludes fx. */
+    const fxEnabled = !!data?.fxEnabled;
 
     const period = mode === 'MTD' ? data?.mtd
         : mode === 'LAST_YEAR' ? data?.lastYear
@@ -417,6 +448,15 @@ const Dashboard = () => {
         schemeFee: num(b.schemeFee),
         ecomFee: num(b.ecomFee),
         netRevenue: num(b.netRevenue),
+        // Net Spread = net margin + DCC acquirer share + rental (server-derived;
+        // an older payload without the fields simply reads 0 / = net margin).
+        dccAcquirer: num(b.dccAcquirer),
+        rental: num(b.rental),
+        // ECOM FX income — only present when the tenant flag is on; the
+        // server already folds it into netSpread in that case.
+        fx: num(b.fx),
+        netSpread: b.netSpread != null ? num(b.netSpread) : num(b.netRevenue) + num(b.dccAcquirer) + num(b.rental),
+        spreadPct: num(b.spreadPct),
         avgTicket: num(b.avgTicket),
         marginPct: num(b.marginPct),
         txns: num(b.txns),
@@ -430,6 +470,14 @@ const Dashboard = () => {
     const viewData = useMemo(
         () => chartData.slice(fromIdx, toIdx + 1),
         [chartData, fromIdx, toIdx]);
+
+    // Window for the shared MID/SID strip: date bounds of the visible buckets
+    // (each week/month bucket carries its own from/to), so the counts track the
+    // MTD/YTD mode and the client-side bucket-range filter exactly.
+    const midSidWindow = useMemo(() => {
+        if (!viewData.length) return { from: undefined, to: undefined };
+        return { from: viewData[0].from, to: viewData[viewData.length - 1].to };
+    }, [viewData]);
 
     const [bestIdx, worstIdx] = useMemo(() => {
         let bi = -1, wi = -1, bv = -Infinity, wv = Infinity;
@@ -449,11 +497,16 @@ const Dashboard = () => {
             txns: a.txns + b.txns, volume: a.volume + b.volume, msf: a.msf + b.msf,
             interchange: a.interchange + b.interchange, schemeFee: a.schemeFee + b.schemeFee,
             ecomFee: a.ecomFee + b.ecomFee, netRevenue: a.netRevenue + b.netRevenue,
-        }), { txns: 0, volume: 0, msf: 0, interchange: 0, schemeFee: 0, ecomFee: 0, netRevenue: 0 });
+            dccAcquirer: a.dccAcquirer + b.dccAcquirer, rental: a.rental + b.rental,
+            fx: a.fx + b.fx,
+            netSpread: a.netSpread + b.netSpread,
+        }), { txns: 0, volume: 0, msf: 0, interchange: 0, schemeFee: 0, ecomFee: 0, netRevenue: 0,
+              dccAcquirer: 0, rental: 0, fx: 0, netSpread: 0 });
         return {
             ...t,
             avgTicket: safeDiv(t.volume, t.txns),
             marginPct: safeDiv(t.netRevenue, t.volume) * 100,
+            spreadPct: safeDiv(t.netSpread, t.volume) * 100,
         };
     }, [isFiltered, totals, viewData]);
 
@@ -495,6 +548,7 @@ const Dashboard = () => {
     const sparks = useMemo(() => ({
         volume: viewData.map(b => b.volume),
         netRevenue: viewData.map(b => b.netRevenue),
+        netSpread: viewData.map(b => b.netSpread),
         marginPct: viewData.map(b => b.marginPct),
         txns: viewData.map(b => b.txns),
     }), [viewData]);
@@ -513,26 +567,36 @@ const Dashboard = () => {
         lines.push(['Executive Summary', modeLabel].map(esc).join(','));
         lines.push(['Period', period?.label || ''].map(esc).join(','));
         if (data?.effectiveDate) lines.push(['Through', data.effectiveDate].map(esc).join(','));
+        if (channel !== 'ALL') lines.push(['Channel', channel].map(esc).join(','));
         if (isFiltered && viewData.length) lines.push(['Filter', `${viewData[0].label} to ${viewData[viewData.length - 1].label}`].map(esc).join(','));
-        lines.push(['Currency', currencyCode || currencySymbol || 'UNKNOWN'].map(esc).join(','));
+        lines.push(['Currency', displayCurrencyCode(currencyCode) || currencySymbol || 'UNKNOWN'].map(esc).join(','));
+        // When the executive USD toggle is on, money cells below are converted
+        // and the file states the indicative rate used.
+        const fx = usdRateInfo(currencyCode);
+        if (fx) lines.push(['FX Rate', `1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`].map(esc).join(','));
         lines.push('');
         // Money columns are written at the tenant's precision (3dp for BHD), not
         // a hardcoded 2dp; MSF keeps its reconciliation digits. Percentages below
-        // are unaffected.
-        const dp = resolveDecimals(currencyDecimals, currencyCode);
+        // are unaffected (ratios are currency-invariant).
+        const dp = isUsdDisplay(currencyCode) ? 2 : resolveDecimals(currencyDecimals, currencyCode);
         const msfDp = Math.max(4, dp);
+        const cv = (v) => convertForDisplay(num(v), currencyCode);
         const heads = [mode === 'MTD' ? 'Week' : 'Month', 'Transactions', 'Volume', 'Avg Ticket',
             'MSF', 'Interchange', 'Interchange % Vol', 'Scheme Fee', 'Scheme % Vol',
-            'PG Fee', 'Net Margin', 'Net Margin %'];
+            'PG Fee', 'Net Margin', 'Net Margin %', 'DCC (Acquirer)', 'Rental',
+            ...(fxEnabled ? ['FX Income'] : []), 'Net Spread', 'Net Spread %'];
         lines.push(heads.map(esc).join(','));
         // Rate columns mirror the on-screen table; exported at 4dp because a
         // spreadsheet has no tooltip to fall back on.
         const rate = (fee, volume) => (num(volume) === 0 ? '' : (safeDiv(fee, volume) * 100).toFixed(4));
-        const row = (label, b) => [label, num(b.txns), num(b.volume).toFixed(dp), num(b.avgTicket).toFixed(dp),
-            num(b.msf).toFixed(msfDp), num(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
-            num(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
-            num(b.ecomFee).toFixed(dp),
-            num(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2)]
+        const row = (label, b) => [label, num(b.txns), cv(b.volume).toFixed(dp), cv(b.avgTicket).toFixed(dp),
+            cv(b.msf).toFixed(msfDp), cv(b.interchange).toFixed(dp), rate(b.interchange, b.volume),
+            cv(b.schemeFee).toFixed(dp), rate(b.schemeFee, b.volume),
+            cv(b.ecomFee).toFixed(dp),
+            cv(b.netRevenue).toFixed(dp), num(b.marginPct).toFixed(2),
+            cv(b.dccAcquirer).toFixed(dp), cv(b.rental).toFixed(dp),
+            ...(fxEnabled ? [cv(b.fx).toFixed(dp)] : []),
+            cv(b.netSpread).toFixed(dp), num(b.spreadPct).toFixed(2)]
             .map(esc).join(',');
         viewData.forEach(b => lines.push(row(b.label + (b.partial ? ' (partial)' : ''), b)));
         lines.push(row(`${modeLabel} Total`, t));
@@ -541,18 +605,23 @@ const Dashboard = () => {
             lines.push(['MSF Rate %', derived.msfRate.toFixed(4)].map(esc).join(','));
             lines.push(['Interchange % of Volume', derived.interchangeRate.toFixed(4)].map(esc).join(','));
             lines.push(['Scheme Fee % of Volume', derived.schemeRate.toFixed(4)].map(esc).join(','));
-            lines.push(['Total Fees', derived.fees.toFixed(dp)].map(esc).join(','));
+            lines.push(['Total Fees', cv(derived.fees).toFixed(dp)].map(esc).join(','));
             lines.push(['Total Fees % of Volume', derived.feesRate.toFixed(4)].map(esc).join(','));
         }
         const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `executive_summary_${mode.toLowerCase()}_${data?.effectiveDate || 'export'}.csv`;
+        a.download = `executive_summary_${mode.toLowerCase()}${channel !== 'ALL' ? `_${channel.toLowerCase()}` : ''}_${data?.effectiveDate || 'export'}.csv`;
         a.click();
         URL.revokeObjectURL(a.href);
-    }, [viewTotals, viewData, derived, mode, modeLabel, period, data, currencySymbol, currencyCode, currencyDecimals, isFiltered]);
+    }, [viewTotals, viewData, derived, mode, modeLabel, period, data, currencySymbol, currencyCode, currencyDecimals, isFiltered, channel, fxEnabled]);
 
-    if (loading) return <SkeletonLoader type="dashboard" />;
+    // Skeleton only when there is nothing to show yet (first load / tenant
+    // switch). A channel or refresh reload keeps the current figures on
+    // screen, dimmed, instead of blanking the whole page — the POS/ECOM
+    // toggle used to feel like a full page reload.
+    if (loading && !data) return <SkeletonLoader type="dashboard" />;
+    const refreshing = loading && !!data;
 
     if (error) return (
         <div style={{ padding: 32 }}>
@@ -568,21 +637,24 @@ const Dashboard = () => {
        on every cell — a 13-column table repeating "BHD" 7 times per row is
        noise. `ccy: true` renders the code next to the label; when the tenant
        currency is unknown the suffix is simply omitted (never invented). */
-    const headCcy = currencyCode || currencySymbol || null;
+    const headCcy = displayCurrencyCode(currencyCode || currencySymbol) || null;
     const TABLE_HEADS = [
         { label: mode === 'MTD' ? 'Week' : 'Month' },
         { label: 'Transactions' },
         { label: 'Volume', ccy: true },
-        { label: 'Avg Ticket', ccy: true },
         { label: 'MSF', ccy: true },
         { label: 'Interchange', ccy: true },
         { label: 'Scheme Fee', ccy: true },
         { label: 'PG Fee', ccy: true },
         { label: 'Net Margin', ccy: true },
-        { label: 'Net Margin %' },
+        // Ancillary legs each get their own column (user, 2026-09-13) —
+        // DCC / Rental / FX, with FX only when the tenant flag is on.
+        // Net Spread stays last and bold.
+        { label: 'DCC', ccy: true },
+        { label: 'Rental', ccy: true },
+        ...(fxEnabled ? [{ label: 'FX Income', ccy: true }] : []),
+        { label: 'Net Spread', ccy: true },
     ];
-
-    const maxAbsMargin = Math.max(...viewData.map(b => Math.abs(b.marginPct)), 0.0001);
 
     return (
         <div className="exec-lume" style={{ padding: '24px 28px', width: '100%', position: 'relative' }}>
@@ -590,6 +662,7 @@ const Dashboard = () => {
                 .rail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
                 .rail-grid > div + div { border-left: 1px solid var(--border-light); }
                 @media (max-width: 900px) { .rail-grid > div + div { border-left: none; border-top: 1px solid var(--border-light); } }
+                @keyframes exec-spin { to { transform: rotate(360deg); } }
                 .exec-row { transition: background 180ms ease; }
                 .exec-row:hover { background: var(--bg-hover); }
                 .seg-btn { border: none; cursor: pointer; border-radius: 8; }
@@ -653,6 +726,7 @@ const Dashboard = () => {
                         {data?.effectiveDate && mode !== 'LAST_YEAR' ? ` · through ${data.effectiveDate}` : ''}
                         <span style={{ color: 'var(--border)' }}>·</span>
                         settlement currency
+                        <MarginGlossaryHint compact style={{ marginLeft: 2 }} />
                         {isFiltered && viewData.length > 0 && (
                             <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700,
                                 fontFamily: 'var(--font-mono)',
@@ -702,6 +776,12 @@ const Dashboard = () => {
                         </div>
                     )}
 
+                    {/* POS / ECOM / All channel scope (server-side, ChannelSql) */}
+                    <ChannelToggle value={channel} onChange={setChannel} />
+
+                    {/* Active MID/SID over the visible bucket window */}
+                    <MidSidSummary from={midSidWindow.from} to={midSidWindow.to} channel={channel} compact />
+
                     <div style={{ display: 'inline-flex', background: 'var(--bg-subtle)',
                         border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
                         {MODES.map(m => (
@@ -723,7 +803,8 @@ const Dashboard = () => {
                         <Download size={14} /> Export
                     </button>
                     <button onClick={load} title="Refresh" style={{ ...GHOST_BTN, padding: 9, color: 'var(--text-secondary)' }}>
-                        <RefreshCw size={15} />
+                        <RefreshCw size={15} style={refreshing
+                            ? { animation: 'exec-spin 1s linear infinite' } : undefined} />
                     </button>
                 </div>
             </div>
@@ -732,7 +813,9 @@ const Dashboard = () => {
                 <EmptyState title={`No ${modeLabel} data`}
                     description="No transactions found for this period yet. Upload data to populate the dashboard." />
             ) : (
-                <>
+                <div style={refreshing
+                    ? { opacity: 0.55, transition: 'opacity 200ms ease', pointerEvents: 'none' }
+                    : { opacity: 1, transition: 'opacity 200ms ease' }}>
                     {/* ── Primary hero band (4 tiles, sparkline shape) ── */}
                     <div style={{ display: 'grid', gap: 14, marginBottom: 14,
                         gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
@@ -746,7 +829,14 @@ const Dashboard = () => {
                             raw={num(vt.netRevenue)} format={(v) => fmt.currency(v)}
                             fullValue={fullNum(vt.netRevenue, currencySymbol)}
                             deltaPct={dpg(vt.netRevenue, prev?.netRevenue)} compareLabel={compareLabel}
-                            spark={sparks.netRevenue} />
+                            spark={sparks.netRevenue}
+                            secondary={
+                                <span title={`Net Spread = net margin + DCC ${fmt.currency(num(vt.dccAcquirer))} + rental ${fmt.currency(num(vt.rental))}${fxEnabled ? ` + FX ${fmt.currency(num(vt.fx))}` : ''} · ${num(vt.spreadPct).toFixed(4)}% of volume`}>
+                                    <span style={{ color: SERIES.ancillary, fontWeight: 700 }}>Net Spread</span>{' '}
+                                    <b style={{ color: 'var(--text)' }}>{fmt.currency(num(vt.netSpread))}</b>
+                                    <span style={{ opacity: 0.8 }}> · {num(vt.spreadPct).toFixed(2)}%</span>
+                                </span>
+                            } />
                         <HeroTile label="Net Margin %" icon={Percent} accent="var(--chart-3)" sparkId="marginpct" index={2}
                             raw={num(vt.marginPct)} format={(v) => `${v.toFixed(2)}%`}
                             fullValue={`${num(vt.marginPct).toFixed(4)}% of volume`}
@@ -804,6 +894,36 @@ const Dashboard = () => {
                                 deltaPct={dpg(vt.ecomFee, prev?.ecomFee)}
                                 compareLabel={`${compareLabel} · lower is better`} invertDelta
                                 hint="Payment gateway fees" />
+                            <RailMetric label="DCC (Acquirer)" icon={Globe}
+                                value={fmt.currency(num(vt.dccAcquirer))}
+                                fullValue={fullNum(vt.dccAcquirer, currencySymbol)}
+                                deltaPct={dpg(vt.dccAcquirer, prev?.dccAcquirer)}
+                                compareLabel={compareLabel}
+                                hint="Acquirer share of DCC revenue (added to Net Spread)" />
+                            <RailMetric label="Rental" icon={Layers}
+                                value={fmt.currency(num(vt.rental))}
+                                fullValue={fullNum(vt.rental, currencySymbol)}
+                                deltaPct={dpg(vt.rental, prev?.rental)}
+                                compareLabel={compareLabel}
+                                hint="POS / terminal rental income (added to Net Spread)" />
+                            {fxEnabled && (
+                                <RailMetric label="FX Income" icon={Globe}
+                                    value={fmt.currency(num(vt.fx))}
+                                    fullValue={fullNum(vt.fx, currencySymbol)}
+                                    deltaPct={dpg(vt.fx, prev?.fx)}
+                                    compareLabel={compareLabel}
+                                    hint="ECOM FX income (added to Net Spread)" />
+                            )}
+                            <RailMetric label="Net Spread" icon={Sigma}
+                                value={fmt.currency(num(vt.netSpread))}
+                                fullValue={fullNum(vt.netSpread, currencySymbol)}
+                                sub={`${num(vt.spreadPct).toFixed(3)}%`}
+                                subTitle={`${num(vt.spreadPct).toFixed(4)}% — net spread / volume`}
+                                deltaPct={dpg(vt.netSpread, prev?.netSpread)}
+                                compareLabel={compareLabel}
+                                hint={fxEnabled
+                                    ? 'Net margin + DCC (acquirer) + rental + FX income'
+                                    : 'Net margin + DCC (acquirer) + rental'} />
                             <RailMetric label="Total Charges" icon={Scale}
                                 value={fmt.currency(derived.fees)}
                                 fullValue={fullNum(derived.fees, currencySymbol)}
@@ -866,7 +986,7 @@ const Dashboard = () => {
                                     <YAxis yAxisId="pct" orientation="right"
                                         tickFormatter={(v) => `${v.toFixed(1)}%`}
                                         {...AXIS_PROPS} width={48} />
-                                    <ReTooltip content={<BucketTooltip fmt={fmt} />}
+                                    <ReTooltip content={<BucketTooltip fmt={fmt} fxEnabled={fxEnabled} />}
                                         cursor={{ fill: 'color-mix(in srgb, var(--primary) 7%, transparent)' }} />
                                     <Legend {...LEGEND_PROPS} />
                                     {/* `fill` is what the Legend swatch reads — the per-bar
@@ -894,7 +1014,7 @@ const Dashboard = () => {
                         </ChartCard>
 
                         <ChartCard title="Cost & Margin Mix"
-                            subtitle="Costs at the base — the green cap is what we keep">
+                            subtitle="Costs at the base — the light-blue cap is what we keep">
                             {/* height matches the two panels + their labels next door */}
                             <ResponsiveContainer width="100%" height={344}>
                                 <BarChart data={viewData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -917,8 +1037,8 @@ const Dashboard = () => {
                                         between segments, not as an outline. `fill` is what the
                                         Legend swatch reads — the Cells paint the gradients.
                                         Stack order: the three costs rise from the baseline,
-                                        margin caps the bar so the green "kept" band is the
-                                        first thing the eye lands on. Legend and tooltip
+                                        margin caps the bar so the light-blue "kept" band is
+                                        the first thing the eye lands on. Legend and tooltip
                                         inherit this order. */}
                                     <Bar dataKey="interchange" name="Interchange" stackId="c"
                                         fill={C.interchange} maxBarSize={30}
@@ -955,7 +1075,7 @@ const Dashboard = () => {
 
                     {/* ── Breakdown table ── */}
                     <div className="dx-card" style={{ overflow: 'hidden' }}>
-                        <div style={{ overflowX: 'auto' }}>
+                        <div className="acq-scroll" style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
@@ -989,7 +1109,6 @@ const Dashboard = () => {
                                         // would suppress the global table zebra.
                                         const tint = i === bestIdx ? rowGrad('var(--success)')
                                             : i === worstIdx ? rowGrad('var(--danger)') : null;
-                                        const marginW = Math.min(Math.abs(b.marginPct) / maxAbsMargin, 1) * 100;
                                         return (
                                             <tr key={b.label} className="exec-row" style={{
                                                 borderBottom: '1px solid var(--border)',
@@ -1010,7 +1129,6 @@ const Dashboard = () => {
                                                 </td>
                                                 <td style={tdNum} title={fullNum(b.txns)}>{num(b.txns).toLocaleString()}</td>
                                                 <td style={tdNum} title={fullNum(b.volume, currencySymbol)}>{fmt.amount(b.volume)}</td>
-                                                <td style={tdNum} title={fullNum(b.avgTicket, currencySymbol)}>{fmt.amount(b.avgTicket)}</td>
                                                 <td style={tdNum} title={formatMsf(b.msf, currencySymbol)}>{fmt.amount(b.msf)}</td>
                                                 <td style={tdNum} title={`${fullNum(b.interchange, currencySymbol)} · ${ratePctTitle(b.interchange, b.volume)}`}>
                                                     {fmt.amount(b.interchange)}
@@ -1023,20 +1141,29 @@ const Dashboard = () => {
                                                 <td style={tdNum} title={fullNum(b.ecomFee, currencySymbol)}>{fmt.amount(b.ecomFee)}</td>
                                                 <td style={{ ...tdNum, fontWeight: 600,
                                                     color: b.netRevenue >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
-                                                    title={fullNum(b.netRevenue, currencySymbol)}>{fmt.amount(b.netRevenue)}</td>
-                                                <td style={{ ...tdNum, fontWeight: 600,
-                                                    color: b.marginPct >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
-                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
-                                                        <span style={{ width: 44, height: 5, borderRadius: 999,
-                                                            background: 'var(--bg-subtle)',
-                                                            overflow: 'hidden', display: 'inline-block' }}>
-                                                            <span style={{ display: 'block', height: '100%',
-                                                                width: `${marginW}%`, borderRadius: 999,
-                                                                transition: 'width 600ms cubic-bezier(0.22, 1, 0.36, 1)',
-                                                                background: b.marginPct >= 0 ? 'var(--grad-accent)' : 'var(--danger)' }} />
-                                                        </span>
-                                                        {b.marginPct.toFixed(2)}%
-                                                    </span>
+                                                    title={`${fullNum(b.netRevenue, currencySymbol)} · ${b.marginPct.toFixed(4)}% of volume`}>
+                                                    {fmt.amount(b.netRevenue)}
+                                                    <span style={rateInline}>({b.marginPct.toFixed(2)}%)</span>
+                                                </td>
+                                                <td style={{ ...tdNum, color: SERIES.ancillary }}
+                                                    title={`DCC (acquirer) ${fullNum(b.dccAcquirer, currencySymbol)}`}>
+                                                    {fmt.amount(b.dccAcquirer)}
+                                                </td>
+                                                <td style={{ ...tdNum, color: SERIES.ancillary }}
+                                                    title={fullNum(b.rental, currencySymbol)}>
+                                                    {fmt.amount(b.rental)}
+                                                </td>
+                                                {fxEnabled && (
+                                                    <td style={{ ...tdNum, color: SERIES.ancillary }}
+                                                        title={fullNum(b.fx, currencySymbol)}>
+                                                        {fmt.amount(b.fx)}
+                                                    </td>
+                                                )}
+                                                <td style={{ ...tdNum, fontWeight: 700,
+                                                    color: b.netSpread >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
+                                                    title={`${fullNum(b.netSpread, currencySymbol)} · ${b.spreadPct.toFixed(4)}% of volume`}>
+                                                    {fmt.amount(b.netSpread)}
+                                                    <span style={rateInline}>({b.spreadPct.toFixed(2)}%)</span>
                                                 </td>
                                             </tr>
                                         );
@@ -1048,7 +1175,6 @@ const Dashboard = () => {
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.txns)}>{num(vt.txns).toLocaleString()}</td>
                                         <td style={tdTotal} title={fullNum(vt.volume, currencySymbol)}>{fmt.amount(num(vt.volume))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.avgTicket, currencySymbol)}>{fmt.amount(num(vt.avgTicket))}</td>
                                         <td style={tdTotal} title={formatMsf(vt.msf, currencySymbol)}>{fmt.amount(num(vt.msf))}</td>
                                         <td style={tdTotal} title={`${fullNum(vt.interchange, currencySymbol)} · ${ratePctTitle(vt.interchange, vt.volume)}`}>
                                             {fmt.amount(num(vt.interchange))}
@@ -1059,17 +1185,36 @@ const Dashboard = () => {
                                             <span style={rateInline}>({ratePct(vt.schemeFee, vt.volume)})</span>
                                         </td>
                                         <td style={tdTotal} title={fullNum(vt.ecomFee, currencySymbol)}>{fmt.amount(num(vt.ecomFee))}</td>
-                                        <td style={tdTotal} title={fullNum(vt.netRevenue, currencySymbol)}>{fmt.amount(num(vt.netRevenue))}</td>
-                                        <td style={{ ...tdTotal,
-                                            color: num(vt.marginPct) >= 0 ? 'var(--success-text)' : 'var(--danger-text)' }}>
-                                            {num(vt.marginPct).toFixed(2)}%
+                                        <td style={{ ...tdTotal, color: num(vt.netRevenue) >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
+                                            title={`${fullNum(vt.netRevenue, currencySymbol)} · ${num(vt.marginPct).toFixed(4)}% of volume`}>
+                                            {fmt.amount(num(vt.netRevenue))}
+                                            <span style={rateInline}>({num(vt.marginPct).toFixed(2)}%)</span>
+                                        </td>
+                                        <td style={{ ...tdTotal, color: SERIES.ancillary }}
+                                            title={`DCC (acquirer) ${fullNum(vt.dccAcquirer, currencySymbol)}`}>
+                                            {fmt.amount(num(vt.dccAcquirer))}
+                                        </td>
+                                        <td style={{ ...tdTotal, color: SERIES.ancillary }}
+                                            title={fullNum(vt.rental, currencySymbol)}>
+                                            {fmt.amount(num(vt.rental))}
+                                        </td>
+                                        {fxEnabled && (
+                                            <td style={{ ...tdTotal, color: SERIES.ancillary }}
+                                                title={fullNum(vt.fx, currencySymbol)}>
+                                                {fmt.amount(num(vt.fx))}
+                                            </td>
+                                        )}
+                                        <td style={{ ...tdTotal, color: num(vt.netSpread) >= 0 ? 'var(--text)' : 'var(--danger-text)' }}
+                                            title={fullNum(vt.netSpread, currencySymbol)}>
+                                            {fmt.amount(num(vt.netSpread))}
+                                            <span style={rateInline}>({num(vt.spreadPct).toFixed(2)}%)</span>
                                         </td>
                                     </tr>
                                 </tbody>
                             </table>
                         </div>
                     </div>
-                </>
+                </div>
             )}
         </div>
     );

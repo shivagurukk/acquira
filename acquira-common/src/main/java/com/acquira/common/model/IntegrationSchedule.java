@@ -46,6 +46,18 @@ public class IntegrationSchedule {
     @Column(name = "precondition_sql", columnDefinition = "TEXT")
     private String preconditionSql;
 
+    /**
+     * Comma/semicolon-separated recipients notified when a pull's FINAL attempt
+     * fails (retries in progress do not alert). Sent via the tenant's own SMTP
+     * config. Blank/NULL = no alert.
+     */
+    @Column(name = "alert_emails", columnDefinition = "TEXT")
+    private String alertEmails;
+
+    /** Mute switch for failure alerts without losing the recipient list. */
+    @Column(name = "alert_on_failure")
+    private Boolean alertOnFailure = true;
+
     @Column(name = "last_run_at")
     private LocalDateTime lastRunAt;
 
@@ -57,4 +69,24 @@ public class IntegrationSchedule {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    // ── Read-model enrichment (not persisted) ────────────────────
+    // Filled by the schedules list endpoint so the UI can show when a schedule
+    // fires next and how its recent runs went, without extra round trips.
+
+    /** Next fire instant as ISO-8601 WITH offset (nextRunAt is a bare LocalDateTime and would render in the wrong zone). */
+    @Transient
+    private String nextRunIso;
+
+    /** Status of the most recent run for this schedule (SUCCESS/FAILED/RUNNING/RETRYING), null if never run. */
+    @Transient
+    private String lastRunStatus;
+
+    /** Error message of the most recent run when it failed. */
+    @Transient
+    private String lastRunError;
+
+    /** Statuses of the last few runs, most recent first — for the mini history dots. */
+    @Transient
+    private java.util.List<String> recentRunStatuses;
 }

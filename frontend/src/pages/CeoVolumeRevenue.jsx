@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/axios';
+import MarginGlossaryHint from '../components/MarginGlossary';
 import {
     RefreshCw, Search, Download, ChevronLeft, ChevronRight,
     ChevronUp, ChevronDown, CalendarRange, TrendingDown,
     Landmark, Receipt, Percent, Layers, Wallet,
 } from 'lucide-react';
+import ChannelToggle from '../components/ChannelToggle';
+import MidSidSummary from '../components/MidSidSummary';
 import EmptyState from '../components/EmptyState';
 import SkeletonLoader from '../components/SkeletonLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { showToast } from '../contexts/ToastContext';
-import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
+import {
+    createFmt, formatMsf, resolveDecimals,
+    isUsdDisplay, convertForDisplay, displayCurrencyCode, usdRateInfo,
+} from '../utils/formatters';
 
 /* ════════════════════════════════════════════════════════════════════
    CEO Volume & Revenue — MID x SID detail with the full fee stack:
@@ -20,7 +27,9 @@ import { createFmt, formatMsf, resolveDecimals } from '../utils/formatters';
    read only, never fact_transaction).
 
    Reused for the Loss-Making Merchants screen via the `lossOnly` prop
-   (adds lossOnly=true -> HAVING net_revenue < 0 server-side). lossOnly
+   (adds lossOnly=true -> HAVING net SPREAD < 0 server-side: margin + DCC
+   + rental + FX when enabled — the true bottom line, so a merchant whose
+   ancillary income covers a margin loss is not listed). lossOnly
    also rolls the server-side query up to MID (merchant) level instead
    of MID x SID, so a merchant's overall position is evaluated as a
    whole rather than flagging/hiding individual stores independently
@@ -40,8 +49,9 @@ const num = (v) => (v == null ? 0 : Number(v));
    tenant's decimals (3dp for BHD); without one it is a count. */
 const fullNum = (v, sym = '') => {
     if (!sym) return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-    const d = resolveDecimals();
-    return sym + ' ' + Number(v || 0).toLocaleString('en-US',
+    // Executive display-currency toggle: convert + relabel when USD is active.
+    const d = isUsdDisplay(sym) ? 2 : resolveDecimals();
+    return displayCurrencyCode(sym) + ' ' + convertForDisplay(v, sym).toLocaleString('en-US',
         { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
@@ -71,10 +81,22 @@ const ALL_COLUMNS = [
     // losing 0.1% from a small one losing 40%). Server sorts on the ratio, with
     // undefined-ratio rows (zero volume) under NULLS LAST.
     { key: 'margin',      label: 'Net Margin %',   align: 'right', sortable: true },
+    // Net Spread = net margin + DCC acquirer share + rental (server-derived,
+    // NetSpreadSql). At MID x SID grain the ancillary lines are the store's
+    // own (DCC is SID-keyed; rental at store/terminal level); on the
+    // Loss-Making merchant rollup they are the merchant's whole amount.
+    { key: 'dcc',         label: 'DCC',            align: 'right', sortable: true },
+    { key: 'rental',      label: 'Rental',         align: 'right', sortable: true },
+    // ECOM FX income (tenant flag netspread.fx_enabled) — only rendered when
+    // the backend says fxEnabled; the server then folds it into Net Spread.
+    { key: 'fx',          label: 'FX Income',      align: 'right', sortable: true },
+    { key: 'spread',      label: 'Net Spread',     align: 'right', sortable: true },
 ];
 // lossOnly rolls the server-side query up to MID (merchant) level, so the
-// SID column has nothing meaningful to show — drop it from that view.
-const columnsFor = (lossOnly) => lossOnly ? ALL_COLUMNS.filter(c => c.key !== 'sid') : ALL_COLUMNS;
+// SID column has nothing meaningful to show — drop it from that view. The FX
+// column only exists when the tenant's netspread.fx_enabled flag is on.
+const columnsFor = (lossOnly, fxEnabled) => ALL_COLUMNS.filter(c =>
+    (lossOnly ? c.key !== 'sid' : true) && (fxEnabled ? true : c.key !== 'fx'));
 
 const PAGE_SIZE = 50;
 
@@ -96,31 +118,51 @@ const buildMonthOptions = (anchorISO, n = 12) => {
     return opts;
 };
 
-/* ── KPI stat tile: uppercase micro-label + tabular-nums value + caption ── */
+/* ── KPI stat card: accent top bar + tinted icon chip + tabular-nums value.
+   Each metric is its own card (not a cell in one shared panel) — the band
+   reads as a row of cards with a soft hover lift, tone-coloured per metric. ── */
 const StatTile = ({ icon: Icon, label, value, caption, tone, title }) => {
-    const valueColor =
+    const accent =
         tone === 'danger'  ? '#dc2626' :
-        tone === 'success' ? '#059669' : 'var(--text)';
+        tone === 'success' ? '#059669' : 'var(--brand, #3b82f6)';
+    const valueColor = tone ? accent : 'var(--text)';
     return (
-        <div title={title} style={{ padding: '16px 20px', minWidth: 0 }}>
-            <div style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em',
-                textTransform: 'uppercase', color: 'var(--text-muted, #94a3b8)',
-                whiteSpace: 'nowrap',
-            }}>
-                <Icon size={12} strokeWidth={2.2} />
-                {label}
+        <div className="cvr-card" title={title} style={{
+            position: 'relative', minWidth: 0, padding: '15px 18px 14px',
+            background: 'var(--bg-card)', border: '1px solid var(--border)',
+            borderRadius: 14, overflow: 'hidden',
+            boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))',
+        }}>
+            {/* tone accent bar */}
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3,
+                background: accent, opacity: 0.9 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                    width: 26, height: 26, borderRadius: 8, flex: 'none',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    color: accent,
+                    background: `color-mix(in srgb, ${accent} 12%, transparent)`,
+                }}>
+                    <Icon size={13} strokeWidth={2.2} />
+                </span>
+                <span style={{
+                    fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em',
+                    textTransform: 'uppercase', color: 'var(--text-muted, #94a3b8)',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                    {label}
+                </span>
             </div>
             <div style={{
-                marginTop: 7, fontSize: 21, fontWeight: 700, color: valueColor,
+                marginTop: 9, fontSize: 21, fontWeight: 700, color: valueColor,
                 letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums',
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
                 {value}
             </div>
             {caption && (
-                <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-secondary)',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {caption}
                 </div>
             )}
@@ -140,10 +182,13 @@ const CeoVolumeRevenue = ({
     const [period, setPeriod] = useState('MTD');
     const [month, setMonth] = useState('');           // 'YYYY-MM' when period==='MONTH'
     const [page, setPage] = useState(0);
-    const [sort, setSort] = useState(lossOnly ? 'net' : 'volume');
+    // loss: sort on net SPREAD (the loss definition), worst first.
+    const [sort, setSort] = useState(lossOnly ? 'spread' : 'volume');
     const [dir, setDir] = useState(lossOnly ? 'asc' : 'desc');  // loss: worst (most negative) first
     const [search, setSearch] = useState('');
     const [query, setQuery] = useState('');
+    // POS / ECOM / All channel scope (ChannelToggle; ChannelSql server-side).
+    const [channel, setChannel] = useState('ALL');
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -162,9 +207,11 @@ const CeoVolumeRevenue = ({
         return { mode: 'MTD' };
     }, [period, month]);
 
+    /* FX column only when the backend says the tenant flag is on. */
+    const fxEnabled = !!data?.fxEnabled;
     // lossOnly is a fixed prop (not state), so this only needs to react to it
     // in case a future caller ever toggles it live.
-    const visibleColumns = useMemo(() => columnsFor(lossOnly), [lossOnly]);
+    const visibleColumns = useMemo(() => columnsFor(lossOnly, fxEnabled), [lossOnly, fxEnabled]);
 
     useEffect(() => {
         clearTimeout(debounceRef.current);
@@ -178,7 +225,7 @@ const CeoVolumeRevenue = ({
             const res = await api.get('/business/ceo-volume-revenue', {
                 signal,
                 params: {
-                    ...periodParams, lossOnly: lossOnly || undefined,
+                    ...periodParams, lossOnly: lossOnly || undefined, channel,
                     page, size: PAGE_SIZE, sort, dir, search: query || undefined,
                 },
             });
@@ -194,7 +241,7 @@ const CeoVolumeRevenue = ({
         } finally {
             setLoading(false);
         }
-    }, [periodParams, lossOnly, page, sort, dir, query]);
+    }, [periodParams, lossOnly, channel, page, sort, dir, query]);
 
     useEffect(() => {
         const ac = new AbortController();
@@ -206,8 +253,9 @@ const CeoVolumeRevenue = ({
     // tenant switch must too. Staying on page 3 while moving to a tenant with
     // fewer loss rows returned an empty page with a non-zero totalRows, which
     // the empty state below used to report as "That's good news" — a false
-    // all-clear on a risk screen.
-    useEffect(() => { setPage(0); }, [tenantVersion]);
+    // all-clear on a risk screen. The channel scope resets to All with it —
+    // a POS/ECOM filter must never silently carry over to another bank.
+    useEffect(() => { setPage(0); setChannel('ALL'); }, [tenantVersion]);
 
     const onSort = (key) => {
         const col = visibleColumns.find(c => c.key === key);
@@ -220,7 +268,7 @@ const CeoVolumeRevenue = ({
     const exportCsv = async () => {
         setExporting(true);
         try {
-            const base = { ...periodParams, lossOnly: lossOnly || undefined, sort, dir, search: query || undefined };
+            const base = { ...periodParams, lossOnly: lossOnly || undefined, channel, sort, dir, search: query || undefined };
             // export=true returns the FULL result set in one response. Paging
             // through in 500-row chunks re-ran the grouped aggregate per chunk
             // (twice: rows + totals) and OFFSET re-sorted all skipped rows, so
@@ -240,24 +288,39 @@ const CeoVolumeRevenue = ({
             // empty rather than writing a 0.00 that reads as a real measurement.
             const pctCell = (v) => (v == null ? '' : Number(v).toFixed(2));
             // Money columns follow the tenant's precision (3dp for BHD) instead
-            // of a hardcoded 2dp; MSF keeps its reconciliation digits.
-            const dp = resolveDecimals(currencyDecimals, currencyCode);
+            // of a hardcoded 2dp; MSF keeps its reconciliation digits. When the
+            // executive USD toggle is on, values are converted and written 2dp.
+            const dp = isUsdDisplay(currencyCode) ? 2 : resolveDecimals(currencyDecimals, currencyCode);
             const msfDp = Math.max(4, dp);
+            const cv = (v) => convertForDisplay(num(v), currencyCode);
+            const fx = usdRateInfo(currencyCode);
+            // FX column only when the backend confirms the tenant flag for THIS
+            // response (not the possibly-stale on-screen data object).
+            const withFx = !!res.data?.fxEnabled;
             // Header mirrors the on-screen column order: SID first, MID second.
+            const spreadHeads = ['DCC (Acquirer)', 'Rental',
+                ...(withFx ? ['FX Income'] : []), 'Net Spread', 'Net Spread %'];
             const header = lossOnly
                 ? ['MID', 'Merchant', 'Count', 'Volume', 'MSF',
-                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %']
+                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %', ...spreadHeads]
                 : ['SID', 'MID', 'Merchant', 'Count', 'Volume', 'MSF',
-                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %'];
+                    'Interchange Fee', 'Scheme Fee', 'ECOM Fee', 'Net Margin', 'Net Margin %', ...spreadHeads];
             // The file must state its currency — the same numbers mean something
             // different in BHD (3dp) than in EGP/AED (2dp).
-            const lines = [`Currency,${currencyCode || currencySymbol || 'UNKNOWN'}`, header.join(',')];
+            const lines = [
+                `Currency,${displayCurrencyCode(currencyCode) || currencySymbol || 'UNKNOWN'}`,
+                ...(fx ? [`FX Rate,1 ${fx.base} = ${fx.rate} USD (indicative; as of ${fx.asOf})`] : []),
+                header.join(','),
+            ];
             rows.forEach(r => lines.push([
                 ...(lossOnly ? [esc(r.mid)] : [esc(r.sid), esc(r.mid)]), esc(r.name), num(r.txns),
-                num(r.volume).toFixed(dp), num(r.msf).toFixed(msfDp),
-                num(r.interchange).toFixed(dp), num(r.schemeFee).toFixed(dp),
-                num(r.ecomFee).toFixed(dp),
-                num(r.netRevenue).toFixed(dp), pctCell(r.marginPct),
+                cv(r.volume).toFixed(dp), cv(r.msf).toFixed(msfDp),
+                cv(r.interchange).toFixed(dp), cv(r.schemeFee).toFixed(dp),
+                cv(r.ecomFee).toFixed(dp),
+                cv(r.netRevenue).toFixed(dp), pctCell(r.marginPct),
+                cv(r.dccAcquirer).toFixed(dp), cv(r.rental).toFixed(dp),
+                ...(withFx ? [cv(r.fx).toFixed(dp)] : []),
+                cv(r.netSpread).toFixed(dp), pctCell(r.spreadPct),
             ].join(',')));
             // Always append the server's own period-total aggregate (unbounded, matches
             // the on-screen KPI band) as a trailing TOTAL row -- so the file is
@@ -268,17 +331,21 @@ const CeoVolumeRevenue = ({
                 lines.push([
                     esc('TOTAL'), ...(lossOnly ? [] : [esc('')]), esc(`${totalRows} rows (period total)`),
                     num(exportTotals.txns),
-                    num(exportTotals.volume).toFixed(dp), num(exportTotals.msf).toFixed(msfDp),
-                    num(exportTotals.interchange).toFixed(dp), num(exportTotals.schemeFee).toFixed(dp),
-                    num(exportTotals.ecomFee).toFixed(dp),
-                    num(exportTotals.netRevenue).toFixed(dp), pctCell(exportTotals.marginPct),
+                    cv(exportTotals.volume).toFixed(dp), cv(exportTotals.msf).toFixed(msfDp),
+                    cv(exportTotals.interchange).toFixed(dp), cv(exportTotals.schemeFee).toFixed(dp),
+                    cv(exportTotals.ecomFee).toFixed(dp),
+                    cv(exportTotals.netRevenue).toFixed(dp), pctCell(exportTotals.marginPct),
+                    cv(exportTotals.dccAcquirer).toFixed(dp), cv(exportTotals.rental).toFixed(dp),
+                    ...(withFx ? [cv(exportTotals.fx).toFixed(dp)] : []),
+                    cv(exportTotals.netSpread).toFixed(dp), pctCell(exportTotals.spreadPct),
                 ].join(','));
             }
             const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             const tag = (data?.mode || period).toString().toLowerCase().replace(/[^a-z0-9-]/g, '');
-            a.download = `${lossOnly ? 'loss-making' : 'volume-revenue'}-${tag}-${data?.effectiveDate || ''}.csv`;
+            const chTag = channel !== 'ALL' ? `-${channel.toLowerCase()}` : '';
+            a.download = `${lossOnly ? 'loss-making' : 'volume-revenue'}-${tag}${chTag}-${data?.effectiveDate || ''}.csv`;
             a.click();
             URL.revokeObjectURL(a.href);
         } catch (e) {
@@ -326,10 +393,26 @@ const CeoVolumeRevenue = ({
     return (
         <div style={{ padding: '24px 28px', width: '100%', maxWidth: '100%', margin: 0, boxSizing: 'border-box' }}>
             <style>{`
+                .cvr-card { transition: transform .15s ease, box-shadow .15s ease; }
+                .cvr-card:hover { transform: translateY(-2px);
+                    box-shadow: 0 6px 16px rgba(16,24,40,0.08); }
                 .cvr-table tbody tr { transition: background .12s ease; }
-                .cvr-table tbody tr:hover { background: var(--bg-hover, rgba(148,163,184,0.07)); }
+                /* zebra on the detail rows only (the totals row styles itself) */
+                .cvr-table tbody tr.cvr-row:nth-child(even) {
+                    background: rgba(148,163,184,0.05); }
+                /* loss rows: faint red wash + a red accent stripe on the left */
+                .cvr-table tbody tr.cvr-loss-row {
+                    background: rgba(220,38,38,0.035);
+                    box-shadow: inset 3px 0 0 rgba(220,38,38,0.55); }
+                .cvr-table tbody tr.cvr-row:hover {
+                    background: var(--bg-hover, rgba(148,163,184,0.10)); }
+                .cvr-table tbody tr.cvr-loss-row:hover {
+                    background: rgba(220,38,38,0.07); }
                 .cvr-table thead th { position: sticky; top: 0; z-index: 1;
                     background: var(--bg-subtle, #f8fafc); }
+                .cvr-table thead th::after { content: ''; position: absolute;
+                    left: 0; right: 0; bottom: 0; height: 2px;
+                    background: var(--border); }
             `}</style>
 
             {/* ── Header ── */}
@@ -354,12 +437,15 @@ const CeoVolumeRevenue = ({
                         {subtitleSuffix}
                         {lossOnly && <>
                             <span style={{ color: 'var(--border)' }}>·</span>
-                            <span style={{ color: '#dc2626', fontWeight: 600 }}>net margin &lt; 0 only</span>
+                            <span style={{ color: '#dc2626', fontWeight: 600 }}>net spread &lt; 0 only</span>
                         </>}
+                        <MarginGlossaryHint compact style={{ marginLeft: 2 }} />
                     </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    {/* Active MID/SID for the resolved period window, matching the table */}
+                    <MidSidSummary from={data?.from} to={displayTo} channel={channel} compact />
                     {/* search */}
                     <div style={{ position: 'relative' }}>
                         <Search size={14} style={{ position: 'absolute', left: 10, top: '50%',
@@ -372,6 +458,10 @@ const CeoVolumeRevenue = ({
                                 borderRadius: 10, color: 'var(--text)', outline: 'none',
                             }} />
                     </div>
+
+                    {/* POS / ECOM / All channel scope (server-side, ChannelSql) */}
+                    <ChannelToggle value={channel}
+                        onChange={(ch) => { setChannel(ch); setPage(0); }} />
 
                     {/* period selector: MTD | YTD | This Month */}
                     <div style={{ display: 'inline-flex', background: 'var(--bg-card)',
@@ -453,59 +543,76 @@ const CeoVolumeRevenue = ({
                     {/* ── KPI summary band (period totals) ── */}
                     {totals && (
                         <div style={{
-                            background: 'var(--bg-card)', border: '1px solid var(--border)',
-                            borderRadius: 14, marginBottom: 14, overflow: 'hidden',
-                            boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))',
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                            display: 'grid', gap: 12, marginBottom: 16,
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(178px, 1fr))',
                         }}>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Layers}
-                                    label={lossOnly ? 'Loss Rows' : 'Rows'}
-                                    value={totalRows.toLocaleString()}
-                                    caption={`${num(totals.txns).toLocaleString()} transactions`}
-                                    tone={lossOnly ? 'danger' : undefined} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Wallet} label="Volume"
-                                    value={fmt.currency(num(totals.volume))}
-                                    caption="settlement currency"
-                                    title={fullNum(totals.volume, currencySymbol)} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Receipt} label="MSF"
-                                    value={fmt.currency(num(totals.msf))}
-                                    caption="gross fee revenue"
-                                    title={formatMsf(totals.msf, currencySymbol)} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={Landmark} label="Costs"
-                                    value={fmt.currency(totalCosts)}
-                                    caption="interchange + scheme + ECOM"
-                                    title={fullNum(totalCosts, currencySymbol)} />
-                            </div>
-                            <div style={{ borderRight: '1px solid var(--border-light, var(--border))' }}>
-                                <StatTile icon={lossOnly ? TrendingDown : Receipt}
-                                    label={lossOnly ? 'Total Net Loss' : 'Net Margin'}
-                                    value={fmt.currency(num(totals.netRevenue))}
-                                    caption={lossOnly ? 'across loss rows' : 'MSF − costs'}
-                                    tone={num(totals.netRevenue) >= 0 ? 'success' : 'danger'}
-                                    title={fullNum(totals.netRevenue, currencySymbol)} />
-                            </div>
-                            <div>
-                                <StatTile icon={Percent} label="Net Margin %"
-                                    value={pct(totals.marginPct)}
-                                    caption="net margin ÷ volume"
-                                    tone={totals.marginPct == null ? undefined
-                                        : num(totals.marginPct) >= 0 ? 'success' : 'danger'} />
-                            </div>
+                            <StatTile icon={Layers}
+                                label={lossOnly ? 'Loss Merchants' : 'Rows'}
+                                value={totalRows.toLocaleString()}
+                                caption={`${num(totals.txns).toLocaleString()} transactions`}
+                                tone={lossOnly ? 'danger' : undefined} />
+                            <StatTile icon={Wallet} label="Volume"
+                                value={fmt.currency(num(totals.volume))}
+                                caption="settlement currency"
+                                title={fullNum(totals.volume, currencySymbol)} />
+                            <StatTile icon={Receipt} label="MSF"
+                                value={fmt.currency(num(totals.msf))}
+                                caption="gross fee revenue"
+                                title={formatMsf(totals.msf, currencySymbol)} />
+                            <StatTile icon={Landmark} label="Costs"
+                                value={fmt.currency(totalCosts)}
+                                caption="interchange + scheme + ECOM"
+                                title={fullNum(totalCosts, currencySymbol)} />
+                            <StatTile icon={Receipt} label="Net Margin"
+                                value={fmt.currency(num(totals.netRevenue))}
+                                caption="MSF − costs"
+                                tone={num(totals.netRevenue) >= 0 ? 'success' : 'danger'}
+                                title={fullNum(totals.netRevenue, currencySymbol)} />
+                            <StatTile icon={Percent} label="Net Margin %"
+                                value={pct(totals.marginPct)}
+                                caption="net margin ÷ volume"
+                                tone={totals.marginPct == null ? undefined
+                                    : num(totals.marginPct) >= 0 ? 'success' : 'danger'} />
+                            {/* On the Loss-Making view the spread IS the loss — the
+                                filter runs on net spread < 0, so this card is the
+                                headline figure. */}
+                            <StatTile icon={lossOnly ? TrendingDown : Layers}
+                                label={lossOnly ? 'Total Net Loss' : 'Net Spread'}
+                                value={fmt.currency(num(totals.netSpread))}
+                                caption={lossOnly
+                                    ? `net spread across loss merchants · ${pct(totals.spreadPct)}`
+                                    : fxEnabled
+                                        ? `margin + DCC ${fmt.currency(num(totals.dccAcquirer))} + rental ${fmt.currency(num(totals.rental))} + FX ${fmt.currency(num(totals.fx))} · ${pct(totals.spreadPct)}`
+                                        : `margin + DCC ${fmt.currency(num(totals.dccAcquirer))} + rental ${fmt.currency(num(totals.rental))} · ${pct(totals.spreadPct)}`}
+                                tone={num(totals.netSpread) >= 0 ? 'success' : 'danger'}
+                                title={fullNum(totals.netSpread, currencySymbol)} />
+                        </div>
+                    )}
+
+                    {/* Store-grain caveat, stated once under the band (not inside a
+                        tile): merchant-level rental/DCC is split evenly across the
+                        merchant's trading stores; merchants with no trading store in
+                        the window have nowhere to land and are called out here. */}
+                    {!lossOnly && totals && (num(totals.allocatedAncillary) > 0 || num(totals.unattributedAncillary) > 0) && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                            fontSize: 12, color: 'var(--text-secondary)', margin: '-6px 2px 12px' }}>
+                            <Layers size={13} style={{ opacity: 0.7 }} />
+                            {num(totals.allocatedAncillary) > 0 && (
+                                <span>{fmt.currency(num(totals.allocatedAncillary))} of merchant-level rental/DCC is split evenly across each merchant's trading stores.</span>
+                            )}
+                            {num(totals.unattributedAncillary) > 0 && (
+                                <span>{fmt.currency(num(totals.unattributedAncillary))} belongs to merchants with no trading store this period and is not in these rows — see{' '}
+                                    <Link to="/business/loss-making" style={{ color: 'var(--primary)', fontWeight: 600 }}>Loss-Making</Link> or{' '}
+                                    <Link to="/executive/net-spread" style={{ color: 'var(--primary)', fontWeight: 600 }}>Net Spread</Link>.
+                                </span>
+                            )}
                         </div>
                     )}
 
                     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)',
                         borderRadius: 14, overflow: 'hidden',
                         boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(16,24,40,0.04))' }}>
-                        <div style={{ overflowX: 'auto', maxHeight: '68vh', overflowY: 'auto' }}>
+                        <div className="acq-scroll" style={{ overflowX: 'auto', maxHeight: '68vh', overflowY: 'auto' }}>
                             <table className="cvr-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
                                     <tr style={{ borderBottom: '1px solid var(--border)' }}>
@@ -535,8 +642,8 @@ const CeoVolumeRevenue = ({
                                 <tbody>
                                     {rows.map((r, i) => (
                                         <tr key={`${r.mid}-${r.sid}-${i}`}
-                                            style={{ borderBottom: '1px solid var(--border-light, var(--border))',
-                                                background: lossOnly ? 'rgba(220,38,38,0.03)' : 'transparent' }}>
+                                            className={lossOnly ? 'cvr-row cvr-loss-row' : 'cvr-row'}
+                                            style={{ borderBottom: '1px solid var(--border-light, var(--border))' }}>
                                             {!lossOnly && (
                                                 <td style={{ ...tdText, fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{r.sid || '—'}</td>
                                             )}
@@ -573,6 +680,16 @@ const CeoVolumeRevenue = ({
                                                     {pct(r.marginPct)}
                                                 </span>
                                             </td>
+                                            <td style={tdNum} title={fullNum(r.dccAcquirer, currencySymbol)}>{fmt.currency(num(r.dccAcquirer))}</td>
+                                            <td style={tdNum} title={fullNum(r.rental, currencySymbol)}>{fmt.currency(num(r.rental))}</td>
+                                            {fxEnabled && (
+                                                <td style={tdNum} title={fullNum(r.fx, currencySymbol)}>{fmt.currency(num(r.fx))}</td>
+                                            )}
+                                            <td style={{ ...tdNum, fontWeight: 700,
+                                                color: num(r.netSpread) >= 0 ? 'var(--text)' : '#dc2626' }}
+                                                title={`${fullNum(r.netSpread, currencySymbol)} · ${pct(r.spreadPct)} of volume`}>
+                                                {fmt.currency(num(r.netSpread))}
+                                            </td>
                                         </tr>
                                     ))}
                                     {totals && (
@@ -590,6 +707,15 @@ const CeoVolumeRevenue = ({
                                                 title={fullNum(totals.netRevenue, currencySymbol)}>{fmt.currency(num(totals.netRevenue))}</td>
                                             <td style={{ ...tdTotal, color: pctTone(totals.marginPct) }}>
                                                 {pct(totals.marginPct)}
+                                            </td>
+                                            <td style={tdTotal} title={fullNum(totals.dccAcquirer, currencySymbol)}>{fmt.currency(num(totals.dccAcquirer))}</td>
+                                            <td style={tdTotal} title={fullNum(totals.rental, currencySymbol)}>{fmt.currency(num(totals.rental))}</td>
+                                            {fxEnabled && (
+                                                <td style={tdTotal} title={fullNum(totals.fx, currencySymbol)}>{fmt.currency(num(totals.fx))}</td>
+                                            )}
+                                            <td style={{ ...tdTotal, color: num(totals.netSpread) >= 0 ? 'var(--text)' : '#dc2626' }}
+                                                title={`${fullNum(totals.netSpread, currencySymbol)} · ${pct(totals.spreadPct)} of volume`}>
+                                                {fmt.currency(num(totals.netSpread))}
                                             </td>
                                         </tr>
                                     )}

@@ -1,4 +1,5 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense } from 'react';
+import { lazyWithReload as lazy } from './lazyWithReload';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -39,7 +40,11 @@ const MerchantHeatmap = lazy(() => import('./pages/business/MerchantHeatmap'));
 const DailyMerchantDashboard = lazy(() => import('./pages/business/DailyMerchantDashboard'));
 const DestinationDashboard = lazy(() => import('./pages/business/DestinationDashboard'));
 const CardTypeDashboard = lazy(() => import('./pages/business/CardTypeDashboard'));
+const IndustryAnalytics = lazy(() => import('./pages/business/IndustryAnalytics'));
+const RevenueMix = lazy(() => import('./pages/business/RevenueMix'));
+const VolumeDrop = lazy(() => import('./pages/business/VolumeDrop'));
 const LocalDebitBankDashboard = lazy(() => import('./pages/business/LocalDebitBankDashboard'));
+const RentalOverview = lazy(() => import('./pages/business/RentalOverview'));
 const MerchantAnalyticsReport = lazy(() => import('./pages/business/MerchantAnalyticsReport'));
 const MerchantComparison = lazy(() => import('./pages/business/MerchantComparison'));
 const PricingSimulator = lazy(() => import('./pages/business/PricingSimulator'));
@@ -52,11 +57,21 @@ const SalesExecutiveDashboard = lazy(() => import('./pages/sales/SalesExecutiveD
 const ExecutiveSalesPulse = lazy(() => import('./pages/executive/ExecutiveSalesPulse'));
 // Executive daily view (distinct from pages/business/DailyMerchantDashboard, the month heat-grid)
 const ExecutiveDailyMerchant = lazy(() => import('./pages/executive/DailyMerchantDashboard'));
+// Net Spread — replica of the executive daily page at merchant grain, plus DCC + rental legs
+const NetSpreadDashboard = lazy(() => import('./pages/executive/NetSpreadDashboard'));
+// Product Summary — per-tenant P&L by revenue product (POS/ECOM acquiring + DCC + rental + FX)
+const ProductSummary = lazy(() => import('./pages/executive/ProductSummary'));
+const InterchangeOutgoing = lazy(() => import('./pages/interchange/Outgoing'));
+const InterchangeIncoming = lazy(() => import('./pages/interchange/Incoming'));
+const DimpDashboard = lazy(() => import('./pages/interchange/DimpDashboard'));
 const SalesTargetManagement = lazy(() => import('./pages/sales/SalesTargetManagement'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const TenantManagement = lazy(() => import('./pages/TenantManagement'));
 const RbacGroups = lazy(() => import('./pages/RbacGroups'));
 const BatchMonitoring = lazy(() => import('./pages/BatchMonitoring'));
+const IngestTrust = lazy(() => import('./pages/ops/IngestTrust'));
+const SchemeBillingReference = lazy(() => import('./pages/ops/SchemeBillingReference'));
+const DailyDigest = lazy(() => import('./pages/ops/DailyDigest'));
 const GroupReports = lazy(() => import('./pages/GroupReports'));
 const FinanceSummary = lazy(() => import('./pages/finance/FinanceSummary'));
 const MerchantInsightHub = lazy(() => import('./pages/reports/MerchantInsightHub'));
@@ -79,6 +94,7 @@ const DatabaseMaintenance = lazy(() => import('./pages/admin/DatabaseMaintenance
 const BinManagement = lazy(() => import('./pages/admin/BinManagement'));
 const AlertsNotifications = lazy(() => import('./pages/admin/AlertsNotifications'));
 const ApiManagement = lazy(() => import('./pages/admin/ApiManagement'));
+const Webhooks = lazy(() => import('./pages/admin/Webhooks'));
 const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
 const SettingsHub = lazy(() => import('./pages/SettingsHub'));
 // S3 report storage settings
@@ -113,6 +129,13 @@ function App() {
               <Route path="/business/loss-making" element={<LossMakingMerchants />} />
               <Route path="/executive/sales" element={<ExecutiveSalesPulse />} />
               <Route path="/executive/daily-merchant" element={<ExecutiveDailyMerchant />} />
+              <Route path="/executive/net-spread" element={<NetSpreadDashboard />} />
+              <Route path="/executive/product-summary" element={<ProductSummary />} />
+
+              {/* Interchange — scheme clearing-file data integrity */}
+              <Route path="/interchange/outgoing" element={<InterchangeOutgoing />} />
+              <Route path="/interchange/incoming" element={<InterchangeIncoming />} />
+              <Route path="/interchange/dimp" element={<DimpDashboard />} />
 
               {/* Merchant MGT */}
               <Route path="/merchants" element={<MerchantHierarchy />} />
@@ -136,7 +159,11 @@ function App() {
               <Route path="/business/daily-dashboard" element={<DailyMerchantDashboard />} />
               <Route path="/business/destination-dashboard" element={<DestinationDashboard />} />
               <Route path="/business/card-type-dashboard" element={<CardTypeDashboard />} />
+              <Route path="/business/industry-analytics" element={<IndustryAnalytics />} />
+              <Route path="/business/revenue-mix" element={<RevenueMix />} />
+              <Route path="/business/volume-drop" element={<VolumeDrop />} />
               <Route path="/business/local-debit-bank-dashboard" element={<LocalDebitBankDashboard />} />
+              <Route path="/business/rentals" element={<RentalOverview />} />
               <Route path="/business/merchant-analytics" element={<MerchantAnalyticsReport />} />
               <Route path="/business/comparison" element={<MerchantComparison />} />
               <Route path="/business/pricing-simulator" element={<PricingSimulator />} />
@@ -172,6 +199,15 @@ function App() {
               } />
               <Route path="/ops/batch-logs" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><BatchMonitoring /></RoleGuard>
+              } />
+              <Route path="/ops/ingest-trust" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><IngestTrust /></RoleGuard>
+              } />
+              <Route path="/ops/scheme-billing-reference" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><SchemeBillingReference /></RoleGuard>
+              } />
+              <Route path="/ops/daily-digest" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><DailyDigest /></RoleGuard>
               } />
               <Route path="/business/emails" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><StatementEmails /></RoleGuard>
@@ -257,6 +293,9 @@ function App() {
               } />
               <Route path="/admin/api-management" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><ApiManagement /></RoleGuard>
+              } />
+              <Route path="/admin/webhooks" element={
+                <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><Webhooks /></RoleGuard>
               } />
               <Route path="/business/budget-targets" element={
                 <RoleGuard requiredRoles={['ROLE_SUPER_ADMIN', 'ROLE_ADMIN']}><BudgetTargets /></RoleGuard>

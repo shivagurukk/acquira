@@ -85,4 +85,40 @@ public class MenuAccessEvaluator {
             return false;
         }
     }
+
+    /** Grant lookup for (username, active tenant) against a whole menu category. */
+    private static final String CATEGORY_GRANT_SQL =
+        "SELECT COUNT(*) FROM sys_group_menu gm " +
+        "JOIN sys_menu m             ON m.menu_id  = gm.menu_id " +
+        "JOIN user_tenant_access uta ON uta.group_id = gm.group_id " +
+        "JOIN users u                ON u.user_id  = uta.user_id " +
+        "WHERE u.username = ? AND uta.tenant_id = ? AND m.category = ?";
+
+    /**
+     * Category-level grant — true if the caller's group in the ACTIVE tenant
+     * has been granted ANY menu in {@code category} (or the caller is a
+     * super-admin). Used by cross-cutting endpoints that back a strip shown on
+     * every screen in a category rather than one specific screen, e.g. the
+     * shared MID/SID summary on the EXECUTIVE pages.
+     */
+    public boolean canAccessCategory(String category) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || category == null) return false;
+
+        for (GrantedAuthority a : auth.getAuthorities()) {
+            if ("ROLE_SUPER_ADMIN".equals(a.getAuthority())) return true;
+        }
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) return false;
+
+        try {
+            Integer granted = jdbc.queryForObject(CATEGORY_GRANT_SQL, Integer.class,
+                    auth.getName(), tenantId, category);
+            return granted != null && granted > 0;
+        } catch (Exception e) {
+            log.warn("[MenuAccess] category grant lookup failed for user={} tenant={} category={}: {}",
+                    auth.getName(), tenantId, category, e.getMessage());
+            return false;
+        }
+    }
 }

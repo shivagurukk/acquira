@@ -51,8 +51,23 @@ public class IntegrationReport {
     @Column(name = "is_active")
     private Boolean isActive = true;
 
+    /**
+     * Who signed off on this report's SQL. NULL = not approved, and
+     * IntegrationPullService refuses to execute it. Cleared automatically
+     * whenever sqlText changes, so an edit must be re-reviewed.
+     * 'LEGACY-PRE-APPROVAL' marks rows grandfathered by
+     * V2026_08_22_01__integration_report_approval.sql.
+     */
     @Column(name = "approved_by")
     private String approvedBy;
+
+    @Column(name = "approved_at")
+    private LocalDateTime approvedAt;
+
+    /** True when this report's SQL may be executed by a pull. */
+    public boolean isApproved() {
+        return approvedBy != null && !approvedBy.isBlank();
+    }
 
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -61,6 +76,6 @@ public class IntegrationReport {
     private LocalDateTime updatedAt;
 
     public enum ReportType {
-        MERCHANT, TRANSACTION
+        MERCHANT, TRANSACTION, RENTAL, DCC
     }
 }

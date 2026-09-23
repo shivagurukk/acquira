@@ -32,4 +32,25 @@ public interface IntegrationRunLogRepository extends JpaRepository<IntegrationRu
     long countFailedRunsSince(Long tenantId, LocalDateTime since);
 
     List<IntegrationRunLog> findTop10ByTenantIdOrderByStartTimeDesc(Long tenantId);
+
+    List<IntegrationRunLog> findTop5ByScheduleIdOrderByStartTimeDesc(Long scheduleId);
+
+    /** Feed-health window: every run for the tenant since a cutoff, newest first. */
+    List<IntegrationRunLog> findByTenantIdAndStartTimeAfterOrderByStartTimeDesc(Long tenantId, LocalDateTime after);
+
+    /** Most recent run of a given status for a report (e.g. last SUCCESS ever, beyond the health window). */
+    IntegrationRunLog findFirstByReportIdAndStatusOrderByStartTimeDesc(Long reportId, IntegrationRunLog.Status status);
+
+    /**
+     * Hard-delete support: run history is kept, but its FK to the deleted
+     * report/schedule is nulled so the parent row can actually be removed
+     * (the schema declares plain REFERENCES with no ON DELETE clause).
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = "UPDATE integration_run_log SET report_id = NULL WHERE report_id = :reportId", nativeQuery = true)
+    int detachReport(@org.springframework.data.repository.query.Param("reportId") Long reportId);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = "UPDATE integration_run_log SET schedule_id = NULL WHERE schedule_id = :scheduleId", nativeQuery = true)
+    int detachSchedule(@org.springframework.data.repository.query.Param("scheduleId") Long scheduleId);
 }

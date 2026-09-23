@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -35,6 +36,14 @@ import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api/business/insights")
+// SECURITY: mirror the stub MerchantInsightController's guard. In production the
+// acquira-pdf module is on the classpath so THIS controller (not the stub) is
+// active — without this annotation every /api/business/insights endpoint sat
+// under SecurityConfig's anyRequest().authenticated(), letting any authenticated
+// tenant user (not just Admin/Super-Admin) start batch PDF jobs, email merchants,
+// push to S3 and download reports. @menuAccess enforces the same DB-driven menu
+// grant the sidebar and the RoleGuard on /business/report-manager already use.
+@PreAuthorize("@menuAccess.canAccess('/business/report-manager')")
 public class PdfController {
 
     private static final Logger log = LoggerFactory.getLogger(PdfController.class);
@@ -59,6 +68,14 @@ public class PdfController {
      */
     @org.springframework.beans.factory.annotation.Autowired
     private ReportEmailTemplateService reportEmailTemplateService;
+
+    /**
+     * Tenant on/off switch. Field injection (like the template service above)
+     * to leave the seven-arg constructor — and every test that calls it —
+     * untouched.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.service.TenantStatusService tenantStatusService;
 
     /**
      * S3 upload service — injected via S3Uploader interface (acquira-common).
@@ -250,6 +267,15 @@ public class PdfController {
             if (currentTenant == null) {
                 return ResponseEntity.status(403).body(Map.of("error", "No tenant context"));
             }
+            // TENANT OFF-SWITCH: no generation, emailing or S3 archival for a
+            // deactivated tenant — covers /generate-all AND /generate-by-mid
+            // (which delegates here in both its ALL and selective branches).
+            if (tenantStatusService != null && tenantStatusService.isInactive(currentTenant)) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "status",  "TENANT_INACTIVE",
+                    "message", "Tenant " + currentTenant + " is not active — report generation is disabled. "
+                             + "Reactivate the tenant (Tenant Management > Status) to generate reports."));
+            }
             String bankShortCode   = resolveBankShortCode();
             Path   folder          = monthFolder(targetMonth, bankShortCode);
             String monthYear       = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
@@ -324,12 +350,16 @@ public class PdfController {
 
             List<long[]>   batchMerchantIds = new ArrayList<>(merchants.size());
             List<String>   merchantNames    = new ArrayList<>(merchants.size());
+            List<String>   merchantMids     = new ArrayList<>(merchants.size());
             Map<Long, String> merchantEmailMap = new HashMap<>();
 
             for (Merchant m : merchants) {
                 batchMerchantIds.add(new long[]{m.getMerchantId()});
                 String name = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
                 merchantNames.add(name);
+                // Parallel to merchantNames — the MID keys the output filename so
+                // two same-named merchants can't overwrite one another's PDF.
+                merchantMids.add(m.getMid());
                 if (sendEmail && m.getContactEmail() != null && !m.getContactEmail().isBlank()) {
                     merchantEmailMap.put(m.getMerchantId(), m.getContactEmail());
                 }
@@ -348,7 +378,7 @@ public class PdfController {
             final List<Merchant> capturedMerchants = merchants; // snapshot for post-batch thread
 
             BatchJobStatus status = playwrightPdfService.generateBatch(
-                    batchMerchantIds, merchantNames,
+                    batchMerchantIds, merchantNames, merchantMids,
                     (mid, ctx) -> {
                         MerchantInsightsDTO dto = null;
                         try {
@@ -419,8 +449,8 @@ public class PdfController {
 
                             for (Merchant m : capturedMerchants) {
                                 String mName    = m.getName() != null ? m.getName() : "Merchant_" + m.getMerchantId();
-                                String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-                                Path   pdfFile  = batchFolder.resolve("Insight_" + safeName + "_" + capturedYearMonth + ".pdf");
+                                Path   pdfFile  = batchFolder.resolve(
+                                        PlaywrightPdfService.reportFileName(mName, m.getMid(), capturedYearMonth));
 
                                 if (!Files.exists(pdfFile)) {
                                     log.warn("[S3-ONLY] PDF not found, skipping: {}", pdfFile.getFileName());
@@ -465,8 +495,8 @@ public class PdfController {
                                 // (the `mid` local above is the surrogate merchant_id, not the MID).
                                 String mMid  = merchant != null ? merchant.getMid() : null;
 
-                                String safeName = mName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-                                Path   pdfFile  = batchFolder.resolve("Insight_" + safeName + "_" + capturedYearMonth + ".pdf");
+                                Path   pdfFile  = batchFolder.resolve(
+                                        PlaywrightPdfService.reportFileName(mName, mMid, capturedYearMonth));
 
                                 if (!Files.exists(pdfFile)) {
                                     log.warn("[EMAIL] PDF not found for {}: {}", mName, pdfFile);
@@ -874,6 +904,129 @@ public class PdfController {
         return s.trim().replaceAll("^\"|\"$", "").trim();
     }
 
+    // ─── Post-hoc S3 upload of already-generated reports ─────────────────
+    //
+    // Batch generation only archives to S3 when sendS3=true was set at start.
+    // These endpoints let a user push a month's ALREADY-GENERATED PDFs to the
+    // tenant's bucket afterwards, without regenerating anything:
+    //
+    //   POST /upload-to-s3?year=&month=      → starts an async upload job
+    //   GET  /s3-upload-status/{jobId}       → poll progress
+    //
+    // Runs async (a big book can hold thousands of PDFs) with the same
+    // in-memory, tenant-guarded status pattern as batch jobs.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /** jobId → live status map. Values mutated by the worker thread; CHM gives visibility. */
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, Object>> s3UploadJobs =
+            new ConcurrentHashMap<>();
+
+    @PostMapping("/upload-to-s3")
+    public ResponseEntity<Map<String, Object>> uploadReportsToS3(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month) {
+
+        Long tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            return ResponseEntity.status(403).body(Map.of(
+                "status", "NO_TENANT", "message", "Tenant context is required."));
+        }
+        if (reportS3UploadService == null) {
+            return ResponseEntity.ok(Map.of(
+                "status",  "S3_UNAVAILABLE",
+                "message", "S3 upload service is not available on this deployment."));
+        }
+        if (!reportS3UploadService.isEnabled(tenantId)) {
+            return ResponseEntity.ok(Map.of(
+                "status",  "S3_DISABLED",
+                "message", "S3 archival is not enabled for this tenant. "
+                         + "Configure it under Admin > S3 Settings, then retry."));
+        }
+
+        try {
+            YearMonth targetMonth = resolveTargetMonth(year, month);
+            String bankShortCode  = resolveBankShortCode();
+            Path folder           = monthFolder(targetMonth, bankShortCode);
+
+            List<Path> pdfs = new ArrayList<>();
+            if (Files.exists(folder)) {
+                try (Stream<Path> files = Files.list(folder)) {
+                    files.filter(p -> p.toString().endsWith(".pdf")).sorted().forEach(pdfs::add);
+                }
+            }
+            if (pdfs.isEmpty()) {
+                return ResponseEntity.ok(Map.of(
+                    "status",      "NO_REPORTS",
+                    "targetMonth", targetMonth.toString(),
+                    "message",     "No generated PDFs found for " + targetMonth + " — generate reports first."));
+            }
+
+            String jobId = "s3up-" + UUID.randomUUID();
+            ConcurrentHashMap<String, Object> job = new ConcurrentHashMap<>();
+            job.put("jobId",       jobId);
+            job.put("tenantId",    tenantId);
+            job.put("targetMonth", targetMonth.toString());
+            job.put("total",       pdfs.size());
+            job.put("uploaded",    0);
+            job.put("failed",      0);
+            job.put("phase",       "RUNNING");
+            s3UploadJobs.put(jobId, job);
+
+            final String capturedBankCode = bankShortCode;
+            final String capturedYearMonth = targetMonth.toString();
+            Thread worker = new Thread(() -> {
+                TenantContext.setCurrentTenant(tenantId);
+                int ok = 0, fail = 0;
+                try {
+                    for (Path pdf : pdfs) {
+                        try {
+                            boolean uploaded = reportS3UploadService.uploadIfEnabled(
+                                    tenantId, pdf, capturedBankCode, capturedYearMonth);
+                            if (uploaded) ok++; else fail++;
+                        } catch (Exception e) {
+                            fail++;
+                            log.error("[S3-POSTHOC] Upload error for {}: {}", pdf.getFileName(), e.getMessage());
+                        }
+                        job.put("uploaded", ok);
+                        job.put("failed",   fail);
+                    }
+                    job.put("phase", "COMPLETED");
+                    log.info("[S3-POSTHOC] Done — {} uploaded, {} failed ({} tenant:{})",
+                            ok, fail, capturedYearMonth, tenantId);
+                } catch (Exception e) {
+                    job.put("phase", "FAILED");
+                    job.put("message", e.getMessage());
+                    log.error("[S3-POSTHOC] Job {} failed: {}", jobId, e.getMessage());
+                } finally {
+                    TenantContext.clear();
+                }
+            }, "s3-posthoc-upload");
+            worker.setDaemon(true);
+            worker.start();
+
+            return ResponseEntity.ok(Map.of(
+                "status",      "STARTED",
+                "jobId",       jobId,
+                "totalFiles",  pdfs.size(),
+                "targetMonth", targetMonth.toString()));
+        } catch (Exception e) {
+            log.error("[S3-POSTHOC] Failed to start upload", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/s3-upload-status/{jobId}")
+    public ResponseEntity<Map<String, Object>> getS3UploadStatus(@PathVariable String jobId) {
+        ConcurrentHashMap<String, Object> job = s3UploadJobs.get(jobId);
+        // Tenant guard: a job is visible only to the tenant that started it.
+        if (job == null || !Objects.equals(job.get("tenantId"), TenantContext.getCurrentTenant())) {
+            return ResponseEntity.notFound().build();
+        }
+        Map<String, Object> out = new LinkedHashMap<>(job);
+        out.remove("tenantId");
+        return ResponseEntity.ok(out);
+    }
+
     // ─── Batch Monitoring ──────────────────────────────────────────────
 
     /** A batch job is visible/cancellable only within the tenant that started it. */
@@ -1095,8 +1248,12 @@ public class PdfController {
             Files.createDirectories(folder);
 
             String merchantName = resolvemerchantName(merchantId);
-            String safeName  = merchantName.replaceAll("[^a-zA-Z0-9.\\-]", "_");
-            String filename  = "Insight_" + safeName + "_" + targetMonth + ".pdf";
+            // MID keys the filename (same scheme as the batch path) so two
+            // same-named merchants never share one PDF. Tenant guard on the
+            // insight fetch below still governs whose data is rendered.
+            String merchantMid = merchantRepository.findById(merchantId)
+                    .map(Merchant::getMid).orElse(null);
+            String filename  = PlaywrightPdfService.reportFileName(merchantName, merchantMid, targetMonth.toString());
             Path   outPath   = folder.resolve(filename);
 
             if (!force && Files.exists(outPath) && Files.size(outPath) > 0) {

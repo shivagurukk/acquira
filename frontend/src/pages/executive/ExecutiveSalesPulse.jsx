@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Activity, Loader2 } from 'lucide-react';
 import api from '../../api/axios';
+import ChannelToggle from '../../components/ChannelToggle';
+import MidSidSummary from '../../components/MidSidSummary';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCompactCurrency } from '../../utils/formatters';
 import { T, CARD } from '../../theme/salesTokens';
 import PulseHeroBand from '../../components/pulse/PulseHeroBand';
+import MarginGlossaryHint from '../../components/MarginGlossary';
 import TeamRacePanel from '../../components/pulse/TeamRacePanel';
 import SpotlightPanel from '../../components/pulse/SpotlightPanel';
 import TeamLeadSection from '../../components/pulse/TeamLeadSection';
@@ -52,6 +55,7 @@ export default function ExecutiveSalesPulse() {
   const [range, setRange] = useState({ from: '', to: '' });
   const [teamLeadId, setTeamLeadId] = useState('');
   const [countryLeadId, setCountryLeadId] = useState('');
+  const [channel, setChannel] = useState('ALL');   // ALL | POS | ECOM (ChannelToggle)
 
   const [data, setData] = useState(null);
   const [teamLeads, setTeamLeads] = useState([]);
@@ -83,8 +87,11 @@ export default function ExecutiveSalesPulse() {
     }
     if (teamLeadId) q.teamLeadId = teamLeadId;
     if (countryLeadId) q.countryLeadId = countryLeadId;
+    // Channel rides in the shared query so the detail drawer's fetch is
+    // scoped exactly like the rows it was opened from.
+    q.channel = channel;
     return q;
-  }, [period, range.from, range.to, teamLeadId, countryLeadId]);
+  }, [period, range.from, range.to, teamLeadId, countryLeadId, channel]);
 
   const fetchPulse = useCallback(async () => {
     setLoading(true); setErr('');
@@ -100,6 +107,11 @@ export default function ExecutiveSalesPulse() {
   }, [query]);
 
   useEffect(() => { fetchPulse(); }, [fetchPulse, tenantVersion]);
+
+  // A channel selection belongs to the tenant it was made on. Clear the old
+  // tenant's data too so the skeleton (loading && !data) shows on switch instead
+  // of flashing the previous tenant's pulse.
+  useEffect(() => { setChannel('ALL'); setData(null); setLoading(true); }, [tenantVersion]);
 
   // Filter options. Failures here are non-fatal: the page still works with the
   // filters empty, so a broken lookup must not take the whole screen down.
@@ -176,9 +188,12 @@ export default function ExecutiveSalesPulse() {
           <h1 style={{ display: 'flex', alignItems: 'center', gap: 9, margin: 0, fontSize: 21, fontWeight: 700, color: T.text }}>
             <Activity size={21} color={T.brand} /> Executive Sales Pulse
           </h1>
-          <p style={{ margin: '4px 0 0', fontSize: 12, color: T.textMut }}>
-            Who is performing, who is improving, and where leadership should look.
-            {data?.dataThrough && ` Data through ${data.dataThrough}.`}
+          <p style={{ margin: '4px 0 0', fontSize: 12, color: T.textMut, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>
+              Who is performing, who is improving, and where leadership should look.
+              {data?.dataThrough && ` Data through ${data.dataThrough}.`}
+            </span>
+            <MarginGlossaryHint compact />
           </p>
         </div>
 
@@ -209,6 +224,11 @@ export default function ExecutiveSalesPulse() {
               <option key={t.id} value={t.id}>{t.teamLeadName}</option>
             ))}
           </Select>
+
+          <ChannelToggle value={channel} onChange={setChannel} />
+
+          {/* Active MID/SID for the resolved period window (data.period) */}
+          <MidSidSummary from={data?.period?.from} to={data?.period?.to} channel={channel} compact />
 
           {/* Every filter change refetches on its own; a Refresh button implied
               the page could go stale, which it cannot. A quiet spinner covers

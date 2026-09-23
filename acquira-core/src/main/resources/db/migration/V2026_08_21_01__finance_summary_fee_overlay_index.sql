@@ -1,0 +1,51 @@
+-- ============================================================================
+-- V2026_08_21_01 — covering index for the Finance Summary fee overlay
+-- ============================================================================
+-- WHY
+-- ---
+-- The Finance Summary (GET /api/finance/summary) now shows interchange and
+-- scheme fee next to volume and MSF. Those two figures do not exist on
+-- sum_daily_insight / sum_monthly_insight, which the report's pivot reads, so
+-- they are fetched as an additive overlay from sum_daily_full — the only daily
+-- summary that carries the fee stack alongside destination and card_type.
+--
+-- That overlay groups a whole date range (a year, on the screen's default
+-- preset) by month over sum_daily_full. With only idx_sum_daily_full_tenant_date
+-- to work with, Postgres finds the rows by index but must then visit every heap
+-- tuple to read destination / card_type / the three money columns — which for a
+-- year of a large tenant is the dominant cost of the request.
+--
+-- This index INCLUDEs everything the overlay projects, so the rollup is served
+-- index-only: no heap visits, no random I/O.
+--
+-- WHAT IT DOES NOT DO
+-- -------------------
+-- Nothing about the report's numbers. Without this index the screen renders
+-- identical figures, just slower. It is a pure performance change and can be
+-- applied (or dropped) at any time.
+--
+-- HOW THIS RUNS
+-- -------------
+-- Idempotent (IF NOT EXISTS) and listed in spring.sql.init.schema-locations, so
+-- it lands automatically in dev. On prod (schema.sql mode=never) apply once via
+-- psql. Prefer the CONCURRENTLY form there — see the note at the bottom.
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_sum_daily_full_fee_overlay
+    ON sum_daily_full (tenant_id, business_date)
+    INCLUDE (destination, card_type, total_msf, total_interchange, total_scheme_fee);
+
+-- PROD NOTE
+-- ---------
+-- The statement above takes an ACCESS EXCLUSIVE lock on each partition for the
+-- duration of the build. On a large live table run this instead, once per
+-- partition, outside a transaction block (CONCURRENTLY cannot run inside one,
+-- and cannot be applied to the partitioned parent directly):
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sdf_fee_overlay_y2026
+--       ON sum_daily_full_y2026 (tenant_id, business_date)
+--       INCLUDE (destination, card_type, total_msf, total_interchange, total_scheme_fee);
+--
+-- ...repeating for _y2024 / _y2025 / _y2027 / _default, then attach them to a
+-- parent index created with ONLY. The non-concurrent form here is correct for
+-- dev and for a maintenance window.

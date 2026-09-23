@@ -1,12 +1,7 @@
 package com.acquira.batch.service;
 
 import com.acquira.common.model.DataSourceConfig;
-import com.acquira.common.model.SumDailyMerchant;
-import com.acquira.common.model.SumMonthlyMerchantMetrics;
 import com.acquira.common.repository.DataSourceConfigRepository;
-import com.acquira.common.repository.SumDailyMerchantRepository;
-import com.acquira.common.repository.SumMonthlyMerchantMetricsRepository;
-import com.acquira.common.service.MerchantMetricCalculator;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,12 +28,23 @@ public class BackfillIngestionService {
     private final DataSourceConfigRepository dataSourceRepo;
     private final JdbcTemplate jdbcTemplate; // For staging inserts & aggregation
     private final PartitionMaintenanceService partitionService;
-    private final SumDailyMerchantRepository dailyMerchantRepo;
-    private final SumMonthlyMerchantMetricsRepository monthlyMetricsRepo;
-    private final MerchantMetricCalculator merchantMetricCalculator;
+    private final com.acquira.common.service.MonthlyMetricsRebuilder monthlyMetricsRebuilder;
+    // Shared ingest pipeline pieces (2026-08-28) — the SAME beans the upload
+    // job uses, so backfilled days price and summarize identically.
+    private final FeeComputationService feeComputationService;
+    private final SummaryPopulationService summaryPopulationService;
+    private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     // Track single active job progress (simple singleton approach for now)
     private final AtomicReference<BackfillProgress> currentProgress = new AtomicReference<>(new BackfillProgress());
+
+    // INGEST TRUST: backfill bypasses Spring Batch entirely, so it has to record
+    // its own ledger row — see the openRun call in startBackfill.
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.ingest.IngestRunRecorder ingestRunRecorder;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.acquira.common.ingest.IngestReconciliationService ingestReconciliation;
 
     @Data
     public static class BackfillRequest {
@@ -63,6 +69,23 @@ public class BackfillIngestionService {
         return currentProgress.get();
     }
 
+    // Backfill writes fact + summary rows outside the Spring Batch jobs, so
+    // CacheEvictionJobListener never fires for it — clear the report caches
+    // here, same contract as BulkMigrationService.evictReportCaches.
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.cache.CacheManager cacheManager;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.acquira.common.service.ReportCacheWarmup> reportCacheWarmup;
+
+    private void evictReportCaches() {
+        for (String name : com.acquira.common.config.ReportCacheConfig.ALL_CACHES) {
+            org.springframework.cache.Cache cache = cacheManager.getCache(name);
+            if (cache != null) cache.clear();
+        }
+        reportCacheWarmup.ifAvailable(w -> w.requestWarm("backfill"));
+    }
+
     @Async
     public CompletableFuture<Void> startBackfill(BackfillRequest request) {
         BackfillProgress progress = new BackfillProgress();
@@ -70,6 +93,22 @@ public class BackfillIngestionService {
         progress.setTotalDays((int) (request.getEndDate().toEpochDay() - request.getStartDate().toEpochDay()) + 1);
         progress.setCurrentDate(request.getStartDate());
         currentProgress.set(progress);
+
+        // Propagate tenant to this @Async worker thread so TenantAspect sets the
+        // Postgres app.current_tenant RLS backstop. Every query below already
+        // scopes by the explicit request.getTenantId(); this keeps the
+        // defense-in-depth session var consistent with the other async paths and
+        // avoids a bypass if RLS is ever forced. Cleared in the finally.
+        com.acquira.common.config.TenantContext.setCurrentTenant(request.getTenantId());
+
+        // INGEST TRUST: backfill is not a Spring Batch job, so IngestRunJobListener
+        // never sees it. Before the ledger, a backfill that rewrote three months of
+        // history left no trace an operator could find. Open the run explicitly.
+        final Long ingestRunId = ingestRunRecorder.openRun(
+                request.getTenantId(), com.acquira.common.ingest.IngestSource.BACKFILL,
+                null, "backfill", null, "REPLACE",
+                com.acquira.common.config.TenantContext.getCurrentTenant() == null ? "system" : "backfill",
+                null);
 
         log.info("Starting Backfill for Tenant: {},  Range: {} to {}", request.getTenantId(), request.getStartDate(),
                 request.getEndDate());
@@ -89,6 +128,15 @@ public class BackfillIngestionService {
             DataSourceConfig dsConfig = dataSourceRepo.findById(request.getDataSourceId())
                     .orElseThrow(() -> new RuntimeException("DataSource not found: " + request.getDataSourceId()));
 
+            // Monthly metrics are derived per MONTH, not per day (see the call
+            // after this loop) — collect the months whose days actually landed.
+            java.util.Set<String> touchedMonths = new java.util.LinkedHashSet<>();
+            // Summary population is batched the same way (2026-08-28): collect
+            // the days whose FACT write succeeded, aggregate them all in ONE
+            // summary pass after the loop. Per-day summary calls rebuilt every
+            // month-grain rollup once per day — ~30x redundant work.
+            java.util.List<java.sql.Date> landedDates = new java.util.ArrayList<>();
+
             LocalDate loopDate = request.getStartDate();
             while (!loopDate.isAfter(request.getEndDate())) {
                 progress.setCurrentDate(loopDate);
@@ -97,6 +145,8 @@ public class BackfillIngestionService {
                 try {
                     processSingleDate(request.getTenantId(), dsConfig, request.getSourceQueries(), loopDate);
                     progress.setCompletedDays(progress.getCompletedDays() + 1);
+                    touchedMonths.add(String.format("%04d-%02d", loopDate.getYear(), loopDate.getMonthValue()));
+                    landedDates.add(java.sql.Date.valueOf(loopDate));
                 } catch (Exception e) {
                     log.error("Failed to process date: " + loopDate, e);
                     progress.getErrorMessages().add("Date " + loopDate + ": " + e.getMessage());
@@ -106,6 +156,40 @@ public class BackfillIngestionService {
                 loopDate = loopDate.plusDays(1);
             }
 
+            // ONE summary pass for every landed day — the SHARED
+            // SummaryPopulationService (same clean-slate deletes, aggregations,
+            // finance rollup, top-spending customer, sargable scopes and
+            // per-tenant advisory lock as the upload job). Daily grains are
+            // per-date so batching changes nothing; month grains are rebuilt
+            // once per touched month instead of once per day. Must run BEFORE
+            // the monthly merchant metrics below, which read sum_daily_merchant.
+            if (!landedDates.isEmpty()) {
+                try {
+                    summaryPopulationService.populateForDates(request.getTenantId(), landedDates);
+                } catch (Exception e) {
+                    log.error("Batched summary population failed", e);
+                    progress.getErrorMessages().add("Summaries: " + e.getMessage());
+                }
+            }
+
+            // PERF: monthly merchant metrics are a whole-MONTH aggregate over
+            // sum_daily_merchant. Deriving them inside the day loop re-computed
+            // every month once per day in it — a 31-day run rebuilt the same
+            // month 31 times, each time with a per-merchant SELECT+save. Doing
+            // it once per touched month after all days have landed produces the
+            // identical end state for a fraction of the work.
+            // Per-month try/catch mirrors the per-day fault isolation above: one
+            // month's failure must not skip the remaining months or flip a run
+            // whose fact/summary data all landed into FAILED.
+            for (String monthYear : touchedMonths) {
+                try {
+                    calculateDashboardMetrics(request.getTenantId(), monthYear);
+                } catch (Exception e) {
+                    log.error("Failed to rebuild monthly metrics for: " + monthYear, e);
+                    progress.getErrorMessages().add("Month " + monthYear + " metrics: " + e.getMessage());
+                }
+            }
+
             progress.setStatus("COMPLETED");
             log.info("Backfill Completed.");
 
@@ -113,6 +197,23 @@ public class BackfillIngestionService {
             log.error("Backfill Critical Failure", e);
             progress.setStatus("FAILED");
             progress.getErrorMessages().add("Critical: " + e.getMessage());
+        } finally {
+            // INGEST TRUST: close the ledger row on every terminal path, success or
+            // failure. A backfill that died halfway still rewrote days, and that is
+            // exactly the run someone will need to find later.
+            try {
+                ingestRunRecorder.updateCounts(ingestRunId, null, null, null, null, null, null,
+                        null, request.getStartDate(), request.getEndDate(),
+                        (int) (request.getEndDate().toEpochDay() - request.getStartDate().toEpochDay()) + 1);
+                ingestReconciliation.reconcile(ingestRunId);
+                ingestRunRecorder.closeRun(ingestRunId, progress.getStatus(), null);
+            } catch (Exception le) {
+                log.warn("Could not close the backfill ingest ledger row (non-fatal): {}", le.toString());
+            }
+            // Even a failed run may have rewritten fact/summary days already
+            // processed — clear on any terminal status, like the job listener.
+            evictReportCaches();
+            com.acquira.common.config.TenantContext.clear();
         }
 
         return CompletableFuture.completedFuture(null);
@@ -152,9 +253,10 @@ public class BackfillIngestionService {
         // C. Run Aggregation Pipeline (Same logic as TransactionJobConfig)
         runAggregationPipeline(tenantId, targetDate);
 
-        // D. Metrics
+        // D. Metrics. Only the per-DAY activity snapshot runs here; the monthly
+        // merchant metrics are rebuilt once per month by the caller after every
+        // day has landed.
         calculateBusinessMetrics(tenantId, targetDate);
-        calculateDashboardMetrics(tenantId, targetDate);
     }
 
     /**
@@ -283,501 +385,69 @@ public class BackfillIngestionService {
     }
 
     // ==================================================================================
-    // PIPELINE REPLICATION (Reusing SQL logic from TransactionJobConfig)
+    // PIPELINE — shared with the upload job (IngestSql + FeeComputationService +
+    // SummaryPopulationService), no longer a local replication of its SQL.
     // ==================================================================================
     private void runAggregationPipeline(Long tenantId, LocalDate date) {
-        // Scope variables
-        String dateScope = "(SELECT DISTINCT DATE(payment_date) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
-
-        // 0. Auto-create missing dimensions (merchant/store/terminal) from staging,
-        // BEFORE the fact insert — same SQL as the upload job's
-        // autoCreateDimensionsStep. This path used to skip creation entirely (its
-        // "auto-create" only renamed existing merchants), so every staged row whose
-        // MID wasn't already an exact dim_merchant.mid landed in fact with
-        // merchant_id NULL and vanished from all merchant-grain summaries.
+        // 0. Auto-create missing dimensions (merchant/store/terminal) from
+        // staging — same SQL as the upload job's autoCreateDimensionsStep.
         autoCreateDimensions(tenantId);
 
-        // 1. Delete Existing Fact
-        jdbcTemplate.update("""
-                DELETE FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) = ?
-                """, tenantId, date);
-
-        // 2. Insert Fact
-        jdbcTemplate.update(
-                """
-                        INSERT INTO fact_transaction (
-                                tenant_id, merchant_id, store_id, terminal_id,
-                                arn, rrn_number, card_number, auth_code,
-                                payment_date, transaction_date, batch_number, transaction_type, card_scheme, card_type, dcc,
-                                txn_currency, txn_currency_amount, store_base_currency, store_base_currency_amount,
-                                msf, vat, total_amount_settled, interchange_fee, destination
-                            )
-                            SELECT
-                                stg.tenant_id,
-                                COALESCE(s.merchant_id, m.merchant_id, s2.merchant_id),
-                                COALESCE(s.store_id, s2.store_id), t.terminal_id,
-                                stg.arn, stg.rrn_number, stg.card_number, stg.auth_code,
-                                stg.payment_date, stg.transaction_date, stg.batch_number, stg.transaction_type,
-                                stg.card_scheme, stg.card_type, stg.dcc,
-                                stg.txn_currency, ABS(stg.txn_currency_amount), stg.store_base_currency, ABS(stg.store_base_currency_amount),
-                                -- SIGNED MSF (2026-08-07): refunds net out, same rule as the
-                                -- upload path in TransactionJobConfig — see the comment there.
-                                -- MSF ONLY: vat/interchange stay ABS.
-                                CASE WHEN UPPER(TRIM(COALESCE(stg.transaction_type,''))) IN ('RFND','REFUND')
-                                     THEN -ABS(stg.msf) ELSE ABS(stg.msf) END,
-                                ABS(stg.vat), stg.total_amount_settled, ABS(stg.interchange_fee), stg.destination
-                            FROM stg_trnx_raw stg
-                            LEFT JOIN dim_store s ON s.tenant_id = stg.tenant_id AND s.sid = NULLIF(TRIM(stg.sid), '')
-                            LEFT JOIN dim_merchant m ON m.tenant_id = stg.tenant_id AND m.mid = NULLIF(TRIM(stg.mid), '')
-                            LEFT JOIN dim_terminal t ON t.tenant_id = stg.tenant_id
-                                AND t.tid = NULLIF(TRIM(stg.tid), '') AND (t.store_id = s.store_id OR s.store_id IS NULL)
-                            LEFT JOIN dim_store s2 ON s2.tenant_id = stg.tenant_id AND s2.store_id = t.store_id
-                            WHERE stg.tenant_id = ? AND DATE(stg.payment_date) = ?
-                        """,
-                tenantId, date);
-
-        // 3. Update Summaries
-        // For backfill, we can run the standard summary logic scoped to this execution
-        // Since stg_trnx_raw currently holds ONLY this date (due to delete step A),
-        // we can reuse the generic 'dateScope' query which selects potentially just
-        // this one date.
-
-        // 3.0 Clean-slate the date's summary rows before re-aggregating — same rule
-        // as the upload job's populateSummary: the inserts below are ON CONFLICT
-        // upserts, so a (merchant/scheme/…) tuple present in an EARLIER run of this
-        // date but absent from this one would otherwise survive as a stale orphan.
-        // fact_transaction for the date was already delete+reinserted above, so a
-        // full delete+rebuild makes every summary reconcile exactly with fact.
-        for (String dailyTbl : new String[]{
-                "sum_daily_bank", "sum_daily_merchant", "sum_daily_mcc",
-                "sum_daily_scheme", "sum_daily_channel", "sum_daily_terminal",
-                "sum_daily_finance", "sum_daily_insight", "sum_daily_full",
-                "sum_daily_explorer", "sum_daily_merchant_destination",
-                "sum_daily_local_debit_bin",
-                "sum_daily_merchant_attribute"}) {
-            jdbcTemplate.update(
-                    "DELETE FROM " + dailyTbl + " WHERE tenant_id = ? AND business_date = ?",
+        // 1+2. FACT WRITE — APPEND-ONLY via the SHARED upload pipeline
+        // (2026-08-28). This used to be a drifted local mirror: no destination
+        // normalization or destination_raw, no DOMESTIC txn-currency fallback,
+        // UNSIGNED refund volumes, no issuer_country — and NO fee engine at
+        // all, so backfilled days kept raw feed interchange with NULL scheme/
+        // ecom fees and disagreed with uploaded days on every fee screen.
+        //
+        // Now: stage the day's rows in a session temp table shaped LIKE
+        // fact_transaction via IngestSql.stagingToFactInsertSql (the job's
+        // exact INSERT ... SELECT), price them with FeeComputationService (the
+        // job's exact two-phase fee pass + gap report), then atomically delete
+        // the old day and flush the finished rows in ONE INSERT — each fact
+        // row written once, fees and statuses already populated. Everything
+        // runs inside a TransactionTemplate because temp tables require all
+        // statements to share a connection (this service's statements
+        // otherwise run on autocommit pooled connections).
+        final java.util.List<java.sql.Date> dayList =
+            java.util.Collections.singletonList(java.sql.Date.valueOf(date));
+        final String dateScope = IngestScopes.dateInList(dayList);
+        final String rngBare = IngestScopes.rangeClause(dayList, "");
+        final String rngF = IngestScopes.rangeClause(dayList, "f.");
+        final String rngFt = IngestScopes.rangeClause(dayList, "ft.");
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+            .executeWithoutResult(tx -> {
+                jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fact_batch");
+                jdbcTemplate.execute(
+                    "CREATE TEMP TABLE tmp_fact_batch (LIKE fact_transaction INCLUDING DEFAULTS)");
+                int inserted = jdbcTemplate.update(
+                    IngestSql.stagingToFactInsertSql("tmp_fact_batch", " AND DATE(stg.payment_date) = ?"),
                     tenantId, date);
-        }
-        int cleanMonthKey = date.getYear() * 100 + date.getMonthValue();
-        for (String monthlyTbl : new String[]{
-                "sum_monthly_bank", "sum_monthly_insight", "sum_monthly_card"}) {
-            jdbcTemplate.update(
-                    "DELETE FROM " + monthlyTbl + " WHERE tenant_id = ? AND month_key = ?",
-                    tenantId, cleanMonthKey);
-        }
+                // Temp tables have no stats until analyzed; the fee joins need
+                // row counts to pick hash joins.
+                jdbcTemplate.execute("ANALYZE tmp_fact_batch");
+                feeComputationService.computeFees(tenantId, "tmp_fact_batch",
+                    rngFt, rngF, rngBare, dateScope);
+                int deleted = jdbcTemplate.update(
+                    "DELETE FROM fact_transaction WHERE tenant_id = ? AND " + rngBare +
+                    "DATE(payment_date) IN " + dateScope, tenantId);
+                int flushed = jdbcTemplate.update(
+                    "INSERT INTO fact_transaction SELECT * FROM tmp_fact_batch");
+                jdbcTemplate.execute("DROP TABLE IF EXISTS tmp_fact_batch");
+                log.info("[Backfill] {}: staged {} fact rows (replaced {}), flushed {} in one append-only write",
+                    date, inserted, deleted, flushed);
+            });
 
-        // 3.1 Bank
-        jdbcTemplate.update("""
-                INSERT INTO sum_daily_bank (tenant_id, business_date, total_txns, total_volume, total_base_volume, total_msf,
-                     total_interchange, total_scheme_fee, total_ecom_fee, total_vat, total_net_revenue)
-                SELECT tenant_id, DATE(payment_date), COUNT(*), SUM(store_base_currency_amount), SUM(store_base_currency_amount), SUM(msf),
-                     SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)), SUM(COALESCE(ecom_fee,0)), SUM(vat),
-                     SUM(COALESCE(msf,0) - COALESCE(interchange_fee,0) - COALESCE(scheme_fee,0) - COALESCE(ecom_fee,0))
-                FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) = ?
-                GROUP BY tenant_id, DATE(payment_date)
-                ON CONFLICT (tenant_id, business_date) DO UPDATE SET
-                     total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf,
-                     total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, total_ecom_fee=EXCLUDED.total_ecom_fee,
-                     total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue
-                """, tenantId, date);
-
-        // 3.2 Merchant
-        jdbcTemplate.update(
-                """
-                           INSERT INTO sum_daily_merchant (tenant_id, business_date, merchant_id,
-                               total_txns, total_volume, total_base_volume, total_msf, total_interchange, total_scheme_fee, total_margin,
-                               total_debit_prepaid_volume, total_credit_volume, sales_user_id, unique_customer_count,
-                               dcc_eligible_volume, dcc_optin_volume, dcc_optout_volume, dcc_eligible_count, dcc_optin_count)
-                           SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, COUNT(*),
-                               SUM(f.store_base_currency_amount), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee),
-                               SUM(COALESCE(f.scheme_fee,0)),
-                               SUM(COALESCE(f.msf,0) - COALESCE(f.interchange_fee,0) - COALESCE(f.scheme_fee,0) - COALESCE(f.ecom_fee,0)),
-                               SUM(CASE WHEN UPPER(f.card_type) IN ('DEBIT','PREPAID') THEN f.store_base_currency_amount ELSE 0 END),
-                               SUM(CASE WHEN UPPER(f.card_type) = 'CREDIT' THEN f.store_base_currency_amount ELSE 0 END),
-                               m.sales_user_id, COUNT(DISTINCT f.card_number),
-                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN f.store_base_currency_amount ELSE 0 END),
-                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN f.store_base_currency_amount ELSE 0 END),
-                               SUM(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND (f.dcc IS FALSE OR f.dcc IS NULL) THEN f.store_base_currency_amount ELSE 0 END),
-                               COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' THEN 1 END),
-                               COUNT(CASE WHEN UPPER(f.destination)='INTERNATIONAL' AND f.dcc IS TRUE THEN 1 END)
-                           FROM fact_transaction f JOIN dim_merchant m ON f.merchant_id = m.merchant_id AND m.tenant_id = f.tenant_id
-                           WHERE f.tenant_id = ? AND DATE(f.payment_date) = ?
-                           GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, m.sales_user_id
-                           ON CONFLICT (tenant_id, business_date, merchant_id) DO UPDATE SET
-                               total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf,
-                               total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee,
-                               total_margin=EXCLUDED.total_margin, total_debit_prepaid_volume=EXCLUDED.total_debit_prepaid_volume,
-                               total_credit_volume=EXCLUDED.total_credit_volume, sales_user_id=EXCLUDED.sales_user_id,
-                               unique_customer_count=EXCLUDED.unique_customer_count,
-                               dcc_eligible_volume=EXCLUDED.dcc_eligible_volume, dcc_optin_volume=EXCLUDED.dcc_optin_volume,
-                               dcc_optout_volume=EXCLUDED.dcc_optout_volume, dcc_eligible_count=EXCLUDED.dcc_eligible_count,
-                               dcc_optin_count=EXCLUDED.dcc_optin_count
-                        """,
-                tenantId, date);
-
-        // 2.1 Top spending customer per merchant-day
-        jdbcTemplate.update(
-                """
-                        WITH DailyCustSpend AS (
-                            SELECT tenant_id, merchant_id, DATE(payment_date) as b_date, card_number,
-                                SUM(store_base_currency_amount) as total_spend
-                            FROM fact_transaction WHERE tenant_id = ? AND DATE(payment_date) = ?
-                            GROUP BY tenant_id, merchant_id, DATE(payment_date), card_number
-                        ), Ranked AS (
-                            SELECT *, ROW_NUMBER() OVER(PARTITION BY tenant_id, merchant_id, b_date ORDER BY total_spend DESC) as rn
-                            FROM DailyCustSpend
-                        )
-                        UPDATE sum_daily_merchant s SET top_spending_customer_id=r.card_number, top_spending_amount=r.total_spend
-                        FROM Ranked r WHERE s.tenant_id=r.tenant_id AND s.merchant_id=r.merchant_id
-                            AND s.business_date=r.b_date AND r.rn=1 AND s.tenant_id = ?
-                        """,
-                tenantId, date, tenantId);
-
-        // 3. sum_daily_mcc
-        jdbcTemplate.update("""
-                INSERT INTO sum_daily_mcc (tenant_id, business_date, mcc, card_scheme, total_txns,
-                    total_volume, total_msf, total_scheme_fee, total_net_revenue)
-                SELECT f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme, COUNT(*),
-                    SUM(f.store_base_currency_amount), SUM(f.msf), SUM(COALESCE(f.scheme_fee,0)),
-                    SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0))
-                FROM fact_transaction f LEFT JOIN dim_store s ON f.store_id=s.store_id AND s.tenant_id=f.tenant_id
-                WHERE f.tenant_id=? AND DATE(f.payment_date) = ?
-                GROUP BY f.tenant_id, DATE(f.payment_date), s.mcc, f.card_scheme
-                ON CONFLICT (tenant_id, business_date, mcc, card_scheme) DO UPDATE SET
-                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf,
-                    total_scheme_fee=EXCLUDED.total_scheme_fee, total_net_revenue=EXCLUDED.total_net_revenue
-                """, tenantId, date);
-
-        // 4. sum_daily_scheme
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_scheme (tenant_id, business_date, card_scheme, total_txns,
-                            total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue)
-                        SELECT tenant_id, DATE(payment_date), card_scheme, COUNT(*),
-                            SUM(store_base_currency_amount), SUM(msf), SUM(interchange_fee), SUM(COALESCE(scheme_fee,0)),
-                            SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)-COALESCE(ecom_fee,0))
-                        FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
-                        GROUP BY tenant_id, DATE(payment_date), card_scheme
-                        ON CONFLICT (tenant_id, business_date, card_scheme) DO UPDATE SET
-                            total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf,
-                            total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee,
-                            total_net_revenue=EXCLUDED.total_net_revenue
-                        """,
-                tenantId, date);
-
-        // 5. sum_daily_channel
-        jdbcTemplate.update("""
-                INSERT INTO sum_daily_channel (tenant_id, business_date, channel, total_txns,
-                    total_volume, total_msf, total_interchange, total_scheme_fee, total_net_revenue)
-                SELECT f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS'), COUNT(*),
-                    SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee), SUM(COALESCE(f.scheme_fee,0)),
-                    SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0))
-                FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id
-                WHERE f.tenant_id=? AND DATE(f.payment_date) = ?
-                GROUP BY f.tenant_id, DATE(f.payment_date), COALESCE(t.type,'POS')
-                ON CONFLICT (tenant_id, business_date, channel) DO UPDATE SET
-                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf,
-                    total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee,
-                    total_net_revenue=EXCLUDED.total_net_revenue
-                """, tenantId, date);
-
-        // 6. sum_monthly_bank
-        String monthScope = "(SELECT DISTINCT CAST(TO_CHAR(payment_date, 'YYYYMM') AS INTEGER) FROM stg_trnx_raw WHERE tenant_id = ? AND payment_date IS NOT NULL)";
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_monthly_bank (tenant_id, month_key, total_txns, total_volume, total_base_volume, total_msf,
-                            total_interchange, total_scheme_fee, total_ecom_fee, total_vat, total_net_revenue)
-                        SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER),
-                            SUM(total_txns), SUM(total_volume), SUM(COALESCE(total_base_volume,0)), SUM(total_msf), SUM(total_interchange),
-                            SUM(total_scheme_fee), SUM(COALESCE(total_ecom_fee,0)), SUM(total_vat), SUM(total_net_revenue)
-                        FROM sum_daily_bank WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN """
-                        + monthScope
-                        + """
-                                GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM')
-                                ON CONFLICT (tenant_id, month_key) DO UPDATE SET
-                                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume, total_msf=EXCLUDED.total_msf,
-                                    total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee, total_ecom_fee=EXCLUDED.total_ecom_fee,
-                                    total_vat=EXCLUDED.total_vat, total_net_revenue=EXCLUDED.total_net_revenue
-                                """,
-                // Exactly 2 placeholders: outer WHERE tenant_id, then the one inside
-                // monthScope. A third arg here made the driver throw "column index
-                // out of range" and silently killed every summary step after this
-                // one for the whole backfilled date (the per-date catch ate it).
-                tenantId, tenantId);
-
-        // 7. sum_daily_terminal
-        jdbcTemplate.update("""
-                INSERT INTO sum_daily_terminal (tenant_id, business_date, merchant_id, store_id, terminal_id,
-                    total_txns, total_volume, total_base_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_revenue)
-                SELECT tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id,
-                    COUNT(*), SUM(store_base_currency_amount), SUM(store_base_currency_amount), SUM(msf),
-                    SUM(COALESCE(interchange_fee,0)), SUM(COALESCE(scheme_fee,0)), SUM(COALESCE(ecom_fee,0)),
-                    SUM(COALESCE(msf,0)-COALESCE(interchange_fee,0)-COALESCE(scheme_fee,0)-COALESCE(ecom_fee,0))
-                FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ?
-                GROUP BY tenant_id, DATE(payment_date), merchant_id, store_id, terminal_id
-                ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id) DO UPDATE SET
-                    total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_base_volume=EXCLUDED.total_base_volume,
-                    total_msf=EXCLUDED.total_msf, total_interchange=EXCLUDED.total_interchange, total_scheme_fee=EXCLUDED.total_scheme_fee,
-                    total_ecom_fee=EXCLUDED.total_ecom_fee, total_revenue=EXCLUDED.total_revenue
-                """, tenantId, date);
-
-        // 8. sum_daily_finance
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_finance (tenant_id, business_date,
-                            dom_debit_cnt, dom_debit_vol, dom_debit_msf, dom_debit_optin,
-                            dom_credit_cnt, dom_credit_vol, dom_credit_msf, dom_credit_optin,
-                            int_cnt, int_vol, int_msf, int_optin, total_vol, total_msf)
-                        SELECT tenant_id, DATE(payment_date),
-                            COUNT(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN 1 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN store_base_currency_amount ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') THEN msf ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type) IN ('DEBIT','PREPAID') AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
-                            COUNT(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN 1 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN store_base_currency_amount ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' THEN msf ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='DOMESTIC' AND UPPER(card_type)='CREDIT' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
-                            COUNT(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN 1 END),
-                            SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN store_base_currency_amount ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' THEN msf ELSE 0 END),
-                            SUM(CASE WHEN UPPER(destination)='INTERNATIONAL' AND dcc IS TRUE THEN store_base_currency_amount ELSE 0 END),
-                            SUM(store_base_currency_amount), SUM(msf)
-                        FROM fact_transaction WHERE tenant_id=? AND DATE(payment_date) = ?
-                        GROUP BY tenant_id, DATE(payment_date)
-                        ON CONFLICT (tenant_id, business_date) DO UPDATE SET
-                            dom_debit_cnt=EXCLUDED.dom_debit_cnt, dom_debit_vol=EXCLUDED.dom_debit_vol,
-                            dom_debit_msf=EXCLUDED.dom_debit_msf, dom_debit_optin=EXCLUDED.dom_debit_optin,
-                            dom_credit_cnt=EXCLUDED.dom_credit_cnt, dom_credit_vol=EXCLUDED.dom_credit_vol,
-                            dom_credit_msf=EXCLUDED.dom_credit_msf, dom_credit_optin=EXCLUDED.dom_credit_optin,
-                            int_cnt=EXCLUDED.int_cnt, int_vol=EXCLUDED.int_vol,
-                            int_msf=EXCLUDED.int_msf, int_optin=EXCLUDED.int_optin,
-                            total_vol=EXCLUDED.total_vol, total_msf=EXCLUDED.total_msf
-                        """,
-                tenantId, date);
-
-        // 9. sum_daily_insight
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_insight (tenant_id, business_date, merchant_id, store_id, terminal_id,
-                            card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf)
-                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
-                            f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc,
-                            COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf)
-                        FROM fact_transaction f LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id
-                        WHERE f.tenant_id=? AND DATE(f.payment_date) = ?
-                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
-                            f.card_scheme, f.card_type, f.destination, COALESCE(t.type,'POS'), f.dcc
-                        ON CONFLICT (tenant_id, business_date, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
-                        DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf
-                        """,
-                tenantId, date);
-
-        // 9b. sum_daily_merchant_destination — mirrors TransactionJobConfig's
-        // populateSummary insert (summary-rebuild-drift rule). Straight off fact,
-        // NULL merchant_id kept, NULL destination lands as DOMESTIC.
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_merchant_destination (tenant_id, business_date, merchant_id, destination,
-                            total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee, total_net_revenue)
-                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id,
-                            CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END,
-                            COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf), SUM(f.interchange_fee),
-                            SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)),
-                            SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0))
-                        FROM fact_transaction f
-                        WHERE f.tenant_id = ? AND DATE(f.payment_date) = ?
-                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id,
-                            CASE WHEN UPPER(COALESCE(f.destination,'DOMESTIC'))='INTERNATIONAL' THEN 'INTERNATIONAL' ELSE 'DOMESTIC' END
-                        """,
-                tenantId, date);
-
-        // 9c. sum_daily_full — the executive/destination/card-type dashboards'
-        // source. This path never wrote it, so backfilled dates were invisible
-        // there until a manual summary rebuild.
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_full (tenant_id, business_date, merchant_id, store_id, mcc,
-                            channel, destination, card_scheme, card_type, is_opt_in,
-                            total_txns, total_volume, total_msf, total_interchange, total_scheme_fee, total_ecom_fee,
-                            total_net_revenue, dcc_optin_count)
-                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc,
-                            COALESCE(t.type,'POS'), f.destination,
-                            CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
-                                 THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified')
-                                 ELSE f.card_scheme END,
-                            f.card_type, f.dcc,
-                            COUNT(*), SUM(f.store_base_currency_amount), SUM(f.msf),
-                            SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0)), SUM(COALESCE(f.ecom_fee,0)),
-                            SUM(COALESCE(f.msf,0)-COALESCE(f.interchange_fee,0)-COALESCE(f.scheme_fee,0)-COALESCE(f.ecom_fee,0)),
-                            COUNT(CASE WHEN f.dcc IS TRUE THEN 1 END)
-                        FROM fact_transaction f
-                        LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id
-                        LEFT JOIN dim_store st ON f.store_id=st.store_id AND st.tenant_id=f.tenant_id
-                        WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) = ?
-                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, st.mcc,
-                            COALESCE(t.type,'POS'), f.destination,
-                            CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
-                                 THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END,
-                            f.card_type, f.dcc
-                        """,
-                tenantId, date);
-
-        // 9c². sum_daily_local_debit_bin — Local Debit Bank Dashboard source,
-        // upload parity. Mirrors TransactionJobConfig.populateSummary exactly
-        // (merchant NOT NULL, normalized card_type DEBIT, strict
-        // destination='DOMESTIC', signed settlement measures).
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_local_debit_bin (tenant_id, business_date, merchant_id, bin6,
-                            total_txns, total_volume, total_msf)
-                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id,
-                            CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END,
-                            COUNT(*), SUM(f.store_base_currency_amount), SUM(COALESCE(f.msf,0))
-                        FROM fact_transaction f
-                        WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL
-                          AND UPPER(COALESCE(NULLIF(TRIM(f.card_type),''),'')) = 'DEBIT'
-                          AND f.destination = 'DOMESTIC'
-                          AND DATE(f.payment_date) = ?
-                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id,
-                            CASE WHEN f.card_number ~ '^[0-9]{6}' THEN LEFT(f.card_number,6) ELSE '??????' END
-                        """,
-                tenantId, date);
-
-        // 9d. sum_daily_explorer — Data Explorer history pre-aggregate, upload parity.
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_explorer (tenant_id, business_date, merchant_id, store_id, terminal_id,
-                            transaction_type, card_scheme, card_type, destination, channel, txn_currency, store_base_currency, is_opt_in,
-                            total_txns, total_txn_currency_amount, total_base_volume, total_msf, total_vat, total_settled,
-                            total_interchange, total_scheme_fee)
-                        SELECT f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
-                            f.transaction_type,
-                            CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
-                                 THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified')
-                                 ELSE f.card_scheme END,
-                            f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc,
-                            COUNT(*), SUM(COALESCE(f.txn_currency_amount,0)), SUM(COALESCE(f.store_base_currency_amount,0)),
-                            SUM(COALESCE(f.msf,0)), SUM(COALESCE(f.vat,0)), SUM(COALESCE(f.total_amount_settled,0)),
-                            SUM(COALESCE(f.interchange_fee,0)), SUM(COALESCE(f.scheme_fee,0))
-                        FROM fact_transaction f
-                        LEFT JOIN dim_terminal t ON f.terminal_id=t.terminal_id AND t.tenant_id=f.tenant_id
-                        WHERE f.tenant_id=? AND f.merchant_id IS NOT NULL AND DATE(f.payment_date) = ?
-                        GROUP BY f.tenant_id, DATE(f.payment_date), f.merchant_id, f.store_id, f.terminal_id,
-                            f.transaction_type,
-                            CASE WHEN NULLIF(TRIM(f.card_scheme), '') IS NULL OR UPPER(TRIM(f.card_scheme)) = 'NULL'
-                                 THEN COALESCE(NULLIF(TRIM(f.card_type), ''), 'Unclassified') ELSE f.card_scheme END,
-                            f.card_type, f.destination, COALESCE(t.type,'POS'), f.txn_currency, f.store_base_currency, f.dcc
-                        """,
-                tenantId, date);
-
-        // 10. Merchant attributes (CARD_SCHEME, CARD_TYPE, DESTINATION,
-        // TRANSACTION_TYPE, HOUR)
-        // CARD_SCHEME uses the upload job's normalization (blank/'NULL' scheme ->
-        // card_type, else 'Unclassified') so labels match upload-written rows.
-        String schemeExpr = "UPPER(CASE WHEN NULLIF(TRIM(card_scheme), '') IS NULL OR UPPER(TRIM(card_scheme)) = 'NULL' " +
-                "THEN COALESCE(NULLIF(TRIM(card_type), ''), 'Unclassified') ELSE card_scheme END)";
-        jdbcTemplate.update(
-                "INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume) " +
-                "SELECT tenant_id, merchant_id, DATE(payment_date), 'CARD_SCHEME', " + schemeExpr + ", COUNT(*), SUM(store_base_currency_amount) " +
-                "FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ? " +
-                "GROUP BY tenant_id, merchant_id, DATE(payment_date), " + schemeExpr + " " +
-                "ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET " +
-                "metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume",
-                tenantId, date);
-        String[] attrCols = { "CARD_TYPE:card_type", "DESTINATION:destination",
-                "TRANSACTION_TYPE:transaction_type" };
-        String dateScopeStr = "(SELECT DATE('" + date.toString() + "'))"; // Simple literal date for attribute loop, or
-                                                                          // bind param?
-        // Let's use bind param pattern carefully or just formatted string since its
-        // internal
-        for (String ac : attrCols) {
-            String[] parts = ac.split(":");
-            jdbcTemplate.update(String.format(
-                    """
-                            INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
-                            SELECT tenant_id, merchant_id, DATE(payment_date), '%s', UPPER(COALESCE(%s,'UNKNOWN')), COUNT(*), SUM(store_base_currency_amount)
-                            FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ?
-                            GROUP BY tenant_id, merchant_id, DATE(payment_date), UPPER(COALESCE(%s,'UNKNOWN'))
-                            ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
-                                metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
-                            """,
-                    parts[0], parts[1], parts[1]), tenantId, date);
-        }
-
-        // HOUR attribute
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
-                        SELECT tenant_id, merchant_id, DATE(payment_date), 'HOUR', CAST(EXTRACT(HOUR FROM transaction_date) AS VARCHAR), COUNT(*), SUM(store_base_currency_amount)
-                        FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ? AND transaction_date IS NOT NULL
-                        GROUP BY tenant_id, merchant_id, DATE(payment_date), EXTRACT(HOUR FROM transaction_date)
-                        ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
-                            metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
-                        """,
-                tenantId, date);
-
-        // TXN_SIZE_BUCKET attribute
-        // Legacy aggregations stored a single '1K+' bucket; remove those rows for the
-        // date so they can't double-count alongside the '1K-5K'/'5K+' split below.
-        jdbcTemplate.update(
-                "DELETE FROM sum_daily_merchant_attribute WHERE tenant_id=? AND business_date=? " +
-                "AND attribute_type='TXN_SIZE_BUCKET' AND attribute_value='1K+'",
-                tenantId, date);
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_daily_merchant_attribute (tenant_id, merchant_id, business_date, attribute_type, attribute_value, metric_count, metric_volume)
-                        SELECT tenant_id, merchant_id, DATE(payment_date), 'TXN_SIZE_BUCKET',
-                            CASE WHEN store_base_currency_amount < 50 THEN '< 50'
-                                 WHEN store_base_currency_amount < 100 THEN '50-100'
-                                 WHEN store_base_currency_amount < 250 THEN '100-250'
-                                 WHEN store_base_currency_amount < 500 THEN '250-500'
-                                 WHEN store_base_currency_amount < 1000 THEN '500-1K'
-                                 WHEN store_base_currency_amount < 5000 THEN '1K-5K'
-                                 ELSE '5K+' END,
-                            COUNT(*), SUM(store_base_currency_amount)
-                        FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND DATE(payment_date) = ?
-                        GROUP BY tenant_id, merchant_id, DATE(payment_date),
-                            CASE WHEN store_base_currency_amount < 50 THEN '< 50'
-                                 WHEN store_base_currency_amount < 100 THEN '50-100'
-                                 WHEN store_base_currency_amount < 250 THEN '100-250'
-                                 WHEN store_base_currency_amount < 500 THEN '250-500'
-                                 WHEN store_base_currency_amount < 1000 THEN '500-1K'
-                                 WHEN store_base_currency_amount < 5000 THEN '1K-5K'
-                                 ELSE '5K+' END
-                        ON CONFLICT (tenant_id, merchant_id, business_date, attribute_type, attribute_value) DO UPDATE SET
-                            metric_count=EXCLUDED.metric_count, metric_volume=EXCLUDED.metric_volume
-                        """,
-                tenantId, date);
-
-        // 11. sum_monthly_card
-        jdbcTemplate
-                .update("""
-                        INSERT INTO sum_monthly_card (tenant_id, merchant_id, month_key, card_number, visit_count, total_spend)
-                        SELECT tenant_id, merchant_id, CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER), card_number, COUNT(*), SUM(store_base_currency_amount)
-                        FROM fact_transaction WHERE tenant_id=? AND merchant_id IS NOT NULL AND CAST(TO_CHAR(payment_date,'YYYYMM') AS INTEGER) IN """
-                        + monthScope + """
-                                GROUP BY tenant_id, merchant_id, TO_CHAR(payment_date,'YYYYMM'), card_number
-                                ON CONFLICT (tenant_id, merchant_id, month_key, card_number) DO UPDATE SET
-                                    visit_count=EXCLUDED.visit_count, total_spend=EXCLUDED.total_spend
-                                """, tenantId, tenantId); // 2 placeholders (outer + monthScope), see sum_monthly_bank note
-
-        // 12. sum_monthly_insight — month-grain rollup of sum_daily_insight
-        // (upload parity; wide-range Explorer/Business queries read this).
-        jdbcTemplate.update(
-                """
-                        INSERT INTO sum_monthly_insight (tenant_id, month_key, merchant_id, store_id, terminal_id,
-                            card_scheme, card_type, destination, channel, is_opt_in, total_txns, total_volume, total_msf)
-                        SELECT tenant_id, CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER), merchant_id, store_id, terminal_id,
-                            card_scheme, card_type, destination, channel, is_opt_in,
-                            SUM(total_txns), SUM(total_volume), SUM(total_msf)
-                        FROM sum_daily_insight WHERE tenant_id=? AND CAST(TO_CHAR(business_date,'YYYYMM') AS INTEGER) IN """
-                        + monthScope + """
-                                GROUP BY tenant_id, TO_CHAR(business_date,'YYYYMM'), merchant_id, store_id, terminal_id,
-                                    card_scheme, card_type, destination, channel, is_opt_in
-                                ON CONFLICT (tenant_id, month_key, merchant_id, store_id, terminal_id, card_scheme, card_type, destination, channel, is_opt_in)
-                                DO UPDATE SET total_txns=EXCLUDED.total_txns, total_volume=EXCLUDED.total_volume, total_msf=EXCLUDED.total_msf
-                                """, tenantId, tenantId); // 2 placeholders (outer + monthScope)
+        // Summaries deliberately do NOT run here. They are batched ONCE for all
+        // landed dates by startBackfill after the day loop (same pattern as the
+        // monthly merchant metrics): running the summary service per day meant
+        // the three MONTHLY tables (sum_monthly_bank / sum_monthly_insight /
+        // sum_monthly_card — the largest unpartitioned table, a whole-month
+        // fact aggregation) were deleted and rebuilt once PER DAY — a 30-day
+        // run rebuilt each month's rollups ~30 times, which is where the
+        // ~9-minutes-per-day cost lived. The daily aggregations are additive
+        // per date, so one batched pass over all dates produces the identical
+        // end state.
     }
 
     /**
@@ -925,39 +595,16 @@ public class BackfillIngestionService {
         log.info("Business Metrics calculation completed in {}ms", elapsed);
     }
 
-    private void calculateDashboardMetrics(Long tenantId, LocalDate date) {
+    /**
+     * Rebuild monthly merchant metrics for ONE month (YYYY-MM). Delegates to the
+     * shared bulk rebuilder — this used to be a per-merchant SELECT+save loop
+     * called once per backfilled day.
+     */
+    private void calculateDashboardMetrics(Long tenantId, String monthYear) {
         long start = System.currentTimeMillis();
-
-        // Calculate Month-Year Key
-        String monthYear = date.getYear() + "-" + String.format("%02d", date.getMonthValue());
-
-        // Fetch daily records for this month
-        LocalDate monthStart = date.withDayOfMonth(1);
-        LocalDate monthEnd = date.withDayOfMonth(date.lengthOfMonth());
-
-        List<SumDailyMerchant> dailyRecs = dailyMerchantRepo.findByTenantIdAndDateRange(tenantId.intValue(), monthStart,
-                monthEnd);
-        java.util.Map<Long, List<SumDailyMerchant>> grouped = dailyRecs.stream()
-                .collect(java.util.stream.Collectors.groupingBy(SumDailyMerchant::getMerchantId));
-
-        for (java.util.Map.Entry<Long, List<SumDailyMerchant>> entry : grouped.entrySet()) {
-            Long merchantId = entry.getKey();
-            List<SumDailyMerchant> mRecs = entry.getValue();
-
-            SumMonthlyMerchantMetrics newMetrics = merchantMetricCalculator.calculateMetrics(mRecs, tenantId.intValue(),
-                    merchantId, monthYear);
-            java.util.Optional<SumMonthlyMerchantMetrics> existing = monthlyMetricsRepo.findByMerchantAndMonth(
-                    tenantId.intValue(),
-                    merchantId, monthYear);
-            if (existing.isPresent()) {
-                newMetrics.setMetricId(existing.get().getMetricId());
-                newMetrics.setCreatedAt(existing.get().getCreatedAt());
-            }
-            monthlyMetricsRepo.save(newMetrics);
-        }
-
-        long elapsed = System.currentTimeMillis() - start;
-        log.info("Dashboard Metrics calculation completed in {}ms", elapsed);
+        int saved = monthlyMetricsRebuilder.rebuildMonth(tenantId.intValue(), monthYear);
+        log.info("Dashboard Metrics for {} completed in {}ms ({} rows)",
+                monthYear, System.currentTimeMillis() - start, saved);
     }
 
     // Helpers

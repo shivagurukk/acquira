@@ -45,15 +45,18 @@
   --imp-4: #93AAF4;
   --chart-royal: var(--imp-2);
 
-  /* Cost & Margin Mix stack — one hue per segment so each cost carries its
-     own identity and the green margin cap reads as "what we keep".
-     Validated as a categorical set (CVD + contrast) against --surface;
-     the deep interchange imperial is a deliberate anchor below the
-     lightness band, relieved by segment gaps, legend and the table. */
-  --mix-margin:      #0E8F64;   /* jade-deep — the kept margin */
-  --mix-interchange: var(--imp-1);
-  --mix-scheme:      #2B7FD4;   /* sky — lighter, clearly apart from imperial */
-  --mix-pg:          #CA5F28;   /* copper — PG fee */
+  /* Cost & Margin Mix stack — monochrome blue ramp (user's call): every
+     segment is a shade of blue, deep navy at the base rising to the light
+     margin cap, so the stack reads as one gradient column. Adjacent steps
+     stay apart thanks to the 2px surface gaps, legend and the table. */
+  --mix-margin:      #8FB4EA;   /* light blue cap — the kept margin */
+  --mix-interchange: #24386B;   /* deep navy base */
+  --mix-scheme:      #3A62B4;
+  --mix-pg:          #5E87CF;
+  /* Ancillary income (DCC acquirer share + rental) — the part of Net Spread
+     that is NOT fee margin. Plum from the validated cat set so it never reads
+     as margin-green or as a cost. */
+  --mix-ancillary:   var(--cat-5);
   --chart-line: #24386B;   /* navy overlay lines (margin %, trends) */
   --chart-pos: #0FA070;
   --chart-neg: #B3382C;
@@ -192,6 +195,8 @@
   --attr-churned-bg:   color-mix(in srgb, var(--negative) 12%, var(--surface));
   --attr-declining:    var(--attention);
   --attr-declining-bg: color-mix(in srgb, var(--attention) 14%, var(--surface));
+  --attr-nonstarter:    color-mix(in srgb, var(--primary) 55%, var(--negative));
+  --attr-nonstarter-bg: color-mix(in srgb, var(--primary) 8%, var(--surface));
   --attr-stable:       var(--muted);
   --attr-stable-bg:    color-mix(in srgb, var(--muted) 12%, var(--surface));
   --attr-growing:      var(--success-text);
@@ -353,6 +358,22 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Data-table scroll boxes need a bar you can actually SEE and grab — the 4px
+   overlay hairline above fades out on Windows and reads as "stuck" in a big
+   table. Opt a scroll container in with class="acq-scroll" (same 12px treatment
+   the executive ledger grids already use). Class specificity beats the bare
+   ::-webkit-scrollbar rules above, so only the tables that ask for it change. */
+.acq-scroll { scrollbar-gutter: stable; scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 34%, transparent) transparent; }
+.acq-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+.acq-scroll::-webkit-scrollbar-track { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.acq-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 30%, transparent);
+  border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+.acq-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 50%, transparent); background-clip: content-box; }
+.acq-scroll::-webkit-scrollbar-corner { background: transparent; }
 
 /* ══════════════════════════════════════════════════════════════
    PAGE TRANSITIONS — opacity only, ≤150ms
@@ -696,12 +717,13 @@ html.dark {
   --imp-4: #B4C4F8;
   --chart-royal: var(--imp-2);
 
-  /* Cost & Margin Mix stack — dark-mode steps re-picked (not auto-flipped)
-     and validated against the dark surface; all six checks pass here. */
-  --mix-margin:      #25A87B;
-  --mix-interchange: #4356E0;
-  --mix-scheme:      #3E9AE8;
-  --mix-pg:          #D5763A;
+  /* Cost & Margin Mix stack — dark-mode blue ramp re-picked (not
+     auto-flipped) so each step keeps contrast against the dark surface. */
+  --mix-margin:      #9DBFF2;
+  --mix-interchange: #3D5BB8;
+  --mix-scheme:      #5379D2;
+  --mix-pg:          #6F97E2;
+  --mix-ancillary:   var(--cat-5);
   --chart-line: #C7CFDA;
   --chart-pos: #34B98A;
   --chart-neg: #E2705C;
@@ -882,6 +904,19 @@ button {
 .spin { animation: spin 1s linear infinite; }
 
 /* ══════════════════════════════════════════════════════════════
+   SHIMMER — the loading-placeholder sweep.
+   Lived only inside SkeletonLoader, which injects it in a <style>
+   tag. That works for its own components but not for a skeleton a
+   page has to render itself (a <table> cannot host a nested
+   SkeletonLoader). Defined globally so any placeholder can use it;
+   SkeletonLoader's own copy stays harmless.
+   ══════════════════════════════════════════════════════════════ */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ══════════════════════════════════════════════════════════════
    FADE-IN UTILITY — opacity only, ≤150ms
    ══════════════════════════════════════════════════════════════ */
 @keyframes fadeIn {
@@ -895,4 +930,5 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .spin, .fade-in, .stagger-in { animation: none; }
+  [style*="shimmer"] { animation: none; }
 }

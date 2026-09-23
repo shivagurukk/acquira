@@ -1,6 +1,8 @@
 // ─── Shared Formatting Utilities ─────────────────────────────────────
 // Usage: import { formatCurrency, formatNumber, formatCompact, formatPercent, createFmt } from '../../utils/formatters';
 
+import { USD_PER_UNIT, FX_RATE_AS_OF } from '../config/fxRates';
+
 // ── Module-level tenant currency ───────────────────────────────────────
 // Kept in sync with the active tenant by AuthContext (see setDefaultCurrency).
 // This makes formatCurrency(val) and createFmt() render in the tenant's
@@ -52,9 +54,10 @@ const warnOnce = (key, msg) => {
  *                               null/undefined means UNKNOWN — it is never
  *                               silently coerced to 2.
  */
-export const setDefaultCurrency = (code, decimals) => {
+export const setDefaultCurrency = (code, decimals, symbol) => {
     DEFAULT_CCY = code || null;
     DEFAULT_DECIMALS = Number.isInteger(decimals) ? decimals : null;
+    DEFAULT_SYMBOL = symbol || code || null;
 };
 export const getDefaultCurrency = () => DEFAULT_CCY;
 export const getCurrencyDecimals = () => DEFAULT_DECIMALS;
@@ -79,6 +82,52 @@ export const resolveDecimals = (decimals, currency = DEFAULT_CCY) => {
 
 const fixed = (n, d) => new Intl.NumberFormat('en-US',
     { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
+
+// ── Display currency (executive USD toggle) ────────────────────────────
+// The executive-menu pages carry a topbar dropdown that flips every money
+// figure to USD, converted client-side at the hardcoded indicative rates in
+// config/fxRates.js. Layout.jsx pushes the mode here (and ONLY for those
+// routes), so in 'LOCAL' mode — the default — this layer is a no-op and the
+// rest of the app can never be affected by it.
+//
+// Converted figures always render at 2dp (USD minor units) and are labelled
+// 'USD'; a currency with no known rate is left untouched — same fail-safe
+// philosophy as the no-fallback rule above: never mislabel money.
+let DEFAULT_SYMBOL = null;      // tenant display symbol (may differ from the ISO code)
+let DISPLAY_MODE = 'LOCAL';     // 'LOCAL' | 'USD'
+
+export const setDisplayMode = (mode) => { DISPLAY_MODE = mode === 'USD' ? 'USD' : 'LOCAL'; };
+export const getDisplayMode = () => DISPLAY_MODE;
+
+/** USD-per-unit rate for a currency code (or the tenant's display symbol);
+ *  null when the toggle is off, the currency is unknown/unrated, or it is
+ *  already USD — i.e. null means "do not convert". */
+const usdRateFor = (ccyOrSym = DEFAULT_CCY) => {
+    if (DISPLAY_MODE !== 'USD' || !ccyOrSym) return null;
+    const code = (ccyOrSym === DEFAULT_SYMBOL && DEFAULT_CCY)
+        ? DEFAULT_CCY : String(ccyOrSym).toUpperCase();
+    if (code === 'USD') return null;
+    const r = USD_PER_UNIT[code];
+    return typeof r === 'number' && r > 0 ? r : null;
+};
+
+/** True when the given (or tenant) currency will actually be converted. */
+export const isUsdDisplay = (ccy = DEFAULT_CCY) => usdRateFor(ccy) != null;
+/** Raw numeric conversion for call sites that format by hand (CSV builders,
+ *  local tooltip helpers). Identity in LOCAL mode / for unrated currencies. */
+export const convertForDisplay = (val, ccy = DEFAULT_CCY) => {
+    const r = usdRateFor(ccy);
+    return r ? (Number(val) || 0) * r : (Number(val) || 0);
+};
+/** The code to LABEL money with: 'USD' when converting, else the input. */
+export const displayCurrencyCode = (ccy = DEFAULT_CCY) => (usdRateFor(ccy) ? 'USD' : ccy);
+/** Rate provenance for CSV footers: { base, rate, asOf } or null. */
+export const usdRateInfo = (ccy = DEFAULT_CCY) => {
+    const r = usdRateFor(ccy);
+    if (!r) return null;
+    const base = (ccy === DEFAULT_SYMBOL && DEFAULT_CCY) ? DEFAULT_CCY : String(ccy).toUpperCase();
+    return { base, rate: r, asOf: FX_RATE_AS_OF };
+};
 
 // ── Per-tenant locale (date format + timezone) ─────────────────────────
 // Mirrors the currency pattern above: AuthContext fetches GET /users/me/locale
@@ -148,18 +197,20 @@ export const formatDateTime = (d) => {
  * @param {number} [decimals] override precision (defaults to tenant decimals)
  */
 export const formatCurrency = (val, currency = DEFAULT_CCY, decimals) => {
-    const d = resolveDecimals(decimals, currency);
-    const n = Number(val) || 0;
-    if (!currency) {
+    const rate = usdRateFor(currency);
+    const ccy = rate ? 'USD' : currency;
+    const d = rate ? 2 : resolveDecimals(decimals, currency);
+    const n = (Number(val) || 0) * (rate || 1);
+    if (!ccy) {
         warnOnce('ccy:none', 'Money rendered without a currency code — tenant currency is not set yet.');
         return fixed(n, d);
     }
     try {
         return new Intl.NumberFormat('en-US',
-            { style: 'currency', currency, minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
+            { style: 'currency', currency: ccy, minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
     } catch {
         // Non-ISO / unrecognised code: still label it, just not via Intl.
-        return currency + ' ' + fixed(n, d);
+        return ccy + ' ' + fixed(n, d);
     }
 };
 
@@ -174,9 +225,12 @@ export const formatCurrency = (val, currency = DEFAULT_CCY, decimals) => {
  * to render a bare, unlabelled number.
  */
 export const formatMsf = (val, sym = DEFAULT_CCY) => {
-    const min = Math.max(2, resolveDecimals());
-    return (sym ? sym + ' ' : '') + new Intl.NumberFormat('en-US',
-        { minimumFractionDigits: min, maximumFractionDigits: Math.max(4, min) }).format(Number(val) || 0);
+    const rate = usdRateFor(sym);
+    const label = rate ? 'USD' : sym;
+    const min = Math.max(2, rate ? 2 : resolveDecimals());
+    const n = (Number(val) || 0) * (rate || 1);
+    return (label ? label + ' ' : '') + new Intl.NumberFormat('en-US',
+        { minimumFractionDigits: min, maximumFractionDigits: Math.max(4, min) }).format(n);
 };
 
 /**
@@ -216,14 +270,16 @@ const compactParts = (val, decimals) => {
  * number is returned unlabelled rather than mislabelled.
  */
 export const formatCompactCurrency = (val, sym = DEFAULT_CCY, decimals) => {
-    const d = resolveDecimals(decimals, sym === DEFAULT_CCY ? sym : undefined);
-    const n = Number(val) || 0;
+    const rate = usdRateFor(sym);
+    const label = rate ? 'USD' : sym;
+    const d = rate ? 2 : resolveDecimals(decimals, sym === DEFAULT_CCY ? sym : undefined);
+    const n = (Number(val) || 0) * (rate || 1);
     const body = compactParts(n, d);
-    if (!sym) {
+    if (!label) {
         warnOnce('ccy:none', 'Money rendered without a currency code — tenant currency is not set yet.');
         return body;
     }
-    return sym + ' ' + body;
+    return label + ' ' + body;
 };
 
 /**
@@ -260,17 +316,25 @@ export const createFmt = (sym = DEFAULT_CCY, decimals) => ({
     /** Compact money with currency — tiles, axes, tooltips. */
     currency: (val) => formatCompactCurrency(val, sym, decimals),
     /** Exact money with currency at the tenant's precision — tables, exports. */
-    money: (val) => (sym
-        ? sym + ' ' + fixed(Number(val) || 0, resolveDecimals(decimals, sym === DEFAULT_CCY ? sym : undefined))
-        : fixed(Number(val) || 0, resolveDecimals(decimals, undefined))),
+    money: (val) => {
+        const rate = usdRateFor(sym);
+        const label = rate ? 'USD' : sym;
+        const d = rate ? 2 : resolveDecimals(decimals, sym === DEFAULT_CCY ? sym : undefined);
+        const n = (Number(val) || 0) * (rate || 1);
+        return label ? label + ' ' + fixed(n, d) : fixed(n, d);
+    },
     /** MSF at reconciliation precision, labelled with the currency. */
     msf: (val) => formatMsf(val, sym),
     /** Compact money WITHOUT the currency label — for tables that state the
      *  currency once in the column header instead of on every cell. */
-    amount: (val) => compactParts(Number(val) || 0,
-        resolveDecimals(decimals, sym === DEFAULT_CCY ? sym : undefined)),
+    amount: (val) => {
+        const rate = usdRateFor(sym);
+        return compactParts((Number(val) || 0) * (rate || 1),
+            rate ? 2 : resolveDecimals(decimals, sym === DEFAULT_CCY ? sym : undefined));
+    },
     /** Raw precision digits in use — handy for CSV builders. */
-    decimals: () => resolveDecimals(decimals, sym === DEFAULT_CCY ? sym : undefined),
+    decimals: () => (usdRateFor(sym) ? 2
+        : resolveDecimals(decimals, sym === DEFAULT_CCY ? sym : undefined)),
     number: (val) => {
         if (val == null) return '0';
         if (Math.abs(val) >= 1_000_000_000) return (val / 1_000_000_000).toFixed(2) + 'B';
