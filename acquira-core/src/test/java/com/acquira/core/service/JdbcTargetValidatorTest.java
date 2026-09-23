@@ -76,7 +76,7 @@ class JdbcTargetValidatorTest {
     void mssqlUrlShape() {
         IntegrationConnection c = conn(IntegrationConnection.DbType.MSSQL, "sql01", 1433, "AcquiraSrc");
         c.setTrustServerCert(false);
-        assertEquals("jdbc:sqlserver://sql01:1433;databaseName=AcquiraSrc;encrypt=true;trustServerCertificate=false",
+        assertEquals("jdbc:sqlserver://sql01:1433;databaseName=AcquiraSrc;encrypt=true;trustServerCertificate=false;packetSize=32767",
                 c.getJdbcUrl());
     }
 

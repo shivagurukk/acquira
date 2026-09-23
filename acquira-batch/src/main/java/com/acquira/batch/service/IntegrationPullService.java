@@ -358,7 +358,7 @@ public class IntegrationPullService {
             //    for it — the JobLauncher is async (returns in STARTING state).
             List<LocalDate> stagedDates = (report.getReportType() == IntegrationReport.ReportType.TRANSACTION)
                     ? stagedTransactionDates(tenantId) : List.of();
-            runBatchPipeline(report.getReportType(), tenantId);
+            long jobMs = runBatchPipeline(report.getReportType(), tenantId);
 
             // 7. Legacy per-merchant metrics (same as the file path does after its
             //    job) — date-scoped so a one-day pull doesn't re-aggregate the
@@ -367,7 +367,15 @@ public class IntegrationPullService {
                 manualIngestionService.processManualUpload(tenantId, stagedDates);
             }
 
-            // 8. Success
+            // 8. Success — persist the phase split on the run log so an operator
+            //    can see WHERE a slow pull spent its time from the Integration Hub
+            //    run detail, without pod logs (the 2026-09-15/23 'Merchant Pull'
+            //    30-minute incidents were undiagnosable from the UI alone).
+            String timing = String.format(
+                    "Timing: connect %ss, source query %ss, source fetch %ss, staging insert %ss, batch job %ss, total %ss",
+                    pulled.connectMs() / 1000, pulled.queryMs() / 1000, pulled.sourceMs() / 1000,
+                    pulled.insertMs() / 1000, jobMs / 1000, (System.currentTimeMillis() - startMs) / 1000);
+            runLog.setErrorMessage(runLog.getErrorMessage() == null ? timing : runLog.getErrorMessage() + "\n" + timing);
             runLog.setStatus(IntegrationRunLog.Status.SUCCESS);
             log.info("[Integration] SUCCESS — '{}' for tenant {}: {} rows fetched, {} processed{}",
                     report.getName(), tenantId, pulled.fetched(), processed,
@@ -442,6 +450,7 @@ public class IntegrationPullService {
                 java.util.concurrent.Executors.newSingleThreadExecutor();
         try (Connection conn = DriverManager.getConnection(url, props)) {
             conn.setReadOnly(true); // Safety: prevent accidental writes to external DB
+            applySessionParity(conn, config);
             try {
                 conn.setNetworkTimeout(netTimeoutExec, timeout * 1000);
             } catch (SQLException | RuntimeException ignored) {
@@ -512,7 +521,9 @@ public class IntegrationPullService {
     }
 
     /** Result of a streamed pull: rows read from the source vs rows written to staging. */
-    private record PullResult(long fetched, int processed) {}
+    private record PullResult(long fetched, int processed, long connectMs, long queryMs, long sourceMs, long insertMs) {
+        PullResult(long fetched, int processed) { this(fetched, processed, 0, 0, 0, 0); }
+    }
 
     /**
      * Refuse to start while any ingest (file upload, server folder) is RUNNING
@@ -602,6 +613,28 @@ public class IntegrationPullService {
     }
 
     /**
+     * Make the pull session behave like the DBA's SSMS session.
+     *
+     * WHY (2026-09-23 'Merchant Pull' 30-min vs "seconds in source"): SQL
+     * Server keys its plan cache on SET options. SSMS connects with
+     * ARITHABORT ON; the JDBC driver connects with the server default (OFF),
+     * so the same SQL text gets a SEPARATE cached plan for the app, usually
+     * compiled with whatever parameters the first pull happened to send.
+     * That is the textbook "fast in SSMS, slow from the application" case.
+     * Matching the option means both sessions share one plan and any tuning
+     * the DBA does in SSMS is what the pull actually runs. Harmless if the
+     * server already has it on; skipped for other engines.
+     */
+    private void applySessionParity(Connection conn, IntegrationConnection config) {
+        if (config.getDbType() != IntegrationConnection.DbType.MSSQL) return;
+        try (java.sql.Statement st = conn.createStatement()) {
+            st.execute("SET ARITHABORT ON");
+        } catch (SQLException | RuntimeException e) {
+            log.warn("[Integration] Could not SET ARITHABORT ON for {}: {}", config.getName(), e.getMessage());
+        }
+    }
+
+    /**
      * Stream the report query into staging without materialising the result
      * set: rows are read cursor-wise (FETCH_SIZE) and flushed to staging in
      * INSERT_BATCH_SIZE batches, so heap stays flat for any pull size — the
@@ -628,9 +661,10 @@ public class IntegrationPullService {
                 java.util.concurrent.Executors.newSingleThreadExecutor();
         long tConnect = System.currentTimeMillis();
         try (Connection extConn = DriverManager.getConnection(url, props)) {
-            log.info("[Integration] Connected to {} in {}ms", config.getName(),
-                    System.currentTimeMillis() - tConnect);
+            long connectMs = System.currentTimeMillis() - tConnect;
+            log.info("[Integration] Connected to {} in {}ms", config.getName(), connectMs);
             extConn.setReadOnly(true); // Safety: prevent accidental writes to external DB
+            applySessionParity(extConn, config);
             // Postgres only streams with autoCommit off (otherwise the driver
             // buffers the full result client-side, defeating the point); Oracle
             // and MSSQL honour fetchSize regardless. Read-only, so close()
@@ -649,8 +683,8 @@ public class IntegrationPullService {
                         timeout, FETCH_SIZE);
                 long tQuery = System.currentTimeMillis();
                 try (ResultSet rs = ps.executeQuery()) {
-                    log.info("[Integration] Source query returned in {}ms — streaming rows",
-                            System.currentTimeMillis() - tQuery);
+                    long queryMs = System.currentTimeMillis() - tQuery;
+                    log.info("[Integration] Source query returned in {}ms — streaming rows", queryMs);
                     ResultSetMetaData meta = rs.getMetaData();
                     int colCount = meta.getColumnCount();
                     // Labels are lower-cased ONCE here, not per row. Lookup keys
@@ -750,7 +784,7 @@ public class IntegrationPullService {
                                     + "(source fetch {}s, staging insert {}s, {} flush(es), avg {} row/s)",
                             fetched, processed, totalMs / 1000, sourceMs / 1000, insertMs / 1000, flushes,
                             totalMs > 0 ? fetched * 1000 / totalMs : fetched);
-                    return new PullResult(fetched, processed);
+                    return new PullResult(fetched, processed, connectMs, queryMs, sourceMs, insertMs);
                 }
             }
         } catch (SQLException e) {
@@ -1161,7 +1195,7 @@ public class IntegrationPullService {
      * a JobExecution in STARTING state). Throws on job failure so the run log
      * reflects it and retries kick in.
      */
-    private void runBatchPipeline(IntegrationReport.ReportType reportType, Long tenantId) throws Exception {
+    private long runBatchPipeline(IntegrationReport.ReportType reportType, Long tenantId) throws Exception {
         Job job = switch (reportType) {
             case MERCHANT -> dbPullMerchantJob;
             case RENTAL -> dbPullRentalJob;
@@ -1189,7 +1223,7 @@ public class IntegrationPullService {
             if (current != null && !current.isRunning()) {
                 if (current.getStatus() == org.springframework.batch.core.BatchStatus.COMPLETED) {
                     log.info("[Integration] {} COMPLETED for tenant {} in {}s", job.getName(), tenantId, waited / 1000);
-                    return;
+                    return waited;
                 }
                 String failure = current.getAllFailureExceptions().isEmpty()
                         ? String.valueOf(current.getStatus())

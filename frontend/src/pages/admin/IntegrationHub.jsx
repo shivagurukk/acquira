@@ -1799,7 +1799,8 @@ const RunHistoryTab = () => {
             </div>
 
             {detail.errorMessage && (
-              <Alert tone="danger" title="Error">
+              <Alert tone={detail.status === 'SUCCESS' ? 'info' : 'danger'}
+                     title={detail.status === 'SUCCESS' ? 'Run notes' : 'Error'}>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '0.72rem', maxHeight: 160, overflow: 'auto' }}>
                   {detail.errorMessage}
                 </pre>
