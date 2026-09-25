@@ -33,6 +33,12 @@ public class DigestContentService {
     public record MerchantLine(String name, String mid, BigDecimal volume,
                                BigDecimal baseline, Double deltaPct) {}
 
+    /** One day of the 14-day trend strip. */
+    public record DayPoint(LocalDate date, BigDecimal volume, BigDecimal spread) {}
+
+    /** One loss-making merchant: negative MTD Net Spread (same rule as the Loss-Making screen). */
+    public record LossLine(String name, String mid, BigDecimal volume, BigDecimal spread) {}
+
     /** Everything the email renderer needs, already aggregated. */
     public static class DigestData {
         public LocalDate businessDate;
@@ -42,10 +48,36 @@ public class DigestContentService {
         public Map<String, BigDecimal> totals = new LinkedHashMap<>();     // cnt/vol/msf/icf/sf/pg/nm/dcc/rental/fx/spread
         public Map<String, BigDecimal> prevWeek = new LinkedHashMap<>();   // same keys, same weekday last week
         public Map<String, BigDecimal> mtdAvg = new LinkedHashMap<>();     // same keys, MTD daily average
+        public Map<String, BigDecimal> mtdTotals = new LinkedHashMap<>();  // same keys, MTD cumulative
         public int mtdDays;
+
+        /** Last 14 calendar days ending on the business date (loaded days only). */
+        public List<DayPoint> trend14 = new ArrayList<>();
+
+        /** Merchants with negative MTD Net Spread (exclusion list applied); count + worst 3. */
+        public int lossCount;
+        public List<LossLine> lossTop = new ArrayList<>();
+
+        /** Day's DCC opt-in picture (from the transaction feed's DCC flags). */
+        public BigDecimal dccEligibleVol = BigDecimal.ZERO;
+        public BigDecimal dccOptinVol = BigDecimal.ZERO;
+        public long dccEligibleCnt;
+        public long dccOptinCnt;
 
         /** Tenant opted into ECOM FX income (netspread.fx_enabled) — see NetSpreadSql. */
         public boolean fxEnabled;
+
+        /**
+         * Which feeds the figures cover (Phase 1, I-1). The renderer prints a
+         * completeness banner from it and shows "not loaded" instead of 0.000
+         * for an absent feed, so a zero is never mistaken for a missing file.
+         */
+        public DigestFeedCoverage coverage = DigestFeedCoverage.none();
+
+        /** 0 = original digest; n = the n-th restatement of an already-sent day (I-2). */
+        public int restateNo;
+        /** When the original digest went out; shown on a restatement banner. */
+        public java.time.LocalDateTime originalSentAt;
 
         public List<MerchantLine> topMerchants = new ArrayList<>();
         public List<MerchantLine> gainers = new ArrayList<>();
@@ -84,8 +116,18 @@ public class DigestContentService {
             {"cnt", "vol", "msf", "icf", "sf", "pg", "nm", "dcc", "rental", "fx", "spread"};
 
     public DigestData build(Long tenantId, LocalDate date) {
+        return build(tenantId, date, DigestFeedCoverage.none());
+    }
+
+    /**
+     * @param coverage the feed picture the gate saw for this tenant-day
+     *                 (DigestScheduler.coverageFor); carried through to the
+     *                 email so it can say what its figures include.
+     */
+    public DigestData build(Long tenantId, LocalDate date, DigestFeedCoverage coverage) {
         DigestData d = new DigestData();
         d.businessDate = date;
+        d.coverage = coverage == null ? DigestFeedCoverage.none() : coverage;
 
         Map<String, Object> tenant = jdbc.queryForMap(
                 // bank_name is the display name; institution_id is a logical code
@@ -107,6 +149,7 @@ public class DigestContentService {
                 + "WHERE tenant_id = ? AND business_date BETWEEN ? AND ? AND COALESCE(total_txns,0) > 0",
                 Integer.class, tenantId, monthStart, date);
         d.mtdDays = days == null ? 0 : days;
+        d.mtdTotals = mtd;
         if (d.mtdDays > 0) {
             BigDecimal n = BigDecimal.valueOf(d.mtdDays);
             mtd.forEach((k, v) -> d.mtdAvg.put(k, v.divide(n, 4, java.math.RoundingMode.HALF_UP)));
@@ -115,7 +158,66 @@ public class DigestContentService {
         topMerchants(tenantId, date, d);
         movers(tenantId, date, d);
         mix(tenantId, date, d);
+        trend(tenantId, date, d);
+        dccOptIn(tenantId, date, d);
+        lossMaking(tenantId, monthStart, date, d);
         return d;
+    }
+
+    /** Loaded days of the last 14, for the trend strip (bar per day). */
+    private void trend(Long tenantId, LocalDate date, DigestData d) {
+        d.trend14 = jdbc.query(
+                "SELECT s.business_date, COALESCE(SUM(s.total_base_volume),0) vol, "
+                + (d.fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s")) + " spread "
+                + "FROM sum_daily_merchant s WHERE s.tenant_id = ? AND s.business_date BETWEEN ? AND ? "
+                + "GROUP BY s.business_date ORDER BY s.business_date",
+                (rs, i) -> new DayPoint(rs.getObject("business_date", LocalDate.class),
+                        rs.getBigDecimal("vol"), rs.getBigDecimal("spread")),
+                tenantId, date.minusDays(13), date);
+    }
+
+    /** Day's DCC opt-in counters — summarised daily from the transaction feed's DCC flags. */
+    private void dccOptIn(Long tenantId, LocalDate date, DigestData d) {
+        jdbc.query(
+                "SELECT COALESCE(SUM(dcc_eligible_volume),0) ev, COALESCE(SUM(dcc_optin_volume),0) ov, "
+                + "COALESCE(SUM(dcc_eligible_count),0) ec, COALESCE(SUM(dcc_optin_count),0) oc "
+                + "FROM sum_daily_merchant WHERE tenant_id = ? AND business_date = ?",
+                rs -> {
+                    d.dccEligibleVol = rs.getBigDecimal("ev");
+                    d.dccOptinVol = rs.getBigDecimal("ov");
+                    d.dccEligibleCnt = rs.getLong("ec");
+                    d.dccOptinCnt = rs.getLong("oc");
+                }, tenantId, date);
+    }
+
+    /**
+     * Merchants whose MTD Net Spread is negative — the Loss-Making screen's rule
+     * (spread, not margin), honouring the same 'lossmaking.excluded_mids'
+     * tenant_setting so the email never re-surfaces a bank's own by-design-loss
+     * MIDs that the screen hides.
+     */
+    private void lossMaking(Long tenantId, LocalDate monthStart, LocalDate date, DigestData d) {
+        String spread = d.fxEnabled ? NetSpreadSql.sumSpreadWithFx("s") : NetSpreadSql.sumSpread("s");
+        List<LossLine> all = jdbc.query(
+                "SELECT m.name, m.mid, SUM(COALESCE(s.total_base_volume,0)) vol, " + spread + " spread "
+                + "FROM sum_daily_merchant s JOIN dim_merchant m ON m.merchant_id = s.merchant_id "
+                + "WHERE s.tenant_id = ? AND s.business_date BETWEEN ? AND ? "
+                + "GROUP BY m.merchant_id, m.name, m.mid "
+                + "HAVING " + spread + " < 0 ORDER BY spread ASC",
+                (rs, i) -> new LossLine(rs.getString("name"), rs.getString("mid"),
+                        rs.getBigDecimal("vol"), rs.getBigDecimal("spread")),
+                tenantId, monthStart, date);
+        java.util.Set<String> excluded = new java.util.HashSet<>();
+        jdbc.queryForList(
+                "SELECT setting_value FROM tenant_setting WHERE tenant_id = ? AND setting_key = 'lossmaking.excluded_mids'",
+                String.class, tenantId).stream()
+            .filter(v -> v != null)
+            .flatMap(v -> java.util.Arrays.stream(v.split(",")))
+            .map(String::trim).filter(s -> !s.isEmpty())
+            .forEach(excluded::add);
+        all = all.stream().filter(l -> !excluded.contains(l.mid())).toList();
+        d.lossCount = all.size();
+        d.lossTop = all.stream().limit(3).toList();
     }
 
     private Map<String, BigDecimal> totalsFor(Long tenantId, boolean fxEnabled,

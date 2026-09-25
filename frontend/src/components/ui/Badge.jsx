@@ -38,7 +38,7 @@ const STATUS_TONES = {
   YES: 'success', TRUE: 'success', ONLINE: 'success', SENT: 'success', APPROVED: 'success',
   FAILED: 'danger', ERROR: 'danger', INACTIVE: 'danger', DISABLED: 'danger',
   REJECTED: 'danger', OFFLINE: 'danger', EXPIRED: 'danger', NO: 'danger', FALSE: 'danger',
-  PENDING: 'warning', RUNNING: 'warning', IN_PROGRESS: 'warning', WARNING: 'warning',
+  PENDING: 'warning', RUNNING: 'warning', SENDING: 'warning', IN_PROGRESS: 'warning', WARNING: 'warning',
   PARTIAL: 'warning', QUEUED: 'warning', PAUSED: 'warning', DRAFT: 'warning',
   INFO: 'info', SCHEDULED: 'info', NEW: 'info',
 };

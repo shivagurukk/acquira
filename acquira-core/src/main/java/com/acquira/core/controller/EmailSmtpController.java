@@ -39,6 +39,20 @@ import java.util.Map;
 public class EmailSmtpController {
 
     private final SmtpConfigService smtpConfigService;
+    private final com.acquira.core.service.DigestScheduler digestScheduler;
+
+    /**
+     * A FAILED digest streak is almost always a dead SMTP config; once the
+     * admin saves or activates one, release those days so the next sweep
+     * retries them instead of waiting for someone to click each day.
+     */
+    private void releaseFailedDigests(Long tenantId) {
+        try {
+            digestScheduler.retryFailed(tenantId);
+        } catch (Exception e) {
+            log.warn("Could not release failed digests after SMTP change (non-fatal): {}", e.toString());
+        }
+    }
 
     private Long tenantId() {
         // Tenant-isolation fix: use the header-aware TenantContext (set by
@@ -71,7 +85,9 @@ public class EmailSmtpController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     public ResponseEntity<?> create(@RequestBody EmailSmtpConfig body) {
         try {
-            return ResponseEntity.ok(smtpConfigService.create(tenantId(), body));
+            EmailSmtpConfig saved = smtpConfigService.create(tenantId(), body);
+            releaseFailedDigests(tenantId());
+            return ResponseEntity.ok(saved);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -81,7 +97,9 @@ public class EmailSmtpController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody EmailSmtpConfig body) {
         try {
-            return ResponseEntity.ok(smtpConfigService.update(tenantId(), id, body));
+            EmailSmtpConfig saved = smtpConfigService.update(tenantId(), id, body);
+            releaseFailedDigests(tenantId());
+            return ResponseEntity.ok(saved);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -102,7 +120,9 @@ public class EmailSmtpController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     public ResponseEntity<?> activate(@PathVariable Long id) {
         try {
-            return ResponseEntity.ok(smtpConfigService.activate(tenantId(), id));
+            Object activated = smtpConfigService.activate(tenantId(), id);
+            releaseFailedDigests(tenantId());
+            return ResponseEntity.ok(activated);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
