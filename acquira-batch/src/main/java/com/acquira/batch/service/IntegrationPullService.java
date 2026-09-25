@@ -138,6 +138,48 @@ public class IntegrationPullService {
     @org.springframework.beans.factory.annotation.Value("${acquira.integration.lookback-days:3}")
     private int lookbackDays;
 
+    /**
+     * Precondition polling budget, separate from the connection's maxRetries.
+     * A deferred pull is not a failure: the upstream batch is simply not done
+     * yet, and a 3-attempt / ~1h retry budget gave up long before a late
+     * upstream (2-3h is routine) finished. Checks are evenly spaced.
+     */
+    @org.springframework.beans.factory.annotation.Value("${acquira.integration.precondition.max-checks:12}")
+    private int preconditionMaxChecks;
+
+    @org.springframework.beans.factory.annotation.Value("${acquira.integration.precondition.recheck-minutes:15}")
+    private int preconditionRecheckMinutes;
+
+    /**
+     * Optional: lets executePull re-read the report (and, through it, the
+     * connection) by id at the start of every run. Field-injected and
+     * nullable for the same reason as tenantStatusService.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private IntegrationReportRepository reportRepo;
+
+    /**
+     * Source of the file path's per-row transaction normaliser
+     * (TransactionJobConfig.transactionRowNormalizer), applied to every pulled
+     * row so DB pulls and file uploads stage identical data. Optional so
+     * direct-construction tests still work; without it the SQL fallback
+     * (normalizeStagedTransactions) runs instead.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private com.acquira.batch.job.TransactionJobConfig transactionJobConfig;
+
+    /**
+     * A failure that would recur identically on retry — an invalid window,
+     * stacked SQL, the row ceiling. Retrying it three times over 35 minutes
+     * (and, for the row cap, re-streaming 2M rows each time) only delays the
+     * alert. Extends IllegalArgumentException so existing callers/tests that
+     * expect that type keep working.
+     */
+    static final class NonRetryablePullException extends IllegalArgumentException {
+        NonRetryablePullException(String message) { super(message); }
+    }
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     /** Hard ceiling so a runaway report query can't materialise unbounded rows in
@@ -180,6 +222,19 @@ public class IntegrationPullService {
                             LocalDate dateFrom, LocalDate dateTo,
                             int attemptNumber) {
 
+        // Re-read the report (with its connection) and the schedule by id.
+        // Scheduled runs hand in the entity DynamicSchedulerService captured
+        // when the schedule was registered, and retries hand in whatever the
+        // failed run had — so without this, approving a report did not unblock
+        // its schedule until restart, revoking approval (or editing the SQL,
+        // which revokes it) did NOT stop the scheduled pull, and a rotated
+        // password was never picked up. The UI retry endpoint also used to
+        // pass an uninitialised LAZY schedule proxy that this thread could not
+        // initialise. Unavailable repository (direct-construction tests) ->
+        // use what was passed.
+        report = freshReport(report);
+        schedule = freshSchedule(schedule);
+
         Long tenantId = report.getTenantId();
         IntegrationConnection conn = report.getConnection();
 
@@ -189,6 +244,11 @@ public class IntegrationPullService {
         org.slf4j.MDC.put("correlationId", "pull#" + report.getId() + "-" + System.currentTimeMillis() % 100000);
         org.slf4j.MDC.put("tenantId", String.valueOf(tenantId));
         org.slf4j.MDC.put("job", "integrationPull:" + report.getReportType());
+        // The pull runs on an @Async thread with no tenant context, so every
+        // staging write went out with app.current_tenant='' — correct only
+        // because isolation is WHERE tenant_id = ?, and broken the day row
+        // level security is enforced. Set it like a request thread would.
+        com.acquira.common.config.TenantContext.setCurrentTenant(tenantId);
 
         // 1. Create run log
         IntegrationRunLog runLog = new IntegrationRunLog();
@@ -224,7 +284,7 @@ public class IntegrationPullService {
             runLog.setErrorMessage("Tenant " + tenantId + " is not active — pull suppressed. "
                     + "Reactivate the tenant (Tenant Management > Status) to resume scheduled pulls.");
             finishRunLog(runLog, startMs);
-            org.slf4j.MDC.clear();
+            clearThreadContext();
             return;
         }
 
@@ -236,18 +296,44 @@ public class IntegrationPullService {
                     + "(Integration Hub > Report Configs > Approve) before it can run against the source database. "
                     + "Note that editing the SQL revokes an existing approval.");
             finishRunLog(runLog, startMs);
-            org.slf4j.MDC.clear();
+            clearThreadContext();
+            return;
+        }
+
+        // Deactivated report / connection: was checked nowhere on the pull
+        // path, so a schedule kept firing against a connection an operator
+        // had switched off.
+        if (Boolean.FALSE.equals(report.getIsActive()) || Boolean.FALSE.equals(conn.getIsActive())) {
+            String what = Boolean.FALSE.equals(report.getIsActive()) ? "report" : "connection '" + conn.getName() + "'";
+            log.warn("[Integration] Pull '{}' (tenant {}) SKIPPED — {} is inactive.", report.getName(), tenantId, what);
+            runLog.setStatus(IntegrationRunLog.Status.FAILED);
+            runLog.setErrorMessage("The " + what + " is inactive — pull suppressed. Reactivate it (or disable the schedule) to stop this message.");
+            finishRunLog(runLog, startMs);
+            clearThreadContext();
             return;
         }
 
         ReentrantLock lock = tenantLocks.computeIfAbsent(tenantId, t -> new ReentrantLock());
         if (!lock.tryLock()) {
-            log.warn("[Integration] Pull '{}' for tenant {} rejected — another pull for this tenant is in progress.",
-                    report.getName(), tenantId);
-            runLog.setStatus(IntegrationRunLog.Status.FAILED);
-            runLog.setErrorMessage("Another pull for this tenant is already in progress — staging tables are shared per tenant. Re-run once it completes.");
+            // Fail fast for THIS attempt (queueing against the shared staging
+            // table is the race we prevent), but re-schedule rather than fail
+            // the run outright: two schedules for one tenant firing at the
+            // same minute (merchant + transaction at 02:00) otherwise lost one
+            // of them every night and emailed an alert for it.
+            log.warn("[Integration] Pull '{}' for tenant {} deferred — another pull for this tenant is in progress (attempt {}/{}).",
+                    report.getName(), tenantId, attemptNumber, runLog.getMaxRetries());
+            if (attemptNumber < runLog.getMaxRetries()) {
+                runLog.setStatus(IntegrationRunLog.Status.RETRYING);
+                runLog.setErrorMessage("Another pull for this tenant is in progress — staging tables are shared per tenant. "
+                        + "This pull will be retried automatically once it completes.");
+                scheduleRetry(report, schedule, dateFrom, dateTo, attemptNumber + 1);
+            } else {
+                runLog.setStatus(IntegrationRunLog.Status.FAILED);
+                runLog.setErrorMessage("Another pull for this tenant was still in progress after " + attemptNumber
+                        + " attempts — staging tables are shared per tenant. Stagger this tenant's schedules and re-run.");
+            }
             finishRunLog(runLog, startMs);
-            org.slf4j.MDC.clear();
+            clearThreadContext();
             return;
         }
 
@@ -277,16 +363,23 @@ public class IntegrationPullService {
                 Object cell = check.isEmpty() ? null
                         : check.get(0).values().stream().findFirst().orElse(null);
                 if (!isTruthy(cell)) {
-                    log.info("[Integration] Precondition NOT met for '{}' (tenant {}) — upstream returned {} (attempt {}/{})",
-                            report.getName(), tenantId, cell, attemptNumber, runLog.getMaxRetries());
-                    if (attemptNumber < runLog.getMaxRetries()) {
+                    // Deferrals have their OWN budget (preconditionMaxChecks,
+                    // evenly spaced) — the connection's maxRetries is for
+                    // failures. Shown on the run log so "attempt 7/12" reads
+                    // correctly in the UI.
+                    int maxChecks = Math.max(preconditionMaxChecks, runLog.getMaxRetries());
+                    runLog.setMaxRetries(maxChecks);
+                    log.info("[Integration] Precondition NOT met for '{}' (tenant {}) — upstream returned {} (check {}/{})",
+                            report.getName(), tenantId, cell, attemptNumber, maxChecks);
+                    if (attemptNumber < maxChecks) {
                         runLog.setStatus(IntegrationRunLog.Status.RETRYING);
                         runLog.setErrorMessage("Upstream batch not complete yet (precondition returned "
-                                + cell + ") — pull deferred, will re-check.");
+                                + cell + ") — pull deferred, will re-check in " + preconditionRecheckMinutes + " minutes.");
                         // Resolved window, so a defer that crosses midnight still
                         // pulls the period this run was scheduled for.
-                        scheduleRetry(report, schedule,
-                                runLog.getDateRangeFrom(), runLog.getDateRangeTo(), attemptNumber + 1);
+                        scheduleRetryAfter(report, schedule,
+                                runLog.getDateRangeFrom(), runLog.getDateRangeTo(), attemptNumber + 1,
+                                Math.max(1, preconditionRecheckMinutes) * 60_000L);
                     } else {
                         runLog.setStatus(IntegrationRunLog.Status.FAILED);
                         runLog.setErrorMessage("Upstream batch never reported complete after "
@@ -317,9 +410,33 @@ public class IntegrationPullService {
             assertNoRunningIngestForTenant(tenantId);
 
             // 4/5. Parse column mapping, wipe staging, stream query -> staging.
+            // stagingStartedAt is taken NOW, on the DATABASE clock, and handed
+            // to the batch job as its 'startedAt': the merchant job purges
+            // staging rows older than startedAt-30s as "stale", and it used to
+            // receive the job LAUNCH time — i.e. after the whole fill — so any
+            // pull that took more than 30s to stage silently lost its earlier
+            // rows and still reported SUCCESS. load_time is stamped with the DB's
+            // CURRENT_TIMESTAMP, hence the DB clock (app/RDS skew is real).
+            long stagingStartedAtMs = dbNowMs();
             Map<String, String> columnMap = parseColumnMapping(report.getColumnMapping());
             SkipTracker skips = new SkipTracker();
-            PullResult pulled = pullToStaging(report, conn, params, columnMap, tenantId, skips);
+
+            // TRANSACTION: run the file path's row normaliser on every pulled
+            // row (see TransactionJobConfig.transactionRowNormalizer). Input
+            // type follows the same rule as before: the report's explicit
+            // amounts_minor_units flag wins, else the tenant's input_format —
+            // which is exactly what FileUploadService.inputTypeForTenant does.
+            org.springframework.batch.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer = null;
+            if (report.getReportType() == IntegrationReport.ReportType.TRANSACTION && transactionJobConfig != null) {
+                boolean minorUnits = report.getAmountsMinorUnits() != null
+                        ? report.getAmountsMinorUnits()
+                        : isCmmTenant(tenantId);
+                normalizer = transactionJobConfig.transactionRowNormalizer(tenantId, minorUnits ? "CMM" : "AMS");
+                log.info("[Integration] Transaction rows will be normalised in-process (file-path parity), inputType={}",
+                        minorUnits ? "CMM" : "AMS");
+            }
+
+            PullResult pulled = pullToStaging(report, conn, params, columnMap, tenantId, skips, normalizer);
             runLog.setRowsFetched((int) Math.min(pulled.fetched(), Integer.MAX_VALUE));
 
             if (pulled.fetched() == 0) {
@@ -330,9 +447,11 @@ public class IntegrationPullService {
             }
 
             int processed = pulled.processed();
-            if (report.getReportType() != IntegrationReport.ReportType.MERCHANT
+            if (normalizer == null
+                    && report.getReportType() != IntegrationReport.ReportType.MERCHANT
                     && report.getReportType() != IntegrationReport.ReportType.DCC
                     && report.getReportType() != IntegrationReport.ReportType.RENTAL) {
+                // SQL fallback only when the in-process normaliser was unavailable.
                 // 5b. Normalize staged rows to match what the file-path ItemProcessor
                 //     produces: granular card_product_code preserved, card_type
                 //     coarsened to DEBIT/CREDIT/PREPAID, ISO-numeric currency tokens
@@ -358,7 +477,7 @@ public class IntegrationPullService {
             //    for it — the JobLauncher is async (returns in STARTING state).
             List<LocalDate> stagedDates = (report.getReportType() == IntegrationReport.ReportType.TRANSACTION)
                     ? stagedTransactionDates(tenantId) : List.of();
-            long jobMs = runBatchPipeline(report.getReportType(), tenantId);
+            long jobMs = runBatchPipeline(report.getReportType(), tenantId, stagingStartedAtMs);
 
             // 7. Legacy per-merchant metrics (same as the file path does after its
             //    job) — date-scoped so a one-day pull doesn't re-aggregate the
@@ -390,10 +509,15 @@ public class IntegrationPullService {
             // the caller's raw arguments: a retry can fire up to 30 minutes later
             // and possibly past midnight, so re-deriving the window from the clock
             // would silently retry a DIFFERENT period than the run that failed.
-            if (attemptNumber < runLog.getMaxRetries()) {
+            // A NonRetryablePullException would fail identically next time —
+            // fail now so the alert goes out now.
+            boolean retryable = !(e instanceof NonRetryablePullException);
+            if (retryable && attemptNumber < runLog.getMaxRetries()) {
                 scheduleRetry(report, schedule,
                         runLog.getDateRangeFrom(), runLog.getDateRangeTo(), attemptNumber + 1);
                 runLog.setStatus(IntegrationRunLog.Status.RETRYING);
+            } else if (!retryable) {
+                runLog.setErrorMessage(e.getMessage() + " (not retried — this failure would recur unchanged)");
             }
         } finally {
             lock.unlock();
@@ -414,7 +538,77 @@ public class IntegrationPullService {
                             schedule.getId(), e.getMessage());
                 }
             }
-            org.slf4j.MDC.clear();
+            clearThreadContext();
+        }
+    }
+
+    /** MDC + tenant context are both thread-bound; the pool thread is reused. */
+    private static void clearThreadContext() {
+        org.slf4j.MDC.clear();
+        com.acquira.common.config.TenantContext.clear();
+    }
+
+    private IntegrationReport freshReport(IntegrationReport report) {
+        if (reportRepo == null || report == null || report.getId() == null) return report;
+        try {
+            return reportRepo.findById(report.getId()).orElse(report);
+        } catch (Exception e) {
+            log.warn("[Integration] Could not reload report #{} — using the passed instance: {}", report.getId(), e.getMessage());
+            return report;
+        }
+    }
+
+    private IntegrationSchedule freshSchedule(IntegrationSchedule schedule) {
+        if (scheduleRepo == null || schedule == null) return schedule;
+        try {
+            Long id = schedule.getId(); // safe on an uninitialised proxy
+            return id == null ? schedule : scheduleRepo.findById(id).orElse(null);
+        } catch (Exception e) {
+            log.warn("[Integration] Could not reload schedule — continuing without it: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Current time on the APPLICATION DATABASE's clock, in epoch millis —
+     * comparable with the CURRENT_TIMESTAMP that staging rows are stamped
+     * with. Falls back to the JVM clock if the query fails.
+     */
+    private long dbNowMs() {
+        try {
+            Long ms = jdbcTemplate.queryForObject(
+                "SELECT (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000)::BIGINT", Long.class);
+            if (ms != null) return ms;
+        } catch (Exception e) {
+            log.debug("[Integration] DB clock unavailable, using JVM clock: {}", e.toString());
+        }
+        return System.currentTimeMillis();
+    }
+
+    /**
+     * Close out runs the previous process left behind. The app is a single
+     * replica and retries are in-memory timers, so on boot every RUNNING /
+     * RETRYING integration run and every RUNNING ingest_run row is dead: the
+     * run log otherwise showed RUNNING forever, and the stale ingest_run row
+     * blocked new pulls and uploads for this tenant for 6 hours
+     * (assertNoRunningIngestForTenant / FileUploadService.assertNoRunningIngest).
+     */
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void reapInterruptedRuns() {
+        try {
+            int runs = jdbcTemplate.update(
+                "UPDATE integration_run_log SET status = 'FAILED', end_time = CURRENT_TIMESTAMP, "
+                + "error_message = COALESCE(error_message || ' | ', '') || "
+                + "'Interrupted by an application restart (was ' || status || '). Re-run from Integration Hub.' "
+                + "WHERE status IN ('RUNNING', 'RETRYING')");
+            int ingests = jdbcTemplate.update(
+                "UPDATE ingest_run SET status = 'FAILED', ended_at = CURRENT_TIMESTAMP WHERE status = 'RUNNING'");
+            if (runs > 0 || ingests > 0) {
+                log.warn("[Integration] Startup reaper: {} interrupted integration run(s) and {} stale ingest_run row(s) marked FAILED.",
+                        runs, ingests);
+            }
+        } catch (Exception e) {
+            log.warn("[Integration] Startup reaper could not run (non-fatal): {}", e.getMessage());
         }
     }
 
@@ -494,7 +688,7 @@ public class IntegrationPullService {
         String trimmed = sql.strip();
         if (trimmed.endsWith(";")) trimmed = trimmed.substring(0, trimmed.length() - 1);
         if (trimmed.contains(";")) {
-            throw new IllegalArgumentException(
+            throw new NonRetryablePullException(
                 "Report SQL must be a single statement (stacked ';'-separated statements are not allowed).");
         }
     }
@@ -564,7 +758,8 @@ public class IntegrationPullService {
      */
     private PullResult pullToStaging(IntegrationReport report, IntegrationConnection config,
                                      Map<String, Object> params, Map<String, String> columnMap,
-                                     Long tenantId, SkipTracker skips) {
+                                     Long tenantId, SkipTracker skips,
+                                     org.springframework.batch.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer) {
         final String stagingTable;
         final String insertSql;
         final java.util.function.Function<Map<String, Object>, Object[]> mapper;
@@ -593,7 +788,7 @@ public class IntegrationPullService {
             default -> {
                 stagingTable = "stg_trnx_raw";
                 insertSql = TRANSACTION_STAGING_INSERT;
-                mapper = row -> mapTransactionArgs(row, columnMap, tenantId, skips);
+                mapper = row -> mapTransactionArgs(row, columnMap, tenantId, skips, normalizer);
             }
         }
 
@@ -695,9 +890,16 @@ public class IntegrationPullService {
                     // fell through to getIgnoreCase's linear scan over all ~33
                     // entries — ~1e9 string comparisons on a 1M-row pull.
                     String[] labels = new String[colCount];
+                    // Each column is ALSO keyed the way the file reader keys its
+                    // headers (lower case, spaces and underscores removed), so a
+                    // query whose aliases match the upload template — 'Sales User
+                    // Email', 'Terminal Device Number', 'Date of Onboarding' —
+                    // resolves without a column mapping, exactly as its export does.
+                    String[] normLabels = new String[colCount];
                     for (int i = 1; i <= colCount; i++) {
                         labels[i - 1] = meta.getColumnLabel(i) == null
                                 ? "" : meta.getColumnLabel(i).trim().toLowerCase();
+                        normLabels[i - 1] = normalizeHeader(labels[i - 1]);
                     }
 
                     List<Object[]> batch = new ArrayList<>(INSERT_BATCH_SIZE);
@@ -734,7 +936,7 @@ public class IntegrationPullService {
                         // applied (the batch job is not launched) and the next
                         // pull's wipe removes them.
                         if (++fetched > MAX_PULL_ROWS) {
-                            throw new IllegalStateException(
+                            throw new NonRetryablePullException(
                                 "Source query returned more than " + MAX_PULL_ROWS + " rows and was STOPPED at the safety cap. "
                                 + "Nothing was applied, because a partial extract would overwrite complete data. "
                                 + "Narrow the report's date window (or split the schedule) and re-run.");
@@ -744,7 +946,11 @@ public class IntegrationPullService {
                         // differ only by case now collapse to one key, and the
                         // first non-null wins — the same column the old
                         // case-insensitive scan would have found.
-                        for (int i = 1; i <= colCount; i++) row.putIfAbsent(labels[i - 1], rs.getObject(i));
+                        for (int i = 1; i <= colCount; i++) {
+                            Object v = rs.getObject(i);
+                            row.putIfAbsent(labels[i - 1], v);
+                            if (!normLabels[i - 1].equals(labels[i - 1])) row.putIfAbsent(normLabels[i - 1], v);
+                        }
                         Object[] args = mapper.apply(row);
                         if (args != null) {
                             batch.add(args);
@@ -839,7 +1045,22 @@ public class IntegrationPullService {
                 for (Object v : row) flat[p++] = v;
             }
             long tStmt = System.currentTimeMillis();
-            jdbcTemplate.update(sql.toString(), flat);
+            // Bind explicitly instead of jdbcTemplate.update(sql, Object[]):
+            // Spring's setNull for an untyped null calls
+            // ps.getParameterMetaData(), which on pgjdbc is a server round
+            // trip PER NULL PARAMETER — on a 2,000-row merchant chunk
+            // (31 params/row, most optional fields null) that is tens of
+            // thousands of round trips per flush; the 2026-09-24 merchant
+            // pull sat in this call for 8+ minutes while the MSSQL session
+            // idled in ASYNC_NETWORK_IO. Types.NULL lets Postgres infer the
+            // type from the INSERT column, no metadata call.
+            jdbcTemplate.update(sql.toString(), ps -> {
+                for (int i = 0; i < flat.length; i++) {
+                    Object v = flat[i];
+                    if (v == null) ps.setNull(i + 1, java.sql.Types.NULL);
+                    else ps.setObject(i + 1, v);
+                }
+            });
             long stmtMs = System.currentTimeMillis() - tStmt;
             // One multi-row INSERT should be a single round trip; anything past
             // ~2s means the DB or the network path to it is struggling — name
@@ -878,61 +1099,198 @@ public class IntegrationPullService {
                 + " Raise Timeout (seconds) on the connection, or narrow the report's date window.";
     }
 
-    private static final String MERCHANT_STAGING_INSERT = """
-            INSERT INTO stg_merchant_master_raw (
-                tenant_id, institution_code, institution_name, entity_internal_id, entity_name, entity_code,
-                aggregator_internal_id, aggregator_name, aggregator_code,
-                merchant_internal_id, mid, merchant_name, merchant_status,
-                merchant_store_internal_id, sid, store_legal_name, store_name, store_status,
-                business_type, business_mcc, vat_number,
-                primary_contact_person, primary_contact_number, primary_contact_email,
-                address, city, state, postal_code,
-                risk_level, product, date_of_onboarding,
-                load_time
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-        """;
+    private enum ColType { STR, TEXT, BOOL, DEC, TS }
+
+    /**
+     * One staging column of stg_merchant_master_raw: the column, the header
+     * the FILE path reads it under (MerchantMasterJobConfig.merchantExcelReader),
+     * its type and the VARCHAR width the file writer truncates to.
+     */
+    private record MerchantCol(String column, String header, ColType type, int maxLen) {
+        static MerchantCol s(String column, String header, int maxLen) { return new MerchantCol(column, header, ColType.STR, maxLen); }
+        static MerchantCol t(String column, String header) { return new MerchantCol(column, header, ColType.TEXT, 0); }
+        static MerchantCol b(String column, String header) { return new MerchantCol(column, header, ColType.BOOL, 0); }
+        static MerchantCol d(String column, String header) { return new MerchantCol(column, header, ColType.DEC, 0); }
+        static MerchantCol ts(String column, String header) { return new MerchantCol(column, header, ColType.TS, 0); }
+    }
+
+    /**
+     * PARITY WITH FILE UPLOAD (2026-09-24). The merchant master is one row PER
+     * TERMINAL, and the same source query feeds both the file upload and this
+     * pull. The pull used to stage only 30 merchant/store columns and dropped
+     * everything else — so a DB-pulled master created no terminals
+     * (dim_terminal), assigned no sales user (dim_merchant.sales_user_id, and
+     * with it every RM attribution), and lost the review/created dates —
+     * while the identical file upload loaded all of it. This is the file
+     * writer's column list, in its order, with its widths.
+     */
+    private static final MerchantCol[] MERCHANT_COLS = {
+        MerchantCol.s("institution_code", "Institution Code", 50),
+        MerchantCol.s("institution_name", "Institution Name", 100),
+        MerchantCol.s("entity_internal_id", "EntityInternalId", 50),
+        MerchantCol.s("entity_name", "Entity Name", 100),
+        MerchantCol.s("entity_code", "Entity Code", 50),
+        MerchantCol.s("aggregator_internal_id", "AggregatorInternalId", 50),
+        MerchantCol.s("aggregator_name", "Aggregator Name", 100),
+        MerchantCol.s("aggregator_code", "Aggregator Code", 50),
+        MerchantCol.s("merchant_internal_id", "MerchantInternalId", 50),
+        MerchantCol.s("mid", "MID", 50),
+        MerchantCol.s("merchant_name", "MerchantName", 150),
+        MerchantCol.s("merchant_status", "MerchantStatus", 50),
+        MerchantCol.s("merchant_store_internal_id", "MerchantStoreInternalId", 50),
+        MerchantCol.s("sid", "SID", 50),
+        MerchantCol.s("store_legal_name", "StoreLegalName", 150),
+        MerchantCol.s("store_name", "StoreName", 150),
+        MerchantCol.s("store_status", "Store Status", 50),
+        MerchantCol.s("business_type", "Business Type", 100),
+        MerchantCol.s("business_mcc", "Business MCC", 10),
+        MerchantCol.s("vat_number", "VATNumber", 50),
+        MerchantCol.s("primary_contact_person", "PrimaryContactPerson", 100),
+        MerchantCol.s("primary_contact_number", "PrimaryContactNumber", 50),
+        MerchantCol.s("primary_contact_email", "PrimaryContactEmail", 100),
+        MerchantCol.s("primary_contact_designation", "PrimaryContactDesignation", 100),
+        MerchantCol.s("secondary_contact_person", "SecondaryContactPerson", 100),
+        MerchantCol.s("secondary_contact_email", "SecondaryContactEmail", 100),
+        MerchantCol.s("secondary_contact_number", "SecondaryContactNumber", 50),
+        MerchantCol.s("secondary_contact_designation", "SecondaryContactDesignation", 100),
+        MerchantCol.t("address", "Address"),
+        MerchantCol.s("city", "City", 100),
+        MerchantCol.s("state", "State", 100),
+        MerchantCol.s("postal_code", "PostalCode", 20),
+        MerchantCol.t("store_desc", "Store Desc"),
+        MerchantCol.s("industry_type", "Industry Type", 100),
+        MerchantCol.s("customer_type", "Customer Type", 100),
+        MerchantCol.s("source_of_fund", "SourceOffund", 100),
+        MerchantCol.d("expected_volume", "Expected Volume"),
+        MerchantCol.b("regulated_activity", "regulatedActivity"),
+        MerchantCol.t("regulated_activity_desc", "regulatedActivityDescription"),
+        MerchantCol.s("auditor_name", "auditorName", 100),
+        MerchantCol.b("is_pep", "isPEP"),
+        MerchantCol.t("pep_reason", "PEPReason"),
+        MerchantCol.b("high_risk_adverse_media", "highRiskAdverseMedia"),
+        MerchantCol.b("high_risk_source_of_wealth", "highRiskSourceOfWealth"),
+        MerchantCol.s("risk_level", "RiskLevel", 20),
+        MerchantCol.b("risk_level_high", "Risk Level High"),
+        MerchantCol.b("risk_level_prohibited", "Risk Level Prohibited"),
+        MerchantCol.b("risk_level_restricted", "Risk Level Restricted"),
+        MerchantCol.s("product", "Product", 100),
+        MerchantCol.ts("date_of_onboarding", "Date of Onboarding"),
+        MerchantCol.ts("reviewed_date", "Reviewed Date"),
+        MerchantCol.ts("next_reviewed_date", "Next Reviewed Date"),
+        MerchantCol.s("sales_user_email", "Sales User Email", 100),
+        MerchantCol.s("sales_user_id", "Sales User Id", 50),
+        MerchantCol.s("referral_partner", "Referral Partner", 100),
+        MerchantCol.ts("created_date", "CreatedDate"),
+        MerchantCol.s("terminal_internal_id", "TerminalInternalId", 50),
+        MerchantCol.s("tid", "TID", 50),
+        MerchantCol.s("terminal_name", "Terminal Name", 100),
+        MerchantCol.s("terminal_status", "Terminal Status", 50),
+        MerchantCol.s("terminal_device_number", "Terminal Device Number", 50),
+        MerchantCol.s("terminal_type", "Terminal Type", 50),
+        MerchantCol.t("terminal_description", "Terminal Description"),
+        MerchantCol.s("bank_name", "BankName", 100),
+        MerchantCol.s("bank_account_name", "BankAccountName", 100),
+        MerchantCol.s("bank_account_number", "BankAccountNumber", 50),
+        MerchantCol.s("swift_code", "SwiftCode", 50),
+        MerchantCol.s("iban_number", "IBANNumber", 50),
+        MerchantCol.ts("merchant_created_date", "Merchant CreatedDate"),
+        MerchantCol.ts("merchant_store_created_date", "MerchantStore CreatedDate"),
+        MerchantCol.ts("terminal_created_date", "Terminal CreatedDate"),
+    };
+
+    private static final String MERCHANT_STAGING_INSERT = buildMerchantInsert();
+
+    private static String buildMerchantInsert() {
+        StringBuilder cols = new StringBuilder("INSERT INTO stg_merchant_master_raw (tenant_id");
+        StringBuilder vals = new StringBuilder(" VALUES (?");
+        for (MerchantCol c : MERCHANT_COLS) {
+            cols.append(", ").append(c.column());
+            vals.append(",?");
+        }
+        cols.append(", load_time)");
+        vals.append(",CURRENT_TIMESTAMP)");
+        return cols.toString() + vals;
+    }
 
     /** Maps one source row to stg_merchant_master_raw insert args; null = skipped (recorded in skips). */
     private Object[] mapMerchantArgs(Map<String, Object> row, Map<String, String> columnMap,
                                      Long tenantId, SkipTracker skips) {
         try {
-            return new Object[]{
-                tenantId,
-                str(getMapped(row, columnMap, "institution_code")),
-                str(getMapped(row, columnMap, "institution_name")),
-                str(getMapped(row, columnMap, "entity_internal_id")),
-                str(getMapped(row, columnMap, "entity_name")),
-                str(getMapped(row, columnMap, "entity_code")),
-                str(getMapped(row, columnMap, "aggregator_internal_id")),
-                str(getMapped(row, columnMap, "aggregator_name")),
-                str(getMapped(row, columnMap, "aggregator_code")),
-                str(getMapped(row, columnMap, "merchant_internal_id")),
-                str(getMapped(row, columnMap, "mid")),
-                str(getMapped(row, columnMap, "merchant_name")),
-                str(getMapped(row, columnMap, "merchant_status")),
-                str(getMapped(row, columnMap, "merchant_store_internal_id")),
-                str(getMapped(row, columnMap, "sid")),
-                str(getMapped(row, columnMap, "store_legal_name")),
-                str(getMapped(row, columnMap, "store_name")),
-                str(getMapped(row, columnMap, "store_status")),
-                str(getMapped(row, columnMap, "business_type")),
-                str(getMapped(row, columnMap, "business_mcc")),
-                str(getMapped(row, columnMap, "vat_number")),
-                str(getMapped(row, columnMap, "primary_contact_person")),
-                str(getMapped(row, columnMap, "primary_contact_number")),
-                str(getMapped(row, columnMap, "primary_contact_email")),
-                str(getMapped(row, columnMap, "address")),
-                str(getMapped(row, columnMap, "city")),
-                str(getMapped(row, columnMap, "state")),
-                str(getMapped(row, columnMap, "postal_code")),
-                str(getMapped(row, columnMap, "risk_level")),
-                str(getMapped(row, columnMap, "product")),
-                str(getMapped(row, columnMap, "date_of_onboarding"))
-            };
+            Object[] args = new Object[1 + MERCHANT_COLS.length];
+            args[0] = tenantId;
+            String mid = null;
+            for (int i = 0; i < MERCHANT_COLS.length; i++) {
+                MerchantCol c = MERCHANT_COLS[i];
+                Object raw = getMapped(row, columnMap, c.column(), c.header());
+                Object v = switch (c.type()) {
+                    case STR -> truncate(strTrim(raw), c.maxLen());
+                    case TEXT -> str(raw);
+                    // File path: parseBoolean(null) is FALSE, not NULL.
+                    case BOOL -> Boolean.TRUE.equals(toBoolean(raw));
+                    case DEC -> toBigDecimal(raw);
+                    case TS -> toTimestamp(raw);
+                };
+                if ("mid".equals(c.column())) mid = (String) v;
+                args[1 + i] = v;
+            }
+            // MID is the one key the merchant upsert anchors on; the job drops
+            // rows without it, but that count only ever reached the upload UI.
+            // Skip here instead so a wrong column mapping shows up on the run
+            // log as "N rows skipped: mid missing" rather than a SUCCESS that
+            // upserted nothing.
+            if (mid == null) {
+                skips.skip("mid missing/blank — check the report's column mapping for 'MID'");
+                return null;
+            }
+            return args;
         } catch (Exception e) {
             skips.skip(e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Merge a separate time-of-day column into a date, mirroring the file
+     * path's parseDateWithTime: accepts a JDBC Time/LocalTime, "HH:mm[:ss]",
+     * or an Excel day-fraction; anything else leaves the date unchanged.
+     */
+    private static Timestamp withTimeOfDay(Timestamp date, Object time) {
+        if (date == null || time == null) return date;
+        try {
+            java.time.LocalTime t;
+            if (time instanceof java.sql.Time st) t = st.toLocalTime();
+            else if (time instanceof java.time.LocalTime lt) t = lt;
+            else if (time instanceof Timestamp ts) t = ts.toLocalDateTime().toLocalTime();
+            else {
+                String tv = time.toString().trim();
+                if (tv.isEmpty()) return date;
+                if (tv.matches("\\d+\\.\\d+")) {
+                    int totalSecs = (int) Math.round(Double.parseDouble(tv) * 86400);
+                    t = java.time.LocalTime.ofSecondOfDay(Math.min(totalSecs, 86399));
+                } else if (tv.contains(":")) {
+                    String[] p = tv.split(":");
+                    t = java.time.LocalTime.of(Integer.parseInt(p[0].trim()),
+                            p.length > 1 ? Integer.parseInt(p[1].trim()) : 0,
+                            p.length > 2 ? (int) Double.parseDouble(p[2].trim()) : 0);
+                } else {
+                    return date;
+                }
+            }
+            return Timestamp.valueOf(date.toLocalDateTime().toLocalDate().atTime(t));
+        } catch (Exception e) {
+            return date;
+        }
+    }
+
+    /** str() plus trim — identifiers from CHAR columns arrive space-padded. */
+    private String strTrim(Object val) {
+        String s = str(val);
+        return s == null ? null : s.trim();
+    }
+
+    /** Same policy as the file writer's setStr: keep the row, cut the tail. */
+    private static String truncate(String s, int maxLen) {
+        return (s != null && maxLen > 0 && s.length() > maxLen) ? s.substring(0, maxLen) : s;
     }
 
     private static final String DCC_STAGING_INSERT = """
@@ -1011,79 +1369,113 @@ public class IntegrationPullService {
         }
     }
 
+    /** Same column list as the file path's highPerfTransactionWriter (minus ingest_run_id, see mapTransactionArgs). */
     private static final String TRANSACTION_STAGING_INSERT = """
             INSERT INTO stg_trnx_raw (
                 tenant_id, entity_name, aggregator_internal_id, aggregator_name, aggregator_code,
                 mid, merchant_internal_id, merchant_name,
-                sid, merchant_store_internal_id, store_name,
+                sid, merchant_store_internal_id, cmm_merchant_store_internal_id, merchant_store_legal_name, store_name,
                 tid, arn, rrn_number, card_number, auth_code,
                 payment_date, transaction_date, batch_number, transaction_type,
                 card_scheme, card_type, card_product_code, dcc,
                 txn_currency, txn_currency_amount, store_base_currency, store_base_currency_amount,
-                msf, vat, total_amount_settled, interchange_fee, destination,
+                msf, vat, total_amount_settled, interchange_fee, destination, issuer_country,
                 load_time
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         """;
 
     /**
      * Maps one source row to stg_trnx_raw insert args; null = skipped.
-     * Includes card_product_code (granular feed 'Card Type' — VIPM/MCPM/MCDB…)
-     * which tier resolution needs; defaults to the raw card_type value when not
-     * mapped separately. ingest_run_id is deliberately NOT set here — the run
-     * only exists once dbPullTransactionJob launches; its adoptStagingStep tags
-     * these rows with the run id before any downstream read.
+     *
+     * Reads the row under the SAME headers the file loader uses (its CSV/Excel
+     * column names), builds the same StagingTransaction, runs it through the
+     * same row normaliser (when available), and writes the same columns — so a
+     * DB pull and a file upload of one export stage identical rows.
+     * ingest_run_id is deliberately NOT set here — the run only exists once
+     * dbPullTransactionJob launches; its adoptStagingStep tags these rows with
+     * the run id before any downstream read.
      */
     private Object[] mapTransactionArgs(Map<String, Object> row, Map<String, String> columnMap,
-                                        Long tenantId, SkipTracker skips) {
+                                        Long tenantId, SkipTracker skips,
+                                        org.springframework.batch.item.ItemProcessor<StagingTransaction, StagingTransaction> normalizer) {
         try {
-            Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date"));
+            Timestamp paymentDate = toTimestamp(getMapped(row, columnMap, "payment_date", "Payment Date"));
             if (paymentDate == null) {
                 // Without payment_date the row can't be partition-routed or
                 // date-scoped anywhere downstream — skip loudly, not silently.
                 skips.skip("payment_date missing/unparseable");
                 return null;
             }
-            String rawCardType = str(getMapped(row, columnMap, "card_type"));
+            StagingTransaction t = new StagingTransaction();
+            t.setTenantId(tenantId);
+            t.setEntityName(str(getMapped(row, columnMap, "entity_name", "Entity Name")));
+            t.setAggregatorInternalId(str(getMapped(row, columnMap, "aggregator_internal_id", "Aggregator Internal Id")));
+            t.setAggregatorName(str(getMapped(row, columnMap, "aggregator_name", "Aggregator Name")));
+            t.setAggregatorCode(str(getMapped(row, columnMap, "aggregator_code", "AggregatorCode")));
+            t.setMid(strTrim(getMapped(row, columnMap, "mid", "MID")));
+            t.setMerchantInternalId(str(getMapped(row, columnMap, "merchant_internal_id", "Merchant Internal Id")));
+            t.setMerchantName(str(getMapped(row, columnMap, "merchant_name", "Merchant Name")));
+            t.setSid(strTrim(getMapped(row, columnMap, "sid", "SID")));
+            t.setMerchantStoreInternalId(str(getMapped(row, columnMap, "merchant_store_internal_id", "Merchant Store Internal Id")));
+            t.setCmmMerchantStoreInternalId(str(getMapped(row, columnMap, "cmm_merchant_store_internal_id", "CMM Merchant Store Internal Id")));
+            t.setMerchantStoreLegalName(str(getMapped(row, columnMap, "merchant_store_legal_name", "Merchant Store Legal Name")));
+            t.setStoreName(str(getMapped(row, columnMap, "store_name", "Store Name")));
+            // The file reads the terminal as "TerminalID" (staging: tid), and
+            // carries the time of day in a separate "Transaction Time" column
+            // that it merges into transaction_date (parseDateWithTime).
+            t.setTid(strTrim(getMapped(row, columnMap, "tid", "TerminalID")));
+            t.setArn(str(getMapped(row, columnMap, "arn", "ARN")));
+            t.setRrnNumber(str(getMapped(row, columnMap, "rrn_number", "RRN Number")));
+            t.setCardNumber(str(getMapped(row, columnMap, "card_number", "CardNumber")));
+            t.setAuthCode(str(getMapped(row, columnMap, "auth_code", "Auth Code")));
+            t.setPaymentDate(paymentDate.toLocalDateTime());
+            Timestamp txnDate = withTimeOfDay(
+                    toTimestamp(getMapped(row, columnMap, "transaction_date", "Transaction Date")),
+                    getMapped(row, columnMap, "transaction_time", "Transaction Time"));
+            t.setTransactionDate(txnDate == null ? null : txnDate.toLocalDateTime());
+            t.setBatchNumber(str(getMapped(row, columnMap, "batch_number", "BatchNumber")));
+            t.setTransactionType(str(getMapped(row, columnMap, "transaction_type", "Transaction Type")));
+            t.setCardScheme(str(getMapped(row, columnMap, "card_scheme", "CardScheme")));
+            String rawCardType = str(getMapped(row, columnMap, "card_type", "Card Type"));
+            t.setCardType(rawCardType);
+            // Preserve the granular product code BEFORE card_type is coarsened
+            // to DEBIT/CREDIT/PREPAID (same rule as the file reader).
             String productCode = str(getMapped(row, columnMap, "card_product_code"));
-            if (productCode == null || productCode.isBlank()) {
-                // Preserve the granular product code BEFORE card_type is
-                // coarsened to DEBIT/CREDIT/PREPAID (same rule as the file path).
-                productCode = rawCardType;
+            t.setCardProductCode(productCode == null || productCode.isBlank() ? rawCardType : productCode);
+            // File path: parseDccFlag(null) is FALSE, not NULL.
+            t.setDcc(Boolean.TRUE.equals(toBoolean(getMapped(row, columnMap, "dcc", "DCC"))));
+            t.setTxnCurrency(str(getMapped(row, columnMap, "txn_currency", "Txn Currency")));
+            t.setTxnCurrencyAmount(toBigDecimal(getMapped(row, columnMap, "txn_currency_amount", "Txn Currency Amount")));
+            t.setStoreBaseCurrency(str(getMapped(row, columnMap, "store_base_currency", "Store Base Currency")));
+            t.setStoreBaseCurrencyAmount(toBigDecimal(getMapped(row, columnMap, "store_base_currency_amount", "Store Base Currency Amount")));
+            t.setMsf(toBigDecimal(getMapped(row, columnMap, "msf", "MSF")));
+            t.setVat(toBigDecimal(getMapped(row, columnMap, "vat", "VAT")));
+            t.setTotalAmountSettled(toBigDecimal(getMapped(row, columnMap, "total_amount_settled", "Total Amount Settled")));
+            t.setInterchangeFee(toBigDecimal(getMapped(row, columnMap, "interchange_fee", "Interchange Fee")));
+            t.setDestination(str(getMapped(row, columnMap, "destination", "Destination")));
+
+            if (normalizer != null) {
+                t = normalizer.process(t);
+                if (t == null) {
+                    skips.skip("filtered by row normaliser");
+                    return null;
+                }
             }
+
             return new Object[]{
                 tenantId,
-                str(getMapped(row, columnMap, "entity_name")),
-                str(getMapped(row, columnMap, "aggregator_internal_id")),
-                str(getMapped(row, columnMap, "aggregator_name")),
-                str(getMapped(row, columnMap, "aggregator_code")),
-                str(getMapped(row, columnMap, "mid")),
-                str(getMapped(row, columnMap, "merchant_internal_id")),
-                str(getMapped(row, columnMap, "merchant_name")),
-                str(getMapped(row, columnMap, "sid")),
-                str(getMapped(row, columnMap, "merchant_store_internal_id")),
-                str(getMapped(row, columnMap, "store_name")),
-                str(getMapped(row, columnMap, "tid")),
-                str(getMapped(row, columnMap, "arn")),
-                str(getMapped(row, columnMap, "rrn_number")),
-                str(getMapped(row, columnMap, "card_number")),
-                str(getMapped(row, columnMap, "auth_code")),
-                paymentDate,
-                toTimestamp(getMapped(row, columnMap, "transaction_date")),
-                str(getMapped(row, columnMap, "batch_number")),
-                str(getMapped(row, columnMap, "transaction_type")),
-                str(getMapped(row, columnMap, "card_scheme")),
-                rawCardType,
-                productCode,
-                toBoolean(getMapped(row, columnMap, "dcc")),
-                str(getMapped(row, columnMap, "txn_currency")),
-                toBigDecimal(getMapped(row, columnMap, "txn_currency_amount")),
-                str(getMapped(row, columnMap, "store_base_currency")),
-                toBigDecimal(getMapped(row, columnMap, "store_base_currency_amount")),
-                toBigDecimal(getMapped(row, columnMap, "msf")),
-                toBigDecimal(getMapped(row, columnMap, "vat")),
-                toBigDecimal(getMapped(row, columnMap, "total_amount_settled")),
-                toBigDecimal(getMapped(row, columnMap, "interchange_fee")),
-                str(getMapped(row, columnMap, "destination"))
+                t.getEntityName(), t.getAggregatorInternalId(), t.getAggregatorName(), t.getAggregatorCode(),
+                t.getMid(), t.getMerchantInternalId(), t.getMerchantName(),
+                t.getSid(), t.getMerchantStoreInternalId(), t.getCmmMerchantStoreInternalId(),
+                t.getMerchantStoreLegalName(), t.getStoreName(),
+                t.getTid(), t.getArn(), t.getRrnNumber(), t.getCardNumber(), t.getAuthCode(),
+                t.getPaymentDate() == null ? null : Timestamp.valueOf(t.getPaymentDate()),
+                t.getTransactionDate() == null ? null : Timestamp.valueOf(t.getTransactionDate()),
+                t.getBatchNumber(), t.getTransactionType(),
+                t.getCardScheme(), t.getCardType(), t.getCardProductCode(), t.getDcc(),
+                t.getTxnCurrency(), t.getTxnCurrencyAmount(), t.getStoreBaseCurrency(), t.getStoreBaseCurrencyAmount(),
+                t.getMsf(), t.getVat(), t.getTotalAmountSettled(), t.getInterchangeFee(),
+                t.getDestination(), t.getIssuerCountry()
             };
         } catch (Exception e) {
             skips.skip(e.getMessage());
@@ -1110,13 +1502,19 @@ public class IntegrationPullService {
      * decimals, no division. Mirrors FileUploadService.inputTypeForTenant.
      */
     private boolean isCmmTenant(Long tenantId) {
+        // A NULL/blank input_format is the legacy default (CMM, divide). A
+        // FAILED lookup is not: silently defaulting to "divide" on a DB hiccup
+        // would scale an AMS tenant's amounts down 100x and publish them as
+        // SUCCESS. Fail the pull instead — it is retried automatically.
+        String fmt;
         try {
-            String fmt = jdbcTemplate.queryForObject(
+            fmt = jdbcTemplate.queryForObject(
                 "SELECT input_format FROM tenant WHERE tenant_id = ?", String.class, tenantId);
-            return !"AMS".equalsIgnoreCase(fmt == null ? "" : fmt.trim());
         } catch (Exception e) {
-            return true; // legacy default: CMM (divide)
+            throw new IllegalStateException("Could not read tenant.input_format for tenant " + tenantId
+                + " (needed to decide minor-unit scaling): " + e.getMessage(), e);
         }
+        return !"AMS".equalsIgnoreCase(fmt == null ? "" : fmt.trim());
     }
 
     private void normalizeStagedTransactions(Long tenantId, boolean minorUnits) {
@@ -1195,7 +1593,8 @@ public class IntegrationPullService {
      * a JobExecution in STARTING state). Throws on job failure so the run log
      * reflects it and retries kick in.
      */
-    private long runBatchPipeline(IntegrationReport.ReportType reportType, Long tenantId) throws Exception {
+    private long runBatchPipeline(IntegrationReport.ReportType reportType, Long tenantId,
+                                  long stagingStartedAtMs) throws Exception {
         Job job = switch (reportType) {
             case MERCHANT -> dbPullMerchantJob;
             case RENTAL -> dbPullRentalJob;
@@ -1205,7 +1604,10 @@ public class IntegrationPullService {
 
         JobParametersBuilder pb = new JobParametersBuilder()
                 .addLong("tenantId", tenantId)
-                .addLong("startedAt", System.currentTimeMillis()); // uniqueness per run
+                // When the staging fill BEGAN (DB clock) — the merchant job's
+                // stale-row purge is relative to this; see executePull.
+                .addLong("startedAt", stagingStartedAtMs)
+                .addLong("launchedAt", System.currentTimeMillis()); // uniqueness per run
         if (reportType == IntegrationReport.ReportType.TRANSACTION) {
             // DB pulls are replace-by-date, never additive: stagingToFact deletes
             // the pulled dates from fact + summaries before re-inserting.
@@ -1249,7 +1651,12 @@ public class IntegrationPullService {
                                 LocalDate dateFrom, LocalDate dateTo, int nextAttempt) {
         long delayMs = (long) Math.pow(5, nextAttempt) * 60_000L; // 5min, 25min, 125min
         delayMs = Math.min(delayMs, 30 * 60_000L); // Cap at 30 minutes
+        scheduleRetryAfter(report, schedule, dateFrom, dateTo, nextAttempt, delayMs);
+    }
 
+    /** Same as scheduleRetry with an explicit delay (precondition re-checks are evenly spaced). */
+    private void scheduleRetryAfter(IntegrationReport report, IntegrationSchedule schedule,
+                                    LocalDate dateFrom, LocalDate dateTo, int nextAttempt, long delayMs) {
         log.info("[Integration] Scheduling retry #{} for '{}' in {}ms", nextAttempt, report.getName(), delayMs);
 
         // Through the proxy (self), NOT this.executePull — see the `self` field.
@@ -1301,7 +1708,7 @@ public class IntegrationPullService {
         LocalDate from = dateFrom != null ? dateFrom : to.minusDays(Math.max(0, lookbackDays));
 
         if (from.isAfter(to)) {
-            throw new IllegalArgumentException(
+            throw new NonRetryablePullException(
                 "Invalid pull window: dateFrom (" + from + ") is after dateTo (" + to + ").");
         }
 
@@ -1313,6 +1720,12 @@ public class IntegrationPullService {
         params.put("today", to);
         params.put("dateFrom", from);
         params.put("dateTo", to);
+        // ':dateTo' binds as a DATE, i.e. midnight at the START of the last day.
+        // Against a DATETIME / TIMESTAMP column, "col <= :dateTo" therefore
+        // drops the whole last day of every window (and a one-day Run Now
+        // pulls nothing). Reports on such columns should use
+        // "col >= :dateFrom AND col < :dateToExclusive".
+        params.put("dateToExclusive", to.plusDays(1));
         return params;
     }
 
@@ -1374,13 +1787,39 @@ public class IntegrationPullService {
      * and the old parser only accepted ISO-8601.
      */
     private Object getMapped(Map<String, Object> row, Map<String, String> columnMap, String stagingField) {
+        return getMapped(row, columnMap, stagingField, null);
+    }
+
+    /**
+     * Resolution order: the report's explicit column mapping; the staging
+     * field name itself; the upload template's header for this field (the
+     * name the file reader uses, e.g. 'Sales User Email'); then the
+     * normalized forms of both — the same lower-case/no-space/no-underscore
+     * key ExcelItemReader builds, so the pull accepts every header spelling
+     * the file upload accepts.
+     */
+    private Object getMapped(Map<String, Object> row, Map<String, String> columnMap,
+                             String stagingField, String fileHeader) {
         // 1. Check mapping
         String sqlCol = columnMap.get(stagingField);
         if (sqlCol != null) {
-            return getIgnoreCase(row, sqlCol);
+            Object v = getIgnoreCase(row, sqlCol);
+            return v != null ? v : row.get(normalizeHeader(sqlCol));
         }
         // 2. Direct match (case-insensitive)
-        return getIgnoreCase(row, stagingField);
+        Object v = getIgnoreCase(row, stagingField);
+        if (v != null) return v;
+        // 3. The file template's header, then the normalized forms.
+        if (fileHeader != null) {
+            v = row.get(normalizeHeader(fileHeader));
+            if (v != null) return v;
+        }
+        return row.get(normalizeHeader(stagingField));
+    }
+
+    /** ExcelItemReader's header key: trim, lower-case, drop spaces and underscores. */
+    private static String normalizeHeader(String name) {
+        return name == null ? "" : name.trim().toLowerCase().replace(" ", "").replace("_", "");
     }
 
     /**
@@ -1449,13 +1888,23 @@ public class IntegrationPullService {
         // declared-method array on every call, and this runs for payment_date AND
         // transaction_date on every row — two million reflective lookups on a
         // 1M-row Oracle pull. The resolution itself is unchanged.
+        // MSSQL: a DATETIMEOFFSET column comes back as microsoft.sql.DateTimeOffset,
+        // which is not a java.util.Date either and whose toString()
+        // ("2026-09-24 10:00:00 +03:00") matches none of the parsers below —
+        // so every row silently became a "payment_date missing" skip. It
+        // exposes getTimestamp() (UTC instant); resolved by the same cached
+        // reflective lookup as Oracle's timestampValue().
         java.lang.reflect.Method m = TIMESTAMP_VALUE_METHODS
                 .computeIfAbsent(val.getClass(), c -> {
-                    try {
-                        return Optional.of(c.getMethod("timestampValue"));
-                    } catch (ReflectiveOperationException | RuntimeException e) {
-                        return Optional.empty();
+                    for (String name : new String[]{"timestampValue", "getTimestamp"}) {
+                        try {
+                            java.lang.reflect.Method cand = c.getMethod(name);
+                            if (Timestamp.class.isAssignableFrom(cand.getReturnType())) return Optional.of(cand);
+                        } catch (ReflectiveOperationException | RuntimeException ignored) {
+                            // try the next name
+                        }
                     }
+                    return Optional.empty();
                 })
                 .orElse(null);
         if (m != null) {
@@ -1473,9 +1922,27 @@ public class IntegrationPullService {
         try { return Timestamp.valueOf(LocalDateTime.parse(s)); } catch (Exception ignored) {}
         try { return Timestamp.valueOf(LocalDateTime.parse(s, JDBC_TS_FORMAT)); } catch (Exception ignored) {}
         try { return Timestamp.valueOf(LocalDate.parse(s).atStartOfDay()); } catch (Exception ignored) {}
-        try { return Timestamp.valueOf(LocalDate.parse(s, DateTimeFormatter.ofPattern("dd/MM/yyyy")).atStartOfDay()); } catch (Exception ignored) {}
+        // The formats the file path accepts (MerchantMasterJobConfig.DATE_FORMATS),
+        // in the same order. The merchant source query emits
+        // FORMAT(d, 'dd-MMM-yyyy') ("24-Sep-2026") and CONVERT(varchar, d, 106)
+        // ("24 Sep 2026"); English month names regardless of server locale.
+        for (DateTimeFormatter f : FILE_DATE_FORMATS) {
+            try { return Timestamp.valueOf(LocalDate.parse(s, f).atStartOfDay()); } catch (Exception ignored) {}
+            try { return Timestamp.valueOf(LocalDateTime.parse(s, f)); } catch (Exception ignored) {}
+        }
         return null;
     }
+
+    private static final DateTimeFormatter[] FILE_DATE_FORMATS = {
+        DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+        DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+        DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+        DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+        DateTimeFormatter.ofPattern("dd-MMM-yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("d-MMM-yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm:ss"),
+    };
 
     private Boolean toBoolean(Object val) {
         if (val == null) return null;

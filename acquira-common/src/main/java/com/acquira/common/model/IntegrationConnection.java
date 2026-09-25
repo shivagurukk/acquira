@@ -77,7 +77,14 @@ public class IntegrationConnection {
      * admin-supplied dbName can append driver properties (Postgres
      * socketFactory => RCE in this JVM, MSSQL ';'-properties, Oracle wallet
      * location) — see JdbcTargetValidator.
+     *
+     * @JsonIgnore: this is a computed getter on a @Data entity that the
+     * Integration Hub returns directly, so Jackson would (a) leak the internal
+     * JDBC URL to the browser and (b) throw for any stored row whose
+     * host/db/port fails validation, turning one bad row into a 500 on every
+     * list screen for the tenant.
      */
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getJdbcUrl() {
         String h = com.acquira.common.util.JdbcTargetValidator.requireValidHost(host);
         int p = com.acquira.common.util.JdbcTargetValidator.requireValidPort(port);

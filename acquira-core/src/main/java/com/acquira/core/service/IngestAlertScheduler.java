@@ -258,6 +258,16 @@ public class IngestAlertScheduler {
      */
     private void raise(Long tenantId, String rule, String severity, String message, Double metric) {
         if (tenantId == null) return;
+        // alert_history has FORCE ROW LEVEL SECURITY (tenant_id = get_current_tenant()).
+        // This runs on a scheduler thread with no tenant in context, so the pooled
+        // connection was stamped app.current_tenant='' — the dedupe SELECT then
+        // silently saw zero rows and the INSERT was rejected by the policy
+        // (SQL state 42501, surfaced by Spring as "bad SQL grammar"). Every ingest
+        // alert was dropped, every tick. Same per-tenant context the
+        // ExplorerAlertScheduler already sets; the connection is checked out per
+        // statement, so setting it here covers both statements.
+        Long previous = com.acquira.common.config.TenantContext.getCurrentTenant();
+        com.acquira.common.config.TenantContext.setCurrentTenant(tenantId);
         try {
             Integer existing = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM alert_history WHERE tenant_id = ? AND rule_name = ? " +
@@ -272,6 +282,9 @@ public class IngestAlertScheduler {
             log.info("[INGEST-ALERT] {} tenant={} {}", rule, tenantId, message);
         } catch (Exception e) {
             log.warn("Could not raise {} for tenant {} (non-fatal): {}", rule, tenantId, e.toString());
+        } finally {
+            if (previous == null) com.acquira.common.config.TenantContext.clear();
+            else com.acquira.common.config.TenantContext.setCurrentTenant(previous);
         }
     }
 

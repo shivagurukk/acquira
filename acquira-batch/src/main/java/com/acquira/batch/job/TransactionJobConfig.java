@@ -1105,6 +1105,24 @@ public class TransactionJobConfig {
     @Bean @StepScope public ItemProcessor<StagingTransaction, StagingTransaction> transactionTenantProcessor(
             @Value("#{jobParameters['tenantId']}") Long tenantId,
             @Value("#{jobParameters['inputType']}") String inputType) {
+        return transactionRowNormalizer(tenantId, inputType);
+    }
+
+    /**
+     * The per-row normalisation every transaction feed goes through before it
+     * reaches staging: scheme fallback, card-type coarsening, BIN typing (and
+     * the blank-type rule for BIN tenants), ISO-numeric currency codes, and the
+     * per-column amount unit contract. Exposed as a plain method (not only as
+     * the step-scoped bean above) so the Integration Hub DB pull runs the SAME
+     * code on the rows it streams from a source database — it used to carry a
+     * partial SQL re-implementation that had no BIN typing, no scheme fallback
+     * and no unit contract, so a DB-pulled day priced and reported differently
+     * from the identical day uploaded as a file.
+     *
+     * @param inputType "AMS" (amounts already final decimals, no division) or
+     *                  "CMM"/null (legacy minor-unit contract)
+     */
+    public ItemProcessor<StagingTransaction, StagingTransaction> transactionRowNormalizer(Long tenantId, String inputType) {
         final RefTableCache refs = loadOrGetRefTables();
         final java.util.Map<String, String> cardSchemeToType = refs.cardSchemeToType;
         final java.util.Map<String, String> isoNumericToCurrencyCode = refs.isoNumericToCurrencyCode;

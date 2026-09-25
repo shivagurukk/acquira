@@ -570,10 +570,15 @@ public class MerchantMasterJobConfig {
 
             // Purge stale staging rows from previous uploads (keep only this run's rows)
             long t0 = System.currentTimeMillis();
+            // startedAt is when THIS run began filling staging (for DB pulls,
+            // read from the database clock — IntegrationPullService). Compare as
+            // an instant via to_timestamp(): binding a java.sql.Timestamp made
+            // the cutoff a JVM-zone wall time against a load_time stamped in the
+            // DB session zone, which is only correct when the two zones match.
             long cutoffMs = (startedAt != null ? startedAt : System.currentTimeMillis()) - 30_000L;
             int purged = jdbcTemplate.update(
-                "DELETE FROM stg_merchant_master_raw WHERE tenant_id = ? AND load_time < ?",
-                tenantId, new java.sql.Timestamp(cutoffMs));
+                "DELETE FROM stg_merchant_master_raw WHERE tenant_id = ? AND load_time < to_timestamp(? / 1000.0)",
+                tenantId, cutoffMs);
             log.info("  staging cleanup: removed {} stale rows for tenant {} in {}ms",
                 purged, tId, System.currentTimeMillis() - t0);
 

@@ -44,8 +44,15 @@ public class BatchConfig {
      * job, so a burst of schedules/retries could spawn threads without limit.
      *
      * Bounded here instead. Pulls are long-lived and DB-connection-hungry, so
-     * the ceiling is deliberately low; CallerRunsPolicy applies natural
-     * backpressure rather than dropping a scheduled pull on the floor.
+     * the ceiling is deliberately low.
+     *
+     * Rejection = AbortPolicy, NOT CallerRunsPolicy: the callers are the
+     * 'integration-cron-' scheduler threads (pool of 5, shared by every
+     * @Scheduled bean in the app) and the HTTP thread for Run Now. Running a
+     * multi-hour pull inline on either would starve all scheduled work or hang
+     * the request. With a 50-deep queue a rejection only happens when 54 pulls
+     * are already pending — that is an incident to surface (the scheduler
+     * logs it, Run Now returns an error), not something to absorb silently.
      */
     @Bean("integrationPullExecutor")
     public TaskExecutor integrationPullExecutor() {
@@ -55,8 +62,13 @@ public class BatchConfig {
         ex.setMaxPoolSize(4);
         ex.setQueueCapacity(50);
         ex.setThreadNamePrefix("integration-pull-");
-        ex.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        ex.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+        // Give an in-flight pull a bounded grace period on shutdown. A pull can
+        // run for hours, so this cannot make shutdown wait for completion — the
+        // startup reaper in IntegrationPullService closes whatever was
+        // interrupted (RUNNING run logs / ingest_run rows) on the next boot.
         ex.setWaitForTasksToCompleteOnShutdown(true);
+        ex.setAwaitTerminationSeconds(30);
         ex.initialize();
         return ex;
     }

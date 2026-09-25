@@ -1,0 +1,6 @@
+<settings>
+  <!-- Deliberately empty of <proxies>. The proxy in ~/.m2/settings.xml
+       (ep.threatpulse.net) returns 403 for repo.maven.apache.org, while the
+       same host is reachable directly from this machine. Used by
+       scripts/start-local.ps1 -Build. -->
+</settings>

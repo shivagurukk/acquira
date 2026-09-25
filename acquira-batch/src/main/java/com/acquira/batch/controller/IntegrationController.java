@@ -53,6 +53,28 @@ public class IntegrationController {
     /** Tier 2 gate — see the class javadoc. */
     private static final String SQL_AUTHORING = "hasRole('SUPER_ADMIN')";
 
+    private static boolean isSuperAdmin() {
+        org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
+    }
+
+    /**
+     * A schedule's precondition SQL runs against the customer's database with
+     * the stored service credentials, exactly like a report's SQL — so
+     * introducing or changing it is Tier 2 work. The schedule endpoints stay
+     * at Tier 1 for cron/enable/alert edits; only a change to the SQL text
+     * itself is gated here. Returns an error response, or null when allowed.
+     */
+    private static ResponseEntity<?> rejectPreconditionSqlChangeUnlessSuperAdmin(String current, String proposed) {
+        String cur = current == null ? "" : current.strip();
+        String prop = proposed == null ? "" : proposed.strip();
+        if (cur.equals(prop) || isSuperAdmin()) return null;
+        return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN).body(Map.of("error",
+                "Precondition SQL executes against the source database and can only be set or changed by a SUPER_ADMIN."));
+    }
+
     private final IntegrationConnectionRepository connectionRepo;
     private final IntegrationReportRepository reportRepo;
     private final IntegrationScheduleRepository scheduleRepo;
@@ -97,6 +119,11 @@ public class IntegrationController {
     @PostMapping("/connections")
     public ResponseEntity<?> createConnection(@RequestBody IntegrationConnection conn) {
         Long tenantId = TenantContext.getCurrentTenant();
+        // The body binds straight onto the entity, so a client-supplied "id"
+        // would turn save() into a JPA merge — an UPDATE of ANY tenant's
+        // existing connection row (host, credentials, tenant_id). Create means
+        // create: never honour an id from the request.
+        conn.setId(null);
         conn.setTenantId(tenantId);
         conn.setCreatedAt(LocalDateTime.now());
 
@@ -540,6 +567,9 @@ public class IntegrationController {
     public ResponseEntity<?> createSchedule(@RequestBody Map<String, Object> body) {
         Long tenantId = TenantContext.getCurrentTenant();
 
+        ResponseEntity<?> gate = rejectPreconditionSqlChangeUnlessSuperAdmin(null, (String) body.get("preconditionSql"));
+        if (gate != null) return gate;
+
         IntegrationSchedule schedule = new IntegrationSchedule();
         schedule.setTenantId(tenantId);
         schedule.setCronExpression((String) body.get("cronExpression"));
@@ -597,7 +627,12 @@ public class IntegrationController {
                     if (body.containsKey("timezone")) existing.setTimezone((String) body.get("timezone"));
                     if (body.containsKey("isEnabled")) existing.setIsEnabled((Boolean) body.get("isEnabled"));
                     if (body.containsKey("preconditionEnabled")) existing.setPreconditionEnabled((Boolean) body.get("preconditionEnabled"));
-                    if (body.containsKey("preconditionSql")) existing.setPreconditionSql((String) body.get("preconditionSql"));
+                    if (body.containsKey("preconditionSql")) {
+                        ResponseEntity<?> gate = rejectPreconditionSqlChangeUnlessSuperAdmin(
+                                existing.getPreconditionSql(), (String) body.get("preconditionSql"));
+                        if (gate != null) return gate;
+                        existing.setPreconditionSql((String) body.get("preconditionSql"));
+                    }
                     if (body.containsKey("alertEmails")) existing.setAlertEmails((String) body.get("alertEmails"));
                     if (body.containsKey("alertOnFailure")) existing.setAlertOnFailure((Boolean) body.get("alertOnFailure"));
                     existing.setUpdatedAt(LocalDateTime.now());
@@ -654,8 +689,15 @@ public class IntegrationController {
                         if (body.containsKey("dateFrom")) dateFrom = LocalDate.parse(body.get("dateFrom"));
                         if (body.containsKey("dateTo")) dateTo = LocalDate.parse(body.get("dateTo"));
                     }
-                    schedulerService.runNow(schedule, dateFrom, dateTo);
-                    return ResponseEntity.ok(Map.of("message", "Pull started", "reportName", schedule.getReport().getName()));
+                    try {
+                        schedulerService.runNow(schedule, dateFrom, dateTo);
+                    } catch (org.springframework.core.task.TaskRejectedException e) {
+                        // integrationPullExecutor is bounded (AbortPolicy) — say so
+                        // rather than running the pull on this request thread.
+                        return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                                .body((Object) Map.of("error", "Too many pulls are queued right now — try again in a few minutes."));
+                    }
+                    return ResponseEntity.ok((Object) Map.of("message", "Pull started", "reportName", schedule.getReport().getName()));
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -1021,15 +1063,28 @@ public class IntegrationController {
                 .filter(r -> r.getTenantId().equals(tenantId))
                 .filter(r -> r.getStatus() == IntegrationRunLog.Status.FAILED)
                 .map(failedRun -> {
+                    // A run whose report was hard-deleted (detachReport) has no
+                    // report to re-run — say so instead of NPE-ing on the async
+                    // thread with no run log written.
+                    if (failedRun.getReport() == null) {
+                        return ResponseEntity.badRequest().body((Object) Map.of("error",
+                                "This run's report no longer exists — nothing to retry."));
+                    }
+                    // schedule is a LAZY association: pass the loaded entity (or
+                    // null), not an uninitialised proxy that the @Async thread
+                    // cannot initialise once this request's session closes.
+                    // executePull also reloads both by id before using them.
+                    IntegrationSchedule sched = failedRun.getSchedule() == null ? null
+                            : scheduleRepo.findById(failedRun.getSchedule().getId()).orElse(null);
                     pullService.executePull(
                             failedRun.getReport(),
-                            failedRun.getSchedule(),
+                            sched,
                             IntegrationRunLog.TriggerType.RETRY,
                             failedRun.getDateRangeFrom(),
                             failedRun.getDateRangeTo(),
                             1
                     );
-                    return ResponseEntity.ok(Map.of("message", "Retry started"));
+                    return ResponseEntity.ok((Object) Map.of("message", "Retry started"));
                 })
                 .orElse(ResponseEntity.badRequest().build());
     }
